@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import random
+import ssl
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -43,6 +44,38 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
 )
 
 
+def _is_ssl_or_connection_error(exc: BaseException) -> bool:
+    """Check if an exception is an SSL or connection error (possibly nested).
+
+    SSL errors from VPN/proxy SSL inspection often appear as:
+    - ``ssl.SSLError`` / ``ssl.SSLEOFError`` directly
+    - ``OSError`` wrapping an SSL error
+    - ``google.api_core.exceptions.ServiceUnavailable`` wrapping an SSL error
+    - ``requests.exceptions.SSLError`` wrapping an SSL error
+    - ``ConnectionError`` / ``ConnectionResetError``
+
+    We check the exception chain (``__cause__`` / ``__context__``) up to 5 levels deep.
+    """
+    checked: set[int] = set()
+
+    def _walk(err: BaseException | None, depth: int = 0) -> bool:
+        if err is None or depth > 5 or id(err) in checked:
+            return False
+        checked.add(id(err))
+
+        if isinstance(err, (ssl.SSLError, ConnectionResetError, ConnectionAbortedError)):
+            return True
+
+        # Check string representation for SSL-related messages
+        err_str = str(err).lower()
+        if any(kw in err_str for kw in ("ssl", "eof occurred", "certificate", "handshake")):
+            return True
+
+        return _walk(err.__cause__, depth + 1) or _walk(err.__context__, depth + 1)
+
+    return _walk(exc)
+
+
 @dataclass
 class ChatMessage:
     """A single message in a conversation."""
@@ -70,6 +103,8 @@ class GeminiClient:
         self._initialized = False
         self._models: dict[str, GenerativeModel] = {}
         self._current_model_id: str = settings.models.default
+        self._active_location: str = settings.gcp.location
+        self._using_fallback: bool = False
 
     def initialize(self) -> None:
         """Initialize the Vertex AI SDK with credentials."""
@@ -80,7 +115,7 @@ class GeminiClient:
 
         vertexai.init(
             project=self._settings.gcp.project_id,
-            location=self._settings.gcp.location,
+            location=self._active_location,
             credentials=credentials,
         )
 
@@ -88,8 +123,30 @@ class GeminiClient:
         logger.info(
             "Vertex AI initialized — project=%s, location=%s",
             self._settings.gcp.project_id,
-            self._settings.gcp.location,
+            self._active_location,
         )
+
+    def _reinitialize_with_fallback(self) -> None:
+        """Re-initialize Vertex AI with the fallback location.
+
+        Clears the model cache (since models are bound to the previous
+        location) and marks the client as using the fallback.
+        """
+        fallback = self._settings.gcp.fallback_location
+        if self._using_fallback or not fallback or fallback == self._active_location:
+            return  # already on fallback or no fallback configured
+
+        logger.warning(
+            "Primary location '%s' failed — falling back to '%s'",
+            self._active_location,
+            fallback,
+        )
+
+        self._active_location = fallback
+        self._using_fallback = True
+        self._initialized = False
+        self._models.clear()  # models are bound to the old location
+        self.initialize()
 
     def _ensure_initialized(self) -> None:
         """Ensure the SDK is initialized before making calls."""
@@ -132,6 +189,10 @@ class GeminiClient:
 
     def _retry_with_backoff(self, fn: Callable[[], T], *, timeout: float | None = None) -> T:
         """Execute *fn* with exponential backoff on retryable Google API errors.
+
+        If an SSL or connection error is detected and a fallback location is
+        configured, the client re-initializes with the fallback location and
+        retries the call once before giving up.
 
         Args:
             fn: Zero-argument callable that performs the API call.
@@ -176,6 +237,22 @@ class GeminiClient:
                     time.sleep(sleep_time)
                     delay *= retry_cfg.backoff_multiplier
                 # else: last attempt failed, fall through to raise below.
+            except Exception as exc:
+                # Check for SSL/connection errors that warrant a location fallback.
+                if _is_ssl_or_connection_error(exc) and not self._using_fallback:
+                    logger.warning(
+                        "SSL/connection error detected (%s: %s) — attempting location fallback",
+                        type(exc).__name__,
+                        exc,
+                    )
+                    self._reinitialize_with_fallback()
+                    # Retry the call once with the new location.
+                    try:
+                        return fn()
+                    except Exception as fallback_exc:
+                        last_exception = fallback_exc
+                        break
+                raise  # Non-SSL, non-retryable — propagate immediately.
 
         # All retries exhausted — raise the appropriate custom exception.
         assert last_exception is not None  # noqa: S101

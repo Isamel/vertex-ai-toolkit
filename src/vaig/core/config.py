@@ -24,6 +24,7 @@ class GCPConfig(BaseModel):
 
     project_id: str = ""
     location: str = "global"
+    fallback_location: str = "us-central1"
 
 
 class AuthConfig(BaseModel):

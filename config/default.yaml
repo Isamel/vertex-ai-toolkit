@@ -2,6 +2,7 @@
 gcp:
   project_id: ""  # Override via VAIG_GCP__PROJECT_ID or --project
   location: "global"  # Gemini 3.1 models require "global"; override via VAIG_GCP__LOCATION
+  fallback_location: "us-central1"  # Fallback if primary location fails (SSL/connection errors)
 
 auth:
   mode: "adc"  # "adc" | "impersonate"
