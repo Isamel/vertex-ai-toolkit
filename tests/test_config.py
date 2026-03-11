@@ -12,6 +12,7 @@ from vaig.core.config import (
     ContextConfig,
     GCPConfig,
     GenerationConfig,
+    LoggingConfig,
     ModelInfo,
     ModelsConfig,
     SessionConfig,
@@ -173,6 +174,48 @@ class TestSettings:
         monkeypatch.setenv("VAIG_GCP__PROJECT_ID", "env-project")
         s = Settings()
         assert s.gcp.project_id == "env-project"
+
+    def test_logging_defaults_in_settings(self) -> None:
+        s = Settings()
+        assert s.logging.level == "WARNING"
+        assert s.logging.show_path is False
+
+    def test_logging_from_yaml(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "logging:\n  level: DEBUG\n  show_path: true\n"
+        )
+        s = Settings.load(config_file)
+        assert s.logging.level == "DEBUG"
+        assert s.logging.show_path is True
+
+    def test_logging_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VAIG_LOGGING__LEVEL", "ERROR")
+        s = Settings()
+        assert s.logging.level == "ERROR"
+
+
+class TestLoggingConfig:
+    """Tests for LoggingConfig model."""
+
+    def test_defaults(self) -> None:
+        cfg = LoggingConfig()
+        assert cfg.level == "WARNING"
+        assert cfg.show_path is False
+
+    def test_custom_level(self) -> None:
+        cfg = LoggingConfig(level="DEBUG")
+        assert cfg.level == "DEBUG"
+
+    def test_custom_show_path(self) -> None:
+        cfg = LoggingConfig(show_path=True)
+        assert cfg.show_path is True
+
+    def test_all_levels_accepted(self) -> None:
+        """LoggingConfig should accept any string — validation happens at setup time."""
+        for level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+            cfg = LoggingConfig(level=level)
+            assert cfg.level == level
 
 
 class TestStripEmptyStrings:

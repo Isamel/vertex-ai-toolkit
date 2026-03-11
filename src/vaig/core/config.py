@@ -82,6 +82,13 @@ class AgentsConfig(BaseModel):
     specialist_model: str = "gemini-2.5-flash"
 
 
+class LoggingConfig(BaseModel):
+    """Logging configuration."""
+
+    level: str = "WARNING"
+    show_path: bool = False
+
+
 class RetryConfig(BaseModel):
     """Retry and backoff configuration for API calls."""
 
@@ -156,6 +163,7 @@ class Settings(BaseSettings):
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
     retry: RetryConfig = Field(default_factory=RetryConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> Settings:

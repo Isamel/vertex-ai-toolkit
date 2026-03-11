@@ -325,6 +325,7 @@ class GeminiClient:
 
         mid = model_id or self._current_model_id
         gen_config = self._build_generation_config(**gen_kwargs)
+        logger.debug("generate() → model=%s, has_history=%s", mid, bool(history))
 
         def _call() -> GenerationResult:
             # Model is created inside the closure so that after a location
@@ -381,6 +382,7 @@ class GeminiClient:
 
         mid = model_id or self._current_model_id
         gen_config = self._build_generation_config(**gen_kwargs)
+        logger.debug("generate_stream() → model=%s, has_history=%s", mid, bool(history))
 
         def _call() -> list[Any]:
             # Model is created inside the closure so that after a location

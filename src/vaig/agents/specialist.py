@@ -36,6 +36,7 @@ class SpecialistAgent(BaseAgent):
         history = self._build_chat_history()
 
         self._add_to_conversation("user", full_prompt)
+        logger.debug("Agent %s executing (model=%s, history=%d)", self.name, self._config.model, len(history))
 
         try:
             result = self._client.generate(
@@ -48,6 +49,7 @@ class SpecialistAgent(BaseAgent):
             )
 
             self._add_to_conversation("agent", result.text)
+            logger.info("Agent %s completed — %s tokens", self.name, result.usage.get("total_tokens", "?"))
 
             return AgentResult(
                 agent_name=self.name,

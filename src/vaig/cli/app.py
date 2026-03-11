@@ -65,8 +65,27 @@ def main(
         Optional[bool],
         typer.Option("--version", "-v", help="Show version", callback=_version_callback, is_eager=True),
     ] = None,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-V", help="Enable verbose logging (INFO level)"),
+    ] = False,
+    log_level: Annotated[
+        Optional[str],
+        typer.Option("--log-level", help="Set log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"),
+    ] = None,
 ) -> None:
     """VAIG — Vertex AI Gemini Toolkit."""
+    from vaig.core.log import setup_logging
+
+    # Determine effective log level: --log-level takes precedence over -V
+    if log_level:
+        level = log_level.upper()
+    elif verbose:
+        level = "INFO"
+    else:
+        level = "WARNING"
+
+    setup_logging(level, show_path=log_level == "DEBUG" if log_level else False)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -159,7 +178,9 @@ def ask(
             err_console.print(f"[dim]Available: {', '.join(registry.list_names())}[/dim]")
             raise typer.Exit(1)
 
-        with console.status(f"[bold cyan]Running {skill} skill...[/bold cyan]"):
+        with console.status(
+            f"[bold cyan]Running {skill} skill on {settings.models.default}...[/bold cyan]"
+        ):
             result = orchestrator.execute_skill_phase(
                 active_skill,
                 SkillPhase.ANALYZE,
@@ -171,7 +192,9 @@ def ask(
     else:
         # Direct chat — single agent
         if no_stream:
-            with console.status("[bold cyan]Thinking...[/bold cyan]"):
+            with console.status(
+                f"[bold cyan]Generating response with {settings.models.default}...[/bold cyan]"
+            ):
                 result = orchestrator.execute_single(question, context=context_str)
             console.print()
             if hasattr(result, "content"):

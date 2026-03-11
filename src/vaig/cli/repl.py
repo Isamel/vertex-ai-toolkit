@@ -240,7 +240,9 @@ def _handle_direct_chat(state: REPLState, user_input: str, context: str) -> None
             console.print()
             full_response = "".join(response_parts)
         else:
-            with console.status("[bold cyan]Thinking...[/bold cyan]"):
+            with console.status(
+                f"[bold cyan]Generating response with {state.model}...[/bold cyan]"
+            ):
                 result = state.orchestrator.execute_single(user_input, context=context)
             full_response = result.content  # type: ignore[union-attr]
             console.print(Markdown(full_response))
@@ -261,10 +263,12 @@ def _handle_skill_chat(state: REPLState, user_input: str, context: str) -> None:
         return
 
     meta = skill.get_metadata()
-    console.print(f"[dim]Running {meta.display_name} → {state.current_phase.value}...[/dim]")
+    console.print(f"[dim]Running {meta.display_name} → {state.current_phase.value} on {state.model}...[/dim]")
 
     try:
-        with console.status(f"[bold cyan]{meta.display_name} ({state.current_phase.value})...[/bold cyan]"):
+        with console.status(
+            f"[bold cyan]{meta.display_name} ({state.current_phase.value}) on {state.model}...[/bold cyan]"
+        ):
             result = state.orchestrator.execute_skill_phase(
                 skill,
                 state.current_phase,

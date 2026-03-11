@@ -99,6 +99,7 @@ def load_file(filepath: Path) -> LoadedFile:
     file_type = classify_file(filepath)
     size_bytes = filepath.stat().st_size
     mime_type = mimetypes.guess_type(str(filepath))[0] or "application/octet-stream"
+    logger.debug("Loading file: %s (type=%s, size=%d bytes)", filepath.name, file_type.value, size_bytes)
 
     if file_type in (FileType.TEXT, FileType.CODE, FileType.ETL):
         return _load_text_file(filepath, file_type, size_bytes)

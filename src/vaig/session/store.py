@@ -64,6 +64,7 @@ class SessionStore:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(_SCHEMA)
+            logger.debug("Database opened: %s", self._db_path)
         return self._conn
 
     def create_session(

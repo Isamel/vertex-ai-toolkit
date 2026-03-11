@@ -86,3 +86,7 @@ retry:
   initial_delay: 1.0
   max_delay: 60.0
   backoff_multiplier: 2.0
+
+logging:
+  level: "WARNING"  # Override via VAIG_LOGGING__LEVEL or --verbose/-V
+  show_path: false   # Show module path in log output (useful for debugging)
