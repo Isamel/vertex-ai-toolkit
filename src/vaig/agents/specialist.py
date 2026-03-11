@@ -120,7 +120,16 @@ class SpecialistAgent(BaseAgent):
         """Factory method to create a SpecialistAgent from a skill's agent config dict.
 
         This maps the dict format used by BaseSkill.get_agents_config() to AgentConfig.
+
+        Raises:
+            TypeError: If config_dict is not a dict (e.g. a list was passed).
+            KeyError: If required keys (name, role, system_instruction) are missing.
         """
+        if not isinstance(config_dict, dict):
+            raise TypeError(
+                f"Expected dict for agent config, got {type(config_dict).__name__}. "
+                "Check that get_agents_config() returns a list of dicts."
+            )
         agent_config = AgentConfig(
             name=config_dict["name"],
             role=config_dict["role"],

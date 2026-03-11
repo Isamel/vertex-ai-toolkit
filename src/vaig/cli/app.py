@@ -212,9 +212,11 @@ def sessions_list(
     table.add_column("Created", style="dim")
 
     for s in sessions:
+        if not isinstance(s, dict):
+            continue
         table.add_row(
-            s["id"][:12],
-            s["name"],
+            s.get("id", "?")[:12],
+            s.get("name", "—"),
             s.get("model", "—"),
             s.get("skill", "—") or "—",
             s.get("created_at", "—"),
@@ -274,8 +276,10 @@ def models_list(
     table.add_column("Default", justify="center")
 
     for m in models:
-        is_default = "✓" if m["id"] == settings.models.default else ""
-        table.add_row(m["id"], m.get("description", ""), is_default)
+        if not isinstance(m, dict):
+            continue
+        is_default = "✓" if m.get("id") == settings.models.default else ""
+        table.add_row(m.get("id", "?"), m.get("description", ""), is_default)
 
     console.print(table)
     console.print(f"\n[dim]Default: {settings.models.default} | Fallback: {settings.models.fallback}[/dim]")

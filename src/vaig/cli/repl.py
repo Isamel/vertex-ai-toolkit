@@ -422,7 +422,9 @@ def _cmd_sessions(state: REPLState) -> None:
     table.add_column("Created", style="dim")
 
     for s in sessions:
-        table.add_row(s["id"][:12], s["name"], s.get("created_at", "—"))
+        if not isinstance(s, dict):
+            continue
+        table.add_row(s.get("id", "?")[:12], s.get("name", "—"), s.get("created_at", "—"))
 
     console.print(table)
     console.print("[dim]Use /load <id> to resume a session[/dim]")

@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
+import pytest
+
 from vaig.agents.base import AgentConfig, AgentMessage, AgentResult, AgentRole
+from vaig.agents.specialist import SpecialistAgent
 
 
 class TestAgentRole:
@@ -94,3 +99,47 @@ class TestAgentResult:
             usage={"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
         )
         assert result.usage["total_tokens"] == 150
+
+
+class TestSpecialistAgentFromConfigDict:
+    """Tests for SpecialistAgent.from_config_dict defensive type checking."""
+
+    def test_valid_config_dict(self) -> None:
+        mock_client = MagicMock()
+        config = {
+            "name": "analyzer",
+            "role": "log analyzer",
+            "system_instruction": "Analyze logs.",
+            "model": "gemini-2.5-flash",
+            "temperature": 0.3,
+        }
+        agent = SpecialistAgent.from_config_dict(config, mock_client)
+        assert agent.name == "analyzer"
+        assert agent.role == "log analyzer"
+        assert agent.model == "gemini-2.5-flash"
+
+    def test_config_dict_with_defaults(self) -> None:
+        mock_client = MagicMock()
+        config = {
+            "name": "agent",
+            "role": "helper",
+            "system_instruction": "Help.",
+        }
+        agent = SpecialistAgent.from_config_dict(config, mock_client)
+        assert agent.model == "gemini-2.5-pro"
+
+    def test_raises_type_error_on_list_input(self) -> None:
+        """The .get() AttributeError bug — if a list is passed instead of a dict."""
+        mock_client = MagicMock()
+        with pytest.raises(TypeError, match="Expected dict"):
+            SpecialistAgent.from_config_dict(["not", "a", "dict"], mock_client)  # type: ignore[arg-type]
+
+    def test_raises_type_error_on_string_input(self) -> None:
+        mock_client = MagicMock()
+        with pytest.raises(TypeError, match="Expected dict"):
+            SpecialistAgent.from_config_dict("not a dict", mock_client)  # type: ignore[arg-type]
+
+    def test_raises_key_error_on_missing_required_keys(self) -> None:
+        mock_client = MagicMock()
+        with pytest.raises(KeyError):
+            SpecialistAgent.from_config_dict({"name": "agent"}, mock_client)

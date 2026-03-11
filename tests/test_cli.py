@@ -117,6 +117,24 @@ class TestSessionsCommands:
         # The command still runs without raising, so exit_code is 0
         assert result.exit_code == 0
 
+    def test_sessions_list_skips_non_dict_items(self) -> None:
+        """Defensive guard: if list_sessions returns corrupt data (non-dict items), skip them."""
+        mixed_sessions = [
+            {"id": "valid-session-id", "name": "good", "model": "gemini-2.5-pro", "skill": None, "created_at": "2025-01-15"},
+            "corrupt-entry",  # not a dict — should be skipped
+            ["also", "corrupt"],  # list — should be skipped
+        ]
+        mock_manager = MagicMock()
+        mock_manager.list_sessions.return_value = mixed_sessions
+
+        with patch("vaig.session.manager.SessionManager", return_value=mock_manager):
+            result = runner.invoke(app, ["sessions", "list"])
+
+        assert result.exit_code == 0
+        assert "good" in result.output
+        # Should not crash — corrupt entries silently skipped
+        mock_manager.close.assert_called_once()
+
 
 # ══════════════════════════════════════════════════════════════
 # MODELS COMMANDS
@@ -146,6 +164,22 @@ class TestModelsCommands:
 
         assert result.exit_code == 0
         assert "No models configured" in result.output
+
+    def test_models_list_skips_non_dict_items(self) -> None:
+        """Defensive guard: if list_available_models returns corrupt data, skip non-dict items."""
+        mixed_models = [
+            {"id": "gemini-2.5-pro", "description": "Pro model"},
+            "corrupt-entry",  # not a dict
+            42,  # not a dict
+        ]
+        mock_client = MagicMock()
+        mock_client.list_available_models.return_value = mixed_models
+
+        with patch("vaig.core.client.GeminiClient", return_value=mock_client):
+            result = runner.invoke(app, ["models", "list"])
+
+        assert result.exit_code == 0
+        assert "gemini-2.5-pro" in result.output
 
 
 # ══════════════════════════════════════════════════════════════

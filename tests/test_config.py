@@ -17,6 +17,8 @@ from vaig.core.config import (
     SessionConfig,
     Settings,
     SkillsConfig,
+    _strip_empty_strings,
+    _strip_empty_strings_in_list,
     reset_settings,
 )
 
@@ -171,3 +173,166 @@ class TestSettings:
         monkeypatch.setenv("VAIG_GCP__PROJECT_ID", "env-project")
         s = Settings()
         assert s.gcp.project_id == "env-project"
+
+
+class TestStripEmptyStrings:
+    """Tests for _strip_empty_strings and _strip_empty_strings_in_list helpers."""
+
+    def test_removes_top_level_empty_strings(self) -> None:
+        data = {"project_id": "", "location": "global", "name": ""}
+        result = _strip_empty_strings(data)
+        assert result == {"location": "global"}
+
+    def test_preserves_non_empty_values(self) -> None:
+        data = {"a": "hello", "b": 42, "c": True, "d": 0, "e": False}
+        result = _strip_empty_strings(data)
+        assert result == data
+
+    def test_recurses_into_nested_dicts(self) -> None:
+        data = {"gcp": {"project_id": "", "location": "global"}}
+        result = _strip_empty_strings(data)
+        assert result == {"gcp": {"location": "global"}}
+
+    def test_removes_empty_nested_dict(self) -> None:
+        """If all values in a nested dict are empty strings, the key is removed."""
+        data = {"gcp": {"project_id": "", "location": ""}, "name": "test"}
+        result = _strip_empty_strings(data)
+        assert result == {"name": "test"}
+
+    def test_recurses_into_list_of_dicts(self) -> None:
+        """The critical bug fix — models.available has list of dicts with empty strings."""
+        data = {
+            "models": {
+                "default": "gemini-2.5-pro",
+                "available": [
+                    {"id": "gemini-2.5-pro", "description": ""},
+                    {"id": "gemini-2.5-flash", "description": "Fast model"},
+                ],
+            }
+        }
+        result = _strip_empty_strings(data)
+        assert result["models"]["default"] == "gemini-2.5-pro"
+        available = result["models"]["available"]
+        assert len(available) == 2
+        # First item: description was "" so it's stripped
+        assert available[0] == {"id": "gemini-2.5-pro"}
+        # Second item: description preserved
+        assert available[1] == {"id": "gemini-2.5-flash", "description": "Fast model"}
+
+    def test_list_of_plain_strings_filters_empty(self) -> None:
+        data = {"tags": ["python", "", "cli", ""]}
+        result = _strip_empty_strings(data)
+        assert result == {"tags": ["python", "cli"]}
+
+    def test_nested_lists(self) -> None:
+        data = {"matrix": [["a", "", "b"], ["", "c"]]}
+        result = _strip_empty_strings(data)
+        assert result == {"matrix": [["a", "b"], ["c"]]}
+
+    def test_mixed_list_content(self) -> None:
+        """Lists with dicts, strings, and numbers."""
+        data = {
+            "items": [
+                {"name": "test", "value": ""},
+                "keep",
+                "",
+                42,
+                {"empty": ""},
+            ]
+        }
+        result = _strip_empty_strings(data)
+        items = result["items"]
+        assert items[0] == {"name": "test"}
+        assert items[1] == "keep"
+        assert items[2] == 42
+        # {"empty": ""} becomes {} — empty dict stays in list (not filtered)
+        assert items[3] == {}
+
+    def test_empty_input(self) -> None:
+        assert _strip_empty_strings({}) == {}
+
+    def test_all_empty_strings(self) -> None:
+        data = {"a": "", "b": "", "c": ""}
+        assert _strip_empty_strings(data) == {}
+
+    def test_preserves_none_values(self) -> None:
+        """None is not an empty string and should be preserved."""
+        data = {"a": None, "b": "", "c": "valid"}
+        result = _strip_empty_strings(data)
+        assert result == {"a": None, "c": "valid"}
+
+    def test_preserves_zero_and_false(self) -> None:
+        """0 and False should not be stripped (they're not empty strings)."""
+        data = {"count": 0, "enabled": False, "name": ""}
+        result = _strip_empty_strings(data)
+        assert result == {"count": 0, "enabled": False}
+
+    def test_deeply_nested_structure(self) -> None:
+        data = {
+            "level1": {
+                "level2": {
+                    "level3": {
+                        "keep": "yes",
+                        "remove": "",
+                    }
+                }
+            }
+        }
+        result = _strip_empty_strings(data)
+        assert result == {"level1": {"level2": {"level3": {"keep": "yes"}}}}
+
+    def test_realistic_yaml_config(self) -> None:
+        """Simulates a realistic YAML config with empty strings throughout."""
+        data = {
+            "gcp": {"project_id": "", "location": "global"},
+            "auth": {"mode": "adc", "impersonate_sa": ""},
+            "models": {
+                "default": "gemini-2.5-pro",
+                "fallback": "",
+                "available": [
+                    {"id": "gemini-2.5-pro", "description": "Pro model"},
+                    {"id": "gemini-2.5-flash", "description": ""},
+                    {"id": "gemini-3.1-pro-preview", "description": ""},
+                ],
+            },
+            "session": {"db_path": "", "auto_save": True},
+        }
+        result = _strip_empty_strings(data)
+        # project_id removed, location kept
+        assert result["gcp"] == {"location": "global"}
+        # impersonate_sa removed
+        assert result["auth"] == {"mode": "adc"}
+        # fallback removed, available cleaned
+        assert result["models"]["default"] == "gemini-2.5-pro"
+        assert "fallback" not in result["models"]
+        assert result["models"]["available"][0] == {"id": "gemini-2.5-pro", "description": "Pro model"}
+        assert result["models"]["available"][1] == {"id": "gemini-2.5-flash"}
+        assert result["models"]["available"][2] == {"id": "gemini-3.1-pro-preview"}
+        # db_path removed, auto_save kept
+        assert result["session"] == {"auto_save": True}
+
+
+class TestStripEmptyStringsInList:
+    """Direct tests for the list helper function."""
+
+    def test_empty_list(self) -> None:
+        assert _strip_empty_strings_in_list([]) == []
+
+    def test_all_empty_strings(self) -> None:
+        assert _strip_empty_strings_in_list(["", "", ""]) == []
+
+    def test_preserves_non_strings(self) -> None:
+        result = _strip_empty_strings_in_list([1, 2.5, True, None])
+        assert result == [1, 2.5, True, None]
+
+    def test_filters_only_empty_strings(self) -> None:
+        result = _strip_empty_strings_in_list(["a", "", "b", "", "c"])
+        assert result == ["a", "b", "c"]
+
+    def test_recurses_into_dicts(self) -> None:
+        result = _strip_empty_strings_in_list([{"key": "val", "empty": ""}])
+        assert result == [{"key": "val"}]
+
+    def test_recurses_into_nested_lists(self) -> None:
+        result = _strip_empty_strings_in_list([["a", ""], ["", "b"]])
+        assert result == [["a"], ["b"]]

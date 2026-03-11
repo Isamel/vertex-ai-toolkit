@@ -107,6 +107,9 @@ def _strip_empty_strings(data: dict[str, Any]) -> dict[str, Any]:
     This prevents YAML defaults like ``project_id: ""`` from shadowing
     environment variables in pydantic-settings (which treats explicit
     init args as higher priority than env vars).
+
+    Also recurses into lists of dicts (e.g. ``models.available``) so that
+    empty strings inside list items are cleaned as well.
     """
     cleaned: dict[str, Any] = {}
     for key, value in data.items():
@@ -114,8 +117,23 @@ def _strip_empty_strings(data: dict[str, Any]) -> dict[str, Any]:
             nested = _strip_empty_strings(value)
             if nested:  # only add if dict still has content
                 cleaned[key] = nested
+        elif isinstance(value, list):
+            cleaned[key] = _strip_empty_strings_in_list(value)
         elif value != "":
             cleaned[key] = value
+    return cleaned
+
+
+def _strip_empty_strings_in_list(items: list[Any]) -> list[Any]:
+    """Clean empty strings inside a list, recursing into nested dicts and lists."""
+    cleaned: list[Any] = []
+    for item in items:
+        if isinstance(item, dict):
+            cleaned.append(_strip_empty_strings(item))
+        elif isinstance(item, list):
+            cleaned.append(_strip_empty_strings_in_list(item))
+        elif item != "":
+            cleaned.append(item)
     return cleaned
 
 
