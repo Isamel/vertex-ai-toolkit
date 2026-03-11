@@ -1,7 +1,7 @@
 # Vertex AI Toolkit — Default Configuration
 gcp:
   project_id: ""  # Override via VAIG_GCP__PROJECT_ID or --project
-  location: "us-central1"
+  location: "global"  # Gemini 3.1 models require "global"; override via VAIG_GCP__LOCATION
 
 auth:
   mode: "adc"  # "adc" | "impersonate"

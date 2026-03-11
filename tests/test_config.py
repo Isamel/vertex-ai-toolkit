@@ -39,7 +39,7 @@ class TestGCPConfig:
     def test_defaults(self) -> None:
         cfg = GCPConfig()
         assert cfg.project_id == ""
-        assert cfg.location == "us-central1"
+        assert cfg.location == "global"
 
     def test_custom_values(self) -> None:
         cfg = GCPConfig(project_id="my-project", location="europe-west1")
@@ -123,7 +123,7 @@ class TestContextConfig:
 class TestSettings:
     def test_default_construction(self) -> None:
         s = Settings()
-        assert s.gcp.location == "us-central1"
+        assert s.gcp.location == "global"
         assert s.models.default == "gemini-2.5-pro"
         assert s.auth.mode == AuthMode.ADC
         assert s.session.auto_save is True

@@ -23,7 +23,7 @@ class GCPConfig(BaseModel):
     """GCP project configuration."""
 
     project_id: str = ""
-    location: str = "us-central1"
+    location: str = "global"
 
 
 class AuthConfig(BaseModel):
