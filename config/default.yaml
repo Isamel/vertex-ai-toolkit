@@ -1,6 +1,6 @@
 # Vertex AI Toolkit — Default Configuration
 gcp:
-  project_id: ""  # Override via VAIG_GCP_PROJECT_ID or --project
+  project_id: ""  # Override via VAIG_GCP__PROJECT_ID or --project
   location: "us-central1"
 
 auth:
@@ -8,25 +8,42 @@ auth:
   impersonate_sa: ""
 
 models:
-  default: "gemini-2.5-pro"
-  fallback: "gemini-2.5-flash"
+  default: "gemini-3.1-pro-preview"
+  fallback: "gemini-3-flash-preview"
   available:
+    # ── Gemini 3.1 series (latest) ──────────────────────────────────
+    - id: "gemini-3.1-pro-preview"
+      description: "Most advanced reasoning model — 1M context, complex problem-solving, agentic workflows"
+      max_output_tokens: 65536
+    - id: "gemini-3.1-pro-preview-customtools"
+      description: "Pro optimized for custom tools & bash — best for agentic coding with tool use"
+      max_output_tokens: 65536
+    - id: "gemini-3-flash-preview"
+      description: "Pro-level intelligence at Flash speed and pricing — 1M context, thinking levels"
+      max_output_tokens: 65536
+    - id: "gemini-3.1-flash-lite-preview"
+      description: "Most cost-efficient Gemini — matches 2.5 Flash quality, low latency, high volume"
+      max_output_tokens: 65535
+
+    # ── Gemini 2.5 series ───────────────────────────────────────────
     - id: "gemini-2.5-pro"
-      description: "Most capable model — 1M token context, best for complex reasoning"
+      description: "Previous gen pro — deep reasoning and coding, 1M context"
       max_output_tokens: 65536
     - id: "gemini-2.5-flash"
-      description: "Fast and efficient — 1M token context, best for high-throughput"
+      description: "Previous gen flash — best price-performance for reasoning tasks"
       max_output_tokens: 65536
+
+    # ── Gemini 2.0 series (deprecated) ──────────────────────────────
     - id: "gemini-2.0-flash"
-      description: "Previous gen fast model"
+      description: "[Deprecated] Second gen fast model"
       max_output_tokens: 8192
     - id: "gemini-2.0-flash-001"
-      description: "Stable previous gen fast model (point release)"
+      description: "[Deprecated] Stable second gen fast model (point release)"
       max_output_tokens: 8192
 
 generation:
-  temperature: 0.7
-  max_output_tokens: 8192
+  temperature: 1.0  # Google recommends 1.0 for Gemini 3 series
+  max_output_tokens: 65536
   top_p: 0.95
   top_k: 40
 
@@ -44,8 +61,8 @@ skills:
 
 agents:
   max_concurrent: 3
-  orchestrator_model: "gemini-2.5-pro"
-  specialist_model: "gemini-2.5-flash"
+  orchestrator_model: "gemini-3.1-pro-preview"
+  specialist_model: "gemini-3-flash-preview"
 
 context:
   max_file_size_mb: 50

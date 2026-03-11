@@ -165,7 +165,7 @@ class TestSettings:
     def test_load_no_yaml_uses_defaults(self) -> None:
         s = Settings.load("/nonexistent/path.yaml")
         assert s.gcp.project_id == ""
-        assert s.models.default == "gemini-2.5-pro"
+        assert s.models.default == "gemini-3.1-pro-preview"
 
     def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VAIG_GCP__PROJECT_ID", "env-project")
