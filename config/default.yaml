@@ -20,8 +20,8 @@ models:
     - id: "gemini-2.0-flash"
       description: "Previous gen fast model"
       max_output_tokens: 8192
-    - id: "gemini-2.0-flash-lite"
-      description: "Lightweight and cheapest option"
+    - id: "gemini-2.0-flash-001"
+      description: "Stable previous gen fast model (point release)"
       max_output_tokens: 8192
 
 generation:

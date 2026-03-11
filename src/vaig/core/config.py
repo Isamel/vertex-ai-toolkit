@@ -101,6 +101,24 @@ class ContextConfig(BaseModel):
     ignore_patterns: list[str] = Field(default_factory=list)
 
 
+def _strip_empty_strings(data: dict[str, Any]) -> dict[str, Any]:
+    """Recursively remove keys whose value is an empty string.
+
+    This prevents YAML defaults like ``project_id: ""`` from shadowing
+    environment variables in pydantic-settings (which treats explicit
+    init args as higher priority than env vars).
+    """
+    cleaned: dict[str, Any] = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            nested = _strip_empty_strings(value)
+            if nested:  # only add if dict still has content
+                cleaned[key] = nested
+        elif value != "":
+            cleaned[key] = value
+    return cleaned
+
+
 class Settings(BaseSettings):
     """Root application settings — merges env vars, YAML, and CLI overrides."""
 
@@ -125,6 +143,10 @@ class Settings(BaseSettings):
         """Load settings from YAML config, env vars, and defaults.
 
         Priority: env vars > yaml config > defaults.
+
+        Empty strings in YAML are stripped so they don't shadow env vars
+        (pydantic-settings treats explicit init args as higher priority
+        than environment variables).
         """
         yaml_data: dict[str, Any] = {}
 
@@ -142,6 +164,9 @@ class Settings(BaseSettings):
                 if resolved.exists():
                     yaml_data = yaml.safe_load(resolved.read_text()) or {}
                     break
+
+        # Strip empty strings so env vars can take precedence
+        yaml_data = _strip_empty_strings(yaml_data)
 
         # Merge env vars over yaml (pydantic-settings handles env automatically)
         return cls(**yaml_data)
