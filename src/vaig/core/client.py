@@ -297,10 +297,13 @@ class GeminiClient:
         self._ensure_initialized()
 
         mid = model_id or self._current_model_id
-        model = self._get_or_create_model(mid, system_instruction)
         gen_config = self._build_generation_config(**gen_kwargs)
 
         def _call() -> GenerationResult:
+            # Model is created inside the closure so that after a location
+            # fallback (which clears the model cache) a fresh model bound
+            # to the new location is used on the retry attempt.
+            model = self._get_or_create_model(mid, system_instruction)
             if history:
                 chat_history = self._build_history(history)
                 chat = model.start_chat(history=chat_history)
@@ -350,10 +353,13 @@ class GeminiClient:
         self._ensure_initialized()
 
         mid = model_id or self._current_model_id
-        model = self._get_or_create_model(mid, system_instruction)
         gen_config = self._build_generation_config(**gen_kwargs)
 
         def _call() -> list[Any]:
+            # Model is created inside the closure so that after a location
+            # fallback (which clears the model cache) a fresh model bound
+            # to the new location is used on the retry attempt.
+            model = self._get_or_create_model(mid, system_instruction)
             if history:
                 chat_history = self._build_history(history)
                 chat = model.start_chat(history=chat_history)
