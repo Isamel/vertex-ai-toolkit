@@ -23,7 +23,7 @@ class GCPConfig(BaseModel):
     """GCP project configuration."""
 
     project_id: str = ""
-    location: str = "global"
+    location: str = "us-central1"
     fallback_location: str = "us-central1"
 
 

@@ -41,7 +41,7 @@ class TestGCPConfig:
     def test_defaults(self) -> None:
         cfg = GCPConfig()
         assert cfg.project_id == ""
-        assert cfg.location == "global"
+        assert cfg.location == "us-central1"
 
     def test_custom_values(self) -> None:
         cfg = GCPConfig(project_id="my-project", location="europe-west1")
@@ -125,7 +125,7 @@ class TestContextConfig:
 class TestSettings:
     def test_default_construction(self) -> None:
         s = Settings()
-        assert s.gcp.location == "global"
+        assert s.gcp.location == "us-central1"
         assert s.models.default == "gemini-2.5-pro"
         assert s.auth.mode == AuthMode.ADC
         assert s.session.auto_save is True
@@ -167,7 +167,7 @@ class TestSettings:
     def test_load_no_yaml_uses_defaults(self) -> None:
         s = Settings.load("/nonexistent/path.yaml")
         assert s.gcp.project_id == ""
-        assert s.models.default == "gemini-3.1-pro-preview"
+        assert s.models.default == "gemini-2.5-pro"
 
     def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VAIG_GCP__PROJECT_ID", "env-project")

@@ -1,7 +1,7 @@
 # Vertex AI Toolkit — Default Configuration
 gcp:
   project_id: ""  # Override via VAIG_GCP__PROJECT_ID or --project
-  location: "global"  # Gemini 3.1 models require "global"; override via VAIG_GCP__LOCATION
+  location: "us-central1"  # Override via VAIG_GCP__LOCATION; use "global" for Gemini 3.1 models
   fallback_location: "us-central1"  # Fallback if primary location fails (SSL/connection errors)
 
 auth:
@@ -9,8 +9,8 @@ auth:
   impersonate_sa: ""
 
 models:
-  default: "gemini-3.1-pro-preview"
-  fallback: "gemini-3-flash-preview"
+  default: "gemini-2.5-pro"
+  fallback: "gemini-2.5-flash"
   available:
     # ── Gemini 3.1 series (latest) ──────────────────────────────────
     - id: "gemini-3.1-pro-preview"
@@ -43,8 +43,8 @@ models:
       max_output_tokens: 8192
 
 generation:
-  temperature: 1.0  # Google recommends 1.0 for Gemini 3 series
-  max_output_tokens: 65536
+  temperature: 0.7
+  max_output_tokens: 8192
   top_p: 0.95
   top_k: 40
 
@@ -62,8 +62,8 @@ skills:
 
 agents:
   max_concurrent: 3
-  orchestrator_model: "gemini-3.1-pro-preview"
-  specialist_model: "gemini-3-flash-preview"
+  orchestrator_model: "gemini-2.5-pro"
+  specialist_model: "gemini-2.5-flash"
 
 context:
   max_file_size_mb: 50
