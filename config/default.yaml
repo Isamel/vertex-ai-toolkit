@@ -1,0 +1,70 @@
+# Vertex AI Toolkit — Default Configuration
+gcp:
+  project_id: ""  # Override via VAIG_GCP_PROJECT_ID or --project
+  location: "us-central1"
+
+auth:
+  mode: "adc"  # "adc" | "impersonate"
+  impersonate_sa: ""
+
+models:
+  default: "gemini-2.5-pro"
+  fallback: "gemini-2.5-flash"
+  available:
+    - id: "gemini-2.5-pro"
+      description: "Most capable model — 1M token context, best for complex reasoning"
+      max_output_tokens: 65536
+    - id: "gemini-2.5-flash"
+      description: "Fast and efficient — 1M token context, best for high-throughput"
+      max_output_tokens: 65536
+    - id: "gemini-2.0-flash"
+      description: "Previous gen fast model"
+      max_output_tokens: 8192
+    - id: "gemini-2.0-flash-lite"
+      description: "Lightweight and cheapest option"
+      max_output_tokens: 8192
+
+generation:
+  temperature: 0.7
+  max_output_tokens: 8192
+  top_p: 0.95
+  top_k: 40
+
+session:
+  db_path: "~/.vaig/sessions.db"
+  auto_save: true
+  max_history_messages: 100
+
+skills:
+  enabled:
+    - rca
+    - anomaly
+    - migration
+  custom_dir: null
+
+agents:
+  max_concurrent: 3
+  orchestrator_model: "gemini-2.5-pro"
+  specialist_model: "gemini-2.5-flash"
+
+context:
+  max_file_size_mb: 50
+  supported_extensions:
+    code: [".py", ".js", ".ts", ".java", ".go", ".rs", ".sql", ".sh", ".yaml", ".yml", ".json", ".xml", ".html", ".css", ".toml", ".ini", ".cfg", ".tf", ".hcl"]
+    docs: [".md", ".txt", ".rst", ".csv", ".log"]
+    media: [".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp3", ".wav", ".mp4"]
+    etl: [".ktr", ".kjb", ".kdb"]  # Pentaho files
+  ignore_patterns:
+    - "__pycache__"
+    - ".git"
+    - "node_modules"
+    - ".venv"
+    - "*.pyc"
+    - ".DS_Store"
+    - "*.egg-info"
+
+retry:
+  max_retries: 3
+  initial_delay: 1.0
+  max_delay: 60.0
+  backoff_multiplier: 2.0
