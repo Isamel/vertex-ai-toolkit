@@ -1107,3 +1107,214 @@ class TestLocationFallbackInRetry:
         """Verify the client starts with the correct primary location state."""
         assert fallback_client._active_location == "global"
         assert fallback_client._using_fallback is False
+
+
+# ── TestProxyResponseParseError ──────────────────────────────
+
+
+class TestProxyResponseParseError:
+    """Tests for detecting VPN/proxy malformed response errors.
+
+    When a VPN/proxy intercepts a request and returns a malformed error body
+    (e.g. a JSON array instead of a dict), the google-api-core SDK crashes in
+    ``format_http_response_error`` with:
+        ``AttributeError: 'list' object has no attribute 'get'``
+
+    These tests verify that ``_is_ssl_or_connection_error`` detects this
+    pattern and that the retry loop triggers location fallback.
+    """
+
+    # ── Detection tests ──────────────────────────────────────
+
+    def test_attribute_error_get_detected(self) -> None:
+        """Direct AttributeError about .get() should be detected as proxy error."""
+        exc = AttributeError("'list' object has no attribute 'get'")
+        assert _is_ssl_or_connection_error(exc) is True
+
+    def test_attribute_error_different_attr_not_detected(self) -> None:
+        """AttributeError about a different attribute should NOT be detected."""
+        exc = AttributeError("'NoneType' object has no attribute 'text'")
+        assert _is_ssl_or_connection_error(exc) is False
+
+    def test_attribute_error_get_nested_in_service_unavailable(self) -> None:
+        """AttributeError wrapped inside ServiceUnavailable should be detected."""
+        inner = AttributeError("'list' object has no attribute 'get'")
+        outer = google_exceptions.ServiceUnavailable("503")
+        outer.__cause__ = inner
+        assert _is_ssl_or_connection_error(outer) is True
+
+    def test_attribute_error_get_nested_in_internal_error(self) -> None:
+        """AttributeError wrapped inside InternalServerError should be detected."""
+        inner = AttributeError("'list' object has no attribute 'get'")
+        outer = google_exceptions.InternalServerError("500")
+        outer.__cause__ = inner
+        assert _is_ssl_or_connection_error(outer) is True
+
+    def test_attribute_error_get_via_context_chain(self) -> None:
+        """AttributeError via __context__ (implicit chaining) should be detected."""
+        inner = AttributeError("'list' object has no attribute 'get'")
+        outer = RuntimeError("failed to format error")
+        outer.__context__ = inner
+        assert _is_ssl_or_connection_error(outer) is True
+
+    # ── Fallback integration tests ───────────────────────────
+
+    @pytest.fixture()
+    def fallback_settings(self) -> Settings:
+        """Settings with global as primary and us-central1 as fallback."""
+        return Settings(
+            gcp=GCPConfig(project_id="test-project", location="global", fallback_location="us-central1"),
+            generation=GenerationConfig(),
+            models=ModelsConfig(default="gemini-2.5-pro", fallback="gemini-2.5-flash"),
+            retry=RetryConfig(
+                max_retries=3,
+                initial_delay=0.01,
+                max_delay=0.05,
+                backoff_multiplier=2.0,
+                retryable_status_codes=[429, 500, 502, 503, 504],
+            ),
+        )
+
+    @pytest.fixture()
+    def fallback_client(self, fallback_settings: Settings) -> GeminiClient:
+        return GeminiClient(fallback_settings)
+
+    @patch("vaig.core.client.time.sleep")
+    @patch("vaig.core.client.GenerativeModel")
+    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.get_credentials")
+    def test_direct_attribute_error_triggers_fallback(
+        self,
+        mock_get_creds: MagicMock,
+        mock_vertexai_init: MagicMock,
+        mock_gen_config_cls: MagicMock,
+        mock_model_cls: MagicMock,
+        mock_sleep: MagicMock,
+        fallback_client: GeminiClient,
+    ) -> None:
+        """A direct AttributeError about .get() should trigger fallback and succeed."""
+        mock_get_creds.return_value = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = "Hello from fallback"
+        mock_response.usage_metadata = MagicMock(
+            prompt_token_count=5,
+            candidates_token_count=10,
+            total_token_count=15,
+        )
+        mock_response.candidates = [MagicMock()]
+        mock_response.candidates[0].finish_reason = MagicMock()
+        mock_response.candidates[0].finish_reason.name = "STOP"
+
+        mock_model = MagicMock()
+        mock_model.generate_content.side_effect = [
+            AttributeError("'list' object has no attribute 'get'"),
+            mock_response,
+        ]
+        mock_model_cls.return_value = mock_model
+
+        result = fallback_client.generate("Hello")
+
+        assert result.text == "Hello from fallback"
+        assert fallback_client._using_fallback is True
+        assert fallback_client._active_location == "us-central1"
+
+    @patch("vaig.core.client.time.sleep")
+    @patch("vaig.core.client.GenerativeModel")
+    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.get_credentials")
+    def test_retryable_wrapping_proxy_error_triggers_fallback(
+        self,
+        mock_get_creds: MagicMock,
+        mock_vertexai_init: MagicMock,
+        mock_gen_config_cls: MagicMock,
+        mock_model_cls: MagicMock,
+        mock_sleep: MagicMock,
+        fallback_client: GeminiClient,
+    ) -> None:
+        """A ServiceUnavailable wrapping the .get() AttributeError should trigger fallback
+        on the first attempt instead of burning all retries."""
+        mock_get_creds.return_value = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = "Fallback success"
+        mock_response.usage_metadata = MagicMock(
+            prompt_token_count=5,
+            candidates_token_count=10,
+            total_token_count=15,
+        )
+        mock_response.candidates = [MagicMock()]
+        mock_response.candidates[0].finish_reason = MagicMock()
+        mock_response.candidates[0].finish_reason.name = "STOP"
+
+        # ServiceUnavailable wrapping the AttributeError from format_http_response_error
+        inner = AttributeError("'list' object has no attribute 'get'")
+        outer = google_exceptions.ServiceUnavailable("503")
+        outer.__cause__ = inner
+
+        mock_model = MagicMock()
+        mock_model.generate_content.side_effect = [outer, mock_response]
+        mock_model_cls.return_value = mock_model
+
+        result = fallback_client.generate("Hello")
+
+        assert result.text == "Fallback success"
+        assert fallback_client._using_fallback is True
+        assert fallback_client._active_location == "us-central1"
+        # Should NOT have retried 4 times — should have fallback on first attempt
+        assert mock_model.generate_content.call_count == 2
+
+    @patch("vaig.core.client.time.sleep")
+    @patch("vaig.core.client.GenerativeModel")
+    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.get_credentials")
+    def test_proxy_error_fallback_also_fails_raises_connection_error(
+        self,
+        mock_get_creds: MagicMock,
+        mock_vertexai_init: MagicMock,
+        mock_gen_config_cls: MagicMock,
+        mock_model_cls: MagicMock,
+        mock_sleep: MagicMock,
+        fallback_client: GeminiClient,
+    ) -> None:
+        """If both primary (proxy error) and fallback fail, raises GeminiConnectionError."""
+        mock_get_creds.return_value = MagicMock()
+        mock_model = MagicMock()
+        mock_model.generate_content.side_effect = AttributeError(
+            "'list' object has no attribute 'get'"
+        )
+        mock_model_cls.return_value = mock_model
+
+        with pytest.raises(GeminiConnectionError):
+            fallback_client.generate("Hello")
+
+        assert fallback_client._using_fallback is True
+
+    @patch("vaig.core.client.time.sleep")
+    @patch("vaig.core.client.GenerativeModel")
+    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.get_credentials")
+    def test_plain_retryable_503_still_retries_normally(
+        self,
+        mock_get_creds: MagicMock,
+        mock_vertexai_init: MagicMock,
+        mock_gen_config_cls: MagicMock,
+        mock_model_cls: MagicMock,
+        mock_sleep: MagicMock,
+        fallback_client: GeminiClient,
+    ) -> None:
+        """A plain 503 (no proxy/SSL cause) should still retry normally, NOT fallback."""
+        mock_get_creds.return_value = MagicMock()
+        mock_model = MagicMock()
+        mock_model.generate_content.side_effect = google_exceptions.ServiceUnavailable("503")
+        mock_model_cls.return_value = mock_model
+
+        with pytest.raises(GeminiConnectionError):
+            fallback_client.generate("Hello")
+
+        assert fallback_client._using_fallback is False
+        assert fallback_client._active_location == "global"
+        # Should have retried max_retries + 1 times (4 total)
+        assert mock_model.generate_content.call_count == 4

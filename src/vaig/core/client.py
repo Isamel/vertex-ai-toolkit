@@ -45,7 +45,7 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
 
 
 def _is_ssl_or_connection_error(exc: BaseException) -> bool:
-    """Check if an exception is an SSL or connection error (possibly nested).
+    """Check if an exception is an SSL/connection/proxy error (possibly nested).
 
     SSL errors from VPN/proxy SSL inspection often appear as:
     - ``ssl.SSLError`` / ``ssl.SSLEOFError`` directly
@@ -53,6 +53,9 @@ def _is_ssl_or_connection_error(exc: BaseException) -> bool:
     - ``google.api_core.exceptions.ServiceUnavailable`` wrapping an SSL error
     - ``requests.exceptions.SSLError`` wrapping an SSL error
     - ``ConnectionError`` / ``ConnectionResetError``
+    - ``AttributeError`` from ``format_http_response_error`` when a VPN/proxy
+      returns a malformed response body (JSON array instead of object), causing
+      ``payload.get(...)`` to crash inside ``google-api-core``.
 
     We check the exception chain (``__cause__`` / ``__context__``) up to 5 levels deep.
     """
@@ -69,6 +72,13 @@ def _is_ssl_or_connection_error(exc: BaseException) -> bool:
         # Check string representation for SSL-related messages
         err_str = str(err).lower()
         if any(kw in err_str for kw in ("ssl", "eof occurred", "certificate", "handshake")):
+            return True
+
+        # Detect google-api-core crash when VPN/proxy returns a malformed
+        # error response (e.g. a JSON list instead of a dict).  The SDK's
+        # ``format_http_response_error`` calls ``payload.get(...)`` which
+        # fails with ``AttributeError: 'list' object has no attribute 'get'``.
+        if isinstance(err, AttributeError) and "has no attribute 'get'" in err_str:
             return True
 
         return _walk(err.__cause__, depth + 1) or _walk(err.__context__, depth + 1)
@@ -223,6 +233,23 @@ class GeminiClient:
                 return fn()
             except _RETRYABLE_EXCEPTIONS as exc:
                 last_exception = exc
+                # A retryable exception (e.g. ServiceUnavailable) may wrap
+                # the real cause — an SSL/proxy error.  If so, fallback to
+                # the alternate location instead of burning retries against
+                # the same broken endpoint.
+                if _is_ssl_or_connection_error(exc) and not self._using_fallback:
+                    logger.warning(
+                        "Retryable error wraps SSL/proxy error (%s: %s) "
+                        "— attempting location fallback instead of retry",
+                        type(exc).__name__,
+                        exc,
+                    )
+                    self._reinitialize_with_fallback()
+                    try:
+                        return fn()
+                    except Exception as fallback_exc:
+                        last_exception = fallback_exc
+                        break
                 if attempt < retry_cfg.max_retries:
                     jitter = random.uniform(0, 0.5)  # noqa: S311
                     sleep_time = min(delay, retry_cfg.max_delay) + jitter
@@ -238,7 +265,7 @@ class GeminiClient:
                     delay *= retry_cfg.backoff_multiplier
                 # else: last attempt failed, fall through to raise below.
             except Exception as exc:
-                # Check for SSL/connection errors that warrant a location fallback.
+                # Check for SSL/connection/proxy errors that warrant a location fallback.
                 if _is_ssl_or_connection_error(exc) and not self._using_fallback:
                     logger.warning(
                         "SSL/connection error detected (%s: %s) — attempting location fallback",
