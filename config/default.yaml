@@ -79,6 +79,18 @@ skills:
     - compliance-check
     - api-design
     - runbook-generator
+    - dependency-audit
+    - db-review
+    - pipeline-review
+    - perf-analysis
+    - threat-model
+    - change-risk
+    - alert-tuning
+    - resilience-review
+    - incident-comms
+    - toil-analysis
+    - network-review
+    - adr-generator
   custom_dir: null
 
 agents:

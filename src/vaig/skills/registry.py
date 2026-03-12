@@ -32,6 +32,18 @@ _BUILTIN_SKILLS: dict[str, str] = {
     "compliance-check": "vaig.skills.compliance_check.skill",
     "api-design": "vaig.skills.api_design.skill",
     "runbook-generator": "vaig.skills.runbook_generator.skill",
+    "dependency-audit": "vaig.skills.dependency_audit.skill",
+    "db-review": "vaig.skills.db_review.skill",
+    "pipeline-review": "vaig.skills.pipeline_review.skill",
+    "perf-analysis": "vaig.skills.perf_analysis.skill",
+    "threat-model": "vaig.skills.threat_model.skill",
+    "change-risk": "vaig.skills.change_risk.skill",
+    "alert-tuning": "vaig.skills.alert_tuning.skill",
+    "resilience-review": "vaig.skills.resilience_review.skill",
+    "incident-comms": "vaig.skills.incident_comms.skill",
+    "toil-analysis": "vaig.skills.toil_analysis.skill",
+    "network-review": "vaig.skills.network_review.skill",
+    "adr-generator": "vaig.skills.adr_generator.skill",
 }
 
 # Skill class name convention: <Name>Skill (e.g., RCASkill, AnomalySkill)

@@ -1,4 +1,4 @@
-"""Tests for all 16 built-in skills: RCA, Anomaly, Migration, Log Analysis, Error Triage, Config Audit, SLO Review, Postmortem, Code Review, IaC Review, Cost Analysis, Capacity Planning, Test Generation, Compliance Check, API Design, and Runbook Generator."""
+"""Tests for all 28 built-in skills: RCA, Anomaly, Migration, Log Analysis, Error Triage, Config Audit, SLO Review, Postmortem, Code Review, IaC Review, Cost Analysis, Capacity Planning, Test Generation, Compliance Check, API Design, Runbook Generator, Dependency Audit, Database Review, Pipeline Review, Performance Analysis, Threat Model, Change Risk, Alert Tuning, Resilience Review, Incident Comms, Toil Analysis, Network Review, and ADR Generator."""
 
 from __future__ import annotations
 
@@ -787,6 +787,726 @@ class TestRunbookGeneratorSkill:
         assert "procedure_analyst" in names
         assert "step_writer" in names
         assert "runbook_lead" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestDependencyAuditSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.dependency_audit.skill import DependencyAuditSkill
+
+        skill = DependencyAuditSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "dependency-audit"
+        assert meta.display_name == "Dependency Audit"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.EXECUTE in meta.supported_phases
+        assert SkillPhase.VALIDATE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "security" in meta.tags
+        assert "supply-chain" in meta.tags
+        assert "dependencies" in meta.tags
+        assert "cve" in meta.tags
+        assert "vulnerability" in meta.tags
+        assert meta.recommended_model == "gemini-2.5-flash"
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.dependency_audit.skill import DependencyAuditSkill
+
+        skill = DependencyAuditSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.dependency_audit.skill import DependencyAuditSkill
+
+        skill = DependencyAuditSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="requirements.txt with outdated packages",
+                user_input="Audit dependencies for vulnerabilities",
+            )
+            assert "requirements.txt with outdated packages" in prompt
+            assert "Audit dependencies for vulnerabilities" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.dependency_audit.skill import DependencyAuditSkill
+
+        skill = DependencyAuditSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 3
+        names = {a["name"] for a in agents}
+        assert "vulnerability_scanner" in names
+        assert "license_analyst" in names
+        assert "dependency_lead" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestDbReviewSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.db_review.skill import DbReviewSkill
+
+        skill = DbReviewSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "db-review"
+        assert meta.display_name == "Database Review"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.EXECUTE in meta.supported_phases
+        assert SkillPhase.VALIDATE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "database" in meta.tags
+        assert "sql" in meta.tags
+        assert "performance" in meta.tags
+        assert "schema" in meta.tags
+        assert "queries" in meta.tags
+        assert "optimization" in meta.tags
+        assert meta.recommended_model == "gemini-2.5-flash"
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.db_review.skill import DbReviewSkill
+
+        skill = DbReviewSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.db_review.skill import DbReviewSkill
+
+        skill = DbReviewSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="SELECT * FROM users WHERE email LIKE '%@example.com'",
+                user_input="Review this query for performance issues",
+            )
+            assert "SELECT * FROM users WHERE email LIKE '%@example.com'" in prompt
+            assert "Review this query for performance issues" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.db_review.skill import DbReviewSkill
+
+        skill = DbReviewSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 3
+        names = {a["name"] for a in agents}
+        assert "query_analyzer" in names
+        assert "schema_reviewer" in names
+        assert "database_lead" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestPipelineReviewSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.pipeline_review.skill import PipelineReviewSkill
+
+        skill = PipelineReviewSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "pipeline-review"
+        assert meta.display_name == "Pipeline Review"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.EXECUTE in meta.supported_phases
+        assert SkillPhase.VALIDATE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "cicd" in meta.tags
+        assert "pipeline" in meta.tags
+        assert "github-actions" in meta.tags
+        assert "gitlab-ci" in meta.tags
+        assert "devops" in meta.tags
+        assert "deployment" in meta.tags
+        assert meta.recommended_model == "gemini-2.5-flash"
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.pipeline_review.skill import PipelineReviewSkill
+
+        skill = PipelineReviewSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.pipeline_review.skill import PipelineReviewSkill
+
+        skill = PipelineReviewSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="name: CI\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest",
+                user_input="Review this GitHub Actions workflow",
+            )
+            assert "name: CI" in prompt
+            assert "Review this GitHub Actions workflow" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.pipeline_review.skill import PipelineReviewSkill
+
+        skill = PipelineReviewSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 3
+        names = {a["name"] for a in agents}
+        assert "security_auditor" in names
+        assert "efficiency_analyzer" in names
+        assert "pipeline_lead" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestPerfAnalysisSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.perf_analysis.skill import PerfAnalysisSkill
+
+        skill = PerfAnalysisSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "perf-analysis"
+        assert meta.display_name == "Performance Analysis"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.EXECUTE in meta.supported_phases
+        assert SkillPhase.VALIDATE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "performance" in meta.tags
+        assert "latency" in meta.tags
+        assert "profiling" in meta.tags
+        assert "tracing" in meta.tags
+        assert "optimization" in meta.tags
+        assert "bottleneck" in meta.tags
+        assert meta.recommended_model == "gemini-2.5-flash"
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.perf_analysis.skill import PerfAnalysisSkill
+
+        skill = PerfAnalysisSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.perf_analysis.skill import PerfAnalysisSkill
+
+        skill = PerfAnalysisSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="P99 latency: 2.5s, P50: 200ms, CPU: 85%",
+                user_input="Analyze performance bottlenecks in the API",
+            )
+            assert "P99 latency: 2.5s, P50: 200ms, CPU: 85%" in prompt
+            assert "Analyze performance bottlenecks in the API" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.perf_analysis.skill import PerfAnalysisSkill
+
+        skill = PerfAnalysisSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 3
+        names = {a["name"] for a in agents}
+        assert "trace_analyzer" in names
+        assert "resource_profiler" in names
+        assert "performance_lead" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestThreatModelSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.threat_model.skill import ThreatModelSkill
+
+        skill = ThreatModelSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "threat-model"
+        assert meta.display_name == "Threat Modeling"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.EXECUTE in meta.supported_phases
+        assert SkillPhase.VALIDATE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "security" in meta.tags
+        assert "threat-modeling" in meta.tags
+        assert "stride" in meta.tags
+        assert "attack-surface" in meta.tags
+        assert "risk" in meta.tags
+        assert meta.recommended_model == "gemini-2.5-flash"
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.threat_model.skill import ThreatModelSkill
+
+        skill = ThreatModelSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.threat_model.skill import ThreatModelSkill
+
+        skill = ThreatModelSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="REST API with OAuth2, PostgreSQL, Redis cache",
+                user_input="Conduct threat modeling for the payments service",
+            )
+            assert "REST API with OAuth2, PostgreSQL, Redis cache" in prompt
+            assert "Conduct threat modeling for the payments service" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.threat_model.skill import ThreatModelSkill
+
+        skill = ThreatModelSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 3
+        names = {a["name"] for a in agents}
+        assert "attack_surface_mapper" in names
+        assert "threat_enumerator" in names
+        assert "threat_model_lead" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestChangeRiskSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.change_risk.skill import ChangeRiskSkill
+
+        skill = ChangeRiskSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "change-risk"
+        assert meta.display_name == "Change Risk Assessment"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.EXECUTE in meta.supported_phases
+        assert SkillPhase.VALIDATE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "change-management" in meta.tags
+        assert "risk" in meta.tags
+        assert "deployment" in meta.tags
+        assert "rollback" in meta.tags
+        assert "blast-radius" in meta.tags
+        assert meta.recommended_model == "gemini-2.5-flash"
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.change_risk.skill import ChangeRiskSkill
+
+        skill = ChangeRiskSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.change_risk.skill import ChangeRiskSkill
+
+        skill = ChangeRiskSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="PR #456: database schema migration adding new columns",
+                user_input="Assess risk for this database migration deployment",
+            )
+            assert "PR #456: database schema migration adding new columns" in prompt
+            assert "Assess risk for this database migration deployment" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.change_risk.skill import ChangeRiskSkill
+
+        skill = ChangeRiskSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 2
+        names = {a["name"] for a in agents}
+        assert "change_analyzer" in names
+        assert "risk_scorer" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestAlertTuningSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.alert_tuning.skill import AlertTuningSkill
+
+        skill = AlertTuningSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "alert-tuning"
+        assert meta.display_name == "Alert & Monitoring Review"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.EXECUTE in meta.supported_phases
+        assert SkillPhase.VALIDATE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "observability" in meta.tags
+        assert "alerting" in meta.tags
+        assert "monitoring" in meta.tags
+        assert "noise-reduction" in meta.tags
+        assert "on-call" in meta.tags
+        assert meta.recommended_model == "gemini-2.5-flash"
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.alert_tuning.skill import AlertTuningSkill
+
+        skill = AlertTuningSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.alert_tuning.skill import AlertTuningSkill
+
+        skill = AlertTuningSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="Alert: HighCPU fires 50 times/day, action rate 5%",
+                user_input="Review our alerting rules for noise reduction",
+            )
+            assert "Alert: HighCPU fires 50 times/day, action rate 5%" in prompt
+            assert "Review our alerting rules for noise reduction" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.alert_tuning.skill import AlertTuningSkill
+
+        skill = AlertTuningSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 3
+        names = {a["name"] for a in agents}
+        assert "noise_analyzer" in names
+        assert "coverage_assessor" in names
+        assert "observability_lead" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestResilienceReviewSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.resilience_review.skill import ResilienceReviewSkill
+
+        skill = ResilienceReviewSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "resilience-review"
+        assert meta.display_name == "Resilience Review"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.EXECUTE in meta.supported_phases
+        assert SkillPhase.VALIDATE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "reliability" in meta.tags
+        assert "chaos-engineering" in meta.tags
+        assert "resilience" in meta.tags
+        assert "failure-modes" in meta.tags
+        assert "fault-tolerance" in meta.tags
+        assert meta.recommended_model == "gemini-2.5-flash"
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.resilience_review.skill import ResilienceReviewSkill
+
+        skill = ResilienceReviewSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.resilience_review.skill import ResilienceReviewSkill
+
+        skill = ResilienceReviewSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="Microservices with circuit breakers and retry logic",
+                user_input="Review resilience patterns for the order service",
+            )
+            assert "Microservices with circuit breakers and retry logic" in prompt
+            assert "Review resilience patterns for the order service" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.resilience_review.skill import ResilienceReviewSkill
+
+        skill = ResilienceReviewSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 3
+        names = {a["name"] for a in agents}
+        assert "failure_mode_analyzer" in names
+        assert "experiment_designer" in names
+        assert "resilience_lead" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestIncidentCommsSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.incident_comms.skill import IncidentCommsSkill
+
+        skill = IncidentCommsSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "incident-comms"
+        assert meta.display_name == "Incident Communications"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.EXECUTE in meta.supported_phases
+        assert SkillPhase.VALIDATE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "incident-response" in meta.tags
+        assert "communication" in meta.tags
+        assert "status-page" in meta.tags
+        assert "stakeholder" in meta.tags
+        assert "crisis" in meta.tags
+        assert meta.recommended_model == "gemini-2.5-flash"
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.incident_comms.skill import IncidentCommsSkill
+
+        skill = IncidentCommsSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.incident_comms.skill import IncidentCommsSkill
+
+        skill = IncidentCommsSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="SEV1: Payment processing down for 30 minutes",
+                user_input="Draft incident communications for stakeholders",
+            )
+            assert "SEV1: Payment processing down for 30 minutes" in prompt
+            assert "Draft incident communications for stakeholders" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.incident_comms.skill import IncidentCommsSkill
+
+        skill = IncidentCommsSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 2
+        names = {a["name"] for a in agents}
+        assert "status_writer" in names
+        assert "comms_coordinator" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestToilAnalysisSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.toil_analysis.skill import ToilAnalysisSkill
+
+        skill = ToilAnalysisSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "toil-analysis"
+        assert meta.display_name == "Toil Analysis"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.EXECUTE in meta.supported_phases
+        assert SkillPhase.VALIDATE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "sre" in meta.tags
+        assert "toil" in meta.tags
+        assert "automation" in meta.tags
+        assert "operational-efficiency" in meta.tags
+        assert "on-call" in meta.tags
+        assert meta.recommended_model == "gemini-2.5-flash"
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.toil_analysis.skill import ToilAnalysisSkill
+
+        skill = ToilAnalysisSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.toil_analysis.skill import ToilAnalysisSkill
+
+        skill = ToilAnalysisSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="On-call tickets: 120/month, 60% manual certificate rotation",
+                user_input="Analyze operational toil and propose automation",
+            )
+            assert "On-call tickets: 120/month, 60% manual certificate rotation" in prompt
+            assert "Analyze operational toil and propose automation" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.toil_analysis.skill import ToilAnalysisSkill
+
+        skill = ToilAnalysisSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 2
+        names = {a["name"] for a in agents}
+        assert "toil_detector" in names
+        assert "automation_planner" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestNetworkReviewSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.network_review.skill import NetworkReviewSkill
+
+        skill = NetworkReviewSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "network-review"
+        assert meta.display_name == "Network Architecture Review"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.EXECUTE in meta.supported_phases
+        assert SkillPhase.VALIDATE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "networking" in meta.tags
+        assert "firewall" in meta.tags
+        assert "dns" in meta.tags
+        assert "load-balancer" in meta.tags
+        assert "service-mesh" in meta.tags
+        assert "security" in meta.tags
+        assert meta.recommended_model == "gemini-2.5-flash"
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.network_review.skill import NetworkReviewSkill
+
+        skill = NetworkReviewSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.network_review.skill import NetworkReviewSkill
+
+        skill = NetworkReviewSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="VPC with public and private subnets, ALB, NAT gateway",
+                user_input="Review network architecture for security issues",
+            )
+            assert "VPC with public and private subnets, ALB, NAT gateway" in prompt
+            assert "Review network architecture for security issues" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.network_review.skill import NetworkReviewSkill
+
+        skill = NetworkReviewSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 3
+        names = {a["name"] for a in agents}
+        assert "security_reviewer" in names
+        assert "topology_analyzer" in names
+        assert "network_lead" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestAdrGeneratorSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.adr_generator.skill import AdrGeneratorSkill
+
+        skill = AdrGeneratorSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "adr-generator"
+        assert meta.display_name == "ADR Generator"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.EXECUTE in meta.supported_phases
+        assert SkillPhase.VALIDATE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "documentation" in meta.tags
+        assert "architecture" in meta.tags
+        assert "decision-record" in meta.tags
+        assert "adr" in meta.tags
+        assert "technical-writing" in meta.tags
+        assert meta.recommended_model == "gemini-2.5-flash"
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.adr_generator.skill import AdrGeneratorSkill
+
+        skill = AdrGeneratorSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.adr_generator.skill import AdrGeneratorSkill
+
+        skill = AdrGeneratorSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="Choosing between PostgreSQL and MongoDB for user data",
+                user_input="Generate an ADR for database selection decision",
+            )
+            assert "Choosing between PostgreSQL and MongoDB for user data" in prompt
+            assert "Generate an ADR for database selection decision" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.adr_generator.skill import AdrGeneratorSkill
+
+        skill = AdrGeneratorSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 2
+        names = {a["name"] for a in agents}
+        assert "context_researcher" in names
+        assert "adr_author" in names
         for agent in agents:
             assert "role" in agent
             assert "system_instruction" in agent
