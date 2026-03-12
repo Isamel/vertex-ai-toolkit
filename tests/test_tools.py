@@ -161,9 +161,9 @@ class TestToolRegistry:
         decls = reg.to_function_declarations()
         assert len(decls) == 1
 
-        from vertexai.generative_models import FunctionDeclaration
+        from google.genai import types
 
-        assert isinstance(decls[0], FunctionDeclaration)
+        assert isinstance(decls[0], types.FunctionDeclaration)
 
     def test_to_function_declarations_required_filtering(self) -> None:
         """Only required=True params appear in the 'required' list of the schema."""

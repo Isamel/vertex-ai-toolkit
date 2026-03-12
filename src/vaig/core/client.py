@@ -1,4 +1,4 @@
-"""Gemini client — Vertex AI wrapper with streaming, multimodal, and model switching."""
+"""Gemini client — google-genai SDK wrapper with streaming, multimodal, and model switching."""
 
 from __future__ import annotations
 
@@ -7,21 +7,12 @@ import random
 import ssl
 import time
 from dataclasses import dataclass, field
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
-import vertexai
+from google import genai
 from google.api_core import exceptions as google_exceptions
-
-from vertexai.generative_models import (
-    Content,
-    GenerationConfig,
-    GenerativeModel,
-    Part,
-    Tool,
-)
-from vertexai.generative_models._generative_models import (  # noqa: E402
-    ResponseValidationError,
-)
+from google.genai import types
 
 from vaig.core.auth import get_credentials
 from vaig.core.exceptions import (
@@ -123,24 +114,28 @@ class ToolCallResult:
 
 
 class GeminiClient:
-    """Vertex AI Gemini client with multi-model support and streaming."""
+    """Vertex AI Gemini client with multi-model support and streaming.
+
+    Uses the ``google-genai`` SDK (``google.genai.Client``) with ``vertexai=True``.
+    """
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._initialized = False
-        self._models: dict[str, GenerativeModel] = {}
+        self._client: genai.Client | None = None
         self._current_model_id: str = settings.models.default
         self._active_location: str = settings.gcp.location
         self._using_fallback: bool = False
 
     def initialize(self) -> None:
-        """Initialize the Vertex AI SDK with credentials."""
+        """Initialize the google-genai Client with Vertex AI credentials."""
         if self._initialized:
             return
 
         credentials = get_credentials(self._settings)
 
-        vertexai.init(
+        self._client = genai.Client(
+            vertexai=True,
             project=self._settings.gcp.project_id,
             location=self._active_location,
             credentials=credentials,
@@ -154,10 +149,10 @@ class GeminiClient:
         )
 
     def _reinitialize_with_fallback(self) -> None:
-        """Re-initialize Vertex AI with the fallback location.
+        """Re-initialize with the fallback location.
 
-        Clears the model cache (since models are bound to the previous
-        location) and marks the client as using the fallback.
+        Creates a new Client bound to the fallback location and marks
+        the client as using the fallback.
         """
         fallback = self._settings.gcp.fallback_location
         if self._using_fallback or not fallback or fallback == self._active_location:
@@ -172,7 +167,7 @@ class GeminiClient:
         self._active_location = fallback
         self._using_fallback = True
         self._initialized = False
-        self._models.clear()  # models are bound to the old location
+        self._client = None
         self.initialize()
 
     def _ensure_initialized(self) -> None:
@@ -180,15 +175,11 @@ class GeminiClient:
         if not self._initialized:
             self.initialize()
 
-    def _get_model(self, model_id: str | None = None) -> GenerativeModel:
-        """Get or create a GenerativeModel instance."""
-        mid = model_id or self._current_model_id
-
-        if mid not in self._models:
-            self._models[mid] = GenerativeModel(mid)
-            logger.info("Created model instance: %s", mid)
-
-        return self._models[mid]
+    def _get_client(self) -> genai.Client:
+        """Get the initialized genai Client, initializing if needed."""
+        self._ensure_initialized()
+        assert self._client is not None  # noqa: S101
+        return self._client
 
     @property
     def current_model(self) -> str:
@@ -202,7 +193,13 @@ class GeminiClient:
         logger.info("Model switched: %s → %s", old, model_id)
         return model_id
 
-    def _build_generation_config(self, **overrides: Any) -> GenerationConfig:
+    def _build_generation_config(
+        self,
+        *,
+        system_instruction: str | None = None,
+        tools: list[types.Tool] | None = None,
+        **overrides: Any,
+    ) -> types.GenerateContentConfig:
         """Build generation config from settings + overrides.
 
         Supports all standard Gemini generation parameters including
@@ -222,7 +219,11 @@ class GeminiClient:
             kwargs["frequency_penalty"] = overrides["frequency_penalty"]
         if "presence_penalty" in overrides:
             kwargs["presence_penalty"] = overrides["presence_penalty"]
-        return GenerationConfig(**kwargs)
+        if system_instruction is not None:
+            kwargs["system_instruction"] = system_instruction
+        if tools is not None:
+            kwargs["tools"] = tools
+        return types.GenerateContentConfig(**kwargs)
 
     # ── Retry logic ───────────────────────────────────────────
 
@@ -330,9 +331,26 @@ class GeminiClient:
 
     # ── Public API ────────────────────────────────────────────
 
+    @staticmethod
+    def _extract_usage(response: Any) -> dict[str, int]:
+        """Extract usage metadata from a google-genai response.
+
+        Fields in ``usage_metadata`` can be ``None`` (e.g. when the model
+        returns function calls only), so we default each to 0.
+        """
+        usage: dict[str, int] = {}
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            um = response.usage_metadata
+            usage = {
+                "prompt_tokens": um.prompt_token_count or 0,
+                "completion_tokens": um.candidates_token_count or 0,
+                "total_tokens": um.total_token_count or 0,
+            }
+        return usage
+
     def generate(
         self,
-        prompt: str | list[Part],
+        prompt: str | list[types.Part],
         *,
         system_instruction: str | None = None,
         history: list[ChatMessage] | None = None,
@@ -353,31 +371,29 @@ class GeminiClient:
         self._ensure_initialized()
 
         mid = model_id or self._current_model_id
-        gen_config = self._build_generation_config(**gen_kwargs)
         logger.debug("generate() → model=%s, has_history=%s", mid, bool(history))
 
         def _call() -> GenerationResult:
-            # Model is created inside the closure so that after a location
-            # fallback (which clears the model cache) a fresh model bound
-            # to the new location is used on the retry attempt.
-            model = self._get_or_create_model(mid, system_instruction)
+            client = self._get_client()
+            config = self._build_generation_config(
+                system_instruction=system_instruction, **gen_kwargs,
+            )
+
             if history:
                 chat_history = self._build_history(history)
-                chat = model.start_chat(history=chat_history)
-                response = chat.send_message(prompt, generation_config=gen_config)
+                chat = client.chats.create(
+                    model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
+                )
+                response = chat.send_message(prompt)
             else:
-                response = model.generate_content(prompt, generation_config=gen_config)
+                response = client.models.generate_content(
+                    model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
+                )
 
-            usage = {}
-            if hasattr(response, "usage_metadata") and response.usage_metadata:
-                usage = {
-                    "prompt_tokens": response.usage_metadata.prompt_token_count,
-                    "completion_tokens": response.usage_metadata.candidates_token_count,
-                    "total_tokens": response.usage_metadata.total_token_count,
-                }
+            usage = GeminiClient._extract_usage(response)
 
             return GenerationResult(
-                text=response.text,
+                text=response.text or "",
                 model=mid,
                 usage=usage,
                 finish_reason=(
@@ -389,7 +405,7 @@ class GeminiClient:
 
     def generate_stream(
         self,
-        prompt: str | list[Part],
+        prompt: str | list[types.Part],
         *,
         system_instruction: str | None = None,
         history: list[ChatMessage] | None = None,
@@ -410,23 +426,23 @@ class GeminiClient:
         self._ensure_initialized()
 
         mid = model_id or self._current_model_id
-        gen_config = self._build_generation_config(**gen_kwargs)
         logger.debug("generate_stream() → model=%s, has_history=%s", mid, bool(history))
 
         def _call() -> list[Any]:
-            # Model is created inside the closure so that after a location
-            # fallback (which clears the model cache) a fresh model bound
-            # to the new location is used on the retry attempt.
-            model = self._get_or_create_model(mid, system_instruction)
+            client = self._get_client()
+            config = self._build_generation_config(
+                system_instruction=system_instruction, **gen_kwargs,
+            )
+
             if history:
                 chat_history = self._build_history(history)
-                chat = model.start_chat(history=chat_history)
-                response_stream = chat.send_message(
-                    prompt, generation_config=gen_config, stream=True,
+                chat = client.chats.create(
+                    model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
                 )
+                response_stream = chat.send_message_stream(prompt)
             else:
-                response_stream = model.generate_content(
-                    prompt, generation_config=gen_config, stream=True,
+                response_stream = client.models.generate_content_stream(
+                    model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
                 )
             # Materialise the stream inside the retryable boundary so that
             # transient errors during iteration are also retried.
@@ -439,7 +455,7 @@ class GeminiClient:
 
     def generate_with_tools(
         self,
-        prompt: str | list[Part],
+        prompt: str | list[types.Part],
         *,
         tool_declarations: list[Any],
         system_instruction: str | None = None,
@@ -466,7 +482,6 @@ class GeminiClient:
         self._ensure_initialized()
 
         mid = model_id or self._current_model_id
-        gen_config = self._build_generation_config(**gen_kwargs)
         logger.debug(
             "generate_with_tools() → model=%s, has_history=%s, num_tools=%d",
             mid,
@@ -475,11 +490,13 @@ class GeminiClient:
         )
 
         def _call() -> ToolCallResult:
-            # Model is created inside the closure so that after a location
-            # fallback (which clears the model cache) a fresh model bound
-            # to the new location is used on the retry attempt.
-            model = self._get_or_create_model(mid, system_instruction)
-            tools = [Tool(function_declarations=tool_declarations)]
+            client = self._get_client()
+            tools = [types.Tool(function_declarations=tool_declarations)]
+            config = self._build_generation_config(
+                system_instruction=system_instruction,
+                tools=tools,
+                **gen_kwargs,
+            )
 
             try:
                 if history:
@@ -495,33 +512,25 @@ class GeminiClient:
                         last_entry = chat_history.pop()
                         actual_prompt = last_entry.parts
 
-                    # response_validation=False: tool-use responses may contain
-                    # only function calls (no text), which the SDK validator
-                    # rejects as "blocked".  We handle validation ourselves.
-                    chat = model.start_chat(
-                        history=chat_history,
-                        response_validation=False,
+                    chat = client.chats.create(
+                        model=mid, history=chat_history, config=config,
                     )
-                    response = chat.send_message(
-                        actual_prompt, generation_config=gen_config, tools=tools,
-                    )
+                    response = chat.send_message(actual_prompt)
                 else:
-                    response = model.generate_content(
-                        prompt, generation_config=gen_config, tools=tools,
+                    response = client.models.generate_content(
+                        model=mid, contents=prompt, config=config,
                     )
-            except ResponseValidationError as exc:
-                # The SDK thought the response was blocked or incomplete, but
-                # the actual response may still contain usable function calls.
-                # Extract whatever the model returned from the exception.
-                logger.warning(
-                    "ResponseValidationError caught — extracting partial response: %s",
-                    exc,
-                )
-                if exc.responses:
-                    response = exc.responses[0]
-                else:
-                    # Truly empty — return an empty result so the caller can
-                    # surface a readable error instead of a raw traceback.
+            except Exception as exc:
+                # In the old SDK we caught ResponseValidationError for
+                # function-call-only responses.  The new google-genai SDK
+                # may raise errors differently — handle gracefully.
+                exc_name = type(exc).__name__
+                if "validation" in exc_name.lower() or "blocked" in str(exc).lower():
+                    logger.warning(
+                        "Response validation/blocked error caught — %s: %s",
+                        exc_name,
+                        exc,
+                    )
                     return ToolCallResult(
                         text=f"Model response was blocked: {exc}",
                         model=mid,
@@ -529,18 +538,15 @@ class GeminiClient:
                         usage={},
                         finish_reason="BLOCKED",
                     )
+                raise
 
             # Extract usage metadata
-            usage: dict[str, int] = {}
-            if hasattr(response, "usage_metadata") and response.usage_metadata:
-                usage = {
-                    "prompt_tokens": response.usage_metadata.prompt_token_count,
-                    "completion_tokens": response.usage_metadata.candidates_token_count,
-                    "total_tokens": response.usage_metadata.total_token_count,
-                }
+            usage = GeminiClient._extract_usage(response)
 
             # Handle empty response
-            if not response.candidates or not response.candidates[0].content.parts:
+            candidate = response.candidates[0] if response.candidates else None
+            content = candidate.content if candidate and candidate.content else None
+            if not content or not content.parts:
                 logger.debug("generate_with_tools() — empty response (no candidates/parts)")
                 return ToolCallResult(
                     text="",
@@ -548,9 +554,7 @@ class GeminiClient:
                     function_calls=[],
                     usage=usage,
                     finish_reason=(
-                        str(response.candidates[0].finish_reason)
-                        if response.candidates
-                        else ""
+                        str(candidate.finish_reason) if candidate else ""
                     ),
                 )
 
@@ -558,7 +562,7 @@ class GeminiClient:
             function_calls: list[dict[str, Any]] = []
             text_parts: list[str] = []
 
-            for part in response.candidates[0].content.parts:
+            for part in content.parts:
                 fc = part.function_call
                 if fc and fc.name:  # It's a function call
                     function_calls.append({
@@ -585,7 +589,7 @@ class GeminiClient:
         return self._retry_with_backoff(_call, timeout=timeout)
 
     @staticmethod
-    def build_function_response_parts(results: list[dict[str, Any]]) -> list[Part]:
+    def build_function_response_parts(results: list[dict[str, Any]]) -> list[types.Part]:
         """Build Part objects containing function responses.
 
         The CodingAgent uses this to send function execution results back to
@@ -598,10 +602,10 @@ class GeminiClient:
         Returns:
             List of Part objects to include in history for the next call.
         """
-        parts: list[Part] = []
+        parts: list[types.Part] = []
         for result in results:
             parts.append(
-                Part.from_function_response(
+                types.Part.from_function_response(
                     name=result["name"],
                     response=result["response"],
                 )
@@ -610,43 +614,25 @@ class GeminiClient:
 
     # ── Internal helpers ──────────────────────────────────────
 
-    def _get_or_create_model(
-        self,
-        model_id: str,
-        system_instruction: str | None = None,
-    ) -> GenerativeModel:
-        """Get or create a model, optionally with system instruction."""
-        # Cache key includes system instruction to avoid stale instances
-        cache_key = f"{model_id}::{hash(system_instruction)}"
-
-        if cache_key not in self._models:
-            kwargs: dict[str, Any] = {}
-            if system_instruction:
-                kwargs["system_instruction"] = system_instruction
-
-            self._models[cache_key] = GenerativeModel(model_id, **kwargs)
-            logger.info("Created model: %s (system_instruction=%s)", model_id, bool(system_instruction))
-
-        return self._models[cache_key]
-
     @staticmethod
-    def _build_history(messages: list[ChatMessage]) -> list[Content]:
-        """Convert ChatMessage list to Vertex AI Content list."""
-        history: list[Content] = []
+    def _build_history(messages: list[ChatMessage]) -> list[types.Content]:
+        """Convert ChatMessage list to google-genai Content list."""
+        history: list[types.Content] = []
         for msg in messages:
             if msg.parts:
                 parts = msg.parts
             else:
-                parts = [Part.from_text(msg.content)]
-            history.append(Content(role=msg.role, parts=parts))
+                parts = [types.Part.from_text(text=msg.content)]
+            history.append(types.Content(role=msg.role, parts=parts))
         return history
 
-    def count_tokens(self, prompt: str | list[Part], *, model_id: str | None = None) -> int:
+    def count_tokens(self, prompt: str | list[types.Part], *, model_id: str | None = None) -> int:
         """Count tokens in a prompt."""
-        self._ensure_initialized()
-        model = self._get_model(model_id)
-        response = model.count_tokens(prompt)
-        return response.total_tokens
+        client = self._get_client()
+        mid = model_id or self._current_model_id
+        response = client.models.count_tokens(model=mid, contents=prompt)  # type: ignore[arg-type]
+        total: int = response.total_tokens if response.total_tokens is not None else 0
+        return total
 
     def list_available_models(self) -> list[dict[str, str]]:
         """List configured available models."""

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
-from vertexai.generative_models import Part
+from google.genai import types
 
 from vaig.context.filters import build_file_filter, should_include_file
 from vaig.context.loader import FileType, LoadedFile, load_file
@@ -32,13 +32,13 @@ class ContextBundle:
         self.total_tokens_estimate += loaded_file.token_estimate
         self.total_size_bytes += loaded_file.size_bytes
 
-    def to_parts(self) -> list[Part | str]:
+    def to_parts(self) -> list[types.Part | str]:
         """Convert all files to a list of Gemini-compatible parts.
 
         Text/code files are concatenated as a single string part.
         Binary files (images, audio, PDF) are individual Part objects.
         """
-        parts: list[Part | str] = []
+        parts: list[types.Part | str] = []
         text_sections: list[str] = []
 
         for f in self.files:

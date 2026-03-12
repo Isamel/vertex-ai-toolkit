@@ -233,10 +233,10 @@ class TestLoadFile:
 
         assert result.token_estimate == 400 // 4  # 100
 
-    @patch("vaig.context.loader.Part.from_data")
-    def test_load_image_creates_binary_part(self, mock_from_data: MagicMock, tmp_path: Path) -> None:
+    @patch("vaig.context.loader.types.Part.from_bytes")
+    def test_load_image_creates_binary_part(self, mock_from_bytes: MagicMock, tmp_path: Path) -> None:
         mock_part = MagicMock()
-        mock_from_data.return_value = mock_part
+        mock_from_bytes.return_value = mock_part
 
         f = tmp_path / "image.png"
         # Write valid PNG magic bytes + some data
@@ -248,12 +248,12 @@ class TestLoadFile:
         assert result.content is None
         assert result.part is mock_part
         assert result.size_bytes == f.stat().st_size
-        mock_from_data.assert_called_once()
+        mock_from_bytes.assert_called_once()
 
-    @patch("vaig.context.loader.Part.from_data")
-    def test_load_pdf_creates_binary_part(self, mock_from_data: MagicMock, tmp_path: Path) -> None:
+    @patch("vaig.context.loader.types.Part.from_bytes")
+    def test_load_pdf_creates_binary_part(self, mock_from_bytes: MagicMock, tmp_path: Path) -> None:
         mock_part = MagicMock()
-        mock_from_data.return_value = mock_part
+        mock_from_bytes.return_value = mock_part
 
         f = tmp_path / "doc.pdf"
         f.write_bytes(b"%PDF-1.4 fake content")
@@ -265,10 +265,10 @@ class TestLoadFile:
         assert result.part is mock_part
         assert result.mime_type == "application/pdf"
 
-    @patch("vaig.context.loader.Part.from_data")
-    def test_load_audio_creates_binary_part(self, mock_from_data: MagicMock, tmp_path: Path) -> None:
+    @patch("vaig.context.loader.types.Part.from_bytes")
+    def test_load_audio_creates_binary_part(self, mock_from_bytes: MagicMock, tmp_path: Path) -> None:
         mock_part = MagicMock()
-        mock_from_data.return_value = mock_part
+        mock_from_bytes.return_value = mock_part
 
         f = tmp_path / "clip.mp3"
         f.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 100)

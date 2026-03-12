@@ -1,8 +1,8 @@
-"""Tests for GeminiClient — Vertex AI wrapper with mocked responses."""
+"""Tests for GeminiClient — google-genai SDK wrapper with mocked responses."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, PropertyMock, call, patch
 
 import pytest
 
@@ -61,7 +61,7 @@ def _make_mock_response(
     total_tokens: int = 30,
     finish_reason: str = "STOP",
 ) -> MagicMock:
-    """Create a mock Vertex AI GenerateContentResponse."""
+    """Create a mock google-genai GenerateContentResponse."""
     response = MagicMock()
     response.text = text
 
@@ -98,17 +98,17 @@ class TestGeminiClientInit:
         client = GeminiClient(settings)
         assert client._initialized is False
         assert client._current_model_id == "gemini-2.5-pro"
-        assert client._models == {}
+        assert client._client is None
 
     def test_current_model_property(self, client: GeminiClient) -> None:
         assert client.current_model == "gemini-2.5-pro"
 
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
-    def test_initialize_calls_vertexai_init(
+    def test_initialize_creates_genai_client(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         fake_creds = MagicMock()
@@ -117,19 +117,21 @@ class TestGeminiClientInit:
         client.initialize()
 
         mock_get_creds.assert_called_once_with(client._settings)
-        mock_vertexai_init.assert_called_once_with(
+        mock_genai_client_cls.assert_called_once_with(
+            vertexai=True,
             project="test-project",
             location="us-central1",
             credentials=fake_creds,
         )
         assert client._initialized is True
+        assert client._client is mock_genai_client_cls.return_value
 
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_initialize_is_idempotent(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
@@ -137,14 +139,14 @@ class TestGeminiClientInit:
         client.initialize()
         client.initialize()
 
-        assert mock_vertexai_init.call_count == 1
+        assert mock_genai_client_cls.call_count == 1
 
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_ensure_initialized_auto_initializes(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
@@ -152,7 +154,7 @@ class TestGeminiClientInit:
         client._ensure_initialized()
 
         assert client._initialized is True
-        mock_vertexai_init.assert_called_once()
+        mock_genai_client_cls.assert_called_once()
 
 
 # ── TestSwitchModel ──────────────────────────────────────────
@@ -179,9 +181,13 @@ class TestSwitchModel:
 
 
 class TestBuildGenerationConfig:
-    """Tests for _build_generation_config()."""
+    """Tests for _build_generation_config().
 
-    @patch("vaig.core.client.GenerationConfig")
+    The new SDK uses types.GenerateContentConfig. We patch it
+    at the module level where it's used.
+    """
+
+    @patch("vaig.core.client.types.GenerateContentConfig")
     def test_uses_settings_defaults(
         self,
         mock_gen_config_cls: MagicMock,
@@ -196,7 +202,7 @@ class TestBuildGenerationConfig:
             top_k=40,
         )
 
-    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.types.GenerateContentConfig")
     def test_overrides_take_precedence(
         self,
         mock_gen_config_cls: MagicMock,
@@ -211,7 +217,7 @@ class TestBuildGenerationConfig:
             top_k=40,
         )
 
-    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.types.GenerateContentConfig")
     def test_partial_overrides(
         self,
         mock_gen_config_cls: MagicMock,
@@ -226,7 +232,7 @@ class TestBuildGenerationConfig:
             top_k=10,
         )
 
-    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.types.GenerateContentConfig")
     def test_frequency_penalty_included_when_set(
         self,
         mock_gen_config_cls: MagicMock,
@@ -243,7 +249,7 @@ class TestBuildGenerationConfig:
             frequency_penalty=0.5,
         )
 
-    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.types.GenerateContentConfig")
     def test_presence_penalty_included_when_set(
         self,
         mock_gen_config_cls: MagicMock,
@@ -260,7 +266,7 @@ class TestBuildGenerationConfig:
             presence_penalty=0.3,
         )
 
-    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.types.GenerateContentConfig")
     def test_both_penalties_included_together(
         self,
         mock_gen_config_cls: MagicMock,
@@ -280,7 +286,7 @@ class TestBuildGenerationConfig:
             presence_penalty=0.2,
         )
 
-    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.types.GenerateContentConfig")
     def test_penalties_omitted_by_default(
         self,
         mock_gen_config_cls: MagicMock,
@@ -293,69 +299,17 @@ class TestBuildGenerationConfig:
         assert "frequency_penalty" not in call_kwargs
         assert "presence_penalty" not in call_kwargs
 
-
-# ── TestGetOrCreateModel ─────────────────────────────────────
-
-
-class TestGetOrCreateModel:
-    """Tests for _get_or_create_model() caching behavior."""
-
-    @patch("vaig.core.client.GenerativeModel")
-    def test_creates_model_without_system_instruction(
+    @patch("vaig.core.client.types.GenerateContentConfig")
+    def test_system_instruction_included_when_set(
         self,
-        mock_model_cls: MagicMock,
+        mock_gen_config_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
-        mock_model_cls.return_value = MagicMock()
+        """system_instruction is now part of GenerateContentConfig in the new SDK."""
+        client._build_generation_config(system_instruction="Be concise.")
 
-        model = client._get_or_create_model("gemini-2.5-pro")
-
-        mock_model_cls.assert_called_once_with("gemini-2.5-pro")
-        assert model is mock_model_cls.return_value
-
-    @patch("vaig.core.client.GenerativeModel")
-    def test_creates_model_with_system_instruction(
-        self,
-        mock_model_cls: MagicMock,
-        client: GeminiClient,
-    ) -> None:
-        mock_model_cls.return_value = MagicMock()
-
-        model = client._get_or_create_model("gemini-2.5-pro", system_instruction="Be concise.")
-
-        mock_model_cls.assert_called_once_with("gemini-2.5-pro", system_instruction="Be concise.")
-        assert model is mock_model_cls.return_value
-
-    @patch("vaig.core.client.GenerativeModel")
-    def test_caches_model_instance(
-        self,
-        mock_model_cls: MagicMock,
-        client: GeminiClient,
-    ) -> None:
-        mock_model_cls.return_value = MagicMock()
-
-        model1 = client._get_or_create_model("gemini-2.5-pro")
-        model2 = client._get_or_create_model("gemini-2.5-pro")
-
-        assert model1 is model2
-        assert mock_model_cls.call_count == 1
-
-    @patch("vaig.core.client.GenerativeModel")
-    def test_different_system_instruction_creates_new_model(
-        self,
-        mock_model_cls: MagicMock,
-        client: GeminiClient,
-    ) -> None:
-        model_a = MagicMock()
-        model_b = MagicMock()
-        mock_model_cls.side_effect = [model_a, model_b]
-
-        result_a = client._get_or_create_model("gemini-2.5-pro", system_instruction="Be concise.")
-        result_b = client._get_or_create_model("gemini-2.5-pro", system_instruction="Be verbose.")
-
-        assert result_a is model_a
-        assert result_b is model_b
-        assert mock_model_cls.call_count == 2
+        call_kwargs = mock_gen_config_cls.call_args[1]
+        assert call_kwargs["system_instruction"] == "Be concise."
 
 
 # ── TestBuildHistory ─────────────────────────────────────────
@@ -364,14 +318,14 @@ class TestGetOrCreateModel:
 class TestBuildHistory:
     """Tests for _build_history() static method."""
 
-    @patch("vaig.core.client.Part.from_text")
-    @patch("vaig.core.client.Content")
+    @patch("vaig.core.client.types.Part.from_text")
+    @patch("vaig.core.client.types.Content")
     def test_builds_from_text_messages(
         self,
         mock_content_cls: MagicMock,
         mock_from_text: MagicMock,
     ) -> None:
-        mock_from_text.side_effect = lambda t: f"part:{t}"
+        mock_from_text.side_effect = lambda text: f"part:{text}"
 
         messages = [
             ChatMessage(role="user", content="Hello"),
@@ -384,7 +338,7 @@ class TestBuildHistory:
         mock_content_cls.assert_any_call(role="user", parts=["part:Hello"])
         mock_content_cls.assert_any_call(role="model", parts=["part:Hi there!"])
 
-    @patch("vaig.core.client.Content")
+    @patch("vaig.core.client.types.Content")
     def test_uses_parts_when_available(
         self,
         mock_content_cls: MagicMock,
@@ -410,16 +364,12 @@ class TestBuildHistory:
 class TestGeminiClientGenerate:
     """Tests for generate() — non-streaming generation."""
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_single_turn_generation(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
@@ -430,9 +380,8 @@ class TestGeminiClientGenerate:
             total_tokens=15,
             finish_reason="STOP",
         )
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = mock_response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = mock_response
 
         result = client.generate("Tell me a joke")
 
@@ -445,18 +394,14 @@ class TestGeminiClientGenerate:
             "total_tokens": 15,
         }
         assert result.finish_reason == "STOP"
-        mock_model.generate_content.assert_called_once()
+        mock_genai.models.generate_content.assert_called_once()
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_multi_turn_generation_with_history(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
@@ -465,9 +410,8 @@ class TestGeminiClientGenerate:
         mock_chat = MagicMock()
         mock_chat.send_message.return_value = mock_response
 
-        mock_model = MagicMock()
-        mock_model.start_chat.return_value = mock_chat
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.chats.create.return_value = mock_chat
 
         history = [
             ChatMessage(role="user", content="What is Python?"),
@@ -477,65 +421,54 @@ class TestGeminiClientGenerate:
         result = client.generate("Tell me more", history=history)
 
         assert result.text == "Follow-up answer"
-        mock_model.start_chat.assert_called_once()
+        mock_genai.chats.create.assert_called_once()
         mock_chat.send_message.assert_called_once()
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_generate_with_model_override(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
         mock_response = _make_mock_response(text="Flash response")
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = mock_response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = mock_response
 
         result = client.generate("Hello", model_id="gemini-2.5-flash")
 
         assert result.model == "gemini-2.5-flash"
-        mock_model_cls.assert_called_once_with("gemini-2.5-flash")
+        # Verify the model ID was passed to generate_content
+        call_kwargs = mock_genai.models.generate_content.call_args
+        assert call_kwargs.kwargs["model"] == "gemini-2.5-flash"
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_generate_with_system_instruction(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
         mock_response = _make_mock_response(text="Concise answer")
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = mock_response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = mock_response
 
         result = client.generate("Explain AI", system_instruction="Be concise.")
 
         assert result.text == "Concise answer"
-        mock_model_cls.assert_called_once_with("gemini-2.5-pro", system_instruction="Be concise.")
+        # System instruction is now part of the config, verified via generate_content call
+        mock_genai.models.generate_content.assert_called_once()
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_generate_without_usage_metadata(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
@@ -546,61 +479,50 @@ class TestGeminiClientGenerate:
         candidate.finish_reason = "STOP"
         mock_response.candidates = [candidate]
 
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = mock_response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = mock_response
 
         result = client.generate("Hello")
 
         assert result.usage == {}
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_generate_with_no_candidates(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
         mock_response = _make_mock_response(text="Empty candidates")
         mock_response.candidates = []
 
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = mock_response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = mock_response
 
         result = client.generate("Hello")
 
         assert result.finish_reason == ""
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_generate_auto_initializes(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """generate() should auto-init if not yet initialized."""
         mock_get_creds.return_value = MagicMock()
         mock_response = _make_mock_response()
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = mock_response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = mock_response
 
         assert client._initialized is False
         client.generate("Hello")
         assert client._initialized is True
-        mock_vertexai_init.assert_called_once()
+        mock_genai_client_cls.assert_called_once()
 
 
 # ── TestGeminiClientStream ───────────────────────────────────
@@ -609,76 +531,57 @@ class TestGeminiClientGenerate:
 class TestGeminiClientStream:
     """Tests for generate_stream() — streaming generation."""
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_stream_yields_text_chunks(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
         chunks = _make_mock_stream_chunks(["Hello ", "world", "!"])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = chunks
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content_stream.return_value = chunks
 
         result = list(client.generate_stream("Say hello"))
 
         assert result == ["Hello ", "world", "!"]
-        mock_model.generate_content.assert_called_once()
-        # Verify stream=True was passed
-        _, kwargs = mock_model.generate_content.call_args
-        assert kwargs["stream"] is True
+        mock_genai.models.generate_content_stream.assert_called_once()
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_stream_skips_empty_chunks(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
         chunks = _make_mock_stream_chunks(["Hello ", "", "world"])
-        # Make the empty chunk's .text falsy
         chunks[1].text = ""
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = chunks
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content_stream.return_value = chunks
 
         result = list(client.generate_stream("Say hello"))
 
         assert result == ["Hello ", "world"]
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_stream_with_history(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
         chunks = _make_mock_stream_chunks(["More ", "info"])
         mock_chat = MagicMock()
-        mock_chat.send_message.return_value = chunks
+        mock_chat.send_message_stream.return_value = chunks
 
-        mock_model = MagicMock()
-        mock_model.start_chat.return_value = mock_chat
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.chats.create.return_value = mock_chat
 
         history = [
             ChatMessage(role="user", content="What is Python?"),
@@ -688,50 +591,40 @@ class TestGeminiClientStream:
         result = list(client.generate_stream("Tell me more", history=history))
 
         assert result == ["More ", "info"]
-        mock_model.start_chat.assert_called_once()
-        _, kwargs = mock_chat.send_message.call_args
-        assert kwargs["stream"] is True
+        mock_genai.chats.create.assert_called_once()
+        mock_chat.send_message_stream.assert_called_once()
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_stream_with_model_override(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
         chunks = _make_mock_stream_chunks(["Fast!"])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = chunks
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content_stream.return_value = chunks
 
         result = list(client.generate_stream("Hello", model_id="gemini-2.5-flash"))
 
         assert result == ["Fast!"]
-        mock_model_cls.assert_called_once_with("gemini-2.5-flash")
+        call_kwargs = mock_genai.models.generate_content_stream.call_args
+        assert call_kwargs.kwargs["model"] == "gemini-2.5-flash"
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_stream_auto_initializes(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
         chunks = _make_mock_stream_chunks(["Hi"])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = chunks
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content_stream.return_value = chunks
 
         assert client._initialized is False
         list(client.generate_stream("Hello"))
@@ -744,66 +637,59 @@ class TestGeminiClientStream:
 class TestCountTokens:
     """Tests for count_tokens()."""
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_count_tokens_returns_total(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
         mock_token_response = MagicMock()
         mock_token_response.total_tokens = 42
 
-        mock_model = MagicMock()
-        mock_model.count_tokens.return_value = mock_token_response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.count_tokens.return_value = mock_token_response
 
         count = client.count_tokens("How many tokens?")
 
         assert count == 42
-        mock_model.count_tokens.assert_called_once_with("How many tokens?")
+        mock_genai.models.count_tokens.assert_called_once()
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_count_tokens_with_model_override(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
         mock_token_response = MagicMock()
         mock_token_response.total_tokens = 10
-        mock_model = MagicMock()
-        mock_model.count_tokens.return_value = mock_token_response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.count_tokens.return_value = mock_token_response
 
         count = client.count_tokens("Hello", model_id="gemini-2.5-flash")
 
         assert count == 10
+        call_kwargs = mock_genai.models.count_tokens.call_args
+        assert call_kwargs.kwargs["model"] == "gemini-2.5-flash"
 
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_count_tokens_auto_initializes(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
         mock_token_response = MagicMock()
         mock_token_response.total_tokens = 1
-        mock_model = MagicMock()
-        mock_model.count_tokens.return_value = mock_token_response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.count_tokens.return_value = mock_token_response
 
         assert client._initialized is False
         client.count_tokens("hi")

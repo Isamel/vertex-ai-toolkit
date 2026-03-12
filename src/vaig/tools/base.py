@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from vertexai.generative_models import FunctionDeclaration
+from google.genai import types
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -61,9 +61,9 @@ class ToolRegistry:
         """Return all registered tools."""
         return list(self._tools.values())
 
-    def to_function_declarations(self) -> list[FunctionDeclaration]:
-        """Convert registered tools to Vertex AI FunctionDeclaration objects."""
-        declarations: list[FunctionDeclaration] = []
+    def to_function_declarations(self) -> list[types.FunctionDeclaration]:
+        """Convert registered tools to google-genai FunctionDeclaration objects."""
+        declarations: list[types.FunctionDeclaration] = []
         for tool in self._tools.values():
             schema: dict[str, Any] = {
                 "type": "object",
@@ -74,10 +74,10 @@ class ToolRegistry:
                 "required": [p.name for p in tool.parameters if p.required],
             }
             declarations.append(
-                FunctionDeclaration(
+                types.FunctionDeclaration(
                     name=tool.name,
                     description=tool.description,
-                    parameters=schema,
+                    parameters_json_schema=schema,
                 )
             )
         return declarations

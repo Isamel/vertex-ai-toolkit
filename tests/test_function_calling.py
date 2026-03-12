@@ -84,7 +84,7 @@ def _make_tool_response(
     finish_reason: str = "STOP",
     has_usage: bool = True,
 ) -> MagicMock:
-    """Create a mock Vertex AI response with configurable parts."""
+    """Create a mock google-genai response with configurable parts."""
     response = MagicMock()
     candidate = MagicMock()
     candidate.content.parts = parts
@@ -179,7 +179,7 @@ class TestToolCallResult:
 class TestBuildFunctionResponseParts:
     """Tests for GeminiClient.build_function_response_parts()."""
 
-    @patch("vaig.core.client.Part.from_function_response")
+    @patch("vaig.core.client.types.Part.from_function_response")
     def test_single_result(self, mock_from_fn_response: MagicMock) -> None:
         mock_from_fn_response.return_value = MagicMock(name="part")
 
@@ -198,7 +198,7 @@ class TestBuildFunctionResponseParts:
             response={"output": "file contents", "error": False},
         )
 
-    @patch("vaig.core.client.Part.from_function_response")
+    @patch("vaig.core.client.types.Part.from_function_response")
     def test_multiple_results(self, mock_from_fn_response: MagicMock) -> None:
         mock_from_fn_response.side_effect = [MagicMock(), MagicMock(), MagicMock()]
 
@@ -219,7 +219,7 @@ class TestBuildFunctionResponseParts:
         assert calls[1].kwargs["name"] == "write_file"
         assert calls[2].kwargs["name"] == "run_command"
 
-    @patch("vaig.core.client.Part.from_function_response")
+    @patch("vaig.core.client.types.Part.from_function_response")
     def test_error_result(self, mock_from_fn_response: MagicMock) -> None:
         mock_from_fn_response.return_value = MagicMock()
 
@@ -238,7 +238,7 @@ class TestBuildFunctionResponseParts:
             response={"output": "File not found: /tmp/nope.py", "error": True},
         )
 
-    @patch("vaig.core.client.Part.from_function_response")
+    @patch("vaig.core.client.types.Part.from_function_response")
     def test_empty_results_list(self, mock_from_fn_response: MagicMock) -> None:
         parts = GeminiClient.build_function_response_parts([])
 
@@ -256,29 +256,28 @@ class TestBuildFunctionResponseParts:
 
 
 class TestGenerateWithTools:
-    """Tests for GeminiClient.generate_with_tools()."""
+    """Tests for GeminiClient.generate_with_tools().
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    Every test must patch ``types.Tool`` because the real Pydantic model
+    rejects MagicMock tool_declarations.
+    """
+
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_text_response_no_function_calls(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """When the model returns only text, result has text and no function_calls."""
         mock_get_creds.return_value = MagicMock()
         text_part = _make_text_part("Here is my analysis.")
         response = _make_tool_response(parts=[text_part])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         result = client.generate_with_tools(
             "Analyze this code",
@@ -292,27 +291,22 @@ class TestGenerateWithTools:
         assert result.finish_reason == "STOP"
         assert result.usage["prompt_tokens"] == 10
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_function_call_response(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """When the model returns function calls, they are parsed into dicts."""
         mock_get_creds.return_value = MagicMock()
         fc_part = _make_function_call_part("read_file", {"path": "/src/main.py"})
         response = _make_tool_response(parts=[fc_part])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         result = client.generate_with_tools(
             "Read the main file",
@@ -324,18 +318,14 @@ class TestGenerateWithTools:
         assert result.function_calls[0]["name"] == "read_file"
         assert result.function_calls[0]["args"]["path"] == "/src/main.py"
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_multiple_function_calls_in_one_response(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Model can return multiple function calls in one response."""
@@ -343,9 +333,8 @@ class TestGenerateWithTools:
         fc1 = _make_function_call_part("read_file", {"path": "a.py"})
         fc2 = _make_function_call_part("read_file", {"path": "b.py"})
         response = _make_tool_response(parts=[fc1, fc2])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         result = client.generate_with_tools(
             "Read both files",
@@ -356,18 +345,14 @@ class TestGenerateWithTools:
         assert result.function_calls[0]["args"]["path"] == "a.py"
         assert result.function_calls[1]["args"]["path"] == "b.py"
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_mixed_text_and_function_calls(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Response with both text and function calls."""
@@ -375,9 +360,8 @@ class TestGenerateWithTools:
         text_part = _make_text_part("Let me read that file first.")
         fc_part = _make_function_call_part("read_file", {"path": "x.py"})
         response = _make_tool_response(parts=[text_part, fc_part])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         result = client.generate_with_tools(
             "Read x.py",
@@ -388,26 +372,21 @@ class TestGenerateWithTools:
         assert len(result.function_calls) == 1
         assert result.function_calls[0]["name"] == "read_file"
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_empty_response_no_candidates(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Empty response (no candidates) returns empty ToolCallResult."""
         mock_get_creds.return_value = MagicMock()
         response = _make_empty_response()
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         result = client.generate_with_tools(
             "Hello",
@@ -418,18 +397,14 @@ class TestGenerateWithTools:
         assert result.function_calls == []
         assert result.finish_reason == ""
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_empty_response_no_parts(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Response with candidate but no parts returns empty ToolCallResult."""
@@ -440,9 +415,8 @@ class TestGenerateWithTools:
         candidate.finish_reason = "STOP"
         response.candidates = [candidate]
         response.usage_metadata = None
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         result = client.generate_with_tools(
             "Hello",
@@ -453,18 +427,14 @@ class TestGenerateWithTools:
         assert result.function_calls == []
         assert result.finish_reason == "STOP"
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_usage_metadata_extraction(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Usage metadata is correctly extracted from response."""
@@ -475,9 +445,8 @@ class TestGenerateWithTools:
             completion_tokens=200,
             total_tokens=300,
         )
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         result = client.generate_with_tools("Test", tool_declarations=[MagicMock()])
 
@@ -487,43 +456,34 @@ class TestGenerateWithTools:
             "total_tokens": 300,
         }
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_no_usage_metadata(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Missing usage metadata results in empty dict."""
         mock_get_creds.return_value = MagicMock()
         response = _make_tool_response(parts=[_make_text_part("ok")], has_usage=False)
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         result = client.generate_with_tools("Test", tool_declarations=[MagicMock()])
 
         assert result.usage == {}
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_function_call_with_no_args(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Function call with None args results in empty dict."""
@@ -533,9 +493,8 @@ class TestGenerateWithTools:
         fc_part.function_call.args = None  # No args
         fc_part.text = ""
         response = _make_tool_response(parts=[fc_part])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         result = client.generate_with_tools("List files", tool_declarations=[MagicMock()])
 
@@ -543,26 +502,21 @@ class TestGenerateWithTools:
         assert result.function_calls[0]["name"] == "list_files"
         assert result.function_calls[0]["args"] == {}
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_model_override(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Model override is respected in the result."""
         mock_get_creds.return_value = MagicMock()
         response = _make_tool_response(parts=[_make_text_part("fast response")])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         result = client.generate_with_tools(
             "Hello",
@@ -572,78 +526,65 @@ class TestGenerateWithTools:
 
         assert result.model == "gemini-2.5-flash"
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_auto_initializes(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """generate_with_tools auto-initializes if not yet initialized."""
         mock_get_creds.return_value = MagicMock()
         response = _make_tool_response(parts=[_make_text_part("ok")])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         assert client._initialized is False
         client.generate_with_tools("Hello", tool_declarations=[MagicMock()])
         assert client._initialized is True
-        mock_vertexai_init.assert_called_once()
+        mock_genai_client_cls.assert_called_once()
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_tool_declarations_wrapped_in_tool(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
-        """Tool declarations are wrapped in a Tool() object for the API call."""
+        """Tool declarations are wrapped in a types.Tool() object for the API call."""
         mock_get_creds.return_value = MagicMock()
         response = _make_tool_response(parts=[_make_text_part("ok")])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         declarations = [MagicMock(name="decl_1"), MagicMock(name="decl_2")]
         client.generate_with_tools("Hello", tool_declarations=declarations)
 
         mock_tool_cls.assert_called_once_with(function_declarations=declarations)
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.GenerateContentConfig")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_with_system_instruction(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
-        """System instruction is passed to _get_or_create_model."""
+        """System instruction is passed to GenerateContentConfig in the new SDK."""
         mock_get_creds.return_value = MagicMock()
         response = _make_tool_response(parts=[_make_text_part("ok")])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         client.generate_with_tools(
             "Hello",
@@ -651,35 +592,29 @@ class TestGenerateWithTools:
             system_instruction="You are a coding expert.",
         )
 
-        mock_model_cls.assert_called_once_with(
-            "gemini-2.5-pro",
-            system_instruction="You are a coding expert.",
-        )
+        # In the new SDK, system_instruction is part of GenerateContentConfig
+        call_kwargs = mock_gen_config_cls.call_args[1]
+        assert call_kwargs["system_instruction"] == "You are a coding expert."
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_with_history_uses_chat(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
-        """When history is provided, uses start_chat + send_message."""
+        """When history is provided, uses chats.create + send_message."""
         mock_get_creds.return_value = MagicMock()
         from vaig.core.client import ChatMessage
 
         response = _make_tool_response(parts=[_make_text_part("ok")])
         mock_chat = MagicMock()
         mock_chat.send_message.return_value = response
-        mock_model = MagicMock()
-        mock_model.start_chat.return_value = mock_chat
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.chats.create.return_value = mock_chat
 
         history = [ChatMessage(role="user", content="Previous question")]
 
@@ -689,86 +624,73 @@ class TestGenerateWithTools:
             history=history,
         )
 
-        mock_model.start_chat.assert_called_once()
+        mock_genai.chats.create.assert_called_once()
         mock_chat.send_message.assert_called_once()
         assert result.text == "ok"
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_without_history_uses_generate_content(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
-        """Without history, uses model.generate_content directly."""
+        """Without history, uses client.models.generate_content directly."""
         mock_get_creds.return_value = MagicMock()
         response = _make_tool_response(parts=[_make_text_part("direct")])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         result = client.generate_with_tools(
             "No history",
             tool_declarations=[MagicMock()],
         )
 
-        mock_model.generate_content.assert_called_once()
-        mock_model.start_chat.assert_not_called()
+        mock_genai.models.generate_content.assert_called_once()
+        mock_genai.chats.create.assert_not_called()
         assert result.text == "direct"
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_multiple_text_parts_concatenated(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Multiple text parts are joined together."""
         mock_get_creds.return_value = MagicMock()
         parts = [_make_text_part("Hello "), _make_text_part("World")]
         response = _make_tool_response(parts=parts)
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         result = client.generate_with_tools("Test", tool_declarations=[MagicMock()])
 
         assert result.text == "Hello World"
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.GenerateContentConfig")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_gen_kwargs_forwarded(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Generation kwargs (temperature, etc.) are forwarded to config."""
         mock_get_creds.return_value = MagicMock()
         response = _make_tool_response(parts=[_make_text_part("ok")])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         client.generate_with_tools(
             "Hello",
@@ -777,12 +699,12 @@ class TestGenerateWithTools:
             max_output_tokens=4096,
         )
 
-        mock_gen_config_cls.assert_called_once_with(
-            temperature=0.2,
-            max_output_tokens=4096,
-            top_p=0.95,
-            top_k=40,
-        )
+        # Verify GenerateContentConfig was called with merged kwargs
+        call_kwargs = mock_gen_config_cls.call_args[1]
+        assert call_kwargs["temperature"] == 0.2
+        assert call_kwargs["max_output_tokens"] == 4096
+        assert call_kwargs["top_p"] == 0.95
+        assert call_kwargs["top_k"] == 40
 
 
 # ===========================================================================
@@ -795,7 +717,7 @@ class TestEmptyPromptWithHistory:
 
     On iteration 2+ of a tool-calling loop, the CodingAgent sends an empty
     prompt because the full context (including function call responses) lives
-    in the history.  The Vertex AI SDK rejects empty prompts with
+    in the history.  The SDK rejects empty prompts with
     ``TypeError: value must not be empty``.
 
     The fix: when ``prompt`` is falsy and ``history`` is non-empty, pop the
@@ -803,18 +725,14 @@ class TestEmptyPromptWithHistory:
     ``send_message()``.
     """
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_empty_string_prompt_pops_last_history_entry(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Empty string prompt with history → pops last entry, sends its parts."""
@@ -822,9 +740,8 @@ class TestEmptyPromptWithHistory:
         response = _make_tool_response(parts=[_make_text_part("tool response")])
         mock_chat = MagicMock()
         mock_chat.send_message.return_value = response
-        mock_model = MagicMock()
-        mock_model.start_chat.return_value = mock_chat
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.chats.create.return_value = mock_chat
 
         # Create mock Content objects to simulate what _build_history returns.
         # We patch _build_history because Content() rejects MagicMock parts.
@@ -859,22 +776,18 @@ class TestEmptyPromptWithHistory:
         assert actual_prompt == fn_response_parts
         assert result.text == "tool response"
 
-        # start_chat should have received history WITHOUT the last entry (popped)
-        start_chat_kwargs = mock_model.start_chat.call_args[1]
-        assert len(start_chat_kwargs["history"]) == 2
+        # chats.create should have received history WITHOUT the last entry (popped)
+        create_kwargs = mock_genai.chats.create.call_args[1]
+        assert len(create_kwargs["history"]) == 2
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_empty_list_prompt_pops_last_history_entry(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Empty list [] prompt with history → same pop behavior."""
@@ -882,9 +795,8 @@ class TestEmptyPromptWithHistory:
         response = _make_tool_response(parts=[_make_text_part("done")])
         mock_chat = MagicMock()
         mock_chat.send_message.return_value = response
-        mock_model = MagicMock()
-        mock_model.start_chat.return_value = mock_chat
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.chats.create.return_value = mock_chat
 
         fn_response_parts = [MagicMock(name="fn_response_part")]
         mock_content_1 = MagicMock(name="content_user")
@@ -914,21 +826,17 @@ class TestEmptyPromptWithHistory:
         assert result.text == "done"
 
         # History should have 1 entry (2nd was popped)
-        start_chat_kwargs = mock_model.start_chat.call_args[1]
-        assert len(start_chat_kwargs["history"]) == 1
+        create_kwargs = mock_genai.chats.create.call_args[1]
+        assert len(create_kwargs["history"]) == 1
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_nonempty_prompt_with_history_does_not_pop(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Non-empty prompt with history → uses prompt as-is, no popping."""
@@ -936,9 +844,8 @@ class TestEmptyPromptWithHistory:
         response = _make_tool_response(parts=[_make_text_part("reply")])
         mock_chat = MagicMock()
         mock_chat.send_message.return_value = response
-        mock_model = MagicMock()
-        mock_model.start_chat.return_value = mock_chat
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.chats.create.return_value = mock_chat
 
         mock_content_1 = MagicMock(name="content_user")
         mock_content_2 = MagicMock(name="content_model")
@@ -966,30 +873,25 @@ class TestEmptyPromptWithHistory:
         assert actual_prompt == "Follow up question"
 
         # History should have ALL 2 entries (nothing popped)
-        start_chat_kwargs = mock_model.start_chat.call_args[1]
-        assert len(start_chat_kwargs["history"]) == 2
+        create_kwargs = mock_genai.chats.create.call_args[1]
+        assert len(create_kwargs["history"]) == 2
         assert result.text == "reply"
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_empty_prompt_without_history_uses_generate_content(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Empty prompt without history → falls through to generate_content (no pop)."""
         mock_get_creds.return_value = MagicMock()
         response = _make_tool_response(parts=[_make_text_part("ok")])
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = response
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.return_value = response
 
         result = client.generate_with_tools(
             "",  # Empty prompt, but no history → no pop logic
@@ -997,22 +899,18 @@ class TestEmptyPromptWithHistory:
         )
 
         # Should use generate_content (no history branch)
-        mock_model.generate_content.assert_called_once()
-        mock_model.start_chat.assert_not_called()
+        mock_genai.models.generate_content.assert_called_once()
+        mock_genai.chats.create.assert_not_called()
         assert result.text == "ok"
 
-    @patch("vaig.core.client.Tool")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.types.Tool")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_empty_prompt_single_history_entry_pops_to_empty(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
-        mock_tool_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        _mock_tool_cls: MagicMock,
         client: GeminiClient,
     ) -> None:
         """Edge case: single history entry + empty prompt → pops it, chat gets empty history."""
@@ -1020,9 +918,8 @@ class TestEmptyPromptWithHistory:
         response = _make_tool_response(parts=[_make_text_part("edge")])
         mock_chat = MagicMock()
         mock_chat.send_message.return_value = response
-        mock_model = MagicMock()
-        mock_model.start_chat.return_value = mock_chat
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.chats.create.return_value = mock_chat
 
         fn_parts = [MagicMock(name="the_only_part")]
         mock_content = MagicMock(name="content_fn")
@@ -1046,8 +943,8 @@ class TestEmptyPromptWithHistory:
             )
 
         # The single entry was popped → chat history is empty
-        start_chat_kwargs = mock_model.start_chat.call_args[1]
-        assert len(start_chat_kwargs["history"]) == 0
+        create_kwargs = mock_genai.chats.create.call_args[1]
+        assert len(create_kwargs["history"]) == 0
 
         # The popped entry's parts become the prompt
         actual_prompt = mock_chat.send_message.call_args[0][0]

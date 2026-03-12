@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from google.genai import types
+
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.core.client import ChatMessage, GeminiClient, ToolCallResult
 from vaig.core.config import CodingConfig
@@ -244,20 +246,16 @@ class CodingAgent(BaseAgent):
             # Case 2: Model returned function calls — execute them
             # First, add the model's response (with function calls) to history
             # so the next turn sees what the model requested
-            from vertexai.generative_models import Content, Part
-
-            fc_parts: list[Part] = []
+            fc_parts: list[types.Part] = []
             for fc in result.function_calls:
                 fc_parts.append(
-                    Part.from_dict({
-                        "function_call": {
-                            "name": fc["name"],
-                            "args": fc["args"],
-                        }
-                    })
+                    types.Part.from_function_call(
+                        name=fc["name"],
+                        args=fc["args"],
+                    )
                 )
             history.append(
-                Content(role="model", parts=fc_parts)
+                types.Content(role="model", parts=fc_parts)
             )
 
             # Execute each function call
@@ -287,7 +285,7 @@ class CodingAgent(BaseAgent):
             # Add function responses to history for next turn
             response_parts = GeminiClient.build_function_response_parts(function_responses)
             history.append(
-                Content(role="user", parts=response_parts)
+                types.Content(role="user", parts=response_parts)
             )
 
             # Continue the loop — send empty prompt (history carries context).
@@ -455,18 +453,16 @@ class CodingAgent(BaseAgent):
         return cleaned
 
     def _build_chat_history(self) -> list[Any]:
-        """Convert agent conversation history to Vertex AI Content list.
+        """Convert agent conversation history to Gemini Content list.
 
         Unlike SpecialistAgent which uses ChatMessage, CodingAgent works
         directly with Content objects because the history may contain
         function call/response Parts (not just text).
         """
-        from vertexai.generative_models import Content, Part
-
-        contents: list[Content] = []
+        contents: list[types.Content] = []
         for msg in self._conversation:
             role = "user" if msg.role == "user" else "model"
             contents.append(
-                Content(role=role, parts=[Part.from_text(msg.content)])
+                types.Content(role=role, parts=[types.Part.from_text(text=msg.content)])
             )
         return contents

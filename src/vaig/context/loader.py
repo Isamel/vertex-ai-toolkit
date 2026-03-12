@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from vertexai.generative_models import Part
+from google.genai import types
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class LoadedFile:
     path: Path
     file_type: FileType
     content: str | None = None  # For text/code files
-    part: Part | None = None    # For multimodal files (image, audio, pdf)
+    part: types.Part | None = None    # For multimodal files (image, audio, pdf)
     size_bytes: int = 0
     mime_type: str = "text/plain"
     token_estimate: int = 0
@@ -149,7 +149,7 @@ def _load_binary_part(filepath: Path, file_type: FileType, size_bytes: int, mime
     """Load a binary file as a Gemini Part."""
     data = filepath.read_bytes()
 
-    part = Part.from_data(data=data, mime_type=mime_type)
+    part = types.Part.from_bytes(data=data, mime_type=mime_type)
 
     return LoadedFile(
         path=filepath,

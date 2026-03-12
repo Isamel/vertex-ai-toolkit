@@ -373,9 +373,9 @@ class TestCodingAgentExecute:
         assert result.usage["completion_tokens"] == 200
         assert result.usage["total_tokens"] == 300
 
-    @patch("vaig.core.client.Part")
-    @patch("vertexai.generative_models.Content")
-    @patch("vertexai.generative_models.Part")
+    @patch("vaig.core.client.types.Part")
+    @patch("vaig.agents.coding.types.Content")
+    @patch("vaig.agents.coding.types.Part")
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
     @patch("vaig.agents.coding.create_file_tools", return_value=[])
     def test_function_call_then_text_response(
@@ -423,9 +423,9 @@ class TestCodingAgentExecute:
         assert result.usage["prompt_tokens"] == 25
         assert result.usage["total_tokens"] == 70
 
-    @patch("vaig.core.client.Part")
-    @patch("vertexai.generative_models.Content")
-    @patch("vertexai.generative_models.Part")
+    @patch("vaig.core.client.types.Part")
+    @patch("vaig.agents.coding.types.Content")
+    @patch("vaig.agents.coding.types.Part")
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
     @patch("vaig.agents.coding.create_file_tools", return_value=[])
     def test_multiple_function_calls_per_iteration(
@@ -468,9 +468,9 @@ class TestCodingAgentExecute:
         assert result.success is True
         assert len(result.metadata["tools_executed"]) == 2
 
-    @patch("vaig.core.client.Part")
-    @patch("vertexai.generative_models.Content")
-    @patch("vertexai.generative_models.Part")
+    @patch("vaig.core.client.types.Part")
+    @patch("vaig.agents.coding.types.Content")
+    @patch("vaig.agents.coding.types.Part")
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
     @patch("vaig.agents.coding.create_file_tools", return_value=[])
     def test_max_iterations_raises_error(
@@ -522,9 +522,9 @@ class TestCodingAgentExecute:
         assert "API quota exceeded" in result.content
         assert result.metadata["error"] == "API quota exceeded"
 
-    @patch("vaig.core.client.Part")
-    @patch("vertexai.generative_models.Content")
-    @patch("vertexai.generative_models.Part")
+    @patch("vaig.core.client.types.Part")
+    @patch("vaig.agents.coding.types.Content")
+    @patch("vaig.agents.coding.types.Part")
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
     @patch("vaig.agents.coding.create_file_tools", return_value=[])
     def test_first_iteration_sends_prompt_subsequent_empty(
@@ -565,9 +565,9 @@ class TestCodingAgentExecute:
         second_prompt = calls[1][0][0]
         assert second_prompt == []
 
-    @patch("vaig.core.client.Part")
-    @patch("vertexai.generative_models.Content")
-    @patch("vertexai.generative_models.Part")
+    @patch("vaig.core.client.types.Part")
+    @patch("vaig.agents.coding.types.Content")
+    @patch("vaig.agents.coding.types.Part")
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
     @patch("vaig.agents.coding.create_file_tools", return_value=[])
     def test_unknown_tool_returns_error_result_to_model(
@@ -594,9 +594,9 @@ class TestCodingAgentExecute:
         assert result.metadata["tools_executed"][0]["error"] is True
         assert "Unknown tool" in result.metadata["tools_executed"][0]["output"]
 
-    @patch("vaig.core.client.Part")
-    @patch("vertexai.generative_models.Content")
-    @patch("vertexai.generative_models.Part")
+    @patch("vaig.core.client.types.Part")
+    @patch("vaig.agents.coding.types.Content")
+    @patch("vaig.agents.coding.types.Part")
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
     @patch("vaig.agents.coding.create_file_tools", return_value=[])
     def test_tool_execution_error_handled_gracefully(
@@ -633,9 +633,9 @@ class TestCodingAgentExecute:
         assert result.metadata["tools_executed"][0]["error"] is True
         assert "Disk full" in result.metadata["tools_executed"][0]["output"]
 
-    @patch("vaig.core.client.Part")
-    @patch("vertexai.generative_models.Content")
-    @patch("vertexai.generative_models.Part")
+    @patch("vaig.core.client.types.Part")
+    @patch("vaig.agents.coding.types.Content")
+    @patch("vaig.agents.coding.types.Part")
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
     @patch("vaig.agents.coding.create_file_tools", return_value=[])
     def test_tool_type_error_handled(
@@ -743,9 +743,9 @@ class TestCodingAgentExecute:
 class TestCodingAgentConfirmation:
     """Tests for confirmation callback integration."""
 
-    @patch("vaig.core.client.Part")
-    @patch("vertexai.generative_models.Content")
-    @patch("vertexai.generative_models.Part")
+    @patch("vaig.core.client.types.Part")
+    @patch("vaig.agents.coding.types.Content")
+    @patch("vaig.agents.coding.types.Part")
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
     @patch("vaig.agents.coding.create_file_tools", return_value=[])
     def test_destructive_tool_calls_confirm_fn(
@@ -779,9 +779,9 @@ class TestCodingAgentConfirmation:
         confirm_fn.assert_called_once_with("write_file", {"path": "x.py", "content": "hello"})
         assert result.metadata["tools_executed"][0]["error"] is False
 
-    @patch("vaig.core.client.Part")
-    @patch("vertexai.generative_models.Content")
-    @patch("vertexai.generative_models.Part")
+    @patch("vaig.core.client.types.Part")
+    @patch("vaig.agents.coding.types.Content")
+    @patch("vaig.agents.coding.types.Part")
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
     @patch("vaig.agents.coding.create_file_tools", return_value=[])
     def test_declined_destructive_returns_error(
@@ -815,9 +815,9 @@ class TestCodingAgentConfirmation:
         assert result.metadata["tools_executed"][0]["error"] is True
         assert "declined" in result.metadata["tools_executed"][0]["output"]
 
-    @patch("vaig.core.client.Part")
-    @patch("vertexai.generative_models.Content")
-    @patch("vertexai.generative_models.Part")
+    @patch("vaig.core.client.types.Part")
+    @patch("vaig.agents.coding.types.Content")
+    @patch("vaig.agents.coding.types.Part")
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
     @patch("vaig.agents.coding.create_file_tools", return_value=[])
     def test_non_destructive_tool_skips_confirmation(
@@ -952,9 +952,9 @@ class TestCodingSystemPrompt:
 class TestCodingAgentUsageAccumulation:
     """Tests for token usage accumulation across iterations."""
 
-    @patch("vaig.core.client.Part")
-    @patch("vertexai.generative_models.Content")
-    @patch("vertexai.generative_models.Part")
+    @patch("vaig.core.client.types.Part")
+    @patch("vaig.agents.coding.types.Content")
+    @patch("vaig.agents.coding.types.Part")
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
     @patch("vaig.agents.coding.create_file_tools", return_value=[])
     def test_usage_accumulates_across_three_iterations(

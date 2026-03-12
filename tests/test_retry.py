@@ -541,16 +541,12 @@ class TestRetryIntegrationWithGenerate:
     """Tests that generate() and generate_stream() properly use retry logic."""
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_generate_retries_on_transient_error(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         client: GeminiClient,
     ) -> None:
@@ -566,52 +562,42 @@ class TestRetryIntegrationWithGenerate:
         candidate.finish_reason = "STOP"
         mock_response.candidates = [candidate]
 
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = [
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.side_effect = [
             google_exceptions.ServiceUnavailable("503"),
             mock_response,
         ]
-        mock_model_cls.return_value = mock_model
 
         result = client.generate("Hello")
 
         assert result.text == "Success after retry"
-        assert mock_model.generate_content.call_count == 2
+        assert mock_genai.models.generate_content.call_count == 2
         assert mock_sleep.call_count == 1
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_generate_raises_after_all_retries_exhausted(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = google_exceptions.ResourceExhausted("429")
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.side_effect = google_exceptions.ResourceExhausted("429")
 
         with pytest.raises(GeminiRateLimitError):
             client.generate("Hello")
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_generate_stream_retries_on_transient_error(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         client: GeminiClient,
     ) -> None:
@@ -623,64 +609,53 @@ class TestRetryIntegrationWithGenerate:
         chunk2 = MagicMock()
         chunk2.text = "world"
 
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = [
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content_stream.side_effect = [
             google_exceptions.InternalServerError("500"),
             [chunk1, chunk2],  # Second attempt succeeds
         ]
-        mock_model_cls.return_value = mock_model
 
         result = list(client.generate_stream("Say hello"))
 
         assert result == ["Hello ", "world"]
-        assert mock_model.generate_content.call_count == 2
+        assert mock_genai.models.generate_content_stream.call_count == 2
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_generate_stream_raises_after_all_retries_exhausted(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         client: GeminiClient,
     ) -> None:
         mock_get_creds.return_value = MagicMock()
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = google_exceptions.ServiceUnavailable("503")
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content_stream.side_effect = google_exceptions.ServiceUnavailable("503")
 
         with pytest.raises(GeminiConnectionError):
             list(client.generate_stream("Hello"))
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_generate_non_retryable_error_not_retried(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         client: GeminiClient,
     ) -> None:
         """A non-retryable error like NotFound should propagate immediately."""
         mock_get_creds.return_value = MagicMock()
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = google_exceptions.NotFound("model not found")
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.side_effect = google_exceptions.NotFound("model not found")
 
         with pytest.raises(google_exceptions.NotFound):
             client.generate("Hello")
 
-        mock_model.generate_content.assert_called_once()
+        mock_genai.models.generate_content.assert_called_once()
         mock_sleep.assert_not_called()
 
 
@@ -782,12 +757,12 @@ class TestGCPConfigFallbackLocation:
 class TestReinitializeWithFallback:
     """Tests for GeminiClient._reinitialize_with_fallback()."""
 
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_switches_to_fallback_location(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
+        mock_genai_client_cls: MagicMock,
     ) -> None:
         """After calling _reinitialize_with_fallback, _active_location should change."""
         mock_get_creds.return_value = MagicMock()
@@ -805,14 +780,17 @@ class TestReinitializeWithFallback:
 
         assert client._active_location == "us-central1"
         assert client._using_fallback is True
+        # genai.Client should have been called twice: primary + fallback
+        assert mock_genai_client_cls.call_count == 2
 
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
-    def test_clears_model_cache_on_fallback(
+    def test_clears_client_on_fallback(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
+        mock_genai_client_cls: MagicMock,
     ) -> None:
+        """After fallback, _client should be reset and recreated via genai.Client."""
         mock_get_creds.return_value = MagicMock()
         settings = Settings(
             gcp=GCPConfig(project_id="proj", location="global", fallback_location="us-central1"),
@@ -820,18 +798,24 @@ class TestReinitializeWithFallback:
         )
         client = GeminiClient(settings)
         client.initialize()
-        client._models["gemini-2.5-pro"] = MagicMock()  # simulate cached model
+
+        # genai.Client was called once for primary init
+        assert mock_genai_client_cls.call_count == 1
 
         client._reinitialize_with_fallback()
 
-        assert client._models == {}
+        # genai.Client was called again for the fallback location
+        assert mock_genai_client_cls.call_count == 2
+        # The second call should use the fallback location
+        second_call_kwargs = mock_genai_client_cls.call_args_list[1][1]
+        assert second_call_kwargs["location"] == "us-central1"
 
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_no_op_if_already_on_fallback(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
+        mock_genai_client_cls: MagicMock,
     ) -> None:
         """If already using fallback, _reinitialize_with_fallback is a no-op."""
         mock_get_creds.return_value = MagicMock()
@@ -843,19 +827,19 @@ class TestReinitializeWithFallback:
         client.initialize()
         client._reinitialize_with_fallback()  # first fallback
 
-        init_count = mock_vertexai_init.call_count
+        init_count = mock_genai_client_cls.call_count
 
         client._reinitialize_with_fallback()  # second call — should be no-op
 
-        assert mock_vertexai_init.call_count == init_count  # no additional init
+        assert mock_genai_client_cls.call_count == init_count  # no additional init
         assert client._active_location == "us-central1"
 
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_no_op_if_fallback_same_as_primary(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
+        mock_genai_client_cls: MagicMock,
     ) -> None:
         """If fallback == primary location, no reinit happens."""
         mock_get_creds.return_value = MagicMock()
@@ -866,19 +850,19 @@ class TestReinitializeWithFallback:
         client = GeminiClient(settings)
         client.initialize()
 
-        init_count = mock_vertexai_init.call_count
+        init_count = mock_genai_client_cls.call_count
 
         client._reinitialize_with_fallback()
 
-        assert mock_vertexai_init.call_count == init_count
+        assert mock_genai_client_cls.call_count == init_count
         assert client._using_fallback is False
 
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_no_op_if_fallback_empty(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
+        mock_genai_client_cls: MagicMock,
     ) -> None:
         """If fallback_location is empty, no reinit happens."""
         mock_get_creds.return_value = MagicMock()
@@ -889,11 +873,11 @@ class TestReinitializeWithFallback:
         client = GeminiClient(settings)
         client.initialize()
 
-        init_count = mock_vertexai_init.call_count
+        init_count = mock_genai_client_cls.call_count
 
         client._reinitialize_with_fallback()
 
-        assert mock_vertexai_init.call_count == init_count
+        assert mock_genai_client_cls.call_count == init_count
         assert client._using_fallback is False
 
 
@@ -924,16 +908,12 @@ class TestLocationFallbackInRetry:
         return GeminiClient(fallback_settings)
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_ssl_error_triggers_fallback_and_succeeds(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         fallback_client: GeminiClient,
     ) -> None:
@@ -950,13 +930,12 @@ class TestLocationFallbackInRetry:
         mock_response.candidates[0].finish_reason = MagicMock()
         mock_response.candidates[0].finish_reason.name = "STOP"
 
-        mock_model = MagicMock()
+        mock_genai = mock_genai_client_cls.return_value
         # First call fails with SSL, second call (after fallback) succeeds
-        mock_model.generate_content.side_effect = [
+        mock_genai.models.generate_content.side_effect = [
             ssl.SSLEOFError("EOF occurred in violation of protocol"),
             mock_response,
         ]
-        mock_model_cls.return_value = mock_model
 
         result = fallback_client.generate("Hello")
 
@@ -965,24 +944,19 @@ class TestLocationFallbackInRetry:
         assert fallback_client._active_location == "us-central1"
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_ssl_error_fallback_also_fails_raises_connection_error(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         fallback_client: GeminiClient,
     ) -> None:
         """If both primary and fallback fail, raises GeminiConnectionError."""
         mock_get_creds.return_value = MagicMock()
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = ssl.SSLEOFError("EOF occurred")
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.side_effect = ssl.SSLEOFError("EOF occurred")
 
         with pytest.raises(GeminiConnectionError):
             fallback_client.generate("Hello")
@@ -990,20 +964,16 @@ class TestLocationFallbackInRetry:
         assert fallback_client._using_fallback is True
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_nested_ssl_error_triggers_fallback(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         fallback_client: GeminiClient,
     ) -> None:
-        """A nested SSL error (wrapped in ServiceUnavailable) should trigger fallback."""
+        """A nested SSL error (wrapped in a non-retryable exception) should trigger fallback."""
         mock_get_creds.return_value = MagicMock()
         mock_response = MagicMock()
         mock_response.text = "OK"
@@ -1014,73 +984,53 @@ class TestLocationFallbackInRetry:
         mock_response.candidates[0].finish_reason = MagicMock()
         mock_response.candidates[0].finish_reason.name = "STOP"
 
-        inner_ssl = ssl.SSLEOFError("EOF occurred")
-        outer_exc = google_exceptions.ServiceUnavailable("503 SSL issue")
-        outer_exc.__cause__ = inner_ssl
-
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = [outer_exc, mock_response]
-        mock_model_cls.return_value = mock_model
-
-        # ServiceUnavailable IS in _RETRYABLE_EXCEPTIONS, so it will be retried
-        # normally (not via fallback). But if ALL retries exhaust and the inner
-        # cause is SSL, it should still be caught. Let's test a pure wrapped case:
         # Use an exception that is NOT retryable but wraps SSL.
         non_retryable_wrapper = RuntimeError("transport error")
         non_retryable_wrapper.__cause__ = ssl.SSLEOFError("EOF occurred")
 
-        mock_model.generate_content.side_effect = [non_retryable_wrapper, mock_response]
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.side_effect = [non_retryable_wrapper, mock_response]
 
         result = fallback_client.generate("Hello")
         assert result.text == "OK"
         assert fallback_client._using_fallback is True
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_non_ssl_error_does_not_trigger_fallback(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         fallback_client: GeminiClient,
     ) -> None:
         """A non-SSL, non-retryable error should propagate immediately, no fallback."""
         mock_get_creds.return_value = MagicMock()
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = google_exceptions.NotFound("model not found")
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.side_effect = google_exceptions.NotFound("model not found")
 
         with pytest.raises(google_exceptions.NotFound):
             fallback_client.generate("Hello")
 
         assert fallback_client._using_fallback is False
         assert fallback_client._active_location == "global"
-        mock_model.generate_content.assert_called_once()
+        mock_genai.models.generate_content.assert_called_once()
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_retryable_error_does_not_trigger_fallback(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         fallback_client: GeminiClient,
     ) -> None:
         """A plain 503 (no SSL) should be retried normally, NOT trigger fallback."""
         mock_get_creds.return_value = MagicMock()
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = google_exceptions.ServiceUnavailable("503")
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.side_effect = google_exceptions.ServiceUnavailable("503")
 
         with pytest.raises(GeminiConnectionError):
             fallback_client.generate("Hello")
@@ -1088,19 +1038,15 @@ class TestLocationFallbackInRetry:
         assert fallback_client._using_fallback is False
         assert fallback_client._active_location == "global"
         # Should have retried max_retries + 1 times (4 total)
-        assert mock_model.generate_content.call_count == 4
+        assert mock_genai.models.generate_content.call_count == 4
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_client_init_tracks_primary_location(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         fallback_client: GeminiClient,
     ) -> None:
@@ -1180,16 +1126,12 @@ class TestProxyResponseParseError:
         return GeminiClient(fallback_settings)
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_direct_attribute_error_triggers_fallback(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         fallback_client: GeminiClient,
     ) -> None:
@@ -1206,12 +1148,11 @@ class TestProxyResponseParseError:
         mock_response.candidates[0].finish_reason = MagicMock()
         mock_response.candidates[0].finish_reason.name = "STOP"
 
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = [
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.side_effect = [
             AttributeError("'list' object has no attribute 'get'"),
             mock_response,
         ]
-        mock_model_cls.return_value = mock_model
 
         result = fallback_client.generate("Hello")
 
@@ -1220,16 +1161,12 @@ class TestProxyResponseParseError:
         assert fallback_client._active_location == "us-central1"
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_retryable_wrapping_proxy_error_triggers_fallback(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         fallback_client: GeminiClient,
     ) -> None:
@@ -1252,9 +1189,8 @@ class TestProxyResponseParseError:
         outer = google_exceptions.ServiceUnavailable("503")
         outer.__cause__ = inner
 
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = [outer, mock_response]
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.side_effect = [outer, mock_response]
 
         result = fallback_client.generate("Hello")
 
@@ -1262,29 +1198,24 @@ class TestProxyResponseParseError:
         assert fallback_client._using_fallback is True
         assert fallback_client._active_location == "us-central1"
         # Should NOT have retried 4 times — should have fallback on first attempt
-        assert mock_model.generate_content.call_count == 2
+        assert mock_genai.models.generate_content.call_count == 2
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_proxy_error_fallback_also_fails_raises_connection_error(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         fallback_client: GeminiClient,
     ) -> None:
         """If both primary (proxy error) and fallback fail, raises GeminiConnectionError."""
         mock_get_creds.return_value = MagicMock()
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = AttributeError(
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.side_effect = AttributeError(
             "'list' object has no attribute 'get'"
         )
-        mock_model_cls.return_value = mock_model
 
         with pytest.raises(GeminiConnectionError):
             fallback_client.generate("Hello")
@@ -1292,24 +1223,19 @@ class TestProxyResponseParseError:
         assert fallback_client._using_fallback is True
 
     @patch("vaig.core.client.time.sleep")
-    @patch("vaig.core.client.GenerativeModel")
-    @patch("vaig.core.client.GenerationConfig")
-    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_plain_retryable_503_still_retries_normally(
         self,
         mock_get_creds: MagicMock,
-        mock_vertexai_init: MagicMock,
-        mock_gen_config_cls: MagicMock,
-        mock_model_cls: MagicMock,
+        mock_genai_client_cls: MagicMock,
         mock_sleep: MagicMock,
         fallback_client: GeminiClient,
     ) -> None:
         """A plain 503 (no proxy/SSL cause) should still retry normally, NOT fallback."""
         mock_get_creds.return_value = MagicMock()
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = google_exceptions.ServiceUnavailable("503")
-        mock_model_cls.return_value = mock_model
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content.side_effect = google_exceptions.ServiceUnavailable("503")
 
         with pytest.raises(GeminiConnectionError):
             fallback_client.generate("Hello")
@@ -1317,4 +1243,4 @@ class TestProxyResponseParseError:
         assert fallback_client._using_fallback is False
         assert fallback_client._active_location == "global"
         # Should have retried max_retries + 1 times (4 total)
-        assert mock_model.generate_content.call_count == 4
+        assert mock_genai.models.generate_content.call_count == 4
