@@ -226,6 +226,73 @@ class TestBuildGenerationConfig:
             top_k=10,
         )
 
+    @patch("vaig.core.client.GenerationConfig")
+    def test_frequency_penalty_included_when_set(
+        self,
+        mock_gen_config_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """frequency_penalty is only sent when explicitly provided."""
+        client._build_generation_config(frequency_penalty=0.5)
+
+        mock_gen_config_cls.assert_called_once_with(
+            temperature=0.7,
+            max_output_tokens=8192,
+            top_p=0.95,
+            top_k=40,
+            frequency_penalty=0.5,
+        )
+
+    @patch("vaig.core.client.GenerationConfig")
+    def test_presence_penalty_included_when_set(
+        self,
+        mock_gen_config_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """presence_penalty is only sent when explicitly provided."""
+        client._build_generation_config(presence_penalty=0.3)
+
+        mock_gen_config_cls.assert_called_once_with(
+            temperature=0.7,
+            max_output_tokens=8192,
+            top_p=0.95,
+            top_k=40,
+            presence_penalty=0.3,
+        )
+
+    @patch("vaig.core.client.GenerationConfig")
+    def test_both_penalties_included_together(
+        self,
+        mock_gen_config_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """Both penalty params included when both provided."""
+        client._build_generation_config(
+            frequency_penalty=0.5, presence_penalty=0.2,
+        )
+
+        mock_gen_config_cls.assert_called_once_with(
+            temperature=0.7,
+            max_output_tokens=8192,
+            top_p=0.95,
+            top_k=40,
+            frequency_penalty=0.5,
+            presence_penalty=0.2,
+        )
+
+    @patch("vaig.core.client.GenerationConfig")
+    def test_penalties_omitted_by_default(
+        self,
+        mock_gen_config_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """Without explicit penalty params, they are NOT included in kwargs."""
+        client._build_generation_config()
+
+        call_kwargs = mock_gen_config_cls.call_args[1]
+        assert "frequency_penalty" not in call_kwargs
+        assert "presence_penalty" not in call_kwargs
+
 
 # ── TestGetOrCreateModel ─────────────────────────────────────
 

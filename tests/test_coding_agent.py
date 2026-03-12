@@ -1067,3 +1067,160 @@ class TestCodingAgentProperties:
         assert "CodingAgent" in r
         assert "coding-agent" in r
         assert "coder" in r
+
+
+# ===========================================================================
+# TestDeduplicateResponse
+# ===========================================================================
+
+
+class TestDeduplicateResponse:
+    """Tests for CodingAgent._deduplicate_response() static method."""
+
+    def test_empty_string(self) -> None:
+        """Empty input returns empty output."""
+        assert CodingAgent._deduplicate_response("") == ""
+
+    def test_none_returns_none(self) -> None:
+        """None input returns None (falsy passthrough)."""
+        assert CodingAgent._deduplicate_response(None) is None  # type: ignore[arg-type]
+
+    def test_no_repetition(self) -> None:
+        """Normal text without repetition passes through unchanged."""
+        text = "Line one here.\nAnother different line.\nThird line is unique."
+        assert CodingAgent._deduplicate_response(text) == text
+
+    def test_few_repeats_below_threshold(self) -> None:
+        """Two consecutive repeats (below default threshold=3) are kept."""
+        text = "This line repeats.\nThis line repeats.\nDifferent ending."
+        assert CodingAgent._deduplicate_response(text) == text
+
+    def test_exactly_at_threshold_keeps_all(self) -> None:
+        """Exactly 3 consecutive repeats (default threshold) — all 3 are kept."""
+        line = "I have created the Priority enum class."
+        text = f"{line}\n{line}\n{line}\nDone."
+        # threshold=3 means we keep first 3 occurrences (repeat_count reaches 3
+        # only on the 3rd occurrence, and >= triggers truncation on the NEXT one)
+        result = CodingAgent._deduplicate_response(text)
+        assert result.count(line) == 3
+        assert "[truncated" not in result
+
+    def test_above_threshold_truncates(self) -> None:
+        """More than 3 consecutive repeats get truncated to 3."""
+        line = "I have created the Priority enum class."
+        repeated = "\n".join([line] * 10)
+        text = f"Start\n{repeated}\nEnd"
+
+        result = CodingAgent._deduplicate_response(text)
+
+        assert result.count(line) == 3
+        assert "[truncated — repeated text removed]" in result
+
+    def test_massive_repetition(self) -> None:
+        """200+ repetitions (the real Gemini bug) are truncated efficiently."""
+        line = "I have created the Priority enum successfully and it is ready to use."
+        repeated = "\n".join([line] * 200)
+        text = f"Here is the file:\n{repeated}\n\nLet me know if you need changes."
+
+        result = CodingAgent._deduplicate_response(text)
+
+        assert result.count(line) == 3
+        assert "[truncated — repeated text removed]" in result
+        # Result should be MUCH shorter than input
+        assert len(result) < len(text) // 10
+
+    def test_short_lines_not_tracked(self) -> None:
+        """Short lines (≤10 chars) are never counted as repeats."""
+        text = "```\n```\n```\n```\n```\n```\n```"
+        result = CodingAgent._deduplicate_response(text)
+        assert result == text
+        assert "[truncated" not in result
+
+    def test_blank_lines_not_tracked(self) -> None:
+        """Blank lines are ignored (≤10 chars)."""
+        text = "Content here.\n\n\n\n\n\n\nMore content here."
+        result = CodingAgent._deduplicate_response(text)
+        assert result == text
+
+    def test_non_consecutive_repeats_not_truncated(self) -> None:
+        """Same line repeated non-consecutively is NOT truncated."""
+        line = "This appears multiple times."
+        text = f"{line}\nSomething else.\n{line}\nAnother thing.\n{line}\nMore.\n{line}"
+        result = CodingAgent._deduplicate_response(text)
+        assert result == text  # All kept — non-consecutive
+
+    def test_custom_threshold(self) -> None:
+        """Custom threshold parameter controls truncation point."""
+        line = "Repeated line with enough characters."
+        text = "\n".join([line] * 5)
+
+        # threshold=1 — keep only 1 occurrence
+        result = CodingAgent._deduplicate_response(text, threshold=1)
+        assert result.count(line) == 1
+        assert "[truncated" in result
+
+        # threshold=5 — keep all 5
+        result = CodingAgent._deduplicate_response(text, threshold=5)
+        assert result.count(line) == 5
+        assert "[truncated" not in result
+
+    def test_multiple_groups_of_repeats(self) -> None:
+        """Multiple different repeated groups each get truncated independently."""
+        line_a = "First repeated sentence with enough length."
+        line_b = "Second repeated sentence with enough length."
+        text = "\n".join([line_a] * 6 + ["break"] + [line_b] * 6)
+
+        result = CodingAgent._deduplicate_response(text)
+
+        assert result.count(line_a) == 3
+        assert result.count(line_b) == 3
+        assert "[truncated" in result
+
+    def test_preserves_indentation(self) -> None:
+        """Original indentation is preserved in kept lines."""
+        line = "    return self.process(data)"
+        text = "\n".join([line] * 5)
+
+        result = CodingAgent._deduplicate_response(text)
+
+        # The kept lines should still be indented
+        for kept_line in result.split("\n"):
+            if "return self.process" in kept_line:
+                assert kept_line.startswith("    ")
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_execute_applies_deduplication(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """Integration: execute() applies deduplication to text response."""
+        client = _make_mock_client()
+        line = "I have created the Priority enum class successfully."
+        repeated_text = "\n".join([line] * 50)
+        client.generate_with_tools.return_value = _make_text_result(text=repeated_text)
+
+        agent = CodingAgent(client, _make_coding_config())
+        result = agent.execute("Create priority enum")
+
+        assert result.success is True
+        assert result.content.count(line) == 3
+        assert "[truncated — repeated text removed]" in result.content
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_execute_passes_frequency_penalty(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """Integration: execute() passes frequency_penalty=0.5 to generate_with_tools."""
+        client = _make_mock_client()
+        client.generate_with_tools.return_value = _make_text_result(text="Done")
+
+        agent = CodingAgent(client, _make_coding_config())
+        agent.execute("Do something")
+
+        call_kwargs = client.generate_with_tools.call_args[1]
+        assert call_kwargs.get("frequency_penalty") == 0.5

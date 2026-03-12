@@ -203,14 +203,26 @@ class GeminiClient:
         return model_id
 
     def _build_generation_config(self, **overrides: Any) -> GenerationConfig:
-        """Build generation config from settings + overrides."""
+        """Build generation config from settings + overrides.
+
+        Supports all standard Gemini generation parameters including
+        ``frequency_penalty`` and ``presence_penalty`` for controlling
+        repetition in model output.
+        """
         cfg = self._settings.generation
-        return GenerationConfig(
-            temperature=overrides.get("temperature", cfg.temperature),
-            max_output_tokens=overrides.get("max_output_tokens", cfg.max_output_tokens),
-            top_p=overrides.get("top_p", cfg.top_p),
-            top_k=overrides.get("top_k", cfg.top_k),
-        )
+        kwargs: dict[str, Any] = {
+            "temperature": overrides.get("temperature", cfg.temperature),
+            "max_output_tokens": overrides.get("max_output_tokens", cfg.max_output_tokens),
+            "top_p": overrides.get("top_p", cfg.top_p),
+            "top_k": overrides.get("top_k", cfg.top_k),
+        }
+        # Optional penalty params — only include when explicitly set to avoid
+        # sending defaults that could change model behaviour unexpectedly.
+        if "frequency_penalty" in overrides:
+            kwargs["frequency_penalty"] = overrides["frequency_penalty"]
+        if "presence_penalty" in overrides:
+            kwargs["presence_penalty"] = overrides["presence_penalty"]
+        return GenerationConfig(**kwargs)
 
     # ── Retry logic ───────────────────────────────────────────
 
