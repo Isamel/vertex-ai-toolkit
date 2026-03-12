@@ -246,11 +246,27 @@ def _handle_direct_chat(state: REPLState, user_input: str, context: str) -> None
     """Handle direct chat without a skill."""
     try:
         if state.stream_enabled:
+            # Show a transient "thinking" indicator while waiting for the
+            # first stream chunk.  We use a Live status that auto-clears
+            # when we exit the context manager.
+            status = console.status(
+                f"[bold cyan]Thinking ({state.model})...[/bold cyan]"
+            )
+            status.start()
+
             stream = state.orchestrator.execute_single(user_input, context=context, stream=True)
             response_parts: list[str] = []
             for chunk in stream:  # type: ignore[union-attr]
+                if status is not None:
+                    status.stop()
+                    status = None  # type: ignore[assignment]
                 console.print(chunk, end="")
                 response_parts.append(chunk)
+
+            # Edge case: stream yielded nothing — stop the spinner
+            if status is not None:
+                status.stop()
+
             console.print()
             full_response = "".join(response_parts)
         else:
