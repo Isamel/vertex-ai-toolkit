@@ -355,3 +355,86 @@ class TestAskCommand:
         mock_orchestrator.execute_single.assert_called_once_with(
             "Explain this code", context="file content here"
         )
+
+    def test_ask_code_with_workspace(self, tmp_path: pytest.TempPathFactory, _mock_settings: Settings) -> None:
+        """--workspace flag overrides coding.workspace_root in code mode."""
+        workspace_dir = tmp_path / "my-project"  # type: ignore[operator]
+        workspace_dir.mkdir()
+
+        mock_result = MagicMock()
+        mock_result.content = "Done."
+        mock_result.metadata = {"tools_executed": [], "iterations": 1}
+        mock_result.usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+
+        with patch("vaig.agents.coding.CodingAgent") as MockCodingAgent:
+            mock_agent = MagicMock()
+            mock_agent.execute.return_value = mock_result
+            MockCodingAgent.return_value = mock_agent
+
+            result = runner.invoke(
+                app,
+                ["ask", "Create a file", "--code", "--workspace", str(workspace_dir)],
+            )
+
+        assert result.exit_code == 0
+        assert _mock_settings.coding.workspace_root == str(workspace_dir)
+
+    def test_ask_code_workspace_not_found(self) -> None:
+        """--workspace with a non-existent directory should exit with error."""
+        result = runner.invoke(
+            app,
+            ["ask", "Do something", "--code", "--workspace", "/nonexistent/path"],
+        )
+
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_ask_workspace_ignored_without_code(self, _mock_settings: Settings) -> None:
+        """--workspace without --code should be silently ignored (no error)."""
+        mock_agent_result = MagicMock()
+        mock_agent_result.content = "The answer."
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_single.return_value = mock_agent_result
+
+        with (
+            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
+        ):
+            result = runner.invoke(
+                app,
+                ["ask", "Hello", "--no-stream", "--workspace", "."],
+            )
+
+        assert result.exit_code == 0
+        # workspace_root should NOT have been changed since --code was not used
+        assert _mock_settings.coding.workspace_root == "."
+
+
+# ══════════════════════════════════════════════════════════════
+# CHAT COMMAND — WORKSPACE FLAG
+# ══════════════════════════════════════════════════════════════
+class TestChatWorkspace:
+    def test_chat_workspace_overrides_config(self, tmp_path: pytest.TempPathFactory, _mock_settings: Settings) -> None:
+        """--workspace flag on chat overrides coding.workspace_root."""
+        workspace_dir = tmp_path / "ws"  # type: ignore[operator]
+        workspace_dir.mkdir()
+
+        with patch("vaig.cli.repl.start_repl") as mock_repl:
+            runner.invoke(
+                app,
+                ["chat", "--workspace", str(workspace_dir)],
+            )
+
+        assert _mock_settings.coding.workspace_root == str(workspace_dir)
+        mock_repl.assert_called_once()
+
+    def test_chat_workspace_not_found(self) -> None:
+        """--workspace with a non-existent directory should exit with error."""
+        result = runner.invoke(
+            app,
+            ["chat", "--workspace", "/nonexistent/path"],
+        )
+
+        assert result.exit_code == 1
+        assert "not found" in result.output

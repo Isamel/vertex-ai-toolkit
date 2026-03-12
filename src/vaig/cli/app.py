@@ -103,6 +103,10 @@ def chat(
     skill: Annotated[Optional[str], typer.Option("--skill", "-s", help="Activate a skill")] = None,
     session: Annotated[Optional[str], typer.Option("--session", help="Load an existing session by ID")] = None,
     name: Annotated[str, typer.Option("--name", "-n", help="Name for new session")] = "chat",
+    workspace: Annotated[
+        Optional[Path],
+        typer.Option("--workspace", "-w", help="Workspace root directory for /code mode"),
+    ] = None,
 ) -> None:
     """Start an interactive chat session (REPL mode).
 
@@ -111,6 +115,7 @@ def chat(
         vaig chat --model gemini-2.5-flash
         vaig chat --skill rca
         vaig chat --session abc123
+        vaig chat -w ./my-project
     """
     from vaig.cli.repl import start_repl
 
@@ -119,6 +124,13 @@ def chat(
 
     if model:
         settings.models.default = model
+
+    if workspace:
+        resolved_ws = workspace.resolve()
+        if not resolved_ws.is_dir():
+            err_console.print(f"[red]Workspace directory not found: {resolved_ws}[/red]")
+            raise typer.Exit(1)
+        settings.coding.workspace_root = str(resolved_ws)
 
     start_repl(
         settings=settings,
@@ -140,6 +152,10 @@ def ask(
     skill: Annotated[Optional[str], typer.Option("--skill", "-s", help="Use a specific skill")] = None,
     no_stream: Annotated[bool, typer.Option("--no-stream", help="Disable streaming output")] = False,
     code: Annotated[bool, typer.Option("--code", help="Enable coding agent mode (read/write/edit files)")] = False,
+    workspace: Annotated[
+        Optional[Path],
+        typer.Option("--workspace", "-w", help="Workspace root directory for code mode"),
+    ] = None,
 ) -> None:
     """Ask a single question and get a response.
 
@@ -148,6 +164,7 @@ def ask(
         vaig ask "Analyze this code" -f main.py
         vaig ask "Investigate this incident" -s rca -f logs.txt
         vaig ask "Add error handling to app.py" --code
+        vaig ask "Fix the bug in utils.py" --code -w ./my-project
     """
     settings = _get_settings(config)
 
@@ -178,6 +195,12 @@ def ask(
 
     # Code mode — use CodingAgent (Tasks 5.1, 5.4, 5.5, 5.6, 5.7)
     if code:
+        if workspace:
+            resolved_ws = workspace.resolve()
+            if not resolved_ws.is_dir():
+                err_console.print(f"[red]Workspace directory not found: {resolved_ws}[/red]")
+                raise typer.Exit(1)
+            settings.coding.workspace_root = str(resolved_ws)
         _execute_code_mode(client, settings, question, context_str)
         return
 
