@@ -1,4 +1,4 @@
-"""Tests for the built-in RCA, Anomaly, Migration, Log Analysis, Error Triage, Config Audit, SLO Review, and Postmortem skills."""
+"""Tests for the built-in RCA, Anomaly, Migration, Log Analysis, Error Triage, Config Audit, SLO Review, Postmortem, Code Review, IaC Review, Cost Analysis, Capacity Planning, and Test Generation skills."""
 
 from __future__ import annotations
 
@@ -356,6 +356,274 @@ class TestPostmortemSkill:
         assert "timeline_builder" in names
         assert "impact_assessor" in names
         assert "postmortem_author" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestCodeReviewSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.code_review.skill import CodeReviewSkill
+
+        skill = CodeReviewSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "code-review"
+        assert meta.display_name == "Code Review"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "code-review" in meta.tags
+        assert "quality" in meta.tags
+        assert "security" in meta.tags
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.code_review.skill import CodeReviewSkill
+
+        skill = CodeReviewSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.code_review.skill import CodeReviewSkill
+
+        skill = CodeReviewSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="def process_payment(card_number, amount):",
+                user_input="Review this payment processing code",
+            )
+            assert "def process_payment(card_number, amount):" in prompt
+            assert "Review this payment processing code" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.code_review.skill import CodeReviewSkill
+
+        skill = CodeReviewSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 3
+        names = {a["name"] for a in agents}
+        assert "code_reviewer" in names
+        assert "security_auditor" in names
+        assert "review_lead" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestIacReviewSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.iac_review.skill import IacReviewSkill
+
+        skill = IacReviewSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "iac-review"
+        assert meta.display_name == "IaC Review"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "iac" in meta.tags
+        assert "terraform" in meta.tags
+        assert "security" in meta.tags
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.iac_review.skill import IacReviewSkill
+
+        skill = IacReviewSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.iac_review.skill import IacReviewSkill
+
+        skill = IacReviewSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context='resource "aws_s3_bucket" "data" { acl = "public-read" }',
+                user_input="Review this Terraform config for security issues",
+            )
+            assert "aws_s3_bucket" in prompt
+            assert "Review this Terraform config for security issues" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.iac_review.skill import IacReviewSkill
+
+        skill = IacReviewSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 3
+        names = {a["name"] for a in agents}
+        assert "plan_analyzer" in names
+        assert "drift_detector" in names
+        assert "iac_reviewer" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestCostAnalysisSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.cost_analysis.skill import CostAnalysisSkill
+
+        skill = CostAnalysisSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "cost-analysis"
+        assert meta.display_name == "Cost Analysis"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "cost" in meta.tags
+        assert "finops" in meta.tags
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.cost_analysis.skill import CostAnalysisSkill
+
+        skill = CostAnalysisSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.cost_analysis.skill import CostAnalysisSkill
+
+        skill = CostAnalysisSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="Monthly AWS bill: $45,000. EC2: $28,000, RDS: $12,000",
+                user_input="Analyze our cloud costs and find savings",
+            )
+            assert "Monthly AWS bill: $45,000" in prompt
+            assert "Analyze our cloud costs and find savings" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.cost_analysis.skill import CostAnalysisSkill
+
+        skill = CostAnalysisSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 2
+        names = {a["name"] for a in agents}
+        assert "resource_scanner" in names
+        assert "cost_optimizer" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestCapacityPlanningSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.capacity_planning.skill import CapacityPlanningSkill
+
+        skill = CapacityPlanningSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "capacity-planning"
+        assert meta.display_name == "Capacity Planning"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "capacity" in meta.tags
+        assert "scaling" in meta.tags
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.capacity_planning.skill import CapacityPlanningSkill
+
+        skill = CapacityPlanningSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.capacity_planning.skill import CapacityPlanningSkill
+
+        skill = CapacityPlanningSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="CPU: 78% avg, Memory: 85% peak, Disk: 92% used",
+                user_input="Plan capacity for Black Friday traffic spike",
+            )
+            assert "CPU: 78% avg" in prompt
+            assert "Plan capacity for Black Friday traffic spike" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.capacity_planning.skill import CapacityPlanningSkill
+
+        skill = CapacityPlanningSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 2
+        names = {a["name"] for a in agents}
+        assert "trend_analyzer" in names
+        assert "capacity_modeler" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestTestGenerationSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.test_generation.skill import TestGenerationSkill
+
+        skill = TestGenerationSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "test-generation"
+        assert meta.display_name == "Test Generation"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.EXECUTE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "testing" in meta.tags
+        assert "tdd" in meta.tags
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.test_generation.skill import TestGenerationSkill
+
+        skill = TestGenerationSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.test_generation.skill import TestGenerationSkill
+
+        skill = TestGenerationSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="class UserService:\n    def create_user(self, email, name):",
+                user_input="Generate tests for the UserService class",
+            )
+            assert "class UserService:" in prompt
+            assert "Generate tests for the UserService class" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.test_generation.skill import TestGenerationSkill
+
+        skill = TestGenerationSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 3
+        names = {a["name"] for a in agents}
+        assert "test_planner" in names
+        assert "test_writer" in names
+        assert "coverage_analyzer" in names
         for agent in agents:
             assert "role" in agent
             assert "system_instruction" in agent

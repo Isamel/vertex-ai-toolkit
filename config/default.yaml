@@ -66,6 +66,16 @@ skills:
     - rca
     - anomaly
     - migration
+    - log-analysis
+    - error-triage
+    - config-audit
+    - slo-review
+    - postmortem
+    - code-review
+    - iac-review
+    - cost-analysis
+    - capacity-planning
+    - test-generation
   custom_dir: null
 
 agents:

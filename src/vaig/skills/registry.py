@@ -24,6 +24,11 @@ _BUILTIN_SKILLS: dict[str, str] = {
     "config-audit": "vaig.skills.config_audit.skill",
     "slo-review": "vaig.skills.slo_review.skill",
     "postmortem": "vaig.skills.postmortem.skill",
+    "code-review": "vaig.skills.code_review.skill",
+    "iac-review": "vaig.skills.iac_review.skill",
+    "cost-analysis": "vaig.skills.cost_analysis.skill",
+    "capacity-planning": "vaig.skills.capacity_planning.skill",
+    "test-generation": "vaig.skills.test_generation.skill",
 }
 
 # Skill class name convention: <Name>Skill (e.g., RCASkill, AnomalySkill)
