@@ -71,7 +71,7 @@ class SessionConfig(BaseModel):
 class SkillsConfig(BaseModel):
     """Skills configuration."""
 
-    enabled: list[str] = Field(default_factory=lambda: ["rca", "anomaly", "migration"])
+    enabled: list[str] = Field(default_factory=lambda: ["rca", "anomaly", "migration", "log-analysis", "error-triage", "config-audit", "slo-review", "postmortem"])
     custom_dir: str | None = None
 
 
