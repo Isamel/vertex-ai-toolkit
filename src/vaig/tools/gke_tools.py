@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import yaml
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
 
@@ -42,6 +46,52 @@ def _k8s_unavailable() -> ToolResult:
 # ── K8s client helper (Task 2.6) ─────────────────────────────
 
 
+def _extract_proxy_url_from_kubeconfig(
+    kubeconfig_path: str | None = None,
+    context: str | None = None,
+) -> str | None:
+    """Extract ``proxy-url`` from the active kubeconfig cluster entry.
+
+    The ``kubernetes`` Python client (v35) ignores the ``proxy-url`` field
+    that ``kubectl`` honours.  This helper reads the raw YAML so we can
+    apply it manually via ``Configuration.proxy``.
+    """
+    kube_path = kubeconfig_path or os.environ.get(
+        "KUBECONFIG", str(Path.home() / ".kube" / "config"),
+    )
+    try:
+        with open(kube_path) as fh:
+            kube_config = yaml.safe_load(fh)
+    except (FileNotFoundError, yaml.YAMLError):
+        return None
+
+    if not isinstance(kube_config, dict):
+        return None
+
+    # Determine the active context
+    ctx_name = context or kube_config.get("current-context")
+    if not ctx_name:
+        return None
+
+    # Locate the context entry
+    contexts = kube_config.get("contexts", [])
+    ctx_entry = next((c for c in contexts if c.get("name") == ctx_name), None)
+    if not ctx_entry:
+        return None
+
+    cluster_name = ctx_entry.get("context", {}).get("cluster")
+    if not cluster_name:
+        return None
+
+    # Locate the cluster entry
+    clusters = kube_config.get("clusters", [])
+    cluster_entry = next((c for c in clusters if c.get("name") == cluster_name), None)
+    if not cluster_entry:
+        return None
+
+    return cluster_entry.get("cluster", {}).get("proxy-url")
+
+
 def _create_k8s_clients(
     gke_config: GKEConfig,
 ) -> tuple[Any, Any, Any] | ToolResult:
@@ -54,32 +104,66 @@ def _create_k8s_clients(
     - Explicit ``kubeconfig_path`` + optional ``context``
     - Default kubeconfig (``~/.kube/config``)
     - In-cluster config (for workload identity / GKE pods)
+
+    The ``proxy-url`` field in kubeconfig cluster entries is **not** supported
+    by the ``kubernetes`` Python client (v35).  This function works around the
+    limitation by parsing the raw YAML, extracting ``proxy-url``, and injecting
+    it into ``kubernetes.client.Configuration.proxy``.
     """
     if not _K8S_AVAILABLE:
         return _k8s_unavailable()
 
     try:
-        if gke_config.kubeconfig_path:
+        kubeconfig_path = gke_config.kubeconfig_path or None
+        context = gke_config.context or None
+
+        # ── Resolve proxy URL ────────────────────────────────
+        proxy_url = _extract_proxy_url_from_kubeconfig(kubeconfig_path, context)
+
+        # Explicit GKEConfig override takes precedence
+        if gke_config.proxy_url:
+            proxy_url = gke_config.proxy_url
+
+        # ── Build a Configuration object with proxy ──────────
+        config = k8s_client.Configuration()
+        if proxy_url:
+            config.proxy = proxy_url
+            logger.info("Using proxy URL for K8s API: %s", proxy_url)
+
+        # ── Load kubeconfig into the Configuration ───────────
+        if kubeconfig_path:
             k8s_config.load_kube_config(
-                config_file=gke_config.kubeconfig_path,
-                context=gke_config.context or None,
+                config_file=kubeconfig_path,
+                context=context,
+                client_configuration=config,
             )
         else:
             try:
-                k8s_config.load_kube_config(context=gke_config.context or None)
+                k8s_config.load_kube_config(
+                    context=context,
+                    client_configuration=config,
+                )
             except k8s_config.ConfigException:
                 # Fallback to in-cluster config (workload identity)
                 k8s_config.load_incluster_config()
+                # In-cluster doesn't need proxy — return plain clients
+                return (
+                    k8s_client.CoreV1Api(),
+                    k8s_client.AppsV1Api(),
+                    k8s_client.CustomObjectsApi(),
+                )
     except Exception as exc:
         return ToolResult(
             output=f"Failed to configure Kubernetes client: {exc}",
             error=True,
         )
 
+    # ── Build API clients with the proxy-aware Configuration ─
+    api_client = k8s_client.ApiClient(config)
     return (
-        k8s_client.CoreV1Api(),
-        k8s_client.AppsV1Api(),
-        k8s_client.CustomObjectsApi(),
+        k8s_client.CoreV1Api(api_client),
+        k8s_client.AppsV1Api(api_client),
+        k8s_client.CustomObjectsApi(api_client),
     )
 
 

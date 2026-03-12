@@ -139,6 +139,10 @@ class GKEConfig(BaseModel):
     context: str = ""
     log_limit: int = 100
     metrics_interval_minutes: int = 60
+    # Proxy URL for private GKE clusters. The kubernetes Python client
+    # ignores the ``proxy-url`` field in kubeconfig; this setting lets
+    # users provide an explicit override via config/CLI.
+    proxy_url: str = ""
 
 
 def _strip_empty_strings(data: dict[str, Any]) -> dict[str, Any]:

@@ -26,6 +26,7 @@ class TestGKEConfig:
         assert cfg.context == ""
         assert cfg.log_limit == 100
         assert cfg.metrics_interval_minutes == 60
+        assert cfg.proxy_url == ""
 
     def test_custom_values(self) -> None:
         cfg = GKEConfig(
@@ -36,6 +37,7 @@ class TestGKEConfig:
             context="gke_my-project_us-central1_prod",
             log_limit=500,
             metrics_interval_minutes=120,
+            proxy_url="https://proxy.example.com:8443",
         )
         assert cfg.cluster_name == "prod-cluster"
         assert cfg.project_id == "my-project-123"
@@ -44,6 +46,7 @@ class TestGKEConfig:
         assert cfg.context == "gke_my-project_us-central1_prod"
         assert cfg.log_limit == 500
         assert cfg.metrics_interval_minutes == 120
+        assert cfg.proxy_url == "https://proxy.example.com:8443"
 
     def test_partial_values(self) -> None:
         cfg = GKEConfig(cluster_name="dev-cluster")

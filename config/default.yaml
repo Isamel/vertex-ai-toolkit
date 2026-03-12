@@ -143,3 +143,4 @@ gke:
   context: ""                     # Kubernetes context to use — uses current-context if empty
   log_limit: 100                  # Max number of log lines to retrieve per pod
   metrics_interval_minutes: 60    # Time window (minutes) for Cloud Monitoring queries
+  proxy_url: ""                   # Proxy URL for private clusters (kubernetes client ignores kubeconfig proxy-url)

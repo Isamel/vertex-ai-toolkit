@@ -22,6 +22,7 @@ def _make_gke_config(**kwargs) -> GKEConfig:
         "context": "",
         "log_limit": 100,
         "metrics_interval_minutes": 60,
+        "proxy_url": "",
     }
     defaults.update(kwargs)
     return GKEConfig(**defaults)
@@ -626,3 +627,229 @@ class TestFormattingHelpers:
         from vaig.tools.gke_tools import _format_generic_table
 
         assert _format_generic_table([]) == "No resources found."
+
+
+# ── _extract_proxy_url_from_kubeconfig ──────────────────────
+
+
+class TestExtractProxyUrlFromKubeconfig:
+    """Tests for _extract_proxy_url_from_kubeconfig helper."""
+
+    _KUBECONFIG_WITH_PROXY = {
+        "current-context": "gke-ctx",
+        "contexts": [
+            {
+                "name": "gke-ctx",
+                "context": {"cluster": "gke-cluster", "user": "gke-user"},
+            },
+        ],
+        "clusters": [
+            {
+                "name": "gke-cluster",
+                "cluster": {
+                    "server": "https://10.168.57.2",
+                    "proxy-url": "https://proxy.example.com:8443",
+                },
+            },
+        ],
+    }
+
+    _KUBECONFIG_NO_PROXY = {
+        "current-context": "gke-ctx",
+        "contexts": [
+            {
+                "name": "gke-ctx",
+                "context": {"cluster": "gke-cluster", "user": "gke-user"},
+            },
+        ],
+        "clusters": [
+            {
+                "name": "gke-cluster",
+                "cluster": {"server": "https://34.1.2.3"},
+            },
+        ],
+    }
+
+    def test_extracts_proxy_url(self, tmp_path) -> None:
+        import yaml as _yaml
+
+        from vaig.tools.gke_tools import _extract_proxy_url_from_kubeconfig
+
+        kc = tmp_path / "config"
+        kc.write_text(_yaml.dump(self._KUBECONFIG_WITH_PROXY))
+
+        result = _extract_proxy_url_from_kubeconfig(str(kc))
+        assert result == "https://proxy.example.com:8443"
+
+    def test_returns_none_when_no_proxy(self, tmp_path) -> None:
+        import yaml as _yaml
+
+        from vaig.tools.gke_tools import _extract_proxy_url_from_kubeconfig
+
+        kc = tmp_path / "config"
+        kc.write_text(_yaml.dump(self._KUBECONFIG_NO_PROXY))
+
+        result = _extract_proxy_url_from_kubeconfig(str(kc))
+        assert result is None
+
+    def test_returns_none_for_missing_file(self) -> None:
+        from vaig.tools.gke_tools import _extract_proxy_url_from_kubeconfig
+
+        result = _extract_proxy_url_from_kubeconfig("/nonexistent/path/config")
+        assert result is None
+
+    def test_returns_none_for_wrong_context(self, tmp_path) -> None:
+        import yaml as _yaml
+
+        from vaig.tools.gke_tools import _extract_proxy_url_from_kubeconfig
+
+        kc = tmp_path / "config"
+        kc.write_text(_yaml.dump(self._KUBECONFIG_WITH_PROXY))
+
+        result = _extract_proxy_url_from_kubeconfig(str(kc), context="nonexistent-ctx")
+        assert result is None
+
+    def test_explicit_context_overrides_current(self, tmp_path) -> None:
+        import yaml as _yaml
+
+        from vaig.tools.gke_tools import _extract_proxy_url_from_kubeconfig
+
+        data = {
+            "current-context": "other-ctx",
+            "contexts": [
+                {
+                    "name": "other-ctx",
+                    "context": {"cluster": "other-cluster", "user": "u"},
+                },
+                {
+                    "name": "proxy-ctx",
+                    "context": {"cluster": "proxy-cluster", "user": "u"},
+                },
+            ],
+            "clusters": [
+                {"name": "other-cluster", "cluster": {"server": "https://1.2.3.4"}},
+                {
+                    "name": "proxy-cluster",
+                    "cluster": {
+                        "server": "https://10.0.0.1",
+                        "proxy-url": "https://my-proxy:443",
+                    },
+                },
+            ],
+        }
+        kc = tmp_path / "config"
+        kc.write_text(_yaml.dump(data))
+
+        result = _extract_proxy_url_from_kubeconfig(str(kc), context="proxy-ctx")
+        assert result == "https://my-proxy:443"
+
+    def test_returns_none_for_invalid_yaml(self, tmp_path) -> None:
+        from vaig.tools.gke_tools import _extract_proxy_url_from_kubeconfig
+
+        kc = tmp_path / "config"
+        kc.write_text("::invalid::yaml::[")
+
+        result = _extract_proxy_url_from_kubeconfig(str(kc))
+        assert result is None
+
+    def test_returns_none_when_no_current_context(self, tmp_path) -> None:
+        import yaml as _yaml
+
+        from vaig.tools.gke_tools import _extract_proxy_url_from_kubeconfig
+
+        kc = tmp_path / "config"
+        kc.write_text(_yaml.dump({"contexts": [], "clusters": []}))
+
+        result = _extract_proxy_url_from_kubeconfig(str(kc))
+        assert result is None
+
+
+# ── _create_k8s_clients with proxy ──────────────────────────
+
+
+class TestCreateK8sClientsProxy:
+    """Tests for proxy-url handling in _create_k8s_clients."""
+
+    @patch("vaig.tools.gke_tools.k8s_config")
+    @patch("vaig.tools.gke_tools.k8s_client")
+    @patch("vaig.tools.gke_tools._extract_proxy_url_from_kubeconfig")
+    def test_proxy_from_kubeconfig_is_set(
+        self,
+        mock_extract: MagicMock,
+        mock_k8s_client: MagicMock,
+        mock_k8s_config: MagicMock,
+    ) -> None:
+        """When kubeconfig has proxy-url, Configuration.proxy must be set."""
+        mock_extract.return_value = "https://proxy.example.com:8443"
+
+        # Stub Configuration so we can inspect it
+        config_instance = MagicMock()
+        mock_k8s_client.Configuration.return_value = config_instance
+
+        cfg = _make_gke_config(kubeconfig_path="/tmp/kube")
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            from vaig.tools.gke_tools import _create_k8s_clients
+
+            result = _create_k8s_clients(cfg)
+
+        # proxy must have been set
+        assert config_instance.proxy == "https://proxy.example.com:8443"
+        # load_kube_config must receive client_configuration
+        mock_k8s_config.load_kube_config.assert_called_once()
+        call_kwargs = mock_k8s_config.load_kube_config.call_args
+        assert call_kwargs.kwargs.get("client_configuration") is config_instance
+        # API clients must be built with the ApiClient wrapping our config
+        mock_k8s_client.ApiClient.assert_called_once_with(config_instance)
+        assert not isinstance(result, ToolResult)
+
+    @patch("vaig.tools.gke_tools.k8s_config")
+    @patch("vaig.tools.gke_tools.k8s_client")
+    @patch("vaig.tools.gke_tools._extract_proxy_url_from_kubeconfig")
+    def test_gkeconfig_proxy_overrides_kubeconfig(
+        self,
+        mock_extract: MagicMock,
+        mock_k8s_client: MagicMock,
+        mock_k8s_config: MagicMock,
+    ) -> None:
+        """GKEConfig.proxy_url should override kubeconfig proxy-url."""
+        mock_extract.return_value = "https://proxy-from-kubeconfig:8443"
+
+        config_instance = MagicMock()
+        mock_k8s_client.Configuration.return_value = config_instance
+
+        cfg = _make_gke_config(proxy_url="https://override-proxy:9090")
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            from vaig.tools.gke_tools import _create_k8s_clients
+
+            _create_k8s_clients(cfg)
+
+        assert config_instance.proxy == "https://override-proxy:9090"
+
+    @patch("vaig.tools.gke_tools.k8s_config")
+    @patch("vaig.tools.gke_tools.k8s_client")
+    @patch("vaig.tools.gke_tools._extract_proxy_url_from_kubeconfig")
+    def test_no_proxy_works_normally(
+        self,
+        mock_extract: MagicMock,
+        mock_k8s_client: MagicMock,
+        mock_k8s_config: MagicMock,
+    ) -> None:
+        """When no proxy-url exists, clients are still created without error."""
+        mock_extract.return_value = None
+
+        config_instance = MagicMock()
+        mock_k8s_client.Configuration.return_value = config_instance
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            from vaig.tools.gke_tools import _create_k8s_clients
+
+            result = _create_k8s_clients(cfg)
+
+        # proxy should NOT have been set (MagicMock default attr, not explicitly set)
+        # Verify load_kube_config was still called with client_configuration
+        mock_k8s_config.load_kube_config.assert_called_once()
+        assert not isinstance(result, ToolResult)
