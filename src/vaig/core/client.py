@@ -6,24 +6,13 @@ import logging
 import random
 import ssl
 import time
-import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import vertexai
 from google.api_core import exceptions as google_exceptions
 
-# Suppress Vertex AI SDK deprecation warning (vertexai.generative_models is deprecated
-# in favor of google-genai SDK, sunset June 2026). We'll migrate when ready.
-# Belt-and-suspenders: filter by message (portable) AND module (Linux path match).
-# On some platforms/SDK versions the module regex alone doesn't match, so the
-# message-only filter catches it regardless.
-warnings.filterwarnings(
-    "ignore",
-    message="This feature is deprecated",
-    category=UserWarning,
-)
-from vertexai.generative_models import (  # noqa: E402
+from vertexai.generative_models import (
     Content,
     GenerationConfig,
     GenerativeModel,
