@@ -783,3 +783,273 @@ class TestGenerateWithTools:
             top_p=0.95,
             top_k=40,
         )
+
+
+# ===========================================================================
+# Empty-prompt-with-history tests (iteration 2+ bug fix)
+# ===========================================================================
+
+
+class TestEmptyPromptWithHistory:
+    """Tests for the empty-prompt-pop-history fix in generate_with_tools.
+
+    On iteration 2+ of a tool-calling loop, the CodingAgent sends an empty
+    prompt because the full context (including function call responses) lives
+    in the history.  The Vertex AI SDK rejects empty prompts with
+    ``TypeError: value must not be empty``.
+
+    The fix: when ``prompt`` is falsy and ``history`` is non-empty, pop the
+    last history entry and use its ``.parts`` as the actual message sent to
+    ``send_message()``.
+    """
+
+    @patch("vaig.core.client.Tool")
+    @patch("vaig.core.client.GenerativeModel")
+    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.get_credentials")
+    def test_empty_string_prompt_pops_last_history_entry(
+        self,
+        mock_get_creds: MagicMock,
+        mock_vertexai_init: MagicMock,
+        mock_gen_config_cls: MagicMock,
+        mock_model_cls: MagicMock,
+        mock_tool_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """Empty string prompt with history → pops last entry, sends its parts."""
+        mock_get_creds.return_value = MagicMock()
+        response = _make_tool_response(parts=[_make_text_part("tool response")])
+        mock_chat = MagicMock()
+        mock_chat.send_message.return_value = response
+        mock_model = MagicMock()
+        mock_model.start_chat.return_value = mock_chat
+        mock_model_cls.return_value = mock_model
+
+        # Create mock Content objects to simulate what _build_history returns.
+        # We patch _build_history because Content() rejects MagicMock parts.
+        fn_response_parts = [MagicMock(name="fn_response_part")]
+        mock_content_1 = MagicMock(name="content_user")
+        mock_content_2 = MagicMock(name="content_model")
+        mock_content_3 = MagicMock(name="content_fn_response")
+        mock_content_3.parts = fn_response_parts
+
+        with patch.object(
+            GeminiClient,
+            "_build_history",
+            return_value=[mock_content_1, mock_content_2, mock_content_3],
+        ):
+            from vaig.core.client import ChatMessage
+
+            history = [
+                ChatMessage(role="user", content="Fix the bug"),
+                ChatMessage(role="model", content="Let me read the file"),
+                ChatMessage(role="user", content="fn response placeholder"),
+            ]
+
+            result = client.generate_with_tools(
+                "",  # <-- Empty prompt (iteration 2+)
+                tool_declarations=[MagicMock()],
+                history=history,
+            )
+
+        # The last history entry should have been popped, its parts used as prompt
+        mock_chat.send_message.assert_called_once()
+        actual_prompt = mock_chat.send_message.call_args[0][0]
+        assert actual_prompt == fn_response_parts
+        assert result.text == "tool response"
+
+        # start_chat should have received history WITHOUT the last entry (popped)
+        start_chat_kwargs = mock_model.start_chat.call_args[1]
+        assert len(start_chat_kwargs["history"]) == 2
+
+    @patch("vaig.core.client.Tool")
+    @patch("vaig.core.client.GenerativeModel")
+    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.get_credentials")
+    def test_empty_list_prompt_pops_last_history_entry(
+        self,
+        mock_get_creds: MagicMock,
+        mock_vertexai_init: MagicMock,
+        mock_gen_config_cls: MagicMock,
+        mock_model_cls: MagicMock,
+        mock_tool_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """Empty list [] prompt with history → same pop behavior."""
+        mock_get_creds.return_value = MagicMock()
+        response = _make_tool_response(parts=[_make_text_part("done")])
+        mock_chat = MagicMock()
+        mock_chat.send_message.return_value = response
+        mock_model = MagicMock()
+        mock_model.start_chat.return_value = mock_chat
+        mock_model_cls.return_value = mock_model
+
+        fn_response_parts = [MagicMock(name="fn_response_part")]
+        mock_content_1 = MagicMock(name="content_user")
+        mock_content_2 = MagicMock(name="content_fn_response")
+        mock_content_2.parts = fn_response_parts
+
+        with patch.object(
+            GeminiClient,
+            "_build_history",
+            return_value=[mock_content_1, mock_content_2],
+        ):
+            from vaig.core.client import ChatMessage
+
+            history = [
+                ChatMessage(role="user", content="Run tests"),
+                ChatMessage(role="user", content="fn response placeholder"),
+            ]
+
+            result = client.generate_with_tools(
+                [],  # <-- Empty list (CodingAgent sends this on iteration 2+)
+                tool_declarations=[MagicMock()],
+                history=history,
+            )
+
+        actual_prompt = mock_chat.send_message.call_args[0][0]
+        assert actual_prompt == fn_response_parts
+        assert result.text == "done"
+
+        # History should have 1 entry (2nd was popped)
+        start_chat_kwargs = mock_model.start_chat.call_args[1]
+        assert len(start_chat_kwargs["history"]) == 1
+
+    @patch("vaig.core.client.Tool")
+    @patch("vaig.core.client.GenerativeModel")
+    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.get_credentials")
+    def test_nonempty_prompt_with_history_does_not_pop(
+        self,
+        mock_get_creds: MagicMock,
+        mock_vertexai_init: MagicMock,
+        mock_gen_config_cls: MagicMock,
+        mock_model_cls: MagicMock,
+        mock_tool_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """Non-empty prompt with history → uses prompt as-is, no popping."""
+        mock_get_creds.return_value = MagicMock()
+        response = _make_tool_response(parts=[_make_text_part("reply")])
+        mock_chat = MagicMock()
+        mock_chat.send_message.return_value = response
+        mock_model = MagicMock()
+        mock_model.start_chat.return_value = mock_chat
+        mock_model_cls.return_value = mock_model
+
+        mock_content_1 = MagicMock(name="content_user")
+        mock_content_2 = MagicMock(name="content_model")
+
+        with patch.object(
+            GeminiClient,
+            "_build_history",
+            return_value=[mock_content_1, mock_content_2],
+        ):
+            from vaig.core.client import ChatMessage
+
+            history = [
+                ChatMessage(role="user", content="First message"),
+                ChatMessage(role="model", content="First reply"),
+            ]
+
+            result = client.generate_with_tools(
+                "Follow up question",  # <-- Non-empty: first iteration
+                tool_declarations=[MagicMock()],
+                history=history,
+            )
+
+        # prompt should be sent as-is
+        actual_prompt = mock_chat.send_message.call_args[0][0]
+        assert actual_prompt == "Follow up question"
+
+        # History should have ALL 2 entries (nothing popped)
+        start_chat_kwargs = mock_model.start_chat.call_args[1]
+        assert len(start_chat_kwargs["history"]) == 2
+        assert result.text == "reply"
+
+    @patch("vaig.core.client.Tool")
+    @patch("vaig.core.client.GenerativeModel")
+    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.get_credentials")
+    def test_empty_prompt_without_history_uses_generate_content(
+        self,
+        mock_get_creds: MagicMock,
+        mock_vertexai_init: MagicMock,
+        mock_gen_config_cls: MagicMock,
+        mock_model_cls: MagicMock,
+        mock_tool_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """Empty prompt without history → falls through to generate_content (no pop)."""
+        mock_get_creds.return_value = MagicMock()
+        response = _make_tool_response(parts=[_make_text_part("ok")])
+        mock_model = MagicMock()
+        mock_model.generate_content.return_value = response
+        mock_model_cls.return_value = mock_model
+
+        result = client.generate_with_tools(
+            "",  # Empty prompt, but no history → no pop logic
+            tool_declarations=[MagicMock()],
+        )
+
+        # Should use generate_content (no history branch)
+        mock_model.generate_content.assert_called_once()
+        mock_model.start_chat.assert_not_called()
+        assert result.text == "ok"
+
+    @patch("vaig.core.client.Tool")
+    @patch("vaig.core.client.GenerativeModel")
+    @patch("vaig.core.client.GenerationConfig")
+    @patch("vaig.core.client.vertexai.init")
+    @patch("vaig.core.client.get_credentials")
+    def test_empty_prompt_single_history_entry_pops_to_empty(
+        self,
+        mock_get_creds: MagicMock,
+        mock_vertexai_init: MagicMock,
+        mock_gen_config_cls: MagicMock,
+        mock_model_cls: MagicMock,
+        mock_tool_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """Edge case: single history entry + empty prompt → pops it, chat gets empty history."""
+        mock_get_creds.return_value = MagicMock()
+        response = _make_tool_response(parts=[_make_text_part("edge")])
+        mock_chat = MagicMock()
+        mock_chat.send_message.return_value = response
+        mock_model = MagicMock()
+        mock_model.start_chat.return_value = mock_chat
+        mock_model_cls.return_value = mock_model
+
+        fn_parts = [MagicMock(name="the_only_part")]
+        mock_content = MagicMock(name="content_fn")
+        mock_content.parts = fn_parts
+
+        with patch.object(
+            GeminiClient,
+            "_build_history",
+            return_value=[mock_content],
+        ):
+            from vaig.core.client import ChatMessage
+
+            history = [
+                ChatMessage(role="user", content="fn response placeholder"),
+            ]
+
+            result = client.generate_with_tools(
+                "",
+                tool_declarations=[MagicMock()],
+                history=history,
+            )
+
+        # The single entry was popped → chat history is empty
+        start_chat_kwargs = mock_model.start_chat.call_args[1]
+        assert len(start_chat_kwargs["history"]) == 0
+
+        # The popped entry's parts become the prompt
+        actual_prompt = mock_chat.send_message.call_args[0][0]
+        assert actual_prompt == fn_parts
+        assert result.text == "edge"

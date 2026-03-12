@@ -288,10 +288,10 @@ class CodingAgent(BaseAgent):
                 Content(role="user", parts=response_parts)
             )
 
-            # Continue the loop — send empty prompt (history carries context)
-            # The prompt for subsequent iterations is empty because
-            # the conversation history already contains the full context.
-            # generate_with_tools will use history to continue the conversation.
+            # Continue the loop — send empty prompt (history carries context).
+            # generate_with_tools handles this by popping the last history
+            # entry (the function responses) and using it as the prompt
+            # for send_message(), since the SDK rejects empty prompts.
 
         # If we get here, max iterations exceeded
         msg = (

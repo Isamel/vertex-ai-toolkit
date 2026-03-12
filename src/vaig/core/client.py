@@ -472,6 +472,17 @@ class GeminiClient:
             try:
                 if history:
                     chat_history = self._build_history(history)
+
+                    # On iteration 2+, the CodingAgent sends an empty prompt
+                    # because the full context lives in the history (including
+                    # function call responses).  The SDK rejects empty prompts
+                    # with "value must not be empty", so we pop the last
+                    # history entry and send its parts as the new message.
+                    actual_prompt: Any = prompt
+                    if not prompt and chat_history:
+                        last_entry = chat_history.pop()
+                        actual_prompt = last_entry.parts
+
                     # response_validation=False: tool-use responses may contain
                     # only function calls (no text), which the SDK validator
                     # rejects as "blocked".  We handle validation ourselves.
@@ -480,7 +491,7 @@ class GeminiClient:
                         response_validation=False,
                     )
                     response = chat.send_message(
-                        prompt, generation_config=gen_config, tools=tools,
+                        actual_prompt, generation_config=gen_config, tools=tools,
                     )
                 else:
                     response = model.generate_content(
