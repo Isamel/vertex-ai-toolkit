@@ -76,6 +76,9 @@ skills:
     - cost-analysis
     - capacity-planning
     - test-generation
+    - compliance-check
+    - api-design
+    - runbook-generator
   custom_dir: null
 
 agents:

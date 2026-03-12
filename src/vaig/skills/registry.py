@@ -29,6 +29,9 @@ _BUILTIN_SKILLS: dict[str, str] = {
     "cost-analysis": "vaig.skills.cost_analysis.skill",
     "capacity-planning": "vaig.skills.capacity_planning.skill",
     "test-generation": "vaig.skills.test_generation.skill",
+    "compliance-check": "vaig.skills.compliance_check.skill",
+    "api-design": "vaig.skills.api_design.skill",
+    "runbook-generator": "vaig.skills.runbook_generator.skill",
 }
 
 # Skill class name convention: <Name>Skill (e.g., RCASkill, AnomalySkill)

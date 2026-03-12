@@ -1,4 +1,4 @@
-"""Tests for the built-in RCA, Anomaly, Migration, Log Analysis, Error Triage, Config Audit, SLO Review, Postmortem, Code Review, IaC Review, Cost Analysis, Capacity Planning, and Test Generation skills."""
+"""Tests for all 16 built-in skills: RCA, Anomaly, Migration, Log Analysis, Error Triage, Config Audit, SLO Review, Postmortem, Code Review, IaC Review, Cost Analysis, Capacity Planning, Test Generation, Compliance Check, API Design, and Runbook Generator."""
 
 from __future__ import annotations
 
@@ -624,6 +624,169 @@ class TestTestGenerationSkill:
         assert "test_planner" in names
         assert "test_writer" in names
         assert "coverage_analyzer" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestComplianceCheckSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.compliance_check.skill import ComplianceCheckSkill
+
+        skill = ComplianceCheckSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "compliance-check"
+        assert meta.display_name == "Compliance Check"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "compliance" in meta.tags
+        assert "audit" in meta.tags
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.compliance_check.skill import ComplianceCheckSkill
+
+        skill = ComplianceCheckSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.compliance_check.skill import ComplianceCheckSkill
+
+        skill = ComplianceCheckSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="AWS account with S3 buckets and RDS instances",
+                user_input="Check SOC 2 compliance for our cloud infrastructure",
+            )
+            assert "AWS account with S3 buckets and RDS instances" in prompt
+            assert "Check SOC 2 compliance for our cloud infrastructure" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.compliance_check.skill import ComplianceCheckSkill
+
+        skill = ComplianceCheckSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 3
+        names = {a["name"] for a in agents}
+        assert "regulation_mapper" in names
+        assert "gap_auditor" in names
+        assert "compliance_lead" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestAPIDesignSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.api_design.skill import APIDesignSkill
+
+        skill = APIDesignSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "api-design"
+        assert meta.display_name == "API Design Review"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "api" in meta.tags
+        assert "rest" in meta.tags
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.api_design.skill import APIDesignSkill
+
+        skill = APIDesignSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.api_design.skill import APIDesignSkill
+
+        skill = APIDesignSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="GET /api/users/{id}\nPOST /api/users\nDELETE /api/users/{id}",
+                user_input="Review this REST API for best practices",
+            )
+            assert "GET /api/users/{id}" in prompt
+            assert "Review this REST API for best practices" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.api_design.skill import APIDesignSkill
+
+        skill = APIDesignSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 3
+        names = {a["name"] for a in agents}
+        assert "contract_analyzer" in names
+        assert "security_reviewer" in names
+        assert "api_design_lead" in names
+        for agent in agents:
+            assert "role" in agent
+            assert "system_instruction" in agent
+            assert "model" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 0
+
+
+class TestRunbookGeneratorSkill:
+    def test_metadata(self) -> None:
+        from vaig.skills.runbook_generator.skill import RunbookGeneratorSkill
+
+        skill = RunbookGeneratorSkill()
+        meta = skill.get_metadata()
+        assert meta.name == "runbook-generator"
+        assert meta.display_name == "Runbook Generator"
+        assert meta.version == "1.0.0"
+        assert SkillPhase.ANALYZE in meta.supported_phases
+        assert SkillPhase.PLAN in meta.supported_phases
+        assert SkillPhase.EXECUTE in meta.supported_phases
+        assert SkillPhase.REPORT in meta.supported_phases
+        assert "runbook" in meta.tags
+        assert "sre" in meta.tags
+
+    def test_system_instruction(self) -> None:
+        from vaig.skills.runbook_generator.skill import RunbookGeneratorSkill
+
+        skill = RunbookGeneratorSkill()
+        instruction = skill.get_system_instruction()
+        assert len(instruction) > 0
+        assert isinstance(instruction, str)
+
+    def test_phase_prompts(self) -> None:
+        from vaig.skills.runbook_generator.skill import RunbookGeneratorSkill
+
+        skill = RunbookGeneratorSkill()
+        for phase in [SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.REPORT]:
+            prompt = skill.get_phase_prompt(
+                phase,
+                context="Production Kubernetes cluster with 50 nodes and PostgreSQL database",
+                user_input="Create a runbook for database failover procedure",
+            )
+            assert "Production Kubernetes cluster with 50 nodes and PostgreSQL database" in prompt
+            assert "Create a runbook for database failover procedure" in prompt
+
+    def test_agents_config(self) -> None:
+        from vaig.skills.runbook_generator.skill import RunbookGeneratorSkill
+
+        skill = RunbookGeneratorSkill()
+        agents = skill.get_agents_config()
+        assert len(agents) == 3
+        names = {a["name"] for a in agents}
+        assert "procedure_analyst" in names
+        assert "step_writer" in names
+        assert "runbook_lead" in names
         for agent in agents:
             assert "role" in agent
             assert "system_instruction" in agent
