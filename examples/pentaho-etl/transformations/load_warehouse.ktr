@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  load_warehouse.ktr — Pentaho Transformation
+  Loads transformed sales data into the data warehouse staging and fact tables.
+
+  Steps:
+    1. Set variables       — Initialise LOAD_BATCH_ID from system timestamp and RECORD_COUNT
+    2. Add sequence         — Generate surrogate key fact_sale_sk for fact table rows
+    3. Insert/Update staging — Upsert rows into staging.stg_daily_sales (lookup on txn_id + sku)
+    4. Table output facts   — Bulk insert into dw.fact_daily_sales with configurable batch size
+    5. Call procedure       — Execute dw.sp_update_aggregates to refresh downstream aggregates
+    6. Log result           — Write row count summary to transformation log
+
+  Pentaho Steps Used:
+    - SetVariable
+    - AddSequence
+    - InsertUpdate
+    - TableOutput
+    - DBProcedure
+    - WriteToLog
+-->
+<transformation>
+  <info>
+    <name>load_warehouse</name>
+    <description>Load transformed sales data into warehouse staging and fact tables</description>
+    <extended_description>
+      Orchestrates the warehouse load phase of the daily retail ETL pipeline.
+      First assigns a batch identifier and surrogate keys, then upserts into
+      the staging table for idempotent reloads, bulk-inserts into the fact
+      table, and finally calls a stored procedure to refresh aggregate tables.
+    </extended_description>
+    <trans_type>Normal</trans_type>
+    <directory>/</directory>
+    <parameters>
+      <parameter>
+        <name>SALES_DATE</name>
+        <default_value>2025-03-01</default_value>
+        <description>Processing date for this load run (YYYY-MM-DD)</description>
+      </parameter>
+      <parameter>
+        <name>BATCH_SIZE</name>
+        <default_value>10000</default_value>
+        <description>Number of rows per batch commit for TableOutput</description>
+      </parameter>
+    </parameters>
+  </info>
+
+  <connection>
+    <name>warehouse_db</name>
+    <server>localhost</server>
+    <type>POSTGRESQL</type>
+    <access>Native</access>
+    <database>retail_warehouse</database>
+    <port>5432</port>
+    <username>${WAREHOUSE_DB_USER}</username>
+    <password>${WAREHOUSE_DB_PASS}</password>
+    <attributes>
+      <attribute><code>EXTRA_OPTION_POSTGRESQL.defaultRowFetchSize</code><attribute>5000</attribute></attribute>
+      <attribute><code>EXTRA_OPTION_POSTGRESQL.reWriteBatchedInserts</code><attribute>true</attribute></attribute>
+    </attributes>
+  </connection>
+
+  <order>
+    <hop><from>Set variables</from><to>Add sequence</to><enabled>Y</enabled></hop>
+    <hop><from>Add sequence</from><to>Insert/Update staging</to><enabled>Y</enabled></hop>
+    <hop><from>Insert/Update staging</from><to>Table output facts</to><enabled>Y</enabled></hop>
+    <hop><from>Table output facts</from><to>Call procedure</to><enabled>Y</enabled></hop>
+    <hop><from>Call procedure</from><to>Log result</to><enabled>Y</enabled></hop>
+  </order>
+
+  <!-- Step 1: Set variables — initialise batch tracking fields -->
+  <step>
+    <name>Set variables</name>
+    <type>SetVariable</type>
+    <description>Set LOAD_BATCH_ID from system time and initialise RECORD_COUNT</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <fields>
+      <field>
+        <field_name>LOAD_BATCH_ID</field_name>
+        <variable_name>LOAD_BATCH_ID</variable_name>
+        <variable_type>JVM</variable_type>
+        <default_value>${Internal.Transformation.Date.Start.Formatted}</default_value>
+      </field>
+      <field>
+        <field_name>RECORD_COUNT</field_name>
+        <variable_name>RECORD_COUNT</variable_name>
+        <variable_type>JVM</variable_type>
+        <default_value>0</default_value>
+      </field>
+    </fields>
+    <use_formatting>Y</use_formatting>
+    <GUI>
+      <xloc>100</xloc>
+      <yloc>200</yloc>
+    </GUI>
+  </step>
+
+  <!-- Step 2: Add sequence — surrogate key for fact table -->
+  <step>
+    <name>Add sequence</name>
+    <type>Sequence</type>
+    <description>Generate surrogate key fact_sale_sk for each row</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <valuename>fact_sale_sk</valuename>
+    <use_database>N</use_database>
+    <use_counter>Y</use_counter>
+    <counter_name>fact_sale_sk_counter</counter_name>
+    <start_at>1</start_at>
+    <increment_by>1</increment_by>
+    <max_value>999999999</max_value>
+    <GUI>
+      <xloc>275</xloc>
+      <yloc>200</yloc>
+    </GUI>
+  </step>
+
+  <!-- Step 3: Insert/Update staging — upsert into staging table -->
+  <step>
+    <name>Insert/Update staging</name>
+    <type>InsertUpdate</type>
+    <description>Upsert rows into staging.stg_daily_sales keyed on txn_id + sku</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <connection>warehouse_db</connection>
+    <commit>1000</commit>
+    <schema>staging</schema>
+    <table>stg_daily_sales</table>
+    <update_bypassed>N</update_bypassed>
+    <lookup>
+      <key>
+        <name>txn_id</name>
+        <field>txn_id</field>
+        <condition>=</condition>
+        <name2/>
+      </key>
+      <key>
+        <name>sku</name>
+        <field>sku</field>
+        <condition>=</condition>
+        <name2/>
+      </key>
+    </lookup>
+    <values>
+      <value><name>txn_id</name><rename>txn_id</rename><update>N</update></value>
+      <value><name>store_id</name><rename>store_id</rename><update>Y</update></value>
+      <value><name>order_date</name><rename>order_date</rename><update>Y</update></value>
+      <value><name>sku</name><rename>sku</rename><update>N</update></value>
+      <value><name>product_name</name><rename>product_name</rename><update>Y</update></value>
+      <value><name>quantity</name><rename>quantity</rename><update>Y</update></value>
+      <value><name>unit_price</name><rename>unit_price</rename><update>Y</update></value>
+      <value><name>discount_pct</name><rename>discount_pct</rename><update>Y</update></value>
+      <value><name>payment_method</name><rename>payment_method</rename><update>Y</update></value>
+      <value><name>source_system</name><rename>source_system</rename><update>Y</update></value>
+      <value><name>load_timestamp</name><rename>load_timestamp</rename><update>Y</update></value>
+      <value><name>category_name</name><rename>category_name</rename><update>Y</update></value>
+      <value><name>region</name><rename>region</rename><update>Y</update></value>
+      <value><name>district</name><rename>district</rename><update>Y</update></value>
+      <value><name>store_name</name><rename>store_name</rename><update>Y</update></value>
+      <value><name>net_amount</name><rename>net_amount</rename><update>Y</update></value>
+      <value><name>gross_amount</name><rename>gross_amount</rename><update>Y</update></value>
+      <value><name>payment_category</name><rename>payment_category</rename><update>Y</update></value>
+      <value><name>row_id</name><rename>row_id</rename><update>Y</update></value>
+    </values>
+    <GUI>
+      <xloc>450</xloc>
+      <yloc>200</yloc>
+    </GUI>
+  </step>
+
+  <!-- Step 4: Table output facts — bulk insert into fact table -->
+  <step>
+    <name>Table output facts</name>
+    <type>TableOutput</type>
+    <description>Bulk insert rows into dw.fact_daily_sales</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <connection>warehouse_db</connection>
+    <schema>dw</schema>
+    <table>fact_daily_sales</table>
+    <commit>${BATCH_SIZE}</commit>
+    <truncate>N</truncate>
+    <ignore_errors>N</ignore_errors>
+    <use_batch>Y</use_batch>
+    <specify_fields>Y</specify_fields>
+    <partitioning_enabled>N</partitioning_enabled>
+    <partitioning_field/>
+    <partitioning_daily>N</partitioning_daily>
+    <partitioning_monthly>Y</partitioning_monthly>
+    <tablename_in_field>N</tablename_in_field>
+    <tablename_field/>
+    <tablename_in_table>Y</tablename_in_table>
+    <return_keys>N</return_keys>
+    <return_field/>
+    <fields>
+      <field><column_name>fact_sale_sk</column_name><stream_name>fact_sale_sk</stream_name></field>
+      <field><column_name>txn_id</column_name><stream_name>txn_id</stream_name></field>
+      <field><column_name>store_id</column_name><stream_name>store_id</stream_name></field>
+      <field><column_name>order_date</column_name><stream_name>order_date</stream_name></field>
+      <field><column_name>sku</column_name><stream_name>sku</stream_name></field>
+      <field><column_name>product_name</column_name><stream_name>product_name</stream_name></field>
+      <field><column_name>quantity</column_name><stream_name>quantity</stream_name></field>
+      <field><column_name>unit_price</column_name><stream_name>unit_price</stream_name></field>
+      <field><column_name>discount_pct</column_name><stream_name>discount_pct</stream_name></field>
+      <field><column_name>net_amount</column_name><stream_name>net_amount</stream_name></field>
+      <field><column_name>gross_amount</column_name><stream_name>gross_amount</stream_name></field>
+      <field><column_name>payment_method</column_name><stream_name>payment_method</stream_name></field>
+      <field><column_name>payment_category</column_name><stream_name>payment_category</stream_name></field>
+      <field><column_name>source_system</column_name><stream_name>source_system</stream_name></field>
+      <field><column_name>category_name</column_name><stream_name>category_name</stream_name></field>
+      <field><column_name>region</column_name><stream_name>region</stream_name></field>
+      <field><column_name>district</column_name><stream_name>district</stream_name></field>
+      <field><column_name>store_name</column_name><stream_name>store_name</stream_name></field>
+      <field><column_name>load_timestamp</column_name><stream_name>load_timestamp</stream_name></field>
+      <field><column_name>load_batch_id</column_name><stream_name>LOAD_BATCH_ID</stream_name></field>
+      <field><column_name>row_id</column_name><stream_name>row_id</stream_name></field>
+    </fields>
+    <GUI>
+      <xloc>625</xloc>
+      <yloc>200</yloc>
+    </GUI>
+  </step>
+
+  <!-- Step 5: Call procedure — refresh aggregate tables after load -->
+  <step>
+    <name>Call procedure</name>
+    <type>DBProc</type>
+    <description>Call dw.sp_update_aggregates to refresh downstream aggregate tables</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <connection>warehouse_db</connection>
+    <procedure>dw.sp_update_aggregates</procedure>
+    <lookup>
+      <arg>
+        <name>sales_date_param</name>
+        <direction>IN</direction>
+        <type>String</type>
+        <default_value>${SALES_DATE}</default_value>
+      </arg>
+    </lookup>
+    <result>
+      <name>proc_result</name>
+      <type>Integer</type>
+    </result>
+    <auto_commit>Y</auto_commit>
+    <GUI>
+      <xloc>800</xloc>
+      <yloc>200</yloc>
+    </GUI>
+  </step>
+
+  <!-- Step 6: Log result — write load summary to transformation log -->
+  <step>
+    <name>Log result</name>
+    <type>WriteToLog</type>
+    <description>Log the number of rows loaded and batch identifier</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <loglevel>log_level_basic</loglevel>
+    <displayHeader>Y</displayHeader>
+    <limitRows>N</limitRows>
+    <limitRowsNumber>0</limitRowsNumber>
+    <logmessage>
+      === LOAD COMPLETE ===
+      Batch ID : ${LOAD_BATCH_ID}
+      Sales Date : ${SALES_DATE}
+      Rows Loaded: ${RECORD_COUNT}
+      Target     : dw.fact_daily_sales
+    </logmessage>
+    <fields>
+      <field><name>fact_sale_sk</name></field>
+      <field><name>txn_id</name></field>
+      <field><name>store_id</name></field>
+      <field><name>net_amount</name></field>
+    </fields>
+    <GUI>
+      <xloc>975</xloc>
+      <yloc>200</yloc>
+    </GUI>
+  </step>
+
+</transformation>

@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  route_output.ktr — Pentaho Transformation
+  Routes merged/unified sales rows to region-specific outputs using Switch/Case.
+
+  Steps:
+    1. Input             — Receives merged/unified rows from upstream
+    2. Switch by region  — Routes rows based on region field value
+    3. Output NE         — Dummy output for NORTHEAST partition
+    4. Output SE         — Dummy output for SOUTHEAST partition
+    5. Output MW         — Dummy output for MIDWEST partition
+    6. Output W          — Dummy output for WEST partition
+    7. Output SW         — Dummy output for SOUTHWEST partition
+    8. Output OTHER      — Dummy output for unmatched/unknown regions
+
+  Pentaho Steps Used:
+    - Dummy
+    - SwitchCase
+-->
+<transformation>
+  <info>
+    <name>route_output</name>
+    <description>Route sales rows to region-partitioned outputs via Switch/Case</description>
+    <extended_description>
+      Receives unified sales rows and routes them to region-specific
+      output streams using the SwitchCase step. Each target is a Dummy
+      placeholder; in production these would be replaced with partitioned
+      file or table writers (e.g. S3 prefix per region, or Hive partitions).
+      Demonstrates the Switch/Case pattern that maps to partition-based
+      writes in AWS Glue or similar cloud ETL engines.
+    </extended_description>
+    <trans_type>Normal</trans_type>
+    <directory>/</directory>
+    <parameters>
+      <parameter>
+        <name>ACTIVE_REGIONS</name>
+        <default_value>NORTHEAST,SOUTHEAST,MIDWEST,WEST,SOUTHWEST</default_value>
+        <description>Comma-separated list of active regions to route</description>
+      </parameter>
+    </parameters>
+  </info>
+
+  <order>
+    <hop><from>Input</from><to>Switch by region</to><enabled>Y</enabled></hop>
+    <hop><from>Switch by region</from><to>Output NE</to><enabled>Y</enabled></hop>
+    <hop><from>Switch by region</from><to>Output SE</to><enabled>Y</enabled></hop>
+    <hop><from>Switch by region</from><to>Output MW</to><enabled>Y</enabled></hop>
+    <hop><from>Switch by region</from><to>Output W</to><enabled>Y</enabled></hop>
+    <hop><from>Switch by region</from><to>Output SW</to><enabled>Y</enabled></hop>
+    <hop><from>Switch by region</from><to>Output OTHER</to><enabled>Y</enabled></hop>
+  </order>
+
+  <!-- Step 1: Input — receives merged/unified rows from upstream -->
+  <step>
+    <name>Input</name>
+    <type>Dummy</type>
+    <description>Placeholder input receiving rows from upstream transformation</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <GUI>
+      <xloc>100</xloc>
+      <yloc>200</yloc>
+    </GUI>
+  </step>
+
+  <!-- Step 2: Switch by region — SwitchCase routing on the region field -->
+  <step>
+    <name>Switch by region</name>
+    <type>SwitchCase</type>
+    <description>Route each row to the output matching its region value</description>
+    <distribute>N</distribute>
+    <copies>1</copies>
+    <fieldname>region</fieldname>
+    <use_contains>N</use_contains>
+    <case_value_type>String</case_value_type>
+    <case_value_format/>
+    <case_value_decimal/>
+    <case_value_group/>
+    <default_target_step>Output OTHER</default_target_step>
+    <cases>
+      <case>
+        <value>NORTHEAST</value>
+        <target_step>Output NE</target_step>
+      </case>
+      <case>
+        <value>SOUTHEAST</value>
+        <target_step>Output SE</target_step>
+      </case>
+      <case>
+        <value>MIDWEST</value>
+        <target_step>Output MW</target_step>
+      </case>
+      <case>
+        <value>WEST</value>
+        <target_step>Output W</target_step>
+      </case>
+      <case>
+        <value>SOUTHWEST</value>
+        <target_step>Output SW</target_step>
+      </case>
+    </cases>
+    <GUI>
+      <xloc>300</xloc>
+      <yloc>200</yloc>
+    </GUI>
+  </step>
+
+  <!-- Step 3: Output NE — NORTHEAST partition -->
+  <step>
+    <name>Output NE</name>
+    <type>Dummy</type>
+    <description>Partition output for NORTHEAST region (replace with writer in production)</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <GUI>
+      <xloc>550</xloc>
+      <yloc>50</yloc>
+    </GUI>
+  </step>
+
+  <!-- Step 4: Output SE — SOUTHEAST partition -->
+  <step>
+    <name>Output SE</name>
+    <type>Dummy</type>
+    <description>Partition output for SOUTHEAST region (replace with writer in production)</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <GUI>
+      <xloc>550</xloc>
+      <yloc>125</yloc>
+    </GUI>
+  </step>
+
+  <!-- Step 5: Output MW — MIDWEST partition -->
+  <step>
+    <name>Output MW</name>
+    <type>Dummy</type>
+    <description>Partition output for MIDWEST region (replace with writer in production)</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <GUI>
+      <xloc>550</xloc>
+      <yloc>200</yloc>
+    </GUI>
+  </step>
+
+  <!-- Step 6: Output W — WEST partition -->
+  <step>
+    <name>Output W</name>
+    <type>Dummy</type>
+    <description>Partition output for WEST region (replace with writer in production)</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <GUI>
+      <xloc>550</xloc>
+      <yloc>275</yloc>
+    </GUI>
+  </step>
+
+  <!-- Step 7: Output SW — SOUTHWEST partition -->
+  <step>
+    <name>Output SW</name>
+    <type>Dummy</type>
+    <description>Partition output for SOUTHWEST region (replace with writer in production)</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <GUI>
+      <xloc>550</xloc>
+      <yloc>350</yloc>
+    </GUI>
+  </step>
+
+  <!-- Step 8: Output OTHER — default/unmatched regions -->
+  <step>
+    <name>Output OTHER</name>
+    <type>Dummy</type>
+    <description>Catch-all output for rows with unrecognized region values</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <GUI>
+      <xloc>550</xloc>
+      <yloc>425</yloc>
+    </GUI>
+  </step>
+
+</transformation>

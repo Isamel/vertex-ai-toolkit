@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ingest_pos_sales.ktr — Pentaho Transformation
+  Reads daily POS sales data from CSV files.
+
+  Steps:
+    1. CSV file input  — Read from ${POS_INPUT_DIR}/*.csv
+    2. Select values   — Rename and cast columns to standard types
+    3. Add constants   — Add source_system = 'POS' and load_timestamp
+    4. Output          — Pass rows downstream (used by merge_sources.ktr)
+
+  Pentaho Steps Used:
+    - CsvInput
+    - SelectValues
+    - Constant
+-->
+<transformation>
+  <info>
+    <name>ingest_pos_sales</name>
+    <description>Ingest daily POS sales data from CSV files</description>
+    <extended_description>
+      Reads CSV files produced by point-of-sale terminals.
+      Each file contains one day of transactions for all stores.
+      Renames columns to match the canonical schema and casts types.
+    </extended_description>
+    <trans_type>Normal</trans_type>
+    <directory>/</directory>
+    <parameters>
+      <parameter>
+        <name>POS_INPUT_DIR</name>
+        <default_value>/data/pos/daily</default_value>
+        <description>Directory containing POS CSV files</description>
+      </parameter>
+      <parameter>
+        <name>SALES_DATE</name>
+        <default_value>2025-03-01</default_value>
+        <description>Processing date (YYYY-MM-DD)</description>
+      </parameter>
+    </parameters>
+  </info>
+
+  <order>
+    <hop><from>CSV file input</from><to>Select values</to><enabled>Y</enabled></hop>
+    <hop><from>Select values</from><to>Add constants</to><enabled>Y</enabled></hop>
+  </order>
+
+  <step>
+    <name>CSV file input</name>
+    <type>CsvInput</type>
+    <filename>${POS_INPUT_DIR}/pos_sales_${SALES_DATE}.csv</filename>
+    <separator>,</separator>
+    <enclosure>"</enclosure>
+    <header>Y</header>
+    <buffer_size>50000</buffer_size>
+    <lazy_conversion>Y</lazy_conversion>
+    <add_filename_field>source_file</add_filename_field>
+    <fields>
+      <field><name>transaction_id</name><type>String</type><length>30</length></field>
+      <field><name>store_id</name><type>String</type><length>10</length></field>
+      <field><name>pos_terminal</name><type>String</type><length>10</length></field>
+      <field><name>sale_date</name><type>Date</type><format>yyyy-MM-dd</format></field>
+      <field><name>sale_time</name><type>String</type><length>8</length></field>
+      <field><name>product_sku</name><type>String</type><length>20</length></field>
+      <field><name>product_name</name><type>String</type><length>100</length></field>
+      <field><name>quantity</name><type>Integer</type></field>
+      <field><name>unit_price</name><type>Number</type><precision>2</precision></field>
+      <field><name>discount_pct</name><type>Number</type><precision>2</precision></field>
+      <field><name>payment_method</name><type>String</type><length>20</length></field>
+      <field><name>cashier_id</name><type>String</type><length>10</length></field>
+    </fields>
+  </step>
+
+  <step>
+    <name>Select values</name>
+    <type>SelectValues</type>
+    <fields>
+      <!-- Rename to canonical schema -->
+      <select><name>transaction_id</name><rename>txn_id</rename></select>
+      <select><name>store_id</name></select>
+      <select><name>sale_date</name><rename>order_date</rename></select>
+      <select><name>sale_time</name><rename>order_time</rename></select>
+      <select><name>product_sku</name><rename>sku</rename></select>
+      <select><name>product_name</name></select>
+      <select><name>quantity</name></select>
+      <select><name>unit_price</name></select>
+      <select><name>discount_pct</name></select>
+      <select><name>payment_method</name></select>
+      <select><name>cashier_id</name></select>
+      <select><name>source_file</name></select>
+      <!-- Drop pos_terminal — not needed downstream -->
+    </fields>
+    <meta>
+      <change><name>discount_pct</name><type>Number</type><precision>2</precision></change>
+      <change><name>unit_price</name><type>Number</type><precision>2</precision></change>
+    </meta>
+  </step>
+
+  <step>
+    <name>Add constants</name>
+    <type>Constant</type>
+    <fields>
+      <field><name>source_system</name><type>String</type><value>POS</value></field>
+      <field><name>load_timestamp</name><type>Timestamp</type><value>${Internal.Transformation.Date.Start}</value></field>
+    </fields>
+  </step>
+
+</transformation>

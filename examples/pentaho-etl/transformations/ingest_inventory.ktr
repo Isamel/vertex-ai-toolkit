@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ingest_inventory.ktr — Pentaho Transformation
+  Reads current inventory levels from PostgreSQL database.
+
+  Steps:
+    1. Table input       — SQL query against inventory_db
+    2. Select values     — Map to canonical schema
+    3. Add constants     — source_system = 'INVENTORY'
+
+  Pentaho Steps Used:
+    - TableInput (database connection)
+    - SelectValues
+    - Constant
+-->
+<transformation>
+  <info>
+    <name>ingest_inventory</name>
+    <description>Read inventory levels from PostgreSQL</description>
+    <trans_type>Normal</trans_type>
+    <parameters>
+      <parameter>
+        <name>SALES_DATE</name>
+        <default_value>2025-03-01</default_value>
+        <description>Date to pull inventory snapshot for</description>
+      </parameter>
+    </parameters>
+  </info>
+
+  <connection>inventory_db</connection>
+
+  <order>
+    <hop><from>Table input</from><to>Select values</to><enabled>Y</enabled></hop>
+    <hop><from>Select values</from><to>Add constants</to><enabled>Y</enabled></hop>
+  </order>
+
+  <step>
+    <name>Table input</name>
+    <type>TableInput</type>
+    <connection>inventory_db</connection>
+    <sql><![CDATA[
+      SELECT
+        p.product_sku          AS sku,
+        p.product_name,
+        p.category_id,
+        p.unit_cost,
+        p.supplier_id,
+        i.warehouse_id,
+        i.quantity_on_hand,
+        i.quantity_reserved,
+        i.reorder_point,
+        i.last_restock_date,
+        i.snapshot_date
+      FROM products p
+      INNER JOIN inventory_levels i
+        ON p.product_sku = i.product_sku
+      WHERE i.snapshot_date = ?
+      ORDER BY p.product_sku
+    ]]></sql>
+    <variables_active>Y</variables_active>
+    <parameter>
+      <field><name>SALES_DATE</name></field>
+    </parameter>
+    <limit>0</limit>
+    <lookup>N</lookup>
+  </step>
+
+  <step>
+    <name>Select values</name>
+    <type>SelectValues</type>
+    <fields>
+      <select><name>sku</name></select>
+      <select><name>product_name</name></select>
+      <select><name>category_id</name></select>
+      <select><name>unit_cost</name></select>
+      <select><name>supplier_id</name></select>
+      <select><name>warehouse_id</name></select>
+      <select><name>quantity_on_hand</name><rename>stock_qty</rename></select>
+      <select><name>quantity_reserved</name><rename>reserved_qty</rename></select>
+      <select><name>reorder_point</name></select>
+      <select><name>last_restock_date</name></select>
+    </fields>
+  </step>
+
+  <step>
+    <name>Add constants</name>
+    <type>Constant</type>
+    <fields>
+      <field><name>source_system</name><type>String</type><value>INVENTORY</value></field>
+      <field><name>load_timestamp</name><type>Timestamp</type><value>${Internal.Transformation.Date.Start}</value></field>
+    </fields>
+  </step>
+
+</transformation>

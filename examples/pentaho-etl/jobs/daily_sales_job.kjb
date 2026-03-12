@@ -1,0 +1,671 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<job>
+  <name>daily_sales_job</name>
+  <description>Master orchestration job for the daily retail sales ETL pipeline.
+Ingests POS, e-commerce, and inventory data, transforms and enriches it,
+loads the star-schema warehouse, runs quality checks, and archives staging.</description>
+  <extended_description/>
+  <job_version/>
+  <directory>/</directory>
+  <created_user>etl_admin</created_user>
+  <created_date>2025-03-01 00:00:00.000</created_date>
+  <modified_user>etl_admin</modified_user>
+  <modified_date>2025-03-01 00:00:00.000</modified_date>
+
+  <parameters>
+    <parameter>
+      <name>SALES_DATE</name>
+      <default_value/>
+      <description>Target sales date (YYYY-MM-DD). Defaults to yesterday if not set.</description>
+    </parameter>
+    <parameter>
+      <name>MAX_ERRORS</name>
+      <default_value>0</default_value>
+      <description>Maximum number of ERROR-level quality issues allowed before failing.</description>
+    </parameter>
+    <parameter>
+      <name>SMTP_SERVER</name>
+      <default_value>smtp.company.local</default_value>
+      <description>SMTP server for email notifications.</description>
+    </parameter>
+    <parameter>
+      <name>NOTIFY_EMAIL</name>
+      <default_value>data-team@company.com</default_value>
+      <description>Recipient email address for ETL notifications.</description>
+    </parameter>
+  </parameters>
+
+  <!-- ====================================================================== -->
+  <!-- ENTRIES                                                                 -->
+  <!-- ====================================================================== -->
+  <entries>
+
+    <!-- 1. START -->
+    <entry>
+      <name>START</name>
+      <description>Job entry point</description>
+      <type>SPECIAL</type>
+      <start>Y</start>
+      <dummy>N</dummy>
+      <repeat>N</repeat>
+      <schedulerType>0</schedulerType>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>50</xloc>
+      <yloc>250</yloc>
+    </entry>
+
+    <!-- 2. Set date variable -->
+    <entry>
+      <name>Set date variable</name>
+      <description>Default SALES_DATE to yesterday if not provided</description>
+      <type>EVAL</type>
+      <script>
+        var salesDate = parent_job.getVariable("SALES_DATE", "");
+        if (salesDate == null || salesDate.length() == 0) {
+          var cal = new java.util.GregorianCalendar();
+          cal.add(java.util.Calendar.DATE, -1);
+          var sdf = new java.text.SimpleDateFormat("yyyy-MM-dd");
+          salesDate = sdf.format(cal.getTime());
+          parent_job.setVariable("SALES_DATE", salesDate);
+        }
+        true;
+      </script>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>200</xloc>
+      <yloc>250</yloc>
+    </entry>
+
+    <!-- 3. Truncate staging -->
+    <entry>
+      <name>Truncate staging</name>
+      <description>Clear ephemeral staging tables before load</description>
+      <type>SQL</type>
+      <sql>
+        TRUNCATE TABLE staging.stg_pos_sales;
+        TRUNCATE TABLE staging.stg_ecommerce_sales;
+        TRUNCATE TABLE staging.stg_inventory;
+        TRUNCATE TABLE staging.stg_daily_sales;
+      </sql>
+      <useVariableSubstitution>N</useVariableSubstitution>
+      <sqlfromfile>N</sqlfromfile>
+      <connection>warehouse_db</connection>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>400</xloc>
+      <yloc>250</yloc>
+    </entry>
+
+    <!-- 4. Ingest POS -->
+    <entry>
+      <name>Ingest POS</name>
+      <description>Load raw POS sales from CSV/flat files</description>
+      <type>TRANS</type>
+      <filename>${Internal.Entry.Current.Directory}/transformations/ingest_pos_sales.ktr</filename>
+      <transname/>
+      <directory>/</directory>
+      <arg_from_previous>N</arg_from_previous>
+      <exec_per_row>N</exec_per_row>
+      <clear_rows>N</clear_rows>
+      <clear_files>N</clear_files>
+      <set_logfile>N</set_logfile>
+      <wait_until_finished>Y</wait_until_finished>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>600</xloc>
+      <yloc>150</yloc>
+    </entry>
+
+    <!-- 5. Ingest Inventory -->
+    <entry>
+      <name>Ingest Inventory</name>
+      <description>Load nightly inventory snapshot</description>
+      <type>TRANS</type>
+      <filename>${Internal.Entry.Current.Directory}/transformations/ingest_inventory.ktr</filename>
+      <transname/>
+      <directory>/</directory>
+      <arg_from_previous>N</arg_from_previous>
+      <exec_per_row>N</exec_per_row>
+      <clear_rows>N</clear_rows>
+      <clear_files>N</clear_files>
+      <set_logfile>N</set_logfile>
+      <wait_until_finished>Y</wait_until_finished>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>600</xloc>
+      <yloc>250</yloc>
+    </entry>
+
+    <!-- 6. Ingest E-commerce -->
+    <entry>
+      <name>Ingest Ecommerce</name>
+      <description>Load online orders from e-commerce API/flat file</description>
+      <type>TRANS</type>
+      <filename>${Internal.Entry.Current.Directory}/transformations/ingest_ecommerce.ktr</filename>
+      <transname/>
+      <directory>/</directory>
+      <arg_from_previous>N</arg_from_previous>
+      <exec_per_row>N</exec_per_row>
+      <clear_rows>N</clear_rows>
+      <clear_files>N</clear_files>
+      <set_logfile>N</set_logfile>
+      <wait_until_finished>Y</wait_until_finished>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>600</xloc>
+      <yloc>350</yloc>
+    </entry>
+
+    <!-- 7. Clean sales -->
+    <entry>
+      <name>Clean sales</name>
+      <description>Standardize, deduplicate, and validate raw sales</description>
+      <type>TRANS</type>
+      <filename>${Internal.Entry.Current.Directory}/transformations/clean_sales.ktr</filename>
+      <transname/>
+      <directory>/</directory>
+      <arg_from_previous>N</arg_from_previous>
+      <exec_per_row>N</exec_per_row>
+      <clear_rows>N</clear_rows>
+      <clear_files>N</clear_files>
+      <set_logfile>N</set_logfile>
+      <wait_until_finished>Y</wait_until_finished>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>800</xloc>
+      <yloc>250</yloc>
+    </entry>
+
+    <!-- 8. Enrich dimensions -->
+    <entry>
+      <name>Enrich dimensions</name>
+      <description>Lookup and attach dimension surrogate keys</description>
+      <type>TRANS</type>
+      <filename>${Internal.Entry.Current.Directory}/transformations/enrich_dimensions.ktr</filename>
+      <transname/>
+      <directory>/</directory>
+      <arg_from_previous>N</arg_from_previous>
+      <exec_per_row>N</exec_per_row>
+      <clear_rows>N</clear_rows>
+      <clear_files>N</clear_files>
+      <set_logfile>N</set_logfile>
+      <wait_until_finished>Y</wait_until_finished>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>1000</xloc>
+      <yloc>250</yloc>
+    </entry>
+
+    <!-- 9. Calculate metrics -->
+    <entry>
+      <name>Calculate metrics</name>
+      <description>Derive gross/net amounts, loyalty points, high-value flags</description>
+      <type>TRANS</type>
+      <filename>${Internal.Entry.Current.Directory}/transformations/calc_metrics.ktr</filename>
+      <transname/>
+      <directory>/</directory>
+      <arg_from_previous>N</arg_from_previous>
+      <exec_per_row>N</exec_per_row>
+      <clear_rows>N</clear_rows>
+      <clear_files>N</clear_files>
+      <set_logfile>N</set_logfile>
+      <wait_until_finished>Y</wait_until_finished>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>1200</xloc>
+      <yloc>250</yloc>
+    </entry>
+
+    <!-- 10. Merge sources -->
+    <entry>
+      <name>Merge sources</name>
+      <description>Union POS and e-commerce into stg_daily_sales</description>
+      <type>TRANS</type>
+      <filename>${Internal.Entry.Current.Directory}/transformations/merge_sources.ktr</filename>
+      <transname/>
+      <directory>/</directory>
+      <arg_from_previous>N</arg_from_previous>
+      <exec_per_row>N</exec_per_row>
+      <clear_rows>N</clear_rows>
+      <clear_files>N</clear_files>
+      <set_logfile>N</set_logfile>
+      <wait_until_finished>Y</wait_until_finished>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>1400</xloc>
+      <yloc>250</yloc>
+    </entry>
+
+    <!-- 11. Custom logic -->
+    <entry>
+      <name>Custom logic</name>
+      <description>Apply business-specific transformations and rules</description>
+      <type>TRANS</type>
+      <filename>${Internal.Entry.Current.Directory}/transformations/custom_logic.ktr</filename>
+      <transname/>
+      <directory>/</directory>
+      <arg_from_previous>N</arg_from_previous>
+      <exec_per_row>N</exec_per_row>
+      <clear_rows>N</clear_rows>
+      <clear_files>N</clear_files>
+      <set_logfile>N</set_logfile>
+      <wait_until_finished>Y</wait_until_finished>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>1600</xloc>
+      <yloc>250</yloc>
+    </entry>
+
+    <!-- 12. Route output -->
+    <entry>
+      <name>Route output</name>
+      <description>Route rows to appropriate warehouse targets</description>
+      <type>TRANS</type>
+      <filename>${Internal.Entry.Current.Directory}/transformations/route_output.ktr</filename>
+      <transname/>
+      <directory>/</directory>
+      <arg_from_previous>N</arg_from_previous>
+      <exec_per_row>N</exec_per_row>
+      <clear_rows>N</clear_rows>
+      <clear_files>N</clear_files>
+      <set_logfile>N</set_logfile>
+      <wait_until_finished>Y</wait_until_finished>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>1800</xloc>
+      <yloc>250</yloc>
+    </entry>
+
+    <!-- 13. Load warehouse -->
+    <entry>
+      <name>Load warehouse</name>
+      <description>Insert into fact_daily_sales and update aggregates</description>
+      <type>TRANS</type>
+      <filename>${Internal.Entry.Current.Directory}/transformations/load_warehouse.ktr</filename>
+      <transname/>
+      <directory>/</directory>
+      <arg_from_previous>N</arg_from_previous>
+      <exec_per_row>N</exec_per_row>
+      <clear_rows>N</clear_rows>
+      <clear_files>N</clear_files>
+      <set_logfile>N</set_logfile>
+      <wait_until_finished>Y</wait_until_finished>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>2000</xloc>
+      <yloc>250</yloc>
+    </entry>
+
+    <!-- 14. Check quality -->
+    <entry>
+      <name>Check quality</name>
+      <description>Run data quality stored procedure</description>
+      <type>SQL</type>
+      <sql>SELECT * FROM dw.sp_check_data_quality('${SALES_DATE}'::DATE);</sql>
+      <useVariableSubstitution>Y</useVariableSubstitution>
+      <sqlfromfile>N</sqlfromfile>
+      <connection>warehouse_db</connection>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>2200</xloc>
+      <yloc>250</yloc>
+    </entry>
+
+    <!-- 15. Evaluate quality -->
+    <entry>
+      <name>Evaluate quality</name>
+      <description>Check whether error-level issues exceed MAX_ERRORS threshold</description>
+      <type>EVAL</type>
+      <script>
+        // Retrieve the quality check result count from the previous SQL step.
+        // If errors exceed the MAX_ERRORS threshold, fail the job.
+        var maxErrors = parseInt(parent_job.getVariable("MAX_ERRORS", "0"), 10);
+        var errorCount = parseInt(parent_job.getVariable("DQ_ERROR_COUNT", "0"), 10);
+        errorCount &lt;= maxErrors;
+      </script>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>2400</xloc>
+      <yloc>250</yloc>
+    </entry>
+
+    <!-- 16. Send success email -->
+    <entry>
+      <name>Send success email</name>
+      <description>Notify data team of successful ETL run</description>
+      <type>MAIL</type>
+      <server>${SMTP_SERVER}</server>
+      <port>25</port>
+      <destination>${NOTIFY_EMAIL}</destination>
+      <replyto>etl-noreply@company.com</replyto>
+      <subject>[ETL SUCCESS] Daily Sales Pipeline — ${SALES_DATE}</subject>
+      <comment>The daily sales ETL pipeline completed successfully for ${SALES_DATE}.</comment>
+      <include_date>Y</include_date>
+      <use_auth>N</use_auth>
+      <use_HTML>N</use_HTML>
+      <encoding>UTF-8</encoding>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>2600</xloc>
+      <yloc>150</yloc>
+    </entry>
+
+    <!-- 17. Send failure email -->
+    <entry>
+      <name>Send failure email</name>
+      <description>Alert data team of quality check failure</description>
+      <type>MAIL</type>
+      <server>${SMTP_SERVER}</server>
+      <port>25</port>
+      <destination>${NOTIFY_EMAIL}</destination>
+      <replyto>etl-noreply@company.com</replyto>
+      <subject>[ETL FAILURE] Daily Sales Pipeline — ${SALES_DATE}</subject>
+      <comment>The daily sales ETL pipeline FAILED quality checks for ${SALES_DATE}. Please review the DQ log.</comment>
+      <include_date>Y</include_date>
+      <use_auth>N</use_auth>
+      <use_HTML>N</use_HTML>
+      <encoding>UTF-8</encoding>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>2600</xloc>
+      <yloc>400</yloc>
+    </entry>
+
+    <!-- 18. Archive staging -->
+    <entry>
+      <name>Archive staging</name>
+      <description>Move staging data to archive and truncate</description>
+      <type>SQL</type>
+      <sql>CALL dw.sp_archive_staging('${SALES_DATE}'::DATE);</sql>
+      <useVariableSubstitution>Y</useVariableSubstitution>
+      <sqlfromfile>N</sqlfromfile>
+      <connection>warehouse_db</connection>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>2800</xloc>
+      <yloc>150</yloc>
+    </entry>
+
+    <!-- 19. Shell cleanup -->
+    <entry>
+      <name>Shell cleanup</name>
+      <description>Archive processed input files on disk</description>
+      <type>SHELL</type>
+      <filename>${Internal.Entry.Current.Directory}/scripts/run_daily_etl.sh</filename>
+      <work_directory>${Internal.Entry.Current.Directory}</work_directory>
+      <arg_from_previous>N</arg_from_previous>
+      <exec_per_row>N</exec_per_row>
+      <set_logfile>N</set_logfile>
+      <insertScript>N</insertScript>
+      <script/>
+      <loglevel>Basic</loglevel>
+      <arguments>
+        <argument>--archive-inputs</argument>
+        <argument>${SALES_DATE}</argument>
+      </arguments>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>3000</xloc>
+      <yloc>150</yloc>
+    </entry>
+
+    <!-- 20. SUCCESS -->
+    <entry>
+      <name>SUCCESS</name>
+      <description>Pipeline completed successfully</description>
+      <type>SUCCESS</type>
+      <parallel>N</parallel>
+      <draw>Y</draw>
+      <nr>0</nr>
+      <xloc>3200</xloc>
+      <yloc>150</yloc>
+    </entry>
+
+  </entries>
+
+  <!-- ====================================================================== -->
+  <!-- HOPS (workflow edges)                                                   -->
+  <!-- ====================================================================== -->
+  <hops>
+
+    <!-- START → Set date variable (unconditional) -->
+    <hop>
+      <from>START</from>
+      <to>Set date variable</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+
+    <!-- Set date variable → Truncate staging -->
+    <hop>
+      <from>Set date variable</from>
+      <to>Truncate staging</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+
+    <!-- Truncate staging → Ingest POS (parallel fan-out) -->
+    <hop>
+      <from>Truncate staging</from>
+      <to>Ingest POS</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+
+    <!-- Truncate staging → Ingest Inventory (parallel) -->
+    <hop>
+      <from>Truncate staging</from>
+      <to>Ingest Inventory</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+
+    <!-- Truncate staging → Ingest E-commerce (parallel) -->
+    <hop>
+      <from>Truncate staging</from>
+      <to>Ingest Ecommerce</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+
+    <!-- All ingests converge → Clean sales -->
+    <hop>
+      <from>Ingest POS</from>
+      <to>Clean sales</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>N</unconditional>
+    </hop>
+    <hop>
+      <from>Ingest Inventory</from>
+      <to>Clean sales</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>N</unconditional>
+    </hop>
+    <hop>
+      <from>Ingest Ecommerce</from>
+      <to>Clean sales</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>N</unconditional>
+    </hop>
+
+    <!-- Linear transform chain -->
+    <hop>
+      <from>Clean sales</from>
+      <to>Enrich dimensions</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+    <hop>
+      <from>Enrich dimensions</from>
+      <to>Calculate metrics</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+    <hop>
+      <from>Calculate metrics</from>
+      <to>Merge sources</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+    <hop>
+      <from>Merge sources</from>
+      <to>Custom logic</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+    <hop>
+      <from>Custom logic</from>
+      <to>Route output</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+    <hop>
+      <from>Route output</from>
+      <to>Load warehouse</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+
+    <!-- Load warehouse → Check quality -->
+    <hop>
+      <from>Load warehouse</from>
+      <to>Check quality</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+
+    <!-- Check quality → Evaluate quality -->
+    <hop>
+      <from>Check quality</from>
+      <to>Evaluate quality</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+
+    <!-- Evaluate quality → Send success email (on TRUE / pass) -->
+    <hop>
+      <from>Evaluate quality</from>
+      <to>Send success email</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>N</unconditional>
+    </hop>
+
+    <!-- Evaluate quality → Send failure email (on FALSE / fail) -->
+    <hop>
+      <from>Evaluate quality</from>
+      <to>Send failure email</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>N</evaluation>
+      <unconditional>N</unconditional>
+    </hop>
+
+    <!-- Send success email → Archive staging -->
+    <hop>
+      <from>Send success email</from>
+      <to>Archive staging</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+
+    <!-- Archive staging → Shell cleanup -->
+    <hop>
+      <from>Archive staging</from>
+      <to>Shell cleanup</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+
+    <!-- Shell cleanup → SUCCESS -->
+    <hop>
+      <from>Shell cleanup</from>
+      <to>SUCCESS</to>
+      <from_nr>0</from_nr>
+      <to_nr>0</to_nr>
+      <enabled>Y</enabled>
+      <evaluation>Y</evaluation>
+      <unconditional>Y</unconditional>
+    </hop>
+
+  </hops>
+
+  <notepads/>
+</job>

@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  merge_sources.ktr — Pentaho Transformation
+  Merges POS sales (enriched with inventory data) and e-commerce rows
+  into a single unified stream with a surrogate key.
+
+  Steps:
+    1.  POS input           — Receives processed POS rows
+    2.  Inventory input     — Receives inventory rows
+    3.  Sort POS by SKU     — SortRows on sku ASC (required for merge join)
+    4.  Sort Inventory by SKU — SortRows on sku ASC
+    5.  Merge join          — LEFT OUTER JOIN POS ⟕ Inventory on sku
+    6.  E-commerce input    — Receives processed e-commerce rows
+    7.  Sort merged by txn_id — SortRows on txn_id ASC
+    8.  Sort E-com by txn_id  — SortRows on txn_id ASC
+    9.  Union all sources   — Append POS+Inventory with E-commerce
+    10. Add sequence        — Adds row_id surrogate key
+
+  Pentaho Steps Used:
+    - Dummy
+    - SortRows
+    - MergeJoin
+    - Append
+    - AddSequence
+-->
+<transformation>
+  <info>
+    <name>merge_sources</name>
+    <description>Merge POS, inventory and e-commerce into unified stream</description>
+    <extended_description>
+      Combines three source streams into a single output.
+      POS sales rows are LEFT OUTER JOINed with inventory data on sku
+      to enrich sales with stock levels and unit cost.
+      The merged POS+Inventory stream is then appended with e-commerce
+      rows to produce a unified dataset. A surrogate row_id sequence
+      is added for downstream loading.
+    </extended_description>
+    <trans_type>Normal</trans_type>
+    <directory>/</directory>
+    <parameters/>
+  </info>
+
+  <order>
+    <!-- POS branch: sort then merge with inventory -->
+    <hop><from>POS input</from><to>Sort POS by SKU</to><enabled>Y</enabled></hop>
+    <hop><from>Inventory input</from><to>Sort Inventory by SKU</to><enabled>Y</enabled></hop>
+    <hop><from>Sort POS by SKU</from><to>Merge join</to><enabled>Y</enabled></hop>
+    <hop><from>Sort Inventory by SKU</from><to>Merge join</to><enabled>Y</enabled></hop>
+
+    <!-- Prepare both streams for append -->
+    <hop><from>Merge join</from><to>Sort merged by txn_id</to><enabled>Y</enabled></hop>
+    <hop><from>E-commerce input</from><to>Sort E-com by txn_id</to><enabled>Y</enabled></hop>
+
+    <!-- Append and add surrogate key -->
+    <hop><from>Sort merged by txn_id</from><to>Union all sources</to><enabled>Y</enabled></hop>
+    <hop><from>Sort E-com by txn_id</from><to>Union all sources</to><enabled>Y</enabled></hop>
+    <hop><from>Union all sources</from><to>Add sequence</to><enabled>Y</enabled></hop>
+  </order>
+
+  <!-- 1. POS input — receives cleaned, enriched POS rows with metrics -->
+  <step>
+    <name>POS input</name>
+    <type>Dummy</type>
+    <description>Receives processed POS sales rows from upstream</description>
+  </step>
+
+  <!-- 2. Inventory input — receives inventory rows -->
+  <step>
+    <name>Inventory input</name>
+    <type>Dummy</type>
+    <description>Receives inventory rows from ingest_inventory.ktr</description>
+  </step>
+
+  <!-- 3. Sort POS by sku for merge join -->
+  <step>
+    <name>Sort POS by SKU</name>
+    <type>SortRows</type>
+    <directory>${java.io.tmpdir}</directory>
+    <prefix>sort_pos_sku</prefix>
+    <sort_size>100000</sort_size>
+    <compress>N</compress>
+    <unique_rows>N</unique_rows>
+    <fields>
+      <field><name>sku</name><ascending>Y</ascending><case_sensitive>N</case_sensitive></field>
+    </fields>
+  </step>
+
+  <!-- 4. Sort Inventory by sku for merge join -->
+  <step>
+    <name>Sort Inventory by SKU</name>
+    <type>SortRows</type>
+    <directory>${java.io.tmpdir}</directory>
+    <prefix>sort_inv_sku</prefix>
+    <sort_size>100000</sort_size>
+    <compress>N</compress>
+    <unique_rows>N</unique_rows>
+    <fields>
+      <field><name>sku</name><ascending>Y</ascending><case_sensitive>N</case_sensitive></field>
+    </fields>
+  </step>
+
+  <!-- 5. LEFT OUTER JOIN POS with Inventory on sku -->
+  <step>
+    <name>Merge join</name>
+    <type>MergeJoin</type>
+    <join_type>LEFT OUTER</join_type>
+    <step1>Sort POS by SKU</step1>
+    <step2>Sort Inventory by SKU</step2>
+    <keys_1>
+      <key>sku</key>
+    </keys_1>
+    <keys_2>
+      <key>sku</key>
+    </keys_2>
+  </step>
+
+  <!-- 6. E-commerce input — receives processed e-commerce rows -->
+  <step>
+    <name>E-commerce input</name>
+    <type>Dummy</type>
+    <description>Receives processed e-commerce rows from upstream</description>
+  </step>
+
+  <!-- 7. Sort merged POS+Inventory by txn_id for append ordering -->
+  <step>
+    <name>Sort merged by txn_id</name>
+    <type>SortRows</type>
+    <directory>${java.io.tmpdir}</directory>
+    <prefix>sort_merged_txn</prefix>
+    <sort_size>100000</sort_size>
+    <compress>N</compress>
+    <unique_rows>N</unique_rows>
+    <fields>
+      <field><name>txn_id</name><ascending>Y</ascending><case_sensitive>N</case_sensitive></field>
+    </fields>
+  </step>
+
+  <!-- 8. Sort e-commerce by txn_id for append ordering -->
+  <step>
+    <name>Sort E-com by txn_id</name>
+    <type>SortRows</type>
+    <directory>${java.io.tmpdir}</directory>
+    <prefix>sort_ecom_txn</prefix>
+    <sort_size>100000</sort_size>
+    <compress>N</compress>
+    <unique_rows>N</unique_rows>
+    <fields>
+      <field><name>txn_id</name><ascending>Y</ascending><case_sensitive>N</case_sensitive></field>
+    </fields>
+  </step>
+
+  <!-- 9. Append POS+Inventory merged stream with E-commerce stream -->
+  <step>
+    <name>Union all sources</name>
+    <type>Append</type>
+    <head_name>Sort merged by txn_id</head_name>
+    <tail_name>Sort E-com by txn_id</tail_name>
+  </step>
+
+  <!-- 10. Add surrogate key sequence -->
+  <step>
+    <name>Add sequence</name>
+    <type>Sequence</type>
+    <valuename>row_id</valuename>
+    <use_database>N</use_database>
+    <use_counter>Y</use_counter>
+    <counter_name/>
+    <start_at>1</start_at>
+    <increment_by>1</increment_by>
+    <max_value>9999999999</max_value>
+  </step>
+
+</transformation>

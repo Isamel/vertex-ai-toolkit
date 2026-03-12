@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  enrich_dimensions.ktr — Pentaho Transformation
+  Enriches cleaned sales rows with dimensional attributes from the data warehouse.
+
+  Steps:
+    1. Input                  — Receives cleaned sales rows
+    2. Lookup product category— DatabaseLookup against dw.dim_product by sku
+    3. Lookup store region    — StreamLookup (in-memory) from dw.dim_store by store_id
+    4. Map payment type       — ValueMapper: payment_method → payment_category
+
+  Pentaho Steps Used:
+    - Dummy
+    - DatabaseLookup
+    - TableInput (reference data for StreamLookup)
+    - StreamLookup
+    - ValueMapper
+-->
+<transformation>
+  <info>
+    <name>enrich_dimensions</name>
+    <description>Enrich sales rows with product, store and payment dimensions</description>
+    <extended_description>
+      Joins cleaned sales rows with dimension tables in the data warehouse.
+      Product attributes (category, subcategory, brand) come from a database
+      lookup. Store attributes (region, district, store_name) are loaded into
+      memory once via StreamLookup for fast in-memory joins. Payment method
+      codes are mapped to business-friendly categories via ValueMapper.
+    </extended_description>
+    <trans_type>Normal</trans_type>
+    <directory>/</directory>
+    <parameters/>
+  </info>
+
+  <connection>warehouse_db</connection>
+
+  <order>
+    <hop><from>Input</from><to>Lookup product category</to><enabled>Y</enabled></hop>
+    <hop><from>Lookup product category</from><to>Lookup store region</to><enabled>Y</enabled></hop>
+    <hop><from>Store reference data</from><to>Lookup store region</to><enabled>Y</enabled></hop>
+    <hop><from>Lookup store region</from><to>Map payment type</to><enabled>Y</enabled></hop>
+  </order>
+
+  <!-- 1. Dummy input — rows arrive from clean_sales.ktr -->
+  <step>
+    <name>Input</name>
+    <type>Dummy</type>
+    <description>Receives cleaned and deduplicated sales rows</description>
+  </step>
+
+  <!-- 2. Database lookup: product dimension -->
+  <step>
+    <name>Lookup product category</name>
+    <type>DBLookup</type>
+    <connection>warehouse_db</connection>
+    <schema>dw</schema>
+    <table>dim_product</table>
+    <cache>Y</cache>
+    <cache_size>5000</cache_size>
+    <lookup>
+      <key>
+        <name>sku</name>
+        <field>sku</field>
+        <condition>=</condition>
+      </key>
+    </lookup>
+    <values>
+      <value>
+        <name>category_name</name>
+        <rename>category_name</rename>
+        <default/>
+        <type>String</type>
+      </value>
+      <value>
+        <name>subcategory</name>
+        <rename>subcategory</rename>
+        <default/>
+        <type>String</type>
+      </value>
+      <value>
+        <name>brand</name>
+        <rename>brand</rename>
+        <default/>
+        <type>String</type>
+      </value>
+    </values>
+    <fail_on_multiple>N</fail_on_multiple>
+    <eat_row_on_failure>N</eat_row_on_failure>
+  </step>
+
+  <!-- 3a. Reference table input for store dimension (loaded once into memory) -->
+  <step>
+    <name>Store reference data</name>
+    <type>TableInput</type>
+    <connection>warehouse_db</connection>
+    <sql><![CDATA[
+      SELECT
+        store_id,
+        region,
+        district,
+        store_name
+      FROM dw.dim_store
+      ORDER BY store_id
+    ]]></sql>
+    <variables_active>N</variables_active>
+    <limit>0</limit>
+    <lookup>N</lookup>
+  </step>
+
+  <!-- 3b. In-memory stream lookup: store dimension -->
+  <step>
+    <name>Lookup store region</name>
+    <type>StreamLookup</type>
+    <from>Store reference data</from>
+    <input_sorted>N</input_sorted>
+    <preserve_memory>Y</preserve_memory>
+    <sorted_list>N</sorted_list>
+    <integer_pair>N</integer_pair>
+    <lookup>
+      <key>
+        <name>store_id</name>
+        <field>store_id</field>
+      </key>
+    </lookup>
+    <values>
+      <value>
+        <name>region</name>
+        <rename>region</rename>
+        <default/>
+        <type>String</type>
+      </value>
+      <value>
+        <name>district</name>
+        <rename>district</rename>
+        <default/>
+        <type>String</type>
+      </value>
+      <value>
+        <name>store_name</name>
+        <rename>store_name</rename>
+        <default/>
+        <type>String</type>
+      </value>
+    </values>
+  </step>
+
+  <!-- 4. Map raw payment_method codes to business categories -->
+  <step>
+    <name>Map payment type</name>
+    <type>ValueMapper</type>
+    <field_to_use>payment_method</field_to_use>
+    <target_field>payment_category</target_field>
+    <non_match_default>Other</non_match_default>
+    <values>
+      <value>
+        <source_value>CASH</source_value>
+        <target_value>Cash</target_value>
+      </value>
+      <value>
+        <source_value>CARD</source_value>
+        <target_value>Card</target_value>
+      </value>
+      <value>
+        <source_value>MOBILE</source_value>
+        <target_value>Digital</target_value>
+      </value>
+      <value>
+        <source_value>CREDIT_CARD</source_value>
+        <target_value>Card</target_value>
+      </value>
+      <value>
+        <source_value>DEBIT_CARD</source_value>
+        <target_value>Card</target_value>
+      </value>
+      <value>
+        <source_value>PAYPAL</source_value>
+        <target_value>Digital</target_value>
+      </value>
+    </values>
+  </step>
+
+</transformation>

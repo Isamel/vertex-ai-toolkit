@@ -1,0 +1,118 @@
+{
+  "orders": [
+    {
+      "order_id": "EC-2025030100001",
+      "customer_id": "CUST-88421",
+      "order_date": "2025-03-01T07:45:00Z",
+      "status": "completed",
+      "shipping_address": {
+        "city": "Austin",
+        "state": "TX",
+        "zip": "78701"
+      },
+      "items": [
+        {
+          "sku": "SKU-10042",
+          "name": "Organic Whole Milk 1L",
+          "quantity": 4,
+          "unit_price": 4.99,
+          "discount_amount": 0.00
+        },
+        {
+          "sku": "SKU-30088",
+          "name": "Premium Coffee Beans 500g",
+          "quantity": 2,
+          "unit_price": 18.99,
+          "discount_amount": 5.70
+        }
+      ],
+      "payment": {
+        "method": "CREDIT_CARD",
+        "total": 52.24,
+        "tax": 4.30
+      }
+    },
+    {
+      "order_id": "EC-2025030100002",
+      "customer_id": "CUST-77210",
+      "order_date": "2025-03-01T10:20:00Z",
+      "status": "completed",
+      "shipping_address": {
+        "city": "Dallas",
+        "state": "TX",
+        "zip": "75201"
+      },
+      "items": [
+        {
+          "sku": "SKU-50001",
+          "name": "Avocado (each)",
+          "quantity": 10,
+          "unit_price": 2.49,
+          "discount_amount": 2.49
+        }
+      ],
+      "payment": {
+        "method": "DEBIT_CARD",
+        "total": 24.17,
+        "tax": 1.76
+      }
+    },
+    {
+      "order_id": "EC-2025030100003",
+      "customer_id": null,
+      "order_date": "2025-03-01T14:00:00Z",
+      "status": "cancelled",
+      "shipping_address": {
+        "city": "Houston",
+        "state": "TX",
+        "zip": "77001"
+      },
+      "items": [
+        {
+          "sku": "SKU-40022",
+          "name": "Free-Range Eggs 12pk",
+          "quantity": 3,
+          "unit_price": 7.25,
+          "discount_amount": 0.00
+        }
+      ],
+      "payment": {
+        "method": "CREDIT_CARD",
+        "total": 23.53,
+        "tax": 1.78
+      }
+    },
+    {
+      "order_id": "EC-2025030100004",
+      "customer_id": "CUST-99102",
+      "order_date": "2025-03-01T18:30:00Z",
+      "status": "completed",
+      "shipping_address": {
+        "city": "San Antonio",
+        "state": "TX",
+        "zip": "78201"
+      },
+      "items": [
+        {
+          "sku": "SKU-20015",
+          "name": "Sourdough Bread Loaf",
+          "quantity": 2,
+          "unit_price": 6.50,
+          "discount_amount": 0.00
+        },
+        {
+          "sku": "SKU-60010",
+          "name": "Sparkling Water 6pk",
+          "quantity": 3,
+          "unit_price": 8.99,
+          "discount_amount": 2.70
+        }
+      ],
+      "payment": {
+        "method": "PAYPAL",
+        "total": 40.61,
+        "tax": 3.34
+      }
+    }
+  ]
+}

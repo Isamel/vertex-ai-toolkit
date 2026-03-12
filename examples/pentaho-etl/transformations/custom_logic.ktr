@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  custom_logic.ktr — Pentaho Transformation
+  Applies complex business rules via Modified JavaScript Value step.
+
+  Steps:
+    1. Input                    — Receives rows from upstream transformation
+    2. JavaScript business rules — Computes loyalty_points, price_tier,
+                                   is_high_value_txn, fiscal_quarter, txn_hash
+    3. Select output fields     — Selects original fields plus 5 new computed fields
+
+  Pentaho Steps Used:
+    - Dummy
+    - ScriptValueMod
+    - SelectValues
+-->
+<transformation>
+  <info>
+    <name>custom_logic</name>
+    <description>Apply complex business rules using Modified JavaScript Value</description>
+    <extended_description>
+      Enriches sales rows with computed fields that require logic too complex
+      for the Calculator step: loyalty point accrual based on payment method,
+      price tier classification, high-value transaction flagging, fiscal
+      quarter derivation (configurable fiscal year start), and an MD5
+      transaction hash for deduplication tracking.
+    </extended_description>
+    <trans_type>Normal</trans_type>
+    <directory>/</directory>
+    <parameters>
+      <parameter>
+        <name>FISCAL_YEAR_START</name>
+        <default_value>2025-02-01</default_value>
+        <description>First day of the fiscal year (YYYY-MM-DD), used to compute fiscal_quarter</description>
+      </parameter>
+    </parameters>
+  </info>
+
+  <order>
+    <hop><from>Input</from><to>JavaScript business rules</to><enabled>Y</enabled></hop>
+    <hop><from>JavaScript business rules</from><to>Select output fields</to><enabled>Y</enabled></hop>
+  </order>
+
+  <!-- Step 1: Input — receives rows from upstream -->
+  <step>
+    <name>Input</name>
+    <type>Dummy</type>
+    <description>Placeholder input receiving rows from upstream transformation</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <GUI>
+      <xloc>100</xloc>
+      <yloc>200</yloc>
+    </GUI>
+  </step>
+
+  <!-- Step 2: JavaScript business rules — Modified JavaScript Value -->
+  <step>
+    <name>JavaScript business rules</name>
+    <type>ScriptValueMod</type>
+    <description>Compute loyalty_points, price_tier, is_high_value_txn, fiscal_quarter, txn_hash</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <compatible>N</compatible>
+    <optimizationLevel>9</optimizationLevel>
+    <jsScripts>
+      <jsScript>
+        <jsScript_type>0</jsScript_type>
+        <jsScript_name>business_rules</jsScript_name>
+        <jsScript_script>
+//
+// custom_logic.ktr — Modified JavaScript Value
+// Applies business rules that are too complex for Calculator.
+//
+
+// ---------------------------------------------------------------
+// 1. loyalty_points — accrual rate depends on payment method
+// ---------------------------------------------------------------
+var pm = payment_method.getString().toUpperCase();
+var netAmt = net_amount.getNumber();
+var loyaltyPoints;
+
+if (pm == "CARD" || pm == "CREDIT_CARD") {
+    loyaltyPoints = java.lang.Math.floor(netAmt * 1.5);
+} else if (pm == "MOBILE" || pm == "PAYPAL") {
+    loyaltyPoints = java.lang.Math.floor(netAmt * 2.0);
+} else {
+    loyaltyPoints = java.lang.Math.floor(netAmt * 1.0);
+}
+
+// ---------------------------------------------------------------
+// 2. price_tier — classify unit price into bands
+// ---------------------------------------------------------------
+var price = unit_price.getNumber();
+var priceTier;
+
+if (price &lt; 5.0) {
+    priceTier = "budget";
+} else if (price &lt; 15.0) {
+    priceTier = "mid-range";
+} else if (price &lt; 50.0) {
+    priceTier = "premium";
+} else {
+    priceTier = "luxury";
+}
+
+// ---------------------------------------------------------------
+// 3. is_high_value_txn — flag transactions over $100
+// ---------------------------------------------------------------
+var isHighValueTxn = (netAmt > 100.0);
+
+// ---------------------------------------------------------------
+// 4. fiscal_quarter — based on FISCAL_YEAR_START parameter
+//    Fiscal year starts on the 1st of the configured month (default Feb 1).
+//    Q1 = months 0-2 from fiscal start, Q2 = 3-5, Q3 = 6-8, Q4 = 9-11.
+// ---------------------------------------------------------------
+var fiscalYearStartStr = getVariable("FISCAL_YEAR_START", "2025-02-01");
+var fyStartParts = fiscalYearStartStr.split("-");
+var fyStartMonth = parseInt(fyStartParts[1], 10);  // 1-based month
+
+var orderDt = order_date.getDate();
+var cal = java.util.Calendar.getInstance();
+cal.setTime(orderDt);
+var orderMonth = cal.get(java.util.Calendar.MONTH) + 1;  // Calendar.MONTH is 0-based
+var orderYear  = cal.get(java.util.Calendar.YEAR);
+
+// Calculate months elapsed since fiscal year start
+var monthsFromFYStart = orderMonth - fyStartMonth;
+if (monthsFromFYStart &lt; 0) {
+    monthsFromFYStart = monthsFromFYStart + 12;
+}
+
+var fiscalQNum = java.lang.Math.floor(monthsFromFYStart / 3) + 1;
+// Determine fiscal year: if order month is before fiscal start month, it belongs
+// to the fiscal year that started in the previous calendar year.
+var fiscalYear = orderYear;
+if (orderMonth &lt; fyStartMonth) {
+    fiscalYear = orderYear - 1;
+}
+var fiscalQuarter = "FY" + fiscalYear + "-Q" + fiscalQNum;
+
+// ---------------------------------------------------------------
+// 5. txn_hash — MD5 of txn_id + sku + order_date for dedup tracking
+// ---------------------------------------------------------------
+var sdf = new java.text.SimpleDateFormat("yyyy-MM-dd");
+var orderDateStr = sdf.format(orderDt);
+var hashInput = txn_id.getString() + "|" + sku.getString() + "|" + orderDateStr;
+
+var md = java.security.MessageDigest.getInstance("MD5");
+var digestBytes = md.digest(
+    new java.lang.String(hashInput).getBytes("UTF-8")
+);
+var sb = new java.lang.StringBuilder();
+for (var i = 0; i &lt; digestBytes.length; i++) {
+    var hex = java.lang.Integer.toHexString(0xff &amp; digestBytes[i]);
+    if (hex.length() == 1) {
+        sb.append("0");
+    }
+    sb.append(hex);
+}
+var txnHash = sb.toString();
+        </jsScript_script>
+      </jsScript>
+    </jsScripts>
+    <fields>
+      <field>
+        <name>loyaltyPoints</name>
+        <rename>loyalty_points</rename>
+        <type>Integer</type>
+        <length>9</length>
+        <precision>0</precision>
+      </field>
+      <field>
+        <name>priceTier</name>
+        <rename>price_tier</rename>
+        <type>String</type>
+        <length>20</length>
+        <precision>-1</precision>
+      </field>
+      <field>
+        <name>isHighValueTxn</name>
+        <rename>is_high_value_txn</rename>
+        <type>Boolean</type>
+        <length>-1</length>
+        <precision>-1</precision>
+      </field>
+      <field>
+        <name>fiscalQuarter</name>
+        <rename>fiscal_quarter</rename>
+        <type>String</type>
+        <length>12</length>
+        <precision>-1</precision>
+      </field>
+      <field>
+        <name>txnHash</name>
+        <rename>txn_hash</rename>
+        <type>String</type>
+        <length>32</length>
+        <precision>-1</precision>
+      </field>
+    </fields>
+    <GUI>
+      <xloc>350</xloc>
+      <yloc>200</yloc>
+    </GUI>
+  </step>
+
+  <!-- Step 3: Select output fields — pass through originals + computed fields -->
+  <step>
+    <name>Select output fields</name>
+    <type>SelectValues</type>
+    <description>Select all original fields plus the 5 new computed business rule fields</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <fields>
+      <!-- Original canonical fields -->
+      <select><name>txn_id</name></select>
+      <select><name>store_id</name></select>
+      <select><name>order_date</name></select>
+      <select><name>sku</name></select>
+      <select><name>product_name</name></select>
+      <select><name>quantity</name></select>
+      <select><name>unit_price</name></select>
+      <select><name>discount_pct</name></select>
+      <select><name>payment_method</name></select>
+      <select><name>source_system</name></select>
+      <select><name>load_timestamp</name></select>
+      <select><name>category_name</name></select>
+      <select><name>region</name></select>
+      <select><name>district</name></select>
+      <select><name>store_name</name></select>
+      <select><name>net_amount</name></select>
+      <select><name>gross_amount</name></select>
+      <select><name>payment_category</name></select>
+      <select><name>row_id</name></select>
+      <!-- Computed fields from JavaScript step -->
+      <select><name>loyalty_points</name></select>
+      <select><name>price_tier</name></select>
+      <select><name>is_high_value_txn</name></select>
+      <select><name>fiscal_quarter</name></select>
+      <select><name>txn_hash</name></select>
+    </fields>
+    <GUI>
+      <xloc>600</xloc>
+      <yloc>200</yloc>
+    </GUI>
+  </step>
+
+</transformation>

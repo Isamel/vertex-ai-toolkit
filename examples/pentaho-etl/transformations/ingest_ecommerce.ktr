@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ingest_ecommerce.ktr — Pentaho Transformation
+  Reads e-commerce order data from JSON files (nested structure).
+
+  Steps:
+    1. JSON input       — Parse nested JSON with JSONPath
+    2. Select values    — Flatten and rename fields
+    3. Filter rows      — Exclude cancelled orders
+    4. Calculator       — Compute line_total = quantity * unit_price - discount_amount
+    5. Add constants    — source_system = 'ECOMMERCE'
+
+  Pentaho Steps Used:
+    - JsonInput (JSONPath expressions)
+    - SelectValues
+    - FilterRows
+    - Calculator
+    - Constant
+-->
+<transformation>
+  <info>
+    <name>ingest_ecommerce</name>
+    <description>Parse e-commerce orders from JSON files</description>
+    <trans_type>Normal</trans_type>
+    <parameters>
+      <parameter>
+        <name>ECOMMERCE_INPUT_DIR</name>
+        <default_value>/data/ecommerce/daily</default_value>
+        <description>Directory containing JSON order files</description>
+      </parameter>
+    </parameters>
+  </info>
+
+  <order>
+    <hop><from>JSON input</from><to>Select values</to><enabled>Y</enabled></hop>
+    <hop><from>Select values</from><to>Filter cancelled</to><enabled>Y</enabled></hop>
+    <hop><from>Filter cancelled</from><to>Calculator</to><enabled>Y</enabled></hop>
+    <hop><from>Calculator</from><to>Add constants</to><enabled>Y</enabled></hop>
+  </order>
+
+  <step>
+    <name>JSON input</name>
+    <type>JsonInput</type>
+    <filename>${ECOMMERCE_INPUT_DIR}/ecommerce_orders_*.json</filename>
+    <is_in_fields>N</is_in_fields>
+    <rowlimit>0</rowlimit>
+    <fields>
+      <field>
+        <name>order_id</name>
+        <path>$.orders[*].order_id</path>
+        <type>String</type>
+      </field>
+      <field>
+        <name>customer_id</name>
+        <path>$.orders[*].customer_id</path>
+        <type>String</type>
+      </field>
+      <field>
+        <name>order_date</name>
+        <path>$.orders[*].order_date</path>
+        <type>String</type>
+      </field>
+      <field>
+        <name>status</name>
+        <path>$.orders[*].status</path>
+        <type>String</type>
+      </field>
+      <field>
+        <name>city</name>
+        <path>$.orders[*].shipping_address.city</path>
+        <type>String</type>
+      </field>
+      <field>
+        <name>state</name>
+        <path>$.orders[*].shipping_address.state</path>
+        <type>String</type>
+      </field>
+      <field>
+        <name>sku</name>
+        <path>$.orders[*].items[*].sku</path>
+        <type>String</type>
+      </field>
+      <field>
+        <name>product_name</name>
+        <path>$.orders[*].items[*].name</path>
+        <type>String</type>
+      </field>
+      <field>
+        <name>quantity</name>
+        <path>$.orders[*].items[*].quantity</path>
+        <type>Integer</type>
+      </field>
+      <field>
+        <name>unit_price</name>
+        <path>$.orders[*].items[*].unit_price</path>
+        <type>Number</type>
+      </field>
+      <field>
+        <name>discount_amount</name>
+        <path>$.orders[*].items[*].discount_amount</path>
+        <type>Number</type>
+      </field>
+      <field>
+        <name>payment_method</name>
+        <path>$.orders[*].payment.method</path>
+        <type>String</type>
+      </field>
+      <field>
+        <name>total_amount</name>
+        <path>$.orders[*].payment.total</path>
+        <type>Number</type>
+      </field>
+      <field>
+        <name>tax_amount</name>
+        <path>$.orders[*].payment.tax</path>
+        <type>Number</type>
+      </field>
+    </fields>
+  </step>
+
+  <step>
+    <name>Select values</name>
+    <type>SelectValues</type>
+    <fields>
+      <select><name>order_id</name><rename>txn_id</rename></select>
+      <select><name>customer_id</name></select>
+      <select><name>order_date</name></select>
+      <select><name>status</name></select>
+      <select><name>city</name><rename>ship_city</rename></select>
+      <select><name>state</name><rename>ship_state</rename></select>
+      <select><name>sku</name></select>
+      <select><name>product_name</name></select>
+      <select><name>quantity</name></select>
+      <select><name>unit_price</name></select>
+      <select><name>discount_amount</name></select>
+      <select><name>payment_method</name></select>
+      <select><name>tax_amount</name></select>
+    </fields>
+  </step>
+
+  <step>
+    <name>Filter cancelled</name>
+    <type>FilterRows</type>
+    <send_true_to>Calculator</send_true_to>
+    <send_false_to/>
+    <compare>
+      <condition>
+        <leftvalue>status</leftvalue>
+        <function>!=</function>
+        <rightvalue/>
+        <value><name>constant</name><type>String</type><text>cancelled</text></value>
+      </condition>
+    </compare>
+  </step>
+
+  <step>
+    <name>Calculator</name>
+    <type>Calculator</type>
+    <calculation>
+      <field_name>line_total</field_name>
+      <calc_type>MULTIPLY</calc_type>
+      <field_a>quantity</field_a>
+      <field_b>unit_price</field_b>
+      <value_type>Number</value_type>
+      <value_length>15</value_length>
+      <value_precision>2</value_precision>
+    </calculation>
+    <calculation>
+      <field_name>net_total</field_name>
+      <calc_type>SUBTRACT</calc_type>
+      <field_a>line_total</field_a>
+      <field_b>discount_amount</field_b>
+      <value_type>Number</value_type>
+      <value_length>15</value_length>
+      <value_precision>2</value_precision>
+    </calculation>
+  </step>
+
+  <step>
+    <name>Add constants</name>
+    <type>Constant</type>
+    <fields>
+      <field><name>source_system</name><type>String</type><value>ECOMMERCE</value></field>
+      <field><name>load_timestamp</name><type>Timestamp</type><value>${Internal.Transformation.Date.Start}</value></field>
+    </fields>
+  </step>
+
+</transformation>

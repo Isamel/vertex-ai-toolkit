@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  calc_metrics.ktr — Pentaho Transformation
+  Computes derived financial metrics, aggregates daily KPIs per store,
+  and pivots sales by payment category into columnar format.
+
+  Steps:
+    1. Input              — Receives enriched sales rows
+    2. Calculator         — gross_amount, discount_amount, net_amount
+    3. Group by store-date— Daily aggregates (SUM, COUNT, MIN, MAX)
+    4. Pivot by payment   — Denormalize payment_category into columns
+
+  Pentaho Steps Used:
+    - Dummy
+    - Calculator
+    - GroupBy
+    - RowDenormaliser (Pivot)
+-->
+<transformation>
+  <info>
+    <name>calc_metrics</name>
+    <description>Calculate financial metrics, daily aggregates and payment pivot</description>
+    <extended_description>
+      Takes enriched sales rows and calculates line-level financial amounts
+      (gross, discount, net). Then aggregates to store-day grain for KPI
+      reporting and pivots net_amount by payment_category so each payment
+      type becomes its own column (sales_cash, sales_card, sales_digital).
+    </extended_description>
+    <trans_type>Normal</trans_type>
+    <directory>/</directory>
+    <parameters/>
+  </info>
+
+  <order>
+    <hop><from>Input</from><to>Calculator</to><enabled>Y</enabled></hop>
+    <hop><from>Calculator</from><to>Group by store-date</to><enabled>Y</enabled></hop>
+    <hop><from>Group by store-date</from><to>Pivot by payment</to><enabled>Y</enabled></hop>
+  </order>
+
+  <!-- 1. Dummy input — rows arrive from enrich_dimensions.ktr -->
+  <step>
+    <name>Input</name>
+    <type>Dummy</type>
+    <description>Receives enriched sales rows with dimensional attributes</description>
+  </step>
+
+  <!-- 2. Calculate line-level financial amounts -->
+  <step>
+    <name>Calculator</name>
+    <type>Calculator</type>
+    <calculation>
+      <field_name>gross_amount</field_name>
+      <calc_type>MULTIPLY</calc_type>
+      <field_a>quantity</field_a>
+      <field_b>unit_price</field_b>
+      <value_type>Number</value_type>
+      <value_length>15</value_length>
+      <value_precision>2</value_precision>
+      <remove>N</remove>
+    </calculation>
+    <calculation>
+      <field_name>discount_factor</field_name>
+      <calc_type>DIVIDE</calc_type>
+      <field_a>discount_pct</field_a>
+      <field_b/>
+      <field_c/>
+      <value_type>Number</value_type>
+      <value_length>10</value_length>
+      <value_precision>4</value_precision>
+      <remove>Y</remove>
+      <constant>100</constant>
+      <comment>discount_pct / 100 to get decimal factor</comment>
+    </calculation>
+    <calculation>
+      <field_name>discount_amount</field_name>
+      <calc_type>MULTIPLY</calc_type>
+      <field_a>gross_amount</field_a>
+      <field_b>discount_factor</field_b>
+      <value_type>Number</value_type>
+      <value_length>15</value_length>
+      <value_precision>2</value_precision>
+      <remove>N</remove>
+    </calculation>
+    <calculation>
+      <field_name>net_amount</field_name>
+      <calc_type>SUBTRACT</calc_type>
+      <field_a>gross_amount</field_a>
+      <field_b>discount_amount</field_b>
+      <value_type>Number</value_type>
+      <value_length>15</value_length>
+      <value_precision>2</value_precision>
+      <remove>N</remove>
+    </calculation>
+  </step>
+
+  <!-- 3. Aggregate daily KPIs per store -->
+  <step>
+    <name>Group by store-date</name>
+    <type>GroupBy</type>
+    <all_rows>N</all_rows>
+    <ignore_aggregate>N</ignore_aggregate>
+    <give_back_row>N</give_back_row>
+    <directory>${java.io.tmpdir}</directory>
+    <prefix>grp_calc_metrics</prefix>
+    <add_linenr>N</add_linenr>
+    <group>
+      <field><name>store_id</name></field>
+      <field><name>order_date</name></field>
+    </group>
+    <fields>
+      <field>
+        <aggregate>daily_net_sales</aggregate>
+        <subject>net_amount</subject>
+        <type>SUM</type>
+        <valuefield/>
+      </field>
+      <field>
+        <aggregate>daily_units_sold</aggregate>
+        <subject>quantity</subject>
+        <type>SUM</type>
+        <valuefield/>
+      </field>
+      <field>
+        <aggregate>daily_txn_count</aggregate>
+        <subject>txn_id</subject>
+        <type>COUNT_DISTINCT</type>
+        <valuefield/>
+      </field>
+      <field>
+        <aggregate>min_txn_value</aggregate>
+        <subject>net_amount</subject>
+        <type>MIN</type>
+        <valuefield/>
+      </field>
+      <field>
+        <aggregate>max_txn_value</aggregate>
+        <subject>net_amount</subject>
+        <type>MAX</type>
+        <valuefield/>
+      </field>
+    </fields>
+  </step>
+
+  <!-- 4. Pivot payment_category into columns -->
+  <step>
+    <name>Pivot by payment</name>
+    <type>Denormaliser</type>
+    <group>
+      <field><name>store_id</name></field>
+      <field><name>order_date</name></field>
+    </group>
+    <key_field>payment_category</key_field>
+    <fields>
+      <field>
+        <field_name>net_amount</field_name>
+        <key_value>Cash</key_value>
+        <target_name>sales_cash</target_name>
+        <target_type>Number</target_type>
+        <target_length>15</target_length>
+        <target_precision>2</target_precision>
+        <target_aggregation_type>SUM</target_aggregation_type>
+      </field>
+      <field>
+        <field_name>net_amount</field_name>
+        <key_value>Card</key_value>
+        <target_name>sales_card</target_name>
+        <target_type>Number</target_type>
+        <target_length>15</target_length>
+        <target_precision>2</target_precision>
+        <target_aggregation_type>SUM</target_aggregation_type>
+      </field>
+      <field>
+        <field_name>net_amount</field_name>
+        <key_value>Digital</key_value>
+        <target_name>sales_digital</target_name>
+        <target_type>Number</target_type>
+        <target_length>15</target_length>
+        <target_precision>2</target_precision>
+        <target_aggregation_type>SUM</target_aggregation_type>
+      </field>
+    </fields>
+  </step>
+
+</transformation>

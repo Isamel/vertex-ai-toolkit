@@ -1,0 +1,232 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  clean_sales.ktr — Pentaho Transformation
+  Validates, normalizes, deduplicates and sorts ingested sales rows.
+
+  Steps:
+    1. Input              — Receives rows from upstream via hop
+    2. Filter null SKU    — Reject rows where sku IS NULL
+    3. Filter negative qty— Reject rows where quantity <= 0
+    4. Replace in string  — Normalize payment_method values to CARD / CASH / MOBILE
+    5. Clamp discount     — Cap discount_pct at 50 to prevent extreme discounts
+    6. Select values      — Drop source_file, rename for consistency
+    7. Sort rows          — Sort by store_id ASC, order_date ASC, txn_id ASC
+    8. Unique rows        — Deduplicate on txn_id + sku
+    9. Error output       — Collects rejected rows from filter steps
+
+  Pentaho Steps Used:
+    - Dummy
+    - FilterRows
+    - ReplaceString
+    - Calculator
+    - SelectValues
+    - SortRows
+    - UniqueRows
+-->
+<transformation>
+  <info>
+    <name>clean_sales</name>
+    <description>Validate, normalize and deduplicate sales rows</description>
+    <extended_description>
+      Receives ingested sales rows from any source (POS, e-commerce).
+      Applies data-quality rules: null-SKU rejection, negative-quantity
+      rejection, payment-method normalization, discount clamping,
+      field pruning, sorting, and deduplication.
+      Rejected rows are routed to an error-handling dummy step.
+    </extended_description>
+    <trans_type>Normal</trans_type>
+    <directory>/</directory>
+    <parameters>
+      <parameter>
+        <name>MAX_DISCOUNT_PCT</name>
+        <default_value>50</default_value>
+        <description>Maximum allowed discount percentage (rows above this are clamped)</description>
+      </parameter>
+    </parameters>
+  </info>
+
+  <order>
+    <hop><from>Input</from><to>Filter null SKU</to><enabled>Y</enabled></hop>
+    <hop><from>Filter null SKU</from><to>Filter negative qty</to><enabled>Y</enabled></hop>
+    <hop><from>Filter null SKU</from><to>Error output</to><enabled>Y</enabled><error_handling>Y</error_handling></hop>
+    <hop><from>Filter negative qty</from><to>Replace in string</to><enabled>Y</enabled></hop>
+    <hop><from>Filter negative qty</from><to>Error output</to><enabled>Y</enabled><error_handling>Y</error_handling></hop>
+    <hop><from>Replace in string</from><to>Clamp discount</to><enabled>Y</enabled></hop>
+    <hop><from>Clamp discount</from><to>Select values</to><enabled>Y</enabled></hop>
+    <hop><from>Select values</from><to>Sort rows</to><enabled>Y</enabled></hop>
+    <hop><from>Sort rows</from><to>Unique rows</to><enabled>Y</enabled></hop>
+  </order>
+
+  <!-- 1. Dummy input — rows arrive from upstream transformation -->
+  <step>
+    <name>Input</name>
+    <type>Dummy</type>
+    <description>Receives rows from upstream ingestion transformations</description>
+  </step>
+
+  <!-- 2. Reject rows with NULL sku -->
+  <step>
+    <name>Filter null SKU</name>
+    <type>FilterRows</type>
+    <send_true_to>Filter negative qty</send_true_to>
+    <send_false_to>Error output</send_false_to>
+    <compare>
+      <condition>
+        <leftvalue>sku</leftvalue>
+        <function>IS NOT NULL</function>
+        <rightvalue/>
+      </condition>
+    </compare>
+  </step>
+
+  <!-- 3. Reject rows with quantity <= 0 -->
+  <step>
+    <name>Filter negative qty</name>
+    <type>FilterRows</type>
+    <send_true_to>Replace in string</send_true_to>
+    <send_false_to>Error output</send_false_to>
+    <compare>
+      <condition>
+        <leftvalue>quantity</leftvalue>
+        <function>&gt;</function>
+        <rightvalue/>
+        <value><name>constant</name><type>Integer</type><text>0</text></value>
+      </condition>
+    </compare>
+  </step>
+
+  <!-- 4. Normalize payment_method: credit_card/debit_card → CARD, cash → CASH -->
+  <step>
+    <name>Replace in string</name>
+    <type>ReplaceString</type>
+    <fields>
+      <field>
+        <in_stream_name>payment_method</in_stream_name>
+        <out_stream_name/>
+        <use_regex>N</use_regex>
+        <replace_string>credit_card</replace_string>
+        <replace_by_string>CARD</replace_by_string>
+        <whole_word>Y</whole_word>
+        <case_sensitive>N</case_sensitive>
+      </field>
+      <field>
+        <in_stream_name>payment_method</in_stream_name>
+        <out_stream_name/>
+        <use_regex>N</use_regex>
+        <replace_string>debit_card</replace_string>
+        <replace_by_string>CARD</replace_by_string>
+        <whole_word>Y</whole_word>
+        <case_sensitive>N</case_sensitive>
+      </field>
+      <field>
+        <in_stream_name>payment_method</in_stream_name>
+        <out_stream_name/>
+        <use_regex>N</use_regex>
+        <replace_string>cash</replace_string>
+        <replace_by_string>CASH</replace_by_string>
+        <whole_word>Y</whole_word>
+        <case_sensitive>N</case_sensitive>
+      </field>
+      <field>
+        <in_stream_name>payment_method</in_stream_name>
+        <out_stream_name/>
+        <use_regex>Y</use_regex>
+        <replace_string>[a-z]</replace_string>
+        <replace_by_string/>
+        <whole_word>N</whole_word>
+        <case_sensitive>Y</case_sensitive>
+        <comment>Uppercase any remaining lowercase chars via regex pass</comment>
+      </field>
+    </fields>
+  </step>
+
+  <!-- 5. Cap discount_pct at MAX_DISCOUNT_PCT (default 50) -->
+  <step>
+    <name>Clamp discount</name>
+    <type>Calculator</type>
+    <calculation>
+      <field_name>discount_pct_clamped</field_name>
+      <calc_type>MIN</calc_type>
+      <field_a>discount_pct</field_a>
+      <field_b>MAX_DISCOUNT_PCT</field_b>
+      <value_type>Number</value_type>
+      <value_length>5</value_length>
+      <value_precision>2</value_precision>
+      <remove>N</remove>
+      <comment>If discount_pct exceeds threshold, clamp to threshold</comment>
+    </calculation>
+    <calculation>
+      <field_name>discount_pct</field_name>
+      <calc_type>MAX</calc_type>
+      <field_a>discount_pct_clamped</field_a>
+      <field_b/>
+      <field_c/>
+      <value_type>Number</value_type>
+      <value_length>5</value_length>
+      <value_precision>2</value_precision>
+      <remove>N</remove>
+      <comment>Ensure discount_pct is at least 0 (no negative discounts)</comment>
+    </calculation>
+  </step>
+
+  <!-- 6. Drop internal fields, keep canonical schema -->
+  <step>
+    <name>Select values</name>
+    <type>SelectValues</type>
+    <fields>
+      <select><name>txn_id</name></select>
+      <select><name>store_id</name></select>
+      <select><name>order_date</name></select>
+      <select><name>order_time</name></select>
+      <select><name>sku</name></select>
+      <select><name>product_name</name></select>
+      <select><name>quantity</name></select>
+      <select><name>unit_price</name></select>
+      <select><name>discount_pct</name></select>
+      <select><name>payment_method</name></select>
+      <select><name>source_system</name></select>
+      <select><name>load_timestamp</name></select>
+      <!-- source_file is intentionally dropped -->
+    </fields>
+    <remove>
+      <name>source_file</name>
+      <name>discount_pct_clamped</name>
+    </remove>
+  </step>
+
+  <!-- 7. Sort for downstream deduplication and merge -->
+  <step>
+    <name>Sort rows</name>
+    <type>SortRows</type>
+    <directory>${java.io.tmpdir}</directory>
+    <prefix>sort_clean_sales</prefix>
+    <sort_size>100000</sort_size>
+    <compress>N</compress>
+    <unique_rows>N</unique_rows>
+    <fields>
+      <field><name>store_id</name><ascending>Y</ascending><case_sensitive>N</case_sensitive></field>
+      <field><name>order_date</name><ascending>Y</ascending><case_sensitive>N</case_sensitive></field>
+      <field><name>txn_id</name><ascending>Y</ascending><case_sensitive>N</case_sensitive></field>
+    </fields>
+  </step>
+
+  <!-- 8. Deduplicate on txn_id + sku (same transaction, same product = duplicate) -->
+  <step>
+    <name>Unique rows</name>
+    <type>UniqueRows</type>
+    <count_rows>N</count_rows>
+    <reject_duplicate_row>N</reject_duplicate_row>
+    <fields>
+      <field><name>txn_id</name><case_insensitive>N</case_insensitive></field>
+      <field><name>sku</name><case_insensitive>N</case_insensitive></field>
+    </fields>
+  </step>
+
+  <!-- 9. Error-handling sink — collects rejected rows from filter steps -->
+  <step>
+    <name>Error output</name>
+    <type>Dummy</type>
+    <description>Collects rows rejected by quality filters (null SKU, negative qty)</description>
+  </step>
+
+</transformation>
