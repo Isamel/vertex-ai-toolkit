@@ -66,7 +66,7 @@ class TestGenerationConfig:
     def test_defaults(self) -> None:
         cfg = GenerationConfig()
         assert cfg.temperature == 0.7
-        assert cfg.max_output_tokens == 8192
+        assert cfg.max_output_tokens == 16384
         assert cfg.top_p == 0.95
         assert cfg.top_k == 40
 

@@ -38,7 +38,7 @@ class GenerationConfig(BaseModel):
     """Model generation parameters."""
 
     temperature: float = 0.7
-    max_output_tokens: int = 8192
+    max_output_tokens: int = 16384
     top_p: float = 0.95
     top_k: int = 40
 
@@ -48,7 +48,7 @@ class ModelInfo(BaseModel):
 
     id: str
     description: str = ""
-    max_output_tokens: int = 8192
+    max_output_tokens: int = 65536
 
 
 class ModelsConfig(BaseModel):

@@ -51,7 +51,7 @@ def _make_agent_config(
     system_instruction: str = "You analyze things.",
     model: str = "gemini-2.5-pro",
     temperature: float = 0.7,
-    max_output_tokens: int = 8192,
+    max_output_tokens: int = 16384,
 ) -> AgentConfig:
     return AgentConfig(
         name=name,
@@ -132,7 +132,7 @@ class TestSpecialistAgentExecute:
             history=[],
             model_id="gemini-2.5-pro",
             temperature=0.7,
-            max_output_tokens=8192,
+            max_output_tokens=16384,
         )
         assert result.success is True
         assert result.agent_name == "test-agent"
@@ -254,7 +254,7 @@ class TestSpecialistAgentExecute:
 
         assert agent.model == "gemini-2.5-pro"
         assert agent.config.temperature == 0.7
-        assert agent.config.max_output_tokens == 8192
+        assert agent.config.max_output_tokens == 16384
 
     def test_build_chat_history_converts_correctly(self) -> None:
         client = _make_mock_client()

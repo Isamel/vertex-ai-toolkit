@@ -34,7 +34,7 @@ class AgentConfig:
     system_instruction: str
     model: str = "gemini-2.5-pro"
     temperature: float = 0.7
-    max_output_tokens: int = 8192
+    max_output_tokens: int = 16384
 
 
 @dataclass

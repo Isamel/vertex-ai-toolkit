@@ -138,6 +138,6 @@ class SpecialistAgent(BaseAgent):
             system_instruction=config_dict["system_instruction"],
             model=config_dict.get("model", "gemini-2.5-pro"),
             temperature=config_dict.get("temperature", 0.7),
-            max_output_tokens=config_dict.get("max_output_tokens", 8192),
+            max_output_tokens=config_dict.get("max_output_tokens", 16384),
         )
         return cls(agent_config, client)

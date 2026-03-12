@@ -170,7 +170,7 @@ class TestCodingAgentInit:
 
         agent = CodingAgent(client, config)
 
-        assert agent.config.max_output_tokens == 8192
+        assert agent.config.max_output_tokens == 65536
 
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
     @patch("vaig.agents.coding.create_file_tools", return_value=[])
@@ -1215,7 +1215,7 @@ class TestDeduplicateResponse:
         mock_file_tools: MagicMock,
         mock_shell_tools: MagicMock,
     ) -> None:
-        """Integration: execute() passes frequency_penalty=0.5 to generate_with_tools."""
+        """Integration: execute() passes frequency_penalty=0.15 to generate_with_tools."""
         client = _make_mock_client()
         client.generate_with_tools.return_value = _make_text_result(text="Done")
 
@@ -1223,4 +1223,4 @@ class TestDeduplicateResponse:
         agent.execute("Do something")
 
         call_kwargs = client.generate_with_tools.call_args[1]
-        assert call_kwargs.get("frequency_penalty") == 0.5
+        assert call_kwargs.get("frequency_penalty") == 0.15

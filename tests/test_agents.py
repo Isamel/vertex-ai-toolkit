@@ -35,7 +35,7 @@ class TestAgentConfig:
         cfg = AgentConfig(name="a", role="b", system_instruction="c")
         assert cfg.model == "gemini-2.5-pro"
         assert cfg.temperature == 0.7
-        assert cfg.max_output_tokens == 8192
+        assert cfg.max_output_tokens == 16384
 
     def test_custom_values(self) -> None:
         cfg = AgentConfig(
