@@ -20,6 +20,8 @@ def _make_settings(
     max_output_tokens: int = 65_536,
     safety_margin: float = 0.1,
     overlap_ratio: float = 0.1,
+    chars_per_token: float = 2.0,
+    inter_chunk_delay: float = 0.0,
 ) -> MagicMock:
     """Create a mock Settings with ModelInfo and ChunkingConfig."""
     settings = MagicMock()
@@ -30,6 +32,8 @@ def _make_settings(
     settings.chunking = ChunkingConfig(
         chunk_overlap_ratio=overlap_ratio,
         token_safety_margin=safety_margin,
+        chars_per_token=chars_per_token,
+        inter_chunk_delay=inter_chunk_delay,
     )
     return settings
 
@@ -106,6 +110,26 @@ class TestTokenBudget:
         )
         # 1_000_000 * 0.5 = 500_000
         assert budget.chunk_budget == 500_000
+
+    def test_chars_per_token_default(self) -> None:
+        """Default chars_per_token should be 2.0 (conservative)."""
+        budget = TokenBudget(
+            context_window=100_000,
+            system_prompt_tokens=0,
+            user_prompt_tokens=0,
+            max_output_tokens=0,
+        )
+        assert budget.chars_per_token == 2.0
+
+    def test_chars_per_token_custom(self) -> None:
+        budget = TokenBudget(
+            context_window=100_000,
+            system_prompt_tokens=0,
+            user_prompt_tokens=0,
+            max_output_tokens=0,
+            chars_per_token=3.5,
+        )
+        assert budget.chars_per_token == 3.5
 
 
 # ══════════════════════════════════════════════════════════════
@@ -196,6 +220,15 @@ class TestCalculateBudget:
         assert budget.context_window == 1_048_576
         assert budget.max_output_tokens == 65_536
 
+    def test_budget_includes_chars_per_token_from_settings(self) -> None:
+        """Budget should carry chars_per_token from settings."""
+        client = _make_client(count_tokens_value=10)
+        settings = _make_settings(chars_per_token=3.0)
+        processor = ChunkedProcessor(client, settings)
+
+        budget = processor.calculate_budget("sys", "prompt")
+        assert budget.chars_per_token == 3.0
+
 
 # ══════════════════════════════════════════════════════════════
 # ChunkedProcessor.needs_chunking
@@ -258,22 +291,23 @@ class TestNeedsChunking:
 
 
 class TestSplitIntoChunks:
-    def _budget(self, chunk_budget_chars: int) -> TokenBudget:
-        """Create a budget where chunk_budget equals chunk_budget_chars // 4 tokens.
+    def _budget(self, chunk_budget_chars: int, *, chars_per_token: float = 2.0) -> TokenBudget:
+        """Create a budget where chunk_budget corresponds to chunk_budget_chars.
 
-        Since the splitter uses len//4 estimation, a budget of N tokens
-        corresponds to content of N*4 characters.
+        The splitter estimates tokens as len(line) / chars_per_token.
+        So a budget of N tokens corresponds to N * chars_per_token characters.
+
+        For convenience, we set chunk_budget = chunk_budget_chars / chars_per_token
+        so the caller thinks in character space.
         """
-        # We want chunk_budget = chunk_budget_chars // 4
-        # chunk_budget = context_window * (1 - margin) - sys - prompt - output
-        # Set sys=prompt=output=0, margin=0 -> chunk_budget = context_window
-        target_tokens = chunk_budget_chars // 4
+        target_tokens = int(chunk_budget_chars / chars_per_token)
         return TokenBudget(
             context_window=target_tokens,
             system_prompt_tokens=0,
             user_prompt_tokens=0,
             max_output_tokens=0,
             safety_margin=0.0,
+            chars_per_token=chars_per_token,
         )
 
     def test_empty_content(self) -> None:
@@ -302,8 +336,8 @@ class TestSplitIntoChunks:
         settings = _make_settings()
         processor = ChunkedProcessor(client, settings)
 
-        # Each line is ~40 chars -> ~10 tokens
-        # Budget of 20 tokens (80 chars) should fit ~2 lines per chunk
+        # Each line is ~40 chars -> ~20 tokens at 2.0 chars/token
+        # Budget of 40 tokens (80 chars) should fit ~2 lines per chunk
         budget = self._budget(80)
 
         content = "".join(f"line {i}: some content here!!!\n" for i in range(10))
@@ -322,8 +356,7 @@ class TestSplitIntoChunks:
         settings = _make_settings()
         processor = ChunkedProcessor(client, settings)
         # Use a budget that gives ~5-10 lines per chunk so overlap of 0.5
-        # produces a meaningful number of overlap lines (int truncation issue
-        # with 2 lines and 0.3 overlap = 0 overlap lines)
+        # produces a meaningful number of overlap lines
         budget = self._budget(400)
 
         content = "".join(f"line {i}: some content here!!!\n" for i in range(50))
@@ -356,7 +389,7 @@ class TestSplitIntoChunks:
         client = _make_client()
         settings = _make_settings()
         processor = ChunkedProcessor(client, settings)
-        budget = self._budget(40)  # 10 tokens
+        budget = self._budget(40)  # 20 tokens
 
         content = "x" * 1000 + "\nshort\n"
         chunks = processor.split_into_chunks(content, budget, overlap_ratio=0.0)
@@ -396,6 +429,73 @@ class TestSplitIntoChunks:
         original_lines = set(content.splitlines())
         assert original_lines.issubset(all_chunk_lines)
 
+    def test_conservative_token_estimation_produces_more_chunks(self) -> None:
+        """A lower chars_per_token should produce more (smaller) chunks.
+
+        This is the core fix for Bug 1: the old len//4 heuristic (4 chars/token)
+        produced chunks that were 3-4x too large. The new default (2.0 chars/token)
+        is more conservative and prevents API token limit errors.
+        """
+        client = _make_client()
+        settings = _make_settings()
+        processor = ChunkedProcessor(client, settings)
+
+        content = "".join(f"line {i}: some data content here!!!\n" for i in range(100))
+
+        # Optimistic estimation (old behavior): 4 chars/token -> fewer, larger chunks
+        budget_optimistic = TokenBudget(
+            context_window=500,
+            system_prompt_tokens=0,
+            user_prompt_tokens=0,
+            max_output_tokens=0,
+            safety_margin=0.0,
+            chars_per_token=4.0,
+        )
+        # Conservative estimation (new default): 2 chars/token -> more, smaller chunks
+        budget_conservative = TokenBudget(
+            context_window=500,
+            system_prompt_tokens=0,
+            user_prompt_tokens=0,
+            max_output_tokens=0,
+            safety_margin=0.0,
+            chars_per_token=2.0,
+        )
+
+        chunks_optimistic = processor.split_into_chunks(content, budget_optimistic, overlap_ratio=0.0)
+        chunks_conservative = processor.split_into_chunks(content, budget_conservative, overlap_ratio=0.0)
+
+        # Conservative should produce MORE chunks (each chunk is smaller)
+        assert len(chunks_conservative) > len(chunks_optimistic)
+        # Each conservative chunk should be smaller or equal in character length
+        max_conservative = max(len(c) for c in chunks_conservative)
+        max_optimistic = max(len(c) for c in chunks_optimistic)
+        assert max_conservative <= max_optimistic
+
+    def test_chunk_sizes_respect_budget_with_realistic_scenario(self) -> None:
+        """Simulate the real-world scenario: 5.4M token file with 1M context.
+
+        With 2.0 chars/token and 10% safety margin, the chunk budget for a
+        1M context window should produce chunks well under the API limit.
+        """
+        # Realistic budget: 1M context, 2K system, 50 user prompt, 16K output
+        budget = TokenBudget(
+            context_window=1_048_576,
+            system_prompt_tokens=2_000,
+            user_prompt_tokens=50,
+            max_output_tokens=16_384,
+            safety_margin=0.1,
+            chars_per_token=2.0,
+        )
+        # chunk_budget = 1_048_576 * 0.9 - 2000 - 50 - 16384 = 925_284
+
+        # With chars_per_token=2.0, each chunk should be at most
+        # 925_284 * 2.0 = ~1.85M characters.
+        # In real tokens, that's ~925K tokens — safely under the 1M limit.
+        assert budget.chunk_budget > 0
+        assert budget.chunk_budget < 1_048_576  # less than full context window
+        max_chunk_chars = budget.chunk_budget * budget.chars_per_token
+        assert max_chunk_chars < 2_000_000  # reasonable character limit per chunk
+
 
 # ══════════════════════════════════════════════════════════════
 # ChunkedProcessor.process_ask (Map-Reduce)
@@ -403,14 +503,15 @@ class TestSplitIntoChunks:
 
 
 class TestProcessAsk:
-    def _budget(self, chunk_budget_chars: int = 200) -> TokenBudget:
-        target_tokens = chunk_budget_chars // 4
+    def _budget(self, chunk_budget_chars: int = 200, *, chars_per_token: float = 2.0) -> TokenBudget:
+        target_tokens = int(chunk_budget_chars / chars_per_token)
         return TokenBudget(
             context_window=target_tokens,
             system_prompt_tokens=0,
             user_prompt_tokens=0,
             max_output_tokens=0,
             safety_margin=0.0,
+            chars_per_token=chars_per_token,
         )
 
     def test_empty_content_returns_empty(self) -> None:
@@ -559,6 +660,53 @@ class TestProcessAsk:
         call_kwargs = client.generate.call_args.kwargs
         assert call_kwargs.get("model_id") == "gemini-2.5-flash"
 
+    @patch("vaig.agents.chunked.time.sleep")
+    def test_inter_chunk_delay_is_applied(self, mock_sleep: MagicMock) -> None:
+        """Inter-chunk delay should be applied between chunk API calls."""
+        client = _make_client(generate_text="result")
+        settings = _make_settings(overlap_ratio=0.0, inter_chunk_delay=2.0)
+        processor = ChunkedProcessor(client, settings)
+
+        content = "".join(f"line {i}: content here!!!\n" for i in range(20))
+        budget = self._budget(80)
+        chunks = processor.split_into_chunks(content, budget)
+
+        if len(chunks) < 2:
+            pytest.skip("Need at least 2 chunks for delay test")
+
+        processor.process_ask(content, "analyze", "sys", budget)
+
+        # Sleep should be called between chunks (n-1 times for map) + 1 for consolidation
+        # Total: len(chunks) times (n-1 inter-chunk + 1 pre-consolidation)
+        expected_sleep_calls = len(chunks)  # (chunks-1) between map chunks + 1 before reduce
+        assert mock_sleep.call_count == expected_sleep_calls
+        # Each call should use the configured delay
+        for call in mock_sleep.call_args_list:
+            assert call.args[0] == 2.0
+
+    @patch("vaig.agents.chunked.time.sleep")
+    def test_no_delay_when_configured_zero(self, mock_sleep: MagicMock) -> None:
+        """No delay should be applied when inter_chunk_delay is 0."""
+        client = _make_client(generate_text="result")
+        settings = _make_settings(overlap_ratio=0.0, inter_chunk_delay=0.0)
+        processor = ChunkedProcessor(client, settings)
+
+        content = "".join(f"line {i}: content here!!!\n" for i in range(20))
+        budget = self._budget(80)
+
+        processor.process_ask(content, "analyze", "sys", budget)
+        mock_sleep.assert_not_called()
+
+    @patch("vaig.agents.chunked.time.sleep")
+    def test_no_delay_for_single_chunk(self, mock_sleep: MagicMock) -> None:
+        """Single chunk processing should not trigger any delay."""
+        client = _make_client(generate_text="answer")
+        settings = _make_settings(inter_chunk_delay=5.0)
+        processor = ChunkedProcessor(client, settings)
+
+        processor.process_ask("short\n", "q", "sys", self._budget(1000))
+        mock_sleep.assert_not_called()
+
 
 # ══════════════════════════════════════════════════════════════
 # ChunkedProcessor.process_chat_summary
@@ -643,11 +791,20 @@ class TestChunkingConfig:
         cfg = ChunkingConfig()
         assert cfg.chunk_overlap_ratio == 0.1
         assert cfg.token_safety_margin == 0.1
+        assert cfg.chars_per_token == 2.0
+        assert cfg.inter_chunk_delay == 2.0
 
     def test_custom_values(self) -> None:
-        cfg = ChunkingConfig(chunk_overlap_ratio=0.2, token_safety_margin=0.15)
+        cfg = ChunkingConfig(
+            chunk_overlap_ratio=0.2,
+            token_safety_margin=0.15,
+            chars_per_token=3.0,
+            inter_chunk_delay=5.0,
+        )
         assert cfg.chunk_overlap_ratio == 0.2
         assert cfg.token_safety_margin == 0.15
+        assert cfg.chars_per_token == 3.0
+        assert cfg.inter_chunk_delay == 5.0
 
 
 # ══════════════════════════════════════════════════════════════

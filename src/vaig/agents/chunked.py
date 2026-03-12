@@ -8,6 +8,7 @@ consolidates partial results into a final answer.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -50,6 +51,7 @@ class TokenBudget:
     user_prompt_tokens: int
     max_output_tokens: int
     safety_margin: float = 0.1
+    chars_per_token: float = 2.0
 
     @property
     def chunk_budget(self) -> int:
@@ -100,6 +102,7 @@ class ChunkedProcessor:
         context_window = model_info.context_window if model_info else 1_048_576
         max_output = model_info.max_output_tokens if model_info else 65_536
         safety_margin = self._settings.chunking.token_safety_margin
+        chars_per_token = self._settings.chunking.chars_per_token
 
         # Measure system instruction tokens
         sys_tokens = self._count_tokens_safe(system_instruction, model_id=mid)
@@ -113,6 +116,7 @@ class ChunkedProcessor:
             user_prompt_tokens=prompt_tokens,
             max_output_tokens=max_output,
             safety_margin=safety_margin,
+            chars_per_token=chars_per_token,
         )
 
         if budget.chunk_budget <= 0:
@@ -125,13 +129,14 @@ class ChunkedProcessor:
 
         logger.info(
             "Token budget: context_window=%d, system=%d, prompt=%d, "
-            "max_output=%d, safety=%.0f%%, chunk_budget=%d",
+            "max_output=%d, safety=%.0f%%, chunk_budget=%d, chars_per_token=%.1f",
             context_window,
             sys_tokens,
             prompt_tokens,
             max_output,
             safety_margin * 100,
             budget.chunk_budget,
+            chars_per_token,
         )
         return budget
 
@@ -159,6 +164,10 @@ class ChunkedProcessor:
     ) -> list[str]:
         """Split content into chunks at line boundaries with overlap.
 
+        Uses chars_per_token from the budget for character-to-token estimation.
+        A lower chars_per_token value (e.g. 2.0) produces conservative estimates
+        that prevent chunks from exceeding the API's context window.
+
         Args:
             content: The full text content to split.
             budget: Token budget that determines chunk size.
@@ -172,13 +181,18 @@ class ChunkedProcessor:
             overlap_ratio = self._settings.chunking.chunk_overlap_ratio
 
         chunk_budget = budget.chunk_budget
+        chars_per_token = budget.chars_per_token
         lines = content.splitlines(keepends=True)
 
         if not lines:
             return [content] if content else []
 
-        # Estimate tokens per line using len//4 heuristic (fast, no API calls)
-        line_token_estimates = [max(len(line) // 4, 1) for line in lines]
+        # Estimate tokens per line using configurable chars_per_token ratio.
+        # Default of 2.0 chars/token is conservative — real tokenizers often
+        # produce ~1.0-1.5 chars/token for dense content (logs, data files).
+        # The old len//4 heuristic (4 chars/token) was far too optimistic,
+        # causing chunks to be 3-4x larger than the budget in real tokens.
+        line_token_estimates = [max(int(len(line) / chars_per_token), 1) for line in lines]
 
         chunks: list[str] = []
         start_idx = 0
@@ -216,9 +230,11 @@ class ChunkedProcessor:
                 start_idx = end_idx
 
         logger.info(
-            "Split content into %d chunks (budget=%d tokens/chunk, overlap=%.0f%%)",
+            "Split content into %d chunks (budget=%d tokens/chunk, "
+            "chars_per_token=%.1f, overlap=%.0f%%)",
             len(chunks),
             chunk_budget,
+            chars_per_token,
             overlap_ratio * 100,
         )
         return chunks
@@ -256,6 +272,7 @@ class ChunkedProcessor:
         """
         chunks = self.split_into_chunks(content, budget)
         total = len(chunks)
+        inter_chunk_delay = self._settings.chunking.inter_chunk_delay
 
         if total == 0:
             return ""
@@ -278,6 +295,16 @@ class ChunkedProcessor:
         for i, chunk in enumerate(chunks):
             if on_progress:
                 on_progress(i + 1, total)
+
+            # Rate-limit: wait between chunk API calls (skip before first)
+            if i > 0 and inter_chunk_delay > 0:
+                logger.debug(
+                    "Inter-chunk delay: %.1fs before chunk %d/%d",
+                    inter_chunk_delay,
+                    i + 1,
+                    total,
+                )
+                time.sleep(inter_chunk_delay)
 
             map_prompt = (
                 f"{user_prompt}\n\n"
@@ -326,6 +353,11 @@ class ChunkedProcessor:
             )
 
         # ── Reduce phase ──────────────────────────────────────
+        # Rate-limit before consolidation call too
+        if inter_chunk_delay > 0:
+            logger.debug("Inter-chunk delay: %.1fs before consolidation", inter_chunk_delay)
+            time.sleep(inter_chunk_delay)
+
         return self._consolidate(
             chunk_results,
             user_prompt,

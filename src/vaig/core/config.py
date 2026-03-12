@@ -125,6 +125,8 @@ class ChunkingConfig(BaseModel):
 
     chunk_overlap_ratio: float = 0.1
     token_safety_margin: float = 0.1
+    chars_per_token: float = 2.0
+    inter_chunk_delay: float = 2.0
 
 
 def _strip_empty_strings(data: dict[str, Any]) -> dict[str, Any]:
