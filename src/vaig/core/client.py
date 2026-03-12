@@ -15,11 +15,13 @@ from google.api_core import exceptions as google_exceptions
 
 # Suppress Vertex AI SDK deprecation warning (vertexai.generative_models is deprecated
 # in favor of google-genai SDK, sunset June 2026). We'll migrate when ready.
+# Belt-and-suspenders: filter by message (portable) AND module (Linux path match).
+# On some platforms/SDK versions the module regex alone doesn't match, so the
+# message-only filter catches it regardless.
 warnings.filterwarnings(
     "ignore",
-    message="This feature is deprecated as of June 24, 2025",
+    message="This feature is deprecated",
     category=UserWarning,
-    module=r"vertexai\.generative_models",
 )
 from vertexai.generative_models import (  # noqa: E402
     Content,
@@ -27,6 +29,9 @@ from vertexai.generative_models import (  # noqa: E402
     GenerativeModel,
     Part,
     Tool,
+)
+from vertexai.generative_models._generative_models import (  # noqa: E402
+    ResponseValidationError,
 )
 
 from vaig.core.auth import get_credentials
@@ -475,16 +480,43 @@ class GeminiClient:
             model = self._get_or_create_model(mid, system_instruction)
             tools = [Tool(function_declarations=tool_declarations)]
 
-            if history:
-                chat_history = self._build_history(history)
-                chat = model.start_chat(history=chat_history)
-                response = chat.send_message(
-                    prompt, generation_config=gen_config, tools=tools,
+            try:
+                if history:
+                    chat_history = self._build_history(history)
+                    # response_validation=False: tool-use responses may contain
+                    # only function calls (no text), which the SDK validator
+                    # rejects as "blocked".  We handle validation ourselves.
+                    chat = model.start_chat(
+                        history=chat_history,
+                        response_validation=False,
+                    )
+                    response = chat.send_message(
+                        prompt, generation_config=gen_config, tools=tools,
+                    )
+                else:
+                    response = model.generate_content(
+                        prompt, generation_config=gen_config, tools=tools,
+                    )
+            except ResponseValidationError as exc:
+                # The SDK thought the response was blocked or incomplete, but
+                # the actual response may still contain usable function calls.
+                # Extract whatever the model returned from the exception.
+                logger.warning(
+                    "ResponseValidationError caught — extracting partial response: %s",
+                    exc,
                 )
-            else:
-                response = model.generate_content(
-                    prompt, generation_config=gen_config, tools=tools,
-                )
+                if exc.responses:
+                    response = exc.responses[0]
+                else:
+                    # Truly empty — return an empty result so the caller can
+                    # surface a readable error instead of a raw traceback.
+                    return ToolCallResult(
+                        text=f"Model response was blocked: {exc}",
+                        model=mid,
+                        function_calls=[],
+                        usage={},
+                        finish_reason="BLOCKED",
+                    )
 
             # Extract usage metadata
             usage: dict[str, int] = {}
