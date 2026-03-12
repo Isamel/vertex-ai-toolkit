@@ -247,10 +247,12 @@ class CodingAgent(BaseAgent):
             fc_parts: list[Part] = []
             for fc in result.function_calls:
                 fc_parts.append(
-                    Part.from_function_call(
-                        name=fc["name"],
-                        args=fc["args"],
-                    )
+                    Part.from_dict({
+                        "function_call": {
+                            "name": fc["name"],
+                            "args": fc["args"],
+                        }
+                    })
                 )
             history.append(
                 Content(role="model", parts=fc_parts)
