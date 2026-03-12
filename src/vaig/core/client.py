@@ -16,6 +16,7 @@ from vertexai.generative_models import (
     GenerationConfig,
     GenerativeModel,
     Part,
+    Tool,
 )
 
 from vaig.core.auth import get_credentials
@@ -101,6 +102,18 @@ class GenerationResult:
 
     text: str
     model: str
+    usage: dict[str, int] = field(default_factory=dict)
+    finish_reason: str = ""
+
+
+@dataclass
+class ToolCallResult:
+    """Result from a generation call that may include function calls."""
+
+    text: str  # Empty if model returned function calls instead of text
+    model: str
+    function_calls: list[dict[str, Any]] = field(default_factory=list)
+    # Each dict: {"name": str, "args": dict[str, Any]}
     usage: dict[str, int] = field(default_factory=dict)
     finish_reason: str = ""
 
@@ -407,6 +420,139 @@ class GeminiClient:
         for chunk in chunks:
             if chunk.text:
                 yield chunk.text
+
+    def generate_with_tools(
+        self,
+        prompt: str | list[Part],
+        *,
+        tool_declarations: list[Any],
+        system_instruction: str | None = None,
+        history: list[ChatMessage] | None = None,
+        model_id: str | None = None,
+        timeout: float | None = None,
+        **gen_kwargs: Any,
+    ) -> ToolCallResult:
+        """Generate a response that may include function calls.
+
+        Makes a SINGLE API call with tool declarations. The response may
+        contain text, function calls, or both. Does NOT loop — the caller
+        (e.g. CodingAgent) is responsible for the tool-use loop.
+
+        Args:
+            prompt: Text prompt or list of multimodal Parts.
+            tool_declarations: List of FunctionDeclaration objects.
+            system_instruction: System-level instruction for the model.
+            history: Conversation history for multi-turn chat.
+            model_id: Override the current model for this call.
+            timeout: Optional wall-clock timeout (seconds) for the retry loop.
+            **gen_kwargs: Override generation config params.
+        """
+        self._ensure_initialized()
+
+        mid = model_id or self._current_model_id
+        gen_config = self._build_generation_config(**gen_kwargs)
+        logger.debug(
+            "generate_with_tools() → model=%s, has_history=%s, num_tools=%d",
+            mid,
+            bool(history),
+            len(tool_declarations),
+        )
+
+        def _call() -> ToolCallResult:
+            # Model is created inside the closure so that after a location
+            # fallback (which clears the model cache) a fresh model bound
+            # to the new location is used on the retry attempt.
+            model = self._get_or_create_model(mid, system_instruction)
+            tools = [Tool(function_declarations=tool_declarations)]
+
+            if history:
+                chat_history = self._build_history(history)
+                chat = model.start_chat(history=chat_history)
+                response = chat.send_message(
+                    prompt, generation_config=gen_config, tools=tools,
+                )
+            else:
+                response = model.generate_content(
+                    prompt, generation_config=gen_config, tools=tools,
+                )
+
+            # Extract usage metadata
+            usage: dict[str, int] = {}
+            if hasattr(response, "usage_metadata") and response.usage_metadata:
+                usage = {
+                    "prompt_tokens": response.usage_metadata.prompt_token_count,
+                    "completion_tokens": response.usage_metadata.candidates_token_count,
+                    "total_tokens": response.usage_metadata.total_token_count,
+                }
+
+            # Handle empty response
+            if not response.candidates or not response.candidates[0].content.parts:
+                logger.debug("generate_with_tools() — empty response (no candidates/parts)")
+                return ToolCallResult(
+                    text="",
+                    model=mid,
+                    function_calls=[],
+                    usage=usage,
+                    finish_reason=(
+                        str(response.candidates[0].finish_reason)
+                        if response.candidates
+                        else ""
+                    ),
+                )
+
+            # Parse parts — may contain function calls, text, or both
+            function_calls: list[dict[str, Any]] = []
+            text_parts: list[str] = []
+
+            for part in response.candidates[0].content.parts:
+                fc = part.function_call
+                if fc and fc.name:  # It's a function call
+                    function_calls.append({
+                        "name": fc.name,
+                        "args": dict(fc.args) if fc.args else {},
+                    })
+                elif part.text:
+                    text_parts.append(part.text)
+
+            logger.debug(
+                "generate_with_tools() — %d function call(s), %d text part(s)",
+                len(function_calls),
+                len(text_parts),
+            )
+
+            return ToolCallResult(
+                text="".join(text_parts),
+                model=mid,
+                function_calls=function_calls,
+                usage=usage,
+                finish_reason=str(response.candidates[0].finish_reason),
+            )
+
+        return self._retry_with_backoff(_call, timeout=timeout)
+
+    @staticmethod
+    def build_function_response_parts(results: list[dict[str, Any]]) -> list[Part]:
+        """Build Part objects containing function responses.
+
+        The CodingAgent uses this to send function execution results back to
+        the model in the conversation history for the next turn.
+
+        Args:
+            results: List of dicts with ``"name"`` (str) and ``"response"`` (dict).
+                     Each response dict should have ``{"output": str, "error": bool}``.
+
+        Returns:
+            List of Part objects to include in history for the next call.
+        """
+        parts: list[Part] = []
+        for result in results:
+            parts.append(
+                Part.from_function_response(
+                    name=result["name"],
+                    response=result["response"],
+                )
+            )
+        return parts
 
     # ── Internal helpers ──────────────────────────────────────
 

@@ -31,3 +31,19 @@ class GeminiRateLimitError(GeminiClientError):
 
 class GeminiConnectionError(GeminiClientError):
     """Raised when the API returns a server/connection error (500/502/503/504) after all retries."""
+
+
+class ToolExecutionError(VAIGError):
+    """Raised when a tool fails to execute."""
+
+    def __init__(self, message: str, *, tool_name: str) -> None:
+        super().__init__(message)
+        self.tool_name = tool_name
+
+
+class MaxIterationsError(VAIGError):
+    """Raised when the tool-use loop exceeds the configured maximum iterations."""
+
+    def __init__(self, message: str, *, iterations: int) -> None:
+        super().__init__(message)
+        self.iterations = iterations

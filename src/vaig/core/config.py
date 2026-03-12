@@ -82,6 +82,16 @@ class AgentsConfig(BaseModel):
     specialist_model: str = "gemini-2.5-flash"
 
 
+class CodingConfig(BaseModel):
+    """Coding agent configuration."""
+
+    workspace_root: str = "."
+    max_tool_iterations: int = 25
+    confirm_actions: bool = True
+    allowed_commands: list[str] = Field(default_factory=list)
+    blocked_paths: list[str] = Field(default_factory=list)
+
+
 class LoggingConfig(BaseModel):
     """Logging configuration."""
 
@@ -164,6 +174,7 @@ class Settings(BaseSettings):
     context: ContextConfig = Field(default_factory=ContextConfig)
     retry: RetryConfig = Field(default_factory=RetryConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    coding: CodingConfig = Field(default_factory=CodingConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> Settings:

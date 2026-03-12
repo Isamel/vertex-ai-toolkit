@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
@@ -15,6 +16,8 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
+import typer
+
 from vaig.agents.orchestrator import Orchestrator
 from vaig.context.builder import ContextBuilder
 from vaig.core.client import GeminiClient
@@ -22,6 +25,9 @@ from vaig.core.config import Settings
 from vaig.session.manager import SessionManager
 from vaig.skills.base import BaseSkill, SkillPhase
 from vaig.skills.registry import SkillRegistry
+
+if TYPE_CHECKING:
+    from vaig.agents.base import AgentResult
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -37,6 +43,7 @@ PROMPT_STYLE = Style.from_dict(
 # ── Slash Command Completer ──────────────────────────────────
 SLASH_COMMANDS = [
     "/add",
+    "/code",
     "/model",
     "/skill",
     "/phase",
@@ -75,6 +82,7 @@ class REPLState:
         self.active_skill: BaseSkill | None = None
         self.current_phase: SkillPhase = SkillPhase.ANALYZE
         self.stream_enabled: bool = True
+        self.code_mode: bool = False
 
     @property
     def model(self) -> str:
@@ -89,6 +97,8 @@ class REPLState:
     def prompt_prefix(self) -> str:
         """Build the prompt prefix showing current state."""
         parts = [f"[{self.model}]"]
+        if self.code_mode:
+            parts.append("(🔧code)")
         if self.active_skill:
             parts.append(f"({self.skill_name}:{self.current_phase.value})")
         if self.context_builder.bundle.file_count > 0:
@@ -188,6 +198,7 @@ def _handle_command(state: REPLState, raw_input: str) -> bool:
 
     handlers: dict[str, object] = {
         "/add": lambda: _cmd_add(state, args),
+        "/code": lambda: _cmd_code(state),
         "/model": lambda: _cmd_model(state, args),
         "/skill": lambda: _cmd_skill(state, args),
         "/phase": lambda: _cmd_phase(state, args),
@@ -220,7 +231,10 @@ def _handle_chat(state: REPLState, user_input: str) -> None:
     # Record user message
     state.session_manager.add_message("user", user_input)
 
-    if state.active_skill:
+    if state.code_mode:
+        # Code mode — use CodingAgent (Task 5.4)
+        _handle_code_chat(state, user_input, context_str)
+    elif state.active_skill:
         # Skill-based execution
         _handle_skill_chat(state, user_input, context_str)
     else:
@@ -292,6 +306,108 @@ def _handle_skill_chat(state: REPLState, user_input: str, context: str) -> None:
         logger.exception("Skill execution error")
 
 
+def _handle_code_chat(state: REPLState, user_input: str, context: str) -> None:
+    """Handle chat in code mode — uses CodingAgent with tool-use loop.
+
+    Implements Tasks 5.4 (routing), 5.5 (tool feedback), 5.6 (usage summary),
+    5.7 (MaxIterationsError handling), 5.8 (no streaming).
+    """
+    from vaig.agents.coding import CodingAgent
+    from vaig.core.exceptions import MaxIterationsError
+
+    coding_config = state.settings.coding
+    agent = CodingAgent(
+        state.client,
+        coding_config,
+        confirm_fn=_repl_confirm,
+        model_id=state.model,
+    )
+
+    try:
+        # Task 5.8: No streaming in code mode — tool loops are non-streamable
+        with console.status(
+            "[bold cyan]🤖 Coding agent working...[/bold cyan]",
+            spinner="dots",
+        ):
+            result = agent.execute(user_input, context=context)
+
+        # Display final response
+        console.print()
+        console.print(Markdown(result.content))
+        console.print()
+
+        # Task 5.5 + 5.6: Show tool feedback and usage summary
+        _show_repl_coding_summary(result)
+
+        # Record model response
+        state.session_manager.add_message("model", result.content, model=state.model)
+
+    except MaxIterationsError as exc:
+        # Task 5.7: Graceful handling
+        console.print(
+            f"\n[bold red]⚠ Max iterations reached ({exc.iterations})[/bold red]\n"
+            "[yellow]The coding agent hit its iteration limit. "
+            "Try breaking the task into smaller steps.[/yellow]"
+        )
+    except Exception as e:
+        console.print(f"[red]Error in code mode: {e}[/red]")
+        logger.exception("Code mode error")
+
+
+def _repl_confirm(tool_name: str, args: dict[str, Any]) -> bool:
+    """Rich-based confirmation prompt for destructive tool operations in REPL (Task 5.3)."""
+    if tool_name == "write_file":
+        desc = f"Write file: [cyan]{args.get('path', '?')}[/cyan]"
+    elif tool_name == "edit_file":
+        desc = f"Edit file: [cyan]{args.get('path', '?')}[/cyan]"
+    elif tool_name == "run_command":
+        desc = f"Run command: [cyan]{args.get('command', '?')}[/cyan]"
+    else:
+        desc = f"Execute: [cyan]{tool_name}[/cyan]"
+
+    console.print(f"\n[bold yellow]⚡ {desc}[/bold yellow]")
+    return typer.confirm("  Allow this operation?", default=True)
+
+
+def _show_repl_coding_summary(result: AgentResult) -> None:
+    """Display tool execution feedback and token usage in REPL (Tasks 5.5 + 5.6)."""
+    metadata = result.metadata or {}
+    tools_executed = metadata.get("tools_executed", [])
+    iterations = metadata.get("iterations", 0)
+
+    if tools_executed:
+        table = Table(title="🔧 Tools Executed", show_lines=False, title_style="bold")
+        table.add_column("#", style="dim", width=3)
+        table.add_column("Tool", style="cyan")
+        table.add_column("Target", style="white")
+        table.add_column("Status", justify="center")
+
+        for i, tool in enumerate(tools_executed, 1):
+            name = tool.get("name", "?")
+            tool_args = tool.get("args", {})
+            error = tool.get("error", False)
+
+            target = tool_args.get("path", tool_args.get("command", tool_args.get("pattern", "")))
+            if len(str(target)) > 60:
+                target = str(target)[:57] + "..."
+
+            status = "[red]✗[/red]" if error else "[green]✓[/green]"
+            table.add_row(str(i), name, str(target), status)
+
+        console.print(table)
+
+    usage = result.usage or {}
+    prompt_tokens = usage.get("prompt_tokens", 0)
+    completion_tokens = usage.get("completion_tokens", 0)
+    total_tokens = usage.get("total_tokens", 0)
+
+    console.print(
+        f"[dim]Completed in {iterations} iteration{'s' if iterations != 1 else ''} "
+        f"| Tokens: {total_tokens:,} total "
+        f"({prompt_tokens:,} prompt + {completion_tokens:,} completion)[/dim]"
+    )
+
+
 # ══════════════════════════════════════════════════════════════
 # Slash Command Handlers
 # ══════════════════════════════════════════════════════════════
@@ -317,6 +433,26 @@ def _cmd_add(state: REPLState, args: str) -> None:
             console.print(f"[red]Failed to add {path}: {e}[/red]")
 
     state.context_builder.show_summary()
+
+
+def _cmd_code(state: REPLState) -> None:
+    """Toggle code mode on/off (Task 5.2)."""
+    state.code_mode = not state.code_mode
+
+    if state.code_mode:
+        workspace = Path(state.settings.coding.workspace_root).resolve()
+        console.print(
+            Panel.fit(
+                "[bold yellow]🔧 Code Mode ON[/bold yellow]\n"
+                f"[dim]Workspace: {workspace}[/dim]\n"
+                f"[dim]Max iterations: {state.settings.coding.max_tool_iterations}[/dim]\n"
+                "[dim]The agent can now read, write, edit files and run commands.[/dim]\n"
+                "[dim]Streaming is disabled in code mode.[/dim]",
+                border_style="yellow",
+            )
+        )
+    else:
+        console.print("[green]✓ Code mode OFF — back to normal chat[/green]")
 
 
 def _cmd_model(state: REPLState, args: str) -> None:
@@ -462,7 +598,8 @@ def _cmd_clear(state: REPLState) -> None:
     state.context_builder.clear()
     state.session_manager.clear_history()
     state.orchestrator.reset_agents()
-    console.print("[green]✓ Cleared context, history, and agent states[/green]")
+    state.code_mode = False
+    console.print("[green]✓ Cleared context, history, agent states, and code mode[/green]")
 
 
 def _cmd_context(state: REPLState) -> None:
@@ -478,6 +615,7 @@ def _cmd_help() -> None:
 
 [bold cyan]Slash Commands[/bold cyan]
   [cyan]/add <path>[/cyan]      — Add files or directories as context
+  [cyan]/code[/cyan]            — Toggle coding agent mode (read/write/edit files)
   [cyan]/model [id][/cyan]      — Show or switch the current model
   [cyan]/skill [name][/cyan]    — Show, activate, or deactivate a skill (use 'off' to deactivate)
   [cyan]/phase [phase][/cyan]   — Show or switch the skill phase (analyze, plan, execute, validate, report)
@@ -494,5 +632,6 @@ def _cmd_help() -> None:
   • Add files before asking questions: [dim]/add src/ logs.txt[/dim]
   • Use skills for specialized tasks: [dim]/skill rca[/dim] then describe the incident
   • Switch models anytime: [dim]/model gemini-2.5-flash[/dim]
+  • Enable code mode for file operations: [dim]/code[/dim] then describe the task
 """
     console.print(Panel(help_text.strip(), title="📖 Help", border_style="bright_blue"))

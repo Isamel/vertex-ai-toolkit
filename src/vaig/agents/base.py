@@ -22,6 +22,7 @@ class AgentRole(StrEnum):
     ORCHESTRATOR = "orchestrator"
     SPECIALIST = "specialist"
     ASSISTANT = "assistant"
+    CODER = "coder"
 
 
 @dataclass

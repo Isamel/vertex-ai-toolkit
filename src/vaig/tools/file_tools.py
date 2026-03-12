@@ -1,0 +1,382 @@
+"""File tools — read, write, edit, list, and search files within a workspace."""
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+from pathlib import Path
+
+from vaig.tools.base import ToolDef, ToolParam, ToolResult
+
+logger = logging.getLogger(__name__)
+
+_MAX_FILE_SIZE = 1_048_576  # 1 MB
+
+_IGNORED_NAMES: frozenset[str] = frozenset({
+    "__pycache__",
+    "node_modules",
+    ".git",
+    ".venv",
+})
+
+_IGNORED_SUFFIXES: frozenset[str] = frozenset({
+    ".pyc",
+})
+
+
+def _is_ignored(name: str) -> bool:
+    """Return True if the name should be skipped during listing/search."""
+    if name.startswith("."):
+        return True
+    if name in _IGNORED_NAMES:
+        return True
+    if any(name.endswith(s) for s in _IGNORED_SUFFIXES):
+        return True
+    if name.endswith(".egg-info"):
+        return True
+    return False
+
+
+# ── Task 2.7 — Path safety utility ──────────────────────────
+
+
+def _resolve_safe_path(path: str, workspace: Path) -> Path | None:
+    """Resolve *path* relative to *workspace* and reject traversal attempts.
+
+    Returns the resolved ``Path`` on success, or ``None`` if the resulting
+    path falls outside the workspace root.
+    """
+    resolved_workspace = workspace.resolve()
+    # Reject absolute paths that are clearly outside workspace
+    candidate = (resolved_workspace / path).resolve()
+    if not candidate.is_relative_to(resolved_workspace):
+        return None
+    return candidate
+
+
+# ── Task 2.1 — read_file ────────────────────────────────────
+
+
+def read_file(path: str, *, workspace: Path) -> ToolResult:
+    """Read the contents of a file within the workspace."""
+    logger.debug("read_file: path=%s workspace=%s", path, workspace)
+
+    resolved = _resolve_safe_path(path, workspace)
+    if resolved is None:
+        return ToolResult(
+            output=f"Path safety error: '{path}' resolves outside the workspace.",
+            error=True,
+        )
+
+    try:
+        size = resolved.stat().st_size
+    except FileNotFoundError:
+        return ToolResult(output=f"File not found: {path}", error=True)
+
+    if size > _MAX_FILE_SIZE:
+        size_kb = size / 1024
+        return ToolResult(
+            output=f"File too large: {path} ({size_kb:.1f} KB). Maximum supported size is 1 MB.",
+            error=True,
+        )
+
+    try:
+        content = resolved.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return ToolResult(
+            output=f"Cannot read binary file: {path}",
+            error=True,
+        )
+    except OSError as exc:
+        return ToolResult(output=f"Error reading {path}: {exc}", error=True)
+
+    return ToolResult(output=content)
+
+
+# ── Task 2.2 — write_file ───────────────────────────────────
+
+
+def write_file(path: str, content: str, *, workspace: Path) -> ToolResult:
+    """Write *content* to a file, creating parent directories as needed."""
+    logger.debug("write_file: path=%s workspace=%s", path, workspace)
+
+    resolved = _resolve_safe_path(path, workspace)
+    if resolved is None:
+        return ToolResult(
+            output=f"Path safety error: '{path}' resolves outside the workspace.",
+            error=True,
+        )
+
+    try:
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(content, encoding="utf-8")
+        written = len(content.encode("utf-8"))
+    except OSError as exc:
+        return ToolResult(output=f"Error writing {path}: {exc}", error=True)
+
+    return ToolResult(output=f"Wrote {written} bytes to {path}")
+
+
+# ── Task 2.3 — edit_file ────────────────────────────────────
+
+
+def edit_file(
+    path: str,
+    old_string: str,
+    new_string: str,
+    *,
+    workspace: Path,
+) -> ToolResult:
+    """Apply an exact string replacement in a file (Claude Code pattern).
+
+    Fails if *old_string* is not found or matches more than once.
+    """
+    logger.debug("edit_file: path=%s workspace=%s", path, workspace)
+
+    resolved = _resolve_safe_path(path, workspace)
+    if resolved is None:
+        return ToolResult(
+            output=f"Path safety error: '{path}' resolves outside the workspace.",
+            error=True,
+        )
+
+    try:
+        content = resolved.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ToolResult(output=f"File not found: {path}", error=True)
+    except UnicodeDecodeError:
+        return ToolResult(output=f"Cannot edit binary file: {path}", error=True)
+    except OSError as exc:
+        return ToolResult(output=f"Error reading {path}: {exc}", error=True)
+
+    count = content.count(old_string)
+
+    if count == 0:
+        return ToolResult(
+            output="old_string not found in file",
+            error=True,
+        )
+
+    if count > 1:
+        return ToolResult(
+            output=(
+                f"Found {count} matches for old_string. "
+                "Provide more surrounding context to identify the correct match."
+            ),
+            error=True,
+        )
+
+    new_content = content.replace(old_string, new_string, 1)
+
+    try:
+        resolved.write_text(new_content, encoding="utf-8")
+    except OSError as exc:
+        return ToolResult(output=f"Error writing {path}: {exc}", error=True)
+
+    return ToolResult(output=f"Successfully edited {path}")
+
+
+# ── Task 2.4 — list_files ───────────────────────────────────
+
+
+def list_files(path: str = ".", *, workspace: Path) -> ToolResult:
+    """List directory contents, skipping hidden / ignored entries."""
+    logger.debug("list_files: path=%s workspace=%s", path, workspace)
+
+    resolved = _resolve_safe_path(path, workspace)
+    if resolved is None:
+        return ToolResult(
+            output=f"Path safety error: '{path}' resolves outside the workspace.",
+            error=True,
+        )
+
+    if not resolved.is_dir():
+        return ToolResult(output=f"Not a directory: {path}", error=True)
+
+    try:
+        entries: list[str] = []
+        for entry in sorted(resolved.iterdir()):
+            if _is_ignored(entry.name):
+                continue
+            suffix = "/" if entry.is_dir() else ""
+            entries.append(f"{entry.name}{suffix}")
+    except OSError as exc:
+        return ToolResult(output=f"Error listing {path}: {exc}", error=True)
+
+    if not entries:
+        return ToolResult(output="(empty directory)")
+
+    return ToolResult(output="\n".join(entries))
+
+
+# ── Task 2.5 — search_files ─────────────────────────────────
+
+_MAX_MATCHES = 100
+
+
+def search_files(pattern: str, path: str = ".", *, workspace: Path) -> ToolResult:
+    """Search file contents using a regex pattern (recursive grep)."""
+    logger.debug("search_files: pattern=%r path=%s workspace=%s", pattern, path, workspace)
+
+    resolved = _resolve_safe_path(path, workspace)
+    if resolved is None:
+        return ToolResult(
+            output=f"Path safety error: '{path}' resolves outside the workspace.",
+            error=True,
+        )
+
+    try:
+        regex = re.compile(pattern)
+    except re.error as exc:
+        return ToolResult(output=f"Invalid regex pattern: {exc}", error=True)
+
+    matches: list[str] = []
+    total_found = 0
+    resolved_workspace = workspace.resolve()
+
+    for dirpath, dirnames, filenames in os.walk(resolved):
+        # Prune ignored directories in-place
+        dirnames[:] = [d for d in dirnames if not _is_ignored(d)]
+
+        for fname in sorted(filenames):
+            if _is_ignored(fname):
+                continue
+
+            fpath = Path(dirpath) / fname
+
+            try:
+                size = fpath.stat().st_size
+            except OSError:
+                continue
+
+            if size > _MAX_FILE_SIZE:
+                continue
+
+            try:
+                content = fpath.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+
+            rel = fpath.resolve().relative_to(resolved_workspace)
+
+            for line_no, line in enumerate(content.splitlines(), start=1):
+                if regex.search(line):
+                    total_found += 1
+                    if len(matches) < _MAX_MATCHES:
+                        matches.append(f"{rel}:{line_no}:{line}")
+
+    if not matches:
+        return ToolResult(output=f"No matches found for pattern: {pattern}")
+
+    result = "\n".join(matches)
+    if total_found > _MAX_MATCHES:
+        result += f"\n... and {total_found - _MAX_MATCHES} more matches"
+
+    return ToolResult(output=result)
+
+
+# ── Task 2.8 — Tool factory ─────────────────────────────────
+
+
+def create_file_tools(workspace: Path) -> list[ToolDef]:
+    """Create all file tool definitions bound to a workspace."""
+    return [
+        ToolDef(
+            name="read_file",
+            description="Read the contents of a file. Returns the file content as text.",
+            parameters=[
+                ToolParam(
+                    name="path",
+                    type="string",
+                    description="Relative path to the file from workspace root",
+                ),
+            ],
+            execute=lambda path, _ws=workspace: read_file(path, workspace=_ws),
+        ),
+        ToolDef(
+            name="write_file",
+            description="Write content to a file. Creates parent directories if needed.",
+            parameters=[
+                ToolParam(
+                    name="path",
+                    type="string",
+                    description="Relative path to the file from workspace root",
+                ),
+                ToolParam(
+                    name="content",
+                    type="string",
+                    description="The content to write to the file",
+                ),
+            ],
+            execute=lambda path, content, _ws=workspace: write_file(
+                path, content, workspace=_ws
+            ),
+        ),
+        ToolDef(
+            name="edit_file",
+            description=(
+                "Apply an exact string replacement in a file. "
+                "The old_string must appear exactly once."
+            ),
+            parameters=[
+                ToolParam(
+                    name="path",
+                    type="string",
+                    description="Relative path to the file from workspace root",
+                ),
+                ToolParam(
+                    name="old_string",
+                    type="string",
+                    description="The exact string to find (must match exactly once)",
+                ),
+                ToolParam(
+                    name="new_string",
+                    type="string",
+                    description="The replacement string",
+                ),
+            ],
+            execute=lambda path, old_string, new_string, _ws=workspace: edit_file(
+                path, old_string, new_string, workspace=_ws
+            ),
+        ),
+        ToolDef(
+            name="list_files",
+            description=(
+                "List directory contents. Returns one entry per line. "
+                "Directories end with /. Skips hidden files and common ignores."
+            ),
+            parameters=[
+                ToolParam(
+                    name="path",
+                    type="string",
+                    description="Relative directory path (defaults to workspace root)",
+                    required=False,
+                ),
+            ],
+            execute=lambda path=".", _ws=workspace: list_files(path, workspace=_ws),
+        ),
+        ToolDef(
+            name="search_files",
+            description=(
+                "Search file contents using a regex pattern (recursive). "
+                "Returns matches in filepath:line:content format."
+            ),
+            parameters=[
+                ToolParam(
+                    name="pattern",
+                    type="string",
+                    description="Regex pattern to search for in file contents",
+                ),
+                ToolParam(
+                    name="path",
+                    type="string",
+                    description="Directory to search in (defaults to workspace root)",
+                    required=False,
+                ),
+            ],
+            execute=lambda pattern, path=".", _ws=workspace: search_files(
+                pattern, path, workspace=_ws
+            ),
+        ),
+    ]

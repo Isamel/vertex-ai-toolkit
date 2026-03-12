@@ -1,0 +1,1069 @@
+"""Tests for CodingAgent — autonomous file-editing agent using function calling."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from vaig.agents.base import AgentConfig, AgentResult, AgentRole
+from vaig.agents.coding import (
+    CODING_SYSTEM_PROMPT,
+    CodingAgent,
+    _DESTRUCTIVE_TOOLS,
+    _default_confirm,
+)
+from vaig.core.client import ToolCallResult
+from vaig.core.config import CodingConfig, reset_settings
+from vaig.core.exceptions import MaxIterationsError
+from vaig.tools import ToolDef, ToolParam, ToolRegistry, ToolResult
+
+
+# ── Fixtures ─────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _reset() -> None:
+    """Reset the settings singleton between tests."""
+    reset_settings()
+
+
+def _make_mock_client(current_model: str = "gemini-2.5-pro") -> MagicMock:
+    """Create a MagicMock that behaves like GeminiClient."""
+    client = MagicMock()
+    client.current_model = current_model
+    return client
+
+
+def _make_coding_config(
+    workspace_root: str = "/tmp/test-workspace",
+    max_tool_iterations: int = 10,
+    confirm_actions: bool = True,
+    allowed_commands: list[str] | None = None,
+) -> CodingConfig:
+    return CodingConfig(
+        workspace_root=workspace_root,
+        max_tool_iterations=max_tool_iterations,
+        confirm_actions=confirm_actions,
+        allowed_commands=allowed_commands or [],
+    )
+
+
+def _make_text_result(
+    text: str = "Done",
+    model: str = "gemini-2.5-pro",
+    usage: dict[str, int] | None = None,
+    finish_reason: str = "STOP",
+) -> ToolCallResult:
+    """Create a ToolCallResult with text only (no function calls)."""
+    return ToolCallResult(
+        text=text,
+        model=model,
+        function_calls=[],
+        usage=usage if usage is not None else {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        finish_reason=finish_reason,
+    )
+
+
+def _make_fc_result(
+    function_calls: list[dict[str, Any]],
+    model: str = "gemini-2.5-pro",
+    usage: dict[str, int] | None = None,
+) -> ToolCallResult:
+    """Create a ToolCallResult with function calls (no text)."""
+    return ToolCallResult(
+        text="",
+        model=model,
+        function_calls=function_calls,
+        usage=usage or {"prompt_tokens": 15, "completion_tokens": 25, "total_tokens": 40},
+        finish_reason="STOP",
+    )
+
+
+# ===========================================================================
+# TestDefaultConfirm
+# ===========================================================================
+
+
+class TestDefaultConfirm:
+    """Tests for _default_confirm()."""
+
+    def test_always_returns_true(self) -> None:
+        assert _default_confirm("write_file", {"path": "test.py"}) is True
+        assert _default_confirm("edit_file", {}) is True
+        assert _default_confirm("run_command", {"cmd": "rm -rf /"}) is True
+
+
+# ===========================================================================
+# TestDestructiveTools
+# ===========================================================================
+
+
+class TestDestructiveTools:
+    """Tests for _DESTRUCTIVE_TOOLS constant."""
+
+    def test_contains_expected_tools(self) -> None:
+        assert "write_file" in _DESTRUCTIVE_TOOLS
+        assert "edit_file" in _DESTRUCTIVE_TOOLS
+        assert "run_command" in _DESTRUCTIVE_TOOLS
+
+    def test_does_not_contain_read_tools(self) -> None:
+        assert "read_file" not in _DESTRUCTIVE_TOOLS
+        assert "list_files" not in _DESTRUCTIVE_TOOLS
+        assert "search_files" not in _DESTRUCTIVE_TOOLS
+
+    def test_is_frozenset(self) -> None:
+        assert isinstance(_DESTRUCTIVE_TOOLS, frozenset)
+
+
+# ===========================================================================
+# TestCodingAgentInit
+# ===========================================================================
+
+
+class TestCodingAgentInit:
+    """Tests for CodingAgent.__init__()."""
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_basic_init(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        client = _make_mock_client()
+        config = _make_coding_config()
+
+        agent = CodingAgent(client, config)
+
+        assert agent.name == "coding-agent"
+        assert agent.role == AgentRole.CODER
+        assert agent.model == "gemini-2.5-pro"
+        assert agent.workspace == Path("/tmp/test-workspace").resolve()
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_temperature_is_low(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """CodingAgent uses low temperature (0.2) for precise code generation."""
+        client = _make_mock_client()
+        config = _make_coding_config()
+
+        agent = CodingAgent(client, config)
+
+        assert agent.config.temperature == 0.2
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_max_output_tokens(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        client = _make_mock_client()
+        config = _make_coding_config()
+
+        agent = CodingAgent(client, config)
+
+        assert agent.config.max_output_tokens == 8192
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_system_instruction_is_coding_prompt(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        client = _make_mock_client()
+        config = _make_coding_config()
+
+        agent = CodingAgent(client, config)
+
+        assert agent.config.system_instruction == CODING_SYSTEM_PROMPT
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_model_override(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        client = _make_mock_client()
+        config = _make_coding_config()
+
+        agent = CodingAgent(client, config, model_id="gemini-2.5-flash")
+
+        assert agent.model == "gemini-2.5-flash"
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_confirm_fn_used_when_confirm_enabled(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """When confirm_actions=True and confirm_fn provided, use it."""
+        client = _make_mock_client()
+        config = _make_coding_config(confirm_actions=True)
+        custom_confirm = MagicMock(return_value=True)
+
+        agent = CodingAgent(client, config, confirm_fn=custom_confirm)
+
+        assert agent._confirm_fn is custom_confirm
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_confirm_disabled_uses_default(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """When confirm_actions=False, default confirm (always True) is used."""
+        client = _make_mock_client()
+        config = _make_coding_config(confirm_actions=False)
+        custom_confirm = MagicMock(return_value=False)
+
+        agent = CodingAgent(client, config, confirm_fn=custom_confirm)
+
+        assert agent._confirm_fn is _default_confirm
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_no_confirm_fn_uses_default(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """When no confirm_fn provided, default is used."""
+        client = _make_mock_client()
+        config = _make_coding_config(confirm_actions=True)
+
+        agent = CodingAgent(client, config)
+
+        assert agent._confirm_fn is _default_confirm
+
+    @patch("vaig.agents.coding.create_shell_tools")
+    @patch("vaig.agents.coding.create_file_tools")
+    def test_tools_registered(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """File and shell tools are registered in the registry."""
+        file_tool = ToolDef(name="read_file", description="Read a file")
+        shell_tool = ToolDef(name="run_command", description="Run a command")
+        mock_file_tools.return_value = [file_tool]
+        mock_shell_tools.return_value = [shell_tool]
+
+        client = _make_mock_client()
+        config = _make_coding_config()
+
+        agent = CodingAgent(client, config)
+
+        assert agent.registry.get("read_file") is file_tool
+        assert agent.registry.get("run_command") is shell_tool
+        assert len(agent.registry.list_tools()) == 2
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools")
+    def test_file_tools_created_with_workspace(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """create_file_tools is called with the resolved workspace path."""
+        mock_file_tools.return_value = []
+        client = _make_mock_client()
+        config = _make_coding_config(workspace_root="/tmp/ws")
+
+        CodingAgent(client, config)
+
+        mock_file_tools.assert_called_once_with(Path("/tmp/ws").resolve())
+
+    @patch("vaig.agents.coding.create_shell_tools")
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_shell_tools_created_with_allowed_commands(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """create_shell_tools is called with workspace and allowed_commands."""
+        mock_shell_tools.return_value = []
+        client = _make_mock_client()
+        config = _make_coding_config(allowed_commands=["pytest", "ruff"])
+
+        CodingAgent(client, config)
+
+        mock_shell_tools.assert_called_once_with(
+            Path("/tmp/test-workspace").resolve(),
+            allowed_commands=["pytest", "ruff"],
+        )
+
+    @patch("vaig.agents.coding.create_shell_tools")
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_shell_tools_none_when_empty_allowed_commands(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """Empty allowed_commands list passes None to create_shell_tools."""
+        mock_shell_tools.return_value = []
+        client = _make_mock_client()
+        config = _make_coding_config(allowed_commands=[])
+
+        CodingAgent(client, config)
+
+        mock_shell_tools.assert_called_once_with(
+            Path("/tmp/test-workspace").resolve(),
+            allowed_commands=None,
+        )
+
+
+# ===========================================================================
+# TestCodingAgentExecute
+# ===========================================================================
+
+
+class TestCodingAgentExecute:
+    """Tests for CodingAgent.execute() — the tool-use loop."""
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_text_response_returns_immediately(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """When model returns text (no FCs), return result immediately."""
+        client = _make_mock_client()
+        client.generate_with_tools.return_value = _make_text_result(text="All done!")
+
+        agent = CodingAgent(client, _make_coding_config())
+        result = agent.execute("Fix the bug")
+
+        assert isinstance(result, AgentResult)
+        assert result.success is True
+        assert result.content == "All done!"
+        assert result.agent_name == "coding-agent"
+        assert result.metadata["iterations"] == 1
+        assert result.metadata["tools_executed"] == []
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_usage_accumulation_single_iteration(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """Usage tokens are accumulated from each iteration."""
+        client = _make_mock_client()
+        client.generate_with_tools.return_value = _make_text_result(
+            usage={"prompt_tokens": 100, "completion_tokens": 200, "total_tokens": 300},
+        )
+
+        agent = CodingAgent(client, _make_coding_config())
+        result = agent.execute("Task")
+
+        assert result.usage["prompt_tokens"] == 100
+        assert result.usage["completion_tokens"] == 200
+        assert result.usage["total_tokens"] == 300
+
+    @patch("vaig.core.client.Part")
+    @patch("vertexai.generative_models.Content")
+    @patch("vertexai.generative_models.Part")
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_function_call_then_text_response(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+        mock_part: MagicMock,
+        mock_content: MagicMock,
+        mock_client_part: MagicMock,
+    ) -> None:
+        """Model returns FC first, then text — two iterations."""
+        client = _make_mock_client()
+
+        # Build a mock tool to register
+        read_tool = ToolDef(
+            name="read_file",
+            description="Read file",
+            parameters=[ToolParam(name="path", type="string", description="Path")],
+            execute=lambda path="": ToolResult(output="file contents here"),
+        )
+
+        # Iteration 1: function call
+        fc_result = _make_fc_result(
+            function_calls=[{"name": "read_file", "args": {"path": "main.py"}}],
+            usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        )
+        # Iteration 2: text response
+        text_result = _make_text_result(
+            text="I read the file, here's my analysis.",
+            usage={"prompt_tokens": 15, "completion_tokens": 25, "total_tokens": 40},
+        )
+        client.generate_with_tools.side_effect = [fc_result, text_result]
+
+        agent = CodingAgent(client, _make_coding_config())
+        agent._registry.register(read_tool)
+
+        result = agent.execute("Read and analyze main.py")
+
+        assert result.success is True
+        assert result.content == "I read the file, here's my analysis."
+        assert result.metadata["iterations"] == 2
+        assert len(result.metadata["tools_executed"]) == 1
+        assert result.metadata["tools_executed"][0]["name"] == "read_file"
+        # Usage accumulated across both iterations
+        assert result.usage["prompt_tokens"] == 25
+        assert result.usage["total_tokens"] == 70
+
+    @patch("vaig.core.client.Part")
+    @patch("vertexai.generative_models.Content")
+    @patch("vertexai.generative_models.Part")
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_multiple_function_calls_per_iteration(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+        mock_part: MagicMock,
+        mock_content: MagicMock,
+        mock_client_part: MagicMock,
+    ) -> None:
+        """Model returns multiple FCs in one response."""
+        client = _make_mock_client()
+
+        read_tool = ToolDef(
+            name="read_file",
+            description="Read",
+            execute=lambda **kw: ToolResult(output="content"),
+        )
+        list_tool = ToolDef(
+            name="list_files",
+            description="List",
+            execute=lambda **kw: ToolResult(output="a.py\nb.py"),
+        )
+
+        fc_result = _make_fc_result(
+            function_calls=[
+                {"name": "read_file", "args": {"path": "a.py"}},
+                {"name": "list_files", "args": {"dir": "."}},
+            ],
+        )
+        text_result = _make_text_result(text="Both done")
+        client.generate_with_tools.side_effect = [fc_result, text_result]
+
+        agent = CodingAgent(client, _make_coding_config())
+        agent._registry.register(read_tool)
+        agent._registry.register(list_tool)
+
+        result = agent.execute("Read and list")
+
+        assert result.success is True
+        assert len(result.metadata["tools_executed"]) == 2
+
+    @patch("vaig.core.client.Part")
+    @patch("vertexai.generative_models.Content")
+    @patch("vertexai.generative_models.Part")
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_max_iterations_raises_error(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+        mock_part: MagicMock,
+        mock_content: MagicMock,
+        mock_client_part: MagicMock,
+    ) -> None:
+        """Exceeding max iterations raises MaxIterationsError."""
+        client = _make_mock_client()
+
+        read_tool = ToolDef(
+            name="read_file",
+            description="Read",
+            execute=lambda **kw: ToolResult(output="data"),
+        )
+
+        # Always return function calls — never settles
+        fc_result = _make_fc_result(
+            function_calls=[{"name": "read_file", "args": {"path": "x.py"}}],
+        )
+        client.generate_with_tools.return_value = fc_result
+
+        agent = CodingAgent(client, _make_coding_config(max_tool_iterations=3))
+        agent._registry.register(read_tool)
+
+        with pytest.raises(MaxIterationsError) as exc_info:
+            agent.execute("Infinite loop")
+
+        assert exc_info.value.iterations == 3
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_api_error_returns_failure_result(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """API call exception returns AgentResult with success=False."""
+        client = _make_mock_client()
+        client.generate_with_tools.side_effect = RuntimeError("API quota exceeded")
+
+        agent = CodingAgent(client, _make_coding_config())
+        result = agent.execute("Do something")
+
+        assert result.success is False
+        assert "API quota exceeded" in result.content
+        assert result.metadata["error"] == "API quota exceeded"
+
+    @patch("vaig.core.client.Part")
+    @patch("vertexai.generative_models.Content")
+    @patch("vertexai.generative_models.Part")
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_first_iteration_sends_prompt_subsequent_empty(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+        mock_part: MagicMock,
+        mock_content: MagicMock,
+        mock_client_part: MagicMock,
+    ) -> None:
+        """First iteration sends full prompt, subsequent iterations send empty list."""
+        client = _make_mock_client()
+
+        read_tool = ToolDef(
+            name="read_file",
+            description="Read",
+            execute=lambda **kw: ToolResult(output="ok"),
+        )
+
+        fc_result = _make_fc_result(
+            function_calls=[{"name": "read_file", "args": {"path": "a.py"}}],
+        )
+        text_result = _make_text_result(text="Done")
+        client.generate_with_tools.side_effect = [fc_result, text_result]
+
+        agent = CodingAgent(client, _make_coding_config())
+        agent._registry.register(read_tool)
+        agent.execute("Analyze code")
+
+        calls = client.generate_with_tools.call_args_list
+
+        # First call: prompt is a non-empty string
+        first_prompt = calls[0][0][0]
+        assert isinstance(first_prompt, str)
+        assert "Analyze code" in first_prompt
+
+        # Second call: prompt is empty list
+        second_prompt = calls[1][0][0]
+        assert second_prompt == []
+
+    @patch("vaig.core.client.Part")
+    @patch("vertexai.generative_models.Content")
+    @patch("vertexai.generative_models.Part")
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_unknown_tool_returns_error_result_to_model(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+        mock_part: MagicMock,
+        mock_content: MagicMock,
+        mock_client_part: MagicMock,
+    ) -> None:
+        """Unknown tool name returns an error ToolResult, model continues."""
+        client = _make_mock_client()
+
+        fc_result = _make_fc_result(
+            function_calls=[{"name": "nonexistent_tool", "args": {}}],
+        )
+        text_result = _make_text_result(text="I see, let me try differently.")
+        client.generate_with_tools.side_effect = [fc_result, text_result]
+
+        agent = CodingAgent(client, _make_coding_config())
+        result = agent.execute("Use a tool")
+
+        assert result.success is True
+        assert result.metadata["tools_executed"][0]["error"] is True
+        assert "Unknown tool" in result.metadata["tools_executed"][0]["output"]
+
+    @patch("vaig.core.client.Part")
+    @patch("vertexai.generative_models.Content")
+    @patch("vertexai.generative_models.Part")
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_tool_execution_error_handled_gracefully(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+        mock_part: MagicMock,
+        mock_content: MagicMock,
+        mock_client_part: MagicMock,
+    ) -> None:
+        """Tool execution error is caught and returned as error ToolResult."""
+        client = _make_mock_client()
+
+        def _failing_tool(**kw: Any) -> ToolResult:
+            raise RuntimeError("Disk full")
+
+        bad_tool = ToolDef(
+            name="write_file",
+            description="Write",
+            execute=_failing_tool,
+        )
+
+        fc_result = _make_fc_result(
+            function_calls=[{"name": "write_file", "args": {"path": "x.py", "content": "hi"}}],
+        )
+        text_result = _make_text_result(text="Write failed, trying plan B.")
+        client.generate_with_tools.side_effect = [fc_result, text_result]
+
+        agent = CodingAgent(client, _make_coding_config(confirm_actions=False))
+        agent._registry.register(bad_tool)
+        result = agent.execute("Write to file")
+
+        assert result.success is True
+        assert result.metadata["tools_executed"][0]["error"] is True
+        assert "Disk full" in result.metadata["tools_executed"][0]["output"]
+
+    @patch("vaig.core.client.Part")
+    @patch("vertexai.generative_models.Content")
+    @patch("vertexai.generative_models.Part")
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_tool_type_error_handled(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+        mock_part: MagicMock,
+        mock_content: MagicMock,
+        mock_client_part: MagicMock,
+    ) -> None:
+        """TypeError from tool (wrong args) is caught and returned to model."""
+        client = _make_mock_client()
+
+        def _strict_tool(*, path: str) -> ToolResult:
+            return ToolResult(output="ok")
+
+        strict = ToolDef(
+            name="read_file",
+            description="Read",
+            parameters=[ToolParam(name="path", type="string", description="Path")],
+            execute=_strict_tool,
+        )
+
+        # Model passes wrong arg names
+        fc_result = _make_fc_result(
+            function_calls=[{"name": "read_file", "args": {"filename": "x.py"}}],
+        )
+        text_result = _make_text_result(text="Corrected")
+        client.generate_with_tools.side_effect = [fc_result, text_result]
+
+        agent = CodingAgent(client, _make_coding_config())
+        agent._registry.register(strict)
+        result = agent.execute("Read file")
+
+        assert result.success is True
+        assert result.metadata["tools_executed"][0]["error"] is True
+        assert "Invalid arguments" in result.metadata["tools_executed"][0]["output"]
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_conversation_history_tracked(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """User prompt and agent response are added to conversation history."""
+        client = _make_mock_client()
+        client.generate_with_tools.return_value = _make_text_result(text="Result")
+
+        agent = CodingAgent(client, _make_coding_config())
+        agent.execute("My task")
+
+        assert len(agent.conversation_history) == 2
+        assert agent.conversation_history[0].role == "user"
+        assert "My task" in agent.conversation_history[0].content
+        assert agent.conversation_history[1].role == "agent"
+        assert agent.conversation_history[1].content == "Result"
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_execute_with_context(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """Context is included in the prompt."""
+        client = _make_mock_client()
+        client.generate_with_tools.return_value = _make_text_result(text="Got it")
+
+        agent = CodingAgent(client, _make_coding_config())
+        agent.execute("Fix the bug", context="Error traceback here")
+
+        first_call = client.generate_with_tools.call_args_list[0]
+        prompt = first_call[0][0]
+        assert "## Context" in prompt
+        assert "Error traceback here" in prompt
+        assert "## Task" in prompt
+        assert "Fix the bug" in prompt
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_execute_without_context(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """Without context, prompt is just the task."""
+        client = _make_mock_client()
+        client.generate_with_tools.return_value = _make_text_result(text="ok")
+
+        agent = CodingAgent(client, _make_coding_config())
+        agent.execute("Simple task")
+
+        first_call = client.generate_with_tools.call_args_list[0]
+        prompt = first_call[0][0]
+        assert prompt == "Simple task"
+        assert "## Context" not in prompt
+
+
+# ===========================================================================
+# TestCodingAgentConfirmation
+# ===========================================================================
+
+
+class TestCodingAgentConfirmation:
+    """Tests for confirmation callback integration."""
+
+    @patch("vaig.core.client.Part")
+    @patch("vertexai.generative_models.Content")
+    @patch("vertexai.generative_models.Part")
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_destructive_tool_calls_confirm_fn(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+        mock_part: MagicMock,
+        mock_content: MagicMock,
+        mock_client_part: MagicMock,
+    ) -> None:
+        """Destructive tools trigger the confirmation callback."""
+        client = _make_mock_client()
+        confirm_fn = MagicMock(return_value=True)
+
+        write_tool = ToolDef(
+            name="write_file",
+            description="Write",
+            execute=lambda **kw: ToolResult(output="written"),
+        )
+
+        fc_result = _make_fc_result(
+            function_calls=[{"name": "write_file", "args": {"path": "x.py", "content": "hello"}}],
+        )
+        text_result = _make_text_result(text="Written")
+        client.generate_with_tools.side_effect = [fc_result, text_result]
+
+        agent = CodingAgent(client, _make_coding_config(confirm_actions=True), confirm_fn=confirm_fn)
+        agent._registry.register(write_tool)
+        result = agent.execute("Write file")
+
+        confirm_fn.assert_called_once_with("write_file", {"path": "x.py", "content": "hello"})
+        assert result.metadata["tools_executed"][0]["error"] is False
+
+    @patch("vaig.core.client.Part")
+    @patch("vertexai.generative_models.Content")
+    @patch("vertexai.generative_models.Part")
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_declined_destructive_returns_error(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+        mock_part: MagicMock,
+        mock_content: MagicMock,
+        mock_client_part: MagicMock,
+    ) -> None:
+        """Declining a destructive tool returns an error result to model."""
+        client = _make_mock_client()
+        confirm_fn = MagicMock(return_value=False)  # user declines
+
+        write_tool = ToolDef(
+            name="write_file",
+            description="Write",
+            execute=lambda **kw: ToolResult(output="written"),
+        )
+
+        fc_result = _make_fc_result(
+            function_calls=[{"name": "write_file", "args": {"path": "x.py"}}],
+        )
+        text_result = _make_text_result(text="User declined, alternative approach")
+        client.generate_with_tools.side_effect = [fc_result, text_result]
+
+        agent = CodingAgent(client, _make_coding_config(confirm_actions=True), confirm_fn=confirm_fn)
+        agent._registry.register(write_tool)
+        result = agent.execute("Write file")
+
+        assert result.metadata["tools_executed"][0]["error"] is True
+        assert "declined" in result.metadata["tools_executed"][0]["output"]
+
+    @patch("vaig.core.client.Part")
+    @patch("vertexai.generative_models.Content")
+    @patch("vertexai.generative_models.Part")
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_non_destructive_tool_skips_confirmation(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+        mock_part: MagicMock,
+        mock_content: MagicMock,
+        mock_client_part: MagicMock,
+    ) -> None:
+        """Non-destructive tools (read_file, list_files) skip confirmation."""
+        client = _make_mock_client()
+        confirm_fn = MagicMock(return_value=True)
+
+        read_tool = ToolDef(
+            name="read_file",
+            description="Read",
+            execute=lambda **kw: ToolResult(output="content"),
+        )
+
+        fc_result = _make_fc_result(
+            function_calls=[{"name": "read_file", "args": {"path": "x.py"}}],
+        )
+        text_result = _make_text_result(text="Read done")
+        client.generate_with_tools.side_effect = [fc_result, text_result]
+
+        agent = CodingAgent(client, _make_coding_config(confirm_actions=True), confirm_fn=confirm_fn)
+        agent._registry.register(read_tool)
+        result = agent.execute("Read a file")
+
+        confirm_fn.assert_not_called()
+        assert result.success is True
+
+
+# ===========================================================================
+# TestCodingAgentStream
+# ===========================================================================
+
+
+class TestCodingAgentStream:
+    """Tests for CodingAgent.execute_stream() fallback."""
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_stream_falls_back_to_execute(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """execute_stream yields the result of execute() since streaming not supported."""
+        client = _make_mock_client()
+        client.generate_with_tools.return_value = _make_text_result(
+            text="Streamed result"
+        )
+
+        agent = CodingAgent(client, _make_coding_config())
+        chunks = list(agent.execute_stream("Hello"))
+
+        assert chunks == ["Streamed result"]
+
+
+# ===========================================================================
+# TestCodingAgentBuildPrompt
+# ===========================================================================
+
+
+class TestCodingAgentBuildPrompt:
+    """Tests for _build_prompt() internal method."""
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_build_prompt_with_context(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config())
+
+        result = agent._build_prompt("Do stuff", "Some context")
+
+        assert "## Context" in result
+        assert "Some context" in result
+        assert "## Task" in result
+        assert "Do stuff" in result
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_build_prompt_without_context(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config())
+
+        result = agent._build_prompt("Do stuff", "")
+
+        assert result == "Do stuff"
+
+
+# ===========================================================================
+# TestCodingSystemPrompt
+# ===========================================================================
+
+
+class TestCodingSystemPrompt:
+    """Tests for CODING_SYSTEM_PROMPT content."""
+
+    def test_contains_tool_usage_guidance(self) -> None:
+        assert "read_file" in CODING_SYSTEM_PROMPT
+        assert "write_file" in CODING_SYSTEM_PROMPT
+        assert "edit_file" in CODING_SYSTEM_PROMPT
+        assert "list_files" in CODING_SYSTEM_PROMPT
+        assert "search_files" in CODING_SYSTEM_PROMPT
+        assert "run_command" in CODING_SYSTEM_PROMPT
+
+    def test_contains_rules(self) -> None:
+        assert "COMPLETE" in CODING_SYSTEM_PROMPT
+        assert "production-ready" in CODING_SYSTEM_PROMPT
+
+    def test_contains_error_handling_guidance(self) -> None:
+        assert "Error Handling" in CODING_SYSTEM_PROMPT
+        assert "Do NOT repeat the same failing call" in CODING_SYSTEM_PROMPT
+
+
+# ===========================================================================
+# TestCodingAgentUsageAccumulation
+# ===========================================================================
+
+
+class TestCodingAgentUsageAccumulation:
+    """Tests for token usage accumulation across iterations."""
+
+    @patch("vaig.core.client.Part")
+    @patch("vertexai.generative_models.Content")
+    @patch("vertexai.generative_models.Part")
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_usage_accumulates_across_three_iterations(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+        mock_part: MagicMock,
+        mock_content: MagicMock,
+        mock_client_part: MagicMock,
+    ) -> None:
+        """Three iterations of tool calls accumulate usage correctly."""
+        client = _make_mock_client()
+
+        tool = ToolDef(
+            name="read_file",
+            description="Read",
+            execute=lambda **kw: ToolResult(output="ok"),
+        )
+
+        # 3 iterations: FC, FC, text
+        fc1 = _make_fc_result(
+            function_calls=[{"name": "read_file", "args": {"path": "a.py"}}],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+        fc2 = _make_fc_result(
+            function_calls=[{"name": "read_file", "args": {"path": "b.py"}}],
+            usage={"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30},
+        )
+        text = _make_text_result(
+            text="Final",
+            usage={"prompt_tokens": 30, "completion_tokens": 15, "total_tokens": 45},
+        )
+        client.generate_with_tools.side_effect = [fc1, fc2, text]
+
+        agent = CodingAgent(client, _make_coding_config())
+        agent._registry.register(tool)
+
+        result = agent.execute("Analyze")
+
+        assert result.usage["prompt_tokens"] == 60
+        assert result.usage["completion_tokens"] == 30
+        assert result.usage["total_tokens"] == 90
+        assert result.metadata["iterations"] == 3
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_usage_with_missing_keys_defaults_to_zero(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """Missing usage keys default to 0 in accumulation."""
+        client = _make_mock_client()
+        client.generate_with_tools.return_value = _make_text_result(
+            text="ok",
+            usage={},  # No usage data
+        )
+
+        agent = CodingAgent(client, _make_coding_config())
+        result = agent.execute("Task")
+
+        assert result.usage["prompt_tokens"] == 0
+        assert result.usage["completion_tokens"] == 0
+        assert result.usage["total_tokens"] == 0
+
+
+# ===========================================================================
+# TestCodingAgentProperties
+# ===========================================================================
+
+
+class TestCodingAgentProperties:
+    """Tests for CodingAgent properties."""
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_workspace_property(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config(workspace_root="/tmp/ws"))
+
+        assert agent.workspace == Path("/tmp/ws").resolve()
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_registry_property(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config())
+
+        assert isinstance(agent.registry, ToolRegistry)
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_repr(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config())
+
+        r = repr(agent)
+        assert "CodingAgent" in r
+        assert "coding-agent" in r
+        assert "coder" in r

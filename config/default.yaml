@@ -90,3 +90,10 @@ retry:
 logging:
   level: "WARNING"  # Override via VAIG_LOGGING__LEVEL or --verbose/-V
   show_path: false   # Show module path in log output (useful for debugging)
+
+coding:
+  workspace_root: "."
+  max_tool_iterations: 25
+  confirm_actions: true
+  allowed_commands: []
+  blocked_paths: []

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import TYPE_CHECKING, Annotated, Optional
 
 import typer
 from rich.console import Console
@@ -11,6 +11,11 @@ from rich.panel import Panel
 from rich.table import Table
 
 from vaig import __version__
+
+if TYPE_CHECKING:
+    from vaig.agents.base import AgentResult
+    from vaig.core.client import GeminiClient
+    from vaig.core.config import Settings
 
 console = Console()
 err_console = Console(stderr=True)
@@ -134,6 +139,7 @@ def ask(
     files: Annotated[Optional[list[Path]], typer.Option("--file", "-f", help="Files to include as context")] = None,
     skill: Annotated[Optional[str], typer.Option("--skill", "-s", help="Use a specific skill")] = None,
     no_stream: Annotated[bool, typer.Option("--no-stream", help="Disable streaming output")] = False,
+    code: Annotated[bool, typer.Option("--code", help="Enable coding agent mode (read/write/edit files)")] = False,
 ) -> None:
     """Ask a single question and get a response.
 
@@ -141,6 +147,7 @@ def ask(
         vaig ask "What is Kubernetes?"
         vaig ask "Analyze this code" -f main.py
         vaig ask "Investigate this incident" -s rca -f logs.txt
+        vaig ask "Add error handling to app.py" --code
     """
     settings = _get_settings(config)
 
@@ -168,6 +175,11 @@ def ask(
                 raise typer.Exit(1)  # noqa: B904
         builder.show_summary()
         context_str = builder.bundle.to_context_string()
+
+    # Code mode — use CodingAgent (Tasks 5.1, 5.4, 5.5, 5.6, 5.7)
+    if code:
+        _execute_code_mode(client, settings, question, context_str)
+        return
 
     # Execute with or without skill
     if skill:
@@ -205,6 +217,121 @@ def ask(
             for chunk in stream:  # type: ignore[union-attr]
                 console.print(chunk, end="")
             console.print()
+
+
+def _execute_code_mode(
+    client: "GeminiClient",
+    settings: "Settings",
+    question: str,
+    context: str,
+) -> None:
+    """Execute a coding task using the CodingAgent.
+
+    Handles confirmation prompts, tool execution feedback,
+    iteration/usage summary, and MaxIterationsError.
+    """
+    from vaig.agents.coding import CodingAgent
+    from vaig.core.exceptions import MaxIterationsError
+
+    coding_config = settings.coding
+
+    console.print(
+        Panel.fit(
+            "[bold yellow]🔧 Code Mode[/bold yellow]\n"
+            f"[dim]Workspace: {Path(coding_config.workspace_root).resolve()}[/dim]\n"
+            f"[dim]Model: {settings.models.default} | Max iterations: {coding_config.max_tool_iterations}[/dim]",
+            border_style="yellow",
+        )
+    )
+
+    agent = CodingAgent(
+        client,
+        coding_config,
+        confirm_fn=_cli_confirm,
+        model_id=settings.models.default,
+    )
+
+    try:
+        with console.status(
+            "[bold cyan]🤖 Coding agent working...[/bold cyan]",
+            spinner="dots",
+        ):
+            result = agent.execute(question, context=context)
+
+        # Display final response
+        console.print()
+        console.print(result.content)
+        console.print()
+
+        # Task 5.5 + 5.6: Show tool execution feedback and usage summary
+        _show_coding_summary(result)
+
+    except MaxIterationsError as exc:
+        # Task 5.7: Graceful handling
+        err_console.print(
+            f"\n[bold red]⚠ Max iterations reached ({exc.iterations})[/bold red]\n"
+            "[yellow]The coding agent hit its iteration limit. "
+            "This usually means the task is too complex for a single turn.\n"
+            "Try breaking it into smaller steps.[/yellow]"
+        )
+        raise typer.Exit(1)  # noqa: B904
+
+
+def _cli_confirm(tool_name: str, args: dict) -> bool:
+    """Rich-based confirmation prompt for destructive tool operations (Task 5.3)."""
+    # Build a readable summary of what the tool will do
+    if tool_name == "write_file":
+        desc = f"Write file: [cyan]{args.get('path', '?')}[/cyan]"
+    elif tool_name == "edit_file":
+        desc = f"Edit file: [cyan]{args.get('path', '?')}[/cyan]"
+    elif tool_name == "run_command":
+        desc = f"Run command: [cyan]{args.get('command', '?')}[/cyan]"
+    else:
+        desc = f"Execute: [cyan]{tool_name}[/cyan]"
+
+    console.print(f"\n[bold yellow]⚡ {desc}[/bold yellow]")
+    return typer.confirm("  Allow this operation?", default=True)
+
+
+def _show_coding_summary(result: "AgentResult") -> None:
+    """Display tool execution feedback and token usage (Tasks 5.5 + 5.6)."""
+    metadata = result.metadata or {}
+    tools_executed = metadata.get("tools_executed", [])
+    iterations = metadata.get("iterations", 0)
+
+    if tools_executed:
+        table = Table(title="🔧 Tools Executed", show_lines=False, title_style="bold")
+        table.add_column("#", style="dim", width=3)
+        table.add_column("Tool", style="cyan")
+        table.add_column("Target", style="white")
+        table.add_column("Status", justify="center")
+
+        for i, tool in enumerate(tools_executed, 1):
+            name = tool.get("name", "?")
+            args = tool.get("args", {})
+            error = tool.get("error", False)
+
+            # Extract the most relevant arg for display
+            target = args.get("path", args.get("command", args.get("pattern", "")))
+            if len(str(target)) > 60:
+                target = str(target)[:57] + "..."
+
+            status = "[red]✗[/red]" if error else "[green]✓[/green]"
+            table.add_row(str(i), name, str(target), status)
+
+        console.print(table)
+
+    # Usage summary
+    usage = result.usage or {}
+    prompt_tokens = usage.get("prompt_tokens", 0)
+    completion_tokens = usage.get("completion_tokens", 0)
+    total_tokens = usage.get("total_tokens", 0)
+
+    console.print(
+        f"[dim]Completed in {iterations} iteration{'s' if iterations != 1 else ''} "
+        f"| Tokens: {total_tokens:,} total "
+        f"({prompt_tokens:,} prompt + {completion_tokens:,} completion)[/dim]"
+    )
 
 
 # ══════════════════════════════════════════════════════════════
