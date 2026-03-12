@@ -438,3 +438,112 @@ class TestChatWorkspace:
 
         assert result.exit_code == 1
         assert "not found" in result.output
+
+
+# ══════════════════════════════════════════════════════════════
+# OUTPUT FLAG
+# ══════════════════════════════════════════════════════════════
+class TestOutputFlag:
+    def test_ask_output_saves_to_file(self, tmp_path) -> None:
+        """--output saves the response to a file."""
+        out_file = tmp_path / "result.md"
+
+        mock_agent_result = MagicMock()
+        mock_agent_result.content = "The answer is 42."
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_single.return_value = mock_agent_result
+
+        with (
+            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
+        ):
+            result = runner.invoke(app, ["ask", "What?", "--no-stream", "-o", str(out_file)])
+
+        assert result.exit_code == 0
+        assert out_file.exists()
+        assert out_file.read_text() == "The answer is 42."
+        assert "saved to" in result.output
+
+    def test_ask_output_creates_parent_dirs(self, tmp_path) -> None:
+        """--output creates parent directories if they don't exist."""
+        out_file = tmp_path / "nested" / "dir" / "result.md"
+
+        mock_agent_result = MagicMock()
+        mock_agent_result.content = "Content"
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_single.return_value = mock_agent_result
+
+        with (
+            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
+        ):
+            result = runner.invoke(app, ["ask", "Hello", "--no-stream", "-o", str(out_file)])
+
+        assert result.exit_code == 0
+        assert out_file.exists()
+        assert out_file.read_text() == "Content"
+
+    def test_ask_output_with_streaming(self, tmp_path) -> None:
+        """--output works with streaming mode (default)."""
+        out_file = tmp_path / "stream_result.md"
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_single.return_value = iter(["Hello ", "World"])
+
+        with (
+            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
+        ):
+            result = runner.invoke(app, ["ask", "Hi", "-o", str(out_file)])
+
+        assert result.exit_code == 0
+        assert out_file.exists()
+        assert out_file.read_text() == "Hello World"
+
+    def test_ask_output_with_skill(self, tmp_path) -> None:
+        """--output works with skill mode."""
+        out_file = tmp_path / "skill_result.md"
+
+        mock_skill = MagicMock()
+        skill_result = SkillResult(
+            phase=SkillPhase.ANALYZE,
+            success=True,
+            output="Root cause: OOM",
+        )
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_skill_phase.return_value = skill_result
+
+        mock_registry = MagicMock()
+        mock_registry.get.return_value = mock_skill
+
+        with (
+            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
+            patch("vaig.skills.registry.SkillRegistry", return_value=mock_registry),
+        ):
+            result = runner.invoke(app, ["ask", "Why?", "--skill", "rca", "-o", str(out_file)])
+
+        assert result.exit_code == 0
+        assert out_file.exists()
+        assert out_file.read_text() == "Root cause: OOM"
+
+    def test_ask_no_output_flag_no_file_created(self, tmp_path) -> None:
+        """Without --output, no file is created."""
+        mock_agent_result = MagicMock()
+        mock_agent_result.content = "Answer"
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_single.return_value = mock_agent_result
+
+        with (
+            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
+        ):
+            result = runner.invoke(app, ["ask", "Hello", "--no-stream"])
+
+        assert result.exit_code == 0
+        # No file should exist in tmp_path
+        assert len(list(tmp_path.iterdir())) == 0

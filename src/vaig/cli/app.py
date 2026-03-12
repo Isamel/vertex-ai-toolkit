@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Optional
 
 import typer
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
@@ -149,6 +150,7 @@ def ask(
     config: Annotated[Optional[str], typer.Option("--config", "-c", help="Path to config YAML")] = None,
     model: Annotated[Optional[str], typer.Option("--model", "-m", help="Model to use")] = None,
     files: Annotated[Optional[list[Path]], typer.Option("--file", "-f", help="Files to include as context")] = None,
+    output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Save response to a file")] = None,
     skill: Annotated[Optional[str], typer.Option("--skill", "-s", help="Use a specific skill")] = None,
     no_stream: Annotated[bool, typer.Option("--no-stream", help="Disable streaming output")] = False,
     code: Annotated[bool, typer.Option("--code", help="Enable coding agent mode (read/write/edit files)")] = False,
@@ -162,6 +164,7 @@ def ask(
     Examples:
         vaig ask "What is Kubernetes?"
         vaig ask "Analyze this code" -f main.py
+        vaig ask "Analyze this" -f logs.csv -o analysis.md
         vaig ask "Investigate this incident" -s rca -f logs.txt
         vaig ask "Add error handling to app.py" --code
         vaig ask "Fix the bug in utils.py" --code -w ./my-project
@@ -201,13 +204,13 @@ def ask(
                 err_console.print(f"[red]Workspace directory not found: {resolved_ws}[/red]")
                 raise typer.Exit(1)
             settings.coding.workspace_root = str(resolved_ws)
-        _execute_code_mode(client, settings, question, context_str)
+        _execute_code_mode(client, settings, question, context_str, output=output)
         return
 
     # ── Chunked file analysis ─────────────────────────────────
     # If the context is large enough to exceed the model's context window,
     # use ChunkedProcessor (Map-Reduce) instead of the normal pipeline.
-    if context_str and _try_chunked_ask(client, settings, question, context_str, model_id=model):
+    if context_str and _try_chunked_ask(client, settings, question, context_str, model_id=model, output=output):
         return
 
     # Execute with or without skill
@@ -229,7 +232,10 @@ def ask(
                 question,
             )
         console.print()
-        console.print(result.output)
+        if result.output:
+            console.print(Markdown(result.output))
+        if output:
+            _save_output(output, result.output)
     else:
         # Direct chat — single agent
         if no_stream:
@@ -238,14 +244,27 @@ def ask(
             ):
                 result = orchestrator.execute_single(question, context=context_str)
             console.print()
-            if hasattr(result, "content"):
-                console.print(result.content)  # type: ignore[union-attr]
+            if hasattr(result, "content") and result.content:
+                console.print(Markdown(result.content))  # type: ignore[union-attr]
+                if output:
+                    _save_output(output, result.content)  # type: ignore[union-attr]
         else:
             stream = orchestrator.execute_single(question, context=context_str, stream=True)
             console.print()
+            response_parts: list[str] = []
             for chunk in stream:  # type: ignore[union-attr]
                 console.print(chunk, end="")
+                response_parts.append(chunk)
             console.print()
+            if output:
+                _save_output(output, "".join(response_parts))
+
+
+def _save_output(output: Path, content: str) -> None:
+    """Write response content to a file and print confirmation."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(content)
+    console.print(f"[green]✓ Response saved to {output}[/green]")
 
 
 def _execute_code_mode(
@@ -253,6 +272,8 @@ def _execute_code_mode(
     settings: "Settings",
     question: str,
     context: str,
+    *,
+    output: Path | None = None,
 ) -> None:
     """Execute a coding task using the CodingAgent.
 
@@ -288,8 +309,12 @@ def _execute_code_mode(
 
         # Display final response
         console.print()
-        console.print(result.content)
+        if result.content:
+            console.print(Markdown(result.content))
         console.print()
+
+        if output:
+            _save_output(output, result.content)
 
         # Task 5.5 + 5.6: Show tool execution feedback and usage summary
         _show_coding_summary(result)
@@ -372,6 +397,7 @@ def _try_chunked_ask(
     context_str: str,
     *,
     model_id: str | None = None,
+    output: Path | None = None,
 ) -> bool:
     """Attempt chunked (Map-Reduce) processing if content exceeds the context window.
 
@@ -424,7 +450,10 @@ def _try_chunked_ask(
         )
 
     console.print()
-    console.print(result)
+    if result:
+        console.print(Markdown(result))
+    if output:
+        _save_output(output, result)
     return True
 
 
