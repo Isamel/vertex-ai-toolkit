@@ -252,11 +252,10 @@ def _execute_code_mode(
     )
 
     try:
-        with console.status(
-            "[bold cyan]🤖 Coding agent working...[/bold cyan]",
-            spinner="dots",
-        ):
-            result = agent.execute(question, context=context)
+        # NOTE: No spinner wrapper here — confirm_fn needs interactive terminal access.
+        # A spinner would swallow confirmation prompts and freeze the terminal.
+        console.print("[bold cyan]🤖 Coding agent working...[/bold cyan]")
+        result = agent.execute(question, context=context)
 
         # Display final response
         console.print()

@@ -325,11 +325,11 @@ def _handle_code_chat(state: REPLState, user_input: str, context: str) -> None:
 
     try:
         # Task 5.8: No streaming in code mode — tool loops are non-streamable
-        with console.status(
-            "[bold cyan]🤖 Coding agent working...[/bold cyan]",
-            spinner="dots",
-        ):
-            result = agent.execute(user_input, context=context)
+        # NOTE: No spinner wrapper here — confirm_fn needs interactive terminal access.
+        # The agent prints confirmation prompts during execution, so a spinner would
+        # swallow that output and freeze the terminal.
+        console.print("[bold cyan]🤖 Coding agent working...[/bold cyan]")
+        result = agent.execute(user_input, context=context)
 
         # Display final response
         console.print()
