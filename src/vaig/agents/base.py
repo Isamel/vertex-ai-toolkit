@@ -23,6 +23,7 @@ class AgentRole(StrEnum):
     SPECIALIST = "specialist"
     ASSISTANT = "assistant"
     CODER = "coder"
+    SRE = "sre"
 
 
 @dataclass

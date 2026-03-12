@@ -31,6 +31,7 @@ class SkillMetadata:
         default_factory=lambda: [SkillPhase.ANALYZE, SkillPhase.EXECUTE, SkillPhase.REPORT]
     )
     recommended_model: str = "gemini-2.5-pro"
+    requires_live_tools: bool = False
 
 
 @dataclass

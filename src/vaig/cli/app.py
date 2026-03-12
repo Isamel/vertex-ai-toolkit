@@ -154,9 +154,17 @@ def ask(
     skill: Annotated[Optional[str], typer.Option("--skill", "-s", help="Use a specific skill")] = None,
     no_stream: Annotated[bool, typer.Option("--no-stream", help="Disable streaming output")] = False,
     code: Annotated[bool, typer.Option("--code", help="Enable coding agent mode (read/write/edit files)")] = False,
+    live: Annotated[bool, typer.Option("--live", help="Enable live infrastructure tools (GKE/GCP)")] = False,
     workspace: Annotated[
         Optional[Path],
         typer.Option("--workspace", "-w", help="Workspace root directory for code mode"),
+    ] = None,
+    cluster: Annotated[Optional[str], typer.Option("--cluster", help="GKE cluster name (overrides config)")] = None,
+    namespace: Annotated[
+        Optional[str], typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)")
+    ] = None,
+    project_id: Annotated[
+        Optional[str], typer.Option("--project-id", help="GCP project ID (overrides config)")
     ] = None,
 ) -> None:
     """Ask a single question and get a response.
@@ -168,6 +176,8 @@ def ask(
         vaig ask "Investigate this incident" -s rca -f logs.txt
         vaig ask "Add error handling to app.py" --code
         vaig ask "Fix the bug in utils.py" --code -w ./my-project
+        vaig ask "Analyze pod crashes" --live -s log-analysis
+        vaig ask "Check OOM kills in prod" --live --namespace=production
     """
     settings = _get_settings(config)
 
@@ -205,6 +215,19 @@ def ask(
                 raise typer.Exit(1)
             settings.coding.workspace_root = str(resolved_ws)
         _execute_code_mode(client, settings, question, context_str, output=output)
+        return
+
+    # Live infrastructure mode — use InfraAgent
+    if live:
+        gke_config = _build_gke_config(settings, cluster=cluster, namespace=namespace, project_id=project_id)
+        _execute_live_mode(
+            client,
+            gke_config,
+            question,
+            context_str,
+            output=output,
+            model_id=model,
+        )
         return
 
     # ── Chunked file analysis ─────────────────────────────────
@@ -265,6 +288,187 @@ def _save_output(output: Path, content: str) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(content)
     console.print(f"[green]✓ Response saved to {output}[/green]")
+
+
+# ══════════════════════════════════════════════════════════════
+# LIVE — Infrastructure investigation (GKE/GCP)
+# ══════════════════════════════════════════════════════════════
+@app.command()
+def live(
+    question: Annotated[str, typer.Argument(help="Infrastructure question or investigation task")],
+    config: Annotated[Optional[str], typer.Option("--config", "-c", help="Path to config YAML")] = None,
+    model: Annotated[Optional[str], typer.Option("--model", "-m", help="Model to use")] = None,
+    output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Save response to a file")] = None,
+    skill: Annotated[Optional[str], typer.Option("--skill", "-s", help="SRE skill to apply")] = None,
+    cluster: Annotated[Optional[str], typer.Option("--cluster", help="GKE cluster name (overrides config)")] = None,
+    namespace: Annotated[
+        Optional[str], typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)")
+    ] = None,
+    project_id: Annotated[
+        Optional[str], typer.Option("--project-id", help="GCP project ID (overrides config)")
+    ] = None,
+) -> None:
+    """Investigate live GKE/GCP infrastructure using AI with read-only tools.
+
+    Launches an autonomous SRE agent that can inspect pods, logs, metrics,
+    and Cloud Logging/Monitoring to answer infrastructure questions.
+
+    All tools are READ-ONLY — no cluster modifications are possible.
+
+    Examples:
+        vaig live "What pods are crashing in the production namespace?"
+        vaig live "Check CPU and memory pressure on nodes"
+        vaig live "Investigate OOM kills in the last hour" --namespace=production
+        vaig live "Show HPA status for frontend deployment" --cluster=prod-gke
+        vaig live "Analyze error rate from Cloud Logging" --project-id=my-project
+        vaig live "Why is the payment service returning 503s?" -o report.md
+    """
+    settings = _get_settings(config)
+
+    if model:
+        settings.models.default = model
+
+    from vaig.core.client import GeminiClient
+
+    client = GeminiClient(settings)
+    gke_config = _build_gke_config(settings, cluster=cluster, namespace=namespace, project_id=project_id)
+
+    # If a skill is specified, prepend skill context to the question
+    context_str = ""
+    if skill:
+        from vaig.skills.registry import SkillRegistry
+
+        registry = SkillRegistry(settings)
+        active_skill = registry.get(skill)
+        if not active_skill:
+            err_console.print(f"[red]Skill not found: {skill}[/red]")
+            err_console.print(f"[dim]Available: {', '.join(registry.list_names())}[/dim]")
+            raise typer.Exit(1)
+
+        # Use skill system prompt as additional context for the InfraAgent
+        skill_meta = active_skill.get_metadata()
+        context_str = (
+            f"## Active Skill: {skill_meta.display_name}\n\n"
+            f"{skill_meta.description}\n\n"
+            f"Apply the {skill_meta.name} analysis methodology to the investigation below."
+        )
+
+    _execute_live_mode(
+        client,
+        gke_config,
+        question,
+        context_str,
+        output=output,
+        model_id=model,
+    )
+
+
+# ── Live mode helpers ─────────────────────────────────────────
+
+
+def _build_gke_config(
+    settings: "Settings",
+    *,
+    cluster: str | None = None,
+    namespace: str | None = None,
+    project_id: str | None = None,
+) -> "GKEConfig":
+    """Build a GKEConfig, applying CLI overrides on top of config file defaults.
+
+    Args:
+        settings: Application settings (contains gke section).
+        cluster: Optional cluster name override.
+        namespace: Optional default namespace override.
+        project_id: Optional GCP project ID override.
+
+    Returns:
+        GKEConfig with CLI overrides applied.
+    """
+    from vaig.core.config import GKEConfig
+
+    gke = settings.gke
+
+    return GKEConfig(
+        cluster_name=cluster or gke.cluster_name,
+        project_id=project_id or gke.project_id or settings.gcp.project_id,
+        default_namespace=namespace or gke.default_namespace,
+        kubeconfig_path=gke.kubeconfig_path,
+        context=gke.context,
+        log_limit=gke.log_limit,
+        metrics_interval_minutes=gke.metrics_interval_minutes,
+    )
+
+
+def _execute_live_mode(
+    client: "GeminiClient",
+    gke_config: "GKEConfig",
+    question: str,
+    context: str,
+    *,
+    output: Path | None = None,
+    model_id: str | None = None,
+) -> None:
+    """Execute an infrastructure investigation using the InfraAgent.
+
+    Handles the full lifecycle: banner, agent creation, execution,
+    result display, and summary — following the same pattern as _execute_code_mode.
+    """
+    from vaig.agents.infra_agent import InfraAgent
+    from vaig.core.exceptions import MaxIterationsError
+
+    console.print(
+        Panel.fit(
+            "[bold green]🔍 Live Infrastructure Mode[/bold green]\n"
+            f"[dim]Cluster: {gke_config.cluster_name or '(kubeconfig default)'}[/dim]\n"
+            f"[dim]Namespace: {gke_config.default_namespace} | "
+            f"Project: {gke_config.project_id or '(auto-detect)'}[/dim]\n"
+            "[dim]All tools are READ-ONLY[/dim]",
+            border_style="green",
+        )
+    )
+
+    agent = InfraAgent(
+        client,
+        gke_config,
+        model_id=model_id or client.current_model,
+    )
+
+    # Show registered tool count
+    tool_count = len(agent.registry.list_tools())
+    if tool_count == 0:
+        err_console.print(
+            "[bold red]No infrastructure tools available![/bold red]\n"
+            "[yellow]Install optional dependencies:[/yellow]\n"
+            "  pip install vertex-ai-toolkit[live]       # GKE tools\n"
+            "  pip install google-cloud-logging google-cloud-monitoring  # GCP observability"
+        )
+        raise typer.Exit(1)
+
+    console.print(f"[dim]{tool_count} tools loaded[/dim]")
+
+    try:
+        console.print("[bold cyan]🤖 Infrastructure agent investigating...[/bold cyan]")
+        result = agent.execute(question, context=context)
+
+        # Display final response
+        console.print()
+        if result.content:
+            console.print(Markdown(result.content))
+        console.print()
+
+        if output and result.content:
+            _save_output(output, result.content)
+
+        # Show summary (reuse coding summary — same metadata shape)
+        _show_coding_summary(result)
+
+    except MaxIterationsError as exc:
+        err_console.print(
+            f"\n[bold red]⚠ Max iterations reached ({exc.iterations})[/bold red]\n"
+            "[yellow]The infrastructure agent hit its tool-use iteration limit. "
+            "Try narrowing the scope of your question or specifying a namespace/resource.[/yellow]"
+        )
+        raise typer.Exit(1)  # noqa: B904
 
 
 def _execute_code_mode(

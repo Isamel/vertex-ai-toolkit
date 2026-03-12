@@ -134,3 +134,12 @@ coding:
 chunking:
   chunk_overlap_ratio: 0.1   # 10% overlap between consecutive chunks
   token_safety_margin: 0.1   # 10% safety margin on context window
+
+gke:
+  cluster_name: ""                # GKE cluster name — Override via VAIG_GKE__CLUSTER_NAME
+  project_id: ""                  # GCP project hosting the cluster — falls back to gcp.project_id
+  default_namespace: "default"    # Kubernetes namespace for queries
+  kubeconfig_path: ""             # Path to kubeconfig file — uses default if empty
+  context: ""                     # Kubernetes context to use — uses current-context if empty
+  log_limit: 100                  # Max number of log lines to retrieve per pod
+  metrics_interval_minutes: 60    # Time window (minutes) for Cloud Monitoring queries

@@ -30,6 +30,12 @@ dev = [
     "ruff>=0.8.0",
     "mypy>=1.13.0",
 ]
+live = [
+    "kubernetes>=31.0.0",
+    "google-cloud-logging>=3.11.0",
+    "google-cloud-monitoring>=2.23.0",
+    "google-auth>=2.35.0",
+]
 
 [project.scripts]
 vaig = "vaig.cli.app:app"

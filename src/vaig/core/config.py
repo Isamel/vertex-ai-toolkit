@@ -129,6 +129,18 @@ class ChunkingConfig(BaseModel):
     inter_chunk_delay: float = 2.0
 
 
+class GKEConfig(BaseModel):
+    """GKE live-cluster connection and query configuration."""
+
+    cluster_name: str = ""
+    project_id: str = ""
+    default_namespace: str = "default"
+    kubeconfig_path: str = ""
+    context: str = ""
+    log_limit: int = 100
+    metrics_interval_minutes: int = 60
+
+
 def _strip_empty_strings(data: dict[str, Any]) -> dict[str, Any]:
     """Recursively remove keys whose value is an empty string.
 
@@ -186,6 +198,7 @@ class Settings(BaseSettings):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     coding: CodingConfig = Field(default_factory=CodingConfig)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
+    gke: GKEConfig = Field(default_factory=GKEConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> Settings:

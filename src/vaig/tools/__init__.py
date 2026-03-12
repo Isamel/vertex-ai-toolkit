@@ -1,4 +1,4 @@
-"""Tools package — tool definitions and registry for the coding agent."""
+"""Tools package — tool definitions and registry for agent tool use."""
 
 from vaig.tools.base import ToolDef, ToolParam, ToolRegistry, ToolResult
 from vaig.tools.file_tools import (
@@ -11,11 +11,34 @@ from vaig.tools.file_tools import (
 )
 from vaig.tools.shell_tools import create_shell_tools, run_command
 
+# GKE tools — optional dependency (kubernetes package)
+try:
+    from vaig.tools.gke_tools import (
+        create_gke_tools,
+        kubectl_describe,
+        kubectl_get,
+        kubectl_logs,
+        kubectl_top,
+    )
+except ImportError:
+    pass
+
+# GCP observability tools — optional dependency (google-cloud-logging/monitoring)
+try:
+    from vaig.tools.gcloud_tools import (
+        create_gcloud_tools,
+        gcloud_logging_query,
+        gcloud_monitoring_query,
+    )
+except ImportError:
+    pass
+
 __all__ = [
     "ToolDef",
     "ToolParam",
     "ToolRegistry",
     "ToolResult",
+    # Always-available tools
     "create_file_tools",
     "create_shell_tools",
     "edit_file",
@@ -24,4 +47,14 @@ __all__ = [
     "run_command",
     "search_files",
     "write_file",
+    # Optional: GKE tools (requires 'kubernetes')
+    "create_gke_tools",
+    "kubectl_describe",
+    "kubectl_get",
+    "kubectl_logs",
+    "kubectl_top",
+    # Optional: GCP observability tools (requires 'google-cloud-logging/monitoring')
+    "create_gcloud_tools",
+    "gcloud_logging_query",
+    "gcloud_monitoring_query",
 ]

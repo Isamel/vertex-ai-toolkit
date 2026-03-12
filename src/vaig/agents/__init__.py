@@ -11,6 +11,12 @@ try:
 except ImportError:
     pass
 
+# Infra agent — requires kubernetes / google-cloud packages
+try:
+    from vaig.agents.infra_agent import InfraAgent
+except ImportError:
+    pass
+
 __all__ = [
     "AgentConfig",
     "AgentMessage",
@@ -19,6 +25,7 @@ __all__ = [
     "AgentRole",
     "BaseAgent",
     "CodingAgent",
+    "InfraAgent",
     "Orchestrator",
     "OrchestratorResult",
     "SpecialistAgent",
