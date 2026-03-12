@@ -16,31 +16,39 @@ models:
     - id: "gemini-3.1-pro-preview"
       description: "Most advanced reasoning model — 1M context, complex problem-solving, agentic workflows"
       max_output_tokens: 65536
+      context_window: 1048576
     - id: "gemini-3.1-pro-preview-customtools"
       description: "Pro optimized for custom tools & bash — best for agentic coding with tool use"
       max_output_tokens: 65536
+      context_window: 1048576
     - id: "gemini-3-flash-preview"
       description: "Pro-level intelligence at Flash speed and pricing — 1M context, thinking levels"
       max_output_tokens: 65536
+      context_window: 1048576
     - id: "gemini-3.1-flash-lite-preview"
       description: "Most cost-efficient Gemini — matches 2.5 Flash quality, low latency, high volume"
       max_output_tokens: 65535
+      context_window: 1048576
 
     # ── Gemini 2.5 series ───────────────────────────────────────────
     - id: "gemini-2.5-pro"
       description: "Previous gen pro — deep reasoning and coding, 1M context"
       max_output_tokens: 65536
+      context_window: 1048576
     - id: "gemini-2.5-flash"
       description: "Previous gen flash — best price-performance for reasoning tasks"
       max_output_tokens: 65536
+      context_window: 1048576
 
     # ── Gemini 2.0 series (deprecated) ──────────────────────────────
     - id: "gemini-2.0-flash"
       description: "[Deprecated] Second gen fast model"
       max_output_tokens: 8192
+      context_window: 1048576
     - id: "gemini-2.0-flash-001"
       description: "[Deprecated] Stable second gen fast model (point release)"
       max_output_tokens: 8192
+      context_window: 1048576
 
 generation:
   temperature: 0.7
@@ -97,3 +105,7 @@ coding:
   confirm_actions: true
   allowed_commands: []
   blocked_paths: []
+
+chunking:
+  chunk_overlap_ratio: 0.1   # 10% overlap between consecutive chunks
+  token_safety_margin: 0.1   # 10% safety margin on context window

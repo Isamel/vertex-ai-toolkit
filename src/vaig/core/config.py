@@ -49,6 +49,7 @@ class ModelInfo(BaseModel):
     id: str
     description: str = ""
     max_output_tokens: int = 65536
+    context_window: int = 1_048_576
 
 
 class ModelsConfig(BaseModel):
@@ -119,6 +120,13 @@ class ContextConfig(BaseModel):
     ignore_patterns: list[str] = Field(default_factory=list)
 
 
+class ChunkingConfig(BaseModel):
+    """Configuration for chunked file processing (Map-Reduce for large files)."""
+
+    chunk_overlap_ratio: float = 0.1
+    token_safety_margin: float = 0.1
+
+
 def _strip_empty_strings(data: dict[str, Any]) -> dict[str, Any]:
     """Recursively remove keys whose value is an empty string.
 
@@ -175,6 +183,7 @@ class Settings(BaseSettings):
     retry: RetryConfig = Field(default_factory=RetryConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     coding: CodingConfig = Field(default_factory=CodingConfig)
+    chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> Settings:

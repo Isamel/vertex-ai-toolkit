@@ -204,6 +204,12 @@ def ask(
         _execute_code_mode(client, settings, question, context_str)
         return
 
+    # ── Chunked file analysis ─────────────────────────────────
+    # If the context is large enough to exceed the model's context window,
+    # use ChunkedProcessor (Map-Reduce) instead of the normal pipeline.
+    if context_str and _try_chunked_ask(client, settings, question, context_str, model_id=model):
+        return
+
     # Execute with or without skill
     if skill:
         registry = SkillRegistry(settings)
@@ -354,6 +360,72 @@ def _show_coding_summary(result: "AgentResult") -> None:
         f"| Tokens: {total_tokens:,} total "
         f"({prompt_tokens:,} prompt + {completion_tokens:,} completion)[/dim]"
     )
+
+
+# ── Chunked file analysis helper ──────────────────────────────
+
+
+def _try_chunked_ask(
+    client: "GeminiClient",
+    settings: "Settings",
+    question: str,
+    context_str: str,
+    *,
+    model_id: str | None = None,
+) -> bool:
+    """Attempt chunked (Map-Reduce) processing if content exceeds the context window.
+
+    Returns True if chunking was performed (caller should return early),
+    False if content fits normally (caller should continue with the standard pipeline).
+    """
+    from vaig.agents.chunked import ChunkedProcessor
+    from vaig.agents.orchestrator import Orchestrator
+
+    processor = ChunkedProcessor(client, settings)
+    orchestrator = Orchestrator(client, settings)
+
+    # Use the same system instruction the normal pipeline would use
+    system_instruction = orchestrator._default_system_instruction()  # noqa: SLF001
+
+    try:
+        budget = processor.calculate_budget(
+            system_instruction,
+            question,
+            model_id=model_id or settings.models.default,
+        )
+    except Exception as exc:
+        err_console.print(f"[dim]Chunking budget calculation failed ({exc}), using normal pipeline[/dim]")
+        return False
+
+    if not processor.needs_chunking(context_str, budget):
+        return False
+
+    # ── Content exceeds context window — use Map-Reduce ───────
+    chunks = processor.split_into_chunks(context_str, budget)
+    total = len(chunks)
+
+    console.print(
+        f"\n[bold yellow]Large file detected[/bold yellow] — "
+        f"splitting into [cyan]{total}[/cyan] chunks for analysis"
+    )
+
+    with console.status("[bold cyan]Analyzing chunks...[/bold cyan]") as status:
+
+        def _on_progress(current: int, total: int) -> None:
+            status.update(f"[bold cyan]Processing chunk {current}/{total}...[/bold cyan]")
+
+        result = processor.process_ask(
+            context_str,
+            question,
+            system_instruction,
+            budget,
+            model_id=model_id or settings.models.default,
+            on_progress=_on_progress,
+        )
+
+    console.print()
+    console.print(result)
+    return True
 
 
 # ══════════════════════════════════════════════════════════════

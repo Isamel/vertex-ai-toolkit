@@ -245,6 +245,10 @@ def _handle_chat(state: REPLState, user_input: str) -> None:
 def _handle_direct_chat(state: REPLState, user_input: str, context: str) -> None:
     """Handle direct chat without a skill."""
     try:
+        # ── Chunked processing for oversized context ──────────
+        if context and _try_chunked_chat(state, user_input, context):
+            return
+
         if state.stream_enabled:
             # Show a transient "thinking" indicator while waiting for the
             # first stream chunk.  We use a Live status that auto-clears
@@ -284,6 +288,63 @@ def _handle_direct_chat(state: REPLState, user_input: str, context: str) -> None
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         logger.exception("Chat error")
+
+
+def _try_chunked_chat(state: REPLState, user_input: str, context: str) -> bool:
+    """Attempt chunked (Map-Reduce) processing for chat if context exceeds the window.
+
+    Returns True if chunking was performed (caller should return early),
+    False if content fits normally.
+    """
+    from vaig.agents.chunked import ChunkedProcessor
+
+    processor = ChunkedProcessor(state.client, state.settings)
+
+    system_instruction = state.orchestrator._default_system_instruction()  # noqa: SLF001
+
+    try:
+        budget = processor.calculate_budget(
+            system_instruction,
+            user_input,
+            model_id=state.model,
+        )
+    except Exception:
+        logger.debug("Chunked budget calculation failed, using normal pipeline")
+        return False
+
+    if not processor.needs_chunking(context, budget):
+        return False
+
+    # ── Content exceeds context window — use Map-Reduce ───────
+    chunks = processor.split_into_chunks(context, budget)
+    total = len(chunks)
+
+    console.print(
+        f"\n[bold yellow]Large context detected[/bold yellow] — "
+        f"splitting into [cyan]{total}[/cyan] chunks for analysis"
+    )
+
+    with console.status("[bold cyan]Analyzing chunks...[/bold cyan]") as status_ctx:
+
+        def _on_progress(current: int, total: int) -> None:
+            status_ctx.update(f"[bold cyan]Processing chunk {current}/{total}...[/bold cyan]")
+
+        full_response = processor.process_ask(
+            context,
+            user_input,
+            system_instruction,
+            budget,
+            model_id=state.model,
+            on_progress=_on_progress,
+        )
+
+    console.print()
+    console.print(Markdown(full_response))
+    console.print()
+
+    # Record model response
+    state.session_manager.add_message("model", full_response, model=state.model)
+    return True
 
 
 def _handle_skill_chat(state: REPLState, user_input: str, context: str) -> None:

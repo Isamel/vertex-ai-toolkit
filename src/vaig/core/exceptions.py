@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vaig.agents.chunked import ChunkResult
+
 
 class VAIGError(Exception):
     """Base exception for all VAIG errors."""
@@ -47,3 +52,32 @@ class MaxIterationsError(VAIGError):
     def __init__(self, message: str, *, iterations: int) -> None:
         super().__init__(message)
         self.iterations = iterations
+
+
+class ChunkedProcessingError(VAIGError):
+    """Raised when chunked file processing fails (partial or total failure).
+
+    Carries context about which chunks failed and any partial results
+    collected before the failure.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        total_chunks: int = 0,
+        failed_chunks: list[int] | None = None,
+        partial_results: list[ChunkResult] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.total_chunks = total_chunks
+        self.failed_chunks = failed_chunks or []
+        self.partial_results = partial_results or []
+
+
+class TokenBudgetError(VAIGError):
+    """Raised when the token budget cannot be computed or is invalid.
+
+    Examples: context_window is too small to fit even the system prompt,
+    or count_tokens() fails and no fallback is possible.
+    """
