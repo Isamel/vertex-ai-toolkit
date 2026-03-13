@@ -156,3 +156,74 @@ def inject_language_into_config(
             config["system_instruction"] = instruction + config["system_instruction"]
 
     return agent_configs
+
+
+# ── Autopilot context injection ──────────────────────────────
+
+
+def build_autopilot_instruction(is_autopilot: bool | None) -> str:
+    """Build an Autopilot context instruction to prepend to agent system prompts.
+
+    Args:
+        is_autopilot: ``True`` if the cluster is GKE Autopilot, ``False``
+            if Standard, ``None`` if detection was unavailable.
+
+    Returns:
+        A system-level instruction telling agents about the cluster mode.
+        Returns an empty string when ``is_autopilot`` is ``False`` or ``None``.
+    """
+    if not is_autopilot:
+        return ""
+
+    return (
+        "## GKE AUTOPILOT CLUSTER\n\n"
+        "This cluster has been **confirmed as GKE Autopilot** via the GKE API. "
+        "Node infrastructure is fully managed by Google.\n\n"
+        "**Autopilot rules:**\n"
+        "- Do NOT attempt node-level operations (`kubectl_top(resource_type='nodes')`, "
+        "`get_node_conditions()`) — they will return an informational message, not data.\n"
+        "- Do NOT flag missing node data as an issue — this is expected on Autopilot.\n"
+        "- Do NOT suggest node-level remediation (add nodes, drain, cordon, check node capacity).\n"
+        "- Focus on **pod-level and workload-level health**: pod status, resource requests/limits, "
+        "deployment rollout, HPA behavior.\n"
+        "- Resource requests are **mandatory** on Autopilot — check that pods have explicit requests.\n"
+        "- Google manages node scaling automatically — utilization thresholds do not apply.\n\n"
+    )
+
+
+def inject_autopilot_into_config(
+    agent_configs: list[dict],
+    is_autopilot: bool | None,
+) -> list[dict]:
+    """Prepend an Autopilot context instruction to every agent's system prompt.
+
+    Follows the same in-place mutation pattern as
+    :func:`inject_language_into_config`.
+
+    Args:
+        agent_configs: List of agent configuration dicts.
+        is_autopilot: Autopilot detection result from
+            :func:`~vaig.tools.gke_tools.detect_autopilot`.
+
+    Returns:
+        The same list (mutated), for convenience.
+    """
+    instruction = build_autopilot_instruction(is_autopilot)
+    if not instruction:
+        return agent_configs
+
+    for config in agent_configs:
+        if "system_prompt" in config:
+            config["system_prompt"] = instruction + config["system_prompt"]
+        if "system_instruction" in config:
+            config["system_instruction"] = instruction + config["system_instruction"]
+
+    return agent_configs
+
+    for config in agent_configs:
+        if "system_prompt" in config:
+            config["system_prompt"] = instruction + config["system_prompt"]
+        if "system_instruction" in config:
+            config["system_instruction"] = instruction + config["system_instruction"]
+
+    return agent_configs

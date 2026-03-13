@@ -685,6 +685,15 @@ def _execute_orchestrated_skill(
     # Build tool registry with live tools
     tool_registry = _register_live_tools(gke_config)
 
+    # Detect Autopilot mode (result is cached from create_gke_tools)
+    is_autopilot: bool | None = None
+    try:
+        from vaig.tools.gke_tools import detect_autopilot  # noqa: WPS433
+
+        is_autopilot = detect_autopilot(gke_config)
+    except ImportError:
+        pass
+
     tool_count = len(tool_registry.list_tools())
     if tool_count == 0:
         err_console.print(
@@ -715,6 +724,7 @@ def _execute_orchestrated_skill(
             skill=skill,
             tool_registry=tool_registry,
             strategy="sequential",
+            is_autopilot=is_autopilot,
         )
 
         # Display final response

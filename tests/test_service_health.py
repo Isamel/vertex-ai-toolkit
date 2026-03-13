@@ -1741,12 +1741,13 @@ class TestServiceHealthAutopilotAwareness:
 
         assert "GKE Autopilot Awareness" in HEALTH_GATHERER_PROMPT
 
-    def test_gatherer_autopilot_detection_via_403(self) -> None:
-        """Gatherer must detect Autopilot via 403 errors on node operations."""
+    def test_gatherer_autopilot_detection_is_automatic(self) -> None:
+        """Gatherer must describe Autopilot detection as automatic (not 403-based)."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        assert "403" in HEALTH_GATHERER_PROMPT
-        assert "Autopilot cluster" in HEALTH_GATHERER_PROMPT
+        assert "Detection" in HEALTH_GATHERER_PROMPT
+        assert "automatic" in HEALTH_GATHERER_PROMPT
+        assert "Autopilot" in HEALTH_GATHERER_PROMPT
 
     def test_gatherer_skip_node_investigation_on_autopilot(self) -> None:
         """Gatherer must skip node-level investigation on Autopilot."""
@@ -1760,11 +1761,11 @@ class TestServiceHealthAutopilotAwareness:
 
         assert "Resource requests are MANDATORY on Autopilot" in HEALTH_GATHERER_PROMPT
 
-    def test_gatherer_autopilot_no_retry_on_permission_error(self) -> None:
-        """Gatherer must not retry on Autopilot permission errors."""
+    def test_gatherer_autopilot_daemonset_awareness(self) -> None:
+        """Gatherer must note DaemonSet behaviour on Autopilot."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        assert "do NOT retry" in HEALTH_GATHERER_PROMPT
+        assert "DaemonSet" in HEALTH_GATHERER_PROMPT
 
     def test_analyzer_has_autopilot_context(self) -> None:
         """Analyzer prompt must include Autopilot context section."""

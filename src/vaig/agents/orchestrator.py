@@ -12,7 +12,11 @@ from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
 from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.client import GeminiClient
-from vaig.core.language import detect_language, inject_language_into_config
+from vaig.core.language import (
+    detect_language,
+    inject_autopilot_into_config,
+    inject_language_into_config,
+)
 from vaig.skills.base import BaseSkill, SkillPhase, SkillResult
 from vaig.tools.base import ToolRegistry
 
@@ -305,6 +309,7 @@ class Orchestrator:
         tool_registry: ToolRegistry,
         *,
         strategy: str = "sequential",
+        is_autopilot: bool | None = None,
     ) -> OrchestratorResult:
         """Execute a skill with tool-aware agents.
 
@@ -321,6 +326,9 @@ class Orchestrator:
             skill: The skill defining agent configs and system prompts.
             tool_registry: Pre-configured tool registry for tool-aware agents.
             strategy: ``"sequential"`` (default), ``"fanout"``, or ``"single"``.
+            is_autopilot: Autopilot detection result — ``True``, ``False``,
+                or ``None`` (unknown).  When ``True``, an Autopilot context
+                instruction is injected into each agent's system prompt.
 
         Returns:
             :class:`OrchestratorResult` with the aggregated outcome.
@@ -342,6 +350,17 @@ class Orchestrator:
             logger.info(
                 "Language detected: %s — injected language instruction into %d agent(s)",
                 lang,
+                len(agent_configs),
+            )
+
+        # ── Autopilot context injection ──────────────────────
+        # When the cluster is confirmed as GKE Autopilot, inject an
+        # instruction so agents adapt their behaviour (skip node ops,
+        # focus on workload health, etc.).
+        if is_autopilot:
+            inject_autopilot_into_config(agent_configs, is_autopilot)
+            logger.info(
+                "GKE Autopilot detected — injected Autopilot instruction into %d agent(s)",
                 len(agent_configs),
             )
 

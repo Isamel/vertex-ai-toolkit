@@ -143,15 +143,14 @@ When using `gcloud_logging_query`, use these GKE-specific filters (replace NAMES
 
 ### GKE Autopilot Awareness
 
-GKE Autopilot clusters are fully managed by Google — node-level operations are restricted. Detect and adapt:
+GKE Autopilot clusters are fully managed by Google — node-level operations are restricted.
 
-- **Detection**: If `kubectl_top(resource_type="nodes")` or `get_node_conditions()` returns a 403 or "Access denied" error, you are likely on a **GKE Autopilot cluster**.
+- **Detection** is automatic: if this is an Autopilot cluster, tools like `kubectl_top(resource_type="nodes")` and `get_node_conditions()` will return an informational message (not an error) confirming Autopilot mode.
 - **On Autopilot clusters**:
   1. SKIP further node-level investigation (Step 1 node deep-dives) — record "GKE Autopilot — node management handled by Google" and move on
   2. Focus on pod-level and deployment-level health (Steps 2-7)
   3. Resource requests are MANDATORY on Autopilot — check if pods have explicit resource requests/limits
   4. Ignore DaemonSet-related findings unless they are system-managed (GKE manages DaemonSets on Autopilot)
-  5. If ANY tool returns a permission error related to nodes, record it as "Autopilot restriction" and do NOT retry
 
 ## Output Format
 
@@ -285,7 +284,7 @@ When deployment/pod YAML is available in gathered data:
 
 ### GKE Autopilot Context
 
-If the gatherer reports "Autopilot cluster detected", "Autopilot restriction", or node data was unavailable due to 403 errors:
+If the gatherer reports "GKE Autopilot cluster detected" or node-level tools returned Autopilot-specific messages:
 - Do NOT flag missing node data or node metrics as an issue — this is expected on Autopilot
 - Focus analysis on workload health: pod status, resource requests/limits compliance, deployment rollout status, and HPA behavior
 - Do NOT suggest node-level remediation (e.g., "add more nodes", "drain node", "check node capacity") for Autopilot clusters
@@ -533,8 +532,8 @@ If the command tool is not found in the container (e.g., distroless image), mark
 
 ### GKE Autopilot Awareness
 
-On GKE Autopilot clusters (identified by 403 errors on node operations or "Autopilot restriction" notes in findings):
-- Do NOT attempt node-level verification calls (kubectl_top for nodes, get_node_conditions) — they will fail with 403
+On GKE Autopilot clusters (identified by Autopilot-specific messages from node-level tools):
+- Do NOT attempt node-level verification calls (kubectl_top for nodes, get_node_conditions) — they will return an informational Autopilot message, not data
 - Focus verification on pod-level and workload-level tool calls only
 """
 
@@ -775,7 +774,7 @@ If the upstream data does NOT include cluster overview info, write:
 NEVER write "Data not available" without explanation.
 
 ### GKE Autopilot Cluster Overview
-If the upstream data indicates a GKE Autopilot cluster (403 errors on node operations, "Autopilot restriction" notes, or "node management handled by Google"):
+If the upstream data indicates a GKE Autopilot cluster (Autopilot-specific messages from node tools, or "node management handled by Google"):
 - In Cluster Overview, state: "GKE Autopilot cluster — node infrastructure managed by Google"
 - Do NOT include node health metrics, node resource utilization, or node-level recommendations
 - Do NOT recommend node-level actions (drain, cordon, add nodes) — these are managed by Google on Autopilot

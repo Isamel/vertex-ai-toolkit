@@ -12,8 +12,10 @@ from __future__ import annotations
 import pytest
 
 from vaig.core.language import (
+    build_autopilot_instruction,
     build_language_instruction,
     detect_language,
+    inject_autopilot_into_config,
     inject_language_into_config,
 )
 
@@ -450,3 +452,92 @@ class TestServiceHealthLanguageIntegration:
         assert prompts.HEALTH_REPORTER_PROMPT == original_reporter
         assert "LANGUAGE INSTRUCTION" not in prompts.HEALTH_GATHERER_PROMPT
         assert "LANGUAGE INSTRUCTION" not in prompts.HEALTH_REPORTER_PROMPT
+
+
+# ══════════════════════════════════════════════════════════════
+# Autopilot context injection tests
+# ══════════════════════════════════════════════════════════════
+
+
+class TestBuildAutopilotInstruction:
+    """Tests for build_autopilot_instruction()."""
+
+    def test_returns_empty_for_false(self) -> None:
+        assert build_autopilot_instruction(False) == ""
+
+    def test_returns_empty_for_none(self) -> None:
+        assert build_autopilot_instruction(None) == ""
+
+    def test_returns_instruction_for_true(self) -> None:
+        result = build_autopilot_instruction(True)
+        assert "GKE AUTOPILOT CLUSTER" in result
+        assert "confirmed as GKE Autopilot" in result
+        assert "node-level operations" in result
+
+    def test_instruction_mentions_mandatory_requests(self) -> None:
+        result = build_autopilot_instruction(True)
+        assert "mandatory" in result.lower()
+
+    def test_instruction_mentions_google_manages_scaling(self) -> None:
+        result = build_autopilot_instruction(True)
+        assert "Google manages node scaling" in result
+
+
+class TestInjectAutopilotIntoConfig:
+    """Tests for inject_autopilot_into_config()."""
+
+    def test_no_modification_when_not_autopilot(self) -> None:
+        configs = [
+            {"system_prompt": "original prompt", "system_instruction": "original instruction"},
+        ]
+        result = inject_autopilot_into_config(configs, False)
+        assert result[0]["system_prompt"] == "original prompt"
+        assert result[0]["system_instruction"] == "original instruction"
+
+    def test_no_modification_when_none(self) -> None:
+        configs = [
+            {"system_prompt": "original prompt"},
+        ]
+        result = inject_autopilot_into_config(configs, None)
+        assert result[0]["system_prompt"] == "original prompt"
+
+    def test_prepends_instruction_when_autopilot(self) -> None:
+        configs = [
+            {"system_prompt": "You are an SRE agent.", "system_instruction": "You are an SRE agent."},
+        ]
+        result = inject_autopilot_into_config(configs, True)
+        assert result[0]["system_prompt"].startswith("## GKE AUTOPILOT CLUSTER")
+        assert result[0]["system_instruction"].startswith("## GKE AUTOPILOT CLUSTER")
+        assert "You are an SRE agent." in result[0]["system_prompt"]
+
+    def test_mutates_in_place(self) -> None:
+        configs = [{"system_prompt": "test"}]
+        result = inject_autopilot_into_config(configs, True)
+        assert result is configs
+
+    def test_handles_multiple_agents(self) -> None:
+        configs = [
+            {"system_prompt": "agent 1"},
+            {"system_instruction": "agent 2"},
+            {"system_prompt": "agent 3", "system_instruction": "agent 3"},
+        ]
+        inject_autopilot_into_config(configs, True)
+        assert "GKE AUTOPILOT" in configs[0]["system_prompt"]
+        assert "GKE AUTOPILOT" in configs[1]["system_instruction"]
+        assert "GKE AUTOPILOT" in configs[2]["system_prompt"]
+        assert "GKE AUTOPILOT" in configs[2]["system_instruction"]
+
+    def test_does_not_corrupt_original_prompt_constants(self) -> None:
+        """Injecting Autopilot must not modify module-level prompt constants."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        original = HEALTH_GATHERER_PROMPT
+
+        skill = ServiceHealthSkill()
+        configs = skill.get_agents_config()
+        inject_autopilot_into_config(configs, True)
+
+        from vaig.skills.service_health import prompts
+        assert prompts.HEALTH_GATHERER_PROMPT == original
+        assert "GKE AUTOPILOT" not in prompts.HEALTH_GATHERER_PROMPT

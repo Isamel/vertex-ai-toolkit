@@ -164,6 +164,7 @@ class GKEConfig(BaseModel):
 
     cluster_name: str = ""
     project_id: str = ""
+    location: str = ""
     default_namespace: str = "default"
     kubeconfig_path: str = ""
     context: str = ""

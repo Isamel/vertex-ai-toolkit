@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 # GKEConfig combination creates clients only once.
 _CLIENT_CACHE: dict[tuple[str, str, str], tuple[Any, ...]] = {}
 
+# ── Autopilot detection cache ─────────────────────────────────
+# Keyed on (project_id, location, cluster_name).
+# Values: True (Autopilot), False (Standard), None (detection failed).
+_AUTOPILOT_CACHE: dict[tuple[str, str, str], bool | None] = {}
+
 
 # ── Lazy import guard ─────────────────────────────────────────
 # The ``kubernetes`` package is an optional dependency (``pip install vertex-ai-toolkit[live]``).
@@ -46,6 +51,82 @@ except ImportError as _exc:
 def _k8s_unavailable() -> ToolResult:
     """Return a ToolResult indicating that the kubernetes SDK is not installed."""
     return ToolResult(output=_K8S_IMPORT_ERROR or "kubernetes SDK not available", error=True)
+
+
+# ── Autopilot detection ──────────────────────────────────────
+
+
+def _query_autopilot_status(project: str, location: str, cluster: str) -> bool:
+    """Query the GKE API for the Autopilot status of a cluster.
+
+    This is an internal helper extracted so tests can mock it without
+    fighting Python's import machinery.
+
+    Raises:
+        ImportError: If ``google-cloud-container`` is not installed.
+        Exception: On any API or network error.
+    """
+    from google.cloud import container_v1  # noqa: WPS433
+
+    client = container_v1.ClusterManagerClient()
+    name = f"projects/{project}/locations/{location}/clusters/{cluster}"
+    cluster_obj = client.get_cluster(name=name)
+    return bool(cluster_obj.autopilot and cluster_obj.autopilot.enabled)
+
+
+def detect_autopilot(gke_config: GKEConfig) -> bool | None:
+    """Detect whether the GKE cluster is running in Autopilot mode.
+
+    Uses the ``google-cloud-container`` library to query the GKE API for
+    ``cluster.autopilot.enabled``.  Results are cached per
+    (project_id, location, cluster_name) tuple.
+
+    Args:
+        gke_config: GKE configuration with ``project_id``, ``location``,
+            and ``cluster_name`` populated.
+
+    Returns:
+        ``True`` if Autopilot, ``False`` if Standard, ``None`` if detection
+        failed (missing config, missing library, API error).
+    """
+    project = gke_config.project_id
+    location = gke_config.location
+    cluster = gke_config.cluster_name
+
+    if not project or not location or not cluster:
+        logger.debug(
+            "Autopilot detection skipped: missing project_id=%r, location=%r, cluster_name=%r",
+            project, location, cluster,
+        )
+        return None
+
+    cache_key = (project, location, cluster)
+    if cache_key in _AUTOPILOT_CACHE:
+        return _AUTOPILOT_CACHE[cache_key]
+
+    try:
+        is_autopilot = _query_autopilot_status(project, location, cluster)
+        _AUTOPILOT_CACHE[cache_key] = is_autopilot
+        logger.info("GKE Autopilot detection: cluster=%s autopilot=%s", cluster, is_autopilot)
+        return is_autopilot
+
+    except ImportError:
+        logger.warning(
+            "google-cloud-container not installed — Autopilot detection unavailable. "
+            "Install with: pip install vertex-ai-toolkit[live]"
+        )
+        _AUTOPILOT_CACHE[cache_key] = None
+        return None
+
+    except Exception as exc:
+        logger.warning("Autopilot detection failed for %s: %s", cluster, exc)
+        _AUTOPILOT_CACHE[cache_key] = None
+        return None
+
+
+def clear_autopilot_cache() -> None:
+    """Clear the Autopilot detection cache (useful for testing)."""
+    _AUTOPILOT_CACHE.clear()
 
 
 # ── K8s client helper (Task 2.6) ─────────────────────────────
@@ -1169,7 +1250,7 @@ def kubectl_top(
                 error=True,
             )
         if exc.status in (401, 403):
-            return ToolResult(output=f"Access denied to metrics API ({exc.status}): {exc.reason}. This may indicate a GKE Autopilot cluster where node-level metrics operations are restricted.", error=True)
+            return ToolResult(output=f"Access denied to metrics API ({exc.status}): {exc.reason}.", error=True)
         return ToolResult(output=f"Kubernetes API error ({exc.status}): {exc.reason}", error=True)
     except Exception as exc:
         logger.exception("kubectl_top failed")
@@ -1829,7 +1910,7 @@ def get_node_conditions(
             return ToolResult(output=f"Node '{name}' not found", error=True)
         if exc.status == 403:
             return ToolResult(
-                output="Access denied: insufficient permissions to read nodes. This may indicate a GKE Autopilot cluster where node-level operations are restricted.",
+                output="Access denied: insufficient permissions to read nodes.",
                 error=True,
             )
         if exc.status == 401:
@@ -2780,7 +2861,45 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
     Follows the exact same factory pattern as ``create_file_tools`` and
     ``create_shell_tools``: returns a list of ``ToolDef`` objects with
     closures that bind the config.
+
+    When the cluster is detected as GKE Autopilot, node-level tools
+    (``kubectl_top`` with ``resource_type="nodes"`` and ``get_node_conditions``)
+    return an immediate informational message instead of calling the K8s API.
     """
+    is_autopilot = detect_autopilot(gke_config)
+
+    def _autopilot_kubectl_top(
+        resource_type: str = "pods",
+        name: str | None = None,
+        namespace: str = "default",
+        _cfg: GKEConfig = gke_config,
+    ) -> ToolResult:
+        """Autopilot-aware kubectl_top wrapper."""
+        if is_autopilot and resource_type == "nodes":
+            return ToolResult(
+                output=(
+                    "GKE Autopilot cluster detected — node-level metrics are not available. "
+                    "Google manages node infrastructure on Autopilot. "
+                    "Use kubectl_top(resource_type='pods') for workload-level metrics."
+                ),
+            )
+        return kubectl_top(resource_type, gke_config=_cfg, name=name, namespace=namespace)
+
+    def _autopilot_get_node_conditions(
+        name: str | None = None,
+        _cfg: GKEConfig = gke_config,
+    ) -> ToolResult:
+        """Autopilot-aware get_node_conditions wrapper."""
+        if is_autopilot:
+            return ToolResult(
+                output=(
+                    "GKE Autopilot cluster detected — node conditions are managed by Google. "
+                    "Node-level inspection is not applicable on Autopilot clusters. "
+                    "Focus on pod-level and workload-level health instead."
+                ),
+            )
+        return get_node_conditions(gke_config=_cfg, name=name)
+
     return [
         ToolDef(
             name="kubectl_get",
@@ -2946,10 +3065,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
-            execute=lambda resource_type="pods", name=None, namespace="default",
-                    _cfg=gke_config: kubectl_top(
-                resource_type, gke_config=_cfg, name=name, namespace=namespace,
-            ),
+            execute=lambda resource_type="pods", name=None, namespace="default":
+                    _autopilot_kubectl_top(resource_type, name=name, namespace=namespace),
         ),
         # ── Write operations ──────────────────────────────────
         ToolDef(
@@ -3194,10 +3311,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
-            execute=lambda name=None,
-                    _cfg=gke_config: get_node_conditions(
-                gke_config=_cfg, name=name,
-            ),
+            execute=lambda name=None: _autopilot_get_node_conditions(name=name),
         ),
         ToolDef(
             name="get_container_status",

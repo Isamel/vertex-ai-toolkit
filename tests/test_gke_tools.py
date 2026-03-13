@@ -14,9 +14,10 @@ from vaig.tools.base import ToolDef, ToolResult
 
 @pytest.fixture(autouse=True)
 def _clear_k8s_cache() -> None:
-    """Clear the K8s client cache before each test to avoid cross-test pollution."""
-    from vaig.tools.gke_tools import clear_k8s_client_cache
+    """Clear the K8s client cache and Autopilot cache before each test."""
+    from vaig.tools.gke_tools import clear_autopilot_cache, clear_k8s_client_cache
     clear_k8s_client_cache()
+    clear_autopilot_cache()
 
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -25,6 +26,7 @@ def _make_gke_config(**kwargs) -> GKEConfig:
     defaults = {
         "cluster_name": "test-cluster",
         "project_id": "test-project",
+        "location": "us-central1",
         "default_namespace": "default",
         "kubeconfig_path": "",
         "context": "",
@@ -4443,3 +4445,171 @@ class TestResourceQuotaResourceMap:
 
         assert _normalise_resource("QUOTA") == "resourcequotas"
         assert _normalise_resource("ResourceQuotas") == "resourcequotas"
+
+
+# ══════════════════════════════════════════════════════════════
+# Autopilot detection tests
+# ══════════════════════════════════════════════════════════════
+
+
+class TestDetectAutopilot:
+    """Tests for detect_autopilot() function."""
+
+    def test_returns_none_when_missing_project_id(self) -> None:
+        from vaig.tools.gke_tools import detect_autopilot
+
+        cfg = _make_gke_config(project_id="", location="us-central1", cluster_name="my-cluster")
+        assert detect_autopilot(cfg) is None
+
+    def test_returns_none_when_missing_location(self) -> None:
+        from vaig.tools.gke_tools import detect_autopilot
+
+        cfg = _make_gke_config(project_id="proj", location="", cluster_name="my-cluster")
+        assert detect_autopilot(cfg) is None
+
+    def test_returns_none_when_missing_cluster_name(self) -> None:
+        from vaig.tools.gke_tools import detect_autopilot
+
+        cfg = _make_gke_config(project_id="proj", location="us-central1", cluster_name="")
+        assert detect_autopilot(cfg) is None
+
+    def test_returns_true_for_autopilot_cluster(self) -> None:
+        from vaig.tools.gke_tools import detect_autopilot
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke_tools._query_autopilot_status", return_value=True):
+            result = detect_autopilot(cfg)
+
+        assert result is True
+
+    def test_returns_false_for_standard_cluster(self) -> None:
+        from vaig.tools.gke_tools import detect_autopilot
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke_tools._query_autopilot_status", return_value=False):
+            result = detect_autopilot(cfg)
+
+        assert result is False
+
+    def test_caches_result(self) -> None:
+        from vaig.tools.gke_tools import _AUTOPILOT_CACHE, detect_autopilot
+
+        cfg = _make_gke_config()
+        cache_key = (cfg.project_id, cfg.location, cfg.cluster_name)
+
+        # Pre-populate cache
+        _AUTOPILOT_CACHE[cache_key] = True
+
+        # Should return cached value without making any API call
+        result = detect_autopilot(cfg)
+        assert result is True
+
+    def test_returns_none_on_api_error(self) -> None:
+        from vaig.tools.gke_tools import detect_autopilot
+
+        with patch(
+            "vaig.tools.gke_tools._query_autopilot_status",
+            side_effect=Exception("API unavailable"),
+        ):
+            cfg = _make_gke_config()
+            result = detect_autopilot(cfg)
+
+        assert result is None
+
+    def test_clear_autopilot_cache(self) -> None:
+        from vaig.tools.gke_tools import _AUTOPILOT_CACHE, clear_autopilot_cache
+
+        _AUTOPILOT_CACHE[("a", "b", "c")] = True
+        assert len(_AUTOPILOT_CACHE) > 0
+
+        clear_autopilot_cache()
+        assert len(_AUTOPILOT_CACHE) == 0
+
+
+class TestAutopilotToolBehavior:
+    """Tests for Autopilot-aware tool wrappers in create_gke_tools."""
+
+    def _get_tool(self, tools: list[ToolDef], name: str) -> ToolDef:
+        for t in tools:
+            if t.name == name:
+                return t
+        raise AssertionError(f"Tool '{name}' not found")
+
+    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=True)
+    def test_kubectl_top_nodes_skipped_on_autopilot(self, _mock_detect: MagicMock) -> None:
+        from vaig.tools.gke_tools import create_gke_tools
+
+        cfg = _make_gke_config()
+        tools = create_gke_tools(cfg)
+        top_tool = self._get_tool(tools, "kubectl_top")
+
+        result = top_tool.execute(resource_type="nodes")
+        assert "GKE Autopilot cluster detected" in result.output
+        assert "node-level metrics are not available" in result.output
+        assert result.error is False
+
+    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=True)
+    @patch("vaig.tools.gke_tools.kubectl_top")
+    def test_kubectl_top_pods_works_on_autopilot(self, mock_top: MagicMock, _mock_detect: MagicMock) -> None:
+        from vaig.tools.gke_tools import create_gke_tools
+
+        mock_top.return_value = ToolResult(output="pod metrics here")
+
+        cfg = _make_gke_config()
+        tools = create_gke_tools(cfg)
+        top_tool = self._get_tool(tools, "kubectl_top")
+
+        result = top_tool.execute(resource_type="pods")
+        assert result.output == "pod metrics here"
+
+    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=True)
+    def test_get_node_conditions_skipped_on_autopilot(self, _mock_detect: MagicMock) -> None:
+        from vaig.tools.gke_tools import create_gke_tools
+
+        cfg = _make_gke_config()
+        tools = create_gke_tools(cfg)
+        node_tool = self._get_tool(tools, "get_node_conditions")
+
+        result = node_tool.execute()
+        assert "GKE Autopilot cluster detected" in result.output
+        assert "node conditions are managed by Google" in result.output
+        assert result.error is False
+
+    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=False)
+    @patch("vaig.tools.gke_tools.kubectl_top")
+    def test_kubectl_top_nodes_works_on_standard(self, mock_top: MagicMock, _mock_detect: MagicMock) -> None:
+        from vaig.tools.gke_tools import create_gke_tools
+
+        mock_top.return_value = ToolResult(output="node metrics here")
+
+        cfg = _make_gke_config()
+        tools = create_gke_tools(cfg)
+        top_tool = self._get_tool(tools, "kubectl_top")
+
+        result = top_tool.execute(resource_type="nodes")
+        assert result.output == "node metrics here"
+
+    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=False)
+    @patch("vaig.tools.gke_tools.get_node_conditions")
+    def test_get_node_conditions_works_on_standard(self, mock_nodes: MagicMock, _mock_detect: MagicMock) -> None:
+        from vaig.tools.gke_tools import create_gke_tools
+
+        mock_nodes.return_value = ToolResult(output="node conditions here")
+
+        cfg = _make_gke_config()
+        tools = create_gke_tools(cfg)
+        node_tool = self._get_tool(tools, "get_node_conditions")
+
+        result = node_tool.execute()
+        assert result.output == "node conditions here"
+
+    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=True)
+    def test_tool_count_unchanged_on_autopilot(self, _mock_detect: MagicMock) -> None:
+        """Autopilot detection must NOT change the number of tools."""
+        from vaig.tools.gke_tools import create_gke_tools
+
+        cfg = _make_gke_config()
+        tools = create_gke_tools(cfg)
+        assert len(tools) == 15
