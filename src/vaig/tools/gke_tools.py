@@ -231,6 +231,8 @@ _RESOURCE_API_MAP: dict[str, str] = {
     "ingress": "networking",
     "ingresses": "networking",
     "networkpolicies": "networking",
+    "poddisruptionbudgets": "policy",
+    "resourcequotas": "core",
 }
 
 # Canonical aliases so users can type short names
@@ -266,6 +268,12 @@ _RESOURCE_ALIASES: dict[str, str] = {
     "networkpolicy": "networkpolicies",
     "persistentvolume": "pv",
     "persistentvolumeclaim": "pvc",
+    "poddisruptionbudget": "poddisruptionbudgets",
+    "pdb": "poddisruptionbudgets",
+    "pdbs": "poddisruptionbudgets",
+    "resourcequota": "resourcequotas",
+    "quota": "resourcequotas",
+    "quotas": "resourcequotas",
 }
 
 
@@ -532,6 +540,7 @@ def _list_resource(
             "endpoints": ("list_namespaced_endpoints", "list_endpoints_for_all_namespaces"),
             "pvc": ("list_namespaced_persistent_volume_claim", "list_persistent_volume_claim_for_all_namespaces"),
             "persistentvolumeclaims": ("list_namespaced_persistent_volume_claim", "list_persistent_volume_claim_for_all_namespaces"),
+            "resourcequotas": ("list_namespaced_resource_quota", "list_resource_quota_for_all_namespaces"),
             "nodes": ("", "list_node"),
             "namespaces": ("", "list_namespace"),
             "pv": ("", "list_persistent_volume"),
@@ -607,6 +616,15 @@ def _list_resource(
         if namespace in ("", "all"):
             return getattr(net_v1, all_method_n)(**kwargs)
         return getattr(net_v1, ns_method_n)(namespace=namespace, **kwargs)
+
+    # ── Policy V1 resources ──────────────────────────────────
+    if api_group == "policy":
+        from kubernetes.client import PolicyV1Api  # noqa: WPS433
+
+        policy_v1 = PolicyV1Api(api_client=api_client)
+        if namespace in ("", "all"):
+            return policy_v1.list_pod_disruption_budget_for_all_namespaces(**kwargs)
+        return policy_v1.list_namespaced_pod_disruption_budget(namespace=namespace, **kwargs)
 
     return ToolResult(output=f"Unknown API group for resource: {resource}", error=True)
 
@@ -719,6 +737,7 @@ def _describe_resource(
             "endpoints": ("read_namespaced_endpoints", ""),
             "pvc": ("read_namespaced_persistent_volume_claim", ""),
             "persistentvolumeclaims": ("read_namespaced_persistent_volume_claim", ""),
+            "resourcequotas": ("read_namespaced_resource_quota", ""),
             "nodes": ("", "read_node"),
             "namespaces": ("", "read_namespace"),
             "pv": ("", "read_persistent_volume"),
@@ -781,6 +800,14 @@ def _describe_resource(
         if not method_name_n:
             return None
         return getattr(net_v1, method_name_n)(name=name, namespace=namespace)
+
+    # ── Policy V1 ────────────────────────────────────────────
+    if api_group == "policy":
+        from kubernetes.client import PolicyV1Api  # noqa: WPS433
+
+        return PolicyV1Api(api_client=api_client).read_namespaced_pod_disruption_budget(
+            name=name, namespace=namespace,
+        )
 
     return None
 
@@ -2242,7 +2269,7 @@ ALLOWED_EXEC_COMMANDS: list[str] = [
     "ps", "top -bn1",
     "df", "du",
     "mount",
-    "ip", "ifconfig", "netstat", "ss", "nslookup", "dig", "ping", "curl", "wget",
+    "ip", "ifconfig", "netstat", "ss", "nslookup", "dig", "ping", "curl", "wget", "nc",
     "java -version", "python --version", "node --version",
     "cat /etc/resolv.conf", "cat /etc/hosts",
 ]

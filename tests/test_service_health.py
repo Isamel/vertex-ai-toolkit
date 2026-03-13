@@ -808,3 +808,67 @@ class TestServiceHealthTwoPassPromptModifications:
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
         assert "UNVERIFIABLE" in HEALTH_REPORTER_PROMPT
+
+
+# ── Cloud Logging, exec_command verification, distroless ───
+
+
+class TestServiceHealthPromptEnhancements:
+    """Validate prompt enhancements for Cloud Logging patterns,
+    exec_command verification gaps, and distroless container handling."""
+
+    # ── Gatherer: Cloud Logging patterns ─────────────────
+
+    def test_gatherer_cloud_logging_patterns(self) -> None:
+        """Gatherer prompt must contain Cloud Logging filter examples."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "OOMKilled" in HEALTH_GATHERER_PROMPT
+        assert "CrashLoopBackOff" in HEALTH_GATHERER_PROMPT
+        assert "resource.type" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_log_time_range_guidance(self) -> None:
+        """Gatherer prompt must mention narrow time ranges for log queries."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        prompt_lower = HEALTH_GATHERER_PROMPT.lower()
+        assert "narrow" in prompt_lower or "time range" in prompt_lower or \
+            "time_range" in prompt_lower
+
+    # ── Analyzer: exec_command verification gaps ─────────
+
+    def test_analyzer_exec_command_verification_gaps(self) -> None:
+        """Analyzer prompt must contain exec_command examples for verification gaps."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "exec_command" in HEALTH_ANALYZER_PROMPT
+        assert "curl" in HEALTH_ANALYZER_PROMPT
+        assert "nslookup" in HEALTH_ANALYZER_PROMPT
+
+    def test_analyzer_exec_enabled_note(self) -> None:
+        """Analyzer must mention exec_enabled requirement."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "exec_enabled" in HEALTH_ANALYZER_PROMPT
+
+    # ── Verifier: exec_command and distroless handling ────
+
+    def test_verifier_exec_command_validation(self) -> None:
+        """Verifier prompt must mention exec_command capabilities."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "exec_command" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_distroless_handling(self) -> None:
+        """Verifier must handle distroless containers (missing tools)."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "distroless" in HEALTH_VERIFIER_PROMPT.lower()
+
+    def test_verifier_exec_disabled_handling(self) -> None:
+        """Verifier must handle the case where exec is disabled."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        prompt_lower = HEALTH_VERIFIER_PROMPT.lower()
+        assert "exec is disabled" in prompt_lower or \
+            "exec_enabled" in HEALTH_VERIFIER_PROMPT

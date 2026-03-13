@@ -86,6 +86,16 @@ Execute the following steps to build a comprehensive health snapshot. Collect da
 - Look for: application errors, upstream dependency failures, timeout patterns
 - Correlate timestamps with Kubernetes events from Step 3
 
+### Cloud Logging Query Patterns
+When using `gcloud_logging_query`, use these GKE-specific filters:
+- OOMKilled: `resource.type="k8s_container" AND resource.labels.namespace_name="NAMESPACE" AND "OOMKilled"`
+- CrashLoopBackOff: `resource.type="k8s_container" AND resource.labels.namespace_name="NAMESPACE" AND "CrashLoopBackOff"`
+- Connection errors: `resource.type="k8s_container" AND resource.labels.namespace_name="NAMESPACE" AND severity>=ERROR AND ("connection refused" OR "connection timed out" OR "no route to host")`
+- Image pull errors: `resource.type="k8s_container" AND resource.labels.namespace_name="NAMESPACE" AND ("ImagePullBackOff" OR "ErrImagePull")`
+- Readiness/liveness probe failures: `resource.type="k8s_container" AND resource.labels.namespace_name="NAMESPACE" AND ("Liveness probe failed" OR "Readiness probe failed")`
+- Pod-specific logs: `resource.type="k8s_container" AND resource.labels.namespace_name="NAMESPACE" AND resource.labels.pod_name="POD_NAME" AND severity>=WARNING`
+- Always use narrow time ranges (last 1h or less) to control cost
+
 ### Step 8: RBAC Check (if permission errors found)
 - If any tool returned 403/Forbidden or logs show permission denied:
   a. `check_rbac(verb="<action>", resource="<type>", namespace=<ns>, service_account="<sa>")` to verify permissions
@@ -255,6 +265,15 @@ RULES:
 - The tool name MUST be one of the available GKE/GCloud tools (kubectl_get, kubectl_describe, kubectl_logs, kubectl_top, get_events, get_node_conditions, get_container_status, get_rollout_status, get_rollout_history, check_rbac, gcloud_logging_query, gcloud_monitoring_query, etc.)
 - Arguments MUST use real values from the gathered data (real pod names, namespaces, resource names) — NEVER placeholders.
 
+### Active Validation Verification Gaps
+When a finding involves connectivity, DNS, or service reachability issues, suggest exec_command-based verification:
+- Connectivity test: `Tool: exec_command(pod_name="POD", namespace="NS", command="curl -s -o /dev/null -w '%{http_code}' http://SERVICE:PORT/health") — Expected: non-200 or connection refused confirms connectivity issue`
+- DNS resolution: `Tool: exec_command(pod_name="POD", namespace="NS", command="nslookup SERVICE.NS.svc.cluster.local") — Expected: resolution failure confirms DNS issue`
+- Port reachability: `Tool: exec_command(pod_name="POD", namespace="NS", command="nc -zv SERVICE PORT") — Expected: connection refused confirms port not listening`
+- Process check: `Tool: exec_command(pod_name="POD", namespace="NS", command="ps aux") — Expected: missing process confirms crash`
+
+Note: exec_command requires gke.exec_enabled=true in config. If exec is disabled, note this in the Verification Gap: "Requires exec_enabled=true — manual verification needed"
+
 ## STRICT Analysis Rules
 1. Be PRECISE about scope. A single failing pod in one namespace does NOT make the cluster "DEGRADED". Classify the issue scope correctly: cluster-level, namespace-level, or resource-level.
 2. ONLY reference data that appears in the gathered output. If the gatherer did not return data for something, say "Data not collected" — never infer or fabricate.
@@ -366,10 +385,21 @@ If no findings were downgraded, write: "No findings were downgraded during verif
 ```
 
 ## Critical Rules
-1. You have access to ALL GKE and GCloud tools (kubectl_get, kubectl_describe, kubectl_logs, kubectl_top, get_events, get_node_conditions, get_container_status, get_rollout_status, get_rollout_history, check_rbac, gcloud_logging_query, gcloud_monitoring_query, and others).
+1. You have access to ALL GKE and GCloud tools (kubectl_get, kubectl_describe, kubectl_logs, kubectl_top, get_events, get_node_conditions, get_container_status, get_rollout_status, get_rollout_history, check_rbac, exec_command, gcloud_logging_query, gcloud_monitoring_query, and others).
 2. Your max_iterations is 10 — be efficient. Only make the tool calls specified in Verification Gap fields.
 3. Preserve ALL content from the analyzer output. You are adding verification, not rewriting.
 4. The Severity Assessment should be updated if verification significantly changed the findings landscape.
+
+### Active Validation via exec_command
+When a Verification Gap specifies an exec_command tool call, you can validate hypotheses by running diagnostic commands INSIDE pods:
+- Use curl/wget for HTTP endpoint testing
+- Use nslookup/dig for DNS verification
+- Use nc for raw port connectivity
+- Use ps/top for process state checks
+- Use cat /etc/resolv.conf for DNS configuration
+
+If exec_command returns "exec is disabled", mark the finding as UNVERIFIABLE with note: "Active validation requires gke.exec_enabled=true"
+If the command tool is not found in the container (e.g., distroless image), mark as UNVERIFIABLE with note: "Container lacks diagnostic tools — manual verification needed"
 """
 
 HEALTH_REPORTER_PROMPT = """You are an SRE communications specialist. You take analyzed and VERIFIED health findings and produce a clear, actionable service health report suitable for both engineering teams and engineering leadership.

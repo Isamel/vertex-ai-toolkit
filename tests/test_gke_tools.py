@@ -4359,3 +4359,87 @@ class TestGetRolloutHistory:
 
         apps_v1.read_namespaced_deployment.assert_called_once_with(name="web", namespace="staging")
         apps_v1.list_namespaced_replica_set.assert_called_once_with(namespace="staging")
+
+
+# ── nc allowlist tests ─────────────────────────────────────
+
+
+class TestNcInAllowlist:
+    """Verify that 'nc' (netcat) is present in the exec_command allowlist."""
+
+    def test_nc_in_allowlist(self) -> None:
+        """nc must be listed in ALLOWED_EXEC_COMMANDS."""
+        from vaig.tools.gke_tools import ALLOWED_EXEC_COMMANDS
+
+        assert "nc" in ALLOWED_EXEC_COMMANDS
+
+    def test_nc_command_allowed(self) -> None:
+        """nc -zv service 8080 must pass _check_allowed validation."""
+        from vaig.tools.gke_tools import _check_allowed
+
+        assert _check_allowed("nc -zv service 8080") is True
+
+    def test_nc_bare_allowed(self) -> None:
+        """Bare 'nc' command must also pass."""
+        from vaig.tools.gke_tools import _check_allowed
+
+        assert _check_allowed("nc") is True
+
+
+# ── PDB and ResourceQuota resource map tests ───────────────
+
+
+class TestPdbResourceMap:
+    """Verify PodDisruptionBudget entries in _RESOURCE_API_MAP and aliases."""
+
+    def test_pdb_in_resource_map(self) -> None:
+        """poddisruptionbudgets must map to 'policy' API group."""
+        from vaig.tools.gke_tools import _RESOURCE_API_MAP
+
+        assert "poddisruptionbudgets" in _RESOURCE_API_MAP
+        assert _RESOURCE_API_MAP["poddisruptionbudgets"] == "policy"
+
+    def test_pdb_aliases(self) -> None:
+        """All PDB aliases must normalise to 'poddisruptionbudgets'."""
+        from vaig.tools.gke_tools import _normalise_resource
+
+        aliases = ("pdb", "pdbs", "poddisruptionbudget", "poddisruptionbudgets")
+        for alias in aliases:
+            assert _normalise_resource(alias) == "poddisruptionbudgets", (
+                f"alias '{alias}' did not resolve to 'poddisruptionbudgets'"
+            )
+
+    def test_pdb_case_insensitive(self) -> None:
+        """PDB aliases must work regardless of case."""
+        from vaig.tools.gke_tools import _normalise_resource
+
+        assert _normalise_resource("PDB") == "poddisruptionbudgets"
+        assert _normalise_resource("Pdbs") == "poddisruptionbudgets"
+
+
+class TestResourceQuotaResourceMap:
+    """Verify ResourceQuota entries in _RESOURCE_API_MAP and aliases."""
+
+    def test_resourcequota_in_resource_map(self) -> None:
+        """resourcequotas must map to 'core' API group."""
+        from vaig.tools.gke_tools import _RESOURCE_API_MAP
+
+        assert "resourcequotas" in _RESOURCE_API_MAP
+        assert _RESOURCE_API_MAP["resourcequotas"] == "core"
+
+    def test_resourcequota_aliases(self) -> None:
+        """All ResourceQuota aliases must normalise to 'resourcequotas'."""
+        from vaig.tools.gke_tools import _normalise_resource
+
+        aliases = ("quota", "quotas", "resourcequota", "resourcequotas")
+        for alias in aliases:
+            assert _normalise_resource(alias) == "resourcequotas", (
+                f"alias '{alias}' did not resolve to 'resourcequotas'"
+            )
+
+    def test_resourcequota_case_insensitive(self) -> None:
+        """ResourceQuota aliases must work regardless of case."""
+        from vaig.tools.gke_tools import _normalise_resource
+
+        assert _normalise_resource("QUOTA") == "resourcequotas"
+        assert _normalise_resource("ResourceQuotas") == "resourcequotas"
