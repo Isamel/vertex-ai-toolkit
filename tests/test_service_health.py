@@ -4,9 +4,11 @@ Validates:
 - Skill metadata (name, tags, requires_live_tools, supported_phases)
 - System instruction is non-empty
 - Phase prompts inject context and user_input correctly
-- Agent pipeline configuration (3 agents, sequential, requires_tools flags)
-- ToolAwareAgent compatibility (system_prompt key on gatherer)
+- Agent pipeline configuration (4 agents, sequential, requires_tools flags)
+- ToolAwareAgent compatibility (system_prompt key on gatherer/verifier)
 - SpecialistAgent compatibility (system_instruction key on analyzer/reporter)
+- Verifier agent prompt content and anti-hallucination rules
+- Two-pass verification pipeline: analyzer → verifier → reporter
 """
 
 from __future__ import annotations
@@ -154,12 +156,12 @@ class TestServiceHealthSkillPhasePrompts:
 class TestServiceHealthSkillAgentsConfig:
     """Agent pipeline configuration tests — the critical integration point."""
 
-    def test_has_three_agents(self) -> None:
+    def test_has_four_agents(self) -> None:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
         agents = skill.get_agents_config()
-        assert len(agents) == 3
+        assert len(agents) == 4
 
     def test_agent_names(self) -> None:
         from vaig.skills.service_health.skill import ServiceHealthSkill
@@ -167,7 +169,7 @@ class TestServiceHealthSkillAgentsConfig:
         skill = ServiceHealthSkill()
         agents = skill.get_agents_config()
         names = [a["name"] for a in agents]
-        assert names == ["health_gatherer", "health_analyzer", "health_reporter"]
+        assert names == ["health_gatherer", "health_analyzer", "health_verifier", "health_reporter"]
 
     def test_agent_roles(self) -> None:
         from vaig.skills.service_health.skill import ServiceHealthSkill
@@ -186,9 +188,10 @@ class TestServiceHealthSkillAgentsConfig:
         agents = skill.get_agents_config()
         # Gatherer uses pro model for complex tool use
         assert agents[0]["model"] == "gemini-2.5-pro"
-        # Analyzer and reporter use flash for speed
+        # Analyzer, verifier, and reporter use flash for speed
         assert agents[1]["model"] == "gemini-2.5-flash"
         assert agents[2]["model"] == "gemini-2.5-flash"
+        assert agents[3]["model"] == "gemini-2.5-flash"
 
     def test_gatherer_requires_tools_true(self) -> None:
         """The health_gatherer MUST have requires_tools=True.
@@ -220,7 +223,7 @@ class TestServiceHealthSkillAgentsConfig:
 
         skill = ServiceHealthSkill()
         agents = skill.get_agents_config()
-        reporter = agents[2]
+        reporter = agents[3]
         assert reporter["name"] == "health_reporter"
         assert reporter.get("requires_tools", False) is False
 
@@ -252,13 +255,13 @@ class TestServiceHealthSkillAgentsConfig:
 
         skill = ServiceHealthSkill()
         agents = skill.get_agents_config()
-        reporter = agents[2]
+        reporter = agents[3]
         assert "system_instruction" in reporter
         assert isinstance(reporter["system_instruction"], str)
         assert len(reporter["system_instruction"]) > 0
 
     def test_sequential_pipeline_order(self) -> None:
-        """Agents must be in gathering → analysis → reporting order.
+        """Agents must be in gathering → analysis → verification → reporting order.
 
         The Orchestrator's execute_sequential/execute_with_tools methods
         process agents in list order, feeding each agent's output as
@@ -268,19 +271,76 @@ class TestServiceHealthSkillAgentsConfig:
 
         skill = ServiceHealthSkill()
         agents = skill.get_agents_config()
-        # Only the first agent should require tools
+        # Gatherer and verifier require tools; analyzer and reporter do not
         requires_tools_flags = [a.get("requires_tools", False) for a in agents]
-        assert requires_tools_flags == [True, False, False]
+        assert requires_tools_flags == [True, False, True, False]
 
-    def test_only_gatherer_requires_tools(self) -> None:
-        """Exactly one agent in the pipeline requires tools."""
+    def test_gatherer_and_verifier_require_tools(self) -> None:
+        """Exactly two agents in the pipeline require tools."""
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
         agents = skill.get_agents_config()
         tool_agents = [a for a in agents if a.get("requires_tools")]
-        assert len(tool_agents) == 1
+        assert len(tool_agents) == 2
         assert tool_agents[0]["name"] == "health_gatherer"
+        assert tool_agents[1]["name"] == "health_verifier"
+
+    # ── Verifier agent configuration ─────────────────────────
+
+    def test_verifier_agent_requires_tools(self) -> None:
+        """The health_verifier MUST have requires_tools=True.
+
+        The verifier makes targeted tool calls to confirm findings from the
+        analyzer — it needs ToolAwareAgent, not SpecialistAgent.
+        """
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        agents = skill.get_agents_config()
+        verifier = agents[2]
+        assert verifier["name"] == "health_verifier"
+        assert verifier["requires_tools"] is True
+
+    def test_verifier_agent_system_prompt(self) -> None:
+        """ToolAwareAgent.from_config_dict expects 'system_prompt' key."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        agents = skill.get_agents_config()
+        verifier = agents[2]
+        assert "system_prompt" in verifier
+        assert isinstance(verifier["system_prompt"], str)
+        assert len(verifier["system_prompt"]) > 0
+
+    def test_verifier_agent_system_instruction(self) -> None:
+        """Verifier provides system_instruction for defensive compatibility."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        agents = skill.get_agents_config()
+        verifier = agents[2]
+        assert "system_instruction" in verifier
+        assert isinstance(verifier["system_instruction"], str)
+        assert len(verifier["system_instruction"]) > 0
+
+    def test_verifier_agent_max_iterations(self) -> None:
+        """Verifier must have max_iterations=10 for efficient targeted calls."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        agents = skill.get_agents_config()
+        verifier = agents[2]
+        assert verifier["max_iterations"] == 10
+
+    def test_verifier_agent_model(self) -> None:
+        """Verifier uses flash model for speed — verification is targeted, not complex."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        agents = skill.get_agents_config()
+        verifier = agents[2]
+        assert verifier["model"] == "gemini-2.5-flash"
 
 
 class TestServiceHealthSkillPromptContent:
@@ -324,7 +384,7 @@ class TestServiceHealthSkillPromptContent:
 
         skill = ServiceHealthSkill()
         agents = skill.get_agents_config()
-        reporter_prompt = agents[2]["system_instruction"]
+        reporter_prompt = agents[3]["system_instruction"]
         assert "Executive Summary" in reporter_prompt
         assert "Recommended Actions" in reporter_prompt
 
@@ -333,7 +393,7 @@ class TestServiceHealthSkillPromptContent:
 
         skill = ServiceHealthSkill()
         agents = skill.get_agents_config()
-        reporter_prompt = agents[2]["system_instruction"]
+        reporter_prompt = agents[3]["system_instruction"]
         assert "kubectl" in reporter_prompt.lower()
 
 
@@ -462,10 +522,10 @@ class TestServiceHealthQualityConstraints:
         assert "ALL four fields" in HEALTH_REPORTER_PROMPT
 
     def test_analyzer_requires_all_four_fields(self) -> None:
-        """Analyzer must explicitly require all 4 fields for every finding."""
+        """Analyzer must explicitly require all fields for every finding."""
         from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
-        assert "all four fields" in HEALTH_ANALYZER_PROMPT
+        assert "all fields" in HEALTH_ANALYZER_PROMPT
 
     def test_reporter_forbids_unstructured_paragraphs(self) -> None:
         """Reporter must forbid unstructured paragraphs in findings."""
@@ -629,3 +689,122 @@ class TestServiceHealthToolAccuracyConstraints:
         assert "No direct kubectl command" in HEALTH_REPORTER_PROMPT
         # Must be in a BANNED context
         assert "NEVER say" in HEALTH_REPORTER_PROMPT
+
+
+class TestServiceHealthVerifierPrompt:
+    """Validate that the verifier prompt contains the required verification
+    workflow, confidence operations, and anti-hallucination rules.
+
+    These are regression tests — if someone weakens the verifier prompt,
+    these tests will catch it.
+    """
+
+    def test_verifier_prompt_exists(self) -> None:
+        """HEALTH_VERIFIER_PROMPT must exist and be non-empty."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert isinstance(HEALTH_VERIFIER_PROMPT, str)
+        assert len(HEALTH_VERIFIER_PROMPT) > 0
+
+    def test_verifier_prompt_mentions_verification_gap(self) -> None:
+        """Verifier must consume the Verification Gap field from analyzer output."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "Verification Gap" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_prompt_confidence_operations(self) -> None:
+        """Verifier must define all confidence level operations."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "CONFIRMED" in HEALTH_VERIFIER_PROMPT
+        assert "HIGH" in HEALTH_VERIFIER_PROMPT
+        assert "MEDIUM" in HEALTH_VERIFIER_PROMPT
+        assert "LOW" in HEALTH_VERIFIER_PROMPT
+        assert "UNVERIFIABLE" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_prompt_anti_hallucination(self) -> None:
+        """Verifier must have explicit anti-hallucination rules."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "NEVER fabricate" in HEALTH_VERIFIER_PROMPT
+        assert "NEVER perform broad" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_prompt_targeted_tool_calls(self) -> None:
+        """Verifier must only make targeted tool calls — not broad collection."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "targeted" in HEALTH_VERIFIER_PROMPT.lower()
+        # Must explicitly state it is NOT a gatherer
+        assert "NOT a" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_prompt_verification_summary(self) -> None:
+        """Verifier must produce a Verification Summary with counts."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "Verification Summary" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_prompt_pass_through(self) -> None:
+        """Verifier must pass through already-CONFIRMED findings unchanged."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "Pass through" in HEALTH_VERIFIER_PROMPT or \
+            "pass through" in HEALTH_VERIFIER_PROMPT
+
+
+class TestServiceHealthTwoPassPromptModifications:
+    """Validate analyzer and reporter prompt modifications for the
+    two-pass verification pipeline.
+
+    The analyzer must produce machine-parseable Verification Gap fields,
+    and the reporter must handle verified/downgraded/unverifiable findings.
+    """
+
+    # ── Analyzer modifications for two-pass pipeline ─────────
+
+    def test_analyzer_mandatory_verification_gap(self) -> None:
+        """Analyzer must make Verification Gap MANDATORY on every finding."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "Verification Gap" in HEALTH_ANALYZER_PROMPT
+        assert "MANDATORY" in HEALTH_ANALYZER_PROMPT
+
+    def test_analyzer_machine_parseable_format(self) -> None:
+        """Analyzer must specify the Tool: format for verification gaps."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        # The prompt defines the "Tool: <tool_name>(<args>)" format
+        assert "Tool:" in HEALTH_ANALYZER_PROMPT
+
+    def test_analyzer_verifier_reference(self) -> None:
+        """Analyzer must reference the downstream verification agent."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "verification" in HEALTH_ANALYZER_PROMPT.lower()
+
+    # ── Reporter modifications for two-pass pipeline ─────────
+
+    def test_reporter_downgraded_section(self) -> None:
+        """Reporter must include a Downgraded Findings section."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Downgraded" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_verified_findings(self) -> None:
+        """Reporter must reference verified findings from the verifier."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        # Reporter must acknowledge that findings are verified
+        assert "verified" in HEALTH_REPORTER_PROMPT.lower() or \
+            "VERIFIED" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_no_silent_omission(self) -> None:
+        """Reporter must never silently omit downgraded findings."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "NEVER silently omit" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_unverifiable_handling(self) -> None:
+        """Reporter must handle UNVERIFIABLE findings with investigation steps."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "UNVERIFIABLE" in HEALTH_REPORTER_PROMPT
