@@ -519,7 +519,7 @@ class TestCreateGkeTools:
         cfg = _make_gke_config()
         tools = create_gke_tools(cfg)
 
-        assert len(tools) == 14
+        assert len(tools) == 15
         assert all(isinstance(t, ToolDef) for t in tools)
 
     def test_tool_names(self) -> None:
@@ -533,7 +533,7 @@ class TestCreateGkeTools:
             "kubectl_get", "kubectl_describe", "kubectl_logs", "kubectl_top",
             "kubectl_scale", "kubectl_restart", "kubectl_label", "kubectl_annotate",
             "get_events", "get_rollout_status", "get_node_conditions", "get_container_status",
-            "exec_command", "check_rbac",
+            "exec_command", "check_rbac", "get_rollout_history",
         }
 
     def test_all_have_descriptions(self) -> None:
@@ -3886,7 +3886,7 @@ class TestCheckRbac:
 
 
 class TestCreateGkeToolsPhase3:
-    """Verify create_gke_tools now returns 14 tools (12 + exec_command + check_rbac)."""
+    """Verify create_gke_tools now returns 15 tools (12 + exec_command + check_rbac + get_rollout_history)."""
 
     def test_tool_count(self) -> None:
         from vaig.tools.gke_tools import create_gke_tools
@@ -3894,7 +3894,7 @@ class TestCreateGkeToolsPhase3:
         cfg = _make_gke_config()
         with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
             tools = create_gke_tools(cfg)
-            assert len(tools) == 14
+            assert len(tools) == 15
 
     def test_exec_command_registered(self) -> None:
         from vaig.tools.gke_tools import create_gke_tools
@@ -3913,3 +3913,449 @@ class TestCreateGkeToolsPhase3:
             tools = create_gke_tools(cfg)
             names = [t.name for t in tools]
             assert "check_rbac" in names
+
+    def test_get_rollout_history_registered(self) -> None:
+        from vaig.tools.gke_tools import create_gke_tools
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            tools = create_gke_tools(cfg)
+            names = [t.name for t in tools]
+            assert "get_rollout_history" in names
+
+
+# ── Helpers for get_rollout_history tests ────────────────────
+
+
+def _mock_replica_set(
+    name: str = "my-deploy-abc123",
+    revision: str = "1",
+    owner_name: str = "my-deploy",
+    replicas: int = 0,
+    ready_replicas: int = 0,
+    image: str = "nginx:1.19",
+    creation_timestamp: datetime | None = None,
+    change_cause: str = "",
+    ports: list | None = None,
+    env_vars: list | None = None,
+    env_from: list | None = None,
+    resources: dict | None = None,
+    volume_mounts: list | None = None,
+) -> MagicMock:
+    """Create a mock ReplicaSet for rollout history tests."""
+    rs = MagicMock()
+    rs.metadata.name = name
+    rs.metadata.creation_timestamp = creation_timestamp or datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+    annotations = {"deployment.kubernetes.io/revision": revision}
+    if change_cause:
+        annotations["kubernetes.io/change-cause"] = change_cause
+    rs.metadata.annotations = annotations
+
+    # Owner reference
+    owner = MagicMock()
+    owner.kind = "Deployment"
+    owner.name = owner_name
+    rs.metadata.owner_references = [owner]
+
+    # Status
+    rs.status.replicas = replicas
+    rs.status.ready_replicas = ready_replicas
+
+    # Container spec
+    container = MagicMock()
+    container.name = "main"
+    container.image = image
+    container.ports = ports or []
+    container.env = env_vars or []
+    container.env_from = env_from or []
+    container.volume_mounts = volume_mounts or []
+
+    if resources:
+        container.resources.requests = resources.get("requests")
+        container.resources.limits = resources.get("limits")
+    else:
+        container.resources = None
+
+    rs.spec.template.spec.containers = [container]
+    return rs
+
+
+class TestGetRolloutHistory:
+    """Tests for get_rollout_history diagnostic tool."""
+
+    def test_k8s_unavailable(self) -> None:
+        from vaig.tools.gke_tools import get_rollout_history
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+            result = get_rollout_history("my-deploy", gke_config=cfg)
+            assert result.error is True
+            assert "kubernetes" in result.output.lower()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_client_creation_error(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import get_rollout_history
+
+        cfg = _make_gke_config()
+        mock_clients.return_value = ToolResult(output="Failed to configure", error=True)
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = get_rollout_history("my-deploy", gke_config=cfg)
+            assert result.error is True
+            assert "Failed to configure" in result.output
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_deployment_not_found_404(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import get_rollout_history
+        from vaig.tools.gke_tools import k8s_exceptions
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
+        k8s_exceptions.ApiException = exc_class
+        apps_v1.read_namespaced_deployment.side_effect = exc_class()
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = get_rollout_history("missing-deploy", gke_config=cfg, namespace="prod")
+            assert result.error is True
+            assert "not found" in result.output.lower()
+            assert "prod" in result.output
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_deployment_no_replicasets(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import get_rollout_history
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        dep = MagicMock()
+        dep.metadata.name = "web"
+        dep.metadata.annotations = {}
+        apps_v1.read_namespaced_deployment.return_value = dep
+
+        # No ReplicaSets at all
+        rs_list = MagicMock()
+        rs_list.items = []
+        apps_v1.list_namespaced_replica_set.return_value = rs_list
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = get_rollout_history("web", gke_config=cfg)
+            assert result.error is False
+            assert "no revision history" in result.output.lower()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_list_multiple_revisions(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import get_rollout_history
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        dep = MagicMock()
+        dep.metadata.name = "web"
+        dep.metadata.annotations = {"deployment.kubernetes.io/revision": "3"}
+        apps_v1.read_namespaced_deployment.return_value = dep
+
+        rs1 = _mock_replica_set(name="web-rs1", revision="1", owner_name="web",
+                                replicas=0, image="nginx:1.19")
+        rs2 = _mock_replica_set(name="web-rs2", revision="2", owner_name="web",
+                                replicas=0, image="nginx:1.20")
+        rs3 = _mock_replica_set(name="web-rs3", revision="3", owner_name="web",
+                                replicas=3, ready_replicas=3, image="nginx:1.21")
+
+        rs_list = MagicMock()
+        rs_list.items = [rs1, rs2, rs3]
+        apps_v1.list_namespaced_replica_set.return_value = rs_list
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = get_rollout_history("web", gke_config=cfg)
+
+        assert result.error is False
+        assert "Rollout History: web" in result.output
+        # Newest first
+        lines = result.output.split("\n")
+        rev_lines = [l for l in lines if l.strip().startswith(("1", "2", "3")) and "nginx" in l]
+        assert len(rev_lines) == 3
+        # First data line should be revision 3 (newest)
+        assert rev_lines[0].strip().startswith("3")
+        assert "active" in rev_lines[0]
+        # Last should be revision 1
+        assert rev_lines[2].strip().startswith("1")
+        assert "scaled-down" in rev_lines[2]
+        assert "Total revisions: 3" in result.output
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_list_sorted_newest_first(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import get_rollout_history
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        dep = MagicMock()
+        dep.metadata.name = "api"
+        dep.metadata.annotations = {"deployment.kubernetes.io/revision": "5"}
+        apps_v1.read_namespaced_deployment.return_value = dep
+
+        # Create in shuffled order to test sorting
+        rs5 = _mock_replica_set(name="api-rs5", revision="5", owner_name="api",
+                                replicas=2, image="api:v5")
+        rs2 = _mock_replica_set(name="api-rs2", revision="2", owner_name="api",
+                                replicas=0, image="api:v2")
+        rs4 = _mock_replica_set(name="api-rs4", revision="4", owner_name="api",
+                                replicas=0, image="api:v4")
+
+        rs_list = MagicMock()
+        rs_list.items = [rs2, rs5, rs4]  # Deliberately not sorted
+        apps_v1.list_namespaced_replica_set.return_value = rs_list
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = get_rollout_history("api", gke_config=cfg)
+
+        assert result.error is False
+        lines = result.output.split("\n")
+        rev_lines = [l for l in lines if l.strip() and l.strip()[0].isdigit() and ("api:" in l or "active" in l or "scaled-down" in l)]
+        # Should be ordered 5, 4, 2
+        revs = [int(l.strip().split()[0]) for l in rev_lines]
+        assert revs == [5, 4, 2]
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_specific_revision_detail(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import get_rollout_history
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        dep = MagicMock()
+        dep.metadata.name = "web"
+        dep.metadata.annotations = {"deployment.kubernetes.io/revision": "2"}
+        apps_v1.read_namespaced_deployment.return_value = dep
+
+        # Set up a ReplicaSet with detailed spec
+        port = MagicMock()
+        port.container_port = 8080
+        port.protocol = "TCP"
+
+        env_plain = MagicMock()
+        env_plain.name = "APP_ENV"
+        env_plain.value_from = None
+
+        env_secret = MagicMock()
+        env_secret.name = "DB_PASSWORD"
+        env_secret.value_from.config_map_key_ref = None
+        env_secret.value_from.secret_key_ref.name = "db-creds"
+        env_secret.value_from.secret_key_ref.key = "password"
+
+        mount = MagicMock()
+        mount.mount_path = "/etc/config"
+        mount.name = "config-vol"
+        mount.read_only = True
+
+        rs = _mock_replica_set(
+            name="web-rs2", revision="2", owner_name="web",
+            replicas=3, ready_replicas=3, image="web:v2",
+            change_cause="kubectl set image deployment/web main=web:v2",
+            ports=[port],
+            env_vars=[env_plain, env_secret],
+            resources={"requests": {"cpu": "100m", "memory": "128Mi"},
+                       "limits": {"cpu": "500m", "memory": "512Mi"}},
+            volume_mounts=[mount],
+        )
+
+        rs_list = MagicMock()
+        rs_list.items = [rs]
+        apps_v1.list_namespaced_replica_set.return_value = rs_list
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = get_rollout_history("web", gke_config=cfg, revision=2)
+
+        assert result.error is False
+        assert "Revision 2 Detail" in result.output
+        assert "web:v2" in result.output
+        assert "8080/TCP" in result.output
+        assert "APP_ENV" in result.output
+        assert "DB_PASSWORD" in result.output
+        assert "Secret:db-creds/password" in result.output
+        # Secret values must NOT be shown
+        assert "ref only" in result.output
+        assert "Change Cause" in result.output
+        assert "kubectl set image" in result.output
+        assert "Requests: cpu=100m, memory=128Mi" in result.output
+        assert "Limits:   cpu=500m, memory=512Mi" in result.output
+        assert "/etc/config from config-vol (ro)" in result.output
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_specific_revision_not_found(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import get_rollout_history
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        dep = MagicMock()
+        dep.metadata.name = "web"
+        dep.metadata.annotations = {}
+        apps_v1.read_namespaced_deployment.return_value = dep
+
+        rs1 = _mock_replica_set(name="web-rs1", revision="1", owner_name="web",
+                                replicas=3, image="nginx:1.19")
+
+        rs_list = MagicMock()
+        rs_list.items = [rs1]
+        apps_v1.list_namespaced_replica_set.return_value = rs_list
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = get_rollout_history("web", gke_config=cfg, revision=99)
+
+        assert result.error is True
+        assert "Revision 99 not found" in result.output
+        assert "1" in result.output  # Shows available revisions
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_api_error_403(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import get_rollout_history
+        from vaig.tools.gke_tools import k8s_exceptions
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        exc_class = type("ApiException", (Exception,), {"status": 403, "reason": "Forbidden"})
+        k8s_exceptions.ApiException = exc_class
+        apps_v1.read_namespaced_deployment.side_effect = exc_class()
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = get_rollout_history("web", gke_config=cfg)
+            assert result.error is True
+            assert "Access denied" in result.output
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_api_error_401(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import get_rollout_history
+        from vaig.tools.gke_tools import k8s_exceptions
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        exc_class = type("ApiException", (Exception,), {"status": 401, "reason": "Unauthorized"})
+        k8s_exceptions.ApiException = exc_class
+        apps_v1.read_namespaced_deployment.side_effect = exc_class()
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = get_rollout_history("web", gke_config=cfg)
+            assert result.error is True
+            assert "Authentication failed" in result.output
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_generic_exception(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import get_rollout_history
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        apps_v1.read_namespaced_deployment.side_effect = RuntimeError("boom")
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = get_rollout_history("web", gke_config=cfg)
+            assert result.error is True
+            assert "boom" in result.output
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_replicasets_not_owned_by_deployment_are_ignored(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import get_rollout_history
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        dep = MagicMock()
+        dep.metadata.name = "web"
+        dep.metadata.annotations = {"deployment.kubernetes.io/revision": "1"}
+        apps_v1.read_namespaced_deployment.return_value = dep
+
+        rs_owned = _mock_replica_set(name="web-rs1", revision="1", owner_name="web",
+                                     replicas=3, image="nginx:1.19")
+        rs_other = _mock_replica_set(name="api-rs1", revision="1", owner_name="api",
+                                     replicas=2, image="api:v1")
+
+        rs_list = MagicMock()
+        rs_list.items = [rs_owned, rs_other]
+        apps_v1.list_namespaced_replica_set.return_value = rs_list
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = get_rollout_history("web", gke_config=cfg)
+
+        assert result.error is False
+        assert "Total revisions: 1" in result.output
+        assert "api" not in result.output.lower().replace("rollout history: web", "")
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_env_from_configmap_and_secret_shown(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import get_rollout_history
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        dep = MagicMock()
+        dep.metadata.name = "web"
+        dep.metadata.annotations = {}
+        apps_v1.read_namespaced_deployment.return_value = dep
+
+        env_from_cm = MagicMock()
+        env_from_cm.config_map_ref.name = "app-config"
+        env_from_cm.secret_ref = None
+
+        env_from_secret = MagicMock()
+        env_from_secret.config_map_ref = None
+        env_from_secret.secret_ref.name = "app-secrets"
+
+        rs = _mock_replica_set(
+            name="web-rs1", revision="1", owner_name="web",
+            replicas=3, image="web:v1",
+            env_from=[env_from_cm, env_from_secret],
+        )
+
+        rs_list = MagicMock()
+        rs_list.items = [rs]
+        apps_v1.list_namespaced_replica_set.return_value = rs_list
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = get_rollout_history("web", gke_config=cfg, revision=1)
+
+        assert result.error is False
+        assert "ConfigMap: app-config" in result.output
+        assert "Secret: app-secrets" in result.output
+        assert "ref only" in result.output
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_uses_default_namespace_from_config(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import get_rollout_history
+
+        cfg = _make_gke_config(default_namespace="staging")
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        dep = MagicMock()
+        dep.metadata.name = "web"
+        dep.metadata.annotations = {}
+        apps_v1.read_namespaced_deployment.return_value = dep
+
+        rs_list = MagicMock()
+        rs_list.items = []
+        apps_v1.list_namespaced_replica_set.return_value = rs_list
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            # Pass empty namespace to trigger config default
+            get_rollout_history("web", gke_config=cfg, namespace="")
+
+        apps_v1.read_namespaced_deployment.assert_called_once_with(name="web", namespace="staging")
+        apps_v1.list_namespaced_replica_set.assert_called_once_with(namespace="staging")

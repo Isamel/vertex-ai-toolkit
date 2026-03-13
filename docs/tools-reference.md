@@ -139,7 +139,7 @@ run_command(command="git diff HEAD~1")
 
 Available in **live** mode (`vaig live` or `--live`). Require the `[live]` extra and a configured GKE cluster.
 
-VAIG provides **14 GKE tools** (8 original + 6 diagnostic) and **2 GCloud tools** — 16 infrastructure tools total.
+VAIG provides **15 GKE tools** (8 original + 7 diagnostic) and **2 GCloud tools** — 17 infrastructure tools total.
 
 ### Read Operations
 
@@ -238,6 +238,21 @@ Check the rollout status of a deployment — whether it is progressing, complete
 
 ```
 get_rollout_status(name="api-server", namespace="production")
+```
+
+#### `get_rollout_history`
+
+Show the revision history of a Kubernetes deployment. Lists all revisions by examining ReplicaSets owned by the deployment, similar to `kubectl rollout history deployment/<name>`. When a specific revision number is provided, shows detailed pod template information for that revision (containers, images, ports, env var names, volume mounts, resource requests/limits). Use BEFORE recommending a rollback to understand what changed in each revision.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Deployment name |
+| `namespace` | string | No | Namespace |
+| `revision` | integer | No | Specific revision number for detailed view. Omit to list all revisions |
+
+```
+get_rollout_history(name="api-server", namespace="production")
+get_rollout_history(name="api-server", namespace="production", revision=3)
 ```
 
 #### `get_node_conditions`

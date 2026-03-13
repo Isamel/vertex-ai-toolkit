@@ -523,3 +523,109 @@ class TestServiceHealthSkillRegistration:
         assert skill_class is not None
         skill = skill_class()
         assert skill.get_metadata().name == "service-health"
+
+
+class TestServiceHealthToolAccuracyConstraints:
+    """Validate that prompts reference the correct tools and avoid the
+    known kubectl_get-for-events bug.
+
+    These are regression tests for the v2 prompt rewrite.
+    """
+
+    # ── Gatherer: correct tool references ────────────────────
+
+    def test_gatherer_references_get_events(self) -> None:
+        """Gatherer MUST use get_events for event retrieval."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "get_events" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_references_get_rollout_status(self) -> None:
+        """Gatherer MUST use get_rollout_status for deployment rollout checks."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "get_rollout_status" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_references_get_rollout_history(self) -> None:
+        """Gatherer MUST use get_rollout_history for revision inspection."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "get_rollout_history" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_references_get_container_status(self) -> None:
+        """Gatherer MUST use get_container_status for pod-level investigation."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "get_container_status" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_references_get_node_conditions(self) -> None:
+        """Gatherer MUST use get_node_conditions for cluster baseline."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "get_node_conditions" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_references_gcloud_monitoring_query(self) -> None:
+        """Gatherer MUST reference gcloud_monitoring_query for HPA metric verification."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "gcloud_monitoring_query" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_does_not_use_kubectl_get_for_events(self) -> None:
+        """Gatherer MUST NOT instruct using kubectl_get to retrieve events — that was the bug."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "use kubectl_get to retrieve events" not in HEALTH_GATHERER_PROMPT.lower()
+        assert "use `kubectl_get` to retrieve" not in HEALTH_GATHERER_PROMPT.lower() or \
+            "events" not in HEALTH_GATHERER_PROMPT.lower().split("use `kubectl_get` to retrieve")[1].split("\n")[0]
+
+    # ── Analyzer: confidence taxonomy and verification gaps ──
+
+    def test_analyzer_has_confidence_taxonomy(self) -> None:
+        """Analyzer MUST define CONFIRMED/HIGH/MEDIUM/LOW confidence levels."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "CONFIRMED" in HEALTH_ANALYZER_PROMPT
+        assert "HIGH" in HEALTH_ANALYZER_PROMPT
+        assert "MEDIUM" in HEALTH_ANALYZER_PROMPT
+        assert "LOW" in HEALTH_ANALYZER_PROMPT
+
+    def test_analyzer_mentions_verification_gap(self) -> None:
+        """Analyzer MUST include verification gap analysis for non-confirmed findings."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "Verification" in HEALTH_ANALYZER_PROMPT
+        # Must mention data gap concept
+        assert "DATA GAP" in HEALTH_ANALYZER_PROMPT
+
+    # ── Reporter: banned practices and evidence rules ────────
+
+    def test_reporter_bans_kubectl_edit(self) -> None:
+        """Reporter MUST ban kubectl edit as a first option."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "kubectl edit" in HEALTH_REPORTER_PROMPT
+        # Must be in a BANNED context
+        assert "BANNED" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_mentions_corrected_yaml(self) -> None:
+        """Reporter MUST instruct showing corrected YAML when fixes are proposed."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Corrected YAML" in HEALTH_REPORTER_PROMPT or \
+            "CORRECTED YAML" in HEALTH_REPORTER_PROMPT or \
+            "corrected YAML" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_mentions_get_rollout_history_for_rollbacks(self) -> None:
+        """Reporter MUST reference get_rollout_history before recommending rollback."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "get_rollout_history" in HEALTH_REPORTER_PROMPT
+        assert "to-revision" in HEALTH_REPORTER_PROMPT.lower()
+
+    def test_reporter_bans_no_direct_kubectl_command(self) -> None:
+        """Reporter MUST ban the phrase 'No direct kubectl command'."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "No direct kubectl command" in HEALTH_REPORTER_PROMPT
+        # Must be in a BANNED context
+        assert "NEVER say" in HEALTH_REPORTER_PROMPT

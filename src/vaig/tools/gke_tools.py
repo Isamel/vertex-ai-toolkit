@@ -2491,6 +2491,259 @@ def check_rbac(
         return ToolResult(output=f"Error checking RBAC: {exc}", error=True)
 
 
+# ── get_rollout_history ──────────────────────────────────────
+
+
+def get_rollout_history(
+    name: str,
+    *,
+    gke_config: GKEConfig,
+    namespace: str = "default",
+    revision: int | None = None,
+) -> ToolResult:
+    """Show the revision history of a Kubernetes deployment.
+
+    Lists all revisions by examining ReplicaSets owned by the deployment,
+    similar to ``kubectl rollout history deployment/<name>``.
+    When a specific revision number is provided, shows detailed pod template
+    information for that revision (containers, images, ports, env var names,
+    volume mounts, resource requests/limits).
+
+    Use BEFORE recommending a rollback so you know what changed in each revision.
+    """
+    if not _K8S_AVAILABLE:
+        return _k8s_unavailable()
+
+    ns = namespace or gke_config.default_namespace
+
+    result = _create_k8s_clients(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+    _, apps_v1, _, _ = result
+
+    try:
+        # Verify the deployment exists first
+        dep = apps_v1.read_namespaced_deployment(name=name, namespace=ns)
+
+        # List all ReplicaSets in the namespace
+        all_rs = apps_v1.list_namespaced_replica_set(namespace=ns)
+
+        # Filter to ReplicaSets owned by this deployment
+        owned_rs: list = []
+        for rs in all_rs.items:
+            for owner in (rs.metadata.owner_references or []):
+                if owner.kind == "Deployment" and owner.name == name:
+                    rev_str = (rs.metadata.annotations or {}).get(
+                        "deployment.kubernetes.io/revision", ""
+                    )
+                    if rev_str:
+                        owned_rs.append((int(rev_str), rs))
+                    break
+
+        if not owned_rs:
+            return ToolResult(
+                output=f"Deployment '{name}' in namespace '{ns}' has no revision history (no ReplicaSets found).",
+                error=False,
+            )
+
+        # Sort by revision number descending (newest first)
+        owned_rs.sort(key=lambda pair: pair[0], reverse=True)
+
+        # ── Specific revision detail ──────────────────────
+        if revision is not None:
+            match = [rs for rev, rs in owned_rs if rev == revision]
+            if not match:
+                available_revs = ", ".join(str(rev) for rev, _ in owned_rs)
+                return ToolResult(
+                    output=(
+                        f"Revision {revision} not found for deployment '{name}' "
+                        f"in namespace '{ns}'. Available revisions: {available_revs}"
+                    ),
+                    error=True,
+                )
+            rs = match[0]
+            return _format_revision_detail(name, ns, revision, rs)
+
+        # ── List all revisions ────────────────────────────
+        # Determine which revision is active (highest replica count > 0)
+        current_rev = _find_current_revision(dep, owned_rs)
+
+        lines: list[str] = []
+        lines.append(f"=== Rollout History: {name} (namespace: {ns}) ===")
+        lines.append("")
+        lines.append(f"{'REVISION':<10} {'IMAGE(S)':<50} {'CREATED':<12} {'REPLICAS':<10} {'STATUS'}")
+        lines.append("-" * 100)
+
+        for rev_num, rs in owned_rs:
+            # Images
+            containers = []
+            if rs.spec and rs.spec.template and rs.spec.template.spec:
+                containers = rs.spec.template.spec.containers or []
+            images = ", ".join(c.image or "<none>" for c in containers) if containers else "<none>"
+            if len(images) > 48:
+                images = images[:45] + "..."
+
+            # Created
+            created = _age(rs.metadata.creation_timestamp) if rs.metadata.creation_timestamp else "<unknown>"
+
+            # Replicas
+            replicas = rs.status.replicas if rs.status and rs.status.replicas else 0
+
+            # Status
+            if rev_num == current_rev:
+                status = "active"
+            elif replicas == 0:
+                status = "scaled-down"
+            else:
+                status = f"{replicas} replicas"
+
+            lines.append(f"{rev_num:<10} {images:<50} {created:<12} {replicas:<10} {status}")
+
+        change_cause = (dep.metadata.annotations or {}).get("kubernetes.io/change-cause", "")
+        if change_cause:
+            lines.append("")
+            lines.append(f"Last change cause: {change_cause}")
+
+        lines.append("")
+        lines.append(f"Total revisions: {len(owned_rs)}")
+        lines.append("Tip: Use get_rollout_history with a specific revision number for detailed info.")
+
+        return ToolResult(output="\n".join(lines), error=False)
+
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            return ToolResult(output=f"Deployment '{name}' not found in namespace '{ns}'", error=True)
+        if exc.status == 403:
+            return ToolResult(
+                output=f"Access denied: insufficient permissions to read deployment/{name} or its ReplicaSets",
+                error=True,
+            )
+        if exc.status == 401:
+            return ToolResult(output="Authentication failed: check your kubeconfig or GKE credentials", error=True)
+        return ToolResult(output=f"Kubernetes API error ({exc.status}): {exc.reason}", error=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("get_rollout_history failed")
+        return ToolResult(output=f"Error retrieving rollout history for deployment/{name}: {exc}", error=True)
+
+
+def _find_current_revision(dep: Any, owned_rs: list[tuple[int, Any]]) -> int | None:
+    """Find the revision number of the currently active ReplicaSet."""
+    # The deployment's own annotation tracks the current revision
+    rev_str = (dep.metadata.annotations or {}).get("deployment.kubernetes.io/revision", "")
+    if rev_str:
+        try:
+            return int(rev_str)
+        except (ValueError, TypeError):
+            pass
+    # Fallback: highest revision with replicas > 0
+    for rev_num, rs in owned_rs:
+        replicas = rs.status.replicas if rs.status and rs.status.replicas else 0
+        if replicas > 0:
+            return rev_num
+    return None
+
+
+def _format_revision_detail(name: str, ns: str, revision: int, rs: Any) -> ToolResult:
+    """Format detailed information for a specific revision."""
+    lines: list[str] = []
+    lines.append(f"=== Revision {revision} Detail: {name} (namespace: {ns}) ===")
+    lines.append("")
+
+    # ReplicaSet info
+    rs_name = rs.metadata.name if rs.metadata else "<unknown>"
+    lines.append(f"ReplicaSet: {rs_name}")
+    created = _age(rs.metadata.creation_timestamp) if rs.metadata and rs.metadata.creation_timestamp else "<unknown>"
+    lines.append(f"Created: {created} ago")
+
+    # Replica counts
+    replicas = rs.status.replicas if rs.status and rs.status.replicas else 0
+    ready = rs.status.ready_replicas if rs.status and rs.status.ready_replicas else 0
+    lines.append(f"Replicas: {replicas} current / {ready} ready")
+
+    # Change cause annotation
+    change_cause = (rs.metadata.annotations or {}).get("kubernetes.io/change-cause", "")
+    if change_cause:
+        lines.append(f"Change Cause: {change_cause}")
+
+    # Pod template containers
+    containers = []
+    if rs.spec and rs.spec.template and rs.spec.template.spec:
+        containers = rs.spec.template.spec.containers or []
+
+    if not containers:
+        lines.append("")
+        lines.append("No container spec found.")
+        return ToolResult(output="\n".join(lines), error=False)
+
+    lines.append("")
+    lines.append("Containers:")
+    for c in containers:
+        c_name = c.name if hasattr(c, "name") else "<unnamed>"
+        lines.append(f"  Container: {c_name}")
+        lines.append(f"    Image: {c.image or '<none>'}")
+
+        # Ports
+        ports = c.ports or [] if hasattr(c, "ports") else []
+        if ports:
+            port_strs = []
+            for p in ports:
+                proto = p.protocol or "TCP" if hasattr(p, "protocol") else "TCP"
+                port_strs.append(f"{p.container_port}/{proto}")
+            lines.append(f"    Ports: {', '.join(port_strs)}")
+
+        # Resource requests/limits
+        resources = c.resources if hasattr(c, "resources") and c.resources else None
+        if resources:
+            requests = resources.requests or {} if hasattr(resources, "requests") else {}
+            limits = resources.limits or {} if hasattr(resources, "limits") else {}
+            if requests or limits:
+                lines.append("    Resources:")
+                if requests:
+                    parts = [f"{k}={v}" for k, v in requests.items()]
+                    lines.append(f"      Requests: {', '.join(parts)}")
+                if limits:
+                    parts = [f"{k}={v}" for k, v in limits.items()]
+                    lines.append(f"      Limits:   {', '.join(parts)}")
+
+        # Env vars — names only, NO secret values
+        env_vars = c.env or [] if hasattr(c, "env") else []
+        if env_vars:
+            lines.append("    Environment Variables:")
+            for ev in env_vars:
+                ev_name = ev.name if hasattr(ev, "name") else "<unnamed>"
+                if hasattr(ev, "value_from") and ev.value_from:
+                    if hasattr(ev.value_from, "config_map_key_ref") and ev.value_from.config_map_key_ref:
+                        ref = ev.value_from.config_map_key_ref
+                        lines.append(f"      {ev_name} <- ConfigMap:{ref.name}/{ref.key}")
+                    elif hasattr(ev.value_from, "secret_key_ref") and ev.value_from.secret_key_ref:
+                        ref = ev.value_from.secret_key_ref
+                        lines.append(f"      {ev_name} <- Secret:{ref.name}/{ref.key} (ref only)")
+                    else:
+                        lines.append(f"      {ev_name} (valueFrom)")
+                else:
+                    lines.append(f"      {ev_name} = <value set>")
+
+        # Env from (configMapRef / secretRef — names only)
+        env_from = c.env_from or [] if hasattr(c, "env_from") else []
+        if env_from:
+            lines.append("    Env From:")
+            for ef in env_from:
+                if hasattr(ef, "config_map_ref") and ef.config_map_ref:
+                    lines.append(f"      ConfigMap: {ef.config_map_ref.name}")
+                if hasattr(ef, "secret_ref") and ef.secret_ref:
+                    lines.append(f"      Secret: {ef.secret_ref.name} (ref only, no values shown)")
+
+        # Volume mounts
+        mounts = c.volume_mounts or [] if hasattr(c, "volume_mounts") else []
+        if mounts:
+            lines.append("    Volume Mounts:")
+            for m in mounts:
+                ro = " (ro)" if hasattr(m, "read_only") and m.read_only else ""
+                lines.append(f"      {m.mount_path} from {m.name}{ro}")
+
+    return ToolResult(output="\n".join(lines), error=False)
+
+
 # ── Task 2.5 — create_gke_tools factory ──────────────────────
 
 
@@ -3049,6 +3302,43 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     _cfg=gke_config: check_rbac(
                 verb, resource, gke_config=_cfg, namespace=namespace,
                 service_account=service_account, resource_name=resource_name,
+            ),
+        ),
+        ToolDef(
+            name="get_rollout_history",
+            description=(
+                "Show the revision history of a Kubernetes deployment. Lists all "
+                "revisions with images, creation time, replica count, and status "
+                "(active vs scaled-down). Optionally show detailed pod template for "
+                "a specific revision including containers, ports, env var names, "
+                "volume mounts, and resource requests/limits. Use BEFORE recommending "
+                "a rollback to understand what changed in each revision. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Name of the deployment to show rollout history for",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (required)",
+                ),
+                ToolParam(
+                    name="revision",
+                    type="integer",
+                    description=(
+                        "Specific revision number to show detailed info for. "
+                        "Omit to list all revisions."
+                    ),
+                    required=False,
+                ),
+            ],
+            execute=lambda name, namespace, revision=None,
+                    _cfg=gke_config: get_rollout_history(
+                name, gke_config=_cfg, namespace=namespace, revision=revision,
             ),
         ),
     ]
