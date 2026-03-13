@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Optional
 
@@ -15,11 +16,15 @@ from vaig import __version__
 
 if TYPE_CHECKING:
     from vaig.agents.base import AgentResult
+    from vaig.agents.orchestrator import OrchestratorResult
     from vaig.core.client import GeminiClient
-    from vaig.core.config import Settings
+    from vaig.core.config import GKEConfig, Settings
+    from vaig.skills.base import BaseSkill
+    from vaig.tools.base import ToolRegistry
 
 console = Console()
 err_console = Console(stderr=True)
+logger = logging.getLogger(__name__)
 
 # ── Main App ──────────────────────────────────────────────────
 app = typer.Typer(
@@ -333,7 +338,8 @@ def live(
     client = GeminiClient(settings)
     gke_config = _build_gke_config(settings, cluster=cluster, namespace=namespace, project_id=project_id)
 
-    # If a skill is specified, prepend skill context to the question
+    # If a skill is specified, check whether it needs the full orchestrated
+    # pipeline (requires_live_tools=True) or the simple context-prepend approach.
     context_str = ""
     if skill:
         from vaig.skills.registry import SkillRegistry
@@ -345,8 +351,22 @@ def live(
             err_console.print(f"[dim]Available: {', '.join(registry.list_names())}[/dim]")
             raise typer.Exit(1)
 
-        # Use skill system prompt as additional context for the InfraAgent
         skill_meta = active_skill.get_metadata()
+
+        if skill_meta.requires_live_tools:
+            # ── Orchestrated tool-aware pipeline ──────────────
+            _execute_orchestrated_skill(
+                client,
+                settings,
+                gke_config,
+                active_skill,
+                question,
+                output=output,
+                model_id=model,
+            )
+            return
+
+        # ── Legacy context-prepend path (requires_live_tools=False) ──
         context_str = (
             f"## Active Skill: {skill_meta.display_name}\n\n"
             f"{skill_meta.description}\n\n"
@@ -397,6 +417,140 @@ def _build_gke_config(
         log_limit=gke.log_limit,
         metrics_interval_minutes=gke.metrics_interval_minutes,
     )
+
+
+def _register_live_tools(gke_config: "GKEConfig") -> "ToolRegistry":
+    """Create a ToolRegistry and register GKE + GCloud tools.
+
+    Follows the same try/except ImportError pattern as InfraAgent._register_tools()
+    so missing optional dependencies degrade gracefully.
+
+    Returns:
+        Populated ToolRegistry (may be empty if no optional deps installed).
+    """
+    from vaig.tools.base import ToolRegistry
+
+    registry = ToolRegistry()
+
+    # GKE tools — requires 'kubernetes' package
+    try:
+        from vaig.tools.gke_tools import create_gke_tools  # noqa: WPS433
+
+        for tool in create_gke_tools(gke_config):
+            registry.register(tool)
+    except ImportError as exc:
+        logger.warning("Could not load GKE tools: %s", exc)
+
+    # GCP observability tools — requires google-cloud-logging / google-cloud-monitoring
+    try:
+        from vaig.tools.gcloud_tools import create_gcloud_tools  # noqa: WPS433
+
+        for tool in create_gcloud_tools(
+            project=gke_config.project_id,
+            log_limit=gke_config.log_limit,
+            metrics_interval_minutes=gke_config.metrics_interval_minutes,
+        ):
+            registry.register(tool)
+    except ImportError as exc:
+        logger.warning("Could not load GCloud observability tools: %s", exc)
+
+    return registry
+
+
+def _execute_orchestrated_skill(
+    client: "GeminiClient",
+    settings: "Settings",
+    gke_config: "GKEConfig",
+    skill: "BaseSkill",
+    question: str,
+    *,
+    output: Path | None = None,
+    model_id: str | None = None,
+) -> None:
+    """Execute a skill through the Orchestrator's tool-aware pipeline.
+
+    Used when a skill has ``requires_live_tools=True``.  Instead of the
+    simple context-prepend approach, this creates a ToolRegistry, populates
+    it with GKE/GCloud tools, and delegates to
+    ``Orchestrator.execute_with_tools()`` for the full multi-agent pipeline.
+    """
+    from vaig.agents.orchestrator import Orchestrator
+    from vaig.core.exceptions import MaxIterationsError
+
+    skill_meta = skill.get_metadata()
+
+    # Build tool registry with live tools
+    tool_registry = _register_live_tools(gke_config)
+
+    tool_count = len(tool_registry.list_tools())
+    if tool_count == 0:
+        err_console.print(
+            "[bold red]No infrastructure tools available![/bold red]\n"
+            "[yellow]Install optional dependencies:[/yellow]\n"
+            "  pip install vertex-ai-toolkit[live]       # GKE tools\n"
+            "  pip install google-cloud-logging google-cloud-monitoring  # GCP observability"
+        )
+        raise typer.Exit(1)
+
+    console.print(
+        Panel.fit(
+            f"[bold green]🔍 Orchestrated Skill: {skill_meta.display_name}[/bold green]\n"
+            f"[dim]Cluster: {gke_config.cluster_name or '(kubeconfig default)'}[/dim]\n"
+            f"[dim]Namespace: {gke_config.default_namespace} | "
+            f"Project: {gke_config.project_id or '(auto-detect)'}[/dim]\n"
+            f"[dim]{tool_count} tools loaded | Strategy: sequential[/dim]",
+            border_style="green",
+        )
+    )
+
+    orchestrator = Orchestrator(client, settings)
+
+    try:
+        console.print(f"[bold cyan]🤖 Running {skill_meta.display_name} pipeline...[/bold cyan]")
+        orch_result = orchestrator.execute_with_tools(
+            query=question,
+            skill=skill,
+            tool_registry=tool_registry,
+            strategy="sequential",
+        )
+
+        # Display final response
+        console.print()
+        if orch_result.synthesized_output:
+            console.print(Markdown(orch_result.synthesized_output))
+        console.print()
+
+        if output and orch_result.synthesized_output:
+            _save_output(output, orch_result.synthesized_output)
+
+        # Show agent pipeline summary
+        _show_orchestrated_summary(orch_result)
+
+    except MaxIterationsError as exc:
+        err_console.print(
+            f"\n[bold red]⚠ Max iterations reached ({exc.iterations})[/bold red]\n"
+            "[yellow]The orchestrated skill pipeline hit its tool-use iteration limit. "
+            "Try narrowing the scope of your question or specifying a namespace/resource.[/yellow]"
+        )
+        raise typer.Exit(1)  # noqa: B904
+
+
+def _show_orchestrated_summary(orch_result: "OrchestratorResult") -> None:
+    """Display a summary table for an orchestrated skill execution."""
+    table = Table(title="Pipeline Summary", show_lines=True)
+    table.add_column("Agent", style="cyan")
+    table.add_column("Role", style="dim")
+    table.add_column("Status", style="bold")
+
+    for agent_result in orch_result.agent_results:
+        status = "[green]✓ success[/green]" if agent_result.success else "[red]✗ failed[/red]"
+        role = agent_result.metadata.get("role") or agent_result.agent_name
+        table.add_row(agent_result.agent_name, role, status)
+
+    console.print(table)
+
+    if not orch_result.success:
+        err_console.print("[bold red]⚠ Pipeline completed with errors[/bold red]")
 
 
 def _execute_live_mode(

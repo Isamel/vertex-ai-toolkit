@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Any
 from google.genai import types
 
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
-from vaig.core.client import GeminiClient, ToolCallResult
+from vaig.agents.mixins import ToolLoopMixin
+from vaig.core.client import GeminiClient
 from vaig.core.config import GKEConfig
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools import ToolRegistry, ToolResult
@@ -89,7 +90,7 @@ If a tool returns an error:
 # ── InfraAgent class ─────────────────────────────────────────
 
 
-class InfraAgent(BaseAgent):
+class InfraAgent(BaseAgent, ToolLoopMixin):
     """Autonomous infrastructure agent that uses Gemini function calling to inspect GKE/GCP.
 
     The agent owns the tool-use loop:
@@ -103,6 +104,7 @@ class InfraAgent(BaseAgent):
     - Follows CodingAgent pattern exactly (same loop structure, same error handling)
     - No confirmation callback needed — all tools are read-only
     - Max 25 tool iterations per turn (safety cap, configurable via GKEConfig)
+    - Tool-use loop delegated to ToolLoopMixin for reuse across agents
     """
 
     def __init__(
@@ -212,132 +214,62 @@ class InfraAgent(BaseAgent):
         full_prompt = self._build_prompt(prompt, context)
         self._add_to_conversation("user", full_prompt)
 
-        declarations = self._registry.to_function_declarations()
         history = self._build_chat_history()
-
-        total_usage: dict[str, int] = {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-        }
-        tools_executed: list[dict[str, Any]] = []
-        iteration = 0
 
         logger.debug(
             "InfraAgent.execute() — starting tool loop (max=%d)",
             self._max_iterations,
         )
 
-        while iteration < self._max_iterations:
-            iteration += 1
-            logger.debug("Tool loop iteration %d/%d", iteration, self._max_iterations)
-
-            # Call Gemini with tool declarations
-            try:
-                result: ToolCallResult = self._client.generate_with_tools(
-                    full_prompt if iteration == 1 else [],
-                    tool_declarations=declarations,
-                    system_instruction=self._config.system_instruction,
-                    history=history,
-                    model_id=self._config.model,
-                    temperature=self._config.temperature,
-                    max_output_tokens=self._config.max_output_tokens,
-                    frequency_penalty=0.15,
-                )
-            except Exception as exc:
-                logger.exception("InfraAgent API call failed on iteration %d", iteration)
-                return AgentResult(
-                    agent_name=self.name,
-                    content=f"Error during API call: {exc}",
-                    success=False,
-                    usage=total_usage,
-                    metadata={"error": str(exc), "iterations": iteration},
-                )
-
-            # Accumulate token usage
-            for key in total_usage:
-                total_usage[key] += result.usage.get(key, 0)
-
-            # Case 1: Model returned text (no function calls) — we're done
-            if not result.function_calls:
-                clean_text = self._deduplicate_response(result.text)
-                logger.info(
-                    "InfraAgent completed — %d iterations, %d tool calls, %s total tokens",
-                    iteration,
-                    len(tools_executed),
-                    total_usage.get("total_tokens", "?"),
-                )
-                self._add_to_conversation("agent", clean_text)
-                return AgentResult(
-                    agent_name=self.name,
-                    content=clean_text,
-                    success=True,
-                    usage=total_usage,
-                    metadata={
-                        "model": result.model,
-                        "finish_reason": result.finish_reason,
-                        "iterations": iteration,
-                        "tools_executed": tools_executed,
-                    },
-                )
-
-            # Case 2: Model returned function calls — execute them
-            # First, add the model's response (with function calls) to history
-            # so the next turn sees what the model requested
-            fc_parts: list[types.Part] = []
-            for fc in result.function_calls:
-                fc_parts.append(
-                    types.Part.from_function_call(
-                        name=fc["name"],
-                        args=fc["args"],
-                    )
-                )
-            history.append(
-                types.Content(role="model", parts=fc_parts)
+        try:
+            loop_result = self._run_tool_loop(
+                client=self._client,
+                prompt=full_prompt,
+                tool_registry=self._registry,
+                system_prompt=self._config.system_instruction,
+                history=history,
+                max_iterations=self._max_iterations,
+                model=self._config.model,
+                temperature=self._config.temperature,
+                max_output_tokens=self._config.max_output_tokens,
+                frequency_penalty=0.15,
+            )
+        except MaxIterationsError:
+            raise
+        except Exception as exc:
+            logger.exception("InfraAgent API call failed")
+            return AgentResult(
+                agent_name=self.name,
+                content=f"Error during API call: {exc}",
+                success=False,
+                usage={
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                },
+                metadata={"error": str(exc)},
             )
 
-            # Execute each function call
-            function_responses: list[dict[str, Any]] = []
-
-            for fc in result.function_calls:
-                tool_name = fc["name"]
-                tool_args = fc["args"]
-
-                tool_result = self._execute_tool(tool_name, tool_args)
-
-                tools_executed.append({
-                    "name": tool_name,
-                    "args": tool_args,
-                    "output": tool_result.output[:200],  # Truncate for metadata
-                    "error": tool_result.error,
-                })
-
-                function_responses.append({
-                    "name": tool_name,
-                    "response": {
-                        "output": tool_result.output,
-                        "error": tool_result.error,
-                    },
-                })
-
-            # Add function responses to history for next turn
-            response_parts = GeminiClient.build_function_response_parts(function_responses)
-            history.append(
-                types.Content(role="user", parts=response_parts)
-            )
-
-            # Continue the loop — send empty prompt (history carries context).
-            # generate_with_tools handles this by popping the last history
-            # entry (the function responses) and using it as the prompt
-            # for send_message(), since the SDK rejects empty prompts.
-
-        # If we get here, max iterations exceeded
-        msg = (
-            f"Tool-use loop exceeded maximum iterations ({self._max_iterations}). "
-            f"Executed {len(tools_executed)} tool calls."
+        clean_text = self._deduplicate_response(loop_result.text)
+        logger.info(
+            "InfraAgent completed — %d iterations, %d tool calls, %s total tokens",
+            loop_result.iterations,
+            len(loop_result.tools_executed),
+            loop_result.usage.get("total_tokens", "?"),
         )
-        logger.warning(msg)
-        raise MaxIterationsError(msg, iterations=self._max_iterations)
+        self._add_to_conversation("agent", clean_text)
+        return AgentResult(
+            agent_name=self.name,
+            content=clean_text,
+            success=True,
+            usage=loop_result.usage,
+            metadata={
+                "model": loop_result.model,
+                "finish_reason": loop_result.finish_reason,
+                "iterations": loop_result.iterations,
+                "tools_executed": loop_result.tools_executed,
+            },
+        )
 
     def execute_stream(self, prompt: str, *, context: str = "") -> Iterator[str]:
         """Streaming is not supported for the infrastructure agent.
@@ -352,6 +284,10 @@ class InfraAgent(BaseAgent):
 
     # ── Tool execution with error handling ───────────────────
 
+    # The core tool execution logic lives in ToolLoopMixin._execute_single_tool().
+    # InfraAgent uses it as-is — all infrastructure tools are read-only,
+    # so no confirmation callback or special handling is needed.
+
     def _execute_tool(
         self,
         tool_name: str,
@@ -359,53 +295,11 @@ class InfraAgent(BaseAgent):
     ) -> ToolResult:
         """Execute a single tool call with error handling.
 
-        All infrastructure tools are read-only, so no confirmation is needed.
-        Catches ALL exceptions and returns them as ToolResult (never raises)
-        so the model can see errors and self-correct.
-
-        Args:
-            tool_name: Name of the tool to execute.
-            tool_args: Arguments to pass to the tool.
-
-        Returns:
-            ToolResult with output or error message.
+        Delegates to :meth:`ToolLoopMixin._execute_single_tool` using
+        this agent's tool registry.  Kept as a convenience method so
+        callers don't need to pass the registry explicitly.
         """
-        tool = self._registry.get(tool_name)
-
-        if tool is None:
-            logger.warning("Unknown tool requested: %s", tool_name)
-            return ToolResult(
-                output=f"Unknown tool: {tool_name}. Available tools: "
-                f"{', '.join(t.name for t in self._registry.list_tools())}",
-                error=True,
-            )
-
-        # Execute the tool — catch ALL exceptions to let model self-correct
-        try:
-            logger.debug("Executing tool: %s(%s)", tool_name, tool_args)
-            result = tool.execute(**tool_args)
-            logger.debug(
-                "Tool %s result: error=%s, output_len=%d",
-                tool_name,
-                result.error,
-                len(result.output),
-            )
-            return result
-        except TypeError as exc:
-            # Most common: wrong argument names from model
-            logger.warning("Tool %s type error: %s", tool_name, exc)
-            return ToolResult(
-                output=f"Invalid arguments for {tool_name}: {exc}. "
-                f"Expected parameters: {', '.join(p.name for p in tool.parameters)}",
-                error=True,
-            )
-        except Exception as exc:
-            # Catch-all: let the model see the error and try again
-            logger.warning("Tool %s unexpected error: %s", tool_name, exc)
-            return ToolResult(
-                output=f"Tool execution error ({tool_name}): {exc}",
-                error=True,
-            )
+        return self._execute_single_tool(self._registry, tool_name, tool_args)
 
     # ── Internal helpers ─────────────────────────────────────
 

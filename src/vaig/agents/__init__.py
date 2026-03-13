@@ -1,9 +1,11 @@
 """Agents package — multi-agent orchestration for skill-based tasks."""
 
 from vaig.agents.base import AgentConfig, AgentMessage, AgentResult, AgentRole, BaseAgent
+from vaig.agents.mixins import ToolLoopMixin, ToolLoopResult
 from vaig.agents.orchestrator import Orchestrator, OrchestratorResult
 from vaig.agents.registry import AgentRegistry
 from vaig.agents.specialist import SpecialistAgent
+from vaig.agents.tool_aware import ToolAwareAgent
 
 # Coding agent (Phase 4 — available after implementation)
 try:
@@ -29,4 +31,7 @@ __all__ = [
     "Orchestrator",
     "OrchestratorResult",
     "SpecialistAgent",
+    "ToolAwareAgent",
+    "ToolLoopMixin",
+    "ToolLoopResult",
 ]

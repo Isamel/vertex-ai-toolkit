@@ -9,8 +9,10 @@ from typing import TYPE_CHECKING, Any
 
 from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
 from vaig.agents.specialist import SpecialistAgent
+from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.client import GeminiClient
 from vaig.skills.base import BaseSkill, SkillPhase, SkillResult
+from vaig.tools.base import ToolRegistry
 
 if TYPE_CHECKING:
     from vaig.core.config import Settings
@@ -60,21 +62,43 @@ class Orchestrator:
     def __init__(self, client: GeminiClient, settings: Settings) -> None:
         self._client = client
         self._settings = settings
-        self._agents: dict[str, SpecialistAgent] = {}
+        self._agents: dict[str, BaseAgent] = {}
 
-    def create_agents_for_skill(self, skill: BaseSkill) -> list[SpecialistAgent]:
-        """Create specialist agents based on a skill's configuration.
+    def create_agents_for_skill(
+        self,
+        skill: BaseSkill,
+        tool_registry: ToolRegistry | None = None,
+    ) -> list[BaseAgent]:
+        """Create agents based on a skill's configuration.
 
         Each skill defines its own agent configs (roles, models, instructions).
+        When an agent config has ``requires_tools=True`` **and** a *tool_registry*
+        is provided, a :class:`ToolAwareAgent` is created instead of a
+        :class:`SpecialistAgent`.  This keeps the method fully backward-compatible
+        — callers that omit *tool_registry* get the same behaviour as before.
         """
         self._agents.clear()
-        agents: list[SpecialistAgent] = []
+        agents: list[BaseAgent] = []
 
         for config_dict in skill.get_agents_config():
-            agent = SpecialistAgent.from_config_dict(config_dict, self._client)
+            if config_dict.get("requires_tools") and tool_registry is not None:
+                model = config_dict.get("model", "gemini-2.5-pro")
+                agent: BaseAgent = ToolAwareAgent.from_config_dict(
+                    config_dict, model, tool_registry, self._client,
+                )
+                logger.info(
+                    "Created ToolAwareAgent: %s (role=%s, model=%s)",
+                    agent.name, agent.role, agent.model,
+                )
+            else:
+                agent = SpecialistAgent.from_config_dict(config_dict, self._client)
+                logger.info(
+                    "Created SpecialistAgent: %s (role=%s, model=%s)",
+                    agent.name, agent.role, agent.model,
+                )
+
             self._agents[agent.name] = agent
             agents.append(agent)
-            logger.info("Created agent: %s (role=%s, model=%s)", agent.name, agent.role, agent.model)
 
         return agents
 
@@ -213,7 +237,108 @@ class Orchestrator:
 
         return orch_result.to_skill_result()
 
-    def get_agent(self, name: str) -> SpecialistAgent | None:
+    def execute_with_tools(
+        self,
+        query: str,
+        skill: BaseSkill,
+        tool_registry: ToolRegistry,
+        *,
+        strategy: str = "sequential",
+    ) -> OrchestratorResult:
+        """Execute a skill with tool-aware agents.
+
+        This is the entry point for tool-backed execution.  It creates a
+        *mixed* agent list (some :class:`ToolAwareAgent`, some
+        :class:`SpecialistAgent`) based on each agent's ``requires_tools``
+        flag, then routes execution through the requested strategy.
+
+        Unlike :meth:`execute_skill_phase` this method does **not** use
+        skill phases — it sends *query* directly to the agent pipeline.
+
+        Args:
+            query: The user query / task to execute.
+            skill: The skill defining agent configs and system prompts.
+            tool_registry: Pre-configured tool registry for tool-aware agents.
+            strategy: ``"sequential"`` (default), ``"fanout"``, or ``"single"``.
+
+        Returns:
+            :class:`OrchestratorResult` with the aggregated outcome.
+        """
+        logger.info(
+            "execute_with_tools: skill=%s strategy=%s",
+            skill.get_metadata().name,
+            strategy,
+        )
+
+        agents = self.create_agents_for_skill(skill, tool_registry)
+        result = OrchestratorResult(
+            skill_name=skill.get_metadata().name,
+            phase=SkillPhase.EXECUTE,
+        )
+
+        known_strategies = {"sequential", "fanout", "single"}
+        if strategy not in known_strategies:
+            logger.warning(
+                "Unknown strategy '%s' — falling back to sequential. "
+                "Valid strategies: %s",
+                strategy,
+                ", ".join(sorted(known_strategies)),
+            )
+
+        if strategy == "fanout":
+            for agent in agents:
+                logger.info("Fan-out (tools): agent=%s", agent.name)
+                agent_result = agent.execute(query, context=query)
+                result.agent_results.append(agent_result)
+                _accumulate_usage(result, agent_result)
+                if not agent_result.success:
+                    logger.warning(
+                        "Agent %s failed (non-fatal in fan-out): %s",
+                        agent.name, agent_result.content,
+                    )
+            result.success = any(r.success for r in result.agent_results)
+            result.synthesized_output = self._merge_agent_outputs(result.agent_results)
+
+        elif strategy == "single":
+            if agents:
+                agent_result = agents[0].execute(query)
+                result.agent_results.append(agent_result)
+                _accumulate_usage(result, agent_result)
+                result.success = agent_result.success
+                result.synthesized_output = agent_result.content
+            else:
+                result.success = False
+                result.synthesized_output = "No agents created for skill."
+
+        else:  # sequential (default)
+            current_context = ""
+            for i, agent in enumerate(agents):
+                logger.info(
+                    "Sequential (tools) step %d/%d: agent=%s",
+                    i + 1, len(agents), agent.name,
+                )
+                if i > 0 and result.agent_results:
+                    prev = result.agent_results[-1]
+                    current_context = (
+                        f"## Previous Analysis ({agents[i - 1].role})\n\n"
+                        f"{prev.content}"
+                    )
+
+                agent_result = agent.execute(query, context=current_context)
+                result.agent_results.append(agent_result)
+                _accumulate_usage(result, agent_result)
+
+                if not agent_result.success:
+                    result.success = False
+                    logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
+                    break
+
+            if result.agent_results:
+                result.synthesized_output = result.agent_results[-1].content
+
+        return result
+
+    def get_agent(self, name: str) -> BaseAgent | None:
         """Get a currently loaded agent by name."""
         return self._agents.get(name)
 
