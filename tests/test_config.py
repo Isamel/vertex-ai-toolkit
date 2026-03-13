@@ -9,6 +9,7 @@ import pytest
 from vaig.core.config import (
     AuthConfig,
     AuthMode,
+    BudgetConfig,
     ContextConfig,
     GCPConfig,
     GenerationConfig,
@@ -379,3 +380,60 @@ class TestStripEmptyStringsInList:
     def test_recurses_into_nested_lists(self) -> None:
         result = _strip_empty_strings_in_list([["a", ""], ["", "b"]])
         assert result == [["a"], ["b"]]
+
+
+# ══════════════════════════════════════════════════════════════
+# BudgetConfig
+# ══════════════════════════════════════════════════════════════
+
+
+class TestBudgetConfig:
+    """Tests for BudgetConfig validation and defaults."""
+
+    def test_defaults(self) -> None:
+        config = BudgetConfig()
+        assert config.enabled is False
+        assert config.max_cost_usd == 5.0
+        assert config.warn_threshold == 0.8
+        assert config.action == "warn"
+
+    def test_enabled_flag(self) -> None:
+        config = BudgetConfig(enabled=True)
+        assert config.enabled is True
+
+    def test_custom_max_cost(self) -> None:
+        config = BudgetConfig(max_cost_usd=25.0)
+        assert config.max_cost_usd == 25.0
+
+    def test_custom_warn_threshold(self) -> None:
+        config = BudgetConfig(warn_threshold=0.5)
+        assert config.warn_threshold == 0.5
+
+    def test_action_warn(self) -> None:
+        config = BudgetConfig(action="warn")
+        assert config.action == "warn"
+
+    def test_action_stop(self) -> None:
+        config = BudgetConfig(action="stop")
+        assert config.action == "stop"
+
+    def test_action_invalid_raises(self) -> None:
+        with pytest.raises(Exception):
+            BudgetConfig(action="invalid")  # type: ignore[arg-type]
+
+    def test_budget_in_settings_defaults(self) -> None:
+        settings = Settings()
+        assert settings.budget.enabled is False
+        assert settings.budget.max_cost_usd == 5.0
+
+    def test_full_config(self) -> None:
+        config = BudgetConfig(
+            enabled=True,
+            max_cost_usd=50.0,
+            warn_threshold=0.9,
+            action="stop",
+        )
+        assert config.enabled is True
+        assert config.max_cost_usd == 50.0
+        assert config.warn_threshold == 0.9
+        assert config.action == "stop"

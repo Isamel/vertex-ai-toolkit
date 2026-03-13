@@ -178,6 +178,50 @@ class SessionStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def update_metadata(self, session_id: str, metadata: dict) -> bool:
+        """Update the metadata JSON for a session.
+
+        Performs a **merge** — existing keys are preserved unless overwritten
+        by the new *metadata* dict.
+
+        Returns:
+            True if the session existed and was updated, False otherwise.
+        """
+        conn = self._get_conn()
+
+        row = conn.execute(
+            "SELECT metadata FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return False
+
+        existing: dict = json.loads(row["metadata"] or "{}")
+        existing.update(metadata)
+
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "UPDATE sessions SET metadata = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(existing), now, session_id),
+        )
+        conn.commit()
+        return True
+
+    def get_metadata(self, session_id: str) -> dict | None:
+        """Get parsed metadata dict for a session.
+
+        Returns:
+            The metadata dict, or None if the session does not exist.
+        """
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT metadata FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["metadata"] or "{}")
+
     def rename_session(self, session_id: str, new_name: str) -> bool:
         """Rename a session.
 

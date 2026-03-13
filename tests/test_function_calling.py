@@ -454,6 +454,7 @@ class TestGenerateWithTools:
             "prompt_tokens": 100,
             "completion_tokens": 200,
             "total_tokens": 300,
+            "thinking_tokens": 0,
         }
 
     @patch("vaig.core.client.types.Tool")

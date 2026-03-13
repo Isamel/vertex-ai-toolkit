@@ -157,6 +157,33 @@ class SessionManager:
         if self._active:
             self._active.history.clear()
 
+    def save_cost_data(self, cost_data: dict) -> bool:
+        """Persist cost tracker data to the active session's metadata.
+
+        Args:
+            cost_data: Serialized cost tracker state (from ``CostTracker.to_dict()``).
+
+        Returns:
+            True if saved successfully, False if no active session or update failed.
+        """
+        if not self._active:
+            return False
+        return self._store.update_metadata(self._active.id, {"cost_data": cost_data})
+
+    def load_cost_data(self, session_id: str) -> dict | None:
+        """Load cost tracker data from a session's metadata.
+
+        Args:
+            session_id: The session to load cost data from.
+
+        Returns:
+            The cost data dict, or None if no cost data exists.
+        """
+        metadata = self._store.get_metadata(session_id)
+        if metadata is None:
+            return None
+        return metadata.get("cost_data")
+
     def close(self) -> None:
         """Close the session store."""
         self._store.close()

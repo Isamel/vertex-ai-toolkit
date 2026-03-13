@@ -87,18 +87,24 @@ def show_tool_execution_summary(
     usage = result.usage or {}
     prompt_tokens = usage.get("prompt_tokens", 0)
     completion_tokens = usage.get("completion_tokens", 0)
+    thinking_tokens = usage.get("thinking_tokens", 0)
     total_tokens = usage.get("total_tokens", 0)
 
-    # Cost estimation
+    # Cost estimation (including thinking tokens)
     from vaig.core.pricing import calculate_cost, format_cost
 
     model_id = metadata.get("model", "") if metadata else ""
-    cost = calculate_cost(model_id, prompt_tokens, completion_tokens)
+    cost = calculate_cost(model_id, prompt_tokens, completion_tokens, thinking_tokens)
     cost_str = format_cost(cost)
+
+    # Build token breakdown string
+    token_parts = [f"{prompt_tokens:,} prompt", f"{completion_tokens:,} completion"]
+    if thinking_tokens:
+        token_parts.append(f"{thinking_tokens:,} thinking")
 
     con.print(
         f"[dim]Completed in {iterations} iteration{'s' if iterations != 1 else ''} "
         f"| Tokens: {total_tokens:,} total "
-        f"({prompt_tokens:,} prompt + {completion_tokens:,} completion)"
+        f"({' + '.join(token_parts)})"
         f" | Cost: {cost_str}[/dim]"
     )

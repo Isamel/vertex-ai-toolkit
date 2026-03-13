@@ -6,7 +6,7 @@ import logging
 import os
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -196,6 +196,18 @@ class MCPConfig(BaseModel):
     servers: list[MCPServerConfig] = Field(default_factory=list)
 
 
+class BudgetConfig(BaseModel):
+    """Token budget tracking configuration.
+
+    Controls session-level cost tracking and enforcement.
+    """
+
+    enabled: bool = False
+    max_cost_usd: float = 5.0
+    warn_threshold: float = 0.8  # 80% of max_cost_usd
+    action: Literal["warn", "stop"] = "warn"
+
+
 def _strip_empty_strings(data: dict[str, Any]) -> dict[str, Any]:
     """Recursively remove keys whose value is an empty string.
 
@@ -255,6 +267,7 @@ class Settings(BaseSettings):
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     gke: GKEConfig = Field(default_factory=GKEConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
+    budget: BudgetConfig = Field(default_factory=BudgetConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> Settings:

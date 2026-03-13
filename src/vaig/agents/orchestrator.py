@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
 from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.tool_aware import ToolAwareAgent
-from vaig.core.client import GeminiClient
+from vaig.core.client import GeminiClient, StreamResult
 from vaig.core.language import (
     detect_language,
     inject_autopilot_into_config,
@@ -257,10 +256,14 @@ class Orchestrator:
         system_instruction: str = "",
         model_id: str | None = None,
         stream: bool = False,
-    ) -> AgentResult | Iterator[str]:
+    ) -> AgentResult | StreamResult:
         """Execute with a single ad-hoc agent (no skill, direct chat).
 
         Used for the general chat mode when no skill is active.
+
+        When *stream* is ``True``, returns a :class:`StreamResult` that
+        is iterable (yields ``str`` chunks) and exposes ``.usage`` after
+        iteration completes.
         """
         config = AgentConfig(
             name="assistant",
@@ -272,7 +275,17 @@ class Orchestrator:
         agent = SpecialistAgent(config, self._client)
 
         if stream:
-            return agent.execute_stream(prompt, context=context)
+            # Return StreamResult directly so callers can access .usage
+            # after iteration.  We build the prompt the same way the agent
+            # would, but skip the agent's generator wrapper.
+            full_prompt = agent._build_prompt(prompt, context)
+            return self._client.generate_stream(
+                full_prompt,
+                system_instruction=config.system_instruction,
+                model_id=config.model,
+                temperature=config.temperature,
+                max_output_tokens=config.max_output_tokens,
+            )
         return agent.execute(prompt, context=context)
 
     def execute_skill_phase(

@@ -40,6 +40,18 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
 )
 
 
+def _safe_int(value: Any) -> int:
+    """Coerce *value* to ``int``, returning ``0`` for non-integer types.
+
+    The google-genai SDK may expose usage fields that are ``None``, missing,
+    or (under test mocks) ``MagicMock`` objects.  This helper ensures we
+    always produce a real ``int``.
+    """
+    if isinstance(value, int):
+        return value
+    return 0
+
+
 def _is_ssl_or_connection_error(exc: BaseException) -> bool:
     """Check if an exception is an SSL/connection/proxy error (possibly nested).
 
@@ -89,6 +101,60 @@ class ChatMessage:
     role: str  # "user" | "model"
     content: str
     parts: list[Any] = field(default_factory=list)  # For multimodal parts
+
+
+class StreamResult:
+    """Wraps a materialized streaming response to capture usage metadata.
+
+    Iterable: ``for chunk in stream_result`` yields text strings — exactly
+    like the old ``generate_stream()`` generator, preserving backward compat.
+
+    After iteration, ``.usage`` contains the token-usage dict extracted from
+    the **last** chunk (where the Gemini SDK reports totals), and ``.text``
+    holds the full accumulated response.
+    """
+
+    __slots__ = ("_chunks", "_usage", "_text_parts", "_model", "_exhausted")
+
+    def __init__(self, raw_chunks: Sequence[Any], model: str) -> None:
+        self._chunks = raw_chunks
+        self._model = model
+        self._usage: dict[str, int] = {}
+        self._text_parts: list[str] = []
+        self._exhausted = False
+
+    def __iter__(self) -> Iterator[str]:
+        """Yield text strings from each chunk, capturing usage from the last."""
+        for chunk in self._chunks:
+            # Capture usage from every chunk — the last one wins
+            # (Gemini SDK reports cumulative totals on the final chunk).
+            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                um = chunk.usage_metadata
+                self._usage = {
+                    "prompt_tokens": um.prompt_token_count or 0,
+                    "completion_tokens": um.candidates_token_count or 0,
+                    "total_tokens": um.total_token_count or 0,
+                    "thinking_tokens": _safe_int(getattr(um, "thoughts_token_count", None)),
+                }
+            if chunk.text:
+                self._text_parts.append(chunk.text)
+                yield chunk.text
+        self._exhausted = True
+
+    @property
+    def usage(self) -> dict[str, int]:
+        """Token usage metadata — available after iteration completes."""
+        return self._usage
+
+    @property
+    def text(self) -> str:
+        """Full accumulated text — available after iteration completes."""
+        return "".join(self._text_parts)
+
+    @property
+    def model(self) -> str:
+        """Model ID used for this generation."""
+        return self._model
 
 
 @dataclass
@@ -345,6 +411,7 @@ class GeminiClient:
                 "prompt_tokens": um.prompt_token_count or 0,
                 "completion_tokens": um.candidates_token_count or 0,
                 "total_tokens": um.total_token_count or 0,
+                "thinking_tokens": _safe_int(getattr(um, "thoughts_token_count", None)),
             }
         return usage
 
@@ -412,8 +479,14 @@ class GeminiClient:
         model_id: str | None = None,
         timeout: float | None = None,
         **gen_kwargs: Any,
-    ) -> Iterator[str]:
-        """Generate a streaming response, yielding text chunks.
+    ) -> StreamResult:
+        """Generate a streaming response, returning a ``StreamResult``.
+
+        The returned ``StreamResult`` is **iterable** — ``for chunk in result``
+        yields text strings exactly like the old generator did, preserving
+        backward compatibility.  After iteration completes, ``result.usage``
+        contains the token-usage dict captured from the last SDK chunk and
+        ``result.text`` holds the full accumulated response.
 
         The stream is materialised into a list inside ``_call()`` so that the
         **entire iteration** falls within the retryable boundary.  Without
@@ -455,10 +528,8 @@ class GeminiClient:
             # transient errors during iteration are also retried.
             return list(response_stream)
 
-        chunks = self._retry_with_backoff(_call, timeout=timeout)
-        for chunk in chunks:
-            if chunk.text:
-                yield chunk.text
+        raw_chunks = self._retry_with_backoff(_call, timeout=timeout)
+        return StreamResult(raw_chunks, model=mid)
 
     def generate_with_tools(
         self,

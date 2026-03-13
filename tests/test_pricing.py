@@ -125,3 +125,83 @@ class TestModelPricing:
         expected_models = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
         for model_id in expected_models:
             assert model_id in MODEL_PRICING, f"Missing pricing for {model_id}"
+
+
+class TestThinkingTokenPricing:
+    """Tests for thinking token support in calculate_cost()."""
+
+    def test_thinking_tokens_use_thinking_rate(self) -> None:
+        """When thinking_per_1m is set, thinking tokens should use that rate."""
+        cost = calculate_cost(
+            "gemini-2.5-pro",
+            prompt_tokens=0,
+            completion_tokens=0,
+            thinking_tokens=1_000_000,
+        )
+        assert cost is not None
+        # gemini-2.5-pro: thinking_per_1m = 10.00
+        assert cost == pytest.approx(10.00)
+
+    def test_thinking_tokens_combined_with_io(self) -> None:
+        """Thinking tokens add to the total cost alongside prompt/completion."""
+        cost = calculate_cost(
+            "gemini-2.5-pro",
+            prompt_tokens=1000,
+            completion_tokens=500,
+            thinking_tokens=2000,
+        )
+        assert cost is not None
+        # input:    (1000 / 1M) * 1.25  = 0.00125
+        # output:   (500  / 1M) * 10.00 = 0.005
+        # thinking: (2000 / 1M) * 10.00 = 0.02
+        expected = 0.00125 + 0.005 + 0.02
+        assert cost == pytest.approx(expected)
+
+    def test_thinking_tokens_fallback_to_output_rate(self) -> None:
+        """When thinking_per_1m is None, thinking tokens use output rate."""
+        # gemini-2.0-flash has no thinking_per_1m
+        pricing = MODEL_PRICING.get("gemini-2.0-flash")
+        assert pricing is not None
+        assert pricing.thinking_per_1m is None
+
+        cost = calculate_cost(
+            "gemini-2.0-flash",
+            prompt_tokens=0,
+            completion_tokens=0,
+            thinking_tokens=1_000_000,
+        )
+        assert cost is not None
+        # Should fallback to output_per_1m = 0.40
+        assert cost == pytest.approx(0.40)
+
+    def test_zero_thinking_tokens_no_extra_cost(self) -> None:
+        """Zero thinking tokens should not add any cost."""
+        cost_without = calculate_cost("gemini-2.5-pro", prompt_tokens=1000, completion_tokens=500, thinking_tokens=0)
+        cost_baseline = calculate_cost("gemini-2.5-pro", prompt_tokens=1000, completion_tokens=500)
+        assert cost_without == cost_baseline
+
+    def test_flash_thinking_rate(self) -> None:
+        """Gemini 2.5 Flash has its own thinking rate."""
+        pricing = MODEL_PRICING.get("gemini-2.5-flash")
+        assert pricing is not None
+        assert pricing.thinking_per_1m is not None
+
+        cost = calculate_cost(
+            "gemini-2.5-flash",
+            prompt_tokens=0,
+            completion_tokens=0,
+            thinking_tokens=1_000_000,
+        )
+        assert cost is not None
+        assert cost == pytest.approx(pricing.thinking_per_1m)
+
+    def test_thinking_per_1m_is_optional_field(self) -> None:
+        """ModelPricing thinking_per_1m defaults to None."""
+        pricing = ModelPricing(input_per_1m=1.0, output_per_1m=2.0)
+        assert pricing.thinking_per_1m is None
+
+    def test_models_with_thinking_have_positive_rates(self) -> None:
+        """All models with thinking_per_1m set should have positive rates."""
+        for model_id, pricing in MODEL_PRICING.items():
+            if pricing.thinking_per_1m is not None:
+                assert pricing.thinking_per_1m > 0, f"{model_id} has non-positive thinking rate"

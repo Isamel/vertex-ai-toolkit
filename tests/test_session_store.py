@@ -122,3 +122,64 @@ class TestSessionStore:
         session = store.get_session(sid)
         assert session is not None
         assert '"project"' in session["metadata"]
+
+    def test_update_metadata(self, store: SessionStore) -> None:
+        sid = store.create_session(name="test", model="gemini-2.5-pro")
+        result = store.update_metadata(sid, {"cost_data": {"total_cost": 0.05}})
+
+        assert result is True
+        metadata = store.get_metadata(sid)
+        assert metadata is not None
+        assert metadata["cost_data"]["total_cost"] == 0.05
+
+    def test_update_metadata_merges(self, store: SessionStore) -> None:
+        """update_metadata should merge with existing metadata, not replace."""
+        sid = store.create_session(
+            name="test",
+            model="gemini-2.5-pro",
+            metadata={"project": "odin"},
+        )
+        store.update_metadata(sid, {"cost_data": {"total_cost": 0.01}})
+
+        metadata = store.get_metadata(sid)
+        assert metadata is not None
+        assert metadata["project"] == "odin"  # preserved
+        assert metadata["cost_data"]["total_cost"] == 0.01  # added
+
+    def test_update_metadata_overwrites_existing_key(self, store: SessionStore) -> None:
+        """If the same key exists, it should be overwritten."""
+        sid = store.create_session(
+            name="test",
+            model="gemini-2.5-pro",
+            metadata={"cost_data": {"total_cost": 0.01}},
+        )
+        store.update_metadata(sid, {"cost_data": {"total_cost": 0.05}})
+
+        metadata = store.get_metadata(sid)
+        assert metadata is not None
+        assert metadata["cost_data"]["total_cost"] == 0.05
+
+    def test_update_metadata_nonexistent_session(self, store: SessionStore) -> None:
+        result = store.update_metadata("nonexistent-id", {"key": "value"})
+        assert result is False
+
+    def test_get_metadata(self, store: SessionStore) -> None:
+        sid = store.create_session(
+            name="test",
+            model="gemini-2.5-pro",
+            metadata={"project": "odin", "env": "prod"},
+        )
+        metadata = store.get_metadata(sid)
+        assert metadata is not None
+        assert metadata["project"] == "odin"
+        assert metadata["env"] == "prod"
+
+    def test_get_metadata_empty(self, store: SessionStore) -> None:
+        sid = store.create_session(name="test", model="gemini-2.5-pro")
+        metadata = store.get_metadata(sid)
+        assert metadata is not None
+        assert metadata == {}
+
+    def test_get_metadata_nonexistent_session(self, store: SessionStore) -> None:
+        metadata = store.get_metadata("nonexistent-id")
+        assert metadata is None

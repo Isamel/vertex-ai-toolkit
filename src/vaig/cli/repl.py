@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -20,8 +19,9 @@ import typer
 
 from vaig.agents.orchestrator import Orchestrator
 from vaig.context.builder import ContextBuilder
-from vaig.core.client import GeminiClient
+from vaig.core.client import GeminiClient, StreamResult
 from vaig.core.config import Settings
+from vaig.core.cost_tracker import BudgetStatus, CostTracker
 from vaig.session.manager import SessionManager
 from vaig.skills.base import BaseSkill, SkillPhase
 from vaig.skills.registry import SkillRegistry
@@ -44,6 +44,7 @@ PROMPT_STYLE = Style.from_dict(
 SLASH_COMMANDS = [
     "/add",
     "/code",
+    "/cost",
     "/model",
     "/skill",
     "/phase",
@@ -86,6 +87,7 @@ class REPLState:
         self.current_phase: SkillPhase = SkillPhase.ANALYZE
         self.stream_enabled: bool = True
         self.code_mode: bool = False
+        self.cost_tracker: CostTracker = CostTracker()
 
     @property
     def model(self) -> str:
@@ -108,6 +110,55 @@ class REPLState:
         if self.context_builder.bundle.file_count > 0:
             parts.append(f"📁{self.context_builder.bundle.file_count}")
         return " ".join(parts) + " > "
+
+
+def _record_cost(
+    cost_tracker: CostTracker,
+    model_id: str,
+    usage: dict[str, int] | None,
+) -> None:
+    """Safely record an API call's cost from a usage dict.
+
+    Handles ``None`` or empty usage gracefully — no-op when there's
+    nothing to record.
+    """
+    if not usage:
+        return
+
+    prompt_tokens = usage.get("prompt_tokens", 0) or usage.get("prompt_token_count", 0)
+    completion_tokens = usage.get("completion_tokens", 0) or usage.get("candidates_token_count", 0)
+    thinking_tokens = usage.get("thinking_tokens", 0) or usage.get("thoughts_token_count", 0)
+
+    if prompt_tokens or completion_tokens or thinking_tokens:
+        cost_tracker.record(model_id, prompt_tokens, completion_tokens, thinking_tokens)
+
+
+def _check_budget(state: REPLState) -> bool:
+    """Check budget before an API call.
+
+    Returns ``True`` if the call should proceed, ``False`` if it should
+    be blocked.  Prints warnings/errors to the console as appropriate.
+    """
+    budget_config = state.settings.budget
+    if not budget_config.enabled:
+        return True
+
+    status, message = state.cost_tracker.check_budget(budget_config)
+
+    if status == BudgetStatus.WARNING:
+        console.print(f"[bold yellow]⚠ {message}[/bold yellow]")
+        return True
+
+    if status == BudgetStatus.EXCEEDED:
+        console.print(f"[bold red]🚫 {message}[/bold red]")
+        if budget_config.action == "stop":
+            console.print("[red]Budget exceeded — request blocked. Use /cost to see details.[/red]")
+            return False
+        # action == "warn" — let it proceed with a warning
+        console.print("[yellow]Proceeding despite budget exceeded (action=warn).[/yellow]")
+        return True
+
+    return True
 
 
 def start_repl(
@@ -160,11 +211,20 @@ def start_repl(
         style=PROMPT_STYLE,
     )
 
+    # ── Load cost data if resuming a session ────────────────
+    if session_id:
+        cost_data = session_manager.load_cost_data(session_id)
+        if cost_data:
+            state.cost_tracker = CostTracker.from_dict(cost_data)
+            console.print(f"[dim]Restored cost tracking: {state.cost_tracker.request_count} prior API calls[/dim]")
+
     try:
         _repl_loop(prompt_session, state)
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted.[/yellow]")
     finally:
+        _show_session_cost_summary(state)
+        _save_cost_data(state)
         session_manager.close()
         console.print("[dim]Session saved. Goodbye! 👋[/dim]")
 
@@ -203,6 +263,7 @@ def _handle_command(state: REPLState, raw_input: str) -> bool:
     handlers: dict[str, object] = {
         "/add": lambda: _cmd_add(state, args),
         "/code": lambda: _cmd_code(state),
+        "/cost": lambda: _cmd_cost(state),
         "/model": lambda: _cmd_model(state, args),
         "/skill": lambda: _cmd_skill(state, args),
         "/phase": lambda: _cmd_phase(state, args),
@@ -251,6 +312,9 @@ def _handle_chat(state: REPLState, user_input: str) -> None:
 
 def _handle_direct_chat(state: REPLState, user_input: str, context: str) -> None:
     """Handle direct chat without a skill."""
+    if not _check_budget(state):
+        return
+
     try:
         # ── Chunked processing for oversized context ──────────
         if context and _try_chunked_chat(state, user_input, context):
@@ -280,6 +344,10 @@ def _handle_direct_chat(state: REPLState, user_input: str, context: str) -> None
 
             console.print()
             full_response = "".join(response_parts)
+
+            # Record cost from stream usage (StreamResult captures usage on last chunk)
+            if isinstance(stream, StreamResult):
+                _record_cost(state.cost_tracker, stream.model, stream.usage)
         else:
             with console.status(
                 f"[bold cyan]Generating response with {state.model}...[/bold cyan]"
@@ -287,6 +355,9 @@ def _handle_direct_chat(state: REPLState, user_input: str, context: str) -> None
                 result = state.orchestrator.execute_single(user_input, context=context)
             full_response = result.content  # type: ignore[union-attr]
             console.print(Markdown(full_response))
+
+            # Record cost from non-streaming result
+            _record_cost(state.cost_tracker, state.model, result.usage)  # type: ignore[union-attr]
 
         # Record model response
         state.session_manager.add_message("model", full_response, model=state.model)
@@ -356,6 +427,9 @@ def _try_chunked_chat(state: REPLState, user_input: str, context: str) -> bool:
 
 def _handle_skill_chat(state: REPLState, user_input: str, context: str) -> None:
     """Handle chat with an active skill."""
+    if not _check_budget(state):
+        return
+
     skill = state.active_skill
     if not skill:
         return
@@ -378,6 +452,11 @@ def _handle_skill_chat(state: REPLState, user_input: str, context: str) -> None:
         console.print(Markdown(result.output))
         console.print()
 
+        # Record cost from skill execution (total_usage from OrchestratorResult)
+        total_usage = result.metadata.get("total_usage") if result.metadata else None
+        if total_usage:
+            _record_cost(state.cost_tracker, state.model, total_usage)
+
         # Record model response
         state.session_manager.add_message("model", result.output, model=state.model)
 
@@ -396,6 +475,9 @@ def _handle_code_chat(state: REPLState, user_input: str, context: str) -> None:
     Implements Tasks 5.4 (routing), 5.5 (tool feedback), 5.6 (usage summary),
     5.7 (MaxIterationsError handling), 5.8 (no streaming).
     """
+    if not _check_budget(state):
+        return
+
     from vaig.agents.coding import CodingAgent
     from vaig.core.exceptions import MaxIterationsError
 
@@ -422,6 +504,9 @@ def _handle_code_chat(state: REPLState, user_input: str, context: str) -> None:
 
         # Task 5.5 + 5.6: Show tool feedback and usage summary
         _show_repl_coding_summary(result)
+
+        # Record cost from coding agent execution
+        _record_cost(state.cost_tracker, state.model, result.usage)
 
         # Record model response
         state.session_manager.add_message("model", result.content, model=state.model)
@@ -635,10 +720,14 @@ def _cmd_sessions(state: REPLState) -> None:
 
 def _cmd_new_session(state: REPLState, args: str) -> None:
     """Start a new session."""
+    # Save current session's cost data before switching
+    _save_cost_data(state)
+
     name = args.strip() or "chat"
     state.session_manager.new_session(name, model=state.model, skill=state.skill_name)
     state.context_builder.clear()
     state.orchestrator.reset_agents()
+    state.cost_tracker = CostTracker()
     console.print(f"[green]✓ New session: {name}[/green]")
 
 
@@ -648,10 +737,23 @@ def _cmd_load_session(state: REPLState, args: str) -> None:
         console.print("[yellow]Usage: /load <session_id>[/yellow]")
         return
 
+    # Save current session's cost data before switching
+    _save_cost_data(state)
+
     session_id = args.strip()
     loaded = state.session_manager.load_session(session_id)
     if loaded:
-        console.print(f"[green]Loaded: {loaded.name} ({len(loaded.history)} messages)[/green]")
+        # Restore cost tracker from the loaded session
+        cost_data = state.session_manager.load_cost_data(session_id)
+        if cost_data:
+            state.cost_tracker = CostTracker.from_dict(cost_data)
+            console.print(
+                f"[green]Loaded: {loaded.name} ({len(loaded.history)} messages, "
+                f"{state.cost_tracker.request_count} prior API calls)[/green]"
+            )
+        else:
+            state.cost_tracker = CostTracker()
+            console.print(f"[green]Loaded: {loaded.name} ({len(loaded.history)} messages)[/green]")
     else:
         console.print(f"[red]Session not found: {session_id}[/red]")
 
@@ -728,9 +830,22 @@ def _cmd_search_sessions(state: REPLState, args: str) -> None:
 
 def _cmd_resume(state: REPLState) -> None:
     """Resume the last active session."""
+    # Save current session's cost data before switching
+    _save_cost_data(state)
+
     loaded = state.session_manager.resume_last_session()
     if loaded:
-        console.print(f"[green]Resumed: {loaded.name} ({len(loaded.history)} messages)[/green]")
+        # Restore cost tracker from the resumed session
+        cost_data = state.session_manager.load_cost_data(loaded.id)
+        if cost_data:
+            state.cost_tracker = CostTracker.from_dict(cost_data)
+            console.print(
+                f"[green]Resumed: {loaded.name} ({len(loaded.history)} messages, "
+                f"{state.cost_tracker.request_count} prior API calls)[/green]"
+            )
+        else:
+            state.cost_tracker = CostTracker()
+            console.print(f"[green]Resumed: {loaded.name} ({len(loaded.history)} messages)[/green]")
     else:
         console.print("[yellow]No previous sessions found.[/yellow]")
 
@@ -749,6 +864,120 @@ def _cmd_context(state: REPLState) -> None:
     state.context_builder.show_summary()
 
 
+def _cmd_cost(state: REPLState) -> None:
+    """Show session cost summary with per-model breakdown."""
+    from vaig.core.pricing import format_cost
+
+    summary = state.cost_tracker.summary()
+
+    if summary["request_count"] == 0:
+        console.print("[dim]No API calls recorded yet in this session.[/dim]")
+        return
+
+    # Overall summary
+    console.print()
+    table = Table(title="💰 Session Cost Summary", show_lines=False, title_style="bold")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="bold", justify="right")
+
+    table.add_row("Total Cost", format_cost(summary["total_cost"]))
+    table.add_row("API Calls", str(summary["request_count"]))
+    table.add_row("Total Tokens", f"{summary['total_tokens']:,}")
+    table.add_row("  Prompt", f"{summary['total_prompt_tokens']:,}")
+    table.add_row("  Completion", f"{summary['total_completion_tokens']:,}")
+    if summary["total_thinking_tokens"] > 0:
+        table.add_row("  Thinking", f"{summary['total_thinking_tokens']:,}")
+
+    console.print(table)
+
+    # Per-model breakdown (if multiple models used)
+    records = state.cost_tracker._records  # noqa: SLF001
+    if records:
+        model_costs: dict[str, dict[str, int | float]] = {}
+        for rec in records:
+            if rec.model_id not in model_costs:
+                model_costs[rec.model_id] = {
+                    "calls": 0,
+                    "prompt": 0,
+                    "completion": 0,
+                    "thinking": 0,
+                    "cost": 0.0,
+                }
+            m = model_costs[rec.model_id]
+            m["calls"] = int(m["calls"]) + 1
+            m["prompt"] = int(m["prompt"]) + rec.prompt_tokens
+            m["completion"] = int(m["completion"]) + rec.completion_tokens
+            m["thinking"] = int(m["thinking"]) + rec.thinking_tokens
+            m["cost"] = float(m["cost"]) + rec.cost
+
+        if len(model_costs) > 1:
+            console.print()
+            model_table = Table(title="Per-Model Breakdown", show_lines=False, title_style="dim bold")
+            model_table.add_column("Model", style="magenta")
+            model_table.add_column("Calls", justify="right")
+            model_table.add_column("Tokens", justify="right")
+            model_table.add_column("Cost", justify="right", style="bold")
+
+            for model_id, data in sorted(model_costs.items()):
+                total = int(data["prompt"]) + int(data["completion"]) + int(data["thinking"])
+                model_table.add_row(
+                    model_id,
+                    str(int(data["calls"])),
+                    f"{total:,}",
+                    format_cost(float(data["cost"])),
+                )
+
+            console.print(model_table)
+
+    # Budget status
+    budget_config = state.settings.budget
+    if budget_config.enabled:
+        status, message = state.cost_tracker.check_budget(budget_config)
+        if status == BudgetStatus.OK:
+            remaining = budget_config.max_cost_usd - summary["total_cost"]
+            console.print(
+                f"\n[green]Budget: {format_cost(summary['total_cost'])} / "
+                f"{format_cost(budget_config.max_cost_usd)} "
+                f"({format_cost(remaining)} remaining)[/green]"
+            )
+        elif status == BudgetStatus.WARNING:
+            console.print(f"\n[bold yellow]⚠ {message}[/bold yellow]")
+        elif status == BudgetStatus.EXCEEDED:
+            console.print(f"\n[bold red]🚫 {message}[/bold red]")
+
+    console.print()
+
+
+def _show_session_cost_summary(state: REPLState) -> None:
+    """Display a brief cost summary when the REPL session ends."""
+    from vaig.core.pricing import format_cost
+
+    summary = state.cost_tracker.summary()
+    if summary["request_count"] == 0:
+        return
+
+    console.print(
+        f"\n[dim]Session cost: {format_cost(summary['total_cost'])} "
+        f"| {summary['request_count']} API call{'s' if summary['request_count'] != 1 else ''} "
+        f"| {summary['total_tokens']:,} tokens[/dim]"
+    )
+
+
+def _save_cost_data(state: REPLState) -> None:
+    """Persist cost tracker data to the session store on exit."""
+    if state.cost_tracker.request_count == 0:
+        return
+
+    try:
+        saved = state.session_manager.save_cost_data(state.cost_tracker.to_dict())
+        if saved:
+            logger.debug("Cost data persisted to session.")
+        else:
+            logger.debug("No active session — cost data not persisted.")
+    except Exception:
+        logger.exception("Failed to persist cost data")
+
+
 def _cmd_help() -> None:
     """Show help for all slash commands."""
     help_text = """
@@ -758,6 +987,7 @@ def _cmd_help() -> None:
 [bold cyan]Slash Commands[/bold cyan]
   [cyan]/add <path>[/cyan]      — Add files or directories as context
   [cyan]/code[/cyan]            — Toggle coding agent mode (read/write/edit files)
+  [cyan]/cost[/cyan]            — Show session cost summary and budget status
   [cyan]/model [id][/cyan]      — Show or switch the current model
   [cyan]/skill [name][/cyan]    — Show, activate, or deactivate a skill (use 'off' to deactivate)
   [cyan]/phase [phase][/cyan]   — Show or switch the skill phase (analyze, plan, execute, validate, report)

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, PropertyMock, call, patch
 
 import pytest
 
-from vaig.core.client import ChatMessage, GeminiClient, GenerationResult
+from vaig.core.client import ChatMessage, GeminiClient, GenerationResult, StreamResult
 from vaig.core.config import (
     GCPConfig,
     GenerationConfig,
@@ -78,13 +78,30 @@ def _make_mock_response(
     return response
 
 
-def _make_mock_stream_chunks(texts: list[str]) -> list[MagicMock]:
-    """Create a list of mock streaming chunks."""
+def _make_mock_stream_chunks(
+    texts: list[str],
+    *,
+    last_usage: dict[str, int] | None = None,
+) -> list[MagicMock]:
+    """Create a list of mock streaming chunks.
+
+    By default, chunks have ``usage_metadata = None`` (no usage info).
+    Pass *last_usage* to attach usage metadata to the **last** chunk, matching
+    how the Gemini SDK reports cumulative totals on the final streamed chunk.
+    """
     chunks = []
     for t in texts:
         chunk = MagicMock()
         chunk.text = t
+        chunk.usage_metadata = None
         chunks.append(chunk)
+    if last_usage and chunks:
+        um = MagicMock()
+        um.prompt_token_count = last_usage.get("prompt_tokens", 0)
+        um.candidates_token_count = last_usage.get("completion_tokens", 0)
+        um.total_token_count = last_usage.get("total_tokens", 0)
+        um.thoughts_token_count = last_usage.get("thinking_tokens", 0)
+        chunks[-1].usage_metadata = um
     return chunks
 
 
@@ -392,6 +409,7 @@ class TestGeminiClientGenerate:
             "prompt_tokens": 5,
             "completion_tokens": 10,
             "total_tokens": 15,
+            "thinking_tokens": 0,
         }
         assert result.finish_reason == "STOP"
         mock_genai.models.generate_content.assert_called_once()
@@ -631,6 +649,133 @@ class TestGeminiClientStream:
         assert client._initialized is True
 
 
+# ── TestStreamResult ─────────────────────────────────────────
+
+
+class TestStreamResult:
+    """Tests for StreamResult — iterable wrapper with usage capture."""
+
+    def test_iteration_yields_text_chunks(self) -> None:
+        chunks = _make_mock_stream_chunks(["Hello ", "world", "!"])
+        result = StreamResult(chunks, model="gemini-2.5-pro")
+
+        collected = list(result)
+
+        assert collected == ["Hello ", "world", "!"]
+
+    def test_skips_empty_text_chunks(self) -> None:
+        chunks = _make_mock_stream_chunks(["Hello ", "", "world"])
+        chunks[1].text = ""  # Explicitly empty
+        result = StreamResult(chunks, model="gemini-2.5-pro")
+
+        collected = list(result)
+
+        assert collected == ["Hello ", "world"]
+
+    def test_text_property_accumulates_all_chunks(self) -> None:
+        chunks = _make_mock_stream_chunks(["Hello ", "world", "!"])
+        result = StreamResult(chunks, model="gemini-2.5-pro")
+
+        list(result)  # exhaust iterator
+
+        assert result.text == "Hello world!"
+
+    def test_usage_empty_when_no_usage_metadata(self) -> None:
+        chunks = _make_mock_stream_chunks(["Hello"])
+        result = StreamResult(chunks, model="gemini-2.5-pro")
+
+        list(result)
+
+        assert result.usage == {}
+
+    def test_usage_captured_from_last_chunk(self) -> None:
+        usage = {
+            "prompt_tokens": 10,
+            "completion_tokens": 25,
+            "total_tokens": 35,
+            "thinking_tokens": 5,
+        }
+        chunks = _make_mock_stream_chunks(["Hello ", "world"], last_usage=usage)
+        result = StreamResult(chunks, model="gemini-2.5-pro")
+
+        list(result)
+
+        assert result.usage == usage
+
+    def test_usage_from_intermediate_chunk_overwritten_by_last(self) -> None:
+        """If multiple chunks have usage, the last one wins."""
+        chunks = _make_mock_stream_chunks(["a", "b"], last_usage={
+            "prompt_tokens": 100,
+            "completion_tokens": 200,
+            "total_tokens": 300,
+            "thinking_tokens": 0,
+        })
+        # Also set usage on first chunk (simulating intermediate usage)
+        um_early = MagicMock()
+        um_early.prompt_token_count = 1
+        um_early.candidates_token_count = 1
+        um_early.total_token_count = 2
+        um_early.thoughts_token_count = 0
+        chunks[0].usage_metadata = um_early
+
+        result = StreamResult(chunks, model="gemini-2.5-pro")
+        list(result)
+
+        # Last chunk wins
+        assert result.usage["prompt_tokens"] == 100
+        assert result.usage["completion_tokens"] == 200
+
+    def test_model_property(self) -> None:
+        chunks = _make_mock_stream_chunks(["Hi"])
+        result = StreamResult(chunks, model="gemini-2.5-flash")
+
+        assert result.model == "gemini-2.5-flash"
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    def test_generate_stream_returns_stream_result(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """generate_stream() now returns a StreamResult, not a bare generator."""
+        mock_get_creds.return_value = MagicMock()
+        usage = {
+            "prompt_tokens": 15,
+            "completion_tokens": 30,
+            "total_tokens": 45,
+            "thinking_tokens": 0,
+        }
+        chunks = _make_mock_stream_chunks(["Hello ", "world"], last_usage=usage)
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.models.generate_content_stream.return_value = chunks
+
+        stream_result = client.generate_stream("Say hello")
+
+        assert isinstance(stream_result, StreamResult)
+
+        # Backward compat: for-loop still works
+        collected = list(stream_result)
+        assert collected == ["Hello ", "world"]
+
+        # Usage is now captured
+        assert stream_result.usage == usage
+        assert stream_result.text == "Hello world"
+        assert stream_result.model == "gemini-2.5-pro"
+
+    def test_can_iterate_with_for_loop(self) -> None:
+        """Verify the most common calling pattern works."""
+        chunks = _make_mock_stream_chunks(["one", "two", "three"])
+        result = StreamResult(chunks, model="gemini-2.5-pro")
+
+        parts = []
+        for chunk in result:
+            parts.append(chunk)
+
+        assert parts == ["one", "two", "three"]
+
+
 # ── TestCountTokens ──────────────────────────────────────────
 
 
@@ -714,6 +859,76 @@ class TestListAvailableModels:
         client = GeminiClient(settings)
 
         assert client.list_available_models() == []
+
+
+# ── TestExtractUsage ─────────────────────────────────────────
+
+
+class TestExtractUsage:
+    """Tests for _extract_usage() static method."""
+
+    def test_extracts_standard_fields(self) -> None:
+        response = MagicMock()
+        response.usage_metadata.prompt_token_count = 100
+        response.usage_metadata.candidates_token_count = 50
+        response.usage_metadata.total_token_count = 150
+        response.usage_metadata.thoughts_token_count = 0
+
+        usage = GeminiClient._extract_usage(response)
+
+        assert usage["prompt_tokens"] == 100
+        assert usage["completion_tokens"] == 50
+        assert usage["total_tokens"] == 150
+        assert usage["thinking_tokens"] == 0
+
+    def test_extracts_thinking_tokens(self) -> None:
+        """_extract_usage should capture thoughts_token_count."""
+        response = MagicMock()
+        response.usage_metadata.prompt_token_count = 500
+        response.usage_metadata.candidates_token_count = 200
+        response.usage_metadata.total_token_count = 3700
+        response.usage_metadata.thoughts_token_count = 3000
+
+        usage = GeminiClient._extract_usage(response)
+
+        assert usage["thinking_tokens"] == 3000
+
+    def test_no_usage_metadata_returns_empty_dict(self) -> None:
+        response = MagicMock()
+        response.usage_metadata = None
+
+        usage = GeminiClient._extract_usage(response)
+
+        assert usage == {}
+
+    def test_none_token_counts_default_to_zero(self) -> None:
+        """Fields can be None (e.g. function-call-only responses)."""
+        response = MagicMock()
+        response.usage_metadata.prompt_token_count = None
+        response.usage_metadata.candidates_token_count = None
+        response.usage_metadata.total_token_count = None
+        # thoughts_token_count might not even exist as an attribute
+        del response.usage_metadata.thoughts_token_count
+
+        usage = GeminiClient._extract_usage(response)
+
+        assert usage["prompt_tokens"] == 0
+        assert usage["completion_tokens"] == 0
+        assert usage["total_tokens"] == 0
+        assert usage["thinking_tokens"] == 0
+
+    def test_missing_thoughts_attribute_defaults_to_zero(self) -> None:
+        """When thoughts_token_count attribute doesn't exist, should be 0."""
+        response = MagicMock(spec=["usage_metadata"])
+        um = MagicMock(spec=["prompt_token_count", "candidates_token_count", "total_token_count"])
+        um.prompt_token_count = 10
+        um.candidates_token_count = 20
+        um.total_token_count = 30
+        response.usage_metadata = um
+
+        usage = GeminiClient._extract_usage(response)
+
+        assert usage["thinking_tokens"] == 0
 
 
 # ── TestDataclasses ──────────────────────────────────────────
