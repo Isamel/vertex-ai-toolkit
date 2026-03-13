@@ -1621,3 +1621,195 @@ class TestReporterSeverityClassification:
         timeline_section = HEALTH_REPORTER_PROMPT[timeline_start:timeline_start + 300]
         assert "CRITICAL/HIGH/MEDIUM/LOW/INFO" in timeline_section
         assert "operational impact" in timeline_section.lower()
+
+
+class TestPromptSchemaParameterConsistency:
+    """Verify that prompt examples use correct parameter names matching tool schemas.
+
+    These tests prevent regressions where prompt instructions reference
+    wrong parameter names (e.g. pod_name instead of pod for kubectl_logs),
+    which cause TypeErrors at runtime when the LLM follows the prompts.
+    """
+
+    def test_gatherer_no_pod_name_for_kubectl_logs(self) -> None:
+        """kubectl_logs uses 'pod' not 'pod_name' — gatherer must not use pod_name."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        # Find all kubectl_logs references in gatherer
+        import re
+
+        calls = re.findall(r"kubectl_logs\([^)]+\)", HEALTH_GATHERER_PROMPT)
+        for call in calls:
+            assert "pod_name" not in call, (
+                f"Gatherer prompt uses 'pod_name' in kubectl_logs call: {call}. "
+                "Schema parameter is 'pod'."
+            )
+
+    def test_gatherer_no_pod_name_for_get_container_status(self) -> None:
+        """get_container_status uses 'name' not 'pod_name'."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        import re
+
+        calls = re.findall(r"get_container_status\([^)]+\)", HEALTH_GATHERER_PROMPT)
+        for call in calls:
+            assert "pod_name" not in call, (
+                f"Gatherer prompt uses 'pod_name' in get_container_status call: {call}. "
+                "Schema parameter is 'name'."
+            )
+
+    def test_gatherer_no_previous_for_kubectl_logs(self) -> None:
+        """kubectl_logs does NOT have a 'previous' parameter — it's handled automatically."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        import re
+
+        calls = re.findall(r"kubectl_logs\([^)]+\)", HEALTH_GATHERER_PROMPT)
+        for call in calls:
+            assert "previous" not in call, (
+                f"Gatherer prompt uses 'previous' in kubectl_logs call: {call}. "
+                "kubectl_logs has no 'previous' parameter — it auto-fetches previous logs."
+            )
+
+    def test_analyzer_no_pod_name_for_kubectl_logs(self) -> None:
+        """kubectl_logs uses 'pod' not 'pod_name' — analyzer must not use pod_name."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        import re
+
+        calls = re.findall(r"kubectl_logs\([^)]+\)", HEALTH_ANALYZER_PROMPT)
+        for call in calls:
+            assert "pod_name" not in call, (
+                f"Analyzer prompt uses 'pod_name' in kubectl_logs call: {call}. "
+                "Schema parameter is 'pod'."
+            )
+
+    def test_tool_call_reference_section_exists(self) -> None:
+        """Gatherer prompt must have a Tool Call Reference section with exact param names."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "## Tool Call Reference" in HEALTH_GATHERER_PROMPT
+
+    def test_tool_call_reference_lists_all_read_tools(self) -> None:
+        """Tool Call Reference must list all read-only diagnostic tools."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        ref_start = HEALTH_GATHERER_PROMPT.find("## Tool Call Reference")
+        ref_end = HEALTH_GATHERER_PROMPT.find("## Data Collection Procedure")
+        ref_section = HEALTH_GATHERER_PROMPT[ref_start:ref_end]
+
+        expected_tools = [
+            "kubectl_get",
+            "kubectl_describe",
+            "kubectl_logs",
+            "kubectl_top",
+            "get_events",
+            "get_rollout_status",
+            "get_node_conditions",
+            "get_container_status",
+            "get_rollout_history",
+            "exec_command",
+            "check_rbac",
+            "gcloud_logging_query",
+            "gcloud_monitoring_query",
+        ]
+        for tool in expected_tools:
+            assert tool in ref_section, (
+                f"Tool Call Reference section missing tool: {tool}"
+            )
+
+    def test_tool_call_reference_warns_about_common_mistakes(self) -> None:
+        """Tool Call Reference must explicitly warn about common parameter name mistakes."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        ref_start = HEALTH_GATHERER_PROMPT.find("## Tool Call Reference")
+        ref_end = HEALTH_GATHERER_PROMPT.find("## Data Collection Procedure")
+        ref_section = HEALTH_GATHERER_PROMPT[ref_start:ref_end]
+
+        # Must warn that kubectl_logs uses 'pod' not 'pod_name'
+        assert "pod" in ref_section and "NOT" in ref_section
+        # Must warn that get_container_status uses 'name' not 'pod_name'
+        assert "get_container_status" in ref_section
+
+
+class TestServiceHealthAutopilotAwareness:
+    """GKE Autopilot awareness tests for all 4 agent prompts."""
+
+    def test_gatherer_has_autopilot_section(self) -> None:
+        """Gatherer prompt must include Autopilot awareness section."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "GKE Autopilot Awareness" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_autopilot_detection_via_403(self) -> None:
+        """Gatherer must detect Autopilot via 403 errors on node operations."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "403" in HEALTH_GATHERER_PROMPT
+        assert "Autopilot cluster" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_skip_node_investigation_on_autopilot(self) -> None:
+        """Gatherer must skip node-level investigation on Autopilot."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "node management handled by Google" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_autopilot_mandatory_resource_requests(self) -> None:
+        """Gatherer must note that resource requests are mandatory on Autopilot."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "Resource requests are MANDATORY on Autopilot" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_autopilot_no_retry_on_permission_error(self) -> None:
+        """Gatherer must not retry on Autopilot permission errors."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "do NOT retry" in HEALTH_GATHERER_PROMPT
+
+    def test_analyzer_has_autopilot_context(self) -> None:
+        """Analyzer prompt must include Autopilot context section."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "GKE Autopilot Context" in HEALTH_ANALYZER_PROMPT
+
+    def test_analyzer_no_flag_missing_node_data_on_autopilot(self) -> None:
+        """Analyzer must not flag missing node data as issue on Autopilot."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "Do NOT flag missing node data" in HEALTH_ANALYZER_PROMPT
+
+    def test_analyzer_no_node_remediation_on_autopilot(self) -> None:
+        """Analyzer must not suggest node-level remediation on Autopilot."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "Do NOT suggest node-level remediation" in HEALTH_ANALYZER_PROMPT
+
+    def test_verifier_has_autopilot_awareness(self) -> None:
+        """Verifier prompt must include Autopilot awareness section."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "GKE Autopilot Awareness" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_skip_node_verification_on_autopilot(self) -> None:
+        """Verifier must not attempt node-level verification on Autopilot."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "Do NOT attempt node-level verification" in HEALTH_VERIFIER_PROMPT
+
+    def test_reporter_has_autopilot_cluster_overview(self) -> None:
+        """Reporter prompt must include Autopilot cluster overview guidance."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "GKE Autopilot Cluster Overview" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_autopilot_node_managed_by_google(self) -> None:
+        """Reporter must state node infrastructure is managed by Google on Autopilot."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "node infrastructure managed by Google" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_no_node_recommendations_on_autopilot(self) -> None:
+        """Reporter must not recommend node-level actions on Autopilot."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Do NOT recommend node-level actions" in HEALTH_REPORTER_PROMPT

@@ -1169,7 +1169,7 @@ def kubectl_top(
                 error=True,
             )
         if exc.status in (401, 403):
-            return ToolResult(output=f"Access denied to metrics API ({exc.status}): {exc.reason}", error=True)
+            return ToolResult(output=f"Access denied to metrics API ({exc.status}): {exc.reason}. This may indicate a GKE Autopilot cluster where node-level metrics operations are restricted.", error=True)
         return ToolResult(output=f"Kubernetes API error ({exc.status}): {exc.reason}", error=True)
     except Exception as exc:
         logger.exception("kubectl_top failed")
@@ -1829,7 +1829,7 @@ def get_node_conditions(
             return ToolResult(output=f"Node '{name}' not found", error=True)
         if exc.status == 403:
             return ToolResult(
-                output="Access denied: insufficient permissions to read nodes",
+                output="Access denied: insufficient permissions to read nodes. This may indicate a GKE Autopilot cluster where node-level operations are restricted.",
                 error=True,
             )
         if exc.status == 401:
