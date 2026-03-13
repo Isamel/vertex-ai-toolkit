@@ -1,0 +1,283 @@
+"""K8s client infrastructure — lazy import guard, client creation, caching, and autopilot detection."""
+
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import yaml
+
+from vaig.tools.base import ToolResult
+
+if TYPE_CHECKING:
+    from vaig.core.config import GKEConfig
+
+logger = logging.getLogger(__name__)
+
+# ── K8s client cache ──────────────────────────────────────────
+# Keyed on (kubeconfig_path, context, proxy_url) so each unique
+# GKEConfig combination creates clients only once.
+_CLIENT_CACHE: dict[tuple[str, str, str], tuple[Any, ...]] = {}
+
+# ── Autopilot detection cache ─────────────────────────────────
+# Keyed on (project_id, location, cluster_name).
+# Values: True (Autopilot), False (Standard), None (detection failed).
+_AUTOPILOT_CACHE: dict[tuple[str, str, str], bool | None] = {}
+
+# ── Lazy import guard ─────────────────────────────────────────
+# The ``kubernetes`` package is an optional dependency (``pip install vertex-ai-toolkit[live]``).
+# All public functions fail gracefully with a descriptive ToolResult when it is missing.
+
+_K8S_AVAILABLE = True
+_K8S_IMPORT_ERROR: str | None = None
+
+try:
+    from kubernetes import client as k8s_client  # noqa: WPS433
+    from kubernetes import config as k8s_config  # noqa: WPS433
+    from kubernetes.client import exceptions as k8s_exceptions  # noqa: WPS433
+except ImportError as _exc:
+    _K8S_AVAILABLE = False
+    _K8S_IMPORT_ERROR = (
+        "The 'kubernetes' package is not installed. "
+        "Install it with: pip install vertex-ai-toolkit[live]"
+    )
+
+
+def _k8s_unavailable() -> ToolResult:
+    """Return a ToolResult indicating that the kubernetes SDK is not installed."""
+    return ToolResult(output=_K8S_IMPORT_ERROR or "kubernetes SDK not available", error=True)
+
+
+# ── Autopilot detection ──────────────────────────────────────
+
+
+def _query_autopilot_status(project: str, location: str, cluster: str) -> bool:
+    """Query the GKE API for the Autopilot status of a cluster.
+
+    This is an internal helper extracted so tests can mock it without
+    fighting Python's import machinery.
+
+    Raises:
+        ImportError: If ``google-cloud-container`` is not installed.
+        Exception: On any API or network error.
+    """
+    from google.cloud import container_v1  # noqa: WPS433
+
+    client = container_v1.ClusterManagerClient()
+    name = f"projects/{project}/locations/{location}/clusters/{cluster}"
+    cluster_obj = client.get_cluster(name=name)
+    return bool(cluster_obj.autopilot and cluster_obj.autopilot.enabled)
+
+
+def detect_autopilot(gke_config: GKEConfig) -> bool | None:
+    """Detect whether the GKE cluster is running in Autopilot mode.
+
+    Uses the ``google-cloud-container`` library to query the GKE API for
+    ``cluster.autopilot.enabled``.  Results are cached per
+    (project_id, location, cluster_name) tuple.
+
+    Args:
+        gke_config: GKE configuration with ``project_id``, ``location``,
+            and ``cluster_name`` populated.
+
+    Returns:
+        ``True`` if Autopilot, ``False`` if Standard, ``None`` if detection
+        failed (missing config, missing library, API error).
+    """
+    project = gke_config.project_id
+    location = gke_config.location
+    cluster = gke_config.cluster_name
+
+    if not project or not location or not cluster:
+        logger.debug(
+            "Autopilot detection skipped: missing project_id=%r, location=%r, cluster_name=%r",
+            project, location, cluster,
+        )
+        return None
+
+    cache_key = (project, location, cluster)
+    if cache_key in _AUTOPILOT_CACHE:
+        return _AUTOPILOT_CACHE[cache_key]
+
+    try:
+        is_autopilot = _query_autopilot_status(project, location, cluster)
+        _AUTOPILOT_CACHE[cache_key] = is_autopilot
+        logger.info("GKE Autopilot detection: cluster=%s autopilot=%s", cluster, is_autopilot)
+        return is_autopilot
+
+    except ImportError:
+        logger.warning(
+            "google-cloud-container not installed — Autopilot detection unavailable. "
+            "Install with: pip install vertex-ai-toolkit[live]"
+        )
+        _AUTOPILOT_CACHE[cache_key] = None
+        return None
+
+    except Exception as exc:
+        logger.warning("Autopilot detection failed for %s: %s", cluster, exc)
+        _AUTOPILOT_CACHE[cache_key] = None
+        return None
+
+
+def clear_autopilot_cache() -> None:
+    """Clear the Autopilot detection cache (useful for testing)."""
+    _AUTOPILOT_CACHE.clear()
+
+
+# ── K8s client helper (Task 2.6) ─────────────────────────────
+
+
+def _extract_proxy_url_from_kubeconfig(
+    kubeconfig_path: str | None = None,
+    context: str | None = None,
+) -> str | None:
+    """Extract ``proxy-url`` from the active kubeconfig cluster entry.
+
+    The ``kubernetes`` Python client (v35) ignores the ``proxy-url`` field
+    that ``kubectl`` honours.  This helper reads the raw YAML so we can
+    apply it manually via ``Configuration.proxy``.
+    """
+    kube_path = kubeconfig_path or os.environ.get(
+        "KUBECONFIG", str(Path.home() / ".kube" / "config"),
+    )
+    try:
+        with open(kube_path) as fh:
+            kube_config = yaml.safe_load(fh)
+    except (FileNotFoundError, yaml.YAMLError):
+        return None
+
+    if not isinstance(kube_config, dict):
+        return None
+
+    # Determine the active context
+    ctx_name = context or kube_config.get("current-context")
+    if not ctx_name:
+        return None
+
+    # Locate the context entry
+    contexts = kube_config.get("contexts", [])
+    ctx_entry = next((c for c in contexts if c.get("name") == ctx_name), None)
+    if not ctx_entry:
+        return None
+
+    cluster_name = ctx_entry.get("context", {}).get("cluster")
+    if not cluster_name:
+        return None
+
+    # Locate the cluster entry
+    clusters = kube_config.get("clusters", [])
+    cluster_entry = next((c for c in clusters if c.get("name") == cluster_name), None)
+    if not cluster_entry:
+        return None
+
+    return cluster_entry.get("cluster", {}).get("proxy-url")
+
+
+def _cache_key(gke_config: GKEConfig) -> tuple[str, str, str]:
+    """Build a hashable cache key from the GKEConfig fields that affect client creation."""
+    return (
+        gke_config.kubeconfig_path or "",
+        gke_config.context or "",
+        gke_config.proxy_url or "",
+    )
+
+
+def clear_k8s_client_cache() -> None:
+    """Clear the cached Kubernetes API clients.
+
+    Useful in tests or when kubeconfig/credentials change at runtime.
+    """
+    _CLIENT_CACHE.clear()
+
+
+def _create_k8s_clients(
+    gke_config: GKEConfig,
+) -> tuple[Any, Any, Any, Any] | ToolResult:
+    """Create and configure Kubernetes API clients from GKEConfig.
+
+    Returns a tuple of ``(CoreV1Api, AppsV1Api, CustomObjectsApi, ApiClient)``
+    on success, or a ``ToolResult`` with ``error=True`` on failure.
+
+    Results are cached per unique ``(kubeconfig_path, context, proxy_url)``
+    combination so that repeated tool invocations within the same session
+    reuse the same authenticated clients instead of rebuilding them on
+    every call.
+
+    Supports:
+    - Explicit ``kubeconfig_path`` + optional ``context``
+    - Default kubeconfig (``~/.kube/config``)
+    - In-cluster config (for workload identity / GKE pods)
+
+    The ``proxy-url`` field in kubeconfig cluster entries is **not** supported
+    by the ``kubernetes`` Python client (v35).  This function works around the
+    limitation by parsing the raw YAML, extracting ``proxy-url``, and injecting
+    it into ``kubernetes.client.Configuration.proxy``.
+    """
+    if not _K8S_AVAILABLE:
+        return _k8s_unavailable()
+
+    key = _cache_key(gke_config)
+    if key in _CLIENT_CACHE:
+        return _CLIENT_CACHE[key]
+
+    try:
+        kubeconfig_path = gke_config.kubeconfig_path or None
+        context = gke_config.context or None
+
+        # ── Resolve proxy URL ────────────────────────────────
+        proxy_url = _extract_proxy_url_from_kubeconfig(kubeconfig_path, context)
+
+        # Explicit GKEConfig override takes precedence
+        if gke_config.proxy_url:
+            proxy_url = gke_config.proxy_url
+
+        # ── Build a Configuration object with proxy ──────────
+        config = k8s_client.Configuration()
+        if proxy_url:
+            config.proxy = proxy_url
+            logger.info("Using proxy URL for K8s API: %s", proxy_url)
+
+        # ── Load kubeconfig into the Configuration ───────────
+        if kubeconfig_path:
+            k8s_config.load_kube_config(
+                config_file=kubeconfig_path,
+                context=context,
+                client_configuration=config,
+            )
+        else:
+            try:
+                k8s_config.load_kube_config(
+                    context=context,
+                    client_configuration=config,
+                )
+            except k8s_config.ConfigException:
+                # Fallback to in-cluster config (workload identity)
+                k8s_config.load_incluster_config()
+                # In-cluster doesn't need proxy — return plain clients
+                api_client_ic = k8s_client.ApiClient()
+                clients = (
+                    k8s_client.CoreV1Api(api_client_ic),
+                    k8s_client.AppsV1Api(api_client_ic),
+                    k8s_client.CustomObjectsApi(api_client_ic),
+                    api_client_ic,
+                )
+                _CLIENT_CACHE[key] = clients
+                return clients
+    except Exception as exc:
+        return ToolResult(
+            output=f"Failed to configure Kubernetes client: {exc}",
+            error=True,
+        )
+
+    # ── Build API clients with the proxy-aware Configuration ─
+    api_client = k8s_client.ApiClient(config)
+    clients = (
+        k8s_client.CoreV1Api(api_client),
+        k8s_client.AppsV1Api(api_client),
+        k8s_client.CustomObjectsApi(api_client),
+        api_client,
+    )
+    _CLIENT_CACHE[key] = clients
+    return clients

@@ -1,0 +1,735 @@
+"""GKE tool definitions and factory function.
+
+Layer 2 — imports all Layer 1 modules and assembles ToolDef objects
+with closures that bind the GKEConfig at creation time.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from vaig.tools.base import ToolDef, ToolParam, ToolResult
+
+from . import _clients, diagnostics, discovery, kubectl, mutations, security
+
+if TYPE_CHECKING:
+    from vaig.core.config import GKEConfig
+
+
+def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
+    """Create all GKE tool definitions bound to a GKEConfig.
+
+    Follows the exact same factory pattern as ``create_file_tools`` and
+    ``create_shell_tools``: returns a list of ``ToolDef`` objects with
+    closures that bind the config.
+
+    When the cluster is detected as GKE Autopilot, node-level tools
+    (``kubectl_top`` with ``resource_type="nodes"`` and ``get_node_conditions``)
+    return an immediate informational message instead of calling the K8s API.
+    """
+    is_autopilot = _clients.detect_autopilot(gke_config)
+
+    def _autopilot_kubectl_top(
+        resource_type: str = "pods",
+        name: str | None = None,
+        namespace: str = "default",
+        _cfg: GKEConfig = gke_config,
+    ) -> ToolResult:
+        """Autopilot-aware kubectl_top wrapper."""
+        if is_autopilot and resource_type == "nodes":
+            return ToolResult(
+                output=(
+                    "GKE Autopilot cluster detected — kubectl top nodes is not available. "
+                    "Node infrastructure is managed by Google on Autopilot. "
+                    "Use kubectl get nodes and get_node_conditions for node status, "
+                    "or kubectl_top(resource_type='pods') for workload-level metrics."
+                ),
+            )
+        return kubectl.kubectl_top(resource_type, gke_config=_cfg, name=name, namespace=namespace)
+
+    return [
+        ToolDef(
+            name="kubectl_get",
+            description=(
+                "List or get Kubernetes resources from the connected GKE cluster. "
+                "Supports pods, deployments, services, configmaps, secrets, hpa, "
+                "ingress, nodes, namespaces, statefulsets, daemonsets, jobs, cronjobs, "
+                "pv, pvc, serviceaccounts, endpoints, networkpolicies, replicasets. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="resource",
+                    type="string",
+                    description=(
+                        "Kubernetes resource type to list (e.g. 'pods', 'deployments', "
+                        "'services', 'nodes')"
+                    ),
+                ),
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Specific resource name to get. Omit to list all.",
+                    required=False,
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (default: 'default'). Use 'all' for all namespaces.",
+                    required=False,
+                ),
+                ToolParam(
+                    name="output_format",
+                    type="string",
+                    description="Output format: 'table' (default), 'yaml', 'json', or 'wide'.",
+                    required=False,
+                ),
+                ToolParam(
+                    name="label_selector",
+                    type="string",
+                    description="Label selector to filter resources (e.g. 'app=nginx,tier=frontend').",
+                    required=False,
+                ),
+                ToolParam(
+                    name="field_selector",
+                    type="string",
+                    description="Field selector to filter resources (e.g. 'status.phase=Running').",
+                    required=False,
+                ),
+            ],
+            execute=lambda resource, name=None, namespace="default", output_format="table",
+                    label_selector=None, field_selector=None, _cfg=gke_config: kubectl.kubectl_get(
+                resource,
+                gke_config=_cfg,
+                name=name,
+                namespace=namespace,
+                output_format=output_format,
+                label_selector=label_selector,
+                field_selector=field_selector,
+            ),
+        ),
+        ToolDef(
+            name="kubectl_describe",
+            description=(
+                "Describe a Kubernetes resource in detail, including labels, annotations, "
+                "spec, status, conditions, and recent events. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="resource",
+                    type="string",
+                    description="Kubernetes resource type (e.g. 'pod', 'deployment', 'service')",
+                ),
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Name of the specific resource to describe",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (default: 'default')",
+                    required=False,
+                ),
+            ],
+            execute=lambda resource, name, namespace="default", _cfg=gke_config: kubectl.kubectl_describe(
+                resource, name, gke_config=_cfg, namespace=namespace,
+            ),
+        ),
+        ToolDef(
+            name="kubectl_logs",
+            description=(
+                "Retrieve logs from a Kubernetes pod. Automatically fetches previous "
+                "container logs when current container is in CrashLoopBackOff. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="pod",
+                    type="string",
+                    description="Name of the pod to get logs from",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (default: 'default')",
+                    required=False,
+                ),
+                ToolParam(
+                    name="container",
+                    type="string",
+                    description="Specific container name (for multi-container pods)",
+                    required=False,
+                ),
+                ToolParam(
+                    name="tail_lines",
+                    type="integer",
+                    description="Number of recent log lines to return (default: 100)",
+                    required=False,
+                ),
+                ToolParam(
+                    name="since",
+                    type="string",
+                    description="Only return logs newer than this duration (e.g. '1h', '30m', '1h30m')",
+                    required=False,
+                ),
+            ],
+            execute=lambda pod, namespace="default", container=None, tail_lines=100,
+                    since=None, _cfg=gke_config: kubectl.kubectl_logs(
+                pod,
+                gke_config=_cfg,
+                namespace=namespace,
+                container=container,
+                tail_lines=tail_lines,
+                since=since,
+            ),
+        ),
+        ToolDef(
+            name="kubectl_top",
+            description=(
+                "Show CPU and memory usage for pods or nodes. "
+                "Requires the metrics-server to be installed in the cluster. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="resource_type",
+                    type="string",
+                    description="Type of resource to show metrics for: 'pods' (default) or 'nodes'",
+                    required=False,
+                ),
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Specific pod or node name to show metrics for. Omit for all.",
+                    required=False,
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace for pod metrics (default: 'default'). Use 'all' for all namespaces.",
+                    required=False,
+                ),
+            ],
+            execute=lambda resource_type="pods", name=None, namespace="default":
+                    _autopilot_kubectl_top(resource_type, name=name, namespace=namespace),
+        ),
+        # ── Write operations ──────────────────────────────────
+        ToolDef(
+            name="kubectl_scale",
+            description=(
+                "Scale a Kubernetes deployment, statefulset, or replicaset to a specified "
+                "number of replicas (0-50). Reports the previous and new replica count. "
+                "WRITE operation — modifies the cluster."
+            ),
+            parameters=[
+                ToolParam(
+                    name="resource",
+                    type="string",
+                    description="Resource type to scale: 'deployments', 'statefulsets', or 'replicasets'",
+                ),
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Name of the resource to scale",
+                ),
+                ToolParam(
+                    name="replicas",
+                    type="integer",
+                    description="Target number of replicas (0-50)",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (default: 'default')",
+                    required=False,
+                ),
+            ],
+            execute=lambda resource, name, replicas, namespace="default",
+                    _cfg=gke_config: mutations.kubectl_scale(
+                resource, name, replicas, gke_config=_cfg, namespace=namespace,
+            ),
+        ),
+        ToolDef(
+            name="kubectl_restart",
+            description=(
+                "Trigger a rolling restart of a deployment, statefulset, or daemonset. "
+                "Equivalent to 'kubectl rollout restart'. Causes a zero-downtime rolling update. "
+                "WRITE operation — modifies the cluster."
+            ),
+            parameters=[
+                ToolParam(
+                    name="resource",
+                    type="string",
+                    description="Resource type to restart: 'deployments', 'statefulsets', or 'daemonsets'",
+                ),
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Name of the resource to restart",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (default: 'default')",
+                    required=False,
+                ),
+            ],
+            execute=lambda resource, name, namespace="default",
+                    _cfg=gke_config: mutations.kubectl_restart(
+                resource, name, gke_config=_cfg, namespace=namespace,
+            ),
+        ),
+        ToolDef(
+            name="kubectl_label",
+            description=(
+                "Add or update labels on a Kubernetes resource. "
+                "Format: 'key1=value1,key2=value2'. To remove: 'key-'. "
+                "System labels (kubernetes.io/, k8s.io/) are protected. "
+                "WRITE operation — modifies the cluster."
+            ),
+            parameters=[
+                ToolParam(
+                    name="resource",
+                    type="string",
+                    description=(
+                        "Resource type (pods, deployments, services, configmaps, secrets, "
+                        "statefulsets, daemonsets, namespaces, nodes)"
+                    ),
+                ),
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Name of the resource to label",
+                ),
+                ToolParam(
+                    name="labels",
+                    type="string",
+                    description="Labels to set: 'key1=value1,key2=value2'. Use 'key-' to remove a label.",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (default: 'default')",
+                    required=False,
+                ),
+            ],
+            execute=lambda resource, name, labels, namespace="default",
+                    _cfg=gke_config: mutations.kubectl_label(
+                resource, name, labels, gke_config=_cfg, namespace=namespace,
+            ),
+        ),
+        ToolDef(
+            name="kubectl_annotate",
+            description=(
+                "Add or update annotations on a Kubernetes resource. "
+                "Format: 'key1=value1,key2=value2'. To remove: 'key-'. "
+                "System annotations (kubernetes.io/, k8s.io/) are protected. "
+                "WRITE operation — modifies the cluster."
+            ),
+            parameters=[
+                ToolParam(
+                    name="resource",
+                    type="string",
+                    description=(
+                        "Resource type (pods, deployments, services, configmaps, secrets, "
+                        "statefulsets, daemonsets, namespaces, nodes)"
+                    ),
+                ),
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Name of the resource to annotate",
+                ),
+                ToolParam(
+                    name="annotations",
+                    type="string",
+                    description="Annotations to set: 'key1=value1,key2=value2'. Use 'key-' to remove.",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (default: 'default')",
+                    required=False,
+                ),
+            ],
+            execute=lambda resource, name, annotations, namespace="default",
+                    _cfg=gke_config: mutations.kubectl_annotate(
+                resource, name, annotations, gke_config=_cfg, namespace=namespace,
+            ),
+        ),
+        # ── Diagnostic tools (Phase 1) ────────────────────────
+        ToolDef(
+            name="get_events",
+            description=(
+                "List Kubernetes events in a namespace, filtered by type (Warning/Normal) "
+                "and optionally by involved object. Events reveal WHY pods fail, WHY nodes "
+                "have issues, and what the scheduler is doing. Critical for SRE triage. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (default: 'default')",
+                    required=False,
+                ),
+                ToolParam(
+                    name="event_type",
+                    type="string",
+                    description="Filter by event type: 'Warning', 'Normal', or omit for all events.",
+                    required=False,
+                ),
+                ToolParam(
+                    name="involved_object_name",
+                    type="string",
+                    description="Filter events by involved object name (e.g. a pod name or node name).",
+                    required=False,
+                ),
+                ToolParam(
+                    name="involved_object_kind",
+                    type="string",
+                    description="Filter events by involved object kind (e.g. 'Pod', 'Node', 'Deployment').",
+                    required=False,
+                ),
+                ToolParam(
+                    name="limit",
+                    type="integer",
+                    description="Maximum number of events to return (default: 50, max: 500).",
+                    required=False,
+                ),
+            ],
+            execute=lambda namespace="default", event_type=None, involved_object_name=None,
+                    involved_object_kind=None, limit=50,
+                    _cfg=gke_config: diagnostics.get_events(
+                gke_config=_cfg,
+                namespace=namespace,
+                event_type=event_type,
+                involved_object_name=involved_object_name,
+                involved_object_kind=involved_object_kind,
+                limit=limit,
+            ),
+        ),
+        ToolDef(
+            name="get_rollout_status",
+            description=(
+                "Check the rollout status of a Kubernetes deployment — whether it is "
+                "progressing, complete, stalled, or failed. Shows replica counts, "
+                "conditions, and rollout strategy. Equivalent to "
+                "'kubectl rollout status deployment/<name>'. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Name of the deployment to check rollout status for",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (default: 'default')",
+                    required=False,
+                ),
+            ],
+            execute=lambda name, namespace="default",
+                    _cfg=gke_config: diagnostics.get_rollout_status(
+                name, gke_config=_cfg, namespace=namespace,
+            ),
+        ),
+        # ── Diagnostic tools (Phase 2) ────────────────────────
+        ToolDef(
+            name="get_node_conditions",
+            description=(
+                "Show node health conditions, resource pressure, taints, and capacity. "
+                "Without a node name, lists ALL nodes with status, roles, version, OS, "
+                "kernel, container runtime, and CPU/memory capacity. With a node name, "
+                "shows detailed conditions (MemoryPressure, DiskPressure, PIDPressure, "
+                "NetworkUnavailable), taints, labels, and capacity vs allocatable. "
+                "Fills the gap where kubectl_get nodes hides pressure conditions. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Specific node name for detailed view. Omit to list all nodes.",
+                    required=False,
+                ),
+            ],
+            execute=lambda name=None, _cfg=gke_config: diagnostics.get_node_conditions(
+                gke_config=_cfg, name=name,
+            ),
+        ),
+        ToolDef(
+            name="get_container_status",
+            description=(
+                "Show detailed container-level status for ALL containers in a pod "
+                "(init, regular, and ephemeral). For each container: name, image, "
+                "state (Waiting/Running/Terminated with reason), ready flag, restart "
+                "count, last termination state (crucial for CrashLoopBackOff), resource "
+                "requests/limits, volume mounts, and env var sources (names only, no "
+                "secret values). Essential for multi-container pod debugging. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Name of the pod to inspect",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (default: 'default')",
+                    required=False,
+                ),
+            ],
+            execute=lambda name, namespace="default",
+                    _cfg=gke_config: diagnostics.get_container_status(
+                name, gke_config=_cfg, namespace=namespace,
+            ),
+        ),
+        # ── Diagnostic tools (Phase 3) ────────────────────────
+        ToolDef(
+            name="exec_command",
+            description=(
+                "Execute a diagnostic command inside a running container. "
+                "SECURITY: Disabled by default (requires gke.exec_enabled=true). "
+                "Commands are validated against a denylist (shell injection, "
+                "destructive operations) and an allowlist (read-only diagnostic "
+                "commands like cat, ls, ps, df, curl, etc.). Output is truncated "
+                "to 10000 chars. Use for inspecting config files, checking "
+                "processes, network debugging, and runtime diagnostics."
+            ),
+            parameters=[
+                ToolParam(
+                    name="pod_name",
+                    type="string",
+                    description="Name of the pod to execute the command in",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (required)",
+                ),
+                ToolParam(
+                    name="command",
+                    type="string",
+                    description=(
+                        "Diagnostic command to execute. Must start with an allowed prefix: "
+                        "cat, head, tail, ls, env, printenv, whoami, id, hostname, date, "
+                        "ps, top -bn1, df, du, mount, ip, ifconfig, netstat, ss, nslookup, "
+                        "dig, ping, curl, wget, java -version, python --version, node --version"
+                    ),
+                ),
+                ToolParam(
+                    name="container",
+                    type="string",
+                    description="Container name (for multi-container pods). Omit for default container.",
+                    required=False,
+                ),
+                ToolParam(
+                    name="timeout",
+                    type="integer",
+                    description="Execution timeout in seconds (default: 30, max: 300)",
+                    required=False,
+                ),
+            ],
+            execute=lambda pod_name, namespace, command, container=None, timeout=30,
+                    _cfg=gke_config: security.exec_command(
+                pod_name, command, gke_config=_cfg, namespace=namespace,
+                container=container, timeout=timeout,
+            ),
+        ),
+        ToolDef(
+            name="check_rbac",
+            description=(
+                "Check if a service account or the current user has permission to "
+                "perform a specific action on a Kubernetes resource. Uses "
+                "SubjectAccessReview (for service accounts) or SelfSubjectAccessReview "
+                "(for current user). Use BEFORE operations that might fail with "
+                "permission errors. Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="verb",
+                    type="string",
+                    description=(
+                        "The action to check: get, list, watch, create, update, patch, delete"
+                    ),
+                ),
+                ToolParam(
+                    name="resource",
+                    type="string",
+                    description=(
+                        "Resource type (pods, deployments, services, configmaps, secrets, etc.). "
+                        "Aliases accepted (po, svc, deploy, etc.)."
+                    ),
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (required)",
+                ),
+                ToolParam(
+                    name="service_account",
+                    type="string",
+                    description=(
+                        "Service account name to check. Omit to check current user's permissions."
+                    ),
+                    required=False,
+                ),
+                ToolParam(
+                    name="resource_name",
+                    type="string",
+                    description="Specific resource name to check access for (optional).",
+                    required=False,
+                ),
+            ],
+            execute=lambda verb, resource, namespace, service_account=None, resource_name=None,
+                    _cfg=gke_config: security.check_rbac(
+                verb, resource, gke_config=_cfg, namespace=namespace,
+                service_account=service_account, resource_name=resource_name,
+            ),
+        ),
+        ToolDef(
+            name="get_rollout_history",
+            description=(
+                "Show the revision history of a Kubernetes deployment. Lists all "
+                "revisions with images, creation time, replica count, and status "
+                "(active vs scaled-down). Optionally show detailed pod template for "
+                "a specific revision including containers, ports, env var names, "
+                "volume mounts, and resource requests/limits. Use BEFORE recommending "
+                "a rollback to understand what changed in each revision. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Name of the deployment to show rollout history for",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (required)",
+                ),
+                ToolParam(
+                    name="revision",
+                    type="integer",
+                    description=(
+                        "Specific revision number to show detailed info for. "
+                        "Omit to list all revisions."
+                    ),
+                    required=False,
+                ),
+            ],
+            execute=lambda name, namespace, revision=None,
+                    _cfg=gke_config: diagnostics.get_rollout_history(
+                name, gke_config=_cfg, namespace=namespace, revision=revision,
+            ),
+        ),
+        ToolDef(
+            name="discover_workloads",
+            description=(
+                "Discover all workloads running in the cluster or a specific namespace. "
+                "Returns a summary table of deployments, statefulsets, daemonsets, and "
+                "optionally jobs/cronjobs. Shows ready/desired replicas, restarts, and "
+                "age. Unhealthy workloads are listed first. Use this BEFORE drilling into "
+                "specific resources to get a high-level overview of what is running. "
+                "Results are cached for 60 seconds. Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description=(
+                        "Namespace to scan. Leave empty or use 'all' for all namespaces."
+                    ),
+                    required=False,
+                ),
+                ToolParam(
+                    name="include_jobs",
+                    type="boolean",
+                    description="Include Jobs and CronJobs in the discovery (default: false).",
+                    required=False,
+                ),
+                ToolParam(
+                    name="force_refresh",
+                    type="boolean",
+                    description="Bypass cache and re-scan the cluster (default: false).",
+                    required=False,
+                ),
+            ],
+            execute=lambda namespace="", include_jobs=False, force_refresh=False,
+                    _cfg=gke_config: discovery.discover_workloads(
+                gke_config=_cfg, namespace=namespace, include_jobs=include_jobs,
+                force_refresh=force_refresh,
+            ),
+        ),
+        ToolDef(
+            name="discover_service_mesh",
+            description=(
+                "Discover service mesh installations in the cluster (Istio, Linkerd, "
+                "Consul). Detects meshes via control-plane namespace existence, CRD "
+                "inspection, and sidecar proxy presence on pods. Reports mesh name, "
+                "version, control-plane health, CRD counts, and sidecar injection "
+                "coverage. Handles multi-mesh scenarios. Use BEFORE investigating "
+                "traffic routing or mTLS issues. Results are cached for 60 seconds. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description=(
+                        "Namespace to scope sidecar scanning. Leave empty for all namespaces."
+                    ),
+                    required=False,
+                ),
+                ToolParam(
+                    name="force_refresh",
+                    type="boolean",
+                    description="Bypass cache and re-scan the cluster (default: false).",
+                    required=False,
+                ),
+            ],
+            execute=lambda namespace="", force_refresh=False,
+                    _cfg=gke_config: discovery.discover_service_mesh(
+                gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
+            ),
+        ),
+        ToolDef(
+            name="discover_network_topology",
+            description=(
+                "Discover network topology: services (grouped by type), endpoints "
+                "(ready/not-ready counts), ingresses (hosts, paths, TLS), and "
+                "network policies (pod selectors, ingress/egress rules). Provides "
+                "a comprehensive view of cluster networking. Use BEFORE debugging "
+                "connectivity issues or reviewing network security posture. Results "
+                "are cached for 60 seconds. Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description=(
+                        "Namespace to scan. Leave empty for all namespaces."
+                    ),
+                    required=False,
+                ),
+                ToolParam(
+                    name="force_refresh",
+                    type="boolean",
+                    description="Bypass cache and re-scan the cluster (default: false).",
+                    required=False,
+                ),
+            ],
+            execute=lambda namespace="", force_refresh=False,
+                    _cfg=gke_config: discovery.discover_network_topology(
+                gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
+            ),
+        ),
+    ]

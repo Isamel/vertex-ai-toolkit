@@ -169,8 +169,8 @@ class TestKubectlGet:
         from vaig.tools.gke_tools import kubectl_get
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = kubectl_get("pods", gke_config=cfg)
             assert result.error is True
             assert "kubernetes" in result.output.lower()
@@ -179,7 +179,7 @@ class TestKubectlGet:
         from vaig.tools.gke_tools import kubectl_get
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = kubectl_get("foobar", gke_config=cfg)
             assert result.error is True
             assert "Unsupported resource type" in result.output
@@ -188,12 +188,12 @@ class TestKubectlGet:
         from vaig.tools.gke_tools import kubectl_get
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = kubectl_get("pods", gke_config=cfg, output_format="xml")
             assert result.error is True
             assert "Invalid output_format" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_successful_pod_list(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_get
 
@@ -210,13 +210,13 @@ class TestKubectlGet:
         api_response.items = [pod]
         core_v1.list_namespaced_pod.return_value = api_response
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = kubectl_get("pods", gke_config=cfg)
 
         assert result.error is False
         assert "my-pod" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_name_filter_not_found(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_get
 
@@ -231,20 +231,20 @@ class TestKubectlGet:
         api_response.items = [_mock_pod(name="other-pod")]
         core_v1.list_namespaced_pod.return_value = api_response
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = kubectl_get("pods", gke_config=cfg, name="nonexistent")
 
         assert result.error is True
         assert "not found" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_client_creation_error(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_get
 
         cfg = _make_gke_config()
         mock_clients.return_value = ToolResult(output="Failed to configure", error=True)
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = kubectl_get("pods", gke_config=cfg)
 
         assert result.error is True
@@ -255,8 +255,8 @@ class TestKubectlGet:
         from vaig.tools.gke_tools import kubectl_get
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools._create_k8s_clients") as mock_clients:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
             apps_v1 = MagicMock()
             api_response = MagicMock()
             api_response.items = [_mock_deployment()]
@@ -279,8 +279,8 @@ class TestKubectlDescribe:
         from vaig.tools.gke_tools import kubectl_describe
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = kubectl_describe("pods", "my-pod", gke_config=cfg)
             assert result.error is True
 
@@ -288,12 +288,12 @@ class TestKubectlDescribe:
         from vaig.tools.gke_tools import kubectl_describe
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = kubectl_describe("foobar", "name", gke_config=cfg)
             assert result.error is True
             assert "Unsupported resource type" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_successful_describe_pod(self, mock_clients: MagicMock) -> None:
         import vaig.tools.gke_tools as _mod
         from vaig.tools.gke_tools import kubectl_describe
@@ -312,7 +312,7 @@ class TestKubectlDescribe:
         events_v1.list_namespaced_event.return_value = MagicMock(items=[])
         fake_k8s_client.CoreV1Api.return_value = events_v1
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
              patch.object(_mod, "k8s_client", fake_k8s_client, create=True):
             result = kubectl_describe("pods", "web-server", gke_config=cfg)
 
@@ -331,12 +331,12 @@ class TestKubectlLogs:
         from vaig.tools.gke_tools import kubectl_logs
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = kubectl_logs("my-pod", gke_config=cfg)
             assert result.error is True
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_successful_logs(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_logs
 
@@ -346,13 +346,13 @@ class TestKubectlLogs:
 
         core_v1.read_namespaced_pod_log.return_value = "2025-01-01 INFO Starting server\n2025-01-01 INFO Ready"
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = kubectl_logs("my-pod", gke_config=cfg)
 
         assert result.error is False
         assert "Starting server" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_empty_logs(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_logs
 
@@ -362,7 +362,7 @@ class TestKubectlLogs:
 
         core_v1.read_namespaced_pod_log.return_value = ""
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = kubectl_logs("my-pod", gke_config=cfg)
 
         assert result.error is False
@@ -372,8 +372,8 @@ class TestKubectlLogs:
         from vaig.tools.gke_tools import kubectl_logs
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools._create_k8s_clients") as mock_clients:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
             mock_clients.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock())
 
             result = kubectl_logs("my-pod", gke_config=cfg, since="invalid")
@@ -381,7 +381,7 @@ class TestKubectlLogs:
         assert result.error is True
         assert "Invalid 'since' format" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_tail_lines_capped_by_config(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_logs
 
@@ -390,7 +390,7 @@ class TestKubectlLogs:
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
         core_v1.read_namespaced_pod_log.return_value = "some logs"
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             kubectl_logs("my-pod", gke_config=cfg, tail_lines=200)
 
         # tail_lines should be min(200, 50) = 50
@@ -408,8 +408,8 @@ class TestKubectlTop:
         from vaig.tools.gke_tools import kubectl_top
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = kubectl_top(gke_config=cfg)
             assert result.error is True
 
@@ -417,12 +417,12 @@ class TestKubectlTop:
         from vaig.tools.gke_tools import kubectl_top
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = kubectl_top("services", gke_config=cfg)
             assert result.error is True
             assert "Invalid resource_type" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_pod_metrics(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_top
 
@@ -441,14 +441,14 @@ class TestKubectlTop:
             ]
         }
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = kubectl_top("pods", gke_config=cfg)
 
         assert result.error is False
         assert "my-pod" in result.output
         assert "100m" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_node_metrics(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_top
 
@@ -465,13 +465,13 @@ class TestKubectlTop:
             ]
         }
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = kubectl_top("nodes", gke_config=cfg)
 
         assert result.error is False
         assert "node-1" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_no_metrics_available(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_top
 
@@ -481,12 +481,12 @@ class TestKubectlTop:
 
         custom_api.list_namespaced_custom_object.return_value = {"items": []}
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = kubectl_top("pods", gke_config=cfg)
 
         assert "No metrics data" in result.output or "metrics" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_name_filter_no_match(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_top
 
@@ -503,7 +503,7 @@ class TestKubectlTop:
             ]
         }
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = kubectl_top("pods", gke_config=cfg, name="nonexistent")
 
         assert result.error is True
@@ -787,9 +787,9 @@ class TestExtractProxyUrlFromKubeconfig:
 class TestCreateK8sClientsProxy:
     """Tests for proxy-url handling in _create_k8s_clients."""
 
-    @patch("vaig.tools.gke_tools.k8s_config")
-    @patch("vaig.tools.gke_tools.k8s_client")
-    @patch("vaig.tools.gke_tools._extract_proxy_url_from_kubeconfig")
+    @patch("vaig.tools.gke._clients.k8s_config")
+    @patch("vaig.tools.gke._clients.k8s_client")
+    @patch("vaig.tools.gke._clients._extract_proxy_url_from_kubeconfig")
     def test_proxy_from_kubeconfig_is_set(
         self,
         mock_extract: MagicMock,
@@ -805,7 +805,7 @@ class TestCreateK8sClientsProxy:
 
         cfg = _make_gke_config(kubeconfig_path="/tmp/kube")
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             from vaig.tools.gke_tools import _create_k8s_clients
 
             result = _create_k8s_clients(cfg)
@@ -820,9 +820,9 @@ class TestCreateK8sClientsProxy:
         mock_k8s_client.ApiClient.assert_called_once_with(config_instance)
         assert not isinstance(result, ToolResult)
 
-    @patch("vaig.tools.gke_tools.k8s_config")
-    @patch("vaig.tools.gke_tools.k8s_client")
-    @patch("vaig.tools.gke_tools._extract_proxy_url_from_kubeconfig")
+    @patch("vaig.tools.gke._clients.k8s_config")
+    @patch("vaig.tools.gke._clients.k8s_client")
+    @patch("vaig.tools.gke._clients._extract_proxy_url_from_kubeconfig")
     def test_gkeconfig_proxy_overrides_kubeconfig(
         self,
         mock_extract: MagicMock,
@@ -837,16 +837,16 @@ class TestCreateK8sClientsProxy:
 
         cfg = _make_gke_config(proxy_url="https://override-proxy:9090")
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             from vaig.tools.gke_tools import _create_k8s_clients
 
             _create_k8s_clients(cfg)
 
         assert config_instance.proxy == "https://override-proxy:9090"
 
-    @patch("vaig.tools.gke_tools.k8s_config")
-    @patch("vaig.tools.gke_tools.k8s_client")
-    @patch("vaig.tools.gke_tools._extract_proxy_url_from_kubeconfig")
+    @patch("vaig.tools.gke._clients.k8s_config")
+    @patch("vaig.tools.gke._clients.k8s_client")
+    @patch("vaig.tools.gke._clients._extract_proxy_url_from_kubeconfig")
     def test_no_proxy_works_normally(
         self,
         mock_extract: MagicMock,
@@ -861,7 +861,7 @@ class TestCreateK8sClientsProxy:
 
         cfg = _make_gke_config()
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             from vaig.tools.gke_tools import _create_k8s_clients
 
             result = _create_k8s_clients(cfg)
@@ -882,8 +882,8 @@ class TestKubectlScale:
         from vaig.tools.gke_tools import kubectl_scale
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = kubectl_scale("deployments", "nginx", 3, gke_config=cfg)
             assert result.error is True
             assert "kubernetes" in result.output.lower()
@@ -892,7 +892,7 @@ class TestKubectlScale:
         from vaig.tools.gke_tools import kubectl_scale
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_scale("pods", "my-pod", 2, gke_config=cfg)
             assert result.error is True
             assert "Cannot scale" in result.output
@@ -902,7 +902,7 @@ class TestKubectlScale:
         from vaig.tools.gke_tools import kubectl_scale
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_scale("deployments", "nginx", 100, gke_config=cfg)
             assert result.error is True
             assert "50" in result.output
@@ -911,11 +911,11 @@ class TestKubectlScale:
         from vaig.tools.gke_tools import kubectl_scale
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_scale("deployments", "nginx", -1, gke_config=cfg)
             assert result.error is True
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_scale_deployment_success(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_scale
 
@@ -927,7 +927,7 @@ class TestKubectlScale:
 
         mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_scale("deploy", "nginx", 5, gke_config=cfg)
             assert result.error is not True
             assert "2 -> 5" in result.output
@@ -936,7 +936,7 @@ class TestKubectlScale:
                 "nginx", "default", {"spec": {"replicas": 5}},
             )
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_scale_statefulset_success(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_scale
 
@@ -948,13 +948,13 @@ class TestKubectlScale:
 
         mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_scale("sts", "redis", 1, gke_config=cfg, namespace="cache")
             assert result.error is not True
             assert "3 -> 1" in result.output
             apps_v1.patch_namespaced_stateful_set_scale.assert_called_once()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_scale_replicaset_success(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_scale
 
@@ -966,12 +966,12 @@ class TestKubectlScale:
 
         mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_scale("replicasets", "my-rs", 0, gke_config=cfg)
             assert result.error is not True
             assert "1 -> 0" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_scale_404(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_scale
 
@@ -984,8 +984,8 @@ class TestKubectlScale:
         exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
         real_exc = exc_class()
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.mutations.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             apps_v1.read_namespaced_deployment.side_effect = real_exc
             mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
@@ -993,7 +993,7 @@ class TestKubectlScale:
             assert result.error is True
             assert "not found" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_scale_403(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_scale
 
@@ -1003,8 +1003,8 @@ class TestKubectlScale:
         exc_class = type("ApiException", (Exception,), {"status": 403, "reason": "Forbidden"})
         real_exc = exc_class()
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.mutations.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             apps_v1.read_namespaced_deployment.side_effect = real_exc
             mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
@@ -1018,12 +1018,12 @@ class TestKubectlScale:
 
         cfg = _make_gke_config()
         # 'services' is not scalable — just verify it rejects properly
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_scale("svc", "my-svc", 2, gke_config=cfg)
             assert result.error is True
             assert "Cannot scale" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_scale_to_zero(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_scale
 
@@ -1035,7 +1035,7 @@ class TestKubectlScale:
 
         mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_scale("deployments", "nginx", 0, gke_config=cfg)
             assert result.error is not True
             assert "3 -> 0" in result.output
@@ -1051,8 +1051,8 @@ class TestKubectlRestart:
         from vaig.tools.gke_tools import kubectl_restart
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = kubectl_restart("deployments", "nginx", gke_config=cfg)
             assert result.error is True
 
@@ -1060,13 +1060,13 @@ class TestKubectlRestart:
         from vaig.tools.gke_tools import kubectl_restart
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_restart("pods", "my-pod", gke_config=cfg)
             assert result.error is True
             assert "Cannot restart" in result.output
             assert "daemonsets" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_restart_deployment_success(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_restart
 
@@ -1074,7 +1074,7 @@ class TestKubectlRestart:
         apps_v1 = MagicMock()
         mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_restart("deploy", "nginx", gke_config=cfg)
             assert result.error is not True
             assert "Rolling restart triggered" in result.output
@@ -1086,7 +1086,7 @@ class TestKubectlRestart:
             assert "kubectl.kubernetes.io/restartedAt" in \
                 patch_body["spec"]["template"]["metadata"]["annotations"]
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_restart_statefulset_success(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_restart
 
@@ -1094,12 +1094,12 @@ class TestKubectlRestart:
         apps_v1 = MagicMock()
         mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_restart("sts", "redis", gke_config=cfg, namespace="cache")
             assert result.error is not True
             apps_v1.patch_namespaced_stateful_set.assert_called_once()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_restart_daemonset_success(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_restart
 
@@ -1107,13 +1107,13 @@ class TestKubectlRestart:
         apps_v1 = MagicMock()
         mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_restart("ds", "fluentd", gke_config=cfg)
             assert result.error is not True
             assert "fluentd" in result.output
             apps_v1.patch_namespaced_daemon_set.assert_called_once()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_restart_404(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_restart
 
@@ -1121,8 +1121,8 @@ class TestKubectlRestart:
         apps_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.mutations.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             apps_v1.patch_namespaced_deployment.side_effect = exc_class()
             mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
@@ -1135,7 +1135,7 @@ class TestKubectlRestart:
         from vaig.tools.gke_tools import kubectl_restart
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_restart("replicasets", "my-rs", gke_config=cfg)
             assert result.error is True
             assert "Cannot restart" in result.output
@@ -1151,8 +1151,8 @@ class TestKubectlLabel:
         from vaig.tools.gke_tools import kubectl_label
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = kubectl_label("pods", "my-pod", "env=prod", gke_config=cfg)
             assert result.error is True
 
@@ -1160,7 +1160,7 @@ class TestKubectlLabel:
         from vaig.tools.gke_tools import kubectl_label
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_label("cronjobs", "my-cron", "env=prod", gke_config=cfg)
             assert result.error is True
             assert "Cannot label" in result.output
@@ -1169,7 +1169,7 @@ class TestKubectlLabel:
         from vaig.tools.gke_tools import kubectl_label
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_label("pods", "my-pod", "invalid_no_equals", gke_config=cfg)
             assert result.error is True
             assert "Invalid label format" in result.output
@@ -1178,7 +1178,7 @@ class TestKubectlLabel:
         from vaig.tools.gke_tools import kubectl_label
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_label("pods", "my-pod", "", gke_config=cfg)
             assert result.error is True
             assert "No labels" in result.output
@@ -1187,7 +1187,7 @@ class TestKubectlLabel:
         from vaig.tools.gke_tools import kubectl_label
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_label("pods", "my-pod", "kubernetes.io/arch=amd64", gke_config=cfg)
             assert result.error is True
             assert "system label" in result.output.lower()
@@ -1196,7 +1196,7 @@ class TestKubectlLabel:
         from vaig.tools.gke_tools import kubectl_label
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_label("pods", "my-pod", "k8s.io/component=api", gke_config=cfg)
             assert result.error is True
             assert "system label" in result.output.lower()
@@ -1205,12 +1205,12 @@ class TestKubectlLabel:
         from vaig.tools.gke_tools import kubectl_label
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_label("pods", "my-pod", "-bad-key=val", gke_config=cfg)
             assert result.error is True
             assert "Invalid label key" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_label_pod_success(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_label
 
@@ -1218,7 +1218,7 @@ class TestKubectlLabel:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_label("pods", "my-pod", "env=prod,tier=frontend", gke_config=cfg)
             assert result.error is not True
             assert "Labels updated" in result.output
@@ -1228,7 +1228,7 @@ class TestKubectlLabel:
             assert patch_body["metadata"]["labels"]["env"] == "prod"
             assert patch_body["metadata"]["labels"]["tier"] == "frontend"
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_label_remove(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_label
 
@@ -1236,14 +1236,14 @@ class TestKubectlLabel:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_label("pods", "my-pod", "obsolete-", gke_config=cfg)
             assert result.error is not True
             assert "obsolete-" in result.output
             patch_body = core_v1.patch_namespaced_pod.call_args[0][2]
             assert patch_body["metadata"]["labels"]["obsolete"] is None
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_label_deployment(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_label
 
@@ -1251,12 +1251,12 @@ class TestKubectlLabel:
         apps_v1 = MagicMock()
         mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_label("deploy", "nginx", "version=v2", gke_config=cfg)
             assert result.error is not True
             apps_v1.patch_namespaced_deployment.assert_called_once()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_label_service(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_label
 
@@ -1264,12 +1264,12 @@ class TestKubectlLabel:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_label("svc", "my-svc", "managed-by=helm", gke_config=cfg)
             assert result.error is not True
             core_v1.patch_namespaced_service.assert_called_once()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_label_namespace(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_label
 
@@ -1277,12 +1277,12 @@ class TestKubectlLabel:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_label("namespaces", "kube-system", "env=prod", gke_config=cfg)
             assert result.error is not True
             core_v1.patch_namespace.assert_called_once()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_label_node(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_label
 
@@ -1290,12 +1290,12 @@ class TestKubectlLabel:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_label("nodes", "worker-1", "role=compute", gke_config=cfg)
             assert result.error is not True
             core_v1.patch_node.assert_called_once()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_label_configmap(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_label
 
@@ -1303,12 +1303,12 @@ class TestKubectlLabel:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_label("cm", "my-config", "app=web", gke_config=cfg)
             assert result.error is not True
             core_v1.patch_namespaced_config_map.assert_called_once()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_label_secret(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_label
 
@@ -1316,12 +1316,12 @@ class TestKubectlLabel:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_label("secrets", "my-secret", "env=staging", gke_config=cfg)
             assert result.error is not True
             core_v1.patch_namespaced_secret.assert_called_once()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_label_404(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_label
 
@@ -1329,8 +1329,8 @@ class TestKubectlLabel:
         core_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.mutations.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             core_v1.patch_namespaced_pod.side_effect = exc_class()
             mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
@@ -1345,8 +1345,8 @@ class TestKubectlLabel:
         cfg = _make_gke_config()
         # We only validate up to the system prefix check — should pass validation
         # but fail at k8s client call since _K8S_AVAILABLE blocks it
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools._create_k8s_clients") as mock_clients:
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
             core_v1 = MagicMock()
             mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
             result = kubectl_label("pods", "my-pod", "mycompany.io/env=prod", gke_config=cfg)
@@ -1363,8 +1363,8 @@ class TestKubectlAnnotate:
         from vaig.tools.gke_tools import kubectl_annotate
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = kubectl_annotate("pods", "my-pod", "desc=test", gke_config=cfg)
             assert result.error is True
 
@@ -1372,7 +1372,7 @@ class TestKubectlAnnotate:
         from vaig.tools.gke_tools import kubectl_annotate
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_annotate("cronjobs", "my-cron", "desc=test", gke_config=cfg)
             assert result.error is True
             assert "Cannot annotate" in result.output
@@ -1381,7 +1381,7 @@ class TestKubectlAnnotate:
         from vaig.tools.gke_tools import kubectl_annotate
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_annotate("pods", "my-pod", "no_equals_sign", gke_config=cfg)
             assert result.error is True
             assert "Invalid annotation format" in result.output
@@ -1390,7 +1390,7 @@ class TestKubectlAnnotate:
         from vaig.tools.gke_tools import kubectl_annotate
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_annotate("pods", "my-pod", "", gke_config=cfg)
             assert result.error is True
             assert "No annotations" in result.output
@@ -1399,7 +1399,7 @@ class TestKubectlAnnotate:
         from vaig.tools.gke_tools import kubectl_annotate
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_annotate(
                 "pods", "my-pod",
                 "kubernetes.io/change-cause=test",
@@ -1412,7 +1412,7 @@ class TestKubectlAnnotate:
         from vaig.tools.gke_tools import kubectl_annotate
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_annotate(
                 "pods", "my-pod",
                 "k8s.io/something=test",
@@ -1421,7 +1421,7 @@ class TestKubectlAnnotate:
             assert result.error is True
             assert "system annotation" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_annotate_pod_success(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_annotate
 
@@ -1429,7 +1429,7 @@ class TestKubectlAnnotate:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_annotate(
                 "pods", "my-pod",
                 "description=web server,owner=team-a",
@@ -1443,7 +1443,7 @@ class TestKubectlAnnotate:
             assert patch_body["metadata"]["annotations"]["description"] == "web server"
             assert patch_body["metadata"]["annotations"]["owner"] == "team-a"
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_annotate_remove(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_annotate
 
@@ -1451,14 +1451,14 @@ class TestKubectlAnnotate:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_annotate("pods", "my-pod", "old-note-", gke_config=cfg)
             assert result.error is not True
             assert "old-note-" in result.output
             patch_body = core_v1.patch_namespaced_pod.call_args[0][2]
             assert patch_body["metadata"]["annotations"]["old-note"] is None
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_annotate_deployment(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_annotate
 
@@ -1466,12 +1466,12 @@ class TestKubectlAnnotate:
         apps_v1 = MagicMock()
         mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_annotate("deploy", "nginx", "gitsha=abc123", gke_config=cfg)
             assert result.error is not True
             apps_v1.patch_namespaced_deployment.assert_called_once()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_annotate_statefulset(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_annotate
 
@@ -1479,12 +1479,12 @@ class TestKubectlAnnotate:
         apps_v1 = MagicMock()
         mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_annotate("sts", "redis", "backup=daily", gke_config=cfg)
             assert result.error is not True
             apps_v1.patch_namespaced_stateful_set.assert_called_once()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_annotate_daemonset(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_annotate
 
@@ -1492,12 +1492,12 @@ class TestKubectlAnnotate:
         apps_v1 = MagicMock()
         mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_annotate("ds", "fluentd", "log-driver=json", gke_config=cfg)
             assert result.error is not True
             apps_v1.patch_namespaced_daemon_set.assert_called_once()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_annotate_namespace(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_annotate
 
@@ -1505,12 +1505,12 @@ class TestKubectlAnnotate:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_annotate("namespaces", "prod", "team=platform", gke_config=cfg)
             assert result.error is not True
             core_v1.patch_namespace.assert_called_once()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_annotate_node(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_annotate
 
@@ -1518,12 +1518,12 @@ class TestKubectlAnnotate:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True):
             result = kubectl_annotate("nodes", "worker-1", "rack=a3", gke_config=cfg)
             assert result.error is not True
             core_v1.patch_node.assert_called_once()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_annotate_404(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_annotate
 
@@ -1531,8 +1531,8 @@ class TestKubectlAnnotate:
         core_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.mutations.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             core_v1.patch_namespaced_pod.side_effect = exc_class()
             mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
@@ -1540,7 +1540,7 @@ class TestKubectlAnnotate:
             assert result.error is True
             assert "not found" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_annotate_403(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import kubectl_annotate
 
@@ -1548,8 +1548,8 @@ class TestKubectlAnnotate:
         core_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 403, "reason": "Forbidden"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.mutations.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             core_v1.patch_namespaced_pod.side_effect = exc_class()
             mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
@@ -1562,8 +1562,8 @@ class TestKubectlAnnotate:
         from vaig.tools.gke_tools import kubectl_annotate
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools._create_k8s_clients") as mock_clients:
+        with patch("vaig.tools.gke.mutations._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
             core_v1 = MagicMock()
             mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
             result = kubectl_annotate("pods", "my-pod", "myorg.io/team=backend", gke_config=cfg)
@@ -1602,8 +1602,8 @@ class TestGetEvents:
         from vaig.tools.gke_tools import get_events
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = get_events(gke_config=cfg)
             assert result.error is True
             assert "kubernetes" in result.output.lower()
@@ -1612,7 +1612,7 @@ class TestGetEvents:
         from vaig.tools.gke_tools import get_events
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_events(gke_config=cfg, event_type="Error")
             assert result.error is True
             assert "Invalid event_type" in result.output
@@ -1621,7 +1621,7 @@ class TestGetEvents:
         from vaig.tools.gke_tools import get_events
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_events(gke_config=cfg, limit=0)
             assert result.error is True
             assert "Limit must be" in result.output
@@ -1630,24 +1630,24 @@ class TestGetEvents:
         from vaig.tools.gke_tools import get_events
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_events(gke_config=cfg, limit=501)
             assert result.error is True
             assert "Limit must be" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_client_creation_error(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_events
 
         cfg = _make_gke_config()
         mock_clients.return_value = ToolResult(output="Failed to configure", error=True)
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_events(gke_config=cfg)
             assert result.error is True
             assert "Failed to configure" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_no_events_found(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_events
 
@@ -1659,13 +1659,13 @@ class TestGetEvents:
         ev_list.items = []
         core_v1.list_namespaced_event.return_value = ev_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_events(gke_config=cfg)
 
         assert result.error is False
         assert "No events found" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_no_events_with_filter_desc(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_events
 
@@ -1677,14 +1677,14 @@ class TestGetEvents:
         ev_list.items = []
         core_v1.list_namespaced_event.return_value = ev_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_events(gke_config=cfg, event_type="Warning", involved_object_name="my-pod")
 
         assert result.error is False
         assert "No events found" in result.output
         assert "Filters:" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_successful_event_list(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_events
 
@@ -1706,7 +1706,7 @@ class TestGetEvents:
         ev_list.items = [ev2, ev1]  # out of order to test sorting
         core_v1.list_namespaced_event.return_value = ev_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_events(gke_config=cfg)
 
         assert result.error is False
@@ -1720,7 +1720,7 @@ class TestGetEvents:
         pulled_idx = result.output.index("Pulled")
         assert backoff_idx < pulled_idx
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_event_type_filter_passed_as_field_selector(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_events
 
@@ -1732,13 +1732,13 @@ class TestGetEvents:
         ev_list.items = [_mock_event()]
         core_v1.list_namespaced_event.return_value = ev_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             get_events(gke_config=cfg, event_type="Warning")
 
         call_kwargs = core_v1.list_namespaced_event.call_args
         assert "type=Warning" in call_kwargs.kwargs.get("field_selector", "")
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_involved_object_filter(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_events
 
@@ -1750,7 +1750,7 @@ class TestGetEvents:
         ev_list.items = [_mock_event()]
         core_v1.list_namespaced_event.return_value = ev_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             get_events(
                 gke_config=cfg,
                 involved_object_name="my-pod",
@@ -1762,7 +1762,7 @@ class TestGetEvents:
         assert "involvedObject.name=my-pod" in field_sel
         assert "involvedObject.kind=Pod" in field_sel
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_limit_applied(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_events
 
@@ -1779,13 +1779,13 @@ class TestGetEvents:
         ev_list.items = events
         core_v1.list_namespaced_event.return_value = ev_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_events(gke_config=cfg, limit=2)
 
         assert result.error is False
         assert "2 shown" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_events_with_none_last_timestamp(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_events
 
@@ -1799,13 +1799,13 @@ class TestGetEvents:
         ev_list.items = [ev]
         core_v1.list_namespaced_event.return_value = ev_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_events(gke_config=cfg)
 
         assert result.error is False
         assert "BackOff" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_namespace_404(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_events
 
@@ -1813,8 +1813,8 @@ class TestGetEvents:
         core_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.diagnostics.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             core_v1.list_namespaced_event.side_effect = exc_class()
             mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
@@ -1823,7 +1823,7 @@ class TestGetEvents:
         assert result.error is True
         assert "not found" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_events_403(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_events
 
@@ -1831,8 +1831,8 @@ class TestGetEvents:
         core_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 403, "reason": "Forbidden"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.diagnostics.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             core_v1.list_namespaced_event.side_effect = exc_class()
             mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
@@ -1841,7 +1841,7 @@ class TestGetEvents:
         assert result.error is True
         assert "Access denied" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_events_401(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_events
 
@@ -1849,8 +1849,8 @@ class TestGetEvents:
         core_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 401, "reason": "Unauthorized"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.diagnostics.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             core_v1.list_namespaced_event.side_effect = exc_class()
             mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
@@ -1859,7 +1859,7 @@ class TestGetEvents:
         assert result.error is True
         assert "Authentication failed" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_events_generic_exception(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_events
 
@@ -1868,7 +1868,7 @@ class TestGetEvents:
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
         core_v1.list_namespaced_event.side_effect = RuntimeError("connection lost")
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_events(gke_config=cfg)
 
         assert result.error is True
@@ -1879,8 +1879,8 @@ class TestGetEvents:
         from vaig.tools.gke_tools import get_events
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools._create_k8s_clients") as mock_clients:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
             core_v1 = MagicMock()
             ev_list = MagicMock()
             ev_list.items = []
@@ -1890,7 +1890,7 @@ class TestGetEvents:
 
         assert result.error is False
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_uses_config_default_namespace(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_events
 
@@ -1901,7 +1901,7 @@ class TestGetEvents:
         core_v1.list_namespaced_event.return_value = ev_list
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             get_events(gke_config=cfg, namespace="")
 
         call_kwargs = core_v1.list_namespaced_event.call_args
@@ -1969,25 +1969,25 @@ class TestGetRolloutStatus:
         from vaig.tools.gke_tools import get_rollout_status
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = get_rollout_status("my-deploy", gke_config=cfg)
             assert result.error is True
             assert "kubernetes" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_client_creation_error(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
         cfg = _make_gke_config()
         mock_clients.return_value = ToolResult(output="Failed to configure", error=True)
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_status("my-deploy", gke_config=cfg)
             assert result.error is True
             assert "Failed to configure" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_complete_rollout(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
@@ -2000,7 +2000,7 @@ class TestGetRolloutStatus:
         )
         apps_v1.read_namespaced_deployment.return_value = dep
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_status("web", gke_config=cfg)
 
         assert result.error is False
@@ -2009,7 +2009,7 @@ class TestGetRolloutStatus:
         assert "Desired:     3" in result.output
         assert "Ready:       3" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_progressing_rollout(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
@@ -2027,14 +2027,14 @@ class TestGetRolloutStatus:
         )
         apps_v1.read_namespaced_deployment.return_value = dep
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_status("web", gke_config=cfg)
 
         assert result.error is False
         assert "Overall Status: Progressing" in result.output
         assert "Unavailable: 1" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_stalled_rollout(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
@@ -2052,13 +2052,13 @@ class TestGetRolloutStatus:
         )
         apps_v1.read_namespaced_deployment.return_value = dep
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_status("web", gke_config=cfg)
 
         assert result.error is False
         assert "Overall Status: Stalled" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_failed_rollout(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
@@ -2077,13 +2077,13 @@ class TestGetRolloutStatus:
         )
         apps_v1.read_namespaced_deployment.return_value = dep
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_status("web", gke_config=cfg)
 
         assert result.error is False
         assert "Overall Status: Failed" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_scaled_to_zero(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
@@ -2099,13 +2099,13 @@ class TestGetRolloutStatus:
         dep.status.conditions = []
         apps_v1.read_namespaced_deployment.return_value = dep
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_status("web", gke_config=cfg)
 
         assert result.error is False
         assert "Scaled to zero" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_strategy_displayed(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
@@ -2120,7 +2120,7 @@ class TestGetRolloutStatus:
         )
         apps_v1.read_namespaced_deployment.return_value = dep
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_status("my-deploy", gke_config=cfg)
 
         assert result.error is False
@@ -2128,7 +2128,7 @@ class TestGetRolloutStatus:
         assert "Max Unavailable: 1" in result.output
         assert "Max Surge:       2" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_conditions_displayed(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
@@ -2139,7 +2139,7 @@ class TestGetRolloutStatus:
         dep = _mock_deployment_status()
         apps_v1.read_namespaced_deployment.return_value = dep
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_status("my-deploy", gke_config=cfg)
 
         assert result.error is False
@@ -2147,7 +2147,7 @@ class TestGetRolloutStatus:
         assert "Available: True" in result.output
         assert "Progressing: True" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_deployment_not_found(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
@@ -2155,8 +2155,8 @@ class TestGetRolloutStatus:
         apps_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.diagnostics.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             apps_v1.read_namespaced_deployment.side_effect = exc_class()
             mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
@@ -2165,7 +2165,7 @@ class TestGetRolloutStatus:
         assert result.error is True
         assert "not found" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_deployment_403(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
@@ -2173,8 +2173,8 @@ class TestGetRolloutStatus:
         apps_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 403, "reason": "Forbidden"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.diagnostics.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             apps_v1.read_namespaced_deployment.side_effect = exc_class()
             mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
@@ -2183,7 +2183,7 @@ class TestGetRolloutStatus:
         assert result.error is True
         assert "Access denied" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_deployment_401(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
@@ -2191,8 +2191,8 @@ class TestGetRolloutStatus:
         apps_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 401, "reason": "Unauthorized"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.diagnostics.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             apps_v1.read_namespaced_deployment.side_effect = exc_class()
             mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
@@ -2201,7 +2201,7 @@ class TestGetRolloutStatus:
         assert result.error is True
         assert "Authentication failed" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_generic_exception(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
@@ -2210,13 +2210,13 @@ class TestGetRolloutStatus:
         mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
         apps_v1.read_namespaced_deployment.side_effect = RuntimeError("timeout")
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_status("web", gke_config=cfg)
 
         assert result.error is True
         assert "timeout" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_uses_config_default_namespace(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
@@ -2226,13 +2226,13 @@ class TestGetRolloutStatus:
         apps_v1.read_namespaced_deployment.return_value = dep
         mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             get_rollout_status("my-deploy", gke_config=cfg, namespace="")
 
         call_args = apps_v1.read_namespaced_deployment.call_args
         assert call_args.kwargs.get("namespace") == "staging"
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_no_status_conditions(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
@@ -2244,14 +2244,14 @@ class TestGetRolloutStatus:
         dep.status.conditions = []
         apps_v1.read_namespaced_deployment.return_value = dep
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_status("my-deploy", gke_config=cfg)
 
         # Should not crash, should show Unknown or Complete depending on replica state
         assert result.error is False
         assert "Overall Status:" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_null_status_fields(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_status
 
@@ -2274,7 +2274,7 @@ class TestGetRolloutStatus:
         dep.status.conditions = []
         apps_v1.read_namespaced_deployment.return_value = dep
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_status("web", gke_config=cfg)
 
         # Should handle None gracefully, defaulting to 0
@@ -2488,25 +2488,25 @@ class TestGetNodeConditions:
         from vaig.tools.gke_tools import get_node_conditions
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = get_node_conditions(gke_config=cfg)
             assert result.error is True
             assert "kubernetes" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_client_creation_error(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
         cfg = _make_gke_config()
         mock_clients.return_value = ToolResult(output="Failed to configure", error=True)
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_node_conditions(gke_config=cfg)
             assert result.error is True
             assert "Failed to configure" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_no_nodes_found(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2515,13 +2515,13 @@ class TestGetNodeConditions:
         core_v1.list_node.return_value.items = []
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_node_conditions(gke_config=cfg)
 
         assert result.error is False
         assert "No nodes found" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_all_nodes_summary(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2534,7 +2534,7 @@ class TestGetNodeConditions:
         core_v1.list_node.return_value.items = nodes
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_node_conditions(gke_config=cfg)
 
         assert result.error is False
@@ -2544,7 +2544,7 @@ class TestGetNodeConditions:
         assert "Ready" in result.output
         assert "NotReady" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_all_nodes_shows_capacity(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2553,7 +2553,7 @@ class TestGetNodeConditions:
         core_v1.list_node.return_value.items = [_mock_node()]
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_node_conditions(gke_config=cfg)
 
         assert result.error is False
@@ -2561,7 +2561,7 @@ class TestGetNodeConditions:
         assert "CPU" in result.output
         assert "MEM" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_single_node_detail(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2571,7 +2571,7 @@ class TestGetNodeConditions:
         core_v1.read_node.return_value = node
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_node_conditions(gke_config=cfg, name="gke-node-detail")
 
         assert result.error is False
@@ -2582,7 +2582,7 @@ class TestGetNodeConditions:
         assert "DiskPressure" in result.output
         assert "PIDPressure" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_single_node_shows_taints(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2598,7 +2598,7 @@ class TestGetNodeConditions:
         core_v1.read_node.return_value = node
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_node_conditions(gke_config=cfg, name="tainted-node")
 
         assert result.error is False
@@ -2606,7 +2606,7 @@ class TestGetNodeConditions:
         assert "node.kubernetes.io/not-ready" in result.output
         assert "dedicated=gpu:NoSchedule" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_single_node_no_taints(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2616,13 +2616,13 @@ class TestGetNodeConditions:
         core_v1.read_node.return_value = node
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_node_conditions(gke_config=cfg, name="clean-node")
 
         assert result.error is False
         assert "(none)" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_single_node_shows_labels(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2632,7 +2632,7 @@ class TestGetNodeConditions:
         core_v1.read_node.return_value = node
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_node_conditions(gke_config=cfg, name="labeled-node")
 
         assert result.error is False
@@ -2640,7 +2640,7 @@ class TestGetNodeConditions:
         assert "topology.kubernetes.io/zone=us-central1-a" in result.output
         assert "cloud.google.com/gke-nodepool=default-pool" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_single_node_capacity_vs_allocatable(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2650,7 +2650,7 @@ class TestGetNodeConditions:
         core_v1.read_node.return_value = node
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_node_conditions(gke_config=cfg, name="capacity-node")
 
         assert result.error is False
@@ -2658,7 +2658,7 @@ class TestGetNodeConditions:
         assert "cpu" in result.output
         assert "memory" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_single_node_unschedulable(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2668,13 +2668,13 @@ class TestGetNodeConditions:
         core_v1.read_node.return_value = node
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_node_conditions(gke_config=cfg, name="cordoned-node")
 
         assert result.error is False
         assert "Unschedulable (cordoned): True" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_single_node_addresses(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2684,7 +2684,7 @@ class TestGetNodeConditions:
         core_v1.read_node.return_value = node
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_node_conditions(gke_config=cfg, name="addr-node")
 
         assert result.error is False
@@ -2692,7 +2692,7 @@ class TestGetNodeConditions:
         assert "InternalIP: 10.128.0.5" in result.output
         assert "ExternalIP: 35.192.0.1" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_node_not_found_404(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2700,8 +2700,8 @@ class TestGetNodeConditions:
         core_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.diagnostics.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             core_v1.read_node.side_effect = exc_class()
             mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
@@ -2710,7 +2710,7 @@ class TestGetNodeConditions:
         assert result.error is True
         assert "not found" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_node_403(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2718,8 +2718,8 @@ class TestGetNodeConditions:
         core_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 403, "reason": "Forbidden"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.diagnostics.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             core_v1.read_node.side_effect = exc_class()
             mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
@@ -2728,7 +2728,7 @@ class TestGetNodeConditions:
         assert result.error is True
         assert "Access denied" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_node_401(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2736,8 +2736,8 @@ class TestGetNodeConditions:
         core_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 401, "reason": "Unauthorized"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.diagnostics.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             core_v1.read_node.side_effect = exc_class()
             mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
@@ -2746,7 +2746,7 @@ class TestGetNodeConditions:
         assert result.error is True
         assert "Authentication failed" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_generic_exception(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2755,13 +2755,13 @@ class TestGetNodeConditions:
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
         core_v1.list_node.side_effect = RuntimeError("connection timeout")
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_node_conditions(gke_config=cfg)
 
         assert result.error is True
         assert "connection timeout" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_node_with_pressure_conditions(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2775,7 +2775,7 @@ class TestGetNodeConditions:
         core_v1.read_node.return_value = node
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_node_conditions(gke_config=cfg, name="pressure-node")
 
         assert result.error is False
@@ -2783,7 +2783,7 @@ class TestGetNodeConditions:
         assert "MemoryPressure" in result.output
         assert "DiskPressure" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_node_roles_displayed(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_node_conditions
 
@@ -2793,7 +2793,7 @@ class TestGetNodeConditions:
         core_v1.list_node.return_value.items = [node]
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_node_conditions(gke_config=cfg)
 
         assert result.error is False
@@ -2810,25 +2810,25 @@ class TestGetContainerStatus:
         from vaig.tools.gke_tools import get_container_status
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = get_container_status("my-pod", gke_config=cfg)
             assert result.error is True
             assert "kubernetes" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_client_creation_error(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
         cfg = _make_gke_config()
         mock_clients.return_value = ToolResult(output="Failed to configure", error=True)
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_container_status("my-pod", gke_config=cfg)
             assert result.error is True
             assert "Failed to configure" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_basic_running_pod(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -2838,7 +2838,7 @@ class TestGetContainerStatus:
         core_v1.read_namespaced_pod.return_value = pod
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_container_status("my-pod", gke_config=cfg)
 
         assert result.error is False
@@ -2849,7 +2849,7 @@ class TestGetContainerStatus:
         assert "Image: myapp:v1.2.3" in result.output
         assert "State: Running" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_init_containers_shown(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -2859,7 +2859,7 @@ class TestGetContainerStatus:
         core_v1.read_namespaced_pod.return_value = pod
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_container_status("my-pod", gke_config=cfg)
 
         assert "=== Init Containers ===" in result.output
@@ -2868,7 +2868,7 @@ class TestGetContainerStatus:
         assert "Terminated" in result.output
         assert "Completed" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_resource_requests_limits(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -2878,14 +2878,14 @@ class TestGetContainerStatus:
         core_v1.read_namespaced_pod.return_value = pod
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_container_status("my-pod", gke_config=cfg)
 
         assert "Resources:" in result.output
         assert "Requests:" in result.output
         assert "Limits:" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_volume_mounts_shown(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -2895,13 +2895,13 @@ class TestGetContainerStatus:
         core_v1.read_namespaced_pod.return_value = pod
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_container_status("my-pod", gke_config=cfg)
 
         assert "Volume Mounts:" in result.output
         assert "/etc/config from config-vol (ro)" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_env_from_configmap(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -2911,13 +2911,13 @@ class TestGetContainerStatus:
         core_v1.read_namespaced_pod.return_value = pod
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_container_status("my-pod", gke_config=cfg)
 
         assert "Env From:" in result.output
         assert "ConfigMap: app-config" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_env_var_secret_ref_no_values(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -2927,7 +2927,7 @@ class TestGetContainerStatus:
         core_v1.read_namespaced_pod.return_value = pod
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_container_status("my-pod", gke_config=cfg)
 
         assert "Env Var References:" in result.output
@@ -2936,7 +2936,7 @@ class TestGetContainerStatus:
         # Must NOT contain actual secret values
         assert "ref only" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_crashloopbackoff_last_state(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -2966,7 +2966,7 @@ class TestGetContainerStatus:
         core_v1.read_namespaced_pod.return_value = pod
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_container_status("my-pod", gke_config=cfg)
 
         assert result.error is False
@@ -2976,7 +2976,7 @@ class TestGetContainerStatus:
         assert "OOMKilled" in result.output
         assert "exit code 137" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_pod_not_found_404(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -2984,8 +2984,8 @@ class TestGetContainerStatus:
         core_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.diagnostics.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             core_v1.read_namespaced_pod.side_effect = exc_class()
             mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
@@ -2994,7 +2994,7 @@ class TestGetContainerStatus:
         assert result.error is True
         assert "not found" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_pod_403(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -3002,8 +3002,8 @@ class TestGetContainerStatus:
         core_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 403, "reason": "Forbidden"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.diagnostics.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             core_v1.read_namespaced_pod.side_effect = exc_class()
             mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
@@ -3012,7 +3012,7 @@ class TestGetContainerStatus:
         assert result.error is True
         assert "Access denied" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_pod_401(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -3020,8 +3020,8 @@ class TestGetContainerStatus:
         core_v1 = MagicMock()
         exc_class = type("ApiException", (Exception,), {"status": 401, "reason": "Unauthorized"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.diagnostics.k8s_exceptions") as mock_k8s_exc:
             mock_k8s_exc.ApiException = exc_class
             core_v1.read_namespaced_pod.side_effect = exc_class()
             mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
@@ -3030,7 +3030,7 @@ class TestGetContainerStatus:
         assert result.error is True
         assert "Authentication failed" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_generic_exception(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -3039,13 +3039,13 @@ class TestGetContainerStatus:
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
         core_v1.read_namespaced_pod.side_effect = RuntimeError("timeout")
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_container_status("my-pod", gke_config=cfg)
 
         assert result.error is True
         assert "timeout" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_uses_config_default_namespace(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -3055,13 +3055,13 @@ class TestGetContainerStatus:
         core_v1.read_namespaced_pod.return_value = pod
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             get_container_status("my-pod", gke_config=cfg, namespace="")
 
         call_args = core_v1.read_namespaced_pod.call_args
         assert call_args.kwargs.get("namespace") == "staging"
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_ephemeral_containers(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -3094,14 +3094,14 @@ class TestGetContainerStatus:
         core_v1.read_namespaced_pod.return_value = pod
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_container_status("my-pod", gke_config=cfg)
 
         assert result.error is False
         assert "=== Ephemeral Containers ===" in result.output
         assert "Container: debug" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_no_status_available(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -3113,13 +3113,13 @@ class TestGetContainerStatus:
         core_v1.read_namespaced_pod.return_value = pod
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_container_status("my-pod", gke_config=cfg)
 
         assert result.error is False
         assert "no status available" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_env_from_secret_ref(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -3137,13 +3137,13 @@ class TestGetContainerStatus:
         core_v1.read_namespaced_pod.return_value = pod
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_container_status("my-pod", gke_config=cfg)
 
         assert result.error is False
         assert "Secret: app-secrets (ref only, no values shown)" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_restart_count_displayed(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_container_status
 
@@ -3154,7 +3154,7 @@ class TestGetContainerStatus:
         core_v1.read_namespaced_pod.return_value = pod
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_container_status("my-pod", gke_config=cfg)
 
         assert result.error is False
@@ -3219,8 +3219,8 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = exec_command("my-pod", "ls /tmp", gke_config=cfg)
             assert result.error is True
             assert "kubernetes" in result.output.lower()
@@ -3229,7 +3229,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config()  # exec_enabled defaults to False
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "ls /tmp", gke_config=cfg)
             assert result.error is True
             assert "exec_command is disabled" in result.output
@@ -3239,7 +3239,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "", gke_config=cfg)
             assert result.error is True
             assert "empty" in result.output.lower()
@@ -3248,7 +3248,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "   ", gke_config=cfg)
             assert result.error is True
             assert "empty" in result.output.lower()
@@ -3259,7 +3259,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "cat /etc/passwd; rm -rf /", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3268,7 +3268,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "cat /etc/passwd | grep root", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3277,7 +3277,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "ls & rm -rf /", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3286,7 +3286,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "cat `whoami`", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3295,7 +3295,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "cat $(whoami)", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3304,7 +3304,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "echo test > /tmp/x", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3313,7 +3313,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "echo test >> /tmp/x", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3322,7 +3322,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "rm -rf /", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3331,7 +3331,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "kill -9 1", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3340,7 +3340,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "shutdown -h now", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3349,7 +3349,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "reboot", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3358,7 +3358,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "dd if=/dev/zero of=/dev/sda", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3367,7 +3367,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "mkfs.ext4 /dev/sda1", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3376,7 +3376,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "fdisk /dev/sda", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3385,7 +3385,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "chmod 777 /tmp/x", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3394,7 +3394,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "chown root:root /tmp/x", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3403,7 +3403,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "sudo cat /etc/shadow", gke_config=cfg)
             assert result.error is True
             assert "denied" in result.output.lower()
@@ -3414,7 +3414,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "python3 -c 'import os; os.system(\"rm -rf /\")'", gke_config=cfg)
             assert result.error is True
             # Should be caught by denylist ($) or by allowlist
@@ -3423,7 +3423,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "apt-get install malware", gke_config=cfg)
             assert result.error is True
             assert "allowlist" in result.output.lower() or "allowed" in result.output.lower()
@@ -3434,7 +3434,7 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "ls /tmp", gke_config=cfg, timeout=0)
             assert result.error is True
             assert "timeout" in result.output.lower()
@@ -3443,14 +3443,14 @@ class TestExecCommand:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "ls /tmp", gke_config=cfg, timeout=999)
             assert result.error is True
             assert "timeout" in result.output.lower()
 
     # ── Successful execution ──────────────────────────────
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_successful_ls(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import exec_command
 
@@ -3458,12 +3458,12 @@ class TestExecCommand:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_stream", create=True) as mock_stream:
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.security.k8s_stream", create=True) as mock_stream:
             mock_stream.return_value = "file1.txt\nfile2.txt\ndir1\n"
 
             # Patch the import inside the function
-            with patch("vaig.tools.gke_tools.exec_command.__module__", "vaig.tools.gke_tools"):
+            with patch("vaig.tools.gke.security.exec_command.__module__", "vaig.tools.gke.security"):
                 with patch("kubernetes.stream.stream", mock_stream):
                     result = exec_command("my-pod", "ls /tmp", gke_config=cfg)
 
@@ -3471,7 +3471,7 @@ class TestExecCommand:
         assert "ls /tmp" in result.output
         assert "my-pod" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_successful_cat(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import exec_command
 
@@ -3479,7 +3479,7 @@ class TestExecCommand:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True), \
              patch("kubernetes.stream.stream") as mock_stream:
             mock_stream.return_value = "nameserver 10.0.0.1\nsearch default.svc.cluster.local\n"
             result = exec_command("my-pod", "cat /etc/resolv.conf", gke_config=cfg)
@@ -3488,7 +3488,7 @@ class TestExecCommand:
         assert "cat /etc/resolv.conf" in result.output
         assert "stdout" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_successful_with_container(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import exec_command
 
@@ -3496,7 +3496,7 @@ class TestExecCommand:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True), \
              patch("kubernetes.stream.stream") as mock_stream:
             mock_stream.return_value = "root\n"
             result = exec_command(
@@ -3507,7 +3507,7 @@ class TestExecCommand:
         assert result.error is False
         assert "Container: sidecar" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_output_truncation(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import exec_command
 
@@ -3515,7 +3515,7 @@ class TestExecCommand:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True), \
              patch("kubernetes.stream.stream") as mock_stream:
             mock_stream.return_value = "x" * 20000
             result = exec_command("my-pod", "cat /var/log/app.log", gke_config=cfg)
@@ -3523,7 +3523,7 @@ class TestExecCommand:
         assert result.error is False
         assert "truncated" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_empty_output(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import exec_command
 
@@ -3531,7 +3531,7 @@ class TestExecCommand:
         core_v1 = MagicMock()
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True), \
              patch("kubernetes.stream.stream") as mock_stream:
             mock_stream.return_value = ""
             result = exec_command("my-pod", "ls /empty-dir", gke_config=cfg)
@@ -3541,19 +3541,19 @@ class TestExecCommand:
 
     # ── Error handling ────────────────────────────────────
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_client_creation_error(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import exec_command
 
         cfg = _make_gke_config(exec_enabled=True)
         mock_clients.return_value = ToolResult(output="Failed to configure", error=True)
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = exec_command("my-pod", "ls /tmp", gke_config=cfg)
             assert result.error is True
             assert "Failed to configure" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_pod_not_found(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import exec_command
 
@@ -3563,8 +3563,8 @@ class TestExecCommand:
 
         exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_exc, \
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.security.k8s_exceptions") as mock_exc, \
              patch("kubernetes.stream.stream") as mock_stream:
             mock_exc.ApiException = exc_class
             mock_stream.side_effect = exc_class()
@@ -3573,7 +3573,7 @@ class TestExecCommand:
         assert result.error is True
         assert "not found" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_permission_denied(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import exec_command
 
@@ -3583,8 +3583,8 @@ class TestExecCommand:
 
         exc_class = type("ApiException", (Exception,), {"status": 403, "reason": "Forbidden"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_exc, \
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.security.k8s_exceptions") as mock_exc, \
              patch("kubernetes.stream.stream") as mock_stream:
             mock_exc.ApiException = exc_class
             mock_stream.side_effect = exc_class()
@@ -3690,25 +3690,25 @@ class TestCheckRbac:
         from vaig.tools.gke_tools import check_rbac
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = check_rbac("get", "pods", gke_config=cfg)
             assert result.error is True
             assert "kubernetes" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_client_creation_error(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import check_rbac
 
         cfg = _make_gke_config()
         mock_clients.return_value = ToolResult(output="Failed to configure", error=True)
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True):
             result = check_rbac("get", "pods", gke_config=cfg)
             assert result.error is True
             assert "Failed to configure" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_self_access_allowed(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import check_rbac
 
@@ -3722,8 +3722,8 @@ class TestCheckRbac:
         mock_review.status.denied = False
         mock_review.status.evaluation_error = ""
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_client") as mock_k8s:
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.security.k8s_client") as mock_k8s:
             mock_auth = MagicMock()
             mock_k8s.AuthorizationV1Api.return_value = mock_auth
             mock_auth.create_self_subject_access_review.return_value = mock_review
@@ -3734,7 +3734,7 @@ class TestCheckRbac:
         assert "current user" in result.output.lower()
         assert "get pods" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_self_access_denied(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import check_rbac
 
@@ -3748,8 +3748,8 @@ class TestCheckRbac:
         mock_review.status.denied = True
         mock_review.status.evaluation_error = ""
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_client") as mock_k8s:
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.security.k8s_client") as mock_k8s:
             mock_auth = MagicMock()
             mock_k8s.AuthorizationV1Api.return_value = mock_auth
             mock_auth.create_self_subject_access_review.return_value = mock_review
@@ -3759,7 +3759,7 @@ class TestCheckRbac:
         assert "Allowed: NO" in result.output
         assert "Explicitly Denied: YES" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_service_account_check(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import check_rbac
 
@@ -3773,8 +3773,8 @@ class TestCheckRbac:
         mock_review.status.denied = False
         mock_review.status.evaluation_error = ""
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_client") as mock_k8s:
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.security.k8s_client") as mock_k8s:
             mock_auth = MagicMock()
             mock_k8s.AuthorizationV1Api.return_value = mock_auth
             mock_auth.create_subject_access_review.return_value = mock_review
@@ -3787,7 +3787,7 @@ class TestCheckRbac:
         assert "Allowed: YES" in result.output
         assert "system:serviceaccount:production:my-sa" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_resource_name_shown(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import check_rbac
 
@@ -3801,8 +3801,8 @@ class TestCheckRbac:
         mock_review.status.denied = False
         mock_review.status.evaluation_error = ""
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_client") as mock_k8s:
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.security.k8s_client") as mock_k8s:
             mock_auth = MagicMock()
             mock_k8s.AuthorizationV1Api.return_value = mock_auth
             mock_auth.create_self_subject_access_review.return_value = mock_review
@@ -3814,7 +3814,7 @@ class TestCheckRbac:
         assert result.error is False
         assert "Resource Name: my-secret" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_resource_alias_normalised(self, mock_clients: MagicMock) -> None:
         """Resource aliases like 'po' should be normalised to 'pods'."""
         from vaig.tools.gke_tools import check_rbac
@@ -3829,8 +3829,8 @@ class TestCheckRbac:
         mock_review.status.denied = False
         mock_review.status.evaluation_error = ""
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_client") as mock_k8s:
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.security.k8s_client") as mock_k8s:
             mock_auth = MagicMock()
             mock_k8s.AuthorizationV1Api.return_value = mock_auth
             mock_auth.create_self_subject_access_review.return_value = mock_review
@@ -3839,7 +3839,7 @@ class TestCheckRbac:
         assert result.error is False
         assert "pods" in result.output  # normalised from "po"
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_api_permission_denied(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import check_rbac
 
@@ -3849,9 +3849,9 @@ class TestCheckRbac:
 
         exc_class = type("ApiException", (Exception,), {"status": 403, "reason": "Forbidden"})
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_client") as mock_k8s, \
-             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_exc:
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.security.k8s_client") as mock_k8s, \
+             patch("vaig.tools.gke.security.k8s_exceptions") as mock_exc:
             mock_auth = MagicMock()
             mock_k8s.AuthorizationV1Api.return_value = mock_auth
             mock_exc.ApiException = exc_class
@@ -3861,7 +3861,7 @@ class TestCheckRbac:
         assert result.error is True
         assert "permission denied" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_evaluation_error_shown(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import check_rbac
 
@@ -3875,8 +3875,8 @@ class TestCheckRbac:
         mock_review.status.denied = False
         mock_review.status.evaluation_error = "webhook timeout"
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke_tools.k8s_client") as mock_k8s:
+        with patch("vaig.tools.gke.security._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.security.k8s_client") as mock_k8s:
             mock_auth = MagicMock()
             mock_k8s.AuthorizationV1Api.return_value = mock_auth
             mock_auth.create_self_subject_access_review.return_value = mock_review
@@ -3896,7 +3896,7 @@ class TestCreateGkeToolsPhase3:
         from vaig.tools.gke_tools import create_gke_tools
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             tools = create_gke_tools(cfg)
             assert len(tools) == 18
 
@@ -3904,7 +3904,7 @@ class TestCreateGkeToolsPhase3:
         from vaig.tools.gke_tools import create_gke_tools
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             tools = create_gke_tools(cfg)
             names = [t.name for t in tools]
             assert "exec_command" in names
@@ -3913,7 +3913,7 @@ class TestCreateGkeToolsPhase3:
         from vaig.tools.gke_tools import create_gke_tools
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             tools = create_gke_tools(cfg)
             names = [t.name for t in tools]
             assert "check_rbac" in names
@@ -3922,7 +3922,7 @@ class TestCreateGkeToolsPhase3:
         from vaig.tools.gke_tools import create_gke_tools
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             tools = create_gke_tools(cfg)
             names = [t.name for t in tools]
             assert "get_rollout_history" in names
@@ -3992,25 +3992,25 @@ class TestGetRolloutHistory:
         from vaig.tools.gke_tools import get_rollout_history
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = get_rollout_history("my-deploy", gke_config=cfg)
             assert result.error is True
             assert "kubernetes" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_client_creation_error(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_history
 
         cfg = _make_gke_config()
         mock_clients.return_value = ToolResult(output="Failed to configure", error=True)
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_history("my-deploy", gke_config=cfg)
             assert result.error is True
             assert "Failed to configure" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_deployment_not_found_404(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_history
         from vaig.tools.gke_tools import k8s_exceptions
@@ -4023,13 +4023,13 @@ class TestGetRolloutHistory:
         k8s_exceptions.ApiException = exc_class
         apps_v1.read_namespaced_deployment.side_effect = exc_class()
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_history("missing-deploy", gke_config=cfg, namespace="prod")
             assert result.error is True
             assert "not found" in result.output.lower()
             assert "prod" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_deployment_no_replicasets(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_history
 
@@ -4047,12 +4047,12 @@ class TestGetRolloutHistory:
         rs_list.items = []
         apps_v1.list_namespaced_replica_set.return_value = rs_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_history("web", gke_config=cfg)
             assert result.error is False
             assert "no revision history" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_list_multiple_revisions(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_history
 
@@ -4076,7 +4076,7 @@ class TestGetRolloutHistory:
         rs_list.items = [rs1, rs2, rs3]
         apps_v1.list_namespaced_replica_set.return_value = rs_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_history("web", gke_config=cfg)
 
         assert result.error is False
@@ -4093,7 +4093,7 @@ class TestGetRolloutHistory:
         assert "scaled-down" in rev_lines[2]
         assert "Total revisions: 3" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_list_sorted_newest_first(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_history
 
@@ -4118,7 +4118,7 @@ class TestGetRolloutHistory:
         rs_list.items = [rs2, rs5, rs4]  # Deliberately not sorted
         apps_v1.list_namespaced_replica_set.return_value = rs_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_history("api", gke_config=cfg)
 
         assert result.error is False
@@ -4128,7 +4128,7 @@ class TestGetRolloutHistory:
         revs = [int(l.strip().split()[0]) for l in rev_lines]
         assert revs == [5, 4, 2]
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_specific_revision_detail(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_history
 
@@ -4176,7 +4176,7 @@ class TestGetRolloutHistory:
         rs_list.items = [rs]
         apps_v1.list_namespaced_replica_set.return_value = rs_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_history("web", gke_config=cfg, revision=2)
 
         assert result.error is False
@@ -4194,7 +4194,7 @@ class TestGetRolloutHistory:
         assert "Limits:   cpu=500m, memory=512Mi" in result.output
         assert "/etc/config from config-vol (ro)" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_specific_revision_not_found(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_history
 
@@ -4214,14 +4214,14 @@ class TestGetRolloutHistory:
         rs_list.items = [rs1]
         apps_v1.list_namespaced_replica_set.return_value = rs_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_history("web", gke_config=cfg, revision=99)
 
         assert result.error is True
         assert "Revision 99 not found" in result.output
         assert "1" in result.output  # Shows available revisions
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_api_error_403(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_history
         from vaig.tools.gke_tools import k8s_exceptions
@@ -4234,12 +4234,12 @@ class TestGetRolloutHistory:
         k8s_exceptions.ApiException = exc_class
         apps_v1.read_namespaced_deployment.side_effect = exc_class()
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_history("web", gke_config=cfg)
             assert result.error is True
             assert "Access denied" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_api_error_401(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_history
         from vaig.tools.gke_tools import k8s_exceptions
@@ -4252,12 +4252,12 @@ class TestGetRolloutHistory:
         k8s_exceptions.ApiException = exc_class
         apps_v1.read_namespaced_deployment.side_effect = exc_class()
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_history("web", gke_config=cfg)
             assert result.error is True
             assert "Authentication failed" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_generic_exception(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_history
 
@@ -4267,12 +4267,12 @@ class TestGetRolloutHistory:
 
         apps_v1.read_namespaced_deployment.side_effect = RuntimeError("boom")
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_history("web", gke_config=cfg)
             assert result.error is True
             assert "boom" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_replicasets_not_owned_by_deployment_are_ignored(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_history
 
@@ -4294,14 +4294,14 @@ class TestGetRolloutHistory:
         rs_list.items = [rs_owned, rs_other]
         apps_v1.list_namespaced_replica_set.return_value = rs_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_history("web", gke_config=cfg)
 
         assert result.error is False
         assert "Total revisions: 1" in result.output
         assert "api" not in result.output.lower().replace("rollout history: web", "")
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_env_from_configmap_and_secret_shown(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_history
 
@@ -4332,7 +4332,7 @@ class TestGetRolloutHistory:
         rs_list.items = [rs]
         apps_v1.list_namespaced_replica_set.return_value = rs_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             result = get_rollout_history("web", gke_config=cfg, revision=1)
 
         assert result.error is False
@@ -4340,7 +4340,7 @@ class TestGetRolloutHistory:
         assert "Secret: app-secrets" in result.output
         assert "ref only" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_uses_default_namespace_from_config(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import get_rollout_history
 
@@ -4357,7 +4357,7 @@ class TestGetRolloutHistory:
         rs_list.items = []
         apps_v1.list_namespaced_replica_set.return_value = rs_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             # Pass empty namespace to trigger config default
             get_rollout_history("web", gke_config=cfg, namespace="")
 
@@ -4480,7 +4480,7 @@ class TestDetectAutopilot:
 
         cfg = _make_gke_config()
 
-        with patch("vaig.tools.gke_tools._query_autopilot_status", return_value=True):
+        with patch("vaig.tools.gke._clients._query_autopilot_status", return_value=True):
             result = detect_autopilot(cfg)
 
         assert result is True
@@ -4490,7 +4490,7 @@ class TestDetectAutopilot:
 
         cfg = _make_gke_config()
 
-        with patch("vaig.tools.gke_tools._query_autopilot_status", return_value=False):
+        with patch("vaig.tools.gke._clients._query_autopilot_status", return_value=False):
             result = detect_autopilot(cfg)
 
         assert result is False
@@ -4512,7 +4512,7 @@ class TestDetectAutopilot:
         from vaig.tools.gke_tools import detect_autopilot
 
         with patch(
-            "vaig.tools.gke_tools._query_autopilot_status",
+            "vaig.tools.gke._clients._query_autopilot_status",
             side_effect=Exception("API unavailable"),
         ):
             cfg = _make_gke_config()
@@ -4539,7 +4539,7 @@ class TestAutopilotToolBehavior:
                 return t
         raise AssertionError(f"Tool '{name}' not found")
 
-    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=True)
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=True)
     def test_kubectl_top_nodes_skipped_on_autopilot(self, _mock_detect: MagicMock) -> None:
         from vaig.tools.gke_tools import create_gke_tools
 
@@ -4552,8 +4552,8 @@ class TestAutopilotToolBehavior:
         assert "kubectl top nodes is not available" in result.output
         assert result.error is False
 
-    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=True)
-    @patch("vaig.tools.gke_tools.kubectl_top")
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=True)
+    @patch("vaig.tools.gke.kubectl.kubectl_top")
     def test_kubectl_top_pods_works_on_autopilot(self, mock_top: MagicMock, _mock_detect: MagicMock) -> None:
         from vaig.tools.gke_tools import create_gke_tools
 
@@ -4566,8 +4566,8 @@ class TestAutopilotToolBehavior:
         result = top_tool.execute(resource_type="pods")
         assert result.output == "pod metrics here"
 
-    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=True)
-    @patch("vaig.tools.gke_tools.get_node_conditions")
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=True)
+    @patch("vaig.tools.gke.diagnostics.get_node_conditions")
     def test_get_node_conditions_works_on_autopilot(self, mock_nodes: MagicMock, _mock_detect: MagicMock) -> None:
         """On Autopilot, get_node_conditions calls the real function (node reads are allowed)."""
         from vaig.tools.gke_tools import create_gke_tools
@@ -4582,8 +4582,8 @@ class TestAutopilotToolBehavior:
         assert result.output == "node conditions here"
         mock_nodes.assert_called_once()
 
-    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=False)
-    @patch("vaig.tools.gke_tools.kubectl_top")
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=False)
+    @patch("vaig.tools.gke.kubectl.kubectl_top")
     def test_kubectl_top_nodes_works_on_standard(self, mock_top: MagicMock, _mock_detect: MagicMock) -> None:
         from vaig.tools.gke_tools import create_gke_tools
 
@@ -4596,8 +4596,8 @@ class TestAutopilotToolBehavior:
         result = top_tool.execute(resource_type="nodes")
         assert result.output == "node metrics here"
 
-    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=False)
-    @patch("vaig.tools.gke_tools.get_node_conditions")
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=False)
+    @patch("vaig.tools.gke.diagnostics.get_node_conditions")
     def test_get_node_conditions_works_on_standard(self, mock_nodes: MagicMock, _mock_detect: MagicMock) -> None:
         from vaig.tools.gke_tools import create_gke_tools
 
@@ -4610,7 +4610,7 @@ class TestAutopilotToolBehavior:
         result = node_tool.execute()
         assert result.output == "node conditions here"
 
-    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=True)
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=True)
     def test_tool_count_unchanged_on_autopilot(self, _mock_detect: MagicMock) -> None:
         """Autopilot detection must NOT change the number of tools."""
         from vaig.tools.gke_tools import create_gke_tools
@@ -4680,27 +4680,27 @@ class TestDiscoverWorkloads:
         from vaig.tools.gke_tools import discover_workloads
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = discover_workloads(gke_config=cfg)
             assert result.error is True
             assert "kubernetes" in result.output.lower()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_client_creation_error(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_workloads
 
         cfg = _make_gke_config()
         mock_clients.return_value = ToolResult(output="Failed to configure", error=True)
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True):
             result = discover_workloads(gke_config=cfg)
             assert result.error is True
             assert "Failed to configure" in result.output
 
-    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=False)
-    @patch("vaig.tools.gke_tools._list_resource")
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=False)
+    @patch("vaig.tools.gke._resources._list_resource")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_no_workloads_found(self, mock_clients: MagicMock, mock_list: MagicMock, _mock_ap: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_workloads
 
@@ -4710,15 +4710,15 @@ class TestDiscoverWorkloads:
         empty_result.items = []
         mock_list.return_value = empty_result
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True):
             result = discover_workloads(gke_config=cfg)
 
         assert result.error is False
         assert "No workloads found" in result.output
 
-    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=False)
-    @patch("vaig.tools.gke_tools._list_resource")
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=False)
+    @patch("vaig.tools.gke._resources._list_resource")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_deployments_listed(self, mock_clients: MagicMock, mock_list: MagicMock, _mock_ap: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_workloads
 
@@ -4736,7 +4736,7 @@ class TestDiscoverWorkloads:
         # deployments returns dep_list; statefulsets, daemonsets return empty
         mock_list.side_effect = [dep_list, empty, empty]
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True):
             result = discover_workloads(gke_config=cfg)
 
         assert result.error is False
@@ -4744,9 +4744,9 @@ class TestDiscoverWorkloads:
         assert "deployments" in result.output
         assert "Total: 1 workloads, 0 unhealthy" in result.output
 
-    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=False)
-    @patch("vaig.tools.gke_tools._list_resource")
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=False)
+    @patch("vaig.tools.gke._resources._list_resource")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_unhealthy_deployment_shows_warn(self, mock_clients: MagicMock, mock_list: MagicMock, _mock_ap: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_workloads
 
@@ -4762,16 +4762,16 @@ class TestDiscoverWorkloads:
         empty.items = []
         mock_list.side_effect = [dep_list, empty, empty]
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True):
             result = discover_workloads(gke_config=cfg)
 
         assert "WARN" in result.output
         assert "broken-app" in result.output
         assert "1 unhealthy" in result.output
 
-    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=False)
-    @patch("vaig.tools.gke_tools._list_resource")
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=False)
+    @patch("vaig.tools.gke._resources._list_resource")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_include_jobs_adds_job_resources(self, mock_clients: MagicMock, mock_list: MagicMock, _mock_ap: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_workloads
 
@@ -4784,15 +4784,15 @@ class TestDiscoverWorkloads:
         # 5 resource types: deployments, statefulsets, daemonsets, jobs, cronjobs
         mock_list.return_value = empty
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True):
             result = discover_workloads(gke_config=cfg, include_jobs=True)
 
         # Should have been called 5 times (3 base + 2 job types)
         assert mock_list.call_count == 5
 
-    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=False)
-    @patch("vaig.tools.gke_tools._list_resource")
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=False)
+    @patch("vaig.tools.gke._resources._list_resource")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_cache_returns_cached_result(self, mock_clients: MagicMock, mock_list: MagicMock, _mock_ap: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_workloads
 
@@ -4803,7 +4803,7 @@ class TestDiscoverWorkloads:
         empty.items = []
         mock_list.return_value = empty
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True):
             # First call populates cache
             result1 = discover_workloads(gke_config=cfg)
             # Second call should use cache — clients should not be called again
@@ -4813,9 +4813,9 @@ class TestDiscoverWorkloads:
         assert result2.output == result1.output
         mock_clients.assert_not_called()
 
-    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=False)
-    @patch("vaig.tools.gke_tools._list_resource")
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=False)
+    @patch("vaig.tools.gke._resources._list_resource")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_force_refresh_bypasses_cache(self, mock_clients: MagicMock, mock_list: MagicMock, _mock_ap: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_workloads
 
@@ -4826,7 +4826,7 @@ class TestDiscoverWorkloads:
         empty.items = []
         mock_list.return_value = empty
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True):
             discover_workloads(gke_config=cfg)
             mock_clients.reset_mock()
             discover_workloads(gke_config=cfg, force_refresh=True)
@@ -4834,9 +4834,9 @@ class TestDiscoverWorkloads:
         # force_refresh should have called clients again
         mock_clients.assert_called_once()
 
-    @patch("vaig.tools.gke_tools.detect_autopilot", return_value=False)
-    @patch("vaig.tools.gke_tools._list_resource")
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=False)
+    @patch("vaig.tools.gke._resources._list_resource")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_list_resource_error_is_captured(self, mock_clients: MagicMock, mock_list: MagicMock, _mock_ap: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_workloads
 
@@ -4850,7 +4850,7 @@ class TestDiscoverWorkloads:
             MagicMock(items=[]),
         ]
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True):
             result = discover_workloads(gke_config=cfg)
 
         assert "Partial errors" in result.output
@@ -4867,24 +4867,24 @@ class TestDiscoverServiceMesh:
         from vaig.tools.gke_tools import discover_service_mesh
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = discover_service_mesh(gke_config=cfg)
             assert result.error is True
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_client_creation_error(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_service_mesh
 
         cfg = _make_gke_config()
         mock_clients.return_value = ToolResult(output="Failed to configure", error=True)
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True):
             result = discover_service_mesh(gke_config=cfg)
             assert result.error is True
             assert "Failed to configure" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_no_mesh_detected(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_service_mesh
 
@@ -4909,7 +4909,7 @@ class TestDiscoverServiceMesh:
         pod_list.items = [pod]
         core_v1.list_pod_for_all_namespaces.return_value = pod_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True), \
              patch("kubernetes.client.ApiextensionsV1Api") as mock_ext:
             mock_ext_instance = MagicMock()
             mock_ext.return_value = mock_ext_instance
@@ -4923,7 +4923,7 @@ class TestDiscoverServiceMesh:
         assert "NO MESH DETECTED" in result.output
         assert "Istio" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_istio_detected_via_namespace(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_service_mesh
 
@@ -4964,7 +4964,7 @@ class TestDiscoverServiceMesh:
         pod_list.items = [pod]
         core_v1.list_pod_for_all_namespaces.return_value = pod_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True), \
              patch("kubernetes.client.ApiextensionsV1Api") as mock_ext:
             mock_ext_instance = MagicMock()
             mock_ext.return_value = mock_ext_instance
@@ -4981,20 +4981,20 @@ class TestDiscoverServiceMesh:
         assert "istiod-abc123" in result.output
         assert "istio-proxy" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_cache_hit_skips_api_calls(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import _set_cache, discover_service_mesh
 
         cfg = _make_gke_config()
         _set_cache("mesh:", "cached-mesh-output")
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True):
             result = discover_service_mesh(gke_config=cfg)
 
         assert result.output == "cached-mesh-output"
         mock_clients.assert_not_called()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_namespace_filter_uses_namespaced_pod_list(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_service_mesh
 
@@ -5012,7 +5012,7 @@ class TestDiscoverServiceMesh:
         pod_list.items = []
         core_v1.list_namespaced_pod.return_value = pod_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True), \
              patch("kubernetes.client.ApiextensionsV1Api") as mock_ext:
             mock_ext_instance = MagicMock()
             mock_ext.return_value = mock_ext_instance
@@ -5037,23 +5037,23 @@ class TestDiscoverNetworkTopology:
         from vaig.tools.gke_tools import discover_network_topology
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
-             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_IMPORT_ERROR", "kubernetes not installed"):
             result = discover_network_topology(gke_config=cfg)
             assert result.error is True
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_client_creation_error(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_network_topology
 
         cfg = _make_gke_config()
         mock_clients.return_value = ToolResult(output="Failed to configure", error=True)
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True):
             result = discover_network_topology(gke_config=cfg)
             assert result.error is True
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_empty_cluster(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_network_topology
 
@@ -5071,7 +5071,7 @@ class TestDiscoverNetworkTopology:
         ep_list.items = []
         core_v1.list_endpoints_for_all_namespaces.return_value = ep_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True), \
              patch("kubernetes.client.NetworkingV1Api") as mock_net:
             mock_net_instance = MagicMock()
             mock_net.return_value = mock_net_instance
@@ -5089,7 +5089,7 @@ class TestDiscoverNetworkTopology:
         assert "SERVICES (0)" in result.output
         assert "ENDPOINTS (0)" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_services_grouped_by_type(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_network_topology
 
@@ -5124,7 +5124,7 @@ class TestDiscoverNetworkTopology:
         ep_list.items = [ep]
         core_v1.list_endpoints_for_all_namespaces.return_value = ep_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True), \
              patch("kubernetes.client.NetworkingV1Api") as mock_net:
             mock_net_instance = MagicMock()
             mock_net.return_value = mock_net_instance
@@ -5143,7 +5143,7 @@ class TestDiscoverNetworkTopology:
         assert "ClusterIP" in result.output
         assert "2 ready" in result.output
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_namespace_filter(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_network_topology
 
@@ -5160,7 +5160,7 @@ class TestDiscoverNetworkTopology:
         ep_list.items = []
         core_v1.list_namespaced_endpoints.return_value = ep_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True), \
              patch("kubernetes.client.NetworkingV1Api") as mock_net:
             mock_net_instance = MagicMock()
             mock_net.return_value = mock_net_instance
@@ -5177,20 +5177,20 @@ class TestDiscoverNetworkTopology:
         core_v1.list_namespaced_endpoints.assert_called_once_with(namespace="prod")
         core_v1.list_service_for_all_namespaces.assert_not_called()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_cache_hit_skips_api_calls(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import _set_cache, discover_network_topology
 
         cfg = _make_gke_config()
         _set_cache("network:", "cached-network-output")
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True):
             result = discover_network_topology(gke_config=cfg)
 
         assert result.output == "cached-network-output"
         mock_clients.assert_not_called()
 
-    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_partial_api_errors_reported(self, mock_clients: MagicMock) -> None:
         from vaig.tools.gke_tools import discover_network_topology
 
@@ -5207,7 +5207,7 @@ class TestDiscoverNetworkTopology:
         ep_list.items = []
         core_v1.list_endpoints_for_all_namespaces.return_value = ep_list
 
-        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True), \
              patch("kubernetes.client.NetworkingV1Api") as mock_net:
             mock_net_instance = MagicMock()
             mock_net.return_value = mock_net_instance

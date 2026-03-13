@@ -1,0 +1,581 @@
+"""Read operations — kubectl get, describe, logs, top equivalents."""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import TYPE_CHECKING, Any
+
+from vaig.tools.base import ToolResult
+
+from . import _clients, _formatters, _resources
+
+if TYPE_CHECKING:
+    from vaig.core.config import GKEConfig
+
+logger = logging.getLogger(__name__)
+
+# ── Lazy import guard (mirrors _clients.py) ──────────────────
+# Needed locally for except clauses and k8s_client usage in _format_describe.
+_K8S_AVAILABLE = True
+try:
+    from kubernetes import client as k8s_client  # noqa: WPS433
+    from kubernetes.client import exceptions as k8s_exceptions  # noqa: WPS433
+except ImportError:
+    _K8S_AVAILABLE = False
+
+
+# ── kubectl_get ──────────────────────────────────────────────
+
+
+def kubectl_get(
+    resource: str,
+    *,
+    gke_config: GKEConfig,
+    name: str | None = None,
+    namespace: str = "default",
+    output_format: str = "table",
+    label_selector: str | None = None,
+    field_selector: str | None = None,
+) -> ToolResult:
+    """List or get Kubernetes resources (read-only kubectl get equivalent).
+
+    Supports pods, deployments, services, configmaps, hpa, ingress, nodes,
+    namespaces, statefulsets, daemonsets, jobs, cronjobs, pv, pvc, secrets,
+    serviceaccounts, endpoints, networkpolicies, and replicasets.
+    """
+    if not _clients._K8S_AVAILABLE:
+        return _clients._k8s_unavailable()
+
+    resource = _resources._normalise_resource(resource)
+    if resource not in _resources._RESOURCE_API_MAP:
+        supported = sorted(_resources._RESOURCE_API_MAP.keys())
+        return ToolResult(
+            output=f"Unsupported resource type: '{resource}'. Supported: {', '.join(supported)}",
+            error=True,
+        )
+
+    if output_format not in ("table", "yaml", "json", "wide"):
+        return ToolResult(
+            output=f"Invalid output_format: '{output_format}'. Must be one of: table, yaml, json, wide",
+            error=True,
+        )
+
+    # Use the config's default namespace when caller doesn't specify
+    ns = namespace or gke_config.default_namespace
+
+    result = _clients._create_k8s_clients(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+    core_v1, apps_v1, custom_api, api_client_inst = result
+
+    try:
+        api_result = _resources._list_resource(
+            core_v1, apps_v1, custom_api, resource,
+            namespace=ns,
+            label_selector=label_selector,
+            field_selector=field_selector,
+            api_client=api_client_inst,
+        )
+        # _list_resource may return a ToolResult on unsupported resource
+        if isinstance(api_result, ToolResult):
+            return api_result
+
+        items = api_result.items
+
+        # If a specific name was requested, filter to that item
+        if name:
+            items = [i for i in items if i.metadata.name == name]
+            if not items:
+                return ToolResult(
+                    output=f"{resource}/{name} not found in namespace '{ns}'",
+                    error=True,
+                )
+
+        return ToolResult(output=_formatters._format_items(resource, items, output_format))
+
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            return ToolResult(output=f"Namespace '{ns}' not found or resource type '{resource}' not available", error=True)
+        if exc.status == 403:
+            return ToolResult(output=f"Access denied: insufficient permissions to list {resource} in namespace '{ns}'", error=True)
+        if exc.status == 401:
+            return ToolResult(output="Authentication failed: check your kubeconfig or GKE credentials", error=True)
+        return ToolResult(output=f"Kubernetes API error ({exc.status}): {exc.reason}", error=True)
+    except Exception as exc:
+        logger.exception("kubectl_get failed")
+        return ToolResult(output=f"Error listing {resource}: {exc}", error=True)
+
+
+# ── _describe_resource ───────────────────────────────────────
+
+
+def _describe_resource(
+    core_v1: Any,
+    apps_v1: Any,
+    resource: str,
+    name: str,
+    namespace: str,
+    api_client: Any | None = None,
+) -> Any:
+    """Read a single resource by name for describe output."""
+    api_group = _resources._RESOURCE_API_MAP.get(resource, "core")
+    is_cluster_scoped = resource in ("nodes", "namespaces", "pv", "persistentvolumes")
+
+    # ── Core V1 ───────────────────────────────────────────────
+    if api_group == "core":
+        read_map: dict[str, tuple[str, str]] = {
+            "pods": ("read_namespaced_pod", ""),
+            "services": ("read_namespaced_service", ""),
+            "configmaps": ("read_namespaced_config_map", ""),
+            "secrets": ("read_namespaced_secret", ""),
+            "serviceaccounts": ("read_namespaced_service_account", ""),
+            "endpoints": ("read_namespaced_endpoints", ""),
+            "pvc": ("read_namespaced_persistent_volume_claim", ""),
+            "persistentvolumeclaims": ("read_namespaced_persistent_volume_claim", ""),
+            "resourcequotas": ("read_namespaced_resource_quota", ""),
+            "nodes": ("", "read_node"),
+            "namespaces": ("", "read_namespace"),
+            "pv": ("", "read_persistent_volume"),
+            "persistentvolumes": ("", "read_persistent_volume"),
+        }
+        entry = read_map.get(resource)
+        if not entry:
+            return None
+        ns_method, cluster_method = entry
+        if is_cluster_scoped:
+            return getattr(core_v1, cluster_method)(name=name)
+        return getattr(core_v1, ns_method)(name=name, namespace=namespace)
+
+    # ── Apps V1 ───────────────────────────────────────────────
+    if api_group == "apps":
+        read_map_apps: dict[str, str] = {
+            "deployments": "read_namespaced_deployment",
+            "statefulsets": "read_namespaced_stateful_set",
+            "daemonsets": "read_namespaced_daemon_set",
+            "replicasets": "read_namespaced_replica_set",
+        }
+        method_name = read_map_apps.get(resource)
+        if not method_name:
+            return None
+        return getattr(apps_v1, method_name)(name=name, namespace=namespace)
+
+    # ── Batch V1 ──────────────────────────────────────────────
+    if api_group == "batch":
+        from kubernetes.client import BatchV1Api  # noqa: WPS433
+
+        batch_v1 = BatchV1Api(api_client=api_client)
+        read_map_batch: dict[str, str] = {
+            "jobs": "read_namespaced_job",
+            "cronjobs": "read_namespaced_cron_job",
+        }
+        method_name_b = read_map_batch.get(resource)
+        if not method_name_b:
+            return None
+        return getattr(batch_v1, method_name_b)(name=name, namespace=namespace)
+
+    # ── Autoscaling ───────────────────────────────────────────
+    if api_group == "autoscaling":
+        from kubernetes.client import AutoscalingV2Api  # noqa: WPS433
+
+        return AutoscalingV2Api(api_client=api_client).read_namespaced_horizontal_pod_autoscaler(
+            name=name, namespace=namespace,
+        )
+
+    # ── Networking ────────────────────────────────────────────
+    if api_group == "networking":
+        from kubernetes.client import NetworkingV1Api  # noqa: WPS433
+
+        net_v1 = NetworkingV1Api(api_client=api_client)
+        read_map_net: dict[str, str] = {
+            "ingress": "read_namespaced_ingress",
+            "ingresses": "read_namespaced_ingress",
+            "networkpolicies": "read_namespaced_network_policy",
+        }
+        method_name_n = read_map_net.get(resource)
+        if not method_name_n:
+            return None
+        return getattr(net_v1, method_name_n)(name=name, namespace=namespace)
+
+    # ── Policy V1 ────────────────────────────────────────────
+    if api_group == "policy":
+        from kubernetes.client import PolicyV1Api  # noqa: WPS433
+
+        return PolicyV1Api(api_client=api_client).read_namespaced_pod_disruption_budget(
+            name=name, namespace=namespace,
+        )
+
+    return None
+
+
+# ── _format_describe ─────────────────────────────────────────
+
+
+def _format_describe(resource: str, obj: Any, api_client: Any | None = None) -> str:
+    """Format a single K8s resource object into a kubectl-describe-style output."""
+    lines: list[str] = []
+    meta = obj.metadata
+
+    lines.append(f"Name:         {meta.name}")
+    if meta.namespace:
+        lines.append(f"Namespace:    {meta.namespace}")
+
+    # Labels
+    labels = meta.labels or {}
+    lines.append("Labels:       " + (", ".join(f"{k}={v}" for k, v in sorted(labels.items())) if labels else "<none>"))
+
+    # Annotations
+    annotations = meta.annotations or {}
+    lines.append("Annotations:  " + (", ".join(f"{k}={v}" for k, v in sorted(annotations.items())) if annotations else "<none>"))
+
+    lines.append(f"CreationTimestamp: {meta.creation_timestamp}")
+
+    # Resource-specific sections
+    if resource == "pods" and obj.spec:
+        lines.append(f"Node:         {obj.spec.node_name or '<none>'}")
+        lines.append(f"Status:       {_formatters._pod_status(obj)}")
+        if obj.status and obj.status.pod_ip:
+            lines.append(f"IP:           {obj.status.pod_ip}")
+        # Containers
+        lines.append("Containers:")
+        for c in obj.spec.containers or []:
+            lines.append(f"  {c.name}:")
+            lines.append(f"    Image:   {c.image}")
+            if c.ports:
+                ports = ", ".join(f"{p.container_port}/{p.protocol or 'TCP'}" for p in c.ports)
+                lines.append(f"    Ports:   {ports}")
+            if c.resources:
+                if c.resources.requests:
+                    lines.append(f"    Requests: {c.resources.requests}")
+                if c.resources.limits:
+                    lines.append(f"    Limits:   {c.resources.limits}")
+        # Container statuses
+        if obj.status and obj.status.container_statuses:
+            lines.append("Container Statuses:")
+            for cs in obj.status.container_statuses:
+                lines.append(f"  {cs.name}:")
+                lines.append(f"    Ready:    {cs.ready}")
+                lines.append(f"    Restarts: {cs.restart_count}")
+                if cs.state:
+                    if cs.state.running:
+                        lines.append(f"    State:    Running (since {cs.state.running.started_at})")
+                    elif cs.state.waiting:
+                        lines.append(f"    State:    Waiting ({cs.state.waiting.reason})")
+                    elif cs.state.terminated:
+                        lines.append(f"    State:    Terminated ({cs.state.terminated.reason})")
+
+    elif resource == "deployments" and obj.spec:
+        lines.append(f"Replicas:     {obj.spec.replicas} desired")
+        if obj.status:
+            lines.append(f"  Ready:      {obj.status.ready_replicas or 0}")
+            lines.append(f"  Available:  {obj.status.available_replicas or 0}")
+            lines.append(f"  Updated:    {obj.status.updated_replicas or 0}")
+        if obj.spec.strategy:
+            lines.append(f"Strategy:     {obj.spec.strategy.type}")
+
+    elif resource == "services" and obj.spec:
+        lines.append(f"Type:         {obj.spec.type}")
+        lines.append(f"ClusterIP:    {obj.spec.cluster_ip}")
+        if obj.spec.ports:
+            for p in obj.spec.ports:
+                port_info = f"{p.port}"
+                if p.target_port:
+                    port_info += f" → {p.target_port}"
+                if p.node_port:
+                    port_info += f" (NodePort: {p.node_port})"
+                lines.append(f"  Port:       {p.name or ''} {port_info}/{p.protocol or 'TCP'}")
+        if obj.spec.selector:
+            lines.append(f"Selector:     {obj.spec.selector}")
+
+    elif resource == "nodes" and obj.status:
+        # Conditions
+        lines.append("Conditions:")
+        for cond in obj.status.conditions or []:
+            lines.append(f"  {cond.type}: {cond.status} ({cond.reason or ''}) — {cond.message or ''}")
+        # Allocatable
+        if obj.status.allocatable:
+            lines.append("Allocatable:")
+            for k, v in sorted(obj.status.allocatable.items()):
+                lines.append(f"  {k}: {v}")
+
+    # Events — try to fetch events for the resource
+    try:
+        events_v1 = k8s_client.CoreV1Api(api_client=api_client) if api_client else k8s_client.CoreV1Api()
+        field_sel = f"involvedObject.name={meta.name}"
+        if meta.namespace:
+            ev_list = events_v1.list_namespaced_event(
+                namespace=meta.namespace, field_selector=field_sel,
+            )
+        else:
+            ev_list = events_v1.list_event_for_all_namespaces(field_selector=field_sel)
+
+        events = ev_list.items
+        if events:
+            lines.append("Events:")
+            lines.append(f"  {'TYPE':<10}{'REASON':<25}{'AGE':<8}{'MESSAGE'}")
+            for ev in events[-20:]:  # Last 20 events
+                ev_type = ev.type or "Normal"
+                reason = ev.reason or ""
+                ev_age = _formatters._age(ev.last_timestamp or ev.metadata.creation_timestamp)
+                message = ev.message or ""
+                lines.append(f"  {ev_type:<10}{reason:<25}{ev_age:<8}{message}")
+        else:
+            lines.append("Events:       <none>")
+    except Exception:
+        logger.debug("Failed to retrieve events for %s/%s", resource, meta.name, exc_info=True)
+        lines.append("Events:       <unable to retrieve>")
+
+    return "\n".join(lines)
+
+
+# ── kubectl_describe ─────────────────────────────────────────
+
+
+def kubectl_describe(
+    resource: str,
+    name: str,
+    *,
+    gke_config: GKEConfig,
+    namespace: str = "default",
+) -> ToolResult:
+    """Describe a Kubernetes resource in detail (read-only kubectl describe equivalent).
+
+    Returns detailed info including labels, annotations, spec, status, conditions,
+    and recent events.
+    """
+    if not _clients._K8S_AVAILABLE:
+        return _clients._k8s_unavailable()
+
+    resource = _resources._normalise_resource(resource)
+    if resource not in _resources._RESOURCE_API_MAP:
+        supported = sorted(_resources._RESOURCE_API_MAP.keys())
+        return ToolResult(
+            output=f"Unsupported resource type: '{resource}'. Supported: {', '.join(supported)}",
+            error=True,
+        )
+
+    ns = namespace or gke_config.default_namespace
+
+    result = _clients._create_k8s_clients(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+    core_v1, apps_v1, _, api_client_inst = result
+
+    try:
+        obj = _describe_resource(core_v1, apps_v1, resource, name, ns, api_client=api_client_inst)
+        if obj is None:
+            return ToolResult(output=f"Describe not supported for resource type: {resource}", error=True)
+        return ToolResult(output=_format_describe(resource, obj, api_client=api_client_inst))
+
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            return ToolResult(output=f"{resource}/{name} not found in namespace '{ns}'", error=True)
+        if exc.status == 403:
+            return ToolResult(output=f"Access denied: insufficient permissions to read {resource}/{name}", error=True)
+        if exc.status == 401:
+            return ToolResult(output="Authentication failed: check your kubeconfig or GKE credentials", error=True)
+        return ToolResult(output=f"Kubernetes API error ({exc.status}): {exc.reason}", error=True)
+    except Exception as exc:
+        logger.exception("kubectl_describe failed")
+        return ToolResult(output=f"Error describing {resource}/{name}: {exc}", error=True)
+
+
+# ── _parse_since ─────────────────────────────────────────────
+
+
+def _parse_since(since: str) -> int | None:
+    """Parse a duration string like '1h', '30m', '2h30m' into total seconds."""
+    pattern = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
+    match = pattern.match(since.strip())
+    if not match or not any(match.groups()):
+        return None
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = int(match.group(3) or 0)
+    return hours * 3600 + minutes * 60 + seconds
+
+
+# ── kubectl_logs ─────────────────────────────────────────────
+
+
+def kubectl_logs(
+    pod: str,
+    *,
+    gke_config: GKEConfig,
+    namespace: str = "default",
+    container: str | None = None,
+    tail_lines: int = 100,
+    since: str | None = None,
+) -> ToolResult:
+    """Retrieve logs from a pod (read-only kubectl logs equivalent).
+
+    Handles CrashLoopBackOff by automatically fetching previous container logs
+    when current logs are unavailable.
+    """
+    if not _clients._K8S_AVAILABLE:
+        return _clients._k8s_unavailable()
+
+    ns = namespace or gke_config.default_namespace
+    tail = min(tail_lines, gke_config.log_limit) if gke_config.log_limit else tail_lines
+
+    result = _clients._create_k8s_clients(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+    core_v1, _, _, _ = result
+
+    kwargs: dict[str, Any] = {
+        "name": pod,
+        "namespace": ns,
+        "tail_lines": tail,
+    }
+    if container:
+        kwargs["container"] = container
+    if since:
+        seconds = _parse_since(since)
+        if seconds is None:
+            return ToolResult(
+                output=f"Invalid 'since' format: '{since}'. Use formats like '1h', '30m', '1h30m', '90s'",
+                error=True,
+            )
+        kwargs["since_seconds"] = seconds
+
+    try:
+        logs = core_v1.read_namespaced_pod_log(**kwargs)
+        if not logs:
+            return ToolResult(output=f"(no logs available for pod/{pod})")
+        return ToolResult(output=logs)
+
+    except k8s_exceptions.ApiException as exc:
+        # If the pod is in CrashLoopBackOff, try previous logs
+        if exc.status == 400 and "previous" not in kwargs:
+            try:
+                kwargs["previous"] = True
+                prev_logs = core_v1.read_namespaced_pod_log(**kwargs)
+                if prev_logs:
+                    return ToolResult(
+                        output=f"[Previous container logs — current container may be crashing]\n{prev_logs}",
+                    )
+                return ToolResult(output=f"No current or previous logs available for pod/{pod}")
+            except k8s_exceptions.ApiException:
+                logger.debug("Failed to retrieve previous logs for pod/%s", pod, exc_info=True)
+                return ToolResult(output=f"No current or previous logs available for pod/{pod}", error=True)
+
+        if exc.status == 404:
+            msg = f"Pod '{pod}' not found in namespace '{ns}'"
+            if container:
+                msg = f"Container '{container}' not found in pod '{pod}' (namespace '{ns}')"
+            return ToolResult(output=msg, error=True)
+        if exc.status == 403:
+            return ToolResult(output=f"Access denied: insufficient permissions to read logs for pod/{pod}", error=True)
+        if exc.status == 401:
+            return ToolResult(output="Authentication failed: check your kubeconfig or GKE credentials", error=True)
+        return ToolResult(output=f"Kubernetes API error ({exc.status}): {exc.reason}", error=True)
+    except Exception as exc:
+        logger.exception("kubectl_logs failed")
+        return ToolResult(output=f"Error reading logs for pod/{pod}: {exc}", error=True)
+
+
+# ── kubectl_top ──────────────────────────────────────────────
+
+
+def kubectl_top(
+    resource_type: str = "pods",
+    *,
+    gke_config: GKEConfig,
+    name: str | None = None,
+    namespace: str = "default",
+) -> ToolResult:
+    """Show CPU and memory usage for pods or nodes (read-only kubectl top equivalent).
+
+    Requires the Metrics Server to be installed in the cluster.
+    """
+    if not _clients._K8S_AVAILABLE:
+        return _clients._k8s_unavailable()
+
+    resource_type = resource_type.lower().strip()
+    if resource_type not in ("pods", "pod", "nodes", "node"):
+        return ToolResult(
+            output=f"Invalid resource_type: '{resource_type}'. Must be 'pods' or 'nodes'",
+            error=True,
+        )
+    is_pods = resource_type in ("pods", "pod")
+    ns = namespace or gke_config.default_namespace
+
+    result = _clients._create_k8s_clients(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+    _, _, custom_api, _ = result
+
+    try:
+        if is_pods:
+            if ns in ("", "all"):
+                metrics = custom_api.list_cluster_custom_object(
+                    group="metrics.k8s.io", version="v1beta1", plural="pods",
+                )
+            else:
+                metrics = custom_api.list_namespaced_custom_object(
+                    group="metrics.k8s.io", version="v1beta1",
+                    namespace=ns, plural="pods",
+                )
+        else:
+            metrics = custom_api.list_cluster_custom_object(
+                group="metrics.k8s.io", version="v1beta1", plural="nodes",
+            )
+
+        items = metrics.get("items", [])
+        if name:
+            items = [i for i in items if i.get("metadata", {}).get("name") == name]
+            if not items:
+                resource_label = "pod" if is_pods else "node"
+                return ToolResult(
+                    output=f"No metrics found for {resource_label}/{name}",
+                    error=True,
+                )
+
+        if not items:
+            return ToolResult(output="No metrics data available. Is metrics-server installed?")
+
+        # Format output
+        lines: list[str] = []
+        if is_pods:
+            lines.append(f"{'NAME':<50}{'CPU(cores)':<15}{'MEMORY(bytes)'}")
+            for item in items:
+                pod_name = item.get("metadata", {}).get("name", "")
+                containers = item.get("containers", [])
+                total_cpu = ""
+                total_mem = ""
+                for c in containers:
+                    usage = c.get("usage", {})
+                    cpu = usage.get("cpu", "0")
+                    mem = usage.get("memory", "0")
+                    total_cpu = cpu  # For single-container pods
+                    total_mem = mem
+                if len(containers) > 1:
+                    # Sum across containers — simplistic display
+                    total_cpu = f"{len(containers)} containers"
+                    total_mem = f"{len(containers)} containers"
+                lines.append(f"{pod_name:<50}{total_cpu:<15}{total_mem}")
+        else:
+            lines.append(f"{'NAME':<50}{'CPU(cores)':<15}{'CPU%':<10}{'MEMORY(bytes)':<17}{'MEMORY%'}")
+            for item in items:
+                node_name = item.get("metadata", {}).get("name", "")
+                usage = item.get("usage", {})
+                cpu = usage.get("cpu", "0")
+                mem = usage.get("memory", "0")
+                lines.append(f"{node_name:<50}{cpu:<15}{'N/A':<10}{mem:<17}{'N/A'}")
+
+        return ToolResult(output="\n".join(lines))
+
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            return ToolResult(
+                output="Metrics API not available. Is the metrics-server installed? "
+                       "Install with: kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml",
+                error=True,
+            )
+        if exc.status in (401, 403):
+            return ToolResult(output=f"Access denied to metrics API ({exc.status}): {exc.reason}.", error=True)
+        return ToolResult(output=f"Kubernetes API error ({exc.status}): {exc.reason}", error=True)
+    except Exception as exc:
+        logger.exception("kubectl_top failed")
+        return ToolResult(output=f"Error fetching metrics: {exc}", error=True)
