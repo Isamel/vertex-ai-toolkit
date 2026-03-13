@@ -536,10 +536,18 @@ class TestServiceHealthQualityConstraints:
     # ── Timeline Rules ───────────────────────────────────────
 
     def test_reporter_has_timeline_anti_hallucination(self) -> None:
-        """Reporter must prevent fabricated timeline events."""
+        """Reporter must prevent fabricated/default timeline events.
+
+        The consistency fix replaced the old 'NEVER fabricate timestamps'
+        with deterministic timeline construction rules that prevent defaulting
+        to 'no events' when data exists.
+        """
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "NEVER fabricate timestamps" in HEALTH_REPORTER_PROMPT
+        # Rule 5: NEVER use "no events" as a default
+        assert "NEVER use this as a default" in HEALTH_REPORTER_PROMPT
+        # Timeline section is MANDATORY
+        assert "Timeline Section (MANDATORY)" in HEALTH_REPORTER_PROMPT
 
 
 class TestServiceHealthSkillRegistration:
@@ -872,3 +880,362 @@ class TestServiceHealthPromptEnhancements:
         prompt_lower = HEALTH_VERIFIER_PROMPT.lower()
         assert "exec is disabled" in prompt_lower or \
             "exec_enabled" in HEALTH_VERIFIER_PROMPT
+
+
+# ── 8 Prompt Consistency Fixes — Regression Tests ────────────────
+
+
+class TestPromptConsistencyFix1GathererStructuredOutput:
+    """Fix 1 (CRITICAL): Gatherer MUST produce mandatory structured output.
+
+    Sections: Cluster Overview, Service Status table, Events Timeline, Raw Findings.
+    Without this structure, downstream agents cannot parse gatherer output reliably.
+    """
+
+    def test_gatherer_has_mandatory_output_format_header(self) -> None:
+        """Gatherer must declare a MANDATORY OUTPUT FORMAT section."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "MANDATORY OUTPUT FORMAT" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_has_cluster_overview_section(self) -> None:
+        """Gatherer output must include a Cluster Overview section."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "### Cluster Overview" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_has_service_status_section(self) -> None:
+        """Gatherer output must include a Service Status table."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "### Service Status" in HEALTH_GATHERER_PROMPT
+        # Must define table columns
+        assert "Deployment" in HEALTH_GATHERER_PROMPT
+        assert "Ready Replicas" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_has_events_timeline_section(self) -> None:
+        """Gatherer output must include an Events Timeline section."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "### Events Timeline" in HEALTH_GATHERER_PROMPT
+        assert "CHRONOLOGICAL" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_has_raw_findings_section(self) -> None:
+        """Gatherer output must include Raw Findings section."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "### Raw Findings" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_sections_not_optional(self) -> None:
+        """Gatherer must state sections are NOT optional."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "NOT optional" in HEALTH_GATHERER_PROMPT or \
+            "CRITICAL" in HEALTH_GATHERER_PROMPT.split("MANDATORY OUTPUT FORMAT")[1]
+
+
+class TestPromptConsistencyFix2ReporterDeterministicTimeline:
+    """Fix 2 (CRITICAL): Reporter MUST construct timeline deterministically.
+
+    6 rules, never default to 'no events', must extract ALL timestamped events.
+    """
+
+    def test_reporter_timeline_section_is_mandatory(self) -> None:
+        """Timeline section must be explicitly marked as MANDATORY."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Timeline Section (MANDATORY)" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_timeline_must_build(self) -> None:
+        """Reporter must be told to BUILD the timeline, not just include it."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "You MUST build a chronological timeline" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_timeline_extract_every_event(self) -> None:
+        """Rule 1: Extract EVERY event with a timestamp."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Extract EVERY event" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_timeline_sort_chronologically(self) -> None:
+        """Rule 2: Sort events chronologically (oldest first)."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Sort events chronologically" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_timeline_table_format(self) -> None:
+        """Rule 3: Timeline must use table format with Time/Type/Resource/Event."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        # Table header columns
+        timeline_section = HEALTH_REPORTER_PROMPT[
+            HEALTH_REPORTER_PROMPT.find("Timeline Section"):
+        ]
+        assert "| Time |" in timeline_section
+        assert "| Type |" in timeline_section or "Type" in timeline_section
+
+    def test_reporter_timeline_events_without_timestamps(self) -> None:
+        """Rule 4: Events without extractable timestamps shown in order."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "WITHOUT timestamps" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_timeline_never_default_to_no_events(self) -> None:
+        """Rule 5: NEVER use 'no events' as a default — only when upstream says so."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "NEVER use this as a default" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_timeline_must_appear_in_every_report(self) -> None:
+        """Rule 6: Timeline MUST appear in every report."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "MUST appear in every report" in HEALTH_REPORTER_PROMPT
+
+
+class TestPromptConsistencyFix3VerifierDecisionTree:
+    """Fix 3 (CRITICAL): Verifier MUST use IF/THEN decision tree for confidence.
+
+    One outcome per scenario, step-down-one-level rule.
+    """
+
+    def test_verifier_has_confidence_decision_tree_header(self) -> None:
+        """Verifier must have an explicit 'Confidence Decision Tree' section."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "Confidence Decision Tree" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_decision_tree_confirms(self) -> None:
+        """IF tool confirms hypothesis → set to CONFIRMED."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "IF tool call SUCCEEDS and result CONFIRMS" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_decision_tree_contradicts(self) -> None:
+        """IF tool contradicts hypothesis → DOWNGRADE one level."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "IF tool call SUCCEEDS but result CONTRADICTS" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_decision_tree_inconclusive(self) -> None:
+        """IF tool result is inconclusive → KEEP original level."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "IF tool call SUCCEEDS but result is INCONCLUSIVE" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_decision_tree_fails(self) -> None:
+        """IF tool call fails → set to UNVERIFIABLE."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "IF tool call FAILS" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_step_down_one_level_rule(self) -> None:
+        """Verifier must step down one level at a time, never skip levels."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "step down one level" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_never_upgrade_without_evidence(self) -> None:
+        """Verifier must NEVER upgrade confidence without tool evidence."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "NEVER upgrade" in HEALTH_VERIFIER_PROMPT
+        assert "without tool evidence" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_never_keep_confirmed_if_failed(self) -> None:
+        """Verifier NEVER keeps CONFIRMED if verification tool call failed."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "NEVER keep" in HEALTH_VERIFIER_PROMPT
+
+
+class TestPromptConsistencyFix4AnalyzerStructuredSummary:
+    """Fix 4 (HIGH): Analyzer MUST output Service Status Summary table and
+    Findings Overview at the TOP of output.
+    """
+
+    def test_analyzer_has_structured_summary_header(self) -> None:
+        """Analyzer must have a Structured Summary section marked MANDATORY."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "Structured Summary (MANDATORY" in HEALTH_ANALYZER_PROMPT
+
+    def test_analyzer_summary_at_top(self) -> None:
+        """Structured Summary must appear at the TOP of output."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "TOP of your output" in HEALTH_ANALYZER_PROMPT
+
+    def test_analyzer_has_service_status_summary_table(self) -> None:
+        """Analyzer must include Service Status Summary table."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "### Service Status Summary" in HEALTH_ANALYZER_PROMPT
+        # Table must have columns
+        assert "Service/Deployment" in HEALTH_ANALYZER_PROMPT
+        assert "Primary Issue" in HEALTH_ANALYZER_PROMPT
+
+    def test_analyzer_has_findings_overview(self) -> None:
+        """Analyzer must include Findings Overview with confidence counts."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "### Findings Overview" in HEALTH_ANALYZER_PROMPT
+        assert "Total findings" in HEALTH_ANALYZER_PROMPT
+
+    def test_analyzer_summary_even_if_no_findings(self) -> None:
+        """Summary must appear even with zero findings."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "zero findings" in HEALTH_ANALYZER_PROMPT or \
+            "No issues detected" in HEALTH_ANALYZER_PROMPT
+
+
+class TestPromptConsistencyFix5ReporterEvidencePresentation:
+    """Fix 5 (HIGH): Reporter MUST present evidence verbatim in code blocks.
+
+    No paraphrasing raw K8s events. Show ACTUAL error text.
+    """
+
+    def test_reporter_has_evidence_presentation_section(self) -> None:
+        """Reporter must have an explicit Evidence Presentation section."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Evidence Presentation" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_evidence_verbatim(self) -> None:
+        """Reporter must include raw events verbatim."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "verbatim" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_evidence_code_blocks(self) -> None:
+        """Evidence must be formatted as code blocks."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "code blocks" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_evidence_no_paraphrasing(self) -> None:
+        """Reporter must NOT paraphrase raw event messages."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "do not paraphrase" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_evidence_never_say_errors_without_text(self) -> None:
+        """Reporter must never say 'tools reported errors' without the actual text."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "ACTUAL error text" in HEALTH_REPORTER_PROMPT or \
+            "without showing the ACTUAL" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_evidence_preserve_upstream_output(self) -> None:
+        """Reporter must preserve upstream kubectl/tool output."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "preserve" in HEALTH_REPORTER_PROMPT.lower()
+
+
+class TestPromptConsistencyFix6GathererNodeConditionsFirst:
+    """Fix 6 (MEDIUM): Gatherer MUST collect node conditions ALWAYS as step 1.
+
+    get_node_conditions() must be called FIRST, before any specific investigation.
+    """
+
+    def test_gatherer_step_1_always_first(self) -> None:
+        """Step 1 must be explicitly marked as ALWAYS and FIRST."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "Step 1 (ALWAYS" in HEALTH_GATHERER_PROMPT
+        assert "do this FIRST" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_step_1_calls_get_node_conditions(self) -> None:
+        """Step 1 must call get_node_conditions."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        # get_node_conditions must appear in step 1 section
+        step1_start = HEALTH_GATHERER_PROMPT.find("Step 1")
+        step2_start = HEALTH_GATHERER_PROMPT.find("Step 2")
+        step1_section = HEALTH_GATHERER_PROMPT[step1_start:step2_start]
+        assert "get_node_conditions" in step1_section
+
+    def test_gatherer_step_1_is_mandatory(self) -> None:
+        """Step 1 must be marked as MANDATORY."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        step1_start = HEALTH_GATHERER_PROMPT.find("Step 1")
+        step2_start = HEALTH_GATHERER_PROMPT.find("Step 2")
+        step1_section = HEALTH_GATHERER_PROMPT[step1_start:step2_start]
+        assert "MANDATORY" in step1_section
+
+    def test_gatherer_step_1_before_specific_investigations(self) -> None:
+        """Node conditions must come BEFORE deployment-specific investigations."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        step1_pos = HEALTH_GATHERER_PROMPT.find("Step 1")
+        step4_pos = HEALTH_GATHERER_PROMPT.find("Step 4")  # Deep-dive step
+        assert step1_pos < step4_pos
+
+
+class TestPromptConsistencyFix7ReporterClusterOverviewMandatory:
+    """Fix 7 (MEDIUM): Reporter Cluster Overview section MUST be mandatory
+    with fallback text when data is unavailable.
+    """
+
+    def test_reporter_cluster_overview_mandatory(self) -> None:
+        """Reporter must have Cluster Overview Section marked as MANDATORY."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Cluster Overview Section (MANDATORY)" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_cluster_overview_uses_upstream_data(self) -> None:
+        """Reporter must use upstream Cluster Overview data when available."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "use it directly" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_cluster_overview_fallback_text(self) -> None:
+        """Reporter must have fallback text when cluster overview data is missing."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Cluster overview data was not collected" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_never_data_not_available_without_explanation(self) -> None:
+        """Reporter NEVER writes 'Data not available' without explanation."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert 'NEVER write "Data not available" without explanation' in HEALTH_REPORTER_PROMPT
+
+
+class TestPromptConsistencyFix8VerifierNoAmbiguousPhrases:
+    """Fix 8 (MEDIUM): Verifier MUST NOT contain ambiguous phrases.
+
+    'You may' → 'You MUST'. All directives must be deterministic.
+    """
+
+    def test_verifier_no_you_may(self) -> None:
+        """Verifier prompt must NOT contain 'You may' (ambiguous directive)."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "You may" not in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_uses_must(self) -> None:
+        """Verifier prompt must use 'You MUST' or 'MUST' for directives."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        # At least one MUST directive
+        assert "MUST" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_never_directives_are_absolute(self) -> None:
+        """Verifier NEVER rules must be absolute (no 'try to' or 'should')."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        # Check that key rules use NEVER, not 'try not to' or 'should not'
+        assert "NEVER fabricate" in HEALTH_VERIFIER_PROMPT
+        assert "NEVER perform broad" in HEALTH_VERIFIER_PROMPT
+        assert "NEVER add new findings" in HEALTH_VERIFIER_PROMPT
+
+    def test_verifier_never_downgrade_directly_to_low(self) -> None:
+        """Verifier must have rule: NEVER downgrade directly to LOW."""
+        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
+
+        assert "NEVER downgrade directly to LOW" in HEALTH_VERIFIER_PROMPT

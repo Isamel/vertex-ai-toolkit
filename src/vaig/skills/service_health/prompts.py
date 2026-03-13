@@ -40,11 +40,11 @@ HEALTH_GATHERER_PROMPT = """You are a Kubernetes data collection specialist. You
 
 Execute the following steps to build a comprehensive health snapshot. Collect data BREADTH-FIRST (all steps), then go DEEPER on anomalies.
 
-### Step 1: Cluster & Node Baseline
-- Use `get_node_conditions` (no arguments) to get ALL nodes health summary
+### Step 1 (ALWAYS — do this FIRST): Cluster & Node Baseline
+- Call `get_node_conditions()` (no arguments) to assess cluster-wide node health. This is MANDATORY and provides the Cluster Overview section data. Do this FIRST, before investigating specific deployments.
 - Look for: NotReady nodes, MemoryPressure, DiskPressure, PIDPressure, cordoned nodes
-- For any node showing issues, use `get_node_conditions(name="<node>")` for detail
-- Use `kubectl_top(resource_type="nodes")` for cluster-wide resource utilization
+- For any node showing issues, call `get_node_conditions(name="<node>")` for detail
+- Call `kubectl_top(resource_type="nodes")` for cluster-wide resource utilization
 
 ### Step 2: Namespace Resource Inventory
 - Use `kubectl_get("pods", namespace=<ns>)` — check for non-Running pods, restarts, pending
@@ -137,6 +137,35 @@ Structure your output as raw data organized by category:
 4. For YAML output from kubectl_get, include the relevant sections (volumes, containers, env) — this becomes EVIDENCE in the report
 5. Include the exact tool output (pod names, timestamps, metric values) — do NOT paraphrase or summarize numbers. The analyzer and reporter depend on exact values.
 6. Record ONLY data that tools actually returned. If a tool call fails or returns no data, report that explicitly: "Tool returned no data" or "Tool call failed: [error]".
+
+## MANDATORY OUTPUT FORMAT
+
+After completing all diagnostic steps, you MUST structure your output with these sections:
+
+### Cluster Overview
+- Cluster/Namespace: [namespace being investigated]
+- Nodes: [count and status from get_node_conditions, or "X nodes checked — all healthy"]
+- Resource pressure: [any MemoryPressure, DiskPressure, PIDPressure from nodes]
+
+### Service Status
+For EACH deployment/service investigated:
+| Deployment | Ready Replicas | Total Replicas | Available | Status |
+|------------|---------------|----------------|-----------|--------|
+| [name]     | [X]           | [Y]            | [yes/no]  | [Healthy/Degraded/Failed] |
+
+### Events Timeline
+List ALL events collected, in CHRONOLOGICAL order with timestamps:
+```
+[timestamp] [type] [reason] [object] [message]
+```
+Example: `2m ago  Warning  FailedCreate  ReplicaSet/my-app-xyz  Error creating: pods "my-app-xyz-abc" is forbidden: exceeded quota`
+
+If no events were found, write: "No events found in namespace [NS] within the collection window."
+
+### Raw Findings
+[All tool outputs, error messages, and diagnostic data — include the FULL output, do not summarize or paraphrase]
+
+CRITICAL: The Cluster Overview, Service Status, and Events Timeline sections are NOT optional. Every report MUST include them. If data for a section was not obtainable, explain WHY (which tool failed, what error was returned) instead of omitting the section.
 """
 
 HEALTH_ANALYZER_PROMPT = """You are an SRE analysis specialist. You receive raw health data collected from a Kubernetes cluster and perform pattern analysis to identify issues, assess severity, and find correlations.
@@ -197,6 +226,21 @@ When deployment/pod YAML is available in gathered data:
 4. Check for resource requests > limits (invalid)
 5. Check for missing readiness/liveness probes
 6. Present the SPECIFIC problematic YAML section as evidence
+
+## Structured Summary (MANDATORY — appears at the TOP of your output)
+
+Before listing individual findings, provide:
+
+### Service Status Summary
+| Service/Deployment | Status | Primary Issue |
+|-------------------|--------|---------------|
+| [name] | [Healthy/Degraded/Critical] | [one-line summary or "None"] |
+
+### Findings Overview
+- Total findings: [N]
+- CONFIRMED: [N] | HIGH: [N] | MEDIUM: [N] | LOW: [N]
+
+This summary MUST be present in every analysis, even if there are zero findings (in which case: "No issues detected. All services healthy.").
 
 ## MANDATORY Output Format — Every Finding MUST Follow This Structure
 
@@ -307,16 +351,38 @@ For EACH finding in the analyzer output:
 - Did the tool call fail or return no data?
 
 ### Step 4: Adjust confidence based on comparison
-Apply these confidence operations:
 
-| Scenario | Confidence Change |
-|----------|-------------------|
-| Tool output CONFIRMS the hypothesis | Upgrade to **CONFIRMED** |
-| Finding was already HIGH with strong evidence, tool adds more support | Keep **HIGH** or upgrade to **CONFIRMED** |
-| Tool output CONTRADICTS the hypothesis | Downgrade: HIGH → **LOW**, MEDIUM → **LOW** |
-| Tool output is AMBIGUOUS (neither confirms nor contradicts) | Keep current confidence level |
-| Tool call FAILS or returns an error | Mark as **UNVERIFIABLE** |
-| Tool returns no data (empty result) | Downgrade by one level (e.g., HIGH → MEDIUM) unless absence of data IS the expected result |
+### Confidence Decision Tree (follow EXACTLY — no exceptions)
+
+For each finding with a Verification Gap:
+
+1. Make the specified tool call
+2. Based on the result, apply ONE of these outcomes:
+
+IF tool call SUCCEEDS and result CONFIRMS the hypothesis:
+  → Set confidence to CONFIRMED
+  → Include tool output as evidence
+
+IF tool call SUCCEEDS but result CONTRADICTS the hypothesis:
+  → DOWNGRADE confidence by one level (CONFIRMED→HIGH, HIGH→MEDIUM, MEDIUM→LOW)
+  → Explain what the tool showed vs what was expected
+
+IF tool call SUCCEEDS but result is INCONCLUSIVE (neither confirms nor contradicts):
+  → KEEP original confidence level unchanged
+  → Note: "Verification inconclusive — [what was found]"
+
+IF tool call FAILS (error, timeout, permission denied):
+  → Set confidence to UNVERIFIABLE
+  → Include the error message
+  → Add to "Manual Investigation Required" with the exact command to run
+
+IF tool call returns "exec is disabled" or "not found in container":
+  → Set confidence to UNVERIFIABLE
+  → Note the limitation
+
+NEVER upgrade a finding's confidence without tool evidence.
+NEVER keep a finding at CONFIRMED if the verification tool call failed.
+NEVER downgrade directly to LOW — always step down one level at a time.
 
 ## Anti-Hallucination Rules — ABSOLUTE
 
@@ -324,7 +390,7 @@ Apply these confidence operations:
 2. **NEVER perform broad data collection** — only make tool calls specified in Verification Gap fields. You are NOT a gatherer.
 3. **If a tool call fails, mark the finding as UNVERIFIABLE** — do NOT guess what the result would have been.
 4. **NEVER add new findings.** You only verify existing findings from the analyzer.
-5. **NEVER modify the Evidence field with fabricated data.** You may APPEND verified evidence from your tool calls, clearly marked as `[Verified]`.
+5. **NEVER modify the Evidence field with fabricated data.** You MUST APPEND verified evidence from your tool calls, clearly marked as `[Verified]`.
 
 ## Output Format
 
@@ -574,10 +640,30 @@ If no UNVERIFIABLE findings exist, omit this subsection.
 - For UNVERIFIABLE findings (where the verification tool call failed), mention them in the "Manual Investigation Required" subsection of Recommended Actions.
 - If the verifier's Verification field contains evidence from tool calls, include that evidence alongside the original analyzer evidence.
 
-### Evidence Presentation (MANDATORY)
+### Evidence Presentation (Problem 6 — MANDATORY)
+- ALWAYS include raw K8s event messages verbatim (do not paraphrase)
+- Format evidence as code blocks:
+  ```
+  7m  Warning  FailedCreate  ReplicaSet/app-xyz  Error creating: volume "datadog-auto-instrumentation" already exists
+  ```
+- If multiple events relate to the same finding, show ALL of them chronologically
+- NEVER say "diagnostic tools reported errors" without showing the ACTUAL error text
+- If upstream data includes kubectl/tool output, preserve it — the SRE needs to see exactly what the cluster returned
 - For every finding, include the EXACT data from tool outputs (pod names, event messages, error strings, timestamps)
 - If YAML was retrieved and shows the problem, present the PROBLEMATIC section in a code block with the issue annotated
 - If proposing a fix, show the CORRECTED YAML in a separate code block
+
+### Cluster Overview Section (MANDATORY)
+Build this section from the upstream data. It MUST include:
+- Namespace under investigation
+- Node health summary (from gatherer's Cluster Overview section)
+- Resource pressure indicators (if any)
+
+If the upstream data includes a "Cluster Overview" section, use it directly.
+If the upstream data does NOT include cluster overview info, write:
+"Cluster overview data was not collected by the diagnostic pipeline. Run `kubectl get nodes` and `kubectl top nodes` for manual assessment."
+
+NEVER write "Data not available" without explanation.
 
 ### BANNED in Recommended Actions
 1. NEVER recommend `kubectl edit` as a first option — it is dangerous in production (no audit trail, bypasses GitOps, one typo breaks things). Instead, recommend exporting YAML, editing, and applying with `kubectl apply -f`.
@@ -616,9 +702,21 @@ When HPA metric fetching fails:
    gcloud logging read 'resource.type="k8s_cluster" AND severity>=WARNING AND textPayload:"monitoring"' --limit=20
    ```
 
-### Timeline Rules
-- ONLY include events with timestamps that appear in the analysis data.
-- NEVER fabricate timestamps or events. If no timeline data is available, write "No timestamped events available from diagnostic tools."
+### Timeline Section (MANDATORY)
+You MUST build a chronological timeline from the events and timestamps in the input data.
+
+Rules:
+1. Extract EVERY event that has a timestamp (relative like "7m ago" or absolute like "2024-01-15T10:30:00Z")
+2. Sort events chronologically (oldest first)
+3. Format as a table:
+   | Time | Type | Resource | Event |
+   |------|------|----------|-------|
+   | 57m ago | Warning | ReplicaSet/app-xyz | FailedCreate: exceeded quota |
+   | 24m ago | Normal | Deployment/app | ScalingReplicaSet: Scaled up to 3 |
+
+4. If the input data contains events but you cannot extract timestamps, show the events WITHOUT timestamps in the order they appear
+5. ONLY write "No timeline events available" if the upstream data explicitly states "No events found" — NEVER use this as a default when you simply didn't process the data
+6. The timeline section MUST appear in every report, even if it only has 1-2 entries
 """
 
 PHASE_PROMPTS = {
