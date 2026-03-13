@@ -156,7 +156,7 @@ List Kubernetes resources.
 | `label_selector` | string | No | Label filter (e.g., `app=nginx,tier=frontend`) |
 | `field_selector` | string | No | Field filter (e.g., `status.phase=Running`) |
 
-Supports 20+ resource types with aliases: `pods`/`po`/`pod`, `deployments`/`deploy`, `services`/`svc`, `configmaps`/`cm`, `secrets`, `ingresses`/`ing`, `statefulsets`/`sts`, `daemonsets`/`ds`, `jobs`, `cronjobs`/`cj`, `namespaces`/`ns`, `nodes`, `persistentvolumeclaims`/`pvc`, `persistentvolumes`/`pv`, `serviceaccounts`/`sa`, `networkpolicies`/`netpol`, `horizontalpodautoscalers`/`hpa`, `replicasets`/`rs`, `endpoints`/`ep`.
+Supports 25 resource types with aliases: `pods`/`po`/`pod`, `deployments`/`deploy`, `services`/`svc`, `configmaps`/`cm`, `secrets`, `ingresses`/`ing`, `statefulsets`/`sts`, `daemonsets`/`ds`, `jobs`, `cronjobs`/`cj`, `namespaces`/`ns`, `nodes`, `persistentvolumeclaims`/`pvc`, `persistentvolumes`/`pv`, `serviceaccounts`/`sa`, `networkpolicies`/`netpol`, `horizontalpodautoscalers`/`hpa`, `replicasets`/`rs`, `endpoints`/`ep`, `poddisruptionbudgets`/`pdb`, `resourcequotas`/`quota`.
 
 ```
 kubectl_get(resource="pods", namespace="production", label_selector="app=api")
@@ -387,7 +387,7 @@ Execute a diagnostic command inside a running container.
 1. **Config gate:** `gke.exec_enabled` must be `true` (disabled by default)
 2. **Denylist:** Commands matching dangerous patterns are always rejected (shell metacharacters `; & | \``, redirection `>`, destructive commands like `rm`, `kill`, `sudo`, `chmod`, etc.)
 3. **Allowlist:** Command must start with an allowed prefix:
-   `cat`, `head`, `tail`, `ls`, `env`, `printenv`, `whoami`, `id`, `hostname`, `date`, `ps`, `top -bn1`, `df`, `du`, `mount`, `ip`, `ifconfig`, `netstat`, `ss`, `nslookup`, `dig`, `ping`, `curl`, `wget`, `java -version`, `python --version`, `node --version`, `cat /etc/resolv.conf`, `cat /etc/hosts`
+   `cat`, `head`, `tail`, `ls`, `env`, `printenv`, `whoami`, `id`, `hostname`, `date`, `ps`, `top -bn1`, `df`, `du`, `mount`, `ip`, `ifconfig`, `netstat`, `ss`, `nslookup`, `dig`, `ping`, `curl`, `wget`, `nc`, `java -version`, `python --version`, `node --version`, `cat /etc/resolv.conf`, `cat /etc/hosts`
 
 Output is truncated to 10,000 characters.
 
