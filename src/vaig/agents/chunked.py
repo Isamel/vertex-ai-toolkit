@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from vaig.core.config import DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.core.exceptions import ChunkedProcessingError, TokenBudgetError
 
 if TYPE_CHECKING:
@@ -99,8 +100,8 @@ class ChunkedProcessor:
         mid = model_id or self._client.current_model
         model_info = self._settings.get_model_info(mid)
 
-        context_window = model_info.context_window if model_info else 1_048_576
-        max_output = model_info.max_output_tokens if model_info else 65_536
+        context_window = model_info.context_window if model_info else DEFAULT_CONTEXT_WINDOW
+        max_output = model_info.max_output_tokens if model_info else DEFAULT_MAX_OUTPUT_TOKENS
         safety_margin = self._settings.chunking.token_safety_margin
         chars_per_token = self._settings.chunking.chars_per_token
 
@@ -331,7 +332,7 @@ class ChunkedProcessor:
                 )
                 logger.info("Chunk %d/%d processed successfully", i + 1, total)
             except Exception as exc:
-                logger.warning("Chunk %d/%d failed: %s", i + 1, total, exc)
+                logger.warning("Chunk %d/%d failed: %s", i + 1, total, exc, exc_info=True)
                 chunk_results.append(
                     ChunkResult(
                         chunk_index=i,
@@ -418,14 +419,18 @@ class ChunkedProcessor:
     # ── Private helpers ───────────────────────────────────────
 
     def _count_tokens_safe(self, text: str, *, model_id: str | None = None) -> int:
-        """Count tokens, falling back to len(text)//4 on failure."""
+        """Count tokens, falling back to chars_per_token estimate on failure."""
         if not text:
             return 0
         try:
             return self._client.count_tokens(text, model_id=model_id)
         except Exception:
-            logger.debug("count_tokens() failed — using len//4 fallback")
-            return len(text) // 4
+            cpt = self._settings.chunking.chars_per_token
+            logger.warning(
+                "count_tokens() failed — using %.1f chars/token fallback for %d chars",
+                cpt, len(text), exc_info=True,
+            )
+            return int(len(text) / cpt)
 
     def _consolidate(
         self,

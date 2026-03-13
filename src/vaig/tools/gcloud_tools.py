@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from typing import Any
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 # We defer imports to execution time so the module can always be loaded.
 
 
-def _get_logging_client(project: str | None = None):  # noqa: ANN201
+def _get_logging_client(project: str | None = None) -> tuple[Any, str | None]:
     """Create a Cloud Logging client with lazy import."""
     try:
         from google.cloud import logging as cloud_logging  # noqa: I001
@@ -29,7 +30,7 @@ def _get_logging_client(project: str | None = None):  # noqa: ANN201
         return None, f"Failed to create Cloud Logging client: {exc}"
 
 
-def _get_monitoring_client(project: str | None = None):  # noqa: ANN201
+def _get_monitoring_client(project: str | None = None) -> tuple[Any, str | None]:
     """Create a Cloud Monitoring client with lazy import."""
     try:
         from google.cloud import monitoring_v3  # noqa: I001
@@ -223,24 +224,30 @@ def gcloud_logging_query(
             )
         )
     except Exception as exc:
-        exc_str = str(exc).lower()
+        # Attempt typed classification via google.api_core.exceptions
+        try:
+            from google.api_core.exceptions import (
+                Forbidden,
+                InvalidArgument,
+                NotFound,
+                PermissionDenied,
+                ResourceExhausted,
+            )
+        except ImportError:
+            # Fallback — SDK not installed; just report the raw error.
+            return ToolResult(output=f"Error querying Cloud Logging: {exc}", error=True)
 
-        # Auth failure detection
-        if "permission" in exc_str or "403" in exc_str or "denied" in exc_str:
+        if isinstance(exc, (PermissionDenied, Forbidden)):
             return ToolResult(
                 output=f"Permission denied querying Cloud Logging. Ensure the service account has 'roles/logging.viewer'. Error: {exc}",
                 error=True,
             )
-
-        # Quota exceeded
-        if "quota" in exc_str or "429" in exc_str or "resource exhausted" in exc_str:
+        if isinstance(exc, ResourceExhausted):
             return ToolResult(
                 output=f"Cloud Logging API quota exceeded. Try reducing the limit or narrowing the filter. Error: {exc}",
                 error=True,
             )
-
-        # Invalid filter
-        if "invalid" in exc_str or "filter" in exc_str or "400" in exc_str:
+        if isinstance(exc, (InvalidArgument, NotFound)):
             return ToolResult(
                 output=f"Invalid filter expression: '{filter_expr}'. Check the Cloud Logging filter syntax. Error: {exc}",
                 error=True,
@@ -312,7 +319,7 @@ def gcloud_monitoring_query(
             _, detected_project = google.auth.default()
             effective_project = detected_project
         except Exception:
-            pass
+            logger.debug("Could not auto-detect GCP project from auth", exc_info=True)
 
     if not effective_project:
         return ToolResult(
@@ -381,24 +388,29 @@ def gcloud_monitoring_query(
         results = client.list_time_series(request=request)
         time_series_list = list(results)
     except Exception as exc:
-        exc_str = str(exc).lower()
+        # Attempt typed classification via google.api_core.exceptions
+        try:
+            from google.api_core.exceptions import (
+                Forbidden,
+                InvalidArgument,
+                NotFound,
+                PermissionDenied,
+                ResourceExhausted,
+            )
+        except ImportError:
+            return ToolResult(output=f"Error querying Cloud Monitoring: {exc}", error=True)
 
-        # Auth failure
-        if "permission" in exc_str or "403" in exc_str or "denied" in exc_str:
+        if isinstance(exc, (PermissionDenied, Forbidden)):
             return ToolResult(
                 output=f"Permission denied querying Cloud Monitoring. Ensure the service account has 'roles/monitoring.viewer'. Error: {exc}",
                 error=True,
             )
-
-        # Quota exceeded
-        if "quota" in exc_str or "429" in exc_str or "resource exhausted" in exc_str:
+        if isinstance(exc, ResourceExhausted):
             return ToolResult(
                 output=f"Cloud Monitoring API quota exceeded. Try reducing the interval or narrowing the filter. Error: {exc}",
                 error=True,
             )
-
-        # Metric not found / invalid
-        if "not found" in exc_str or "invalid" in exc_str or "400" in exc_str:
+        if isinstance(exc, (InvalidArgument, NotFound)):
             return ToolResult(
                 output=(
                     f"Metric not found or invalid: '{metric_type}'. "

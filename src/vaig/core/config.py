@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from enum import StrEnum
 from pathlib import Path
@@ -10,6 +11,26 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
+
+# ── Shared constants ─────────────────────────────────────────
+# Centralised defaults that are referenced across the codebase to avoid
+# magic numbers.  Import from here instead of hardcoding.
+
+DEFAULT_CHARS_PER_TOKEN: float = 4.0
+"""Conservative estimate of characters per token for quick size checks.
+
+The ``ChunkingConfig.chars_per_token`` (default ``2.0``) is more conservative
+and is used for budget calculations.  This constant is the *fallback* used by
+``load_file`` and ``count_tokens_safe`` when no settings object is available.
+"""
+
+DEFAULT_MAX_OUTPUT_TOKENS: int = 65_536
+"""Default max output tokens for Gemini models."""
+
+DEFAULT_CONTEXT_WINDOW: int = 1_048_576
+"""Default context window size in tokens for Gemini models."""
 
 
 class AuthMode(StrEnum):
@@ -25,6 +46,15 @@ class GCPConfig(BaseModel):
     project_id: str = ""
     location: str = "us-central1"
     fallback_location: str = "us-central1"
+
+    def model_post_init(self, _context: Any) -> None:
+        """Warn when project_id is unset (will fall back to ADC default)."""
+        if not self.project_id:
+            logger.debug(
+                "GCP project_id is empty — will use Application Default Credentials "
+                "project. Set gcp.project_id in config or GOOGLE_CLOUD_PROJECT env var "
+                "to make it explicit."
+            )
 
 
 class AuthConfig(BaseModel):
@@ -48,8 +78,8 @@ class ModelInfo(BaseModel):
 
     id: str
     description: str = ""
-    max_output_tokens: int = 65536
-    context_window: int = 1_048_576
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
+    context_window: int = DEFAULT_CONTEXT_WINDOW
 
 
 class ModelsConfig(BaseModel):

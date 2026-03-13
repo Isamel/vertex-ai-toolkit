@@ -200,7 +200,7 @@ class Orchestrator:
         config = AgentConfig(
             name="assistant",
             role="General Assistant",
-            system_instruction=system_instruction or self._default_system_instruction(),
+            system_instruction=system_instruction or self.default_system_instruction(),
             model=model_id or self._settings.models.default,
         )
 
@@ -361,7 +361,7 @@ class Orchestrator:
                 sections.append(f"### {r.agent_name} (failed)\n\n{r.content}")
         return "\n\n---\n\n".join(sections)
 
-    def _default_system_instruction(self) -> str:
+    def default_system_instruction(self) -> str:
         """Default system instruction for general chat mode."""
         return (
             "You are VAIG (Vertex AI Gemini Toolkit), a helpful AI assistant powered by "

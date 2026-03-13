@@ -12,7 +12,7 @@ from vaig.agents.utils import deduplicate_response
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import ToolLoopMixin
 from vaig.core.client import GeminiClient
-from vaig.core.config import GKEConfig
+from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS, GKEConfig
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools import ToolRegistry, ToolResult
 
@@ -131,7 +131,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
             system_instruction=INFRA_SYSTEM_PROMPT,
             model=model_id or client.current_model,
             temperature=0.2,  # Low temperature for precise infrastructure analysis
-            max_output_tokens=65536,
+            max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
         )
         super().__init__(config, client)
 

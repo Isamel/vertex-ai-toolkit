@@ -8,6 +8,7 @@ from typing import Any
 
 from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
 from vaig.core.client import ChatMessage, GeminiClient
+from vaig.core.exceptions import GeminiConnectionError, GeminiRateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,24 @@ class SpecialistAgent(BaseAgent):
                 metadata={"model": result.model, "finish_reason": result.finish_reason},
             )
 
+        except GeminiRateLimitError as e:
+            logger.warning("Agent %s rate-limited after %d retries", self.name, e.retries_attempted)
+            return AgentResult(
+                agent_name=self.name,
+                content=f"Rate limit exceeded (retried {e.retries_attempted}x): {e}",
+                success=False,
+                metadata={"error": str(e), "error_type": "rate_limit"},
+            )
+
+        except GeminiConnectionError as e:
+            logger.warning("Agent %s connection error after %d retries", self.name, e.retries_attempted)
+            return AgentResult(
+                agent_name=self.name,
+                content=f"Connection error (retried {e.retries_attempted}x): {e}",
+                success=False,
+                metadata={"error": str(e), "error_type": "connection"},
+            )
+
         except Exception as e:
             logger.exception("Agent %s failed", self.name)
             return AgentResult(
@@ -95,6 +114,14 @@ class SpecialistAgent(BaseAgent):
 
             full_response = "".join(accumulated)
             self._add_to_conversation("agent", full_response)
+
+        except GeminiRateLimitError as e:
+            logger.warning("Agent %s streaming rate-limited after %d retries", self.name, e.retries_attempted)
+            yield f"\n[Rate limit exceeded (retried {e.retries_attempted}x): {e}]"
+
+        except GeminiConnectionError as e:
+            logger.warning("Agent %s streaming connection error after %d retries", self.name, e.retries_attempted)
+            yield f"\n[Connection error (retried {e.retries_attempted}x): {e}]"
 
         except Exception as e:
             logger.exception("Agent %s streaming failed", self.name)

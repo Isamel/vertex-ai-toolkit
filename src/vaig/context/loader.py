@@ -10,6 +10,8 @@ from pathlib import Path
 
 from google.genai import types
 
+from vaig.core.config import DEFAULT_CHARS_PER_TOKEN
+
 logger = logging.getLogger(__name__)
 
 
@@ -127,8 +129,8 @@ def _load_text_file(filepath: Path, file_type: FileType, size_bytes: int) -> Loa
         encoding = detected.get("encoding", "utf-8") or "utf-8"
         content = raw.decode(encoding, errors="replace")
 
-    # Rough token estimate (1 token ≈ 4 chars for English)
-    token_estimate = len(content) // 4
+    # Rough token estimate using the shared constant
+    token_estimate = int(len(content) / DEFAULT_CHARS_PER_TOKEN)
 
     # Wrap code files with file path context
     if file_type in (FileType.CODE, FileType.ETL):
@@ -156,7 +158,7 @@ def _load_binary_part(filepath: Path, file_type: FileType, size_bytes: int, mime
         part=part,
         size_bytes=size_bytes,
         mime_type=mime_type,
-        token_estimate=size_bytes // 4,  # Rough estimate for binary
+        token_estimate=int(size_bytes / DEFAULT_CHARS_PER_TOKEN),  # Rough estimate for binary
     )
 
 
@@ -184,10 +186,10 @@ def load_pdf_with_text(filepath: Path) -> LoadedFile:
                 content=content,
                 size_bytes=filepath.stat().st_size,
                 mime_type="application/pdf",
-                token_estimate=len(content) // 4,
+                token_estimate=int(len(content) / DEFAULT_CHARS_PER_TOKEN),
             )
     except Exception:
-        logger.warning("Failed to extract text from PDF: %s — using binary mode", filepath)
+        logger.warning("Failed to extract text from PDF: %s — using binary mode", filepath, exc_info=True)
 
     # Fallback to binary part
     return load_file(filepath)

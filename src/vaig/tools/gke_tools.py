@@ -471,8 +471,9 @@ def _format_items(resource: str, items: list[Any], output_format: str) -> str:
     import json as _json
 
     if output_format == "json":
-        # Use the kubernetes client's serialisation
-        serialised = [k8s_client.ApiClient().sanitize_for_serialization(i) for i in items]
+        # Use a single ApiClient for serialisation (not one per item)
+        api = k8s_client.ApiClient()
+        serialised = [api.sanitize_for_serialization(i) for i in items]
         return _json.dumps(serialised, indent=2, default=str)
 
     if output_format == "yaml":
@@ -480,7 +481,8 @@ def _format_items(resource: str, items: list[Any], output_format: str) -> str:
             import yaml as _yaml  # noqa: WPS433
         except ImportError:
             return "PyYAML is not installed. Use output_format='json' instead."
-        serialised = [k8s_client.ApiClient().sanitize_for_serialization(i) for i in items]
+        api = k8s_client.ApiClient()
+        serialised = [api.sanitize_for_serialization(i) for i in items]
         return _yaml.dump_all(serialised, default_flow_style=False)
 
     # Table or wide
@@ -783,7 +785,7 @@ def _describe_resource(
     return None
 
 
-def _format_describe(resource: str, obj: Any) -> str:
+def _format_describe(resource: str, obj: Any, api_client: Any | None = None) -> str:
     """Format a single K8s resource object into a kubectl-describe-style output."""
     lines: list[str] = []
     meta = obj.metadata
@@ -872,7 +874,7 @@ def _format_describe(resource: str, obj: Any) -> str:
 
     # Events — try to fetch events for the resource
     try:
-        events_v1 = k8s_client.CoreV1Api()
+        events_v1 = k8s_client.CoreV1Api(api_client=api_client) if api_client else k8s_client.CoreV1Api()
         field_sel = f"involvedObject.name={meta.name}"
         if meta.namespace:
             ev_list = events_v1.list_namespaced_event(
@@ -894,6 +896,7 @@ def _format_describe(resource: str, obj: Any) -> str:
         else:
             lines.append("Events:       <none>")
     except Exception:
+        logger.debug("Failed to retrieve events for %s/%s", resource, meta.name, exc_info=True)
         lines.append("Events:       <unable to retrieve>")
 
     return "\n".join(lines)
@@ -933,7 +936,7 @@ def kubectl_describe(
         obj = _describe_resource(core_v1, apps_v1, resource, name, ns, api_client=api_client_inst)
         if obj is None:
             return ToolResult(output=f"Describe not supported for resource type: {resource}", error=True)
-        return ToolResult(output=_format_describe(resource, obj))
+        return ToolResult(output=_format_describe(resource, obj, api_client=api_client_inst))
 
     except k8s_exceptions.ApiException as exc:
         if exc.status == 404:
@@ -1021,7 +1024,8 @@ def kubectl_logs(
                         output=f"[Previous container logs — current container may be crashing]\n{prev_logs}",
                     )
                 return ToolResult(output=f"No current or previous logs available for pod/{pod}")
-            except Exception:
+            except k8s_exceptions.ApiException:
+                logger.debug("Failed to retrieve previous logs for pod/%s", pod, exc_info=True)
                 return ToolResult(output=f"No current or previous logs available for pod/{pod}", error=True)
 
         if exc.status == 404:

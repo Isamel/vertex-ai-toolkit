@@ -8,6 +8,7 @@ from typing import Any
 from google.genai import types
 
 from vaig.core.client import GeminiClient, ToolCallResult
+from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools.base import ToolRegistry, ToolResult
 
@@ -48,7 +49,7 @@ class ToolLoopMixin:
         max_iterations: int = 15,
         model: str | None = None,
         temperature: float = 0.7,
-        max_output_tokens: int = 65536,
+        max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
         frequency_penalty: float | None = 0.15,
     ) -> ToolLoopResult:
         """Drive a Gemini tool-use loop until text or max iterations.

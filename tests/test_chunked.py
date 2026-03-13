@@ -170,17 +170,17 @@ class TestCalculateBudget:
         assert budget.max_output_tokens == 65_536
 
     def test_fallback_on_count_tokens_failure(self) -> None:
-        """When count_tokens raises, fall back to len//4."""
+        """When count_tokens raises, fall back to len / chars_per_token."""
         client = _make_client()  # count_tokens raises by default
-        settings = _make_settings()
+        settings = _make_settings()  # chars_per_token=2.0
         processor = ChunkedProcessor(client, settings)
 
-        system_instruction = "x" * 400  # len=400, //4 = 100
-        user_prompt = "y" * 200  # len=200, //4 = 50
+        system_instruction = "x" * 400  # len=400, /2.0 = 200
+        user_prompt = "y" * 200  # len=200, /2.0 = 100
 
         budget = processor.calculate_budget(system_instruction, user_prompt)
-        assert budget.system_prompt_tokens == 100
-        assert budget.user_prompt_tokens == 50
+        assert budget.system_prompt_tokens == 200
+        assert budget.user_prompt_tokens == 100
 
     def test_raises_on_zero_budget(self) -> None:
         """Should raise TokenBudgetError when prompts consume entire window."""

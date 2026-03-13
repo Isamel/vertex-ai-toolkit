@@ -727,7 +727,7 @@ def _try_chunked_ask(
     orchestrator = Orchestrator(client, settings)
 
     # Use the same system instruction the normal pipeline would use
-    system_instruction = orchestrator._default_system_instruction()  # noqa: SLF001
+    system_instruction = orchestrator.default_system_instruction()
 
     try:
         budget = processor.calculate_budget(

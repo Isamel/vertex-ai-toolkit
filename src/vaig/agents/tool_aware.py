@@ -17,6 +17,7 @@ from google.genai import types
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import ToolLoopMixin
 from vaig.core.client import GeminiClient
+from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools.base import ToolRegistry
 
@@ -57,7 +58,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         client: GeminiClient,
         max_iterations: int = 15,
         temperature: float = 0.7,
-        max_output_tokens: int = 65536,
+        max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     ) -> None:
         """Initialise the tool-aware agent.
 
@@ -135,7 +136,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             client=client,
             max_iterations=config.get("max_iterations", 15),
             temperature=config.get("temperature", 0.7),
-            max_output_tokens=config.get("max_output_tokens", 65536),
+            max_output_tokens=config.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS),
         )
 
     # ── Properties ───────────────────────────────────────────

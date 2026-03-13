@@ -94,6 +94,7 @@ class REPLState:
             return self.active_skill.get_metadata().name
         return None
 
+    @property
     def prompt_prefix(self) -> str:
         """Build the prompt prefix showing current state."""
         parts = [f"[{self.model}]"]
@@ -169,7 +170,7 @@ def _repl_loop(prompt_session: PromptSession[str], state: REPLState) -> None:
     """Main REPL input loop."""
     while True:
         try:
-            user_input = prompt_session.prompt(state.prompt_prefix()).strip()
+            user_input = prompt_session.prompt(state.prompt_prefix).strip()
         except EOFError:
             break
         except KeyboardInterrupt:
@@ -300,7 +301,7 @@ def _try_chunked_chat(state: REPLState, user_input: str, context: str) -> bool:
 
     processor = ChunkedProcessor(state.client, state.settings)
 
-    system_instruction = state.orchestrator._default_system_instruction()  # noqa: SLF001
+    system_instruction = state.orchestrator.default_system_instruction()
 
     try:
         budget = processor.calculate_budget(
@@ -309,7 +310,7 @@ def _try_chunked_chat(state: REPLState, user_input: str, context: str) -> bool:
             model_id=state.model,
         )
     except Exception:
-        logger.debug("Chunked budget calculation failed, using normal pipeline")
+        logger.debug("Chunked budget calculation failed, using normal pipeline", exc_info=True)
         return False
 
     if not processor.needs_chunking(context, budget):

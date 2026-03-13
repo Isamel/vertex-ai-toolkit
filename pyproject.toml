@@ -19,7 +19,6 @@ dependencies = [
     "chardet>=5.2.0",
     "pymupdf>=1.25.0",
     "pillow>=11.0.0",
-    "aiosqlite>=0.20.0",
     "humanize>=4.11.0",
 ]
 

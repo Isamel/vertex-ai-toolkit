@@ -12,7 +12,7 @@ from google.genai import types
 
 from vaig.context.filters import build_file_filter, should_include_file
 from vaig.context.loader import FileType, LoadedFile, load_file
-from vaig.core.config import Settings
+from vaig.core.config import DEFAULT_CHARS_PER_TOKEN, Settings
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -165,7 +165,7 @@ class ContextBuilder:
             file_type=FileType.TEXT,
             content=text,
             size_bytes=len(text.encode()),
-            token_estimate=len(text) // 4,
+            token_estimate=int(len(text) / DEFAULT_CHARS_PER_TOKEN),
         )
         self._bundle.add_file(loaded)
         return loaded
@@ -184,8 +184,9 @@ class ContextBuilder:
 
 def _format_size(size_bytes: int) -> str:
     """Format bytes into human-readable size."""
+    size: float = float(size_bytes)
     for unit in ("B", "KB", "MB", "GB"):
-        if size_bytes < 1024:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024  # type: ignore[assignment]
-    return f"{size_bytes:.1f} TB"
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"

@@ -10,7 +10,7 @@ from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import ToolLoopMixin
 from vaig.agents.utils import deduplicate_response
 from vaig.core.client import GeminiClient
-from vaig.core.config import CodingConfig
+from vaig.core.config import CodingConfig, DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools import ToolRegistry, ToolResult, create_file_tools, create_shell_tools
 
@@ -133,7 +133,7 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
             system_instruction=CODING_SYSTEM_PROMPT,
             model=model_id or client.current_model,
             temperature=0.2,  # Low temperature for precise code generation
-            max_output_tokens=65536,
+            max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
         )
         super().__init__(config, client)
 

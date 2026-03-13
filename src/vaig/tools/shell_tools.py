@@ -11,6 +11,48 @@ from vaig.tools.base import ToolDef, ToolParam, ToolResult
 
 logger = logging.getLogger(__name__)
 
+# Maximum output size in characters to prevent memory exhaustion from
+# commands that produce unbounded output (e.g. ``cat /dev/urandom``).
+_MAX_OUTPUT_CHARS = 100_000
+
+# Default command timeout in seconds.  Can be overridden via the
+# ``timeout`` parameter on ``run_command``.
+_DEFAULT_TIMEOUT = 30
+
+# Argument patterns that are blocked regardless of the allowed-commands
+# allowlist.  These prevent path traversal, reading sensitive files, and
+# shell meta-character abuse.
+_BLOCKED_ARG_PATTERNS: tuple[str, ...] = (
+    "/etc/shadow",
+    "/etc/passwd",
+    "/etc/sudoers",
+    "~root",
+)
+
+
+def _is_arg_safe(arg: str, workspace: Path) -> tuple[bool, str]:
+    """Validate that a single command argument is safe.
+
+    Returns ``(True, "")`` when the arg is allowed, or
+    ``(False, reason)`` when it should be rejected.
+    """
+    # Block known sensitive paths
+    for pattern in _BLOCKED_ARG_PATTERNS:
+        if pattern in arg:
+            return False, f"Blocked argument pattern: {pattern}"
+
+    # For arguments that look like file paths, ensure they resolve
+    # inside the workspace directory (prevent traversal via ``../``).
+    if "/" in arg or arg.startswith(".."):
+        try:
+            resolved = (workspace / arg).resolve()
+            if not str(resolved).startswith(str(workspace.resolve())):
+                return False, f"Path escapes workspace: {arg}"
+        except (OSError, ValueError):
+            pass  # Non-path argument — allow through
+
+    return True, ""
+
 
 # ── Task 2.6 — run_command ───────────────────────────────────
 
@@ -20,11 +62,15 @@ def run_command(
     *,
     workspace: Path,
     allowed_commands: list[str] | None = None,
+    timeout: int = _DEFAULT_TIMEOUT,
 ) -> ToolResult:
     """Run a shell command inside *workspace*.
 
     If *allowed_commands* is provided and non-empty, the first token of the
     command must appear in the allowlist.
+
+    Arguments are validated to prevent path traversal outside the workspace
+    and access to sensitive system files.
     """
     logger.debug("run_command: command=%r workspace=%s", command, workspace)
 
@@ -45,18 +91,25 @@ def run_command(
             error=True,
         )
 
+    # Validate all arguments for safety
+    for arg in args[1:]:
+        safe, reason = _is_arg_safe(arg, workspace)
+        if not safe:
+            return ToolResult(output=f"Argument rejected: {reason}", error=True)
+
     try:
         result = subprocess.run(
             args,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout,
             cwd=workspace,
+            shell=False,
             check=False,
         )
     except subprocess.TimeoutExpired:
         return ToolResult(
-            output=f"Command timed out after 30 seconds: {command}",
+            output=f"Command timed out after {timeout} seconds: {command}",
             error=True,
         )
     except FileNotFoundError:
@@ -74,6 +127,10 @@ def run_command(
         output_parts.append(result.stderr)
 
     combined = "\n".join(output_parts).rstrip("\n") if output_parts else "(no output)"
+
+    # Truncate excessive output to prevent memory issues
+    if len(combined) > _MAX_OUTPUT_CHARS:
+        combined = combined[:_MAX_OUTPUT_CHARS] + f"\n... (truncated — output exceeded {_MAX_OUTPUT_CHARS} chars)"
 
     if result.returncode != 0:
         return ToolResult(
