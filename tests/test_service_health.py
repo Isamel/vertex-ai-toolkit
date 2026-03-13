@@ -1486,12 +1486,12 @@ class TestGathererCloudLoggingMandatoryOutput:
         assert "Cloud Logging Findings sections are NOT optional" in HEALTH_GATHERER_PROMPT
 
     def test_cloud_logging_findings_in_output_format_template(self) -> None:
-        """Cloud Logging Findings must appear in the output format template section."""
+        """Cloud Logging Findings must appear in the mandatory output format section."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        output_format_start = HEALTH_GATHERER_PROMPT.find("## Output Format")
-        data_collection_start = HEALTH_GATHERER_PROMPT.find("## Data Collection Rules")
-        output_section = HEALTH_GATHERER_PROMPT[output_format_start:data_collection_start]
+        output_format_start = HEALTH_GATHERER_PROMPT.find("## MANDATORY OUTPUT FORMAT")
+        assert output_format_start != -1, "MANDATORY OUTPUT FORMAT section must exist"
+        output_section = HEALTH_GATHERER_PROMPT[output_format_start:]
         assert "Cloud Logging Findings" in output_section
 
 
@@ -1733,85 +1733,73 @@ class TestPromptSchemaParameterConsistency:
 
 
 class TestServiceHealthAutopilotAwareness:
-    """GKE Autopilot awareness tests for all 4 agent prompts."""
+    """GKE Autopilot awareness is handled by dynamic injection (language.py),
+    NOT by inline sections in prompts.  These tests verify:
+    1. Prompts do NOT contain inline Autopilot sections (single source of truth).
+    2. Dynamic injection via build_autopilot_instruction covers all required rules.
+    """
 
-    def test_gatherer_has_autopilot_section(self) -> None:
-        """Gatherer prompt must include Autopilot awareness section."""
+    def test_gatherer_no_inline_autopilot_section(self) -> None:
+        """Gatherer prompt must NOT have an inline Autopilot section."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        assert "GKE Autopilot Awareness" in HEALTH_GATHERER_PROMPT
+        assert "GKE Autopilot Awareness" not in HEALTH_GATHERER_PROMPT
 
-    def test_gatherer_autopilot_detection_is_automatic(self) -> None:
-        """Gatherer must describe Autopilot detection as automatic (not 403-based)."""
-        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
-
-        assert "Detection" in HEALTH_GATHERER_PROMPT
-        assert "automatic" in HEALTH_GATHERER_PROMPT
-        assert "Autopilot" in HEALTH_GATHERER_PROMPT
-
-    def test_gatherer_skip_node_investigation_on_autopilot(self) -> None:
-        """Gatherer must read node data but note kubectl top nodes is not available on Autopilot."""
-        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
-
-        assert "node infrastructure managed by Google" in HEALTH_GATHERER_PROMPT
-
-    def test_gatherer_autopilot_mandatory_resource_requests(self) -> None:
-        """Gatherer must note that resource requests are mandatory on Autopilot."""
-        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
-
-        assert "Resource requests are MANDATORY on Autopilot" in HEALTH_GATHERER_PROMPT
-
-    def test_gatherer_autopilot_daemonset_awareness(self) -> None:
-        """Gatherer must note DaemonSet behaviour on Autopilot."""
-        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
-
-        assert "DaemonSet" in HEALTH_GATHERER_PROMPT
-
-    def test_analyzer_has_autopilot_context(self) -> None:
-        """Analyzer prompt must include Autopilot context section."""
+    def test_analyzer_no_inline_autopilot_section(self) -> None:
+        """Analyzer prompt must NOT have an inline Autopilot section."""
         from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
-        assert "GKE Autopilot Context" in HEALTH_ANALYZER_PROMPT
+        assert "GKE Autopilot Context" not in HEALTH_ANALYZER_PROMPT
 
-    def test_analyzer_no_flag_missing_node_data_on_autopilot(self) -> None:
-        """Analyzer must not flag missing node metrics from kubectl_top as issue on Autopilot."""
-        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
-
-        assert "Do NOT flag missing node metrics" in HEALTH_ANALYZER_PROMPT
-
-    def test_analyzer_no_node_remediation_on_autopilot(self) -> None:
-        """Analyzer must not suggest node-level remediation on Autopilot."""
-        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
-
-        assert "Do NOT suggest node-level remediation" in HEALTH_ANALYZER_PROMPT
-
-    def test_verifier_has_autopilot_awareness(self) -> None:
-        """Verifier prompt must include Autopilot awareness section."""
+    def test_verifier_no_inline_autopilot_section(self) -> None:
+        """Verifier prompt must NOT have an inline Autopilot section."""
         from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
 
-        assert "GKE Autopilot Awareness" in HEALTH_VERIFIER_PROMPT
+        assert "GKE Autopilot Awareness" not in HEALTH_VERIFIER_PROMPT
 
-    def test_verifier_skip_node_verification_on_autopilot(self) -> None:
-        """Verifier must not use kubectl_top for nodes on Autopilot but can use get_node_conditions."""
-        from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
-
-        assert "Do NOT use" in HEALTH_VERIFIER_PROMPT
-        assert "kubectl_top" in HEALTH_VERIFIER_PROMPT
-
-    def test_reporter_has_autopilot_cluster_overview(self) -> None:
-        """Reporter prompt must include Autopilot cluster overview guidance."""
+    def test_reporter_no_inline_autopilot_section(self) -> None:
+        """Reporter prompt must NOT have an inline Autopilot section."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "GKE Autopilot Cluster Overview" in HEALTH_REPORTER_PROMPT
+        assert "GKE Autopilot Cluster Overview" not in HEALTH_REPORTER_PROMPT
 
-    def test_reporter_autopilot_node_managed_by_google(self) -> None:
-        """Reporter must state node infrastructure is managed by Google on Autopilot."""
-        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+    def test_dynamic_injection_covers_node_data_readable(self) -> None:
+        """Dynamic Autopilot instruction must confirm node data is readable."""
+        from vaig.core.language import build_autopilot_instruction
 
-        assert "node infrastructure managed by Google" in HEALTH_REPORTER_PROMPT
+        result = build_autopilot_instruction(True)
+        assert "kubectl_get" in result
+        assert "get_node_conditions" in result
 
-    def test_reporter_no_node_recommendations_on_autopilot(self) -> None:
-        """Reporter must not recommend node-level actions on Autopilot."""
-        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+    def test_dynamic_injection_covers_node_top_not_available(self) -> None:
+        """Dynamic Autopilot instruction must warn kubectl_top nodes is unavailable."""
+        from vaig.core.language import build_autopilot_instruction
 
-        assert "Do NOT recommend node-level actions" in HEALTH_REPORTER_PROMPT
+        result = build_autopilot_instruction(True)
+        assert "kubectl_top" in result
+        assert "NOT available" in result
+
+    def test_dynamic_injection_covers_no_node_actions(self) -> None:
+        """Dynamic Autopilot instruction must prohibit node-level actions."""
+        from vaig.core.language import build_autopilot_instruction
+
+        result = build_autopilot_instruction(True)
+        assert "node-level actions" in result
+
+    def test_dynamic_injection_covers_mandatory_requests(self) -> None:
+        """Dynamic Autopilot instruction must note mandatory resource requests."""
+        from vaig.core.language import build_autopilot_instruction
+
+        result = build_autopilot_instruction(True)
+        assert "mandatory" in result.lower()
+        assert "resource requests" in result.lower()
+
+    def test_dynamic_injection_preserves_full_analysis_depth(self) -> None:
+        """Dynamic Autopilot instruction must NOT narrow analysis scope."""
+        from vaig.core.language import build_autopilot_instruction
+
+        result = build_autopilot_instruction(True)
+        assert "UNCHANGED" in result
+        assert "full depth" in result
+        # Must NOT contain the old scope-narrowing language
+        assert "Focus on pod-level and workload-level health" not in result

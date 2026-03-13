@@ -175,20 +175,19 @@ def build_autopilot_instruction(is_autopilot: bool | None) -> str:
 
     return (
         "## GKE AUTOPILOT CLUSTER\n\n"
-        "This cluster has been **confirmed as GKE Autopilot** via the GKE API. "
-        "Node infrastructure is fully managed by Google.\n\n"
-        "**Autopilot rules:**\n"
+        "This is a GKE Autopilot cluster (confirmed via GKE API). "
+        "Node infrastructure is managed by Google.\n\n"
+        "**Autopilot-specific rules:**\n"
         "- You CAN read node data normally: `kubectl_get(resource='nodes')` and "
         "`get_node_conditions()` work on Autopilot and return real data.\n"
-        "- `kubectl_top(resource_type='nodes')` is NOT available on Autopilot — "
-        "it will return an informational message, not metrics data.\n"
-        "- Do NOT flag missing node metrics from `kubectl_top` as an issue — this is expected on Autopilot.\n"
-        "- Do NOT suggest node-level ACTIONS (scaling node pools, changing machine types, "
-        "adding/draining/cordoning nodes) — these are managed by Google.\n"
-        "- Focus on **pod-level and workload-level health**: pod status, resource requests/limits, "
-        "deployment rollout, HPA behavior.\n"
-        "- Resource requests are **mandatory** on Autopilot — check that pods have explicit requests.\n"
-        "- Google manages node scaling automatically — utilization thresholds do not apply.\n\n"
+        "- `kubectl_top(resource_type='nodes')` is NOT available — "
+        "do not flag missing node metrics as an issue.\n"
+        "- Do NOT recommend node-level actions (scaling node pools, draining/cordoning nodes, "
+        "changing machine types) — these are managed by Google.\n"
+        "- Resource requests are **mandatory** on Autopilot — flag workloads missing resource requests.\n"
+        "- Google manages node scaling automatically — utilization thresholds do not apply.\n"
+        "- All other diagnostic steps and analysis depth remain UNCHANGED — "
+        "investigate with full depth.\n\n"
     )
 
 

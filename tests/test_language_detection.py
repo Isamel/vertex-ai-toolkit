@@ -458,8 +458,8 @@ class TestBuildAutopilotInstruction:
     def test_returns_instruction_for_true(self) -> None:
         result = build_autopilot_instruction(True)
         assert "GKE AUTOPILOT CLUSTER" in result
-        assert "confirmed as GKE Autopilot" in result
-        assert "node-level ACTIONS" in result
+        assert "GKE Autopilot cluster" in result
+        assert "node-level actions" in result
 
     def test_instruction_mentions_mandatory_requests(self) -> None:
         result = build_autopilot_instruction(True)
