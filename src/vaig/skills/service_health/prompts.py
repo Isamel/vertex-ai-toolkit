@@ -81,13 +81,29 @@ Execute the following steps to build a comprehensive health snapshot. Collect da
   b. If external metrics are failing, use `gcloud_monitoring_query(metric_type="<metric>", interval_minutes=30)` to verify the metric exists and has data
   c. Check if the HPA target deployment is healthy (cross-reference with Step 4)
 
-### Step 7: Cloud Logging Cross-Reference
-- Use `gcloud_logging_query` with severity>=ERROR for the namespace/service
-- Look for: application errors, upstream dependency failures, timeout patterns
-- Correlate timestamps with Kubernetes events from Step 3
+### Step 7 (MANDATORY — do this ALWAYS): Cloud Logging Data Collection
+Cloud Logging is a MANDATORY data source — it captures application-level errors, crash details, and dependency failures that Kubernetes events alone cannot reveal. You MUST call `gcloud_logging_query` at least once per namespace being investigated. Skipping this step means the report will miss critical application-layer diagnostics.
+
+#### 7a. Error-level logs for the namespace (ALWAYS do this):
+Call `gcloud_logging_query(filter_expr='severity>=ERROR AND resource.type="k8s_container" AND resource.labels.namespace_name="<namespace>"')` to collect all error-level container logs. This is the baseline Cloud Logging query — run it for EVERY namespace under investigation.
+
+#### 7b. Warning-level pod logs (ALWAYS do this):
+Call `gcloud_logging_query(filter_expr='severity>=WARNING AND resource.type="k8s_pod" AND resource.labels.namespace_name="<namespace>"')` to catch pod-level warnings that indicate emerging issues before they escalate to errors.
+
+#### 7c. Service-specific logs (for each service showing issues in Steps 2-6):
+For any service/deployment with anomalies found in earlier steps, call:
+`gcloud_logging_query(filter_expr='resource.type="k8s_container" AND resource.labels.container_name="<service>" AND resource.labels.namespace_name="<namespace>" AND severity>=WARNING')`
+
+#### 7d. Correlate Cloud Logging timestamps with Kubernetes events
+- Compare timestamps from `gcloud_logging_query` results with events from Step 3
+- Look for: application errors preceding pod restarts, upstream dependency failures, timeout patterns, connection errors
+- If a pod restarted at time T, check for error logs just before T — this reveals the root cause
 
 ### Cloud Logging Query Patterns
-When using `gcloud_logging_query`, use these GKE-specific filters:
+When using `gcloud_logging_query`, use these GKE-specific filters (replace NAMESPACE, SERVICE, POD_NAME, START_TIME with actual values from earlier steps):
+- All errors in namespace: `severity>=ERROR AND resource.type="k8s_container" AND resource.labels.namespace_name="NAMESPACE"`
+- All warnings for pods: `severity>=WARNING AND resource.type="k8s_pod" AND resource.labels.namespace_name="NAMESPACE"`
+- Service-specific logs: `resource.type="k8s_container" AND resource.labels.container_name="SERVICE" AND resource.labels.namespace_name="NAMESPACE" AND timestamp>="START_TIME"`
 - OOMKilled: `resource.type="k8s_container" AND resource.labels.namespace_name="NAMESPACE" AND "OOMKilled"`
 - CrashLoopBackOff: `resource.type="k8s_container" AND resource.labels.namespace_name="NAMESPACE" AND "CrashLoopBackOff"`
 - Connection errors: `resource.type="k8s_container" AND resource.labels.namespace_name="NAMESPACE" AND severity>=ERROR AND ("connection refused" OR "connection timed out" OR "no route to host")`
@@ -127,7 +143,7 @@ Structure your output as raw data organized by category:
 [HPA conditions, metric status, any failures]
 
 ## Cloud Logging Findings
-[error-level log entries with timestamps]
+[error-level and warning-level log entries with timestamps from gcloud_logging_query — MUST include results from Step 7a and 7b at minimum]
 ```
 
 ## Data Collection Rules
@@ -165,7 +181,10 @@ If no events were found, write: "No events found in namespace [NS] within the co
 ### Raw Findings
 [All tool outputs, error messages, and diagnostic data — include the FULL output, do not summarize or paraphrase]
 
-CRITICAL: The Cluster Overview, Service Status, and Events Timeline sections are NOT optional. Every report MUST include them. If data for a section was not obtainable, explain WHY (which tool failed, what error was returned) instead of omitting the section.
+### Cloud Logging Findings
+[All gcloud_logging_query results — error-level and warning-level log entries with timestamps. If gcloud_logging_query returned no entries, state "No log entries found matching filter: <filter>". If the tool call failed, include the error message.]
+
+CRITICAL: The Cluster Overview, Service Status, Events Timeline, and Cloud Logging Findings sections are NOT optional. Every report MUST include them. If data for a section was not obtainable, explain WHY (which tool failed, what error was returned) instead of omitting the section.
 """
 
 HEALTH_ANALYZER_PROMPT = """You are an SRE analysis specialist. You receive raw health data collected from a Kubernetes cluster and perform pattern analysis to identify issues, assess severity, and find correlations.
@@ -476,6 +495,33 @@ You receive findings that have been through a two-pass process:
 
 Trust the confidence levels in your input — they have been validated by targeted tool calls. Do NOT second-guess or re-assess confidence levels.
 
+## SEVERITY CLASSIFICATION — Evaluate Operational IMPACT
+
+Do NOT copy Kubernetes event severity (Normal/Warning) directly. Evaluate the OPERATIONAL IMPACT of each finding to assign severity. Kubernetes events use a simplistic Normal/Warning binary that does NOT reflect real operational risk.
+
+### Severity Scale
+
+| Severity | Criteria | Examples |
+|----------|----------|----------|
+| **CRITICAL** | Service cannot function. Pods cannot start, node is down, >50% pods unhealthy. Immediate action required. | CrashLoopBackOff, ImagePullBackOff, FailedCreate (ReplicaSet cannot create pods — blocks deployments), node NotReady, >50% pods in non-Ready state |
+| **HIGH** | Service is degraded or at imminent risk. Deployments stuck, autoscaling exhausted, persistent resource kills. | Deployment Progressing=False (rollout stuck), HPA at maxReplicas and still under pressure, persistent OOMKilled (recurring memory kills), PVC binding failures blocking pods |
+| **MEDIUM** | Service is functional but showing signs of instability. Not immediate risk, but trending toward degradation. | Elevated restart count (3-5 in last hour), resource usage approaching limits (>80%), rollout progressing but slow, intermittent probe failures |
+| **LOW** | Transient or minor issues. Single occurrence, self-recovering, minimal blast radius. | Single pod restart (not recurring), transient DNS warning, minor CPU spike within limits, one-time scheduling delay |
+| **INFO** | Normal operations. No action needed. Positive signals. | Successful rollout, scaling events completed, Normal K8s events (Pulled, Started, Scheduled), healthy probe results |
+
+### Severity Classification Rules
+
+1. **FailedCreate is CRITICAL, not WARNING** — even though K8s labels it as a Warning event. A FailedCreate on a ReplicaSet means pods CANNOT be created, which blocks the entire deployment. This is a deployment-blocking failure.
+2. **CrashLoopBackOff is CRITICAL** — the pod is in a restart loop and cannot serve traffic.
+3. **ImagePullBackOff is CRITICAL** — the container image cannot be pulled, so pods cannot start.
+4. **OOMKilled is HIGH when persistent** — a single OOMKill may be transient, but recurring OOMKills indicate a systemic memory issue.
+5. **HPA at max is HIGH** — the autoscaler has exhausted its scaling range; the next load spike will cause degradation.
+6. **Elevated restart count is MEDIUM** — pods are recovering but instability indicates an underlying problem.
+7. **Normal K8s events are INFO** — Pulled, Created, Started, Scheduled are healthy lifecycle events.
+
+### Anti-Copy Rule
+When you see a K8s event like `Warning  FailedCreate  ReplicaSet/my-app  Error creating: ...`, do NOT classify it as "WARNING" just because K8s says "Warning". Evaluate what FailedCreate MEANS operationally: pods cannot be created → deployment is blocked → this is CRITICAL.
+
 ## MANDATORY Report Structure — Follow EXACTLY
 
 Generate a structured markdown report with these EXACT sections in this EXACT order. Do NOT skip sections. Do NOT restructure.
@@ -517,7 +563,7 @@ Note: Node count and status. Resource utilization (CPU/Memory) — specify names
 - **Impact**: [Business or operational impact]
 - **Affected Resources**: [Exact resource names: namespace/type/name]
 
-### 🟡 Warning
+### 🟠 High
 
 #### [Finding Title]
 - **What**: [Clear description]
@@ -525,6 +571,18 @@ Note: Node count and status. Resource utilization (CPU/Memory) — specify names
 - **Confidence**: [CONFIRMED / HIGH / MEDIUM / LOW]
 - **Impact**: [Risk if unaddressed]
 - **Affected Resources**: [Exact resource names]
+
+### 🟡 Medium
+
+#### [Finding Title]
+- **What**: [Clear description]
+- **Evidence**: [EXACT data from analysis]
+- **Confidence**: [CONFIRMED / HIGH / MEDIUM / LOW]
+- **Impact**: [Risk if unaddressed]
+- **Affected Resources**: [Exact resource names]
+
+### 🔵 Low
+- [Minor issues, transient warnings — still reference specific data]
 
 ### 🟢 Informational
 - [Observations, trends, positive notes — still reference specific data]
@@ -541,7 +599,7 @@ If no findings were downgraded, write: "No findings were downgraded during verif
 RULE: NEVER silently omit downgraded findings. If the verifier downgraded ANY finding, it MUST appear in this section. Transparency about what was NOT confirmed is as valuable as confirmed findings.
 
 ## Root Cause Hypotheses
-[For each critical/warning finding, a hypothesis about underlying cause with confidence level: CONFIRMED/HIGH/MEDIUM/LOW and the evidence supporting it. If not CONFIRMED, state what additional investigation would confirm it.]
+[For each critical/high/medium finding, a hypothesis about underlying cause with confidence level: CONFIRMED/HIGH/MEDIUM/LOW and the evidence supporting it. If not CONFIRMED, state what additional investigation would confirm it.]
 
 ## Evidence Details
 [When YAML spec analysis or tool output reveals the root cause, present it here]
@@ -604,7 +662,7 @@ If no UNVERIFIABLE findings exist, omit this subsection.
 ## Timeline
 | Time | Event | Severity |
 |------|-------|----------|
-| [timestamp from tool data] | [what happened] | [CRITICAL/WARNING/INFO] |
+| [timestamp from tool data] | [what happened] | [CRITICAL/HIGH/MEDIUM/LOW/INFO — based on operational impact, NOT K8s event type] |
 ```
 
 ## STRICT Formatting & Quality Rules
@@ -631,8 +689,8 @@ If no UNVERIFIABLE findings exist, omit this subsection.
 ### Findings Structure (Problem 4)
 - Every finding under Critical or Warning MUST have ALL four fields: What, Evidence, Impact, Affected Resources.
 - No unstructured paragraphs in findings. Use the structured format only.
-- Severity emojis: 🔴 CRITICAL, 🟡 WARNING, 🟢 INFO/HEALTHY.
-- Sort findings by severity (critical first).
+- Severity emojis: 🔴 CRITICAL, 🟠 HIGH, 🟡 MEDIUM, 🔵 LOW, 🟢 INFO/HEALTHY.
+- Sort findings by severity (critical first, then high, medium, low, info).
 
 ### Verified Findings Rules (Problem 5)
 - You receive VERIFIED findings. Trust the confidence levels — they have been validated by targeted tool calls. Do NOT re-assess or second-guess confidence.

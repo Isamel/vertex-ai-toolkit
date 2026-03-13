@@ -1337,3 +1337,276 @@ class TestServiceHealthRequiredOutputSections:
                 return ""
 
         assert DummySkill().get_required_output_sections() is None
+
+
+# ── Cloud Logging Mandatory Collection — Regression Tests ────────────────
+
+
+class TestGathererCloudLoggingMandatory:
+    """Validate that the gatherer prompt makes gcloud_logging_query a MANDATORY
+    data collection step, not an optional cross-reference.
+
+    The gatherer was previously not calling gcloud_logging_query despite having
+    access to it. These tests ensure the prompt explicitly forces the agent to
+    call gcloud_logging_query as part of its mandatory data collection procedure.
+    """
+
+    def test_step_7_is_mandatory(self) -> None:
+        """Step 7 must be explicitly marked as MANDATORY."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "Step 7 (MANDATORY" in HEALTH_GATHERER_PROMPT
+
+    def test_step_7_says_always(self) -> None:
+        """Step 7 must say ALWAYS to match Step 1's pattern."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        # Extract Step 7 header line
+        step7_start = HEALTH_GATHERER_PROMPT.find("Step 7")
+        step7_header = HEALTH_GATHERER_PROMPT[step7_start:step7_start + 100]
+        assert "ALWAYS" in step7_header
+
+    def test_step_7_references_gcloud_logging_query(self) -> None:
+        """Step 7 must explicitly reference gcloud_logging_query tool."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        step7_start = HEALTH_GATHERER_PROMPT.find("Step 7")
+        step8_start = HEALTH_GATHERER_PROMPT.find("Step 8")
+        step7_section = HEALTH_GATHERER_PROMPT[step7_start:step8_start]
+        assert "gcloud_logging_query" in step7_section
+
+    def test_step_7_must_call_at_least_once(self) -> None:
+        """Step 7 must require at least one gcloud_logging_query call per namespace."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        step7_start = HEALTH_GATHERER_PROMPT.find("Step 7")
+        step8_start = HEALTH_GATHERER_PROMPT.find("Step 8")
+        step7_section = HEALTH_GATHERER_PROMPT[step7_start:step8_start]
+        assert "MUST call" in step7_section or "You MUST" in step7_section
+
+    def test_step_7a_error_level_query(self) -> None:
+        """Step 7a must include the baseline error-level query with severity>=ERROR."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "7a." in HEALTH_GATHERER_PROMPT
+        step7a_start = HEALTH_GATHERER_PROMPT.find("7a.")
+        step7b_start = HEALTH_GATHERER_PROMPT.find("7b.")
+        step7a_section = HEALTH_GATHERER_PROMPT[step7a_start:step7b_start]
+        assert "severity>=ERROR" in step7a_section
+        assert "k8s_container" in step7a_section
+
+    def test_step_7b_warning_level_query(self) -> None:
+        """Step 7b must include warning-level pod query."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "7b." in HEALTH_GATHERER_PROMPT
+        step7b_start = HEALTH_GATHERER_PROMPT.find("7b.")
+        step7c_start = HEALTH_GATHERER_PROMPT.find("7c.")
+        step7b_section = HEALTH_GATHERER_PROMPT[step7b_start:step7c_start]
+        assert "severity>=WARNING" in step7b_section
+        assert "k8s_pod" in step7b_section
+
+    def test_step_7c_service_specific_query(self) -> None:
+        """Step 7c must instruct service-specific log queries for unhealthy services."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "7c." in HEALTH_GATHERER_PROMPT
+        step7c_start = HEALTH_GATHERER_PROMPT.find("7c.")
+        step7d_start = HEALTH_GATHERER_PROMPT.find("7d.")
+        step7c_section = HEALTH_GATHERER_PROMPT[step7c_start:step7d_start]
+        assert "container_name" in step7c_section
+        assert "gcloud_logging_query" in step7c_section
+
+    def test_step_7d_correlation_with_k8s_events(self) -> None:
+        """Step 7d must instruct correlation of Cloud Logging with K8s events."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "7d." in HEALTH_GATHERER_PROMPT
+        step7d_start = HEALTH_GATHERER_PROMPT.find("7d.")
+        step8_start = HEALTH_GATHERER_PROMPT.find("Cloud Logging Query Patterns")
+        step7d_section = HEALTH_GATHERER_PROMPT[step7d_start:step8_start]
+        assert "correlate" in step7d_section.lower()
+        assert "Step 3" in step7d_section or "events" in step7d_section.lower()
+
+    def test_cloud_logging_is_mandatory_data_source(self) -> None:
+        """Prompt must explicitly state Cloud Logging is a MANDATORY data source."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        step7_start = HEALTH_GATHERER_PROMPT.find("Step 7")
+        step8_start = HEALTH_GATHERER_PROMPT.find("Step 8")
+        step7_section = HEALTH_GATHERER_PROMPT[step7_start:step8_start]
+        assert "MANDATORY data source" in step7_section
+
+    def test_cloud_logging_filter_severity_error(self) -> None:
+        """Cloud Logging patterns must include severity>=ERROR filter."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert 'severity>=ERROR AND resource.type="k8s_container"' in HEALTH_GATHERER_PROMPT
+
+    def test_cloud_logging_filter_severity_warning(self) -> None:
+        """Cloud Logging patterns must include severity>=WARNING filter."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert 'severity>=WARNING AND resource.type="k8s_pod"' in HEALTH_GATHERER_PROMPT
+
+    def test_cloud_logging_filter_namespace(self) -> None:
+        """Cloud Logging patterns must include namespace_name filter."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "resource.labels.namespace_name" in HEALTH_GATHERER_PROMPT
+
+
+class TestGathererCloudLoggingMandatoryOutput:
+    """Validate that Cloud Logging Findings is a mandatory output section."""
+
+    def test_cloud_logging_findings_in_mandatory_output(self) -> None:
+        """Cloud Logging Findings must appear in the MANDATORY OUTPUT FORMAT."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        mandatory_section = HEALTH_GATHERER_PROMPT[
+            HEALTH_GATHERER_PROMPT.find("MANDATORY OUTPUT FORMAT"):
+        ]
+        assert "### Cloud Logging Findings" in mandatory_section
+
+    def test_cloud_logging_findings_listed_as_not_optional(self) -> None:
+        """The CRITICAL statement must list Cloud Logging Findings as not optional."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "Cloud Logging Findings sections are NOT optional" in HEALTH_GATHERER_PROMPT
+
+    def test_cloud_logging_findings_in_output_format_template(self) -> None:
+        """Cloud Logging Findings must appear in the output format template section."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        output_format_start = HEALTH_GATHERER_PROMPT.find("## Output Format")
+        data_collection_start = HEALTH_GATHERER_PROMPT.find("## Data Collection Rules")
+        output_section = HEALTH_GATHERER_PROMPT[output_format_start:data_collection_start]
+        assert "Cloud Logging Findings" in output_section
+
+
+# ── Severity Classification — Operational Impact Rules ───────────────
+
+
+class TestReporterSeverityClassification:
+    """Validate that the reporter prompt contains severity classification rules
+    based on operational IMPACT instead of copying K8s event severity labels.
+
+    The reporter was previously copying K8s event severity (Normal/Warning) verbatim,
+    which misclassifies critical operational failures like FailedCreate as mere
+    WARNING instead of CRITICAL.
+    """
+
+    def test_severity_classification_section_exists(self) -> None:
+        """Reporter must have a SEVERITY CLASSIFICATION section."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "SEVERITY CLASSIFICATION" in HEALTH_REPORTER_PROMPT
+
+    def test_severity_evaluates_operational_impact(self) -> None:
+        """Reporter must evaluate operational IMPACT, not K8s labels."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "OPERATIONAL IMPACT" in HEALTH_REPORTER_PROMPT
+
+    def test_anti_copy_rule_exists(self) -> None:
+        """Reporter must explicitly forbid copying K8s event severity."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Do NOT copy Kubernetes event severity" in HEALTH_REPORTER_PROMPT
+
+    def test_severity_scale_has_five_levels(self) -> None:
+        """Reporter must define a 5-level severity scale: CRITICAL, HIGH, MEDIUM, LOW, INFO."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        severity_section_start = HEALTH_REPORTER_PROMPT.find("SEVERITY CLASSIFICATION")
+        severity_section_end = HEALTH_REPORTER_PROMPT.find("MANDATORY Report Structure")
+        severity_section = HEALTH_REPORTER_PROMPT[severity_section_start:severity_section_end]
+
+        assert "CRITICAL" in severity_section
+        assert "HIGH" in severity_section
+        assert "MEDIUM" in severity_section
+        assert "LOW" in severity_section
+        assert "INFO" in severity_section
+
+    def test_failedcreate_classified_as_critical(self) -> None:
+        """FailedCreate must be classified as CRITICAL, not WARNING."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "FailedCreate is CRITICAL" in HEALTH_REPORTER_PROMPT
+
+    def test_crashloopbackoff_classified_as_critical(self) -> None:
+        """CrashLoopBackOff must be classified as CRITICAL."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "CrashLoopBackOff is CRITICAL" in HEALTH_REPORTER_PROMPT
+
+    def test_imagepullbackoff_classified_as_critical(self) -> None:
+        """ImagePullBackOff must be classified as CRITICAL."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "ImagePullBackOff is CRITICAL" in HEALTH_REPORTER_PROMPT
+
+    def test_persistent_oomkilled_classified_as_high(self) -> None:
+        """Persistent OOMKilled must be classified as HIGH."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "OOMKilled is HIGH when persistent" in HEALTH_REPORTER_PROMPT
+
+    def test_hpa_at_max_classified_as_high(self) -> None:
+        """HPA at maxReplicas must be classified as HIGH."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "HPA at max is HIGH" in HEALTH_REPORTER_PROMPT
+
+    def test_elevated_restart_count_classified_as_medium(self) -> None:
+        """Elevated restart count must be classified as MEDIUM."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Elevated restart count is MEDIUM" in HEALTH_REPORTER_PROMPT
+
+    def test_normal_k8s_events_classified_as_info(self) -> None:
+        """Normal K8s events must be classified as INFO."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Normal K8s events are INFO" in HEALTH_REPORTER_PROMPT
+
+    def test_anti_copy_rule_with_example(self) -> None:
+        """Anti-copy rule must include a concrete FailedCreate example."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Anti-Copy Rule" in HEALTH_REPORTER_PROMPT
+        # Must mention that K8s says Warning but operational impact is CRITICAL
+        anti_copy_start = HEALTH_REPORTER_PROMPT.find("Anti-Copy Rule")
+        anti_copy_section = HEALTH_REPORTER_PROMPT[anti_copy_start:anti_copy_start + 500]
+        assert "FailedCreate" in anti_copy_section
+        assert "CRITICAL" in anti_copy_section
+
+    def test_severity_scale_in_severity_table(self) -> None:
+        """Severity scale must be presented as a structured table."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "### Severity Scale" in HEALTH_REPORTER_PROMPT
+        assert "| Severity | Criteria | Examples |" in HEALTH_REPORTER_PROMPT
+
+    def test_findings_template_has_five_severity_levels(self) -> None:
+        """The Findings section template must include all 5 severity levels."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        findings_start = HEALTH_REPORTER_PROMPT.find("## Findings")
+        downgraded_start = HEALTH_REPORTER_PROMPT.find("## Downgraded Findings")
+        findings_section = HEALTH_REPORTER_PROMPT[findings_start:downgraded_start]
+
+        assert "Critical" in findings_section
+        assert "High" in findings_section
+        assert "Medium" in findings_section
+        assert "Low" in findings_section
+        assert "Informational" in findings_section
+
+    def test_timeline_uses_operational_severity(self) -> None:
+        """Timeline table must reference operational impact severity, not K8s event type."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        timeline_start = HEALTH_REPORTER_PROMPT.find("## Timeline")
+        timeline_section = HEALTH_REPORTER_PROMPT[timeline_start:timeline_start + 300]
+        assert "CRITICAL/HIGH/MEDIUM/LOW/INFO" in timeline_section
+        assert "operational impact" in timeline_section.lower()

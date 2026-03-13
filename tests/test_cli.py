@@ -547,3 +547,134 @@ class TestOutputFlag:
         assert result.exit_code == 0
         # No file should exist in tmp_path
         assert len(list(tmp_path.iterdir())) == 0
+
+
+# ══════════════════════════════════════════════════════════════
+# VERBOSE / DEBUG FLAGS
+# ══════════════════════════════════════════════════════════════
+class TestVerboseDebugFlags:
+    """Tests for --verbose, --debug, and --log-level CLI flags."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_log_state(self) -> None:
+        """Reset logging state before and after each test."""
+        from vaig.core.log import reset_logging
+
+        reset_logging()
+        yield  # type: ignore[misc]
+        reset_logging()
+
+    def test_verbose_flag_sets_info_level(self) -> None:
+        """--verbose / -V sets the vaig logger to INFO."""
+        import logging
+
+        mock_agent_result = MagicMock()
+        mock_agent_result.content = "Answer"
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_single.return_value = mock_agent_result
+
+        with (
+            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
+        ):
+            result = runner.invoke(app, ["-V", "ask", "Hello", "--no-stream"])
+
+        assert result.exit_code == 0
+        vaig_logger = logging.getLogger("vaig")
+        assert vaig_logger.level == logging.INFO
+
+    def test_debug_flag_sets_debug_level(self) -> None:
+        """--debug / -d sets the vaig logger to DEBUG with show_path."""
+        import logging
+
+        mock_agent_result = MagicMock()
+        mock_agent_result.content = "Answer"
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_single.return_value = mock_agent_result
+
+        with (
+            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
+        ):
+            result = runner.invoke(app, ["-d", "ask", "Hello", "--no-stream"])
+
+        assert result.exit_code == 0
+        vaig_logger = logging.getLogger("vaig")
+        assert vaig_logger.level == logging.DEBUG
+        # DEBUG mode should enable show_path on the handler
+        assert len(vaig_logger.handlers) == 1
+        assert vaig_logger.handlers[0]._log_render.show_path is True
+
+    def test_log_level_overrides_verbose(self) -> None:
+        """--log-level takes precedence over --verbose."""
+        import logging
+
+        mock_agent_result = MagicMock()
+        mock_agent_result.content = "Answer"
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_single.return_value = mock_agent_result
+
+        with (
+            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
+        ):
+            result = runner.invoke(app, ["-V", "--log-level", "ERROR", "ask", "Hello", "--no-stream"])
+
+        assert result.exit_code == 0
+        vaig_logger = logging.getLogger("vaig")
+        assert vaig_logger.level == logging.ERROR
+
+    def test_log_level_overrides_debug(self) -> None:
+        """--log-level takes precedence over --debug."""
+        import logging
+
+        mock_agent_result = MagicMock()
+        mock_agent_result.content = "Answer"
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_single.return_value = mock_agent_result
+
+        with (
+            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
+        ):
+            result = runner.invoke(app, ["-d", "--log-level", "WARNING", "ask", "Hello", "--no-stream"])
+
+        assert result.exit_code == 0
+        vaig_logger = logging.getLogger("vaig")
+        assert vaig_logger.level == logging.WARNING
+
+    def test_default_level_is_warning(self) -> None:
+        """Without flags, default level should be WARNING."""
+        import logging
+
+        mock_agent_result = MagicMock()
+        mock_agent_result.content = "Answer"
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_single.return_value = mock_agent_result
+
+        with (
+            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
+        ):
+            result = runner.invoke(app, ["ask", "Hello", "--no-stream"])
+
+        assert result.exit_code == 0
+        vaig_logger = logging.getLogger("vaig")
+        assert vaig_logger.level == logging.WARNING
+
+    def test_debug_flag_shows_in_help(self) -> None:
+        """--debug flag should appear in help output."""
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert "--debug" in result.output
+
+    def test_verbose_flag_shows_in_help(self) -> None:
+        """--verbose flag should appear in help output."""
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert "--verbose" in result.output

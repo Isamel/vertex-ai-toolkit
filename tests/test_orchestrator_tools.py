@@ -12,7 +12,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vaig.agents.base import AgentResult, BaseAgent
-from vaig.agents.orchestrator import Orchestrator, OrchestratorResult
+from vaig.agents.orchestrator import (
+    DEFAULT_MIN_CONTENT_CHARS,
+    EMPTY_MARKERS,
+    GathererValidationResult,
+    Orchestrator,
+    OrchestratorResult,
+)
 from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.client import GenerationResult
@@ -512,53 +518,72 @@ class TestValidateGathererOutput:
     def _make_orchestrator(self) -> Orchestrator:
         return Orchestrator(_make_mock_client(), _make_mock_settings())
 
-    def test_complete_output_returns_empty_list(self) -> None:
-        """All required sections present → no missing sections."""
+    def test_complete_output_returns_empty_lists(self) -> None:
+        """All required sections present with sufficient content → no issues."""
         orch = self._make_orchestrator()
         output = (
             "## Cluster Overview\n"
-            "Nodes: 3, all healthy\n\n"
+            "Nodes: 3, all healthy. CPU usage is at 45% across the cluster. Memory is stable.\n\n"
             "## Service Status\n"
-            "| Deployment | Ready |\n"
-            "| app | 3/3 |\n\n"
+            "| Deployment | Ready | Restarts |\n"
+            "| app-frontend | 3/3 | 0 |\n"
+            "| app-backend | 2/2 | 1 |\n\n"
             "## Events Timeline\n"
-            "10:00 Normal pod started\n"
+            "10:00 Normal pod started successfully on node-1\n"
+            "10:05 Normal deployment scaled to 3 replicas\n"
         )
         required = ["Cluster Overview", "Service Status", "Events Timeline"]
-        missing = orch._validate_gatherer_output(output, required)
-        assert missing == []
+        result = orch._validate_gatherer_output(output, required)
+        assert result.missing_sections == []
+        assert result.shallow_sections == []
+        assert not result.needs_retry
 
     def test_missing_sections_detected(self) -> None:
-        """Missing sections are returned in a list."""
+        """Missing sections are returned in missing_sections list."""
         orch = self._make_orchestrator()
-        output = "## Cluster Overview\nNodes: 3\n"
+        output = (
+            "## Cluster Overview\n"
+            "Nodes: 3, all healthy. CPU usage is at 45% across the cluster. Memory is stable.\n"
+        )
         required = ["Cluster Overview", "Service Status", "Events Timeline"]
-        missing = orch._validate_gatherer_output(output, required)
-        assert "Service Status" in missing
-        assert "Events Timeline" in missing
-        assert "Cluster Overview" not in missing
+        result = orch._validate_gatherer_output(output, required)
+        assert "Service Status" in result.missing_sections
+        assert "Events Timeline" in result.missing_sections
+        assert "Cluster Overview" not in result.missing_sections
+        assert result.needs_retry
 
     def test_case_insensitive_matching(self) -> None:
         """Section matching is case-insensitive."""
         orch = self._make_orchestrator()
-        output = "## CLUSTER OVERVIEW\nData\n## service status\nData\n## events timeline\nData"
+        output = (
+            "## CLUSTER OVERVIEW\n"
+            "Nodes: 3, all healthy. CPU usage is at 45% across the cluster. Memory is stable.\n"
+            "## service status\n"
+            "All services running smoothly, 100% uptime across all deployments in the namespace.\n"
+            "## events timeline\n"
+            "10:00 Normal pod started, 10:05 scaling complete, 10:10 health check passed.\n"
+        )
         required = ["Cluster Overview", "Service Status", "Events Timeline"]
-        missing = orch._validate_gatherer_output(output, required)
-        assert missing == []
+        result = orch._validate_gatherer_output(output, required)
+        assert result.missing_sections == []
+        assert result.shallow_sections == []
 
     def test_all_sections_missing(self) -> None:
         """Output with none of the required sections returns all as missing."""
         orch = self._make_orchestrator()
         output = "Some random text with no structure."
         required = ["Cluster Overview", "Service Status", "Events Timeline"]
-        missing = orch._validate_gatherer_output(output, required)
-        assert len(missing) == 3
+        result = orch._validate_gatherer_output(output, required)
+        assert len(result.missing_sections) == 3
+        assert result.needs_retry
 
     def test_empty_required_list(self) -> None:
-        """Empty required list → nothing is missing."""
+        """Empty required list → nothing is missing or shallow."""
         orch = self._make_orchestrator()
-        missing = orch._validate_gatherer_output("anything", [])
-        assert missing == []
+        result = orch._validate_gatherer_output("anything", [])
+        assert result.missing_sections == []
+        assert result.shallow_sections == []
+        assert not result.needs_retry
 
 
 class TestGathererRetryLogic:
@@ -571,20 +596,30 @@ class TestGathererRetryLogic:
         orchestrator = Orchestrator(client, _make_mock_settings())
         registry = _make_mock_registry()
 
-        # First call returns incomplete output, retry returns complete
+        # First call returns incomplete output (missing 2 sections), retry returns complete
         agent1 = MagicMock(spec=ToolAwareAgent)
         agent1.name = "gatherer"
         agent1.role = "Gatherer"
         agent1.execute.side_effect = [
             AgentResult(
                 agent_name="gatherer",
-                content="## Cluster Overview\nData here\n",  # Missing Service Status, Events Timeline
+                content=(
+                    "## Cluster Overview\n"
+                    "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
+                ),  # Missing Service Status, Events Timeline
                 success=True,
                 usage={"total_tokens": 100},
             ),
             AgentResult(
                 agent_name="gatherer",
-                content="## Cluster Overview\nData\n## Service Status\nOK\n## Events Timeline\nEvents",
+                content=(
+                    "## Cluster Overview\n"
+                    "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
+                    "## Service Status\n"
+                    "All services running. Frontend 3/3, Backend 2/2, DB 1/1. No crashloops.\n"
+                    "## Events Timeline\n"
+                    "10:00 Normal pod started. 10:05 Scaling complete. 10:10 Health checks pass.\n"
+                ),
                 success=True,
                 usage={"total_tokens": 150},
             ),
@@ -612,15 +647,15 @@ class TestGathererRetryLogic:
         assert agent1.execute.call_count == 2
         # Agent1 should have been reset before retry
         agent1.reset.assert_called_once()
-        # Retry prompt should mention missing sections
+        # Retry prompt should mention missing sections with clean language
         retry_call = agent1.execute.call_args_list[1]
         retry_prompt = retry_call.args[0]
-        assert "MANDATORY sections are missing" in retry_prompt
+        assert "missing the following sections" in retry_prompt
         assert "Service Status" in retry_prompt
         assert "Events Timeline" in retry_prompt
 
     def test_no_retry_when_output_is_complete(self) -> None:
-        """When gatherer output is complete, no retry happens."""
+        """When gatherer output is complete with sufficient depth, no retry happens."""
         client = _make_mock_client()
         orchestrator = Orchestrator(client, _make_mock_settings())
         registry = _make_mock_registry()
@@ -630,7 +665,14 @@ class TestGathererRetryLogic:
         agent1.role = "Gatherer"
         agent1.execute.return_value = AgentResult(
             agent_name="gatherer",
-            content="## Cluster Overview\nOK\n## Service Status\nOK\n## Events Timeline\nOK",
+            content=(
+                "## Cluster Overview\n"
+                "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
+                "## Service Status\n"
+                "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
+                "## Events Timeline\n"
+                "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+            ),
             success=True,
             usage={"total_tokens": 100},
         )
@@ -766,3 +808,623 @@ class TestGathererRetryLogic:
 
         assert result.success is False
         agent2.execute.assert_not_called()
+
+
+# ===========================================================================
+# Retry prompt cleanliness — no warning markers leak into LLM prompts
+# ===========================================================================
+
+
+class TestBuildRetryPrompt:
+    """Test Orchestrator._build_retry_prompt() produces clean prompts."""
+
+    def _make_orchestrator(self) -> Orchestrator:
+        return Orchestrator(_make_mock_client(), _make_mock_settings())
+
+    def test_retry_prompt_contains_missing_sections(self) -> None:
+        """The retry prompt lists the missing section names."""
+        orch = self._make_orchestrator()
+        prompt = orch._build_retry_prompt(
+            "check health", ["Service Status", "Events Timeline"],
+        )
+        assert "Service Status" in prompt
+        assert "Events Timeline" in prompt
+
+    def test_retry_prompt_includes_original_query(self) -> None:
+        """The retry prompt starts with the original user query."""
+        orch = self._make_orchestrator()
+        prompt = orch._build_retry_prompt("check health", ["Section A"])
+        assert prompt.startswith("check health")
+
+    def test_retry_prompt_no_bracket_markers(self) -> None:
+        """No [WARNING], [ERROR], [IMPORTANT] or similar bracket-prefixed
+        markers should appear in the retry prompt sent to the LLM."""
+        orch = self._make_orchestrator()
+        prompt = orch._build_retry_prompt(
+            "analyze cluster",
+            ["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+        # These patterns should NEVER appear in LLM prompts
+        assert "[WARNING]" not in prompt
+        assert "[ERROR]" not in prompt
+        assert "[IMPORTANT]" not in prompt
+        assert "[CRITICAL]" not in prompt
+        assert "[ALERT]" not in prompt
+
+    def test_retry_prompt_no_imperative_warning_language(self) -> None:
+        """The prompt should use neutral instructional language, not
+        all-caps imperative words that LLMs tend to echo verbatim."""
+        orch = self._make_orchestrator()
+        prompt = orch._build_retry_prompt(
+            "check pods",
+            ["Cluster Overview", "Events Timeline"],
+        )
+        # These imperative markers from the old prompt should be gone
+        assert "IMPORTANT:" not in prompt
+        assert "MANDATORY" not in prompt
+        assert "You MUST" not in prompt
+
+    def test_retry_prompt_uses_neutral_instruction(self) -> None:
+        """The prompt should contain neutral re-generation instructions."""
+        orch = self._make_orchestrator()
+        prompt = orch._build_retry_prompt("query", ["Section X"])
+        assert "missing the following sections" in prompt
+        assert "Please regenerate" in prompt
+
+    def test_retry_prompt_single_missing_section(self) -> None:
+        """Works correctly with a single missing section."""
+        orch = self._make_orchestrator()
+        prompt = orch._build_retry_prompt("query", ["Events Timeline"])
+        assert "Events Timeline" in prompt
+        assert "missing the following sections" in prompt
+
+
+class TestRetryPromptCleanInPipeline:
+    """Integration test: verify the retry prompt sent during execute_with_tools
+    is free of warning markers that the LLM would echo."""
+
+    def test_retry_prompt_clean_during_execution(self) -> None:
+        """When a retry is triggered, the actual prompt sent to the agent
+        must not contain any bracket-prefixed warning markers."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content=(
+                    "## Cluster Overview\n"
+                    "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
+                ),
+                success=True,
+                usage={"total_tokens": 100},
+            ),
+            AgentResult(
+                agent_name="gatherer",
+                content=(
+                    "## Cluster Overview\n"
+                    "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
+                    "## Service Status\n"
+                    "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
+                    "## Events Timeline\n"
+                    "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+                ),
+                success=True,
+                usage={"total_tokens": 150},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Final report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            orchestrator.execute_with_tools("check health", skill, registry)
+
+        # Verify the retry prompt was clean
+        retry_call = agent1.execute.call_args_list[1]
+        retry_prompt = retry_call.args[0]
+
+        # No bracket-prefixed markers
+        for marker in ("[WARNING]", "[ERROR]", "[IMPORTANT]", "[CRITICAL]", "[ALERT]"):
+            assert marker not in retry_prompt, (
+                f"LLM prompt contains '{marker}' which will be echoed into the report"
+            )
+
+        # No all-caps imperative language from the old prompt
+        assert "IMPORTANT:" not in retry_prompt
+        assert "MANDATORY" not in retry_prompt
+        assert "You MUST" not in retry_prompt
+
+        # The prompt DOES contain the expected clean language
+        assert "missing the following sections" in retry_prompt
+        assert "Service Status" in retry_prompt
+        assert "Events Timeline" in retry_prompt
+
+
+# ===========================================================================
+# Content depth validation — shallow section detection
+# ===========================================================================
+
+
+class TestShallowSectionDetection:
+    """Test that _validate_gatherer_output detects shallow sections."""
+
+    def _make_orchestrator(self) -> Orchestrator:
+        return Orchestrator(_make_mock_client(), _make_mock_settings())
+
+    def test_empty_section_body_is_shallow(self) -> None:
+        """Section header exists but body is empty → shallow."""
+        orch = self._make_orchestrator()
+        output = (
+            "## Cluster Overview\n"
+            "\n"
+            "## Service Status\n"
+            "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
+            "## Events Timeline\n"
+            "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+        )
+        required = ["Cluster Overview", "Service Status", "Events Timeline"]
+        result = orch._validate_gatherer_output(output, required)
+        assert "Cluster Overview" in result.shallow_sections
+        assert "Service Status" not in result.shallow_sections
+        assert "Events Timeline" not in result.shallow_sections
+        assert result.needs_retry
+
+    def test_na_body_is_shallow(self) -> None:
+        """Section body is just 'N/A' → shallow."""
+        orch = self._make_orchestrator()
+        output = (
+            "## Cluster Overview\n"
+            "N/A\n"
+            "## Service Status\n"
+            "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
+            "## Events Timeline\n"
+            "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+        )
+        required = ["Cluster Overview", "Service Status", "Events Timeline"]
+        result = orch._validate_gatherer_output(output, required)
+        assert "Cluster Overview" in result.shallow_sections
+        assert result.needs_retry
+
+    def test_data_not_available_is_shallow(self) -> None:
+        """Section body is 'Data not available' → shallow."""
+        orch = self._make_orchestrator()
+        output = (
+            "## Cluster Overview\n"
+            "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
+            "## Service Status\n"
+            "Data not available\n"
+            "## Events Timeline\n"
+            "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+        )
+        required = ["Cluster Overview", "Service Status", "Events Timeline"]
+        result = orch._validate_gatherer_output(output, required)
+        assert "Service Status" in result.shallow_sections
+        assert "Cluster Overview" not in result.shallow_sections
+
+    def test_all_empty_markers_detected(self) -> None:
+        """Every item in EMPTY_MARKERS is detected as shallow."""
+        orch = self._make_orchestrator()
+        for marker in EMPTY_MARKERS:
+            output = f"## Test Section\n{marker}\n"
+            result = orch._validate_gatherer_output(output, ["Test Section"])
+            assert "Test Section" in result.shallow_sections, (
+                f"Empty marker '{marker}' was not detected as shallow"
+            )
+
+    def test_short_content_is_shallow(self) -> None:
+        """Section with fewer than min_content_chars is shallow."""
+        orch = self._make_orchestrator()
+        # "OK" is only 2 chars, well below the 50-char default
+        output = (
+            "## Cluster Overview\n"
+            "OK\n"
+            "## Service Status\n"
+            "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
+            "## Events Timeline\n"
+            "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+        )
+        required = ["Cluster Overview", "Service Status", "Events Timeline"]
+        result = orch._validate_gatherer_output(output, required)
+        assert "Cluster Overview" in result.shallow_sections
+
+    def test_custom_min_content_chars(self) -> None:
+        """Custom min_content_chars threshold is respected."""
+        orch = self._make_orchestrator()
+        # 30 chars of content: "This is some moderate content."
+        body_text = "This is some moderate content."
+        output = f"## Cluster Overview\n{body_text}\n"
+        required = ["Cluster Overview"]
+
+        # With default (50), it should be shallow
+        result_default = orch._validate_gatherer_output(output, required)
+        assert "Cluster Overview" in result_default.shallow_sections
+
+        # With threshold of 20, it should pass
+        result_low = orch._validate_gatherer_output(
+            output, required, min_content_chars=20,
+        )
+        assert "Cluster Overview" not in result_low.shallow_sections
+        assert not result_low.needs_retry
+
+    def test_sufficient_content_passes(self) -> None:
+        """Section with adequate content (>= min chars) passes depth check."""
+        orch = self._make_orchestrator()
+        output = (
+            "## Cluster Overview\n"
+            "The cluster has 3 nodes running Kubernetes v1.28. CPU usage averages 45% across all nodes. "
+            "Memory utilization is stable at 60%. No node pressure conditions detected.\n"
+        )
+        required = ["Cluster Overview"]
+        result = orch._validate_gatherer_output(output, required)
+        assert result.missing_sections == []
+        assert result.shallow_sections == []
+        assert not result.needs_retry
+
+    def test_mixed_missing_and_shallow(self) -> None:
+        """Output with both missing and shallow sections reports both."""
+        orch = self._make_orchestrator()
+        output = (
+            "## Cluster Overview\n"
+            "N/A\n"
+            "## Service Status\n"
+            "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
+            # Events Timeline is completely missing
+        )
+        required = ["Cluster Overview", "Service Status", "Events Timeline"]
+        result = orch._validate_gatherer_output(output, required)
+        assert "Cluster Overview" in result.shallow_sections
+        assert "Events Timeline" in result.missing_sections
+        assert "Service Status" not in result.missing_sections
+        assert "Service Status" not in result.shallow_sections
+        assert result.needs_retry
+
+    def test_empty_marker_case_insensitive(self) -> None:
+        """Empty marker matching is case-insensitive."""
+        orch = self._make_orchestrator()
+        output = "## Test Section\nNO DATA AVAILABLE\n"
+        result = orch._validate_gatherer_output(output, ["Test Section"])
+        assert "Test Section" in result.shallow_sections
+
+    def test_section_with_only_whitespace_is_shallow(self) -> None:
+        """Section body with only whitespace is shallow."""
+        orch = self._make_orchestrator()
+        output = (
+            "## Cluster Overview\n"
+            "   \n"
+            "  \t  \n"
+            "## Service Status\n"
+            "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
+        )
+        required = ["Cluster Overview", "Service Status"]
+        result = orch._validate_gatherer_output(output, required)
+        assert "Cluster Overview" in result.shallow_sections
+
+
+class TestExtractSectionBody:
+    """Test Orchestrator._extract_section_body()."""
+
+    def test_markdown_heading_extraction(self) -> None:
+        """Extracts body between markdown heading and next heading."""
+        output = (
+            "## Section A\n"
+            "Content of section A with details.\n\n"
+            "## Section B\n"
+            "Content of section B.\n"
+        )
+        body = Orchestrator._extract_section_body(output, "Section A")
+        assert "Content of section A" in body
+        assert "Section B" not in body
+
+    def test_last_section_extracts_to_end(self) -> None:
+        """Last section extracts until end of text."""
+        output = (
+            "## Section A\n"
+            "First.\n\n"
+            "## Section B\n"
+            "Content of the last section with lots of detail.\n"
+        )
+        body = Orchestrator._extract_section_body(output, "Section B")
+        assert "Content of the last section" in body
+
+    def test_section_not_found_returns_empty(self) -> None:
+        """Non-existent section returns empty string."""
+        output = "## Other Section\nSome data.\n"
+        body = Orchestrator._extract_section_body(output, "Missing Section")
+        assert body == ""
+
+    def test_case_insensitive_heading(self) -> None:
+        """Heading matching is case-insensitive."""
+        output = "## CLUSTER OVERVIEW\nData here with enough detail to matter.\n"
+        body = Orchestrator._extract_section_body(output, "Cluster Overview")
+        assert "Data here" in body
+
+    def test_different_heading_levels(self) -> None:
+        """Works with different markdown heading levels (# to ######)."""
+        for level in range(1, 7):
+            prefix = "#" * level
+            output = f"{prefix} My Section\nBody content for this particular section.\n"
+            body = Orchestrator._extract_section_body(output, "My Section")
+            assert "Body content" in body, f"Failed for heading level {level}"
+
+
+class TestIsSectionShallow:
+    """Test Orchestrator._is_section_shallow()."""
+
+    def test_empty_body_is_shallow(self) -> None:
+        assert Orchestrator._is_section_shallow("", 50) is True
+
+    def test_empty_marker_is_shallow(self) -> None:
+        assert Orchestrator._is_section_shallow("N/A", 50) is True
+        assert Orchestrator._is_section_shallow("No data", 50) is True
+
+    def test_short_body_is_shallow(self) -> None:
+        assert Orchestrator._is_section_shallow("OK", 50) is True
+
+    def test_sufficient_body_not_shallow(self) -> None:
+        body = "This section contains detailed information about the cluster health status and metrics."
+        assert Orchestrator._is_section_shallow(body, 50) is False
+
+    def test_exact_threshold_not_shallow(self) -> None:
+        body = "x" * 50
+        assert Orchestrator._is_section_shallow(body, 50) is False
+
+    def test_one_below_threshold_is_shallow(self) -> None:
+        body = "x" * 49
+        assert Orchestrator._is_section_shallow(body, 50) is True
+
+
+class TestGathererValidationResult:
+    """Test the GathererValidationResult dataclass."""
+
+    def test_empty_result_no_retry(self) -> None:
+        result = GathererValidationResult()
+        assert not result.needs_retry
+
+    def test_missing_triggers_retry(self) -> None:
+        result = GathererValidationResult(missing_sections=["X"])
+        assert result.needs_retry
+
+    def test_shallow_triggers_retry(self) -> None:
+        result = GathererValidationResult(shallow_sections=["Y"])
+        assert result.needs_retry
+
+    def test_both_triggers_retry(self) -> None:
+        result = GathererValidationResult(
+            missing_sections=["X"],
+            shallow_sections=["Y"],
+        )
+        assert result.needs_retry
+
+
+# ===========================================================================
+# Enhanced retry prompt — missing vs shallow distinction
+# ===========================================================================
+
+
+class TestBuildRetryPromptEnhanced:
+    """Test enhanced _build_retry_prompt with shallow_sections parameter."""
+
+    def _make_orchestrator(self) -> Orchestrator:
+        return Orchestrator(_make_mock_client(), _make_mock_settings())
+
+    def test_only_missing_sections_prompt(self) -> None:
+        """When only missing sections, prompt mentions missing but not shallow."""
+        orch = self._make_orchestrator()
+        prompt = orch._build_retry_prompt(
+            "check health",
+            ["Service Status"],
+            shallow_sections=[],
+        )
+        assert "missing the following sections" in prompt
+        assert "Service Status" in prompt
+        assert "insufficient data" not in prompt
+
+    def test_only_shallow_sections_prompt(self) -> None:
+        """When only shallow sections, prompt mentions insufficient data."""
+        orch = self._make_orchestrator()
+        prompt = orch._build_retry_prompt(
+            "check health",
+            [],
+            shallow_sections=["Cluster Overview", "Events Timeline"],
+        )
+        assert "insufficient data" in prompt
+        assert "Cluster Overview" in prompt
+        assert "Events Timeline" in prompt
+        assert "missing the following sections" not in prompt
+
+    def test_both_missing_and_shallow_prompt(self) -> None:
+        """When both missing and shallow, prompt mentions both."""
+        orch = self._make_orchestrator()
+        prompt = orch._build_retry_prompt(
+            "check health",
+            ["Events Timeline"],
+            shallow_sections=["Cluster Overview"],
+        )
+        assert "missing the following sections" in prompt
+        assert "Events Timeline" in prompt
+        assert "insufficient data" in prompt
+        assert "Cluster Overview" in prompt
+
+    def test_enhanced_prompt_no_bracket_markers(self) -> None:
+        """Enhanced prompt still has no bracket markers."""
+        orch = self._make_orchestrator()
+        prompt = orch._build_retry_prompt(
+            "check health",
+            ["A"],
+            shallow_sections=["B"],
+        )
+        for marker in ("[WARNING]", "[ERROR]", "[IMPORTANT]", "[CRITICAL]"):
+            assert marker not in prompt
+
+    def test_enhanced_prompt_starts_with_query(self) -> None:
+        """Enhanced prompt still starts with the original query."""
+        orch = self._make_orchestrator()
+        prompt = orch._build_retry_prompt(
+            "check health",
+            [],
+            shallow_sections=["Cluster Overview"],
+        )
+        assert prompt.startswith("check health")
+
+    def test_backward_compat_no_shallow_kwarg(self) -> None:
+        """Calling without shallow_sections kwarg still works (backward compat)."""
+        orch = self._make_orchestrator()
+        prompt = orch._build_retry_prompt("query", ["Missing Section"])
+        assert "missing the following sections" in prompt
+        assert "Missing Section" in prompt
+        assert "Please regenerate" in prompt
+
+
+# ===========================================================================
+# Integration: shallow section triggers retry in pipeline
+# ===========================================================================
+
+
+class TestShallowRetryIntegration:
+    """Integration tests for shallow-section retry in execute_with_tools."""
+
+    def test_shallow_section_triggers_retry(self) -> None:
+        """When a section header exists but content is shallow,
+        the orchestrator retries with a prompt mentioning insufficient data."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content=(
+                    "## Cluster Overview\n"
+                    "N/A\n"  # Shallow — empty marker
+                    "## Service Status\n"
+                    "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
+                    "## Events Timeline\n"
+                    "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+                ),
+                success=True,
+                usage={"total_tokens": 100},
+            ),
+            AgentResult(
+                agent_name="gatherer",
+                content=(
+                    "## Cluster Overview\n"
+                    "Nodes: 3 running k8s v1.28. CPU 45%. Memory 60%. No node pressure detected.\n"
+                    "## Service Status\n"
+                    "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
+                    "## Events Timeline\n"
+                    "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+                ),
+                success=True,
+                usage={"total_tokens": 200},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Final report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check health", skill, registry)
+
+        assert result.success is True
+        assert agent1.execute.call_count == 2
+        agent1.reset.assert_called_once()
+
+        # Retry prompt should mention "insufficient data" for shallow section
+        retry_call = agent1.execute.call_args_list[1]
+        retry_prompt = retry_call.args[0]
+        assert "insufficient data" in retry_prompt
+        assert "Cluster Overview" in retry_prompt
+        # Should NOT say "missing" for Cluster Overview (it was found, just shallow)
+        assert "missing the following sections" not in retry_prompt
+
+    def test_mixed_missing_and_shallow_retry(self) -> None:
+        """Both missing and shallow sections trigger retry with differentiated prompt."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content=(
+                    "## Cluster Overview\n"
+                    "No data available\n"  # Shallow — empty marker
+                    "## Service Status\n"
+                    "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
+                    # Events Timeline is completely missing
+                ),
+                success=True,
+                usage={"total_tokens": 100},
+            ),
+            AgentResult(
+                agent_name="gatherer",
+                content=(
+                    "## Cluster Overview\n"
+                    "Nodes: 3 running k8s v1.28. CPU 45%. Memory 60%. No node pressure.\n"
+                    "## Service Status\n"
+                    "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
+                    "## Events Timeline\n"
+                    "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+                ),
+                success=True,
+                usage={"total_tokens": 200},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check health", skill, registry)
+
+        assert result.success is True
+        assert agent1.execute.call_count == 2
+
+        retry_call = agent1.execute.call_args_list[1]
+        retry_prompt = retry_call.args[0]
+        # Should mention BOTH missing and shallow
+        assert "missing the following sections" in retry_prompt
+        assert "Events Timeline" in retry_prompt
+        assert "insufficient data" in retry_prompt
+        assert "Cluster Overview" in retry_prompt

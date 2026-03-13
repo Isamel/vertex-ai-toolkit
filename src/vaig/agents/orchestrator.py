@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -11,6 +12,7 @@ from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
 from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.client import GeminiClient
+from vaig.core.language import detect_language, inject_language_into_config
 from vaig.skills.base import BaseSkill, SkillPhase, SkillResult
 from vaig.tools.base import ToolRegistry
 
@@ -18,6 +20,21 @@ if TYPE_CHECKING:
     from vaig.core.config import Settings
 
 logger = logging.getLogger(__name__)
+
+# ── Gatherer output validation constants ────────────────────────────────
+DEFAULT_MIN_CONTENT_CHARS = 50
+
+EMPTY_MARKERS: tuple[str, ...] = (
+    "n/a",
+    "data not available",
+    "no data",
+    "not available",
+    "none found",
+    "no results",
+    "no data available",
+    "no information available",
+    "unavailable",
+)
 
 
 @dataclass
@@ -44,6 +61,25 @@ class OrchestratorResult:
         )
 
 
+@dataclass
+class GathererValidationResult:
+    """Rich validation result from gatherer output checking.
+
+    Separates two classes of issues:
+    - **missing_sections**: section header not found at all.
+    - **shallow_sections**: header found but content is empty, too short,
+      or consists only of empty-marker phrases (e.g. "N/A").
+    """
+
+    missing_sections: list[str] = field(default_factory=list)
+    shallow_sections: list[str] = field(default_factory=list)
+
+    @property
+    def needs_retry(self) -> bool:
+        """Return ``True`` when at least one section is missing or shallow."""
+        return bool(self.missing_sections or self.shallow_sections)
+
+
 class Orchestrator:
     """Orchestrates multi-agent execution for skills.
 
@@ -68,6 +104,8 @@ class Orchestrator:
         self,
         skill: BaseSkill,
         tool_registry: ToolRegistry | None = None,
+        *,
+        agent_configs: list[dict] | None = None,
     ) -> list[BaseAgent]:
         """Create agents based on a skill's configuration.
 
@@ -76,11 +114,23 @@ class Orchestrator:
         is provided, a :class:`ToolAwareAgent` is created instead of a
         :class:`SpecialistAgent`.  This keeps the method fully backward-compatible
         — callers that omit *tool_registry* get the same behaviour as before.
+
+        Args:
+            skill: The skill whose agents to create.
+            tool_registry: Optional tool registry for tool-aware agents.
+            agent_configs: Optional pre-built agent config dicts.  When
+                provided, these are used instead of calling
+                ``skill.get_agents_config()``.  This allows callers
+                (e.g. :meth:`execute_with_tools`) to inject runtime
+                modifications like language instructions before agent
+                creation.
         """
         self._agents.clear()
         agents: list[BaseAgent] = []
 
-        for config_dict in skill.get_agents_config():
+        configs = agent_configs if agent_configs is not None else skill.get_agents_config()
+
+        for config_dict in configs:
             if config_dict.get("requires_tools") and tool_registry is not None:
                 model = config_dict.get("model", "gemini-2.5-pro")
                 agent: BaseAgent = ToolAwareAgent.from_config_dict(
@@ -125,6 +175,10 @@ class Orchestrator:
 
         for i, agent in enumerate(agents):
             logger.info("Sequential step %d/%d: agent=%s", i + 1, len(agents), agent.name)
+            logger.debug(
+                "Agent '%s' config: role=%s, model=%s",
+                agent.name, agent.role, agent.model,
+            )
 
             # First agent gets the original prompt; subsequent agents get the accumulated context
             if i == 0:
@@ -136,6 +190,13 @@ class Orchestrator:
 
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
+
+            logger.debug(
+                "Agent '%s' finished: success=%s, tokens=%s",
+                agent.name,
+                agent_result.success,
+                agent_result.usage.get("total_tokens", "?"),
+            )
 
             if not agent_result.success:
                 result.success = False
@@ -270,7 +331,23 @@ class Orchestrator:
             strategy,
         )
 
-        agents = self.create_agents_for_skill(skill, tool_registry)
+        # ── Dynamic language detection & injection ───────────
+        # Detect the user's language and inject a language instruction
+        # into each agent's system prompt so the entire pipeline responds
+        # in the same language as the query.
+        lang = detect_language(query)
+        agent_configs = skill.get_agents_config()
+        if lang != "en":
+            inject_language_into_config(agent_configs, lang)
+            logger.info(
+                "Language detected: %s — injected language instruction into %d agent(s)",
+                lang,
+                len(agent_configs),
+            )
+
+        agents = self.create_agents_for_skill(
+            skill, tool_registry, agent_configs=agent_configs,
+        )
         result = OrchestratorResult(
             skill_name=skill.get_metadata().name,
             phase=SkillPhase.EXECUTE,
@@ -319,6 +396,10 @@ class Orchestrator:
                     "Sequential (tools) step %d/%d: agent=%s",
                     i + 1, len(agents), agent.name,
                 )
+                logger.debug(
+                    "Agent '%s' config: role=%s, model=%s",
+                    agent.name, agent.role, agent.model,
+                )
                 if i > 0 and result.agent_results:
                     prev = result.agent_results[-1]
                     current_context = (
@@ -330,6 +411,13 @@ class Orchestrator:
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
 
+                logger.debug(
+                    "Agent '%s' finished: success=%s, tokens=%s",
+                    agent.name,
+                    agent_result.success,
+                    agent_result.usage.get("total_tokens", "?"),
+                )
+
                 if not agent_result.success:
                     result.success = False
                     logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
@@ -337,23 +425,31 @@ class Orchestrator:
 
                 # ── Gatherer output validation + retry ───────────
                 if i == 0 and required_sections and agent_result.success:
-                    missing = self._validate_gatherer_output(
+                    validation = self._validate_gatherer_output(
                         agent_result.content, required_sections,
                     )
-                    if missing:
+                    if validation.needs_retry:
+                        all_issues = validation.missing_sections + validation.shallow_sections
                         logger.warning(
-                            "Gatherer output missing %d mandatory section(s): %s — retrying once",
-                            len(missing),
-                            ", ".join(missing),
+                            "Gatherer output has %d issue(s): "
+                            "missing=%s, shallow=%s — retrying once",
+                            len(all_issues),
+                            ", ".join(validation.missing_sections) or "(none)",
+                            ", ".join(validation.shallow_sections) or "(none)",
                         )
-                        retry_prompt = (
-                            f"{query}\n\n"
-                            f"IMPORTANT: Your previous data collection was incomplete. "
-                            f"The following MANDATORY sections are missing from your output: "
-                            f"{', '.join(missing)}. "
-                            f"You MUST collect this data. Re-execute your data collection "
-                            f"and ensure ALL mandatory sections are present in your output."
+                        logger.debug(
+                            "Validation failed: required_sections=%s, "
+                            "missing=%s, shallow=%s",
+                            required_sections,
+                            validation.missing_sections,
+                            validation.shallow_sections,
                         )
+                        retry_prompt = self._build_retry_prompt(
+                            query,
+                            validation.missing_sections,
+                            shallow_sections=validation.shallow_sections,
+                        )
+                        logger.debug("Retry prompt: %s", retry_prompt[:200])
                         agent.reset()
                         retry_result = agent.execute(retry_prompt, context="")
                         _accumulate_usage(result, retry_result)
@@ -368,6 +464,17 @@ class Orchestrator:
                                 agent.name, retry_result.content,
                             )
                             break
+                        logger.info(
+                            "Agent %s retry succeeded — tokens=%s",
+                            agent.name,
+                            retry_result.usage.get("total_tokens", "?"),
+                        )
+                    else:
+                        logger.debug(
+                            "Gatherer validation passed: all %d required sections "
+                            "present with sufficient depth",
+                            len(required_sections),
+                        )
 
             if result.agent_results:
                 result.synthesized_output = result.agent_results[-1].content
@@ -397,25 +504,179 @@ class Orchestrator:
                 sections.append(f"### {r.agent_name} (failed)\n\n{r.content}")
         return "\n\n---\n\n".join(sections)
 
-    def _validate_gatherer_output(self, output: str, required_sections: list[str]) -> list[str]:
-        """Check whether the gatherer output contains all required sections.
+    def _validate_gatherer_output(
+        self,
+        output: str,
+        required_sections: list[str],
+        *,
+        min_content_chars: int = DEFAULT_MIN_CONTENT_CHARS,
+    ) -> GathererValidationResult:
+        """Check whether the gatherer output contains all required sections
+        with sufficient content depth.
 
-        Comparison is case-insensitive.
+        The method performs two levels of validation:
+
+        1. **Header presence** (case-insensitive) — same as before.
+        2. **Content depth** — for each found header, extract the body text
+           (everything between this header and the next markdown heading or
+           end-of-text), strip whitespace, and verify:
+           a) The body is not empty.
+           b) The body does not consist solely of an empty-marker phrase
+              (e.g. ``"N/A"``, ``"Data not available"``).
+           c) The body has at least *min_content_chars* meaningful characters.
 
         Args:
             output: The text produced by the first agent (gatherer).
             required_sections: Section headings that MUST appear in the output.
+            min_content_chars: Minimum character count for a section body to be
+                considered "deep enough".  Defaults to
+                :data:`DEFAULT_MIN_CONTENT_CHARS`.
 
         Returns:
-            List of section names that are **missing** from the output.
-            An empty list means all sections are present.
+            A :class:`GathererValidationResult` with separate lists for
+            missing and shallow sections.
         """
         output_lower = output.lower()
-        return [
-            section
-            for section in required_sections
-            if section.lower() not in output_lower
-        ]
+        result = GathererValidationResult()
+
+        for section in required_sections:
+            section_lower = section.lower()
+
+            if section_lower not in output_lower:
+                result.missing_sections.append(section)
+                continue
+
+            # ── Extract section body ─────────────────────────────────
+            body = self._extract_section_body(output, section)
+
+            if self._is_section_shallow(body, min_content_chars):
+                result.shallow_sections.append(section)
+
+        return result
+
+    @staticmethod
+    def _extract_section_body(output: str, section_name: str) -> str:
+        """Extract text content after a section header up to the next heading.
+
+        Uses a regex that matches the section name (case-insensitive) preceded
+        by optional ``#`` markdown heading markers.  The body extends until the
+        next markdown heading (``^#{1,6} ``) or the end of text.
+
+        Args:
+            output: Full gatherer output text.
+            section_name: The section header to find.
+
+        Returns:
+            The extracted body text, stripped of leading/trailing whitespace.
+            Returns ``""`` if the header is not found.
+        """
+        # Match optional markdown heading markers, then the section name
+        pattern = re.compile(
+            rf"^(?:#{1,6}\s+)?{re.escape(section_name)}\s*$",
+            re.IGNORECASE | re.MULTILINE,
+        )
+        match = pattern.search(output)
+        if not match:
+            # Fallback: try finding the section name as a substring on any line
+            idx = output.lower().find(section_name.lower())
+            if idx == -1:
+                return ""
+            # Skip past the header line
+            newline_after = output.find("\n", idx)
+            if newline_after == -1:
+                return ""
+            body_start = newline_after + 1
+        else:
+            body_start = match.end()
+
+        # Find the next markdown heading (or end of string)
+        next_heading = re.search(
+            r"^#{1,6}\s+",
+            output[body_start:],
+            re.MULTILINE,
+        )
+        if next_heading:
+            body_end = body_start + next_heading.start()
+        else:
+            body_end = len(output)
+
+        return output[body_start:body_end].strip()
+
+    @staticmethod
+    def _is_section_shallow(body: str, min_content_chars: int) -> bool:
+        """Determine if a section body is too shallow to be useful.
+
+        A section is considered shallow if:
+        - The body is empty after stripping whitespace.
+        - The body text (ignoring case) matches an empty-marker phrase.
+        - The body has fewer than *min_content_chars* characters.
+
+        Args:
+            body: Extracted section body text (already stripped).
+            min_content_chars: Minimum character count threshold.
+
+        Returns:
+            ``True`` if the section is shallow, ``False`` otherwise.
+        """
+        if not body:
+            return True
+
+        body_lower = body.lower().strip()
+
+        # Check if body is just an empty marker
+        if body_lower in EMPTY_MARKERS:
+            return True
+
+        # Check minimum character threshold
+        return len(body) < min_content_chars
+
+    def _build_retry_prompt(
+        self,
+        original_query: str,
+        missing_sections: list[str],
+        *,
+        shallow_sections: list[str] | None = None,
+    ) -> str:
+        """Build a clean retry prompt for the gatherer agent.
+
+        The prompt uses neutral instructional language so the LLM does not
+        echo warning/error markers into its output.  All diagnostic text
+        (e.g. ``[WARNING] ...``) stays in the Python logger — it must
+        **never** appear inside a prompt sent to the model.
+
+        Args:
+            original_query: The original user query to re-execute.
+            missing_sections: Section names absent from the first attempt.
+            shallow_sections: Section names present but with insufficient
+                content depth.  ``None`` or empty list means no shallow
+                sections.
+
+        Returns:
+            A prompt string free of bracket-prefixed markers.
+        """
+        parts: list[str] = [original_query, ""]
+
+        if missing_sections:
+            sections_list = ", ".join(missing_sections)
+            parts.append(
+                f"Your previous response was missing the following sections: "
+                f"{sections_list}."
+            )
+
+        if shallow_sections:
+            sections_list = ", ".join(shallow_sections)
+            parts.append(
+                f"The following sections had insufficient data and need more "
+                f"detail: {sections_list}. Please collect more detailed data "
+                f"for these sections."
+            )
+
+        parts.append(
+            "Please regenerate your response including ALL required sections "
+            "with comprehensive, detailed data for each."
+        )
+
+        return "\n".join(parts)
 
     def default_system_instruction(self) -> str:
         """Default system instruction for general chat mode."""

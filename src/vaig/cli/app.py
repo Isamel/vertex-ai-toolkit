@@ -83,6 +83,10 @@ def main(
         bool,
         typer.Option("--verbose", "-V", help="Enable verbose logging (INFO level)"),
     ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option("--debug", "-d", help="Enable debug logging (DEBUG level, shows paths and full tracebacks)"),
+    ] = False,
     log_level: Annotated[
         Optional[str],
         typer.Option("--log-level", help="Set log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"),
@@ -91,15 +95,21 @@ def main(
     """VAIG — Vertex AI Gemini Toolkit."""
     from vaig.core.log import setup_logging
 
-    # Determine effective log level: --log-level takes precedence over -V
+    # Priority: --log-level > --debug > --verbose > default (WARNING)
     if log_level:
         level = log_level.upper()
+        show_path = level == "DEBUG"
+    elif debug:
+        level = "DEBUG"
+        show_path = True
     elif verbose:
         level = "INFO"
+        show_path = False
     else:
         level = "WARNING"
+        show_path = False
 
-    setup_logging(level, show_path=log_level == "DEBUG" if log_level else False)
+    setup_logging(level, show_path=show_path)
 
 
 # ══════════════════════════════════════════════════════════════
