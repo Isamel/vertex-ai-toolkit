@@ -91,6 +91,7 @@ skills:
     - toil-analysis
     - network-review
     - adr-generator
+    - service-health
   custom_dir: null
 
 agents:
