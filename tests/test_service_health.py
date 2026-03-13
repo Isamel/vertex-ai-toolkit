@@ -337,6 +337,151 @@ class TestServiceHealthSkillPromptContent:
         assert "kubectl" in reporter_prompt.lower()
 
 
+class TestServiceHealthQualityConstraints:
+    """Validate the 4 quality constraints are present in prompts.
+
+    These tests ensure the prompt engineering fixes for hallucination,
+    actionability, scope precision, and findings structure remain in place.
+    Regression protection — if someone removes these constraints, tests fail.
+    """
+
+    # ── Problem 1: Anti-Hallucination ────────────────────────
+
+    def test_system_instruction_has_anti_hallucination_rules(self) -> None:
+        """SYSTEM_INSTRUCTION must contain anti-hallucination rules."""
+        from vaig.skills.service_health.prompts import SYSTEM_INSTRUCTION
+
+        assert "NEVER invent" in SYSTEM_INSTRUCTION
+        assert "placeholder" in SYSTEM_INSTRUCTION.lower()
+        assert "REDACTED" in SYSTEM_INSTRUCTION
+        assert "Data not available" in SYSTEM_INSTRUCTION
+
+    def test_gatherer_has_data_integrity_rules(self) -> None:
+        """Gatherer must enforce data integrity — no fabrication."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "NEVER fabricate" in HEALTH_GATHERER_PROMPT
+        assert "Tool returned no data" in HEALTH_GATHERER_PROMPT
+        assert "exact tool output" in HEALTH_GATHERER_PROMPT.lower()
+
+    def test_reporter_has_anti_hallucination_section(self) -> None:
+        """Reporter must have explicit anti-hallucination rules."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Anti-Hallucination" in HEALTH_REPORTER_PROMPT
+        assert "NEVER invent data" in HEALTH_REPORTER_PROMPT
+        assert "placeholder" in HEALTH_REPORTER_PROMPT.lower()
+
+    # ── Problem 2: Actionability ─────────────────────────────
+
+    def test_reporter_has_actionability_section(self) -> None:
+        """Reporter must enforce actionable recommendations with exact commands."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Actionability" in HEALTH_REPORTER_PROMPT
+        assert "exact kubectl commands" in HEALTH_REPORTER_PROMPT.lower()
+        assert "copy-paste" in HEALTH_REPORTER_PROMPT.lower()
+
+    def test_reporter_has_three_time_horizons(self) -> None:
+        """Reporter must structure actions into 3 time horizons."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Immediate (next 5 minutes)" in HEALTH_REPORTER_PROMPT
+        assert "Short-term (next 1 hour)" in HEALTH_REPORTER_PROMPT
+        assert "Long-term (next sprint)" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_requires_commands_for_every_action(self) -> None:
+        """Reporter must require a command for every action — no vague suggestions."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "EVERY action MUST include an exact command" in HEALTH_REPORTER_PROMPT
+
+    # ── Problem 3: Scope Precision ───────────────────────────
+
+    def test_system_instruction_has_scope_precision_rules(self) -> None:
+        """SYSTEM_INSTRUCTION must define scope levels."""
+        from vaig.skills.service_health.prompts import SYSTEM_INSTRUCTION
+
+        assert "Cluster-level" in SYSTEM_INSTRUCTION
+        assert "Namespace-level" in SYSTEM_INSTRUCTION
+        assert "Resource-level" in SYSTEM_INSTRUCTION
+
+    def test_system_instruction_prevents_scope_exaggeration(self) -> None:
+        """SYSTEM_INSTRUCTION must explicitly prevent scope exaggeration."""
+        from vaig.skills.service_health.prompts import SYSTEM_INSTRUCTION
+
+        assert "NEVER say the cluster is" in SYSTEM_INSTRUCTION
+        assert "RESOURCE-LEVEL issue" in SYSTEM_INSTRUCTION
+
+    def test_reporter_has_scope_precision_section(self) -> None:
+        """Reporter must have explicit scope precision rules."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Scope Precision" in HEALTH_REPORTER_PROMPT
+        assert "NEVER exaggerate scope" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_executive_summary_has_scope_field(self) -> None:
+        """Reporter template must include Scope in Executive Summary."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "**Scope**" in HEALTH_REPORTER_PROMPT
+
+    def test_analyzer_has_scope_in_severity_assessment(self) -> None:
+        """Analyzer must include scope classification in severity assessment."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "**Scope**" in HEALTH_ANALYZER_PROMPT
+        assert "Cluster-wide" in HEALTH_ANALYZER_PROMPT
+
+    # ── Problem 4: Findings Structure ────────────────────────
+
+    def test_analyzer_has_mandatory_findings_structure(self) -> None:
+        """Analyzer must enforce structured findings with What/Evidence/Impact/Affected."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "MANDATORY Output Format" in HEALTH_ANALYZER_PROMPT
+        assert "**What**" in HEALTH_ANALYZER_PROMPT
+        assert "**Evidence**" in HEALTH_ANALYZER_PROMPT
+        assert "**Impact**" in HEALTH_ANALYZER_PROMPT
+        assert "**Affected Resources**" in HEALTH_ANALYZER_PROMPT
+
+    def test_reporter_has_mandatory_findings_structure(self) -> None:
+        """Reporter must enforce structured findings with What/Evidence/Impact/Affected."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "MANDATORY Report Structure" in HEALTH_REPORTER_PROMPT
+        assert "**What**" in HEALTH_REPORTER_PROMPT
+        assert "**Evidence**" in HEALTH_REPORTER_PROMPT
+        assert "**Impact**" in HEALTH_REPORTER_PROMPT
+        assert "**Affected Resources**" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_requires_all_four_fields(self) -> None:
+        """Reporter must explicitly require all 4 fields for every finding."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "ALL four fields" in HEALTH_REPORTER_PROMPT
+
+    def test_analyzer_requires_all_four_fields(self) -> None:
+        """Analyzer must explicitly require all 4 fields for every finding."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "all four fields" in HEALTH_ANALYZER_PROMPT
+
+    def test_reporter_forbids_unstructured_paragraphs(self) -> None:
+        """Reporter must forbid unstructured paragraphs in findings."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "No unstructured paragraphs" in HEALTH_REPORTER_PROMPT
+
+    # ── Timeline Rules ───────────────────────────────────────
+
+    def test_reporter_has_timeline_anti_hallucination(self) -> None:
+        """Reporter must prevent fabricated timeline events."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "NEVER fabricate timestamps" in HEALTH_REPORTER_PROMPT
+
+
 class TestServiceHealthSkillRegistration:
     """Verify the skill is properly registered in the builtin skills map."""
 
