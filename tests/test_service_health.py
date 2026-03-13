@@ -333,6 +333,17 @@ class TestServiceHealthSkillAgentsConfig:
         verifier = agents[2]
         assert verifier["max_iterations"] == 10
 
+    def test_gatherer_max_iterations(self) -> None:
+        """Gatherer must have max_iterations=25 — mandatory Cloud Logging (Steps 7a-7d)
+        adds ~4 extra tool calls beyond the default 15-iteration limit."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        agents = skill.get_agents_config()
+        gatherer = agents[0]
+        assert gatherer["name"] == "health_gatherer"
+        assert gatherer["max_iterations"] == 25
+
     def test_verifier_agent_model(self) -> None:
         """Verifier uses flash model for speed — verification is targeted, not complex."""
         from vaig.skills.service_health.skill import ServiceHealthSkill
