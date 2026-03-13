@@ -312,6 +312,8 @@ class Orchestrator:
 
         else:  # sequential (default)
             current_context = ""
+            required_sections = skill.get_required_output_sections()
+
             for i, agent in enumerate(agents):
                 logger.info(
                     "Sequential (tools) step %d/%d: agent=%s",
@@ -332,6 +334,40 @@ class Orchestrator:
                     result.success = False
                     logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
                     break
+
+                # ── Gatherer output validation + retry ───────────
+                if i == 0 and required_sections and agent_result.success:
+                    missing = self._validate_gatherer_output(
+                        agent_result.content, required_sections,
+                    )
+                    if missing:
+                        logger.warning(
+                            "Gatherer output missing %d mandatory section(s): %s — retrying once",
+                            len(missing),
+                            ", ".join(missing),
+                        )
+                        retry_prompt = (
+                            f"{query}\n\n"
+                            f"IMPORTANT: Your previous data collection was incomplete. "
+                            f"The following MANDATORY sections are missing from your output: "
+                            f"{', '.join(missing)}. "
+                            f"You MUST collect this data. Re-execute your data collection "
+                            f"and ensure ALL mandatory sections are present in your output."
+                        )
+                        agent.reset()
+                        retry_result = agent.execute(retry_prompt, context="")
+                        _accumulate_usage(result, retry_result)
+
+                        # Replace the original result with the retry
+                        result.agent_results[-1] = retry_result
+
+                        if not retry_result.success:
+                            result.success = False
+                            logger.warning(
+                                "Agent %s retry also failed: %s",
+                                agent.name, retry_result.content,
+                            )
+                            break
 
             if result.agent_results:
                 result.synthesized_output = result.agent_results[-1].content
@@ -360,6 +396,26 @@ class Orchestrator:
             else:
                 sections.append(f"### {r.agent_name} (failed)\n\n{r.content}")
         return "\n\n---\n\n".join(sections)
+
+    def _validate_gatherer_output(self, output: str, required_sections: list[str]) -> list[str]:
+        """Check whether the gatherer output contains all required sections.
+
+        Comparison is case-insensitive.
+
+        Args:
+            output: The text produced by the first agent (gatherer).
+            required_sections: Section headings that MUST appear in the output.
+
+        Returns:
+            List of section names that are **missing** from the output.
+            An empty list means all sections are present.
+        """
+        output_lower = output.lower()
+        return [
+            section
+            for section in required_sections
+            if section.lower() not in output_lower
+        ]
 
     def default_system_instruction(self) -> str:
         """Default system instruction for general chat mode."""

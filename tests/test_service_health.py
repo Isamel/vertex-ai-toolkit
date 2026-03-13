@@ -1239,3 +1239,101 @@ class TestPromptConsistencyFix8VerifierNoAmbiguousPhrases:
         from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
 
         assert "NEVER downgrade directly to LOW" in HEALTH_VERIFIER_PROMPT
+
+
+# ── Temperature & Validation — Non-Determinism Mitigation ────────────────
+
+
+class TestServiceHealthTemperatureConfig:
+    """Verify that all 4 agents have low temperature for deterministic output."""
+
+    def test_gatherer_temperature(self) -> None:
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        agents = skill.get_agents_config()
+        assert agents[0]["name"] == "health_gatherer"
+        assert agents[0]["temperature"] == 0.2
+
+    def test_analyzer_temperature(self) -> None:
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        agents = skill.get_agents_config()
+        assert agents[1]["name"] == "health_analyzer"
+        assert agents[1]["temperature"] == 0.2
+
+    def test_verifier_temperature(self) -> None:
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        agents = skill.get_agents_config()
+        assert agents[2]["name"] == "health_verifier"
+        assert agents[2]["temperature"] == 0.2
+
+    def test_reporter_temperature(self) -> None:
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        agents = skill.get_agents_config()
+        assert agents[3]["name"] == "health_reporter"
+        assert agents[3]["temperature"] == 0.3
+
+    def test_all_temperatures_below_default(self) -> None:
+        """All agents must have temperature below the 0.7 default."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        for agent in skill.get_agents_config():
+            assert agent["temperature"] < 0.7, (
+                f"{agent['name']} temperature {agent['temperature']} is not below 0.7"
+            )
+
+
+class TestServiceHealthRequiredOutputSections:
+    """Verify get_required_output_sections() returns expected sections."""
+
+    def test_returns_list_not_none(self) -> None:
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        sections = skill.get_required_output_sections()
+        assert sections is not None
+        assert isinstance(sections, list)
+
+    def test_contains_cluster_overview(self) -> None:
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        sections = skill.get_required_output_sections()
+        assert "Cluster Overview" in sections
+
+    def test_contains_service_status(self) -> None:
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        sections = skill.get_required_output_sections()
+        assert "Service Status" in sections
+
+    def test_contains_events_timeline(self) -> None:
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        sections = skill.get_required_output_sections()
+        assert "Events Timeline" in sections
+
+    def test_base_skill_returns_none(self) -> None:
+        """BaseSkill.get_required_output_sections() returns None by default."""
+        from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
+
+        class DummySkill(BaseSkill):
+            def get_metadata(self) -> SkillMetadata:
+                return SkillMetadata(name="dummy", display_name="D", description="d")
+
+            def get_system_instruction(self) -> str:
+                return ""
+
+            def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
+                return ""
+
+        assert DummySkill().get_required_output_sections() is None

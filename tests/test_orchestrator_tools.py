@@ -499,3 +499,270 @@ class TestExecuteWithToolsUsage:
         assert result.total_usage["prompt_tokens"] == 25
         assert result.total_usage["completion_tokens"] == 45
         assert result.total_usage["total_tokens"] == 70
+
+
+# ===========================================================================
+# Gatherer output validation + retry logic
+# ===========================================================================
+
+
+class TestValidateGathererOutput:
+    """Test Orchestrator._validate_gatherer_output()."""
+
+    def _make_orchestrator(self) -> Orchestrator:
+        return Orchestrator(_make_mock_client(), _make_mock_settings())
+
+    def test_complete_output_returns_empty_list(self) -> None:
+        """All required sections present → no missing sections."""
+        orch = self._make_orchestrator()
+        output = (
+            "## Cluster Overview\n"
+            "Nodes: 3, all healthy\n\n"
+            "## Service Status\n"
+            "| Deployment | Ready |\n"
+            "| app | 3/3 |\n\n"
+            "## Events Timeline\n"
+            "10:00 Normal pod started\n"
+        )
+        required = ["Cluster Overview", "Service Status", "Events Timeline"]
+        missing = orch._validate_gatherer_output(output, required)
+        assert missing == []
+
+    def test_missing_sections_detected(self) -> None:
+        """Missing sections are returned in a list."""
+        orch = self._make_orchestrator()
+        output = "## Cluster Overview\nNodes: 3\n"
+        required = ["Cluster Overview", "Service Status", "Events Timeline"]
+        missing = orch._validate_gatherer_output(output, required)
+        assert "Service Status" in missing
+        assert "Events Timeline" in missing
+        assert "Cluster Overview" not in missing
+
+    def test_case_insensitive_matching(self) -> None:
+        """Section matching is case-insensitive."""
+        orch = self._make_orchestrator()
+        output = "## CLUSTER OVERVIEW\nData\n## service status\nData\n## events timeline\nData"
+        required = ["Cluster Overview", "Service Status", "Events Timeline"]
+        missing = orch._validate_gatherer_output(output, required)
+        assert missing == []
+
+    def test_all_sections_missing(self) -> None:
+        """Output with none of the required sections returns all as missing."""
+        orch = self._make_orchestrator()
+        output = "Some random text with no structure."
+        required = ["Cluster Overview", "Service Status", "Events Timeline"]
+        missing = orch._validate_gatherer_output(output, required)
+        assert len(missing) == 3
+
+    def test_empty_required_list(self) -> None:
+        """Empty required list → nothing is missing."""
+        orch = self._make_orchestrator()
+        missing = orch._validate_gatherer_output("anything", [])
+        assert missing == []
+
+
+class TestGathererRetryLogic:
+    """Test the retry-on-incomplete-gatherer-output logic in execute_with_tools."""
+
+    def test_retry_triggered_on_incomplete_output(self) -> None:
+        """When gatherer output is incomplete and skill defines required sections,
+        the orchestrator retries the gatherer once."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        # First call returns incomplete output, retry returns complete
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content="## Cluster Overview\nData here\n",  # Missing Service Status, Events Timeline
+                success=True,
+                usage={"total_tokens": 100},
+            ),
+            AgentResult(
+                agent_name="gatherer",
+                content="## Cluster Overview\nData\n## Service Status\nOK\n## Events Timeline\nEvents",
+                success=True,
+                usage={"total_tokens": 150},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Final report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        # Skill with required sections
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check health", skill, registry)
+
+        assert result.success is True
+        # Agent1 should have been called twice (original + retry)
+        assert agent1.execute.call_count == 2
+        # Agent1 should have been reset before retry
+        agent1.reset.assert_called_once()
+        # Retry prompt should mention missing sections
+        retry_call = agent1.execute.call_args_list[1]
+        retry_prompt = retry_call.args[0]
+        assert "MANDATORY sections are missing" in retry_prompt
+        assert "Service Status" in retry_prompt
+        assert "Events Timeline" in retry_prompt
+
+    def test_no_retry_when_output_is_complete(self) -> None:
+        """When gatherer output is complete, no retry happens."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.return_value = AgentResult(
+            agent_name="gatherer",
+            content="## Cluster Overview\nOK\n## Service Status\nOK\n## Events Timeline\nOK",
+            success=True,
+            usage={"total_tokens": 100},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check health", skill, registry)
+
+        assert result.success is True
+        assert agent1.execute.call_count == 1
+        agent1.reset.assert_not_called()
+
+    def test_no_retry_when_skill_has_no_required_sections(self) -> None:
+        """Skills without required sections skip validation entirely."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.return_value = AgentResult(
+            agent_name="gatherer",
+            content="Random incomplete output",
+            success=True,
+            usage={"total_tokens": 100},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        # Default StubToolSkill doesn't override get_required_output_sections
+        skill = StubToolSkill()
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("query", skill, registry)
+
+        assert result.success is True
+        assert agent1.execute.call_count == 1
+        agent1.reset.assert_not_called()
+
+    def test_retry_only_happens_once(self) -> None:
+        """Even if retry output is still incomplete, no second retry."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        # Both calls return incomplete output
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer", content="nothing useful",
+                success=True, usage={"total_tokens": 50},
+            ),
+            AgentResult(
+                agent_name="gatherer", content="still incomplete",
+                success=True, usage={"total_tokens": 60},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check", skill, registry)
+
+        # Exactly 2 calls: original + 1 retry (not more)
+        assert agent1.execute.call_count == 2
+        # Pipeline continues with retry result even though incomplete
+        assert result.success is True
+        assert agent2.execute.call_count == 1
+
+    def test_retry_failure_stops_pipeline(self) -> None:
+        """If the retry itself fails (success=False), the pipeline stops."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer", content="no sections",
+                success=True, usage={"total_tokens": 50},
+            ),
+            AgentResult(
+                agent_name="gatherer", content="API error",
+                success=False, usage={"total_tokens": 10},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check", skill, registry)
+
+        assert result.success is False
+        agent2.execute.assert_not_called()

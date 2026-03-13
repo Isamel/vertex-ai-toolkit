@@ -67,6 +67,19 @@ class ServiceHealthSkill(BaseSkill):
     def get_system_instruction(self) -> str:
         return SYSTEM_INSTRUCTION
 
+    def get_required_output_sections(self) -> list[str]:
+        """Mandatory sections the gatherer (first agent) must produce.
+
+        These correspond to the MANDATORY OUTPUT FORMAT defined in
+        ``HEALTH_GATHERER_PROMPT``.  The orchestrator validates the gatherer's
+        output against these sections and retries once if any are missing.
+        """
+        return [
+            "Cluster Overview",
+            "Service Status",
+            "Events Timeline",
+        ]
+
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         template = PHASE_PROMPTS.get(phase.value, PHASE_PROMPTS["analyze"])
         return template.format(context=context, user_input=user_input)
@@ -104,6 +117,7 @@ class ServiceHealthSkill(BaseSkill):
                 # (included for defensive compatibility if routing changes)
                 "system_instruction": HEALTH_GATHERER_PROMPT,
                 "model": "gemini-2.5-pro",
+                "temperature": 0.2,  # Low temp for precise data collection
             },
             {
                 "name": "health_analyzer",
@@ -111,6 +125,7 @@ class ServiceHealthSkill(BaseSkill):
                 "requires_tools": False,
                 "system_instruction": HEALTH_ANALYZER_PROMPT,
                 "model": "gemini-2.5-flash",
+                "temperature": 0.2,  # Low temp for precise analysis
             },
             {
                 "name": "health_verifier",
@@ -120,6 +135,7 @@ class ServiceHealthSkill(BaseSkill):
                 "system_instruction": HEALTH_VERIFIER_PROMPT,
                 "model": "gemini-2.5-flash",
                 "max_iterations": 10,
+                "temperature": 0.2,  # Low temp for precise verification
             },
             {
                 "name": "health_reporter",
@@ -127,5 +143,6 @@ class ServiceHealthSkill(BaseSkill):
                 "requires_tools": False,
                 "system_instruction": HEALTH_REPORTER_PROMPT,
                 "model": "gemini-2.5-flash",
+                "temperature": 0.3,  # Slightly higher for natural writing
             },
         ]

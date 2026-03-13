@@ -98,6 +98,18 @@ class BaseSkill(ABC):
             }
         ]
 
+    def get_required_output_sections(self) -> list[str] | None:
+        """Return mandatory sections expected in the first agent's output.
+
+        When this returns a non-``None`` list, the orchestrator validates the
+        first agent's output and retries once if any sections are missing.
+
+        Override in subclasses whose first agent must produce structured output
+        (e.g. the service-health gatherer).  Return ``None`` (the default) to
+        skip validation entirely.
+        """
+        return None
+
     def format_output(self, result: SkillResult) -> str:
         """Format the skill result for display. Override for custom formatting."""
         return result.output
