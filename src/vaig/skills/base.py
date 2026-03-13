@@ -101,3 +101,100 @@ class BaseSkill(ABC):
     def format_output(self, result: SkillResult) -> str:
         """Format the skill result for display. Override for custom formatting."""
         return result.output
+
+
+class CompositeSkill(BaseSkill):
+    """Combine multiple skills into a single unified skill.
+
+    Merges system instructions, agent configs, tags, and phases from all
+    component skills.  Useful when an investigation requires expertise from
+    several domains (e.g. RCA + log-analysis + cost-analysis).
+    """
+
+    def __init__(self, skills: list[BaseSkill], *, name: str | None = None) -> None:
+        if len(skills) < 2:  # noqa: PLR2004
+            msg = "CompositeSkill requires at least 2 component skills."
+            raise ValueError(msg)
+
+        self._skills = skills
+        metas = [s.get_metadata() for s in skills]
+
+        self._name = name or "+".join(m.name for m in metas)
+        self._display_name = " + ".join(m.display_name for m in metas)
+        self._description = "Composite: " + "; ".join(m.description for m in metas)
+
+        # Merge tags (deduplicated, order preserved)
+        seen: set[str] = set()
+        merged_tags: list[str] = []
+        for m in metas:
+            for tag in m.tags:
+                if tag not in seen:
+                    seen.add(tag)
+                    merged_tags.append(tag)
+        self._tags = merged_tags
+
+        # Union of supported phases (order preserved by StrEnum)
+        all_phases = {p for m in metas for p in m.supported_phases}
+        self._phases = sorted(all_phases, key=lambda p: list(SkillPhase).index(p))
+
+        # Use the first skill's recommended model
+        self._model = metas[0].recommended_model
+
+        # Requires live tools if ANY component does
+        self._requires_live_tools = any(m.requires_live_tools for m in metas)
+
+    def get_metadata(self) -> SkillMetadata:
+        return SkillMetadata(
+            name=self._name,
+            display_name=self._display_name,
+            description=self._description,
+            version="1.0.0",
+            author="vaig",
+            tags=self._tags,
+            supported_phases=self._phases,
+            recommended_model=self._model,
+            requires_live_tools=self._requires_live_tools,
+        )
+
+    def get_system_instruction(self) -> str:
+        sections = []
+        for skill in self._skills:
+            meta = skill.get_metadata()
+            sections.append(
+                f"## {meta.display_name}\n\n{skill.get_system_instruction()}"
+            )
+        return (
+            "You are a composite specialist combining expertise from multiple domains.\n"
+            "Apply ALL of the following expertise areas to your analysis:\n\n"
+            + "\n\n---\n\n".join(sections)
+        )
+
+    def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
+        """Merge phase prompts from all component skills that support the phase."""
+        prompts: list[str] = []
+        for skill in self._skills:
+            meta = skill.get_metadata()
+            if phase in meta.supported_phases:
+                prompts.append(
+                    f"### {meta.display_name} perspective\n\n"
+                    + skill.get_phase_prompt(phase, context, user_input)
+                )
+
+        if not prompts:
+            return f"No component skills support phase '{phase.value}'."
+
+        return (
+            f"Apply ALL of the following analysis perspectives to the input:\n\n"
+            + "\n\n---\n\n".join(prompts)
+        )
+
+    def get_agents_config(self) -> list[dict]:
+        """Merge agent configs from all component skills (deduplicated by name)."""
+        agents: list[dict] = []
+        seen_names: set[str] = set()
+        for skill in self._skills:
+            for agent in skill.get_agents_config():
+                if agent["name"] not in seen_names:
+                    seen_names.add(agent["name"])
+                    agents.append(agent)
+        return agents

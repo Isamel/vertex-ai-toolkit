@@ -93,8 +93,21 @@ class TaskManager:
         logger.info("Updated task #%d", task_id)
         return task
 
-    # TODO: Add a delete_task method that removes a task by ID
-    # It should raise KeyError if the task is not found
+    def delete_task(self, task_id: int) -> None:
+        """Delete a task by ID.
+
+        Args:
+            task_id: The ID of the task to delete.
+
+        Raises:
+            KeyError: If the task is not found.
+        """
+        task = self.get_task(task_id)
+        if task is None:
+            raise KeyError(f"Task #{task_id} not found")
+
+        self.tasks.remove(task)
+        logger.info("Deleted task #%d", task_id)
 
     def list_tasks(
         self,

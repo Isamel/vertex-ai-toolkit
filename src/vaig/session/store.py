@@ -178,14 +178,44 @@ class SessionStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def rename_session(self, session_id: str, new_name: str) -> bool:
+        """Rename a session.
+
+        Returns:
+            True if the session existed and was renamed, False otherwise.
+        """
+        conn = self._get_conn()
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = conn.execute(
+            "UPDATE sessions SET name = ?, updated_at = ? WHERE id = ?",
+            (new_name, now, session_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
     def search_sessions(self, query: str) -> list[dict]:
-        """Search sessions by name."""
+        """Search sessions by name or message content."""
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT id, name, model, skill, created_at, updated_at FROM sessions WHERE name LIKE ? ORDER BY updated_at DESC",
-            (f"%{query}%",),
+            "SELECT DISTINCT s.id, s.name, s.model, s.skill, s.created_at, s.updated_at, "
+            "(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count "
+            "FROM sessions s "
+            "LEFT JOIN messages m ON m.session_id = s.id "
+            "WHERE s.name LIKE ? OR m.content LIKE ? "
+            "ORDER BY s.updated_at DESC",
+            (f"%{query}%", f"%{query}%"),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def get_last_session(self) -> dict | None:
+        """Get the most recently updated session."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT id, name, model, skill, created_at, updated_at, "
+            "(SELECT COUNT(*) FROM messages WHERE session_id = sessions.id) as message_count "
+            "FROM sessions ORDER BY updated_at DESC LIMIT 1",
+        ).fetchone()
+        return dict(row) if row else None
 
     def close(self) -> None:
         """Close the database connection."""

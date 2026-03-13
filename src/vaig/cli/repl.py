@@ -51,6 +51,9 @@ SLASH_COMMANDS = [
     "/sessions",
     "/new",
     "/load",
+    "/resume",
+    "/rename",
+    "/search",
     "/clear",
     "/context",
     "/help",
@@ -207,6 +210,9 @@ def _handle_command(state: REPLState, raw_input: str) -> bool:
         "/sessions": lambda: _cmd_sessions(state),
         "/new": lambda: _cmd_new_session(state, args),
         "/load": lambda: _cmd_load_session(state, args),
+        "/rename": lambda: _cmd_rename_session(state, args),
+        "/search": lambda: _cmd_search_sessions(state, args),
+        "/resume": lambda: _cmd_resume(state),
         "/clear": lambda: _cmd_clear(state),
         "/context": lambda: _cmd_context(state),
         "/help": lambda: _cmd_help(),
@@ -594,18 +600,37 @@ def _cmd_sessions(state: REPLState) -> None:
         console.print("[dim]No saved sessions.[/dim]")
         return
 
-    table = Table(title="📋 Recent Sessions", show_lines=False)
+    table = Table(title="Recent Sessions", show_lines=False)
     table.add_column("ID", style="cyan", max_width=12)
     table.add_column("Name", style="bold")
-    table.add_column("Created", style="dim")
+    table.add_column("Model", style="magenta")
+    table.add_column("Skill", style="green")
+    table.add_column("Msgs", style="yellow", justify="right")
+    table.add_column("Updated", style="dim")
 
     for s in sessions:
         if not isinstance(s, dict):
             continue
-        table.add_row(s.get("id", "?")[:12], s.get("name", "—"), s.get("created_at", "—"))
+        updated = s.get("updated_at", "")
+        if updated:
+            try:
+                from datetime import datetime
+
+                dt = datetime.fromisoformat(updated)
+                updated = dt.strftime("%Y-%m-%d %H:%M")
+            except (ValueError, TypeError):
+                updated = updated[:16]
+        table.add_row(
+            s.get("id", "?")[:12],
+            s.get("name", "—"),
+            s.get("model", "—"),
+            s.get("skill", "—") or "—",
+            str(s.get("message_count", 0)),
+            updated or "—",
+        )
 
     console.print(table)
-    console.print("[dim]Use /load <id> to resume a session[/dim]")
+    console.print("[dim]Use /load <id> to resume, /rename <id> <name>, /search <query>[/dim]")
 
 
 def _cmd_new_session(state: REPLState, args: str) -> None:
@@ -626,9 +651,88 @@ def _cmd_load_session(state: REPLState, args: str) -> None:
     session_id = args.strip()
     loaded = state.session_manager.load_session(session_id)
     if loaded:
-        console.print(f"[green]✓ Loaded: {loaded.name} ({len(loaded.history)} messages)[/green]")
+        console.print(f"[green]Loaded: {loaded.name} ({len(loaded.history)} messages)[/green]")
     else:
         console.print(f"[red]Session not found: {session_id}[/red]")
+
+
+def _cmd_rename_session(state: REPLState, args: str) -> None:
+    """Rename a session (current or by ID)."""
+    parts = args.strip().split(maxsplit=1)
+    if not parts:
+        console.print("[yellow]Usage: /rename <new_name>  or  /rename <session_id> <new_name>[/yellow]")
+        return
+
+    if len(parts) == 1:
+        # Rename current session
+        new_name = parts[0]
+        if not state.session_manager.has_active_session:
+            console.print("[red]No active session to rename.[/red]")
+            return
+        active = state.session_manager.active
+        assert active is not None
+        if state.session_manager.rename_session(active.id, new_name):
+            console.print(f"[green]Renamed to: {new_name}[/green]")
+        else:
+            console.print("[red]Failed to rename session.[/red]")
+    else:
+        # Rename by ID
+        session_id, new_name = parts
+        if state.session_manager.rename_session(session_id, new_name):
+            console.print(f"[green]Renamed session {session_id[:12]} to: {new_name}[/green]")
+        else:
+            console.print(f"[red]Session not found: {session_id}[/red]")
+
+
+def _cmd_search_sessions(state: REPLState, args: str) -> None:
+    """Search sessions by name or content."""
+    if not args:
+        console.print("[yellow]Usage: /search <query>[/yellow]")
+        return
+
+    query = args.strip()
+    sessions = state.session_manager.search_sessions(query)
+
+    if not sessions:
+        console.print(f"[dim]No sessions matching '{query}'.[/dim]")
+        return
+
+    table = Table(title=f"Search: '{query}'", show_lines=False)
+    table.add_column("ID", style="cyan", max_width=12)
+    table.add_column("Name", style="bold")
+    table.add_column("Msgs", style="yellow", justify="right")
+    table.add_column("Updated", style="dim")
+
+    for s in sessions:
+        if not isinstance(s, dict):
+            continue
+        updated = s.get("updated_at", "")
+        if updated:
+            try:
+                from datetime import datetime
+
+                dt = datetime.fromisoformat(updated)
+                updated = dt.strftime("%Y-%m-%d %H:%M")
+            except (ValueError, TypeError):
+                updated = updated[:16]
+        table.add_row(
+            s.get("id", "?")[:12],
+            s.get("name", "—"),
+            str(s.get("message_count", 0)),
+            updated or "—",
+        )
+
+    console.print(table)
+    console.print("[dim]Use /load <id> to resume a session[/dim]")
+
+
+def _cmd_resume(state: REPLState) -> None:
+    """Resume the last active session."""
+    loaded = state.session_manager.resume_last_session()
+    if loaded:
+        console.print(f"[green]Resumed: {loaded.name} ({len(loaded.history)} messages)[/green]")
+    else:
+        console.print("[yellow]No previous sessions found.[/yellow]")
 
 
 def _cmd_clear(state: REPLState) -> None:
@@ -661,6 +765,9 @@ def _cmd_help() -> None:
   [cyan]/sessions[/cyan]        — List recent sessions
   [cyan]/new [name][/cyan]      — Start a new session
   [cyan]/load <id>[/cyan]       — Resume an existing session
+  [cyan]/resume[/cyan]          — Resume the last active session
+  [cyan]/rename [id] <name>[/cyan] — Rename current or specified session
+  [cyan]/search <query>[/cyan]  — Search sessions by name or content
   [cyan]/clear[/cyan]           — Clear context, history, and agent states
   [cyan]/context[/cyan]         — Show loaded context files
   [cyan]/help[/cyan]            — Show this help
@@ -671,5 +778,6 @@ def _cmd_help() -> None:
   • Use skills for specialized tasks: [dim]/skill rca[/dim] then describe the incident
   • Switch models anytime: [dim]/model gemini-2.5-flash[/dim]
   • Enable code mode for file operations: [dim]/code[/dim] then describe the task
+  • Resume your last session: [dim]/resume[/dim] or [dim]vaig chat --resume[/dim]
 """
     console.print(Panel(help_text.strip(), title="📖 Help", border_style="bright_blue"))

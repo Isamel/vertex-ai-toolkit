@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,6 +14,46 @@ if TYPE_CHECKING:
     from vaig.core.config import Settings
 
 logger = logging.getLogger(__name__)
+
+# Common stop words to exclude from query matching
+_STOP_WORDS: frozenset[str] = frozenset({
+    "a", "an", "the", "is", "are", "was", "were", "be", "been",
+    "in", "on", "at", "to", "for", "of", "with", "by", "from",
+    "and", "or", "but", "not", "no", "do", "does", "did",
+    "what", "why", "how", "when", "where", "who", "which",
+    "my", "your", "our", "their", "its", "this", "that",
+    "i", "me", "we", "you", "he", "she", "it", "they",
+    "can", "could", "will", "would", "should", "shall",
+    "have", "has", "had", "may", "might", "must",
+})
+
+
+def _tokenize_query(query: str) -> list[str]:
+    """Tokenize and normalize a query string, removing stop words."""
+    words = re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)*", query.lower())
+    return [w for w in words if w not in _STOP_WORDS and len(w) > 1]
+
+
+def _score_skill(query_words: list[str], meta: SkillMetadata) -> float:
+    """Score a skill against query words."""
+    score = 0.0
+    tags_lower = {t.lower() for t in meta.tags}
+    name_parts = set(meta.name.lower().split("-"))
+    description_lower = meta.description.lower()
+
+    for word in query_words:
+        # Exact tag match (highest weight)
+        if word in tags_lower:
+            score += 2.0
+        # Name match
+        if word in name_parts:
+            score += 1.5
+        # Description substring match
+        if word in description_lower:
+            score += 0.5
+
+    # Normalize by query length to avoid bias toward long queries
+    return score / len(query_words)
 
 # Directory containing built-in skill packages (each has a ``skill.py`` module).
 _SKILLS_DIR = Path(__file__).parent
@@ -146,6 +187,32 @@ class SkillRegistry:
         """Check if a skill is registered."""
         self._ensure_loaded()
         return name in self._skills
+
+    def suggest_skill(self, query: str, *, top_n: int = 3) -> list[tuple[str, float]]:
+        """Suggest skills based on query keywords matching skill tags and descriptions.
+
+        Uses a simple TF-based scoring:
+        - Each query word is checked against skill tags (exact match = 2.0 points)
+        - Each query word is checked against skill name (exact match = 1.5 points)
+        - Each query word is checked against skill description (substring match = 0.5 points)
+        - Scores are normalized by the number of query words
+
+        Returns list of (skill_name, score) tuples, sorted by score descending.
+        Only returns skills with score > 0.
+        """
+        self._ensure_loaded()
+        query_words = _tokenize_query(query)
+        if not query_words:
+            return []
+
+        scores: list[tuple[str, float]] = []
+        for name, meta in self._metadata_cache.items():
+            score = _score_skill(query_words, meta)
+            if score > 0:
+                scores.append((name, score))
+
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores[:top_n]
 
     @property
     def count(self) -> int:

@@ -145,3 +145,17 @@ gke:
   log_limit: 100                  # Max number of log lines to retrieve per pod
   metrics_interval_minutes: 60    # Time window (minutes) for Cloud Monitoring queries
   proxy_url: ""                   # Proxy URL for private clusters (kubernetes client ignores kubeconfig proxy-url)
+
+mcp:
+  enabled: false                    # Set to true to enable MCP integration
+  servers: []                       # List of MCP servers — example:
+  # - name: "filesystem"
+  #   command: "npx"
+  #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+  #   description: "Filesystem access via MCP"
+  # - name: "github"
+  #   command: "npx"
+  #   args: ["-y", "@modelcontextprotocol/server-github"]
+  #   env:
+  #     GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_..."
+  #   description: "GitHub API via MCP"

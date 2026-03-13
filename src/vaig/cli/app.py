@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Optional
+from typing import TYPE_CHECKING, Annotated, Any, Optional
 
 import typer
 from rich.console import Console
@@ -17,6 +17,7 @@ from vaig import __version__
 if TYPE_CHECKING:
     from vaig.agents.base import AgentResult
     from vaig.agents.orchestrator import OrchestratorResult
+    from vaig.cli.export import ExportPayload
     from vaig.core.client import GeminiClient
     from vaig.core.config import GKEConfig, Settings
     from vaig.skills.base import BaseSkill
@@ -38,10 +39,12 @@ app = typer.Typer(
 sessions_app = typer.Typer(help="Manage chat sessions")
 models_app = typer.Typer(help="Manage AI models")
 skills_app = typer.Typer(help="Manage skills")
+mcp_app = typer.Typer(help="Manage MCP (Model Context Protocol) servers")
 
 app.add_typer(sessions_app, name="sessions")
 app.add_typer(models_app, name="models")
 app.add_typer(skills_app, name="skills")
+app.add_typer(mcp_app, name="mcp")
 
 
 # ── Shared State ──────────────────────────────────────────────
@@ -108,6 +111,7 @@ def chat(
     model: Annotated[Optional[str], typer.Option("--model", "-m", help="Model to use")] = None,
     skill: Annotated[Optional[str], typer.Option("--skill", "-s", help="Activate a skill")] = None,
     session: Annotated[Optional[str], typer.Option("--session", help="Load an existing session by ID")] = None,
+    resume: Annotated[bool, typer.Option("--resume", "-r", help="Resume the last session")] = False,
     name: Annotated[str, typer.Option("--name", "-n", help="Name for new session")] = "chat",
     workspace: Annotated[
         Optional[Path],
@@ -121,6 +125,7 @@ def chat(
         vaig chat --model gemini-2.5-flash
         vaig chat --skill rca
         vaig chat --session abc123
+        vaig chat --resume
         vaig chat -w ./my-project
     """
     from vaig.cli.repl import start_repl
@@ -138,10 +143,24 @@ def chat(
             raise typer.Exit(1)
         settings.coding.workspace_root = str(resolved_ws)
 
+    # Resolve --resume to a session ID
+    resume_session_id = session
+    if resume and not session:
+        from vaig.session.manager import SessionManager
+
+        mgr = SessionManager(settings)
+        last = mgr.get_last_session()
+        mgr.close()
+        if last:
+            resume_session_id = last["id"]
+            console.print(f"[dim]Resuming last session: {last['name']} ({last['id'][:12]})[/dim]")
+        else:
+            console.print("[yellow]No previous sessions found. Starting new session.[/yellow]")
+
     start_repl(
         settings=settings,
         skill_name=skill,
-        session_id=session,
+        session_id=resume_session_id,
         session_name=name,
     )
 
@@ -156,7 +175,9 @@ def ask(
     model: Annotated[Optional[str], typer.Option("--model", "-m", help="Model to use")] = None,
     files: Annotated[Optional[list[Path]], typer.Option("--file", "-f", help="Files to include as context")] = None,
     output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Save response to a file")] = None,
+    format_: Annotated[Optional[str], typer.Option("--format", help="Export format: json, md, html")] = None,
     skill: Annotated[Optional[str], typer.Option("--skill", "-s", help="Use a specific skill")] = None,
+    auto_skill: Annotated[bool, typer.Option("--auto-skill", help="Auto-detect the best skill based on query")] = False,
     no_stream: Annotated[bool, typer.Option("--no-stream", help="Disable streaming output")] = False,
     code: Annotated[bool, typer.Option("--code", help="Enable coding agent mode (read/write/edit files)")] = False,
     live: Annotated[bool, typer.Option("--live", help="Enable live infrastructure tools (GKE/GCP)")] = False,
@@ -183,6 +204,7 @@ def ask(
         vaig ask "Fix the bug in utils.py" --code -w ./my-project
         vaig ask "Analyze pod crashes" --live -s log-analysis
         vaig ask "Check OOM kills in prod" --live --namespace=production
+        vaig ask "Explain this code" -f main.py --format json -o report.json
     """
     settings = _get_settings(config)
 
@@ -242,6 +264,22 @@ def ask(
         return
 
     # Execute with or without skill
+    context_file_paths = [str(f) for f in files] if files else []
+
+    # Auto-detect skill if requested and no explicit skill specified
+    if auto_skill and not skill:
+        registry = SkillRegistry(settings)
+        suggestions = registry.suggest_skill(question)
+        if suggestions:
+            best_name, best_score = suggestions[0]
+            if best_score >= 1.0:  # Only auto-select if score is meaningful
+                skill = best_name
+                console.print(f"[dim]Auto-selected skill: [cyan]{skill}[/cyan] (score: {best_score:.1f})[/dim]")
+            else:
+                console.print(
+                    f"[dim]Suggested skills: {', '.join(f'{n} ({s:.1f})' for n, s in suggestions)}[/dim]"
+                )
+
     if skill:
         registry = SkillRegistry(settings)
         active_skill = registry.get(skill)
@@ -262,8 +300,15 @@ def ask(
         console.print()
         if result.output:
             console.print(Markdown(result.output))
-        if output:
-            _save_output(output, result.output)
+        _handle_export_output(
+            response_text=result.output,
+            question=question,
+            model_id=settings.models.default,
+            skill_name=skill,
+            context_files=context_file_paths,
+            format_=format_,
+            output=output,
+        )
     else:
         # Direct chat — single agent
         if no_stream:
@@ -274,8 +319,15 @@ def ask(
             console.print()
             if hasattr(result, "content") and result.content:
                 console.print(Markdown(result.content))  # type: ignore[union-attr]
-                if output:
-                    _save_output(output, result.content)  # type: ignore[union-attr]
+                _handle_export_output(
+                    response_text=result.content,  # type: ignore[union-attr]
+                    question=question,
+                    model_id=settings.models.default,
+                    skill_name=skill,
+                    context_files=context_file_paths,
+                    format_=format_,
+                    output=output,
+                )
         else:
             stream = orchestrator.execute_single(question, context=context_str, stream=True)
             console.print()
@@ -284,8 +336,15 @@ def ask(
                 console.print(chunk, end="")
                 response_parts.append(chunk)
             console.print()
-            if output:
-                _save_output(output, "".join(response_parts))
+            _handle_export_output(
+                response_text="".join(response_parts),
+                question=question,
+                model_id=settings.models.default,
+                skill_name=skill,
+                context_files=context_file_paths,
+                format_=format_,
+                output=output,
+            )
 
 
 def _save_output(output: Path, content: str) -> None:
@@ -293,6 +352,116 @@ def _save_output(output: Path, content: str) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(content)
     console.print(f"[green]✓ Response saved to {output}[/green]")
+
+
+def _format_session_date(iso_str: str) -> str:
+    """Format an ISO timestamp to a human-friendly short form."""
+    if not iso_str:
+        return "—"
+    try:
+        from datetime import datetime
+
+        dt = datetime.fromisoformat(iso_str)
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError):
+        return iso_str[:16] if len(iso_str) > 16 else iso_str
+
+
+def _resolve_session_id(manager: object, prefix: str) -> str:
+    """Resolve a session ID prefix to a full session ID.
+
+    Supports both full UUIDs and short prefixes (e.g. first 8 chars).
+    """
+    from vaig.session.manager import SessionManager
+
+    if not isinstance(manager, SessionManager):
+        return prefix
+
+    # Try exact match first
+    session = manager._store.get_session(prefix)
+    if session:
+        return prefix
+
+    # Try prefix match
+    sessions = manager.list_sessions(limit=100)
+    matches = [s for s in sessions if s["id"].startswith(prefix)]
+    if len(matches) == 1:
+        return matches[0]["id"]
+    if len(matches) > 1:
+        err_console.print(f"[yellow]Ambiguous prefix '{prefix}' matches {len(matches)} sessions. Use more characters.[/yellow]")
+    return prefix
+
+
+def _build_export_payload(
+    *,
+    question: str,
+    response_text: str,
+    model_id: str,
+    skill_name: str | None = None,
+    tokens: dict[str, int] | None = None,
+    cost: str | None = None,
+    context_files: list[str] | None = None,
+    agent_results: list[dict] | None = None,
+) -> "ExportPayload":
+    """Build an ExportPayload from ask/live command results."""
+    from datetime import datetime, timezone
+
+    from vaig.cli.export import ExportMetadata, ExportPayload
+
+    meta = ExportMetadata(
+        model=model_id,
+        skill=skill_name,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        tokens=tokens or {},
+        cost=cost,
+        vaig_version=__version__,
+    )
+    return ExportPayload(
+        question=question,
+        response=response_text,
+        metadata=meta,
+        context_files=context_files or [],
+        agent_results=agent_results or [],
+    )
+
+
+def _handle_export_output(
+    *,
+    response_text: str,
+    question: str,
+    model_id: str,
+    skill_name: str | None = None,
+    context_files: list[str] | None = None,
+    format_: str | None = None,
+    output: Path | None = None,
+) -> None:
+    """Handle exporting/saving output based on --format and --output flags.
+
+    When --format is set, builds an ExportPayload and formats it.
+    When --output is set (with or without --format), writes to file.
+    When --format is set without --output, prints formatted content to stdout.
+    When neither is set, does nothing (display already handled by caller).
+    """
+    if not format_ and not output:
+        return
+
+    if format_:
+        from vaig.cli.export import format_export
+
+        payload = _build_export_payload(
+            question=question,
+            response_text=response_text,
+            model_id=model_id,
+            skill_name=skill_name,
+            context_files=context_files,
+        )
+        content = format_export(payload, format_)
+        if output:
+            _save_output(output, content)
+        else:
+            console.print(content)
+    elif output:
+        _save_output(output, response_text)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -304,7 +473,9 @@ def live(
     config: Annotated[Optional[str], typer.Option("--config", "-c", help="Path to config YAML")] = None,
     model: Annotated[Optional[str], typer.Option("--model", "-m", help="Model to use")] = None,
     output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Save response to a file")] = None,
+    format_: Annotated[Optional[str], typer.Option("--format", help="Export format: json, md, html")] = None,
     skill: Annotated[Optional[str], typer.Option("--skill", "-s", help="SRE skill to apply")] = None,
+    auto_skill: Annotated[bool, typer.Option("--auto-skill", help="Auto-detect the best skill based on query")] = False,
     cluster: Annotated[Optional[str], typer.Option("--cluster", help="GKE cluster name (overrides config)")] = None,
     namespace: Annotated[
         Optional[str], typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)")
@@ -327,6 +498,7 @@ def live(
         vaig live "Show HPA status for frontend deployment" --cluster=prod-gke
         vaig live "Analyze error rate from Cloud Logging" --project-id=my-project
         vaig live "Why is the payment service returning 503s?" -o report.md
+        vaig live "Investigate pod crashes" --format json -o report.json
     """
     settings = _get_settings(config)
 
@@ -337,6 +509,22 @@ def live(
 
     client = GeminiClient(settings)
     gke_config = _build_gke_config(settings, cluster=cluster, namespace=namespace, project_id=project_id)
+
+    # Auto-detect skill if requested and no explicit skill specified
+    if auto_skill and not skill:
+        from vaig.skills.registry import SkillRegistry
+
+        registry = SkillRegistry(settings)
+        suggestions = registry.suggest_skill(question)
+        if suggestions:
+            best_name, best_score = suggestions[0]
+            if best_score >= 1.0:  # Only auto-select if score is meaningful
+                skill = best_name
+                console.print(f"[dim]Auto-selected skill: [cyan]{skill}[/cyan] (score: {best_score:.1f})[/dim]")
+            else:
+                console.print(
+                    f"[dim]Suggested skills: {', '.join(f'{n} ({s:.1f})' for n, s in suggestions)}[/dim]"
+                )
 
     # If a skill is specified, check whether it needs the full orchestrated
     # pipeline (requires_live_tools=True) or the simple context-prepend approach.
@@ -362,6 +550,7 @@ def live(
                 active_skill,
                 question,
                 output=output,
+                format_=format_,
                 model_id=model,
             )
             return
@@ -379,6 +568,8 @@ def live(
         question,
         context_str,
         output=output,
+        format_=format_,
+        skill_name=skill,
         model_id=model,
     )
 
@@ -466,6 +657,7 @@ def _execute_orchestrated_skill(
     question: str,
     *,
     output: Path | None = None,
+    format_: str | None = None,
     model_id: str | None = None,
 ) -> None:
     """Execute a skill through the Orchestrator's tool-aware pipeline.
@@ -521,8 +713,14 @@ def _execute_orchestrated_skill(
             console.print(Markdown(orch_result.synthesized_output))
         console.print()
 
-        if output and orch_result.synthesized_output:
-            _save_output(output, orch_result.synthesized_output)
+        _handle_export_output(
+            response_text=orch_result.synthesized_output or "",
+            question=question,
+            model_id=settings.models.default,
+            skill_name=skill_meta.name,
+            format_=format_,
+            output=output,
+        )
 
         # Show agent pipeline summary
         _show_orchestrated_summary(orch_result)
@@ -561,6 +759,8 @@ def _execute_live_mode(
     context: str,
     *,
     output: Path | None = None,
+    format_: str | None = None,
+    skill_name: str | None = None,
     model_id: str | None = None,
 ) -> None:
     """Execute an infrastructure investigation using the InfraAgent.
@@ -611,8 +811,14 @@ def _execute_live_mode(
             console.print(Markdown(result.content))
         console.print()
 
-        if output and result.content:
-            _save_output(output, result.content)
+        _handle_export_output(
+            response_text=result.content or "",
+            question=question,
+            model_id=model_id or client.current_model,
+            skill_name=skill_name,
+            format_=format_,
+            output=output,
+        )
 
         # Show summary (reuse coding summary — same metadata shape)
         _show_coding_summary(result)
@@ -774,6 +980,66 @@ def _try_chunked_ask(
 
 
 # ══════════════════════════════════════════════════════════════
+# EXPORT — Re-export a past session
+# ══════════════════════════════════════════════════════════════
+@app.command(name="export")
+def export_session(
+    session_id: Annotated[str, typer.Argument(help="Session ID to export")],
+    format_: Annotated[str, typer.Option("--format", "-f", help="Export format: json, md, html")] = "md",
+    output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Save to file (default: stdout)")] = None,
+    config: Annotated[Optional[str], typer.Option("--config", "-c", help="Path to config YAML")] = None,
+) -> None:
+    """Export a past session to JSON, Markdown, or HTML."""
+    from vaig.cli.export import ExportMetadata, ExportPayload, format_export
+    from vaig.session.manager import SessionManager
+
+    settings = _get_settings(config)
+    manager = SessionManager(settings)
+
+    session_data = manager._store.get_session(session_id)  # noqa: SLF001
+    if not session_data:
+        err_console.print(f"[red]Session not found: {session_id}[/red]")
+        manager.close()
+        raise typer.Exit(1)
+
+    messages = manager._store.get_messages(session_id)  # noqa: SLF001
+    context_files_rows = manager._store.get_context_files(session_id)  # noqa: SLF001
+    manager.close()
+
+    # Build question from first user message, response from last assistant message
+    user_messages = [m for m in messages if m["role"] == "user"]
+    assistant_messages = [m for m in messages if m["role"] in ("assistant", "model")]
+
+    question_text = user_messages[0]["content"] if user_messages else "(no question)"
+    response_text = assistant_messages[-1]["content"] if assistant_messages else "(no response)"
+
+    # Sum up tokens from all messages
+    total_tokens = sum(m.get("token_count", 0) for m in messages)
+
+    meta = ExportMetadata(
+        model=session_data.get("model", "unknown"),
+        skill=session_data.get("skill"),
+        timestamp=session_data.get("created_at", ""),
+        tokens={"total_tokens": total_tokens},
+        cost=None,
+        vaig_version=__version__,
+    )
+
+    payload = ExportPayload(
+        question=question_text,
+        response=response_text,
+        metadata=meta,
+        context_files=[cf["file_path"] for cf in context_files_rows],
+    )
+
+    content = format_export(payload, format_)
+    if output:
+        _save_output(output, content)
+    else:
+        console.print(content)
+
+
+# ══════════════════════════════════════════════════════════════
 # SESSIONS — List, show, delete
 # ══════════════════════════════════════════════════════════════
 @sessions_app.command("list")
@@ -793,12 +1059,13 @@ def sessions_list(
         console.print("[yellow]No sessions found.[/yellow]")
         return
 
-    table = Table(title="📋 Sessions", show_lines=False)
+    table = Table(title="Sessions", show_lines=False)
     table.add_column("ID", style="cyan", no_wrap=True, max_width=12)
     table.add_column("Name", style="bold")
     table.add_column("Model", style="magenta")
     table.add_column("Skill", style="green")
-    table.add_column("Created", style="dim")
+    table.add_column("Msgs", style="yellow", justify="right")
+    table.add_column("Updated", style="dim")
 
     for s in sessions:
         if not isinstance(s, dict):
@@ -808,7 +1075,8 @@ def sessions_list(
             s.get("name", "—"),
             s.get("model", "—"),
             s.get("skill", "—") or "—",
-            s.get("created_at", "—"),
+            str(s.get("message_count", 0)),
+            _format_session_date(s.get("updated_at", "")),
         )
 
     console.print(table)
@@ -839,9 +1107,135 @@ def sessions_delete(
     manager.close()
 
 
-# ══════════════════════════════════════════════════════════════
-# MODELS — List, info
-# ══════════════════════════════════════════════════════════════
+@sessions_app.command("rename")
+def sessions_rename(
+    session_id: Annotated[str, typer.Argument(help="Session ID (or prefix) to rename")],
+    new_name: Annotated[str, typer.Argument(help="New name for the session")],
+    config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+) -> None:
+    """Rename a chat session."""
+    settings = _get_settings(config)
+
+    from vaig.session.manager import SessionManager
+
+    manager = SessionManager(settings)
+    session_id = _resolve_session_id(manager, session_id)
+    if manager.rename_session(session_id, new_name):
+        console.print(f"[green]Renamed session {session_id[:12]} to: {new_name}[/green]")
+    else:
+        err_console.print(f"[red]Session not found: {session_id}[/red]")
+    manager.close()
+
+
+@sessions_app.command("search")
+def sessions_search(
+    query: Annotated[str, typer.Argument(help="Search term (matches session name and message content)")],
+    config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+) -> None:
+    """Search sessions by name or message content."""
+    settings = _get_settings(config)
+
+    from vaig.session.manager import SessionManager
+
+    manager = SessionManager(settings)
+    sessions = manager.search_sessions(query)
+
+    if not sessions:
+        console.print(f"[yellow]No sessions matching '{query}'.[/yellow]")
+        manager.close()
+        return
+
+    table = Table(title=f"Search: '{query}'", show_lines=False)
+    table.add_column("ID", style="cyan", no_wrap=True, max_width=12)
+    table.add_column("Name", style="bold")
+    table.add_column("Model", style="magenta")
+    table.add_column("Msgs", style="yellow", justify="right")
+    table.add_column("Updated", style="dim")
+
+    for s in sessions:
+        if not isinstance(s, dict):
+            continue
+        table.add_row(
+            s.get("id", "?")[:12],
+            s.get("name", "—"),
+            s.get("model", "—"),
+            str(s.get("message_count", 0)),
+            _format_session_date(s.get("updated_at", "")),
+        )
+
+    console.print(table)
+    manager.close()
+
+
+@sessions_app.command("show")
+def sessions_show(
+    session_id: Annotated[str, typer.Argument(help="Session ID (or prefix) to show")],
+    config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+    messages: Annotated[int, typer.Option("--messages", "-m", help="Number of recent messages to show")] = 10,
+) -> None:
+    """Show detailed information about a session."""
+    settings = _get_settings(config)
+
+    from vaig.session.manager import SessionManager
+
+    manager = SessionManager(settings)
+    session_id = _resolve_session_id(manager, session_id)
+
+    session = manager._store.get_session(session_id)
+    if not session:
+        err_console.print(f"[red]Session not found: {session_id}[/red]")
+        manager.close()
+        return
+
+    msgs = manager._store.get_messages(session_id)
+    context_files = manager._store.get_context_files(session_id)
+
+    # Session info panel
+    info_lines = [
+        f"[cyan]ID:[/cyan]      {session['id']}",
+        f"[cyan]Name:[/cyan]    {session['name']}",
+        f"[cyan]Model:[/cyan]   {session['model']}",
+        f"[cyan]Skill:[/cyan]   {session.get('skill') or '—'}",
+        f"[cyan]Created:[/cyan] {_format_session_date(session['created_at'])}",
+        f"[cyan]Updated:[/cyan] {_format_session_date(session['updated_at'])}",
+        f"[cyan]Messages:[/cyan] {len(msgs)}",
+    ]
+    if context_files:
+        info_lines.append(f"[cyan]Context files:[/cyan] {len(context_files)}")
+    console.print(Panel("\n".join(info_lines), title="Session Details", border_style="cyan"))
+
+    # Context files
+    if context_files:
+        ft = Table(title="Context Files", show_lines=False)
+        ft.add_column("Path", style="green")
+        ft.add_column("Type", style="dim")
+        ft.add_column("Size", style="yellow", justify="right")
+        for cf in context_files:
+            size = cf.get("size_bytes", 0)
+            size_str = f"{size:,}" if size else "—"
+            ft.add_row(cf["file_path"], cf["file_type"], size_str)
+        console.print(ft)
+
+    # Recent messages
+    recent = msgs[-messages:] if len(msgs) > messages else msgs
+    if recent:
+        mt = Table(title=f"Messages (last {len(recent)} of {len(msgs)})", show_lines=True)
+        mt.add_column("Role", style="bold", max_width=8)
+        mt.add_column("Content", max_width=100)
+        mt.add_column("Time", style="dim", max_width=20)
+        for m in recent:
+            content = m["content"]
+            if len(content) > 200:
+                content = content[:200] + "..."
+            role_style = "cyan" if m["role"] == "user" else "green"
+            mt.add_row(
+                f"[{role_style}]{m['role']}[/{role_style}]",
+                content,
+                _format_session_date(m.get("created_at", "")),
+            )
+        console.print(mt)
+
+    manager.close()
 @models_app.command("list")
 def models_list(
     config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
@@ -951,3 +1345,238 @@ def skills_info(
             agent_table.add_row(a["name"], a["role"], a.get("model", "default"))
 
         console.print(agent_table)
+
+
+@skills_app.command("create")
+def skills_create(
+    name: Annotated[str, typer.Argument(help="Skill name (kebab-case, e.g. 'my-analyzer')")],
+    description: Annotated[str, typer.Option("--description", "-d")] = "A custom skill",
+    tags: Annotated[Optional[str], typer.Option("--tags", "-t", help="Comma-separated tags")] = None,
+    output_dir: Annotated[Optional[str], typer.Option("--output", "-o", help="Target directory (default: custom_dir from config)")] = None,
+    config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+) -> None:
+    """Scaffold a new custom skill with boilerplate files."""
+    from vaig.skills.scaffold import scaffold_skill
+
+    settings = _get_settings(config)
+
+    # Determine target directory
+    if output_dir:
+        target = Path(output_dir).expanduser().resolve()
+    elif settings.skills.custom_dir:
+        target = Path(settings.skills.custom_dir).expanduser().resolve()
+    else:
+        target = Path.cwd() / "skills"
+        console.print(
+            f"[yellow]No custom_dir configured. Scaffolding to: {target}[/yellow]\n"
+            "[dim]Set 'skills.custom_dir' in your config to auto-load custom skills.[/dim]"
+        )
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+
+    try:
+        skill_dir = scaffold_skill(name, target, description=description, tags=tag_list)
+    except FileExistsError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
+
+    console.print(f"[green]Skill scaffolded at:[/green] {skill_dir}")
+    console.print("\n[bold]Created files:[/bold]")
+    console.print(f"  {skill_dir / '__init__.py'}")
+    console.print(f"  {skill_dir / 'skill.py'}")
+    console.print(f"  {skill_dir / 'prompts.py'}")
+    console.print(f"\n[dim]Edit skill.py and prompts.py to implement your skill logic.[/dim]")
+
+
+# ══════════════════════════════════════════════════════════════
+# MCP — Model Context Protocol server management
+# ══════════════════════════════════════════════════════════════
+@mcp_app.command("list-servers")
+def mcp_list_servers(
+    config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+) -> None:
+    """List configured MCP servers."""
+    from vaig.tools.mcp_bridge import is_mcp_available
+
+    settings = _get_settings(config)
+
+    if not is_mcp_available():
+        err_console.print(
+            "[bold red]MCP SDK not installed.[/bold red]\n"
+            "[yellow]Install with:[/yellow]  pip install mcp"
+        )
+        raise typer.Exit(1)
+
+    mcp_cfg = settings.mcp
+
+    if not mcp_cfg.enabled:
+        console.print(
+            "[yellow]MCP integration is disabled.[/yellow]\n"
+            "[dim]Set 'mcp.enabled: true' in your config to enable it.[/dim]"
+        )
+        return
+
+    if not mcp_cfg.servers:
+        console.print("[yellow]No MCP servers configured.[/yellow]")
+        console.print("[dim]Add servers under 'mcp.servers' in your config YAML.[/dim]")
+        return
+
+    table = Table(title="MCP Servers", show_lines=False)
+    table.add_column("Name", style="cyan")
+    table.add_column("Command", style="bold")
+    table.add_column("Args", style="dim")
+    table.add_column("Description")
+
+    for srv in mcp_cfg.servers:
+        table.add_row(
+            srv.name,
+            srv.command,
+            " ".join(srv.args) if srv.args else "—",
+            srv.description or "—",
+        )
+
+    console.print(table)
+
+
+@mcp_app.command("discover")
+def mcp_discover(
+    server_name: Annotated[str, typer.Argument(help="Name of configured MCP server to discover tools from")],
+    config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+) -> None:
+    """Discover available tools from an MCP server.
+
+    Examples:
+        vaig mcp discover my-server
+    """
+    import asyncio
+
+    from vaig.tools.mcp_bridge import discover_tools, is_mcp_available
+
+    if not is_mcp_available():
+        err_console.print(
+            "[bold red]MCP SDK not installed.[/bold red]\n"
+            "[yellow]Install with:[/yellow]  pip install mcp"
+        )
+        raise typer.Exit(1)
+
+    settings = _get_settings(config)
+    mcp_cfg = settings.mcp
+
+    if not mcp_cfg.enabled:
+        err_console.print("[red]MCP integration is disabled. Set 'mcp.enabled: true' in your config.[/red]")
+        raise typer.Exit(1)
+
+    srv = next((s for s in mcp_cfg.servers if s.name == server_name), None)
+    if not srv:
+        err_console.print(f"[red]MCP server not found: {server_name}[/red]")
+        available = [s.name for s in mcp_cfg.servers]
+        if available:
+            err_console.print(f"[dim]Available: {', '.join(available)}[/dim]")
+        raise typer.Exit(1)
+
+    with console.status(f"[bold cyan]Connecting to {server_name}...[/bold cyan]"):
+        try:
+            tools = asyncio.run(
+                discover_tools(
+                    command=srv.command,
+                    args=srv.args or None,
+                    env=srv.env or None,
+                )
+            )
+        except Exception as exc:
+            err_console.print(f"[red]Failed to connect to {server_name}: {exc}[/red]")
+            raise typer.Exit(1) from None
+
+    if not tools:
+        console.print(f"[yellow]{server_name} exposes no tools.[/yellow]")
+        return
+
+    table = Table(title=f"Tools from {server_name}", show_lines=True)
+    table.add_column("Tool", style="cyan")
+    table.add_column("Description")
+    table.add_column("Parameters", style="dim")
+
+    for tool in tools:
+        schema = tool.inputSchema or {}
+        props = schema.get("properties", {})
+        required = set(schema.get("required", []))
+        param_strs: list[str] = []
+        for pname, pschema in props.items():
+            req_mark = "*" if pname in required else ""
+            ptype = pschema.get("type", "?")
+            param_strs.append(f"{pname}{req_mark}: {ptype}")
+        table.add_row(
+            tool.name,
+            tool.description or "—",
+            "\n".join(param_strs) if param_strs else "—",
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]{len(tools)} tools discovered from {server_name}[/dim]")
+
+
+@mcp_app.command("call")
+def mcp_call(
+    server_name: Annotated[str, typer.Argument(help="MCP server name")],
+    tool_name: Annotated[str, typer.Argument(help="Tool name to call")],
+    args_json: Annotated[Optional[str], typer.Argument(help="JSON arguments (e.g. '{\"path\": \"/tmp\"}')")] = None,
+    config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+) -> None:
+    """Call a specific tool on an MCP server.
+
+    Examples:
+        vaig mcp call my-server read_file '{"path": "/etc/hostname"}'
+        vaig mcp call my-server list_files
+    """
+    import asyncio
+    import json
+
+    from vaig.tools.mcp_bridge import call_mcp_tool, is_mcp_available
+
+    if not is_mcp_available():
+        err_console.print(
+            "[bold red]MCP SDK not installed.[/bold red]\n"
+            "[yellow]Install with:[/yellow]  pip install mcp"
+        )
+        raise typer.Exit(1)
+
+    settings = _get_settings(config)
+    mcp_cfg = settings.mcp
+
+    if not mcp_cfg.enabled:
+        err_console.print("[red]MCP integration is disabled. Set 'mcp.enabled: true' in your config.[/red]")
+        raise typer.Exit(1)
+
+    srv = next((s for s in mcp_cfg.servers if s.name == server_name), None)
+    if not srv:
+        err_console.print(f"[red]MCP server not found: {server_name}[/red]")
+        available = [s.name for s in mcp_cfg.servers]
+        if available:
+            err_console.print(f"[dim]Available: {', '.join(available)}[/dim]")
+        raise typer.Exit(1)
+
+    # Parse arguments
+    arguments: dict[str, Any] = {}
+    if args_json:
+        try:
+            arguments = json.loads(args_json)
+        except json.JSONDecodeError as exc:
+            err_console.print(f"[red]Invalid JSON arguments: {exc}[/red]")
+            raise typer.Exit(1) from None
+
+    with console.status(f"[bold cyan]Calling {tool_name} on {server_name}...[/bold cyan]"):
+        result = asyncio.run(
+            call_mcp_tool(
+                command=srv.command,
+                tool_name=tool_name,
+                arguments=arguments,
+                args=srv.args or None,
+                env=srv.env or None,
+            )
+        )
+
+    if result.error:
+        err_console.print(f"[red]Tool error:[/red] {result.output}")
+        raise typer.Exit(1)
+
+    console.print(result.output)

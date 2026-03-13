@@ -48,7 +48,7 @@ class Task:
         if self.due_date is None:
             return False
         # BUG: should be `>` not `<`
-        return datetime.now() < self.due_date
+        return datetime.now() > self.due_date
 
     def mark_complete(self) -> None:
         """Mark the task as completed."""

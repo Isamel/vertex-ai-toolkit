@@ -1,4 +1,5 @@
-"""Tests for GKE tools — kubectl_get, kubectl_describe, kubectl_logs, kubectl_top, create_gke_tools."""
+"""Tests for GKE tools — kubectl_get, kubectl_describe, kubectl_logs, kubectl_top,
+kubectl_scale, kubectl_restart, kubectl_label, kubectl_annotate, create_gke_tools."""
 
 from __future__ import annotations
 
@@ -512,13 +513,13 @@ class TestKubectlTop:
 class TestCreateGkeTools:
     """Tests for create_gke_tools factory function."""
 
-    def test_returns_four_tool_defs(self) -> None:
+    def test_returns_eight_tool_defs(self) -> None:
         from vaig.tools.gke_tools import create_gke_tools
 
         cfg = _make_gke_config()
         tools = create_gke_tools(cfg)
 
-        assert len(tools) == 4
+        assert len(tools) == 8
         assert all(isinstance(t, ToolDef) for t in tools)
 
     def test_tool_names(self) -> None:
@@ -528,7 +529,10 @@ class TestCreateGkeTools:
         tools = create_gke_tools(cfg)
         names = {t.name for t in tools}
 
-        assert names == {"kubectl_get", "kubectl_describe", "kubectl_logs", "kubectl_top"}
+        assert names == {
+            "kubectl_get", "kubectl_describe", "kubectl_logs", "kubectl_top",
+            "kubectl_scale", "kubectl_restart", "kubectl_label", "kubectl_annotate",
+        }
 
     def test_all_have_descriptions(self) -> None:
         from vaig.tools.gke_tools import create_gke_tools
@@ -860,3 +864,701 @@ class TestCreateK8sClientsProxy:
         # Verify load_kube_config was still called with client_configuration
         mock_k8s_config.load_kube_config.assert_called_once()
         assert not isinstance(result, ToolResult)
+
+
+# ── kubectl_scale ────────────────────────────────────────────
+
+
+class TestKubectlScale:
+    """Tests for kubectl_scale write operation."""
+
+    def test_k8s_unavailable(self) -> None:
+        from vaig.tools.gke_tools import kubectl_scale
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+            result = kubectl_scale("deployments", "nginx", 3, gke_config=cfg)
+            assert result.error is True
+            assert "kubernetes" in result.output.lower()
+
+    def test_unsupported_resource_type(self) -> None:
+        from vaig.tools.gke_tools import kubectl_scale
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_scale("pods", "my-pod", 2, gke_config=cfg)
+            assert result.error is True
+            assert "Cannot scale" in result.output
+            assert "deployments" in result.output
+
+    def test_replicas_too_high(self) -> None:
+        from vaig.tools.gke_tools import kubectl_scale
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_scale("deployments", "nginx", 100, gke_config=cfg)
+            assert result.error is True
+            assert "50" in result.output
+
+    def test_replicas_negative(self) -> None:
+        from vaig.tools.gke_tools import kubectl_scale
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_scale("deployments", "nginx", -1, gke_config=cfg)
+            assert result.error is True
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_scale_deployment_success(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_scale
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        deploy_obj = MagicMock()
+        deploy_obj.spec.replicas = 2
+        apps_v1.read_namespaced_deployment.return_value = deploy_obj
+
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_scale("deploy", "nginx", 5, gke_config=cfg)
+            assert result.error is not True
+            assert "2 -> 5" in result.output
+            assert "nginx" in result.output
+            apps_v1.patch_namespaced_deployment_scale.assert_called_once_with(
+                "nginx", "default", {"spec": {"replicas": 5}},
+            )
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_scale_statefulset_success(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_scale
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        sts_obj = MagicMock()
+        sts_obj.spec.replicas = 3
+        apps_v1.read_namespaced_stateful_set.return_value = sts_obj
+
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_scale("sts", "redis", 1, gke_config=cfg, namespace="cache")
+            assert result.error is not True
+            assert "3 -> 1" in result.output
+            apps_v1.patch_namespaced_stateful_set_scale.assert_called_once()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_scale_replicaset_success(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_scale
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        rs_obj = MagicMock()
+        rs_obj.spec.replicas = 1
+        apps_v1.read_namespaced_replica_set.return_value = rs_obj
+
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_scale("replicasets", "my-rs", 0, gke_config=cfg)
+            assert result.error is not True
+            assert "1 -> 0" in result.output
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_scale_404(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_scale
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+
+        from unittest.mock import PropertyMock
+        exc = MagicMock()
+        type(exc).status = PropertyMock(return_value=404)
+        exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
+        real_exc = exc_class()
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+            mock_k8s_exc.ApiException = exc_class
+            apps_v1.read_namespaced_deployment.side_effect = real_exc
+            mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+            result = kubectl_scale("deployments", "ghost", 3, gke_config=cfg)
+            assert result.error is True
+            assert "not found" in result.output
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_scale_403(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_scale
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+
+        exc_class = type("ApiException", (Exception,), {"status": 403, "reason": "Forbidden"})
+        real_exc = exc_class()
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+            mock_k8s_exc.ApiException = exc_class
+            apps_v1.read_namespaced_deployment.side_effect = real_exc
+            mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+            result = kubectl_scale("deployments", "nginx", 3, gke_config=cfg)
+            assert result.error is True
+            assert "Access denied" in result.output
+
+    def test_scale_alias_normalisation(self) -> None:
+        """Aliases like 'deploy' resolve before validation."""
+        from vaig.tools.gke_tools import kubectl_scale
+
+        cfg = _make_gke_config()
+        # 'services' is not scalable — just verify it rejects properly
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_scale("svc", "my-svc", 2, gke_config=cfg)
+            assert result.error is True
+            assert "Cannot scale" in result.output
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_scale_to_zero(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_scale
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        deploy_obj = MagicMock()
+        deploy_obj.spec.replicas = 3
+        apps_v1.read_namespaced_deployment.return_value = deploy_obj
+
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_scale("deployments", "nginx", 0, gke_config=cfg)
+            assert result.error is not True
+            assert "3 -> 0" in result.output
+
+
+# ── kubectl_restart ──────────────────────────────────────────
+
+
+class TestKubectlRestart:
+    """Tests for kubectl_restart write operation."""
+
+    def test_k8s_unavailable(self) -> None:
+        from vaig.tools.gke_tools import kubectl_restart
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+            result = kubectl_restart("deployments", "nginx", gke_config=cfg)
+            assert result.error is True
+
+    def test_unsupported_resource_type(self) -> None:
+        from vaig.tools.gke_tools import kubectl_restart
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_restart("pods", "my-pod", gke_config=cfg)
+            assert result.error is True
+            assert "Cannot restart" in result.output
+            assert "daemonsets" in result.output
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_restart_deployment_success(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_restart
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_restart("deploy", "nginx", gke_config=cfg)
+            assert result.error is not True
+            assert "Rolling restart triggered" in result.output
+            assert "nginx" in result.output
+            apps_v1.patch_namespaced_deployment.assert_called_once()
+            # Verify the annotation was set
+            call_args = apps_v1.patch_namespaced_deployment.call_args
+            patch_body = call_args[0][2]
+            assert "kubectl.kubernetes.io/restartedAt" in \
+                patch_body["spec"]["template"]["metadata"]["annotations"]
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_restart_statefulset_success(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_restart
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_restart("sts", "redis", gke_config=cfg, namespace="cache")
+            assert result.error is not True
+            apps_v1.patch_namespaced_stateful_set.assert_called_once()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_restart_daemonset_success(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_restart
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_restart("ds", "fluentd", gke_config=cfg)
+            assert result.error is not True
+            assert "fluentd" in result.output
+            apps_v1.patch_namespaced_daemon_set.assert_called_once()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_restart_404(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_restart
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+            mock_k8s_exc.ApiException = exc_class
+            apps_v1.patch_namespaced_deployment.side_effect = exc_class()
+            mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+            result = kubectl_restart("deployments", "ghost", gke_config=cfg)
+            assert result.error is True
+            assert "not found" in result.output
+
+    def test_restart_replicasets_not_allowed(self) -> None:
+        """replicasets are scalable but NOT restartable."""
+        from vaig.tools.gke_tools import kubectl_restart
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_restart("replicasets", "my-rs", gke_config=cfg)
+            assert result.error is True
+            assert "Cannot restart" in result.output
+
+
+# ── kubectl_label ────────────────────────────────────────────
+
+
+class TestKubectlLabel:
+    """Tests for kubectl_label write operation."""
+
+    def test_k8s_unavailable(self) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+            result = kubectl_label("pods", "my-pod", "env=prod", gke_config=cfg)
+            assert result.error is True
+
+    def test_unsupported_resource_type(self) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_label("cronjobs", "my-cron", "env=prod", gke_config=cfg)
+            assert result.error is True
+            assert "Cannot label" in result.output
+
+    def test_invalid_label_format(self) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_label("pods", "my-pod", "invalid_no_equals", gke_config=cfg)
+            assert result.error is True
+            assert "Invalid label format" in result.output
+
+    def test_empty_labels(self) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_label("pods", "my-pod", "", gke_config=cfg)
+            assert result.error is True
+            assert "No labels" in result.output
+
+    def test_system_label_blocked(self) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_label("pods", "my-pod", "kubernetes.io/arch=amd64", gke_config=cfg)
+            assert result.error is True
+            assert "system label" in result.output.lower()
+
+    def test_k8s_io_system_label_blocked(self) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_label("pods", "my-pod", "k8s.io/component=api", gke_config=cfg)
+            assert result.error is True
+            assert "system label" in result.output.lower()
+
+    def test_invalid_label_key_format(self) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_label("pods", "my-pod", "-bad-key=val", gke_config=cfg)
+            assert result.error is True
+            assert "Invalid label key" in result.output
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_label_pod_success(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_label("pods", "my-pod", "env=prod,tier=frontend", gke_config=cfg)
+            assert result.error is not True
+            assert "Labels updated" in result.output
+            assert "env=prod" in result.output
+            core_v1.patch_namespaced_pod.assert_called_once()
+            patch_body = core_v1.patch_namespaced_pod.call_args[0][2]
+            assert patch_body["metadata"]["labels"]["env"] == "prod"
+            assert patch_body["metadata"]["labels"]["tier"] == "frontend"
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_label_remove(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_label("pods", "my-pod", "obsolete-", gke_config=cfg)
+            assert result.error is not True
+            assert "obsolete-" in result.output
+            patch_body = core_v1.patch_namespaced_pod.call_args[0][2]
+            assert patch_body["metadata"]["labels"]["obsolete"] is None
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_label_deployment(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_label("deploy", "nginx", "version=v2", gke_config=cfg)
+            assert result.error is not True
+            apps_v1.patch_namespaced_deployment.assert_called_once()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_label_service(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_label("svc", "my-svc", "managed-by=helm", gke_config=cfg)
+            assert result.error is not True
+            core_v1.patch_namespaced_service.assert_called_once()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_label_namespace(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_label("namespaces", "kube-system", "env=prod", gke_config=cfg)
+            assert result.error is not True
+            core_v1.patch_namespace.assert_called_once()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_label_node(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_label("nodes", "worker-1", "role=compute", gke_config=cfg)
+            assert result.error is not True
+            core_v1.patch_node.assert_called_once()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_label_configmap(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_label("cm", "my-config", "app=web", gke_config=cfg)
+            assert result.error is not True
+            core_v1.patch_namespaced_config_map.assert_called_once()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_label_secret(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_label("secrets", "my-secret", "env=staging", gke_config=cfg)
+            assert result.error is not True
+            core_v1.patch_namespaced_secret.assert_called_once()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_label_404(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+            mock_k8s_exc.ApiException = exc_class
+            core_v1.patch_namespaced_pod.side_effect = exc_class()
+            mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+            result = kubectl_label("pods", "ghost", "env=prod", gke_config=cfg)
+            assert result.error is True
+            assert "not found" in result.output
+
+    def test_label_with_prefix_valid(self) -> None:
+        """Labels with custom prefixes (not system) should be allowed."""
+        from vaig.tools.gke_tools import kubectl_label
+
+        cfg = _make_gke_config()
+        # We only validate up to the system prefix check — should pass validation
+        # but fail at k8s client call since _K8S_AVAILABLE blocks it
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke_tools._create_k8s_clients") as mock_clients:
+            core_v1 = MagicMock()
+            mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+            result = kubectl_label("pods", "my-pod", "mycompany.io/env=prod", gke_config=cfg)
+            assert result.error is not True
+
+
+# ── kubectl_annotate ─────────────────────────────────────────
+
+
+class TestKubectlAnnotate:
+    """Tests for kubectl_annotate write operation."""
+
+    def test_k8s_unavailable(self) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke_tools._K8S_IMPORT_ERROR", "kubernetes not installed"):
+            result = kubectl_annotate("pods", "my-pod", "desc=test", gke_config=cfg)
+            assert result.error is True
+
+    def test_unsupported_resource_type(self) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_annotate("cronjobs", "my-cron", "desc=test", gke_config=cfg)
+            assert result.error is True
+            assert "Cannot annotate" in result.output
+
+    def test_invalid_annotation_format(self) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_annotate("pods", "my-pod", "no_equals_sign", gke_config=cfg)
+            assert result.error is True
+            assert "Invalid annotation format" in result.output
+
+    def test_empty_annotations(self) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_annotate("pods", "my-pod", "", gke_config=cfg)
+            assert result.error is True
+            assert "No annotations" in result.output
+
+    def test_system_annotation_blocked(self) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_annotate(
+                "pods", "my-pod",
+                "kubernetes.io/change-cause=test",
+                gke_config=cfg,
+            )
+            assert result.error is True
+            assert "system annotation" in result.output.lower()
+
+    def test_k8s_io_system_annotation_blocked(self) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_annotate(
+                "pods", "my-pod",
+                "k8s.io/something=test",
+                gke_config=cfg,
+            )
+            assert result.error is True
+            assert "system annotation" in result.output.lower()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_annotate_pod_success(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_annotate(
+                "pods", "my-pod",
+                "description=web server,owner=team-a",
+                gke_config=cfg,
+            )
+            assert result.error is not True
+            assert "Annotations updated" in result.output
+            assert "description=web server" in result.output
+            core_v1.patch_namespaced_pod.assert_called_once()
+            patch_body = core_v1.patch_namespaced_pod.call_args[0][2]
+            assert patch_body["metadata"]["annotations"]["description"] == "web server"
+            assert patch_body["metadata"]["annotations"]["owner"] == "team-a"
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_annotate_remove(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_annotate("pods", "my-pod", "old-note-", gke_config=cfg)
+            assert result.error is not True
+            assert "old-note-" in result.output
+            patch_body = core_v1.patch_namespaced_pod.call_args[0][2]
+            assert patch_body["metadata"]["annotations"]["old-note"] is None
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_annotate_deployment(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_annotate("deploy", "nginx", "gitsha=abc123", gke_config=cfg)
+            assert result.error is not True
+            apps_v1.patch_namespaced_deployment.assert_called_once()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_annotate_statefulset(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_annotate("sts", "redis", "backup=daily", gke_config=cfg)
+            assert result.error is not True
+            apps_v1.patch_namespaced_stateful_set.assert_called_once()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_annotate_daemonset(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        apps_v1 = MagicMock()
+        mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_annotate("ds", "fluentd", "log-driver=json", gke_config=cfg)
+            assert result.error is not True
+            apps_v1.patch_namespaced_daemon_set.assert_called_once()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_annotate_namespace(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_annotate("namespaces", "prod", "team=platform", gke_config=cfg)
+            assert result.error is not True
+            core_v1.patch_namespace.assert_called_once()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_annotate_node(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
+            result = kubectl_annotate("nodes", "worker-1", "rack=a3", gke_config=cfg)
+            assert result.error is not True
+            core_v1.patch_node.assert_called_once()
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_annotate_404(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+            mock_k8s_exc.ApiException = exc_class
+            core_v1.patch_namespaced_pod.side_effect = exc_class()
+            mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+            result = kubectl_annotate("pods", "ghost", "note=test", gke_config=cfg)
+            assert result.error is True
+            assert "not found" in result.output
+
+    @patch("vaig.tools.gke_tools._create_k8s_clients")
+    def test_annotate_403(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        exc_class = type("ApiException", (Exception,), {"status": 403, "reason": "Forbidden"})
+
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke_tools.k8s_exceptions") as mock_k8s_exc:
+            mock_k8s_exc.ApiException = exc_class
+            core_v1.patch_namespaced_pod.side_effect = exc_class()
+            mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+            result = kubectl_annotate("pods", "my-pod", "note=test", gke_config=cfg)
+            assert result.error is True
+            assert "Access denied" in result.output
+
+    def test_annotate_custom_prefix_allowed(self) -> None:
+        """Annotations with custom prefixes (not system) should be allowed."""
+        from vaig.tools.gke_tools import kubectl_annotate
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke_tools._create_k8s_clients") as mock_clients:
+            core_v1 = MagicMock()
+            mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+            result = kubectl_annotate("pods", "my-pod", "myorg.io/team=backend", gke_config=cfg)
+            assert result.error is not True

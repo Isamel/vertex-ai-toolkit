@@ -175,6 +175,23 @@ class GKEConfig(BaseModel):
     proxy_url: str = ""
 
 
+class MCPServerConfig(BaseModel):
+    """Configuration for a single MCP server."""
+
+    name: str
+    command: str
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    description: str = ""
+
+
+class MCPConfig(BaseModel):
+    """MCP (Model Context Protocol) integration configuration."""
+
+    enabled: bool = False
+    servers: list[MCPServerConfig] = Field(default_factory=list)
+
+
 def _strip_empty_strings(data: dict[str, Any]) -> dict[str, Any]:
     """Recursively remove keys whose value is an empty string.
 
@@ -233,6 +250,7 @@ class Settings(BaseSettings):
     coding: CodingConfig = Field(default_factory=CodingConfig)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     gke: GKEConfig = Field(default_factory=GKEConfig)
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> Settings:
