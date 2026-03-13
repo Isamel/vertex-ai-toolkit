@@ -33,7 +33,7 @@ def _make_tool_registry(*tools: ToolDef) -> ToolRegistry:
 def _make_agent(
     *,
     name: str = "test-agent",
-    system_prompt: str = "You are a test agent.",
+    system_instruction: str = "You are a test agent.",
     max_iterations: int = 15,
     extra_tools: list[ToolDef] | None = None,
 ) -> tuple[ToolAwareAgent, MagicMock]:
@@ -41,7 +41,7 @@ def _make_agent(
     client = _make_mock_client()
     registry = _make_tool_registry(*(extra_tools or []))
     agent = ToolAwareAgent(
-        system_prompt=system_prompt,
+        system_instruction=system_instruction,
         tool_registry=registry,
         model="gemini-2.5-pro",
         name=name,
@@ -91,7 +91,7 @@ class TestInit:
     """Tests for ToolAwareAgent construction."""
 
     def test_basic_initialization(self) -> None:
-        agent, _ = _make_agent(name="my-agent", system_prompt="Be helpful.")
+        agent, _ = _make_agent(name="my-agent", system_instruction="Be helpful.")
 
         assert agent.name == "my-agent"
         assert agent._config.system_instruction == "Be helpful."
@@ -156,7 +156,7 @@ class TestFromConfigDict:
         config = {
             "name": "analyzer",
             "role": "analyst",
-            "system_prompt": "You analyze data.",
+            "system_instruction": "You analyze data.",
         }
 
         agent = ToolAwareAgent.from_config_dict(config, "gemini-2.5-flash", registry, client)
@@ -172,7 +172,7 @@ class TestFromConfigDict:
         config = {
             "name": "quick",
             "role": "worker",
-            "system_prompt": "Work fast.",
+            "system_instruction": "Work fast.",
             "max_iterations": 3,
         }
 
@@ -186,7 +186,7 @@ class TestFromConfigDict:
         config = {
             "name": "precise",
             "role": "analyzer",
-            "system_prompt": "Be precise.",
+            "system_instruction": "Be precise.",
             "temperature": 0.1,
         }
 
@@ -200,24 +200,24 @@ class TestFromConfigDict:
 
         with pytest.raises(KeyError, match="name"):
             ToolAwareAgent.from_config_dict(
-                {"system_prompt": "hello"},
+                {"system_instruction": "hello"},
                 "gemini-2.5-pro",
                 registry,
                 client,
             )
 
-    def test_missing_system_prompt_and_instruction_raises_key_error(self) -> None:
-        """KeyError is raised when neither system_prompt nor system_instruction is present."""
+    def test_missing_system_prompt_and_instruction_uses_empty_string(self) -> None:
+        """When neither system_prompt nor system_instruction is present, defaults to empty string."""
         client = _make_mock_client()
         registry = _make_tool_registry()
 
-        with pytest.raises(KeyError, match="system_instruction"):
-            ToolAwareAgent.from_config_dict(
-                {"name": "broken"},
-                "gemini-2.5-pro",
-                registry,
-                client,
-            )
+        agent = ToolAwareAgent.from_config_dict(
+            {"name": "no-prompt", "role": "Worker"},
+            "gemini-2.5-pro",
+            registry,
+            client,
+        )
+        assert agent._config.system_instruction == ""
 
 
 # ── TestExecuteSimpleQuery ───────────────────────────────────

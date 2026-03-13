@@ -44,7 +44,7 @@ class ToolLoopMixin:
         client: GeminiClient,
         prompt: str | list[types.Part],
         tool_registry: ToolRegistry,
-        system_prompt: str,
+        system_instruction: str,
         history: list[Any],
         max_iterations: int = 15,
         model: str | None = None,
@@ -63,7 +63,7 @@ class ToolLoopMixin:
             client: The ``GeminiClient`` for API calls.
             prompt: The initial user prompt (text or Parts).
             tool_registry: Registry containing available tools.
-            system_prompt: System instruction for the model.
+            system_instruction: System instruction for the model.
             history: Mutable list of ``types.Content`` -- updated in-place
                      with function call/response entries as the loop runs.
             max_iterations: Safety cap on loop iterations.
@@ -110,7 +110,7 @@ class ToolLoopMixin:
                 result: ToolCallResult = client.generate_with_tools(
                     prompt if iteration == 1 else [],
                     tool_declarations=declarations,
-                    system_instruction=system_prompt,
+                    system_instruction=system_instruction,
                     history=history,
                     model_id=model,
                     **gen_kwargs,

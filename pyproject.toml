@@ -26,6 +26,7 @@ dependencies = [
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
 ]
@@ -64,3 +65,42 @@ warn_unused_configs = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+addopts = "-v --tb=short"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests requiring external services",
+]
+
+# ── Coverage ──────────────────────────────────────────────────────────
+
+[tool.coverage.run]
+source = ["src/vaig"]
+branch = true
+omit = [
+    "*/__pycache__/*",
+    "*/.venv/*",
+    "tests/*",
+    "*/conftest.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 0
+precision = 2
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "raise NotImplementedError",
+    "raise AssertionError",
+    "if TYPE_CHECKING:",
+    "@(abc\\.)?abstractmethod",
+    "\\.\\.\\.",
+]
+exclude_also = [
+    "def __repr__",
+    "class .*\\bProtocol\\):",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"

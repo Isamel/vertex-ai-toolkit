@@ -40,7 +40,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         registry = ToolRegistry()
         registry.register(some_tool)
         agent = ToolAwareAgent(
-            system_prompt="You are a ...",
+            system_instruction="You are a ...",
             tool_registry=registry,
             model="gemini-2.5-pro",
             name="my-agent",
@@ -51,7 +51,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
     def __init__(
         self,
         *,
-        system_prompt: str,
+        system_instruction: str,
         tool_registry: ToolRegistry,
         model: str,
         name: str,
@@ -63,7 +63,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         """Initialise the tool-aware agent.
 
         Args:
-            system_prompt: System instruction that defines the agent's skill.
+            system_instruction: System instruction that defines the agent's skill.
             tool_registry: Pre-configured registry of tools available to the agent.
             model: Gemini model ID.
             name: Unique agent name.
@@ -75,7 +75,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         config = AgentConfig(
             name=name,
             role=AgentRole.SPECIALIST,
-            system_instruction=system_prompt,
+            system_instruction=system_instruction,
             model=model,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
@@ -108,9 +108,9 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         Expected keys in *config*:
         - ``name`` (str): Agent name.
         - ``role`` (str): Role description (informational, stored in config).
-        - ``system_prompt`` or ``system_instruction`` (str): The system
-          instruction for the agent.  ``system_prompt`` takes precedence
-          when both are present (for backward compatibility).
+        - ``system_instruction`` (str): The system instruction for the
+          agent.  ``system_prompt`` is accepted as a fallback alias for
+          backward compatibility but ``system_instruction`` takes precedence.
         - ``max_iterations`` (int, optional): Override default max iterations.
         - ``temperature`` (float, optional): Override default temperature.
         - ``max_output_tokens`` (int, optional): Override default max tokens.
@@ -125,11 +125,11 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             A fully configured ``ToolAwareAgent``.
 
         Raises:
-            KeyError: If required keys (``name``, ``system_prompt`` or
-                ``system_instruction``) are missing.
+            KeyError: If required keys (``name``, ``system_instruction``)
+                are missing.
         """
         return cls(
-            system_prompt=config.get("system_prompt") or config["system_instruction"],
+            system_instruction=config.get("system_instruction") or config.get("system_prompt", ""),
             tool_registry=tool_registry,
             model=model,
             name=config["name"],
@@ -182,7 +182,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 client=self._client,
                 prompt=full_prompt,
                 tool_registry=self._tool_registry,
-                system_prompt=self._config.system_instruction,
+                system_instruction=self._config.system_instruction,
                 history=history,
                 max_iterations=self._max_iterations,
                 model=self._config.model,

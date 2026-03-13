@@ -150,8 +150,6 @@ def inject_language_into_config(
         return agent_configs
 
     for config in agent_configs:
-        if "system_prompt" in config:
-            config["system_prompt"] = instruction + config["system_prompt"]
         if "system_instruction" in config:
             config["system_instruction"] = instruction + config["system_instruction"]
 
@@ -216,8 +214,6 @@ def inject_autopilot_into_config(
         return agent_configs
 
     for config in agent_configs:
-        if "system_prompt" in config:
-            config["system_prompt"] = instruction + config["system_prompt"]
         if "system_instruction" in config:
             config["system_instruction"] = instruction + config["system_instruction"]
     return agent_configs

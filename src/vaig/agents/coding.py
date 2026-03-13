@@ -210,7 +210,7 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
                 client=self._client,
                 prompt=full_prompt,
                 tool_registry=self._registry,
-                system_prompt=self._config.system_instruction,
+                system_instruction=self._config.system_instruction,
                 history=history,
                 max_iterations=self._max_iterations,
                 model=self._config.model,

@@ -5,7 +5,7 @@ Validates:
 - System instruction is non-empty
 - Phase prompts inject context and user_input correctly
 - Agent pipeline configuration (4 agents, sequential, requires_tools flags)
-- ToolAwareAgent compatibility (system_prompt key on gatherer/verifier)
+- ToolAwareAgent compatibility (system_instruction key on gatherer/verifier)
 - SpecialistAgent compatibility (system_instruction key on analyzer/reporter)
 - Verifier agent prompt content and anti-hallucination rules
 - Two-pass verification pipeline: analyzer → verifier → reporter
@@ -227,16 +227,16 @@ class TestServiceHealthSkillAgentsConfig:
         assert reporter["name"] == "health_reporter"
         assert reporter.get("requires_tools", False) is False
 
-    def test_gatherer_has_system_prompt_for_tool_aware_agent(self) -> None:
-        """ToolAwareAgent.from_config_dict expects 'system_prompt' key."""
+    def test_gatherer_has_system_instruction_for_tool_aware_agent(self) -> None:
+        """ToolAwareAgent.from_config_dict expects 'system_instruction' key."""
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
         agents = skill.get_agents_config()
         gatherer = agents[0]
-        assert "system_prompt" in gatherer
-        assert isinstance(gatherer["system_prompt"], str)
-        assert len(gatherer["system_prompt"]) > 0
+        assert "system_instruction" in gatherer
+        assert isinstance(gatherer["system_instruction"], str)
+        assert len(gatherer["system_instruction"]) > 0
 
     def test_analyzer_has_system_instruction_for_specialist_agent(self) -> None:
         """SpecialistAgent.from_config_dict expects 'system_instruction' key."""
@@ -302,19 +302,19 @@ class TestServiceHealthSkillAgentsConfig:
         assert verifier["name"] == "health_verifier"
         assert verifier["requires_tools"] is True
 
-    def test_verifier_agent_system_prompt(self) -> None:
-        """ToolAwareAgent.from_config_dict expects 'system_prompt' key."""
+    def test_verifier_agent_system_instruction_for_tool_aware(self) -> None:
+        """ToolAwareAgent.from_config_dict expects 'system_instruction' key."""
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
         agents = skill.get_agents_config()
         verifier = agents[2]
-        assert "system_prompt" in verifier
-        assert isinstance(verifier["system_prompt"], str)
-        assert len(verifier["system_prompt"]) > 0
+        assert "system_instruction" in verifier
+        assert isinstance(verifier["system_instruction"], str)
+        assert len(verifier["system_instruction"]) > 0
 
     def test_verifier_agent_system_instruction(self) -> None:
-        """Verifier provides system_instruction for defensive compatibility."""
+        """Verifier provides system_instruction."""
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
@@ -362,7 +362,7 @@ class TestServiceHealthSkillPromptContent:
 
         skill = ServiceHealthSkill()
         agents = skill.get_agents_config()
-        gatherer_prompt = agents[0]["system_prompt"]
+        gatherer_prompt = agents[0]["system_instruction"]
         assert "kubectl" in gatherer_prompt.lower()
 
     def test_gatherer_prompt_mentions_pods(self) -> None:
@@ -370,7 +370,7 @@ class TestServiceHealthSkillPromptContent:
 
         skill = ServiceHealthSkill()
         agents = skill.get_agents_config()
-        gatherer_prompt = agents[0]["system_prompt"]
+        gatherer_prompt = agents[0]["system_instruction"]
         assert "pod" in gatherer_prompt.lower()
 
     def test_analyzer_prompt_mentions_severity(self) -> None:

@@ -156,7 +156,6 @@ class TestInjectLanguageIntoConfig:
             {
                 "name": "gatherer",
                 "role": "Gatherer",
-                "system_prompt": "You are a gatherer.",
                 "system_instruction": "You are a gatherer.",
                 "requires_tools": True,
             },
@@ -169,7 +168,6 @@ class TestInjectLanguageIntoConfig:
             {
                 "name": "verifier",
                 "role": "Verifier",
-                "system_prompt": "You are a verifier.",
                 "system_instruction": "You are a verifier.",
                 "requires_tools": True,
             },
@@ -184,9 +182,9 @@ class TestInjectLanguageIntoConfig:
     def test_english_no_modification(self) -> None:
         """English should not modify any configs."""
         configs = self._make_agent_configs()
-        original_prompts = [c.get("system_prompt", c.get("system_instruction")) for c in configs]
+        original_prompts = [c.get("system_instruction") for c in configs]
         inject_language_into_config(configs, "en")
-        new_prompts = [c.get("system_prompt", c.get("system_instruction")) for c in configs]
+        new_prompts = [c.get("system_instruction") for c in configs]
         assert original_prompts == new_prompts
 
     def test_spanish_prepends_to_all_agents(self) -> None:
@@ -195,19 +193,16 @@ class TestInjectLanguageIntoConfig:
         inject_language_into_config(configs, "es")
 
         for config in configs:
-            if "system_instruction" in config:
-                assert config["system_instruction"].startswith("## LANGUAGE INSTRUCTION")
-            if "system_prompt" in config:
-                assert config["system_prompt"].startswith("## LANGUAGE INSTRUCTION")
+            assert config["system_instruction"].startswith("## LANGUAGE INSTRUCTION")
 
     def test_spanish_preserves_original_content(self) -> None:
         """Original prompt content should still be present after injection."""
         configs = self._make_agent_configs()
         inject_language_into_config(configs, "es")
 
-        assert "You are a gatherer." in configs[0]["system_prompt"]
+        assert "You are a gatherer." in configs[0]["system_instruction"]
         assert "You are an analyzer." in configs[1]["system_instruction"]
-        assert "You are a verifier." in configs[2]["system_prompt"]
+        assert "You are a verifier." in configs[2]["system_instruction"]
         assert "You are a reporter." in configs[3]["system_instruction"]
 
     def test_returns_same_list(self) -> None:
@@ -222,14 +217,13 @@ class TestInjectLanguageIntoConfig:
         result = inject_language_into_config(configs, "es")
         assert result == []
 
-    def test_both_keys_updated(self) -> None:
-        """Agents with both system_prompt AND system_instruction should have BOTH updated."""
+    def test_system_instruction_key_updated(self) -> None:
+        """Agents with system_instruction should have it updated."""
         configs = self._make_agent_configs()
         inject_language_into_config(configs, "es")
 
-        # Gatherer has both keys
+        # Gatherer has system_instruction
         gatherer = configs[0]
-        assert gatherer["system_prompt"].startswith("## LANGUAGE INSTRUCTION")
         assert gatherer["system_instruction"].startswith("## LANGUAGE INSTRUCTION")
 
 
@@ -293,7 +287,6 @@ class TestOrchestratorLanguageIntegration:
                         "name": "test-agent",
                         "role": "Tester",
                         "system_instruction": "You are a tester.",
-                        "system_prompt": "You are a tester.",
                         "requires_tools": True,
                     },
                 ]
@@ -309,7 +302,6 @@ class TestOrchestratorLanguageIntegration:
         assert len(captured_configs) == 1
         assert "LANGUAGE INSTRUCTION" in captured_configs[0]["system_instruction"]
         assert "Spanish" in captured_configs[0]["system_instruction"]
-        assert "LANGUAGE INSTRUCTION" in captured_configs[0]["system_prompt"]
 
     def test_english_query_no_injection(self) -> None:
         """When the query is in English, no language injection should happen."""
@@ -358,7 +350,6 @@ class TestOrchestratorLanguageIntegration:
                         "name": "test-agent",
                         "role": "Tester",
                         "system_instruction": "You are a tester.",
-                        "system_prompt": "You are a tester.",
                         "requires_tools": True,
                     },
                 ]
@@ -397,12 +388,8 @@ class TestServiceHealthLanguageIntegration:
         # All 4 agents should have the language instruction
         assert len(configs) == 4
         for config in configs:
-            if "system_instruction" in config:
-                assert "LANGUAGE INSTRUCTION" in config["system_instruction"]
-                assert "Spanish" in config["system_instruction"]
-            if "system_prompt" in config:
-                assert "LANGUAGE INSTRUCTION" in config["system_prompt"]
-                assert "Spanish" in config["system_prompt"]
+            assert "LANGUAGE INSTRUCTION" in config["system_instruction"]
+            assert "Spanish" in config["system_instruction"]
 
     def test_service_health_english_no_injection(self) -> None:
         """English should NOT modify service-health configs."""
@@ -420,9 +407,9 @@ class TestServiceHealthLanguageIntegration:
         inject_language_into_config(configs, "en")
 
         # Prompts should be unchanged
-        assert configs[0]["system_prompt"] == HEALTH_GATHERER_PROMPT
+        assert configs[0]["system_instruction"] == HEALTH_GATHERER_PROMPT
         assert configs[1]["system_instruction"] == HEALTH_ANALYZER_PROMPT
-        assert configs[2]["system_prompt"] == HEALTH_VERIFIER_PROMPT
+        assert configs[2]["system_instruction"] == HEALTH_VERIFIER_PROMPT
         assert configs[3]["system_instruction"] == HEALTH_REPORTER_PROMPT
 
     def test_prompt_constants_not_mutated(self) -> None:
@@ -488,43 +475,40 @@ class TestInjectAutopilotIntoConfig:
 
     def test_no_modification_when_not_autopilot(self) -> None:
         configs = [
-            {"system_prompt": "original prompt", "system_instruction": "original instruction"},
+            {"system_instruction": "original instruction"},
         ]
         result = inject_autopilot_into_config(configs, False)
-        assert result[0]["system_prompt"] == "original prompt"
         assert result[0]["system_instruction"] == "original instruction"
 
     def test_no_modification_when_none(self) -> None:
         configs = [
-            {"system_prompt": "original prompt"},
+            {"system_instruction": "original prompt"},
         ]
         result = inject_autopilot_into_config(configs, None)
-        assert result[0]["system_prompt"] == "original prompt"
+        assert result[0]["system_instruction"] == "original prompt"
 
     def test_prepends_instruction_when_autopilot(self) -> None:
         configs = [
-            {"system_prompt": "You are an SRE agent.", "system_instruction": "You are an SRE agent."},
+            {"system_instruction": "You are an SRE agent."},
         ]
         result = inject_autopilot_into_config(configs, True)
-        assert result[0]["system_prompt"].startswith("## GKE AUTOPILOT CLUSTER")
         assert result[0]["system_instruction"].startswith("## GKE AUTOPILOT CLUSTER")
-        assert "You are an SRE agent." in result[0]["system_prompt"]
+        assert "You are an SRE agent." in result[0]["system_instruction"]
 
     def test_mutates_in_place(self) -> None:
-        configs = [{"system_prompt": "test"}]
+        configs = [{"system_instruction": "test"}]
         result = inject_autopilot_into_config(configs, True)
         assert result is configs
 
     def test_handles_multiple_agents(self) -> None:
         configs = [
-            {"system_prompt": "agent 1"},
+            {"system_instruction": "agent 1"},
             {"system_instruction": "agent 2"},
-            {"system_prompt": "agent 3", "system_instruction": "agent 3"},
+            {"system_instruction": "agent 3"},
         ]
         inject_autopilot_into_config(configs, True)
-        assert "GKE AUTOPILOT" in configs[0]["system_prompt"]
+        assert "GKE AUTOPILOT" in configs[0]["system_instruction"]
         assert "GKE AUTOPILOT" in configs[1]["system_instruction"]
-        assert "GKE AUTOPILOT" in configs[2]["system_prompt"]
         assert "GKE AUTOPILOT" in configs[2]["system_instruction"]
 
     def test_does_not_corrupt_original_prompt_constants(self) -> None:

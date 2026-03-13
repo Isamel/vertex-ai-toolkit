@@ -101,20 +101,16 @@ class ServiceHealthSkill(BaseSkill):
         Agent 4 (health_reporter) has ``requires_tools=False`` and
         is instantiated as :class:`~vaig.agents.specialist.SpecialistAgent`.
 
-        Note: ``ToolAwareAgent.from_config_dict`` reads the ``system_prompt``
-        key, while ``SpecialistAgent.from_config_dict`` reads
-        ``system_instruction``.  Both keys are provided on tool-aware agents
-        for maximum compatibility.
+        Note: Both ``ToolAwareAgent.from_config_dict`` and
+        ``SpecialistAgent.from_config_dict`` read the ``system_instruction``
+        key.  The ``system_prompt`` alias is accepted as a backward-compat
+        fallback by ``ToolAwareAgent`` but is no longer needed here.
         """
         return [
             {
                 "name": "health_gatherer",
                 "role": "Health Data Gatherer",
                 "requires_tools": True,
-                # ToolAwareAgent.from_config_dict reads "system_prompt"
-                "system_prompt": HEALTH_GATHERER_PROMPT,
-                # SpecialistAgent.from_config_dict reads "system_instruction"
-                # (included for defensive compatibility if routing changes)
                 "system_instruction": HEALTH_GATHERER_PROMPT,
                 "model": "gemini-2.5-pro",
                 "temperature": 0.2,  # Low temp for precise data collection
@@ -133,7 +129,6 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_verifier",
                 "role": "Health Finding Verifier",
                 "requires_tools": True,
-                "system_prompt": HEALTH_VERIFIER_PROMPT,
                 "system_instruction": HEALTH_VERIFIER_PROMPT,
                 "model": "gemini-2.5-flash",
                 "max_iterations": 10,
