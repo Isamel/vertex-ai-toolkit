@@ -67,8 +67,12 @@ vaig ask "Refactor this to use async/await" -f server.py --code
 ### InfraAgent
 
 SRE-focused agent with live infrastructure tools:
-- **GKE tools**: `kubectl_get`, `kubectl_describe`, `kubectl_logs`, `kubectl_top`, `kubectl_scale`, `kubectl_restart`, `kubectl_label`, `kubectl_annotate`
+- **GKE read tools**: `kubectl_get`, `kubectl_describe`, `kubectl_logs`, `kubectl_top`, `get_events`, `get_rollout_status`, `get_node_conditions`, `get_container_status`, `check_rbac`
+- **GKE write tools**: `kubectl_scale`, `kubectl_restart`, `kubectl_label`, `kubectl_annotate`
+- **GKE exec tools**: `exec_command` (disabled by default — requires `gke.exec_enabled: true`)
 - **GCloud tools**: `gcloud_logging_query`, `gcloud_monitoring_query`
+
+Total: **14 GKE tools + 2 GCloud tools = 16 tools**.
 
 Activated via `vaig live` or `vaig ask --live`.
 

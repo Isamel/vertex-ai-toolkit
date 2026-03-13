@@ -1,6 +1,6 @@
 # Configuration Guide
 
-VAIG is configured via YAML files and environment variables. This guide covers all 14 configuration sections.
+VAIG is configured via YAML files and environment variables. This guide covers all configuration sections.
 
 ## Config File Locations
 
@@ -237,7 +237,12 @@ gke:
   log_limit: 100                     # Default log tail lines
   metrics_interval_minutes: 60       # Default metrics time window
   proxy_url: null                    # Proxy URL for GKE API
+  exec_enabled: false                # Enable exec_command tool (DISABLED by default)
 ```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `exec_enabled` | boolean | `false` | When `true`, enables the `exec_command` tool which allows executing diagnostic commands inside running containers. **Disabled by default for security.** Commands are still validated against a denylist (dangerous patterns) and an allowlist (read-only diagnostics) even when enabled. |
 
 ### `mcp` — Model Context Protocol
 
@@ -307,6 +312,7 @@ gke:
   default_namespace: api
   log_limit: 200
   metrics_interval_minutes: 30
+  exec_enabled: false                # Set true to enable exec_command tool
 
 logging:
   level: INFO

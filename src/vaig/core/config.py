@@ -173,6 +173,9 @@ class GKEConfig(BaseModel):
     # ignores the ``proxy-url`` field in kubeconfig; this setting lets
     # users provide an explicit override via config/CLI.
     proxy_url: str = ""
+    # Allow exec_command tool to execute diagnostic commands inside containers.
+    # Disabled by default for security — must be explicitly opted-in.
+    exec_enabled: bool = False
 
 
 class MCPServerConfig(BaseModel):

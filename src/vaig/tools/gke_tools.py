@@ -1522,6 +1522,975 @@ def kubectl_annotate(
         return ToolResult(output=f"Error annotating {resource}/{name}: {exc}", error=True)
 
 
+# ── Diagnostic tools — Phase 1 ────────────────────────────────
+
+
+def get_events(
+    *,
+    gke_config: GKEConfig,
+    namespace: str = "default",
+    event_type: str | None = None,
+    involved_object_name: str | None = None,
+    involved_object_kind: str | None = None,
+    limit: int = 50,
+) -> ToolResult:
+    """List Kubernetes events in a namespace, optionally filtered by type and involved object.
+
+    Events reveal WHY pods fail, WHY nodes have issues, and what the scheduler
+    is doing. Critical for SRE triage. Equivalent to
+    ``kubectl get events --sort-by=.lastTimestamp``.
+    """
+    if not _K8S_AVAILABLE:
+        return _k8s_unavailable()
+
+    if event_type is not None and event_type not in ("Warning", "Normal"):
+        return ToolResult(
+            output=f"Invalid event_type: '{event_type}'. Must be 'Warning', 'Normal', or omit for all.",
+            error=True,
+        )
+
+    if limit < 1 or limit > 500:
+        return ToolResult(
+            output=f"Limit must be between 1 and 500. Got: {limit}",
+            error=True,
+        )
+
+    ns = namespace or gke_config.default_namespace
+
+    result = _create_k8s_clients(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+    core_v1, _, _, _ = result
+
+    try:
+        # Build field selector for server-side filtering
+        field_parts: list[str] = []
+        if event_type:
+            field_parts.append(f"type={event_type}")
+        if involved_object_name:
+            field_parts.append(f"involvedObject.name={involved_object_name}")
+        if involved_object_kind:
+            field_parts.append(f"involvedObject.kind={involved_object_kind}")
+        field_selector = ",".join(field_parts) if field_parts else None
+
+        kwargs: dict[str, Any] = {"namespace": ns}
+        if field_selector:
+            kwargs["field_selector"] = field_selector
+
+        ev_list = core_v1.list_namespaced_event(**kwargs)
+        events = ev_list.items or []
+
+        # Sort by last_timestamp descending (most recent first)
+        def _sort_key(ev: Any) -> datetime:
+            ts = ev.last_timestamp or ev.metadata.creation_timestamp
+            if ts is None:
+                return datetime.min.replace(tzinfo=timezone.utc)
+            return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+
+        events.sort(key=_sort_key, reverse=True)
+
+        # Apply limit
+        events = events[:limit]
+
+        if not events:
+            filter_desc = ""
+            if event_type:
+                filter_desc += f" type={event_type}"
+            if involved_object_name:
+                filter_desc += f" object={involved_object_name}"
+            return ToolResult(
+                output=f"No events found in namespace '{ns}'.{' Filters:' + filter_desc if filter_desc else ''}",
+            )
+
+        # Format as table
+        lines: list[str] = []
+        lines.append(f"{'LAST SEEN':<12}{'TYPE':<10}{'REASON':<25}{'OBJECT':<40}{'MESSAGE'}")
+        for ev in events:
+            last_seen = _age(ev.last_timestamp or ev.metadata.creation_timestamp)
+            ev_type_str = ev.type or "Normal"
+            reason = ev.reason or ""
+            # Build OBJECT column: Kind/Name
+            obj_kind = ev.involved_object.kind if ev.involved_object else ""
+            obj_name = ev.involved_object.name if ev.involved_object else ""
+            obj_str = f"{obj_kind}/{obj_name}" if obj_kind else obj_name
+            message = ev.message or ""
+            lines.append(f"{last_seen:<12}{ev_type_str:<10}{reason:<25}{obj_str:<40}{message}")
+
+        header = f"Events in namespace '{ns}' ({len(events)} shown):"
+        return ToolResult(output=f"{header}\n" + "\n".join(lines))
+
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            return ToolResult(output=f"Namespace '{ns}' not found", error=True)
+        if exc.status == 403:
+            return ToolResult(output=f"Access denied: insufficient permissions to list events in namespace '{ns}'", error=True)
+        if exc.status == 401:
+            return ToolResult(output="Authentication failed: check your kubeconfig or GKE credentials", error=True)
+        return ToolResult(output=f"Kubernetes API error ({exc.status}): {exc.reason}", error=True)
+    except Exception as exc:
+        logger.exception("get_events failed")
+        return ToolResult(output=f"Error listing events: {exc}", error=True)
+
+
+def get_rollout_status(
+    name: str,
+    *,
+    gke_config: GKEConfig,
+    namespace: str = "default",
+) -> ToolResult:
+    """Check the rollout status of a Kubernetes deployment.
+
+    Shows whether a deployment is progressing, complete, stalled, or failed.
+    Reports replica counts, conditions, and rollout strategy.
+    Equivalent to ``kubectl rollout status deployment/<name>``.
+    """
+    if not _K8S_AVAILABLE:
+        return _k8s_unavailable()
+
+    ns = namespace or gke_config.default_namespace
+
+    result = _create_k8s_clients(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+    _, apps_v1, _, _ = result
+
+    try:
+        dep = apps_v1.read_namespaced_deployment(name=name, namespace=ns)
+
+        lines: list[str] = []
+        lines.append(f"Deployment: {name}")
+        lines.append(f"Namespace:  {ns}")
+
+        # ── Replica counts ────────────────────────────────────
+        desired = dep.spec.replicas if dep.spec and dep.spec.replicas is not None else 0
+        status = dep.status
+        current = status.replicas or 0 if status else 0
+        ready = status.ready_replicas or 0 if status else 0
+        updated = status.updated_replicas or 0 if status else 0
+        available = status.available_replicas or 0 if status else 0
+        unavailable = status.unavailable_replicas or 0 if status else 0
+
+        lines.append("")
+        lines.append("Replicas:")
+        lines.append(f"  Desired:     {desired}")
+        lines.append(f"  Current:     {current}")
+        lines.append(f"  Ready:       {ready}")
+        lines.append(f"  Updated:     {updated}")
+        lines.append(f"  Available:   {available}")
+        lines.append(f"  Unavailable: {unavailable}")
+
+        # ── Rollout strategy ──────────────────────────────────
+        if dep.spec and dep.spec.strategy:
+            strategy = dep.spec.strategy
+            lines.append("")
+            lines.append(f"Strategy: {strategy.type or 'RollingUpdate'}")
+            if strategy.rolling_update:
+                ru = strategy.rolling_update
+                lines.append(f"  Max Unavailable: {ru.max_unavailable}")
+                lines.append(f"  Max Surge:       {ru.max_surge}")
+
+        # ── Conditions ────────────────────────────────────────
+        conditions = (status.conditions or []) if status else []
+        overall_state = "Unknown"
+        condition_details: list[str] = []
+
+        progressing_cond = None
+        available_cond = None
+        failure_cond = None
+
+        for cond in conditions:
+            cond_type = cond.type or ""
+            cond_status = cond.status or "Unknown"
+            reason = cond.reason or ""
+            message = cond.message or ""
+            condition_details.append(f"  {cond_type}: {cond_status} — {reason}: {message}")
+
+            if cond_type == "Progressing":
+                progressing_cond = cond
+            elif cond_type == "Available":
+                available_cond = cond
+            elif cond_type == "ReplicaFailure":
+                failure_cond = cond
+
+        # Determine overall state
+        if failure_cond and failure_cond.status == "True":
+            overall_state = "Failed"
+        elif progressing_cond and progressing_cond.reason == "ProgressDeadlineExceeded":
+            overall_state = "Stalled"
+        elif (
+            available_cond
+            and available_cond.status == "True"
+            and updated == desired
+            and ready == desired
+        ):
+            overall_state = "Complete"
+        elif progressing_cond and progressing_cond.status == "True":
+            overall_state = "Progressing"
+        elif desired == 0 and ready == 0:
+            overall_state = "Scaled to zero"
+
+        lines.append("")
+        lines.append(f"Overall Status: {overall_state}")
+
+        if condition_details:
+            lines.append("")
+            lines.append("Conditions:")
+            lines.extend(condition_details)
+
+        return ToolResult(output="\n".join(lines))
+
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            return ToolResult(output=f"Deployment '{name}' not found in namespace '{ns}'", error=True)
+        if exc.status == 403:
+            return ToolResult(output=f"Access denied: insufficient permissions to read deployment/{name}", error=True)
+        if exc.status == 401:
+            return ToolResult(output="Authentication failed: check your kubeconfig or GKE credentials", error=True)
+        return ToolResult(output=f"Kubernetes API error ({exc.status}): {exc.reason}", error=True)
+    except Exception as exc:
+        logger.exception("get_rollout_status failed")
+        return ToolResult(output=f"Error checking rollout status for deployment/{name}: {exc}", error=True)
+
+
+# ── Phase 2 diagnostic tools ─────────────────────────────────
+
+
+def get_node_conditions(
+    *,
+    gke_config: GKEConfig,
+    name: str | None = None,
+) -> ToolResult:
+    """Show node health conditions, resource pressure, taints, and capacity.
+
+    When called WITHOUT a node name, lists ALL nodes with a summary: name,
+    status (Ready/NotReady), roles, age, version, OS, kernel, container
+    runtime, CPU capacity/allocatable, and memory capacity/allocatable.
+
+    When called WITH a specific node name, shows a detailed view including
+    ALL conditions (Ready, MemoryPressure, DiskPressure, PIDPressure,
+    NetworkUnavailable), taints, relevant labels, allocatable vs capacity
+    comparison, and the unschedulable (cordon) flag.
+
+    Fills the gap left by ``kubectl_get nodes`` which only shows Ready/NotReady
+    but hides pressure conditions that indicate imminent node failures.
+    """
+    if not _K8S_AVAILABLE:
+        return _k8s_unavailable()
+
+    result = _create_k8s_clients(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+    core_v1, _, _, _ = result
+
+    try:
+        if name:
+            # ── Single node detail ────────────────────────────
+            node = core_v1.read_node(name=name)
+            return _format_node_detail(node)
+
+        # ── All nodes summary ─────────────────────────────
+        node_list = core_v1.list_node()
+        nodes = node_list.items or []
+
+        if not nodes:
+            return ToolResult(output="No nodes found in the cluster.")
+
+        return _format_nodes_summary(nodes)
+
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            return ToolResult(output=f"Node '{name}' not found", error=True)
+        if exc.status == 403:
+            return ToolResult(
+                output="Access denied: insufficient permissions to read nodes",
+                error=True,
+            )
+        if exc.status == 401:
+            return ToolResult(
+                output="Authentication failed: check your kubeconfig or GKE credentials",
+                error=True,
+            )
+        return ToolResult(output=f"Kubernetes API error ({exc.status}): {exc.reason}", error=True)
+    except Exception as exc:
+        logger.exception("get_node_conditions failed")
+        return ToolResult(output=f"Error reading node conditions: {exc}", error=True)
+
+
+def _format_nodes_summary(nodes: list[Any]) -> ToolResult:
+    """Format a list of nodes into a summary table with capacity info."""
+    lines: list[str] = []
+    header = (
+        f"{'NAME':<40}{'STATUS':<12}{'ROLES':<12}{'AGE':<7}{'VERSION':<15}"
+        f"{'OS':<12}{'KERNEL':<25}{'RUNTIME':<20}"
+        f"{'CPU(cap/alloc)':<17}{'MEM(cap/alloc)'}"
+    )
+    lines.append(header)
+
+    for node in nodes:
+        nd_name = node.metadata.name or ""
+
+        # Status from conditions
+        status = "Unknown"
+        for cond in (node.status.conditions or []) if node.status else []:
+            if cond.type == "Ready":
+                status = "Ready" if cond.status == "True" else "NotReady"
+                break
+
+        # Roles from labels
+        roles_set: list[str] = []
+        for label_key in node.metadata.labels or {}:
+            if label_key.startswith("node-role.kubernetes.io/"):
+                roles_set.append(label_key.split("/")[-1])
+        roles = ",".join(roles_set) if roles_set else "<none>"
+
+        age = _age(node.metadata.creation_timestamp)
+
+        # Node info
+        node_info = node.status.node_info if node.status and node.status.node_info else None
+        version = node_info.kubelet_version if node_info else ""
+        os_image = node_info.os_image if node_info else ""
+        kernel = node_info.kernel_version if node_info else ""
+        runtime = node_info.container_runtime_version if node_info else ""
+
+        # Capacity / Allocatable
+        capacity = node.status.capacity or {} if node.status else {}
+        allocatable = node.status.allocatable or {} if node.status else {}
+        cpu_cap = capacity.get("cpu", "?")
+        cpu_alloc = allocatable.get("cpu", "?")
+        mem_cap = _format_memory(capacity.get("memory", "?"))
+        mem_alloc = _format_memory(allocatable.get("memory", "?"))
+
+        cpu_str = f"{cpu_cap}/{cpu_alloc}"
+        mem_str = f"{mem_cap}/{mem_alloc}"
+
+        lines.append(
+            f"{nd_name:<40}{status:<12}{roles:<12}{age:<7}{version:<15}"
+            f"{os_image:<12}{kernel:<25}{runtime:<20}"
+            f"{cpu_str:<17}{mem_str}"
+        )
+
+    return ToolResult(output=f"Nodes ({len(nodes)}):\n" + "\n".join(lines))
+
+
+def _format_memory(mem_str: str) -> str:
+    """Convert Kubernetes memory strings (e.g. '16384Ki') to human-readable."""
+    if mem_str == "?" or not mem_str:
+        return "?"
+    # Handle Ki (kibibytes)
+    if mem_str.endswith("Ki"):
+        try:
+            ki = int(mem_str[:-2])
+            gi = ki / (1024 * 1024)
+            if gi >= 1:
+                return f"{gi:.1f}Gi"
+            mi = ki / 1024
+            return f"{mi:.0f}Mi"
+        except ValueError:
+            return mem_str
+    # Handle Mi
+    if mem_str.endswith("Mi"):
+        try:
+            mi = int(mem_str[:-2])
+            gi = mi / 1024
+            if gi >= 1:
+                return f"{gi:.1f}Gi"
+            return f"{mi}Mi"
+        except ValueError:
+            return mem_str
+    # Handle Gi
+    if mem_str.endswith("Gi"):
+        return mem_str
+    # Handle plain bytes
+    try:
+        b = int(mem_str)
+        gi = b / (1024**3)
+        if gi >= 1:
+            return f"{gi:.1f}Gi"
+        mi = b / (1024**2)
+        return f"{mi:.0f}Mi"
+    except ValueError:
+        return mem_str
+
+
+def _format_node_detail(node: Any) -> ToolResult:
+    """Format a single node with full detail: conditions, taints, labels, capacity."""
+    lines: list[str] = []
+    nd_name = node.metadata.name or ""
+    lines.append(f"Node: {nd_name}")
+
+    # ── Basic info ────────────────────────────────────────
+    node_info = node.status.node_info if node.status and node.status.node_info else None
+    if node_info:
+        lines.append(f"  Kubelet Version:         {node_info.kubelet_version}")
+        lines.append(f"  OS Image:                {node_info.os_image}")
+        lines.append(f"  Kernel Version:          {node_info.kernel_version}")
+        lines.append(f"  Container Runtime:       {node_info.container_runtime_version}")
+        lines.append(f"  Architecture:            {node_info.architecture}")
+        lines.append(f"  Operating System:        {node_info.operating_system}")
+
+    age = _age(node.metadata.creation_timestamp)
+    lines.append(f"  Age:                     {age}")
+
+    # ── Addresses ─────────────────────────────────────────
+    addresses = node.status.addresses or [] if node.status else []
+    if addresses:
+        lines.append("")
+        lines.append("Addresses:")
+        for addr in addresses:
+            lines.append(f"  {addr.type}: {addr.address}")
+
+    # ── Unschedulable (cordon) ────────────────────────────
+    unschedulable = node.spec.unschedulable if node.spec else False
+    lines.append("")
+    lines.append(f"Unschedulable (cordoned): {unschedulable or False}")
+
+    # ── Conditions (ALL of them) ──────────────────────────
+    conditions = (node.status.conditions or []) if node.status else []
+    lines.append("")
+    lines.append("Conditions:")
+    if not conditions:
+        lines.append("  (none)")
+    else:
+        lines.append(f"  {'TYPE':<25}{'STATUS':<10}{'REASON':<30}{'LAST TRANSITION':<22}{'MESSAGE'}")
+        for cond in conditions:
+            cond_type = cond.type or ""
+            cond_status = cond.status or "Unknown"
+            reason = cond.reason or ""
+            message = cond.message or ""
+            last_transition = _age(cond.last_transition_time) if cond.last_transition_time else "<unknown>"
+            lines.append(
+                f"  {cond_type:<25}{cond_status:<10}{reason:<30}{last_transition:<22}{message}"
+            )
+
+    # ── Taints ────────────────────────────────────────────
+    taints = node.spec.taints or [] if node.spec else []
+    lines.append("")
+    lines.append("Taints:")
+    if not taints:
+        lines.append("  (none)")
+    else:
+        for taint in taints:
+            taint_key = taint.key or ""
+            taint_value = taint.value or ""
+            taint_effect = taint.effect or ""
+            val_str = f"={taint_value}" if taint_value else ""
+            lines.append(f"  {taint_key}{val_str}:{taint_effect}")
+
+    # ── Labels (relevant subset) ──────────────────────────
+    labels = node.metadata.labels or {}
+    relevant_prefixes = (
+        "node-role.kubernetes.io/",
+        "topology.kubernetes.io/",
+        "cloud.google.com/",
+        "node.kubernetes.io/",
+        "beta.kubernetes.io/",
+    )
+    relevant_keys = (
+        "kubernetes.io/arch",
+        "kubernetes.io/os",
+        "kubernetes.io/hostname",
+    )
+    lines.append("")
+    lines.append("Labels (relevant):")
+    found_labels = False
+    for k, v in sorted(labels.items()):
+        if k.startswith(relevant_prefixes) or k in relevant_keys:
+            lines.append(f"  {k}={v}")
+            found_labels = True
+    if not found_labels:
+        lines.append("  (none matching filter)")
+
+    # ── Capacity vs Allocatable ───────────────────────────
+    capacity = node.status.capacity or {} if node.status else {}
+    allocatable = node.status.allocatable or {} if node.status else {}
+    lines.append("")
+    lines.append("Capacity vs Allocatable:")
+    lines.append(f"  {'RESOURCE':<25}{'CAPACITY':<20}{'ALLOCATABLE'}")
+    # Show common resources
+    resource_keys = sorted(set(list(capacity.keys()) + list(allocatable.keys())))
+    for rk in resource_keys:
+        cap_val = capacity.get(rk, "-")
+        alloc_val = allocatable.get(rk, "-")
+        # Human-readable memory
+        if "memory" in rk.lower() or rk == "hugepages-2Mi" or rk == "hugepages-1Gi":
+            cap_val = _format_memory(str(cap_val))
+            alloc_val = _format_memory(str(alloc_val))
+        lines.append(f"  {rk:<25}{cap_val:<20}{alloc_val}")
+
+    return ToolResult(output="\n".join(lines))
+
+
+def get_container_status(
+    name: str,
+    *,
+    gke_config: GKEConfig,
+    namespace: str = "default",
+) -> ToolResult:
+    """Show detailed container-level status for ALL containers in a pod.
+
+    Covers init containers, regular containers, and ephemeral containers.
+    For each container shows: name, image, state (Waiting/Running/Terminated
+    with details), ready flag, restart count, last termination state (crucial
+    for CrashLoopBackOff debugging), resource requests/limits, volume mounts,
+    and environment variable sources (configMapRef/secretRef names only — no
+    secret values exposed).
+
+    Essential for debugging multi-container pods where ``kubectl_get pods``
+    only shows pod-level status.
+    """
+    if not _K8S_AVAILABLE:
+        return _k8s_unavailable()
+
+    ns = namespace or gke_config.default_namespace
+
+    result = _create_k8s_clients(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+    core_v1, _, _, _ = result
+
+    try:
+        pod = core_v1.read_namespaced_pod(name=name, namespace=ns)
+
+        lines: list[str] = []
+        lines.append(f"Pod: {name}")
+        lines.append(f"Namespace: {ns}")
+        lines.append(f"Node: {pod.spec.node_name or '<unassigned>'}")
+        lines.append(f"Phase: {pod.status.phase or 'Unknown' if pod.status else 'Unknown'}")
+        lines.append("")
+
+        # Build status maps for quick lookup
+        container_statuses = {cs.name: cs for cs in (pod.status.container_statuses or []) if pod.status} if pod.status else {}
+        init_statuses = {cs.name: cs for cs in (pod.status.init_container_statuses or []) if pod.status} if pod.status else {}
+        ephemeral_statuses = {cs.name: cs for cs in (pod.status.ephemeral_container_statuses or []) if pod.status} if pod.status else {}
+
+        # ── Init Containers ───────────────────────────────
+        init_containers = pod.spec.init_containers or [] if pod.spec else []
+        if init_containers:
+            lines.append("=== Init Containers ===")
+            for c in init_containers:
+                cs = init_statuses.get(c.name)
+                _format_container_section(c, cs, lines)
+                lines.append("")
+
+        # ── Regular Containers ────────────────────────────
+        containers = pod.spec.containers or [] if pod.spec else []
+        if containers:
+            lines.append("=== Containers ===")
+            for c in containers:
+                cs = container_statuses.get(c.name)
+                _format_container_section(c, cs, lines)
+                lines.append("")
+
+        # ── Ephemeral Containers ──────────────────────────
+        ephemeral_containers = pod.spec.ephemeral_containers or [] if pod.spec else []
+        if ephemeral_containers:
+            lines.append("=== Ephemeral Containers ===")
+            for c in ephemeral_containers:
+                cs = ephemeral_statuses.get(c.name)
+                _format_container_section(c, cs, lines)
+                lines.append("")
+
+        if not init_containers and not containers and not ephemeral_containers:
+            lines.append("No containers found in pod spec.")
+
+        return ToolResult(output="\n".join(lines))
+
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            return ToolResult(output=f"Pod '{name}' not found in namespace '{ns}'", error=True)
+        if exc.status == 403:
+            return ToolResult(
+                output=f"Access denied: insufficient permissions to read pod/{name}",
+                error=True,
+            )
+        if exc.status == 401:
+            return ToolResult(
+                output="Authentication failed: check your kubeconfig or GKE credentials",
+                error=True,
+            )
+        return ToolResult(output=f"Kubernetes API error ({exc.status}): {exc.reason}", error=True)
+    except Exception as exc:
+        logger.exception("get_container_status failed")
+        return ToolResult(output=f"Error reading container status for pod/{name}: {exc}", error=True)
+
+
+def _format_container_section(container: Any, status: Any | None, lines: list[str]) -> None:
+    """Format a single container's detail into output lines."""
+    c_name = container.name or ""
+    lines.append(f"  Container: {c_name}")
+    lines.append(f"    Image: {container.image or '<none>'}")
+
+    if status:
+        lines.append(f"    Image ID: {status.image_id or '<none>'}")
+        lines.append(f"    Ready: {status.ready if status.ready is not None else 'N/A'}")
+        lines.append(f"    Restart Count: {status.restart_count or 0}")
+
+        # Current state
+        state = status.state
+        if state:
+            if state.running:
+                started = _age(state.running.started_at) if state.running.started_at else "<unknown>"
+                lines.append(f"    State: Running (started {started} ago)")
+            elif state.waiting:
+                reason = state.waiting.reason or "Unknown"
+                message = state.waiting.message or ""
+                lines.append(f"    State: Waiting — {reason}")
+                if message:
+                    lines.append(f"      Message: {message}")
+            elif state.terminated:
+                t = state.terminated
+                reason = t.reason or "Unknown"
+                exit_code = t.exit_code if t.exit_code is not None else "?"
+                lines.append(f"    State: Terminated — {reason} (exit code {exit_code})")
+                if t.message:
+                    lines.append(f"      Message: {t.message}")
+                if t.started_at:
+                    lines.append(f"      Started:  {t.started_at}")
+                if t.finished_at:
+                    lines.append(f"      Finished: {t.finished_at}")
+            else:
+                lines.append("    State: Unknown")
+
+        # Last termination state (crucial for CrashLoopBackOff)
+        last_state = status.last_state
+        if last_state and last_state.terminated:
+            lt = last_state.terminated
+            reason = lt.reason or "Unknown"
+            exit_code = lt.exit_code if lt.exit_code is not None else "?"
+            lines.append(f"    Last State: Terminated — {reason} (exit code {exit_code})")
+            if lt.message:
+                lines.append(f"      Message: {lt.message}")
+            if lt.started_at:
+                lines.append(f"      Started:  {lt.started_at}")
+            if lt.finished_at:
+                lines.append(f"      Finished: {lt.finished_at}")
+    else:
+        lines.append("    (no status available)")
+
+    # ── Resource requests/limits ──────────────────────────
+    resources = container.resources
+    if resources:
+        requests = resources.requests or {}
+        limits = resources.limits or {}
+        if requests or limits:
+            lines.append("    Resources:")
+            if requests:
+                parts = [f"{k}={v}" for k, v in requests.items()]
+                lines.append(f"      Requests: {', '.join(parts)}")
+            if limits:
+                parts = [f"{k}={v}" for k, v in limits.items()]
+                lines.append(f"      Limits:   {', '.join(parts)}")
+
+    # ── Volume mounts ─────────────────────────────────────
+    mounts = container.volume_mounts or []
+    if mounts:
+        lines.append("    Volume Mounts:")
+        for m in mounts:
+            ro = " (ro)" if m.read_only else ""
+            lines.append(f"      {m.mount_path} from {m.name}{ro}")
+
+    # ── Env from (configMapRef / secretRef — names only) ──
+    env_from = container.env_from or []
+    if env_from:
+        lines.append("    Env From:")
+        for ef in env_from:
+            if ef.config_map_ref:
+                lines.append(f"      ConfigMap: {ef.config_map_ref.name}")
+            if ef.secret_ref:
+                lines.append(f"      Secret: {ef.secret_ref.name} (ref only, no values shown)")
+
+    # ── Env vars with valueFrom (names only) ──────────────
+    env_vars = container.env or []
+    env_refs: list[str] = []
+    for ev in env_vars:
+        if ev.value_from:
+            if ev.value_from.config_map_key_ref:
+                ref = ev.value_from.config_map_key_ref
+                env_refs.append(f"      {ev.name} ← ConfigMap:{ref.name}/{ref.key}")
+            elif ev.value_from.secret_key_ref:
+                ref = ev.value_from.secret_key_ref
+                env_refs.append(f"      {ev.name} ← Secret:{ref.name}/{ref.key} (ref only)")
+    if env_refs:
+        lines.append("    Env Var References:")
+        lines.extend(env_refs)
+
+
+# ── Phase 3: exec_command security model ─────────────────────
+
+# Denylist — checked FIRST.  If any pattern matches, the command is rejected.
+DENIED_PATTERNS: list[str] = [
+    r"[;&|`$]",       # shell metacharacters / chaining / substitution
+    r">\s*",           # output redirection (overwrite)
+    r">>\s*",          # output redirection (append)
+    r"\brm\b",         # file deletion
+    r"\bkill\b",       # process killing
+    r"\bshutdown\b",   # system shutdown
+    r"\breboot\b",     # system reboot
+    r"\bdd\b",         # raw disk write
+    r"\bmkfs\b",       # filesystem creation
+    r"\bfdisk\b",      # partition editing
+    r"\bchmod\b",      # permission changes
+    r"\bchown\b",      # ownership changes
+    r"\bsudo\b",       # privilege escalation
+]
+_COMPILED_DENY = [re.compile(p) for p in DENIED_PATTERNS]
+
+# Allowlist — checked SECOND.  The command must start with one of these prefixes.
+ALLOWED_EXEC_COMMANDS: list[str] = [
+    "cat", "head", "tail", "ls", "env", "printenv",
+    "whoami", "id", "hostname", "date",
+    "ps", "top -bn1",
+    "df", "du",
+    "mount",
+    "ip", "ifconfig", "netstat", "ss", "nslookup", "dig", "ping", "curl", "wget",
+    "java -version", "python --version", "node --version",
+    "cat /etc/resolv.conf", "cat /etc/hosts",
+]
+
+_MAX_EXEC_OUTPUT = 10_000
+
+
+def _check_denied(command: str) -> str | None:
+    """Return a reason string if *command* matches any deny pattern, else ``None``."""
+    for pattern, compiled in zip(DENIED_PATTERNS, _COMPILED_DENY):
+        if compiled.search(command):
+            return f"Command denied — matches blocked pattern: {pattern}"
+    return None
+
+
+def _check_allowed(command: str) -> bool:
+    """Return ``True`` if *command* starts with an allowed prefix."""
+    cmd_stripped = command.strip()
+    return any(cmd_stripped == prefix or cmd_stripped.startswith(prefix + " ") for prefix in ALLOWED_EXEC_COMMANDS)
+
+
+def exec_command(
+    pod_name: str,
+    command: str,
+    *,
+    gke_config: GKEConfig,
+    namespace: str = "default",
+    container: str | None = None,
+    timeout: int = 30,
+) -> ToolResult:
+    """Execute a diagnostic command inside a running container.
+
+    Uses ``kubernetes.stream.stream()`` with
+    ``CoreV1Api.connect_get_namespaced_pod_exec``.
+
+    Security model:
+    1. ``gke_config.exec_enabled`` must be ``True`` (disabled by default).
+    2. Command is checked against a **denylist** of dangerous patterns.
+    3. Command must start with an **allowed prefix** (read-only diagnostics).
+    4. Output is truncated to *_MAX_EXEC_OUTPUT* characters.
+    """
+    if not _K8S_AVAILABLE:
+        return _k8s_unavailable()
+
+    # ── Gate: exec must be explicitly enabled ──────────────
+    if not gke_config.exec_enabled:
+        return ToolResult(
+            output=(
+                "exec_command is disabled. Set gke.exec_enabled=true in your config "
+                "to enable container command execution."
+            ),
+            error=True,
+        )
+
+    # ── Validate command ──────────────────────────────────
+    if not command or not command.strip():
+        return ToolResult(output="Command cannot be empty.", error=True)
+
+    denied_reason = _check_denied(command)
+    if denied_reason:
+        return ToolResult(output=denied_reason, error=True)
+
+    if not _check_allowed(command):
+        return ToolResult(
+            output=(
+                f"Command not in allowlist. Allowed prefixes: {', '.join(ALLOWED_EXEC_COMMANDS)}. "
+                f"Got: '{command.split()[0]}'"
+            ),
+            error=True,
+        )
+
+    # ── Validate timeout ──────────────────────────────────
+    if timeout < 1 or timeout > 300:
+        return ToolResult(
+            output=f"Timeout must be between 1 and 300 seconds. Got: {timeout}",
+            error=True,
+        )
+
+    ns = namespace or gke_config.default_namespace
+
+    result = _create_k8s_clients(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+    core_v1, _, _, _ = result
+
+    try:
+        # Lazy-import stream to keep it optional
+        from kubernetes.stream import stream as k8s_stream  # noqa: WPS433
+
+        exec_kwargs: dict[str, Any] = {
+            "name": pod_name,
+            "namespace": ns,
+            "command": ["/bin/sh", "-c", command],
+            "stderr": True,
+            "stdin": False,
+            "stdout": True,
+            "tty": False,
+            "_request_timeout": timeout,
+        }
+        if container:
+            exec_kwargs["container"] = container
+
+        resp = k8s_stream(
+            core_v1.connect_get_namespaced_pod_exec,
+            **exec_kwargs,
+        )
+
+        # resp is the full combined output as a string
+        stdout = resp if isinstance(resp, str) else str(resp)
+        stderr = ""  # stream() merges stderr into the response string
+
+        # Truncate if needed
+        if len(stdout) > _MAX_EXEC_OUTPUT:
+            stdout = stdout[:_MAX_EXEC_OUTPUT] + f"\n... [truncated at {_MAX_EXEC_OUTPUT} chars]"
+
+        lines: list[str] = []
+        lines.append(f"=== exec_command: {command} ===")
+        lines.append(f"Pod: {pod_name} | Namespace: {ns}")
+        if container:
+            lines.append(f"Container: {container}")
+        lines.append("")
+        if stdout.strip():
+            lines.append("--- stdout ---")
+            lines.append(stdout)
+        if stderr.strip():
+            lines.append("--- stderr ---")
+            lines.append(stderr)
+        if not stdout.strip() and not stderr.strip():
+            lines.append("(no output)")
+
+        return ToolResult(output="\n".join(lines), error=False)
+
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            msg = f"Pod '{pod_name}' not found in namespace '{ns}'."
+            if container:
+                msg += f" (container: {container})"
+            return ToolResult(output=msg, error=True)
+        if exc.status in (401, 403):
+            return ToolResult(
+                output=f"Permission denied executing command on pod '{pod_name}': {exc.reason}",
+                error=True,
+            )
+        return ToolResult(output=f"K8s API error ({exc.status}): {exc.reason}", error=True)
+    except Exception as exc:  # noqa: BLE001
+        return ToolResult(output=f"Error executing command: {exc}", error=True)
+
+
+# ── Phase 3: check_rbac ──────────────────────────────────────
+
+
+def check_rbac(
+    verb: str,
+    resource: str,
+    *,
+    gke_config: GKEConfig,
+    namespace: str = "default",
+    service_account: str | None = None,
+    resource_name: str | None = None,
+) -> ToolResult:
+    """Check whether a service account has permission to perform a specific action.
+
+    Uses ``AuthorizationV1Api.create_namespaced_subject_access_review()``
+    for specific service accounts, or
+    ``create_self_subject_access_review()`` for the current user.
+
+    Read-only — only checks permissions, does not modify any resources.
+    """
+    if not _K8S_AVAILABLE:
+        return _k8s_unavailable()
+
+    # Normalise resource alias (e.g. "po" → "pods")
+    normalised = _normalise_resource(resource)
+
+    ns = namespace or gke_config.default_namespace
+
+    result = _create_k8s_clients(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+    _, _, _, api_client = result
+
+    try:
+        auth_v1 = k8s_client.AuthorizationV1Api(api_client)
+
+        if service_account:
+            # SubjectAccessReview — check for a specific service account
+            sar_spec = k8s_client.V1SubjectAccessReviewSpec(
+                user=f"system:serviceaccount:{ns}:{service_account}",
+                resource_attributes=k8s_client.V1ResourceAttributes(
+                    namespace=ns,
+                    verb=verb,
+                    resource=normalised,
+                    name=resource_name or "",
+                ),
+            )
+            sar = k8s_client.V1SubjectAccessReview(spec=sar_spec)
+            review = auth_v1.create_subject_access_review(body=sar)
+        else:
+            # SelfSubjectAccessReview — check for the current user
+            self_spec = k8s_client.V1SelfSubjectAccessReviewSpec(
+                resource_attributes=k8s_client.V1ResourceAttributes(
+                    namespace=ns,
+                    verb=verb,
+                    resource=normalised,
+                    name=resource_name or "",
+                ),
+            )
+            self_sar = k8s_client.V1SelfSubjectAccessReview(spec=self_spec)
+            review = auth_v1.create_self_subject_access_review(body=self_sar)
+
+        status = review.status
+        allowed = status.allowed if status else False
+        reason = status.reason or "" if status else ""
+        denied = getattr(status, "denied", False) if status else False
+        evaluation_error = getattr(status, "evaluation_error", "") if status else ""
+
+        lines: list[str] = []
+        lines.append("=== RBAC Permission Check ===")
+        if service_account:
+            lines.append(f"Subject: system:serviceaccount:{ns}:{service_account}")
+        else:
+            lines.append("Subject: current user (self)")
+        lines.append(f"Action: {verb} {normalised}")
+        if resource_name:
+            lines.append(f"Resource Name: {resource_name}")
+        lines.append(f"Namespace: {ns}")
+        lines.append("")
+        lines.append(f"Allowed: {'YES' if allowed else 'NO'}")
+        if denied:
+            lines.append("Explicitly Denied: YES")
+        if reason:
+            lines.append(f"Reason: {reason}")
+        if evaluation_error:
+            lines.append(f"Evaluation Error: {evaluation_error}")
+
+        return ToolResult(output="\n".join(lines), error=False)
+
+    except k8s_exceptions.ApiException as exc:
+        if exc.status in (401, 403):
+            return ToolResult(
+                output=f"Permission denied performing RBAC check: {exc.reason}",
+                error=True,
+            )
+        return ToolResult(output=f"K8s API error ({exc.status}): {exc.reason}", error=True)
+    except Exception as exc:  # noqa: BLE001
+        return ToolResult(output=f"Error checking RBAC: {exc}", error=True)
+
+
 # ── Task 2.5 — create_gke_tools factory ──────────────────────
 
 
@@ -1844,6 +2813,242 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             execute=lambda resource, name, annotations, namespace="default",
                     _cfg=gke_config: kubectl_annotate(
                 resource, name, annotations, gke_config=_cfg, namespace=namespace,
+            ),
+        ),
+        # ── Diagnostic tools (Phase 1) ────────────────────────
+        ToolDef(
+            name="get_events",
+            description=(
+                "List Kubernetes events in a namespace, filtered by type (Warning/Normal) "
+                "and optionally by involved object. Events reveal WHY pods fail, WHY nodes "
+                "have issues, and what the scheduler is doing. Critical for SRE triage. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (default: 'default')",
+                    required=False,
+                ),
+                ToolParam(
+                    name="event_type",
+                    type="string",
+                    description="Filter by event type: 'Warning', 'Normal', or omit for all events.",
+                    required=False,
+                ),
+                ToolParam(
+                    name="involved_object_name",
+                    type="string",
+                    description="Filter events by involved object name (e.g. a pod name or node name).",
+                    required=False,
+                ),
+                ToolParam(
+                    name="involved_object_kind",
+                    type="string",
+                    description="Filter events by involved object kind (e.g. 'Pod', 'Node', 'Deployment').",
+                    required=False,
+                ),
+                ToolParam(
+                    name="limit",
+                    type="integer",
+                    description="Maximum number of events to return (default: 50, max: 500).",
+                    required=False,
+                ),
+            ],
+            execute=lambda namespace="default", event_type=None, involved_object_name=None,
+                    involved_object_kind=None, limit=50,
+                    _cfg=gke_config: get_events(
+                gke_config=_cfg,
+                namespace=namespace,
+                event_type=event_type,
+                involved_object_name=involved_object_name,
+                involved_object_kind=involved_object_kind,
+                limit=limit,
+            ),
+        ),
+        ToolDef(
+            name="get_rollout_status",
+            description=(
+                "Check the rollout status of a Kubernetes deployment — whether it is "
+                "progressing, complete, stalled, or failed. Shows replica counts, "
+                "conditions, and rollout strategy. Equivalent to "
+                "'kubectl rollout status deployment/<name>'. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Name of the deployment to check rollout status for",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (default: 'default')",
+                    required=False,
+                ),
+            ],
+            execute=lambda name, namespace="default",
+                    _cfg=gke_config: get_rollout_status(
+                name, gke_config=_cfg, namespace=namespace,
+            ),
+        ),
+        # ── Diagnostic tools (Phase 2) ────────────────────────
+        ToolDef(
+            name="get_node_conditions",
+            description=(
+                "Show node health conditions, resource pressure, taints, and capacity. "
+                "Without a node name, lists ALL nodes with status, roles, version, OS, "
+                "kernel, container runtime, and CPU/memory capacity. With a node name, "
+                "shows detailed conditions (MemoryPressure, DiskPressure, PIDPressure, "
+                "NetworkUnavailable), taints, labels, and capacity vs allocatable. "
+                "Fills the gap where kubectl_get nodes hides pressure conditions. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Specific node name for detailed view. Omit to list all nodes.",
+                    required=False,
+                ),
+            ],
+            execute=lambda name=None,
+                    _cfg=gke_config: get_node_conditions(
+                gke_config=_cfg, name=name,
+            ),
+        ),
+        ToolDef(
+            name="get_container_status",
+            description=(
+                "Show detailed container-level status for ALL containers in a pod "
+                "(init, regular, and ephemeral). For each container: name, image, "
+                "state (Waiting/Running/Terminated with reason), ready flag, restart "
+                "count, last termination state (crucial for CrashLoopBackOff), resource "
+                "requests/limits, volume mounts, and env var sources (names only, no "
+                "secret values). Essential for multi-container pod debugging. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Name of the pod to inspect",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (default: 'default')",
+                    required=False,
+                ),
+            ],
+            execute=lambda name, namespace="default",
+                    _cfg=gke_config: get_container_status(
+                name, gke_config=_cfg, namespace=namespace,
+            ),
+        ),
+        # ── Diagnostic tools (Phase 3) ────────────────────────
+        ToolDef(
+            name="exec_command",
+            description=(
+                "Execute a diagnostic command inside a running container. "
+                "SECURITY: Disabled by default (requires gke.exec_enabled=true). "
+                "Commands are validated against a denylist (shell injection, "
+                "destructive operations) and an allowlist (read-only diagnostic "
+                "commands like cat, ls, ps, df, curl, etc.). Output is truncated "
+                "to 10000 chars. Use for inspecting config files, checking "
+                "processes, network debugging, and runtime diagnostics."
+            ),
+            parameters=[
+                ToolParam(
+                    name="pod_name",
+                    type="string",
+                    description="Name of the pod to execute the command in",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (required)",
+                ),
+                ToolParam(
+                    name="command",
+                    type="string",
+                    description=(
+                        "Diagnostic command to execute. Must start with an allowed prefix: "
+                        "cat, head, tail, ls, env, printenv, whoami, id, hostname, date, "
+                        "ps, top -bn1, df, du, mount, ip, ifconfig, netstat, ss, nslookup, "
+                        "dig, ping, curl, wget, java -version, python --version, node --version"
+                    ),
+                ),
+                ToolParam(
+                    name="container",
+                    type="string",
+                    description="Container name (for multi-container pods). Omit for default container.",
+                    required=False,
+                ),
+                ToolParam(
+                    name="timeout",
+                    type="integer",
+                    description="Execution timeout in seconds (default: 30, max: 300)",
+                    required=False,
+                ),
+            ],
+            execute=lambda pod_name, namespace, command, container=None, timeout=30,
+                    _cfg=gke_config: exec_command(
+                pod_name, command, gke_config=_cfg, namespace=namespace,
+                container=container, timeout=timeout,
+            ),
+        ),
+        ToolDef(
+            name="check_rbac",
+            description=(
+                "Check if a service account or the current user has permission to "
+                "perform a specific action on a Kubernetes resource. Uses "
+                "SubjectAccessReview (for service accounts) or SelfSubjectAccessReview "
+                "(for current user). Use BEFORE operations that might fail with "
+                "permission errors. Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="verb",
+                    type="string",
+                    description=(
+                        "The action to check: get, list, watch, create, update, patch, delete"
+                    ),
+                ),
+                ToolParam(
+                    name="resource",
+                    type="string",
+                    description=(
+                        "Resource type (pods, deployments, services, configmaps, secrets, etc.). "
+                        "Aliases accepted (po, svc, deploy, etc.)."
+                    ),
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (required)",
+                ),
+                ToolParam(
+                    name="service_account",
+                    type="string",
+                    description=(
+                        "Service account name to check. Omit to check current user's permissions."
+                    ),
+                    required=False,
+                ),
+                ToolParam(
+                    name="resource_name",
+                    type="string",
+                    description="Specific resource name to check access for (optional).",
+                    required=False,
+                ),
+            ],
+            execute=lambda verb, resource, namespace, service_account=None, resource_name=None,
+                    _cfg=gke_config: check_rbac(
+                verb, resource, gke_config=_cfg, namespace=namespace,
+                service_account=service_account, resource_name=resource_name,
             ),
         ),
     ]

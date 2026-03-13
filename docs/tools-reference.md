@@ -139,6 +139,8 @@ run_command(command="git diff HEAD~1")
 
 Available in **live** mode (`vaig live` or `--live`). Require the `[live]` extra and a configured GKE cluster.
 
+VAIG provides **14 GKE tools** (8 original + 6 diagnostic) and **2 GCloud tools** — 16 infrastructure tools total.
+
 ### Read Operations
 
 #### `kubectl_get`
@@ -147,17 +149,18 @@ List Kubernetes resources.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `resource_type` | string | Yes | Resource type (e.g., `pods`, `deployments`, `services`) |
-| `namespace` | string | No | Namespace (default from config) |
-| `label_selector` | string | No | Label filter (e.g., `app=nginx`) |
+| `resource` | string | Yes | Resource type (e.g., `pods`, `deployments`, `services`) |
+| `name` | string | No | Specific resource name (omit to list all) |
+| `namespace` | string | No | Namespace (default from config). Use `all` for all namespaces |
+| `output_format` | string | No | Output format: `table` (default), `yaml`, `json`, `wide` |
+| `label_selector` | string | No | Label filter (e.g., `app=nginx,tier=frontend`) |
 | `field_selector` | string | No | Field filter (e.g., `status.phase=Running`) |
-| `all_namespaces` | boolean | No | List across all namespaces |
 
-Supports 20+ resource types with aliases: `pods`/`po`/`pod`, `deployments`/`deploy`, `services`/`svc`, `configmaps`/`cm`, `secrets`, `ingresses`/`ing`, `statefulsets`/`sts`, `daemonsets`/`ds`, `jobs`, `cronjobs`/`cj`, `namespaces`/`ns`, `nodes`, `persistentvolumeclaims`/`pvc`, `persistentvolumes`/`pv`, `serviceaccounts`/`sa`, `networkpolicies`/`netpol`, `horizontalpodautoscalers`/`hpa`, `replicasets`/`rs`, `endpoints`/`ep`, `events`.
+Supports 20+ resource types with aliases: `pods`/`po`/`pod`, `deployments`/`deploy`, `services`/`svc`, `configmaps`/`cm`, `secrets`, `ingresses`/`ing`, `statefulsets`/`sts`, `daemonsets`/`ds`, `jobs`, `cronjobs`/`cj`, `namespaces`/`ns`, `nodes`, `persistentvolumeclaims`/`pvc`, `persistentvolumes`/`pv`, `serviceaccounts`/`sa`, `networkpolicies`/`netpol`, `horizontalpodautoscalers`/`hpa`, `replicasets`/`rs`, `endpoints`/`ep`.
 
 ```
-kubectl_get(resource_type="pods", namespace="production", label_selector="app=api")
-kubectl_get(resource_type="deploy", all_namespaces=true)
+kubectl_get(resource="pods", namespace="production", label_selector="app=api")
+kubectl_get(resource="deploy", namespace="all")
 ```
 
 #### `kubectl_describe`
@@ -166,45 +169,123 @@ Get detailed information about a specific resource.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `resource_type` | string | Yes | Resource type |
+| `resource` | string | Yes | Resource type |
 | `name` | string | Yes | Resource name |
 | `namespace` | string | No | Namespace |
 
 ```
-kubectl_describe(resource_type="pod", name="api-server-xyz", namespace="production")
+kubectl_describe(resource="pod", name="api-server-xyz", namespace="production")
 ```
 
 #### `kubectl_logs`
 
-Get container logs from a pod.
+Get container logs from a pod. Automatically fetches previous container logs when the current container is in CrashLoopBackOff.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `pod_name` | string | Yes | Pod name |
+| `pod` | string | Yes | Pod name |
 | `namespace` | string | No | Namespace |
 | `container` | string | No | Container name (for multi-container pods) |
-| `tail_lines` | integer | No | Number of lines from the end |
-| `since_seconds` | integer | No | Logs from the last N seconds |
-| `previous` | boolean | No | Get logs from previous container instance |
+| `tail_lines` | integer | No | Number of recent log lines (default: 100) |
+| `since` | string | No | Duration filter (e.g., `1h`, `30m`, `1h30m`) |
 
 ```
-kubectl_logs(pod_name="api-server-xyz", namespace="production", tail_lines=100)
-kubectl_logs(pod_name="api-server-xyz", container="sidecar", previous=true)
+kubectl_logs(pod="api-server-xyz", namespace="production", tail_lines=100)
+kubectl_logs(pod="api-server-xyz", container="sidecar", since="30m")
 ```
 
 #### `kubectl_top`
 
-Get resource utilization metrics.
+Get resource utilization metrics. Requires metrics-server installed in the cluster.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `resource_type` | string | Yes | `pods` or `nodes` |
-| `namespace` | string | No | Namespace (for pods) |
-| `name` | string | No | Specific resource name |
+| `resource_type` | string | No | `pods` (default) or `nodes` |
+| `name` | string | No | Specific resource name (omit for all) |
+| `namespace` | string | No | Namespace for pod metrics. Use `all` for all namespaces |
 
 ```
 kubectl_top(resource_type="pods", namespace="production")
 kubectl_top(resource_type="nodes")
+```
+
+#### `get_events`
+
+List Kubernetes events in a namespace, filtered by type and/or involved object. Events reveal WHY pods fail, WHY nodes have issues, and what the scheduler is doing. Critical for SRE triage.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `namespace` | string | No | Namespace (default from config) |
+| `event_type` | string | No | Filter by type: `Warning`, `Normal`, or omit for all |
+| `involved_object_name` | string | No | Filter by involved object name (e.g., a pod or node name) |
+| `involved_object_kind` | string | No | Filter by involved object kind (e.g., `Pod`, `Node`, `Deployment`) |
+| `limit` | integer | No | Max events to return (default: 50, max: 500) |
+
+```
+get_events(namespace="production", event_type="Warning")
+get_events(namespace="default", involved_object_name="api-server-xyz", involved_object_kind="Pod")
+get_events(namespace="production", limit=100)
+```
+
+#### `get_rollout_status`
+
+Check the rollout status of a deployment — whether it is progressing, complete, stalled, or failed. Reports replica counts, conditions, and rollout strategy. Equivalent to `kubectl rollout status deployment/<name>`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Deployment name |
+| `namespace` | string | No | Namespace |
+
+```
+get_rollout_status(name="api-server", namespace="production")
+```
+
+#### `get_node_conditions`
+
+Show node health conditions, resource pressure, taints, and capacity. Without a node name, lists ALL nodes with status, roles, version, OS, kernel, container runtime, and CPU/memory capacity. With a node name, shows detailed conditions (MemoryPressure, DiskPressure, PIDPressure, NetworkUnavailable), taints, labels, and capacity vs allocatable.
+
+Fills the gap where `kubectl_get nodes` only shows Ready/NotReady but hides pressure conditions that indicate imminent node failures.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | No | Specific node name for detailed view. Omit to list all nodes |
+
+```
+get_node_conditions()
+get_node_conditions(name="gke-prod-pool-abc123")
+```
+
+#### `get_container_status`
+
+Show detailed container-level status for ALL containers in a pod (init, regular, and ephemeral). For each container: name, image, state (Waiting/Running/Terminated with reason and exit code), ready flag, restart count, last termination state (crucial for CrashLoopBackOff debugging), resource requests/limits, volume mounts, and env var sources (names only — no secret values exposed).
+
+Essential for debugging multi-container pods where `kubectl_get pods` only shows pod-level status.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Pod name to inspect |
+| `namespace` | string | No | Namespace |
+
+```
+get_container_status(name="api-server-xyz", namespace="production")
+```
+
+#### `check_rbac`
+
+Check whether a service account or the current user has permission to perform a specific action on a Kubernetes resource. Uses SubjectAccessReview (for service accounts) or SelfSubjectAccessReview (for current user). Use BEFORE operations that might fail with permission errors.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `verb` | string | Yes | Action to check: `get`, `list`, `watch`, `create`, `update`, `patch`, `delete` |
+| `resource` | string | Yes | Resource type (aliases accepted: `po`, `svc`, `deploy`, etc.) |
+| `namespace` | string | Yes | Namespace |
+| `service_account` | string | No | Service account name. Omit to check current user |
+| `resource_name` | string | No | Specific resource name to check access for |
+
+```
+check_rbac(verb="get", resource="pods", namespace="production")
+check_rbac(verb="delete", resource="deployments", namespace="production", service_account="ci-bot")
+check_rbac(verb="list", resource="secrets", namespace="kube-system", service_account="app-sa")
 ```
 
 ### Write Operations
@@ -213,61 +294,92 @@ kubectl_top(resource_type="nodes")
 
 #### `kubectl_scale`
 
-Scale a deployment or statefulset.
+Scale a deployment, statefulset, or replicaset. Replicas are clamped to the 0-50 range. Reports the previous and new replica count.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `resource_type` | string | Yes | `deployment` or `statefulset` |
+| `resource` | string | Yes | `deployments`, `statefulsets`, or `replicasets` |
 | `name` | string | Yes | Resource name |
-| `replicas` | integer | Yes | Desired replica count |
+| `replicas` | integer | Yes | Target replica count (0-50) |
 | `namespace` | string | No | Namespace |
 
 ```
-kubectl_scale(resource_type="deployment", name="api-server", replicas=5, namespace="production")
+kubectl_scale(resource="deployment", name="api-server", replicas=5, namespace="production")
 ```
 
 #### `kubectl_restart`
 
-Trigger a rolling restart of a deployment.
+Trigger a rolling restart of a deployment, statefulset, or daemonset. Equivalent to `kubectl rollout restart`. Causes a zero-downtime rolling update.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `resource_type` | string | Yes | `deployment` |
+| `resource` | string | Yes | `deployments`, `statefulsets`, or `daemonsets` |
 | `name` | string | Yes | Resource name |
 | `namespace` | string | No | Namespace |
 
 ```
-kubectl_restart(resource_type="deployment", name="api-server", namespace="production")
+kubectl_restart(resource="deployment", name="api-server", namespace="production")
 ```
 
 #### `kubectl_label`
 
-Add or update labels on a resource.
+Add or update labels on a resource. System labels (`kubernetes.io/`, `k8s.io/`) are protected and cannot be modified.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `resource_type` | string | Yes | Resource type |
+| `resource` | string | Yes | Resource type |
 | `name` | string | Yes | Resource name |
-| `labels` | object | Yes | Key-value pairs to set |
+| `labels` | string | Yes | Labels to set: `key1=value1,key2=value2`. Use `key-` to remove |
 | `namespace` | string | No | Namespace |
 
 ```
-kubectl_label(resource_type="pod", name="api-xyz", labels={"team": "platform"})
+kubectl_label(resource="pod", name="api-xyz", labels="team=platform,env=prod")
 ```
 
 #### `kubectl_annotate`
 
-Add or update annotations on a resource.
+Add or update annotations on a resource. System annotations (`kubernetes.io/`, `k8s.io/`) are protected and cannot be modified.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `resource_type` | string | Yes | Resource type |
+| `resource` | string | Yes | Resource type |
 | `name` | string | Yes | Resource name |
-| `annotations` | object | Yes | Key-value pairs to set |
+| `annotations` | string | Yes | Annotations to set: `key1=value1,key2=value2`. Use `key-` to remove |
 | `namespace` | string | No | Namespace |
 
 ```
-kubectl_annotate(resource_type="deployment", name="api", annotations={"deploy-note": "hotfix"})
+kubectl_annotate(resource="deployment", name="api", annotations="deploy-note=hotfix")
+```
+
+### Exec Operations
+
+> **Security:** Exec operations are **disabled by default** and require explicit opt-in.
+
+#### `exec_command`
+
+Execute a diagnostic command inside a running container.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `pod_name` | string | Yes | Pod name |
+| `namespace` | string | Yes | Namespace |
+| `command` | string | Yes | Diagnostic command to execute (must match allowlist) |
+| `container` | string | No | Container name (for multi-container pods) |
+| `timeout` | integer | No | Execution timeout in seconds (default: 30, max: 300) |
+
+**Security model (three layers):**
+
+1. **Config gate:** `gke.exec_enabled` must be `true` (disabled by default)
+2. **Denylist:** Commands matching dangerous patterns are always rejected (shell metacharacters `; & | \``, redirection `>`, destructive commands like `rm`, `kill`, `sudo`, `chmod`, etc.)
+3. **Allowlist:** Command must start with an allowed prefix:
+   `cat`, `head`, `tail`, `ls`, `env`, `printenv`, `whoami`, `id`, `hostname`, `date`, `ps`, `top -bn1`, `df`, `du`, `mount`, `ip`, `ifconfig`, `netstat`, `ss`, `nslookup`, `dig`, `ping`, `curl`, `wget`, `java -version`, `python --version`, `node --version`, `cat /etc/resolv.conf`, `cat /etc/hosts`
+
+Output is truncated to 10,000 characters.
+
+```
+exec_command(pod_name="api-server-xyz", namespace="production", command="cat /etc/resolv.conf")
+exec_command(pod_name="api-server-xyz", namespace="production", command="ps aux", container="app")
+exec_command(pod_name="debug-pod", namespace="default", command="curl -s http://localhost:8080/healthz", timeout=10)
 ```
 
 ## GCloud Tools
