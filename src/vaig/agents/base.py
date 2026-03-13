@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from google.genai import types
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -136,3 +138,29 @@ class BaseAgent(ABC):
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} name={self.name!r} role={self.role!r} model={self.model!r}>"
+
+    # ── Shared helpers (subclasses may override) ──────────────
+
+    def _build_prompt(self, prompt: str, context: str) -> str:
+        """Build the full prompt with optional context.
+
+        Subclasses inherit this as-is unless they need custom formatting.
+        """
+        if context:
+            return f"## Context\n\n{context}\n\n## Task\n\n{prompt}"
+        return prompt
+
+    def _build_chat_history(self) -> list[Any]:
+        """Convert conversation history to Gemini ``Content`` objects.
+
+        Returns ``types.Content`` instances suitable for the chat API.
+        Subclasses that need a different format (e.g. ``ChatMessage``)
+        should override this method.
+        """
+        contents: list[types.Content] = []
+        for msg in self._conversation:
+            role = "user" if msg.role == "user" else "model"
+            contents.append(
+                types.Content(role=role, parts=[types.Part.from_text(text=msg.content)]),
+            )
+        return contents

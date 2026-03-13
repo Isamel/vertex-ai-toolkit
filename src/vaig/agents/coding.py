@@ -6,10 +6,10 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from google.genai import types
-
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
-from vaig.core.client import ChatMessage, GeminiClient, ToolCallResult
+from vaig.agents.mixins import ToolLoopMixin
+from vaig.agents.utils import deduplicate_response
+from vaig.core.client import GeminiClient
 from vaig.core.config import CodingConfig
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools import ToolRegistry, ToolResult, create_file_tools, create_shell_tools
@@ -91,13 +91,17 @@ def _default_confirm(tool_name: str, args: dict[str, Any]) -> bool:
 # ── Task 4.1 — CodingAgent class ────────────────────────────
 
 
-class CodingAgent(BaseAgent):
+class CodingAgent(BaseAgent, ToolLoopMixin):
     """Autonomous coding agent that uses Gemini function calling to edit files.
 
-    The agent owns the tool-use loop:
-    1. Sends the user prompt to Gemini with tool declarations
-    2. If Gemini returns function calls, executes them and sends results back
-    3. Repeats until Gemini returns a text response or max iterations is hit
+    Inherits the generic tool-use loop from :class:`ToolLoopMixin` and
+    adds CodingAgent-specific behaviour:
+
+    - Confirmation callback for destructive tools (write_file, edit_file,
+      run_command) via an overridden ``_execute_single_tool``.
+    - Response deduplication to remove pathological repetition.
+    - Graceful error handling that returns ``AgentResult(success=False)``
+      instead of propagating API exceptions.
 
     Architecture decisions:
     - AD-02: CodingAgent owns the tool-use loop (not client, not orchestrator)
@@ -172,15 +176,14 @@ class CodingAgent(BaseAgent):
         """The tool registry for this agent."""
         return self._registry
 
-    # ── Task 4.2 — Tool-use loop ─────────────────────────────
+    # ── Task 4.2 — Tool-use loop (via ToolLoopMixin) ───────────
 
     def execute(self, prompt: str, *, context: str = "") -> AgentResult:
         """Execute a coding task using the tool-use loop.
 
-        Sends the prompt to Gemini with tool declarations. If the model
-        returns function calls, executes them and feeds results back.
-        Repeats until the model returns a text response or the iteration
-        limit is reached.
+        Delegates to :meth:`ToolLoopMixin._run_tool_loop` for the loop
+        mechanics.  Wraps the result in an ``AgentResult`` and applies
+        response deduplication.
 
         Args:
             prompt: The coding task or question.
@@ -195,132 +198,58 @@ class CodingAgent(BaseAgent):
         full_prompt = self._build_prompt(prompt, context)
         self._add_to_conversation("user", full_prompt)
 
-        declarations = self._registry.to_function_declarations()
         history = self._build_chat_history()
-
-        total_usage: dict[str, int] = {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-        }
-        tools_executed: list[dict[str, Any]] = []
-        iteration = 0
 
         logger.debug(
             "CodingAgent.execute() — starting tool loop (max=%d)",
             self._max_iterations,
         )
 
-        while iteration < self._max_iterations:
-            iteration += 1
-            logger.debug("Tool loop iteration %d/%d", iteration, self._max_iterations)
-
-            # Call Gemini with tool declarations
-            try:
-                result: ToolCallResult = self._client.generate_with_tools(
-                    full_prompt if iteration == 1 else [],
-                    tool_declarations=declarations,
-                    system_instruction=self._config.system_instruction,
-                    history=history,
-                    model_id=self._config.model,
-                    temperature=self._config.temperature,
-                    max_output_tokens=self._config.max_output_tokens,
-                    frequency_penalty=0.15,
-                )
-            except Exception as exc:
-                logger.exception("CodingAgent API call failed on iteration %d", iteration)
-                return AgentResult(
-                    agent_name=self.name,
-                    content=f"Error during API call: {exc}",
-                    success=False,
-                    usage=total_usage,
-                    metadata={"error": str(exc), "iterations": iteration},
-                )
-
-            # Accumulate token usage
-            for key in total_usage:
-                total_usage[key] += result.usage.get(key, 0)
-
-            # Case 1: Model returned text (no function calls) — we're done
-            if not result.function_calls:
-                clean_text = self._deduplicate_response(result.text)
-                logger.info(
-                    "CodingAgent completed — %d iterations, %d tool calls, %s total tokens",
-                    iteration,
-                    len(tools_executed),
-                    total_usage.get("total_tokens", "?"),
-                )
-                self._add_to_conversation("agent", clean_text)
-                return AgentResult(
-                    agent_name=self.name,
-                    content=clean_text,
-                    success=True,
-                    usage=total_usage,
-                    metadata={
-                        "model": result.model,
-                        "finish_reason": result.finish_reason,
-                        "iterations": iteration,
-                        "tools_executed": tools_executed,
-                    },
-                )
-
-            # Case 2: Model returned function calls — execute them
-            # First, add the model's response (with function calls) to history
-            # so the next turn sees what the model requested
-            fc_parts: list[types.Part] = []
-            for fc in result.function_calls:
-                fc_parts.append(
-                    types.Part.from_function_call(
-                        name=fc["name"],
-                        args=fc["args"],
-                    )
-                )
-            history.append(
-                types.Content(role="model", parts=fc_parts)
+        try:
+            loop_result = self._run_tool_loop(
+                client=self._client,
+                prompt=full_prompt,
+                tool_registry=self._registry,
+                system_prompt=self._config.system_instruction,
+                history=history,
+                max_iterations=self._max_iterations,
+                model=self._config.model,
+                temperature=self._config.temperature,
+                max_output_tokens=self._config.max_output_tokens,
+                frequency_penalty=0.15,
+            )
+        except MaxIterationsError:
+            raise  # Let the caller handle iteration exhaustion
+        except Exception as exc:
+            logger.exception("CodingAgent API call failed")
+            return AgentResult(
+                agent_name=self.name,
+                content=f"Error during API call: {exc}",
+                success=False,
+                usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                metadata={"error": str(exc), "iterations": 0},
             )
 
-            # Execute each function call
-            function_responses: list[dict[str, Any]] = []
-
-            for fc in result.function_calls:
-                tool_name = fc["name"]
-                tool_args = fc["args"]
-
-                tool_result = self._execute_tool(tool_name, tool_args)
-
-                tools_executed.append({
-                    "name": tool_name,
-                    "args": tool_args,
-                    "output": tool_result.output[:200],  # Truncate for metadata
-                    "error": tool_result.error,
-                })
-
-                function_responses.append({
-                    "name": tool_name,
-                    "response": {
-                        "output": tool_result.output,
-                        "error": tool_result.error,
-                    },
-                })
-
-            # Add function responses to history for next turn
-            response_parts = GeminiClient.build_function_response_parts(function_responses)
-            history.append(
-                types.Content(role="user", parts=response_parts)
-            )
-
-            # Continue the loop — send empty prompt (history carries context).
-            # generate_with_tools handles this by popping the last history
-            # entry (the function responses) and using it as the prompt
-            # for send_message(), since the SDK rejects empty prompts.
-
-        # If we get here, max iterations exceeded
-        msg = (
-            f"Tool-use loop exceeded maximum iterations ({self._max_iterations}). "
-            f"Executed {len(tools_executed)} tool calls."
+        clean_text = self._deduplicate_response(loop_result.text)
+        logger.info(
+            "CodingAgent completed — %d iterations, %d tool calls, %s total tokens",
+            loop_result.iterations,
+            len(loop_result.tools_executed),
+            loop_result.usage.get("total_tokens", "?"),
         )
-        logger.warning(msg)
-        raise MaxIterationsError(msg, iterations=self._max_iterations)
+        self._add_to_conversation("agent", clean_text)
+        return AgentResult(
+            agent_name=self.name,
+            content=clean_text,
+            success=True,
+            usage=loop_result.usage,
+            metadata={
+                "model": loop_result.model,
+                "finish_reason": loop_result.finish_reason,
+                "iterations": loop_result.iterations,
+                "tools_executed": loop_result.tools_executed,
+            },
+        )
 
     def execute_stream(self, prompt: str, *, context: str = "") -> Iterator[str]:
         """Streaming is not supported for the coding agent.
@@ -333,36 +262,19 @@ class CodingAgent(BaseAgent):
         result = self.execute(prompt, context=context)
         yield result.content
 
-    # ── Task 4.5 — Tool execution with error handling ────────
+    # ── Tool execution override (adds confirmation) ──────────
 
-    def _execute_tool(
+    def _execute_single_tool(
         self,
+        tool_registry: ToolRegistry,
         tool_name: str,
         tool_args: dict[str, Any],
     ) -> ToolResult:
-        """Execute a single tool call with confirmation and error handling.
+        """Execute a tool with confirmation for destructive operations.
 
-        - Checks confirmation for destructive operations
-        - Catches ALL exceptions and returns them as ToolResult (never raises)
-        - The model sees error results and can self-correct
-
-        Args:
-            tool_name: Name of the tool to execute.
-            tool_args: Arguments to pass to the tool.
-
-        Returns:
-            ToolResult with output or error message.
+        Overrides ``ToolLoopMixin._execute_single_tool`` to add a
+        confirmation callback before write_file / edit_file / run_command.
         """
-        tool = self._registry.get(tool_name)
-
-        if tool is None:
-            logger.warning("Unknown tool requested: %s", tool_name)
-            return ToolResult(
-                output=f"Unknown tool: {tool_name}. Available tools: "
-                f"{', '.join(t.name for t in self._registry.list_tools())}",
-                error=True,
-            )
-
         # Confirmation check for destructive operations
         if tool_name in _DESTRUCTIVE_TOOLS:
             if not self._confirm_fn(tool_name, tool_args):
@@ -373,117 +285,12 @@ class CodingAgent(BaseAgent):
                     error=True,
                 )
 
-        # Execute the tool — catch ALL exceptions to let model self-correct
-        try:
-            logger.debug("Executing tool: %s(%s)", tool_name, tool_args)
-            result = tool.execute(**tool_args)
-            logger.debug(
-                "Tool %s result: error=%s, output_len=%d",
-                tool_name,
-                result.error,
-                len(result.output),
-            )
-            return result
-        except TypeError as exc:
-            # Most common: wrong argument names from model
-            logger.warning("Tool %s type error: %s", tool_name, exc)
-            return ToolResult(
-                output=f"Invalid arguments for {tool_name}: {exc}. "
-                f"Expected parameters: {', '.join(p.name for p in tool.parameters)}",
-                error=True,
-            )
-        except Exception as exc:
-            # Catch-all: let the model see the error and try again
-            logger.warning("Tool %s unexpected error: %s", tool_name, exc)
-            return ToolResult(
-                output=f"Tool execution error ({tool_name}): {exc}",
-                error=True,
-            )
+        # Delegate to the base implementation for actual execution
+        return super()._execute_single_tool(tool_registry, tool_name, tool_args)
 
     # ── Internal helpers ─────────────────────────────────────
 
-    def _build_prompt(self, prompt: str, context: str) -> str:
-        """Build the full prompt with optional context."""
-        if context:
-            return f"## Context\n\n{context}\n\n## Task\n\n{prompt}"
-        return prompt
-
     @staticmethod
     def _deduplicate_response(text: str, *, threshold: int = 3) -> str:
-        """Remove repeated sentences/lines from model output.
-
-        Gemini can sometimes produce pathological repetition — the same
-        sentence hundreds of times in a single response, especially at low
-        temperature with high ``max_output_tokens``.  This method acts as
-        a safety net: it scans the text line by line and truncates once a
-        line has been seen more than *threshold* consecutive times.
-
-        The algorithm is intentionally conservative:
-        - It only counts **consecutive** repetitions (not scattered ones).
-        - Short lines (≤ 10 chars) are ignored to avoid false positives on
-          blank lines, bullets, braces, etc.
-        - A ``[truncated — repeated text removed]`` marker is appended when
-          truncation occurs so the user knows something was cut.
-
-        Args:
-            text: The raw model response text.
-            threshold: How many consecutive identical lines to allow before
-                       truncating.  Default is 3 (keeps first 3 occurrences).
-
-        Returns:
-            The cleaned text, possibly truncated.
-        """
-        if not text:
-            return text
-
-        lines = text.split("\n")
-        result: list[str] = []
-        prev_line: str | None = None
-        repeat_count = 0
-        truncated = False
-
-        for line in lines:
-            stripped = line.strip()
-
-            # Skip short-line tracking — too many false positives
-            if len(stripped) <= 10:
-                result.append(line)
-                prev_line = None
-                repeat_count = 0
-                continue
-
-            if stripped == prev_line:
-                repeat_count += 1
-                if repeat_count > threshold:
-                    truncated = True
-                    continue  # Drop this repeated line
-                result.append(line)
-            else:
-                prev_line = stripped
-                repeat_count = 1
-                result.append(line)
-
-        cleaned = "\n".join(result)
-        if truncated:
-            cleaned = cleaned.rstrip() + "\n\n[truncated — repeated text removed]"
-            logger.warning(
-                "Deduplicated model response — removed repeated lines "
-                "(threshold=%d)",
-                threshold,
-            )
-        return cleaned
-
-    def _build_chat_history(self) -> list[Any]:
-        """Convert agent conversation history to Gemini Content list.
-
-        Unlike SpecialistAgent which uses ChatMessage, CodingAgent works
-        directly with Content objects because the history may contain
-        function call/response Parts (not just text).
-        """
-        contents: list[types.Content] = []
-        for msg in self._conversation:
-            role = "user" if msg.role == "user" else "model"
-            contents.append(
-                types.Content(role=role, parts=[types.Part.from_text(text=msg.content)])
-            )
-        return contents
+        """Remove repeated lines — delegates to shared ``deduplicate_response``."""
+        return deduplicate_response(text, threshold=threshold)

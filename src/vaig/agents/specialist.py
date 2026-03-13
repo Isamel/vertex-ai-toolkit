@@ -100,14 +100,13 @@ class SpecialistAgent(BaseAgent):
             logger.exception("Agent %s streaming failed", self.name)
             yield f"\n[Error: {e}]"
 
-    def _build_prompt(self, prompt: str, context: str) -> str:
-        """Build the full prompt with optional context."""
-        if context:
-            return f"## Context\n\n{context}\n\n## Task\n\n{prompt}"
-        return prompt
-
     def _build_chat_history(self) -> list[ChatMessage]:
-        """Convert agent conversation history to ChatMessage format for Gemini."""
+        """Convert agent conversation history to ChatMessage format for Gemini.
+
+        Overrides ``BaseAgent._build_chat_history`` because SpecialistAgent
+        uses the lightweight ``ChatMessage`` dataclass (text-only history)
+        rather than ``types.Content`` objects.
+        """
         messages: list[ChatMessage] = []
 
         for msg in self._conversation:

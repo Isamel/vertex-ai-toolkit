@@ -18,6 +18,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ── K8s client cache ──────────────────────────────────────────
+# Keyed on (kubeconfig_path, context, proxy_url) so each unique
+# GKEConfig combination creates clients only once.
+_CLIENT_CACHE: dict[tuple[str, str, str], tuple[Any, ...]] = {}
+
 
 # ── Lazy import guard ─────────────────────────────────────────
 # The ``kubernetes`` package is an optional dependency (``pip install vertex-ai-toolkit[live]``).
@@ -92,13 +97,35 @@ def _extract_proxy_url_from_kubeconfig(
     return cluster_entry.get("cluster", {}).get("proxy-url")
 
 
+def _cache_key(gke_config: GKEConfig) -> tuple[str, str, str]:
+    """Build a hashable cache key from the GKEConfig fields that affect client creation."""
+    return (
+        gke_config.kubeconfig_path or "",
+        gke_config.context or "",
+        gke_config.proxy_url or "",
+    )
+
+
+def clear_k8s_client_cache() -> None:
+    """Clear the cached Kubernetes API clients.
+
+    Useful in tests or when kubeconfig/credentials change at runtime.
+    """
+    _CLIENT_CACHE.clear()
+
+
 def _create_k8s_clients(
     gke_config: GKEConfig,
-) -> tuple[Any, Any, Any] | ToolResult:
+) -> tuple[Any, Any, Any, Any] | ToolResult:
     """Create and configure Kubernetes API clients from GKEConfig.
 
-    Returns a tuple of ``(CoreV1Api, AppsV1Api, CustomObjectsApi)`` on success,
-    or a ``ToolResult`` with ``error=True`` on failure.
+    Returns a tuple of ``(CoreV1Api, AppsV1Api, CustomObjectsApi, ApiClient)``
+    on success, or a ``ToolResult`` with ``error=True`` on failure.
+
+    Results are cached per unique ``(kubeconfig_path, context, proxy_url)``
+    combination so that repeated tool invocations within the same session
+    reuse the same authenticated clients instead of rebuilding them on
+    every call.
 
     Supports:
     - Explicit ``kubeconfig_path`` + optional ``context``
@@ -112,6 +139,10 @@ def _create_k8s_clients(
     """
     if not _K8S_AVAILABLE:
         return _k8s_unavailable()
+
+    key = _cache_key(gke_config)
+    if key in _CLIENT_CACHE:
+        return _CLIENT_CACHE[key]
 
     try:
         kubeconfig_path = gke_config.kubeconfig_path or None
@@ -147,11 +178,15 @@ def _create_k8s_clients(
                 # Fallback to in-cluster config (workload identity)
                 k8s_config.load_incluster_config()
                 # In-cluster doesn't need proxy — return plain clients
-                return (
-                    k8s_client.CoreV1Api(),
-                    k8s_client.AppsV1Api(),
-                    k8s_client.CustomObjectsApi(),
+                api_client_ic = k8s_client.ApiClient()
+                clients = (
+                    k8s_client.CoreV1Api(api_client_ic),
+                    k8s_client.AppsV1Api(api_client_ic),
+                    k8s_client.CustomObjectsApi(api_client_ic),
+                    api_client_ic,
                 )
+                _CLIENT_CACHE[key] = clients
+                return clients
     except Exception as exc:
         return ToolResult(
             output=f"Failed to configure Kubernetes client: {exc}",
@@ -160,11 +195,14 @@ def _create_k8s_clients(
 
     # ── Build API clients with the proxy-aware Configuration ─
     api_client = k8s_client.ApiClient(config)
-    return (
+    clients = (
         k8s_client.CoreV1Api(api_client),
         k8s_client.AppsV1Api(api_client),
         k8s_client.CustomObjectsApi(api_client),
+        api_client,
     )
+    _CLIENT_CACHE[key] = clients
+    return clients
 
 
 # ── Formatting helpers ────────────────────────────────────────
@@ -469,6 +507,7 @@ def _list_resource(
     namespace: str,
     label_selector: str | None = None,
     field_selector: str | None = None,
+    api_client: Any | None = None,
 ) -> Any:
     """Dispatch a list call to the correct API group and return the item list."""
     kwargs: dict[str, Any] = {}
@@ -527,7 +566,7 @@ def _list_resource(
     if api_group == "batch":
         from kubernetes.client import BatchV1Api  # noqa: WPS433
 
-        batch_v1 = BatchV1Api()
+        batch_v1 = BatchV1Api(api_client=api_client)
         method_map_batch: dict[str, tuple[str, str]] = {
             "jobs": ("list_namespaced_job", "list_job_for_all_namespaces"),
             "cronjobs": ("list_namespaced_cron_job", "list_cron_job_for_all_namespaces"),
@@ -544,7 +583,7 @@ def _list_resource(
     if api_group == "autoscaling":
         from kubernetes.client import AutoscalingV2Api  # noqa: WPS433
 
-        auto_v2 = AutoscalingV2Api()
+        auto_v2 = AutoscalingV2Api(api_client=api_client)
         if namespace in ("", "all"):
             return auto_v2.list_horizontal_pod_autoscaler_for_all_namespaces(**kwargs)
         return auto_v2.list_namespaced_horizontal_pod_autoscaler(namespace=namespace, **kwargs)
@@ -553,7 +592,7 @@ def _list_resource(
     if api_group == "networking":
         from kubernetes.client import NetworkingV1Api  # noqa: WPS433
 
-        net_v1 = NetworkingV1Api()
+        net_v1 = NetworkingV1Api(api_client=api_client)
         method_map_net: dict[str, tuple[str, str]] = {
             "ingress": ("list_namespaced_ingress", "list_ingress_for_all_namespaces"),
             "ingresses": ("list_namespaced_ingress", "list_ingress_for_all_namespaces"),
@@ -612,7 +651,7 @@ def kubectl_get(
     result = _create_k8s_clients(gke_config)
     if isinstance(result, ToolResult):
         return result
-    core_v1, apps_v1, custom_api = result
+    core_v1, apps_v1, custom_api, api_client_inst = result
 
     try:
         api_result = _list_resource(
@@ -620,6 +659,7 @@ def kubectl_get(
             namespace=ns,
             label_selector=label_selector,
             field_selector=field_selector,
+            api_client=api_client_inst,
         )
         # _list_resource may return a ToolResult on unsupported resource
         if isinstance(api_result, ToolResult):
@@ -660,6 +700,7 @@ def _describe_resource(
     resource: str,
     name: str,
     namespace: str,
+    api_client: Any | None = None,
 ) -> Any:
     """Read a single resource by name for describe output."""
     api_group = _RESOURCE_API_MAP.get(resource, "core")
@@ -706,7 +747,7 @@ def _describe_resource(
     if api_group == "batch":
         from kubernetes.client import BatchV1Api  # noqa: WPS433
 
-        batch_v1 = BatchV1Api()
+        batch_v1 = BatchV1Api(api_client=api_client)
         read_map_batch: dict[str, str] = {
             "jobs": "read_namespaced_job",
             "cronjobs": "read_namespaced_cron_job",
@@ -720,7 +761,7 @@ def _describe_resource(
     if api_group == "autoscaling":
         from kubernetes.client import AutoscalingV2Api  # noqa: WPS433
 
-        return AutoscalingV2Api().read_namespaced_horizontal_pod_autoscaler(
+        return AutoscalingV2Api(api_client=api_client).read_namespaced_horizontal_pod_autoscaler(
             name=name, namespace=namespace,
         )
 
@@ -728,7 +769,7 @@ def _describe_resource(
     if api_group == "networking":
         from kubernetes.client import NetworkingV1Api  # noqa: WPS433
 
-        net_v1 = NetworkingV1Api()
+        net_v1 = NetworkingV1Api(api_client=api_client)
         read_map_net: dict[str, str] = {
             "ingress": "read_namespaced_ingress",
             "ingresses": "read_namespaced_ingress",
@@ -886,10 +927,10 @@ def kubectl_describe(
     result = _create_k8s_clients(gke_config)
     if isinstance(result, ToolResult):
         return result
-    core_v1, apps_v1, _ = result
+    core_v1, apps_v1, _, api_client_inst = result
 
     try:
-        obj = _describe_resource(core_v1, apps_v1, resource, name, ns)
+        obj = _describe_resource(core_v1, apps_v1, resource, name, ns, api_client=api_client_inst)
         if obj is None:
             return ToolResult(output=f"Describe not supported for resource type: {resource}", error=True)
         return ToolResult(output=_format_describe(resource, obj))
@@ -945,7 +986,7 @@ def kubectl_logs(
     result = _create_k8s_clients(gke_config)
     if isinstance(result, ToolResult):
         return result
-    core_v1, _, _ = result
+    core_v1, _, _, _ = result
 
     kwargs: dict[str, Any] = {
         "name": pod,
@@ -1027,7 +1068,7 @@ def kubectl_top(
     result = _create_k8s_clients(gke_config)
     if isinstance(result, ToolResult):
         return result
-    _, _, custom_api = result
+    _, _, custom_api, _ = result
 
     try:
         if is_pods:

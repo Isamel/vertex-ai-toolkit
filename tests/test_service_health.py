@@ -341,18 +341,19 @@ class TestServiceHealthSkillRegistration:
     """Verify the skill is properly registered in the builtin skills map."""
 
     def test_skill_in_builtin_registry(self) -> None:
-        from vaig.skills.registry import _BUILTIN_SKILLS
+        from vaig.skills.registry import _discover_builtin_skills
 
-        assert "service-health" in _BUILTIN_SKILLS
-        assert _BUILTIN_SKILLS["service-health"] == "vaig.skills.service_health.skill"
+        discovered = _discover_builtin_skills()
+        assert "service-health" in discovered
+        assert discovered["service-health"] == "vaig.skills.service_health.skill"
 
     def test_skill_can_be_imported(self) -> None:
         """Verify the registry's module path actually resolves."""
         import importlib
 
-        from vaig.skills.registry import _BUILTIN_SKILLS
+        from vaig.skills.registry import _discover_builtin_skills
 
-        module_path = _BUILTIN_SKILLS["service-health"]
+        module_path = _discover_builtin_skills()["service-health"]
         module = importlib.import_module(module_path)
         assert hasattr(module, "ServiceHealthSkill")
 
@@ -362,9 +363,9 @@ class TestServiceHealthSkillRegistration:
         import inspect
 
         from vaig.skills.base import BaseSkill
-        from vaig.skills.registry import _BUILTIN_SKILLS
+        from vaig.skills.registry import _discover_builtin_skills
 
-        module_path = _BUILTIN_SKILLS["service-health"]
+        module_path = _discover_builtin_skills()["service-health"]
         module = importlib.import_module(module_path)
 
         # Find the BaseSkill subclass (same logic as _find_skill_class)

@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 
 from google.genai import types
 
+from vaig.agents.utils import deduplicate_response
+
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import ToolLoopMixin
 from vaig.core.client import GeminiClient
@@ -303,88 +305,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
 
     # ── Internal helpers ─────────────────────────────────────
 
-    def _build_prompt(self, prompt: str, context: str) -> str:
-        """Build the full prompt with optional context."""
-        if context:
-            return f"## Context\n\n{context}\n\n## Task\n\n{prompt}"
-        return prompt
-
     @staticmethod
     def _deduplicate_response(text: str, *, threshold: int = 3) -> str:
-        """Remove repeated sentences/lines from model output.
-
-        Gemini can sometimes produce pathological repetition — the same
-        sentence hundreds of times in a single response, especially at low
-        temperature with high ``max_output_tokens``.  This method acts as
-        a safety net: it scans the text line by line and truncates once a
-        line has been seen more than *threshold* consecutive times.
-
-        The algorithm is intentionally conservative:
-        - It only counts **consecutive** repetitions (not scattered ones).
-        - Short lines (<=10 chars) are ignored to avoid false positives on
-          blank lines, bullets, braces, etc.
-        - A ``[truncated — repeated text removed]`` marker is appended when
-          truncation occurs so the user knows something was cut.
-
-        Args:
-            text: The raw model response text.
-            threshold: How many consecutive identical lines to allow before
-                       truncating.  Default is 3 (keeps first 3 occurrences).
-
-        Returns:
-            The cleaned text, possibly truncated.
-        """
-        if not text:
-            return text
-
-        lines = text.split("\n")
-        result: list[str] = []
-        prev_line: str | None = None
-        repeat_count = 0
-        truncated = False
-
-        for line in lines:
-            stripped = line.strip()
-
-            # Skip short-line tracking — too many false positives
-            if len(stripped) <= 10:
-                result.append(line)
-                prev_line = None
-                repeat_count = 0
-                continue
-
-            if stripped == prev_line:
-                repeat_count += 1
-                if repeat_count > threshold:
-                    truncated = True
-                    continue  # Drop this repeated line
-                result.append(line)
-            else:
-                prev_line = stripped
-                repeat_count = 1
-                result.append(line)
-
-        cleaned = "\n".join(result)
-        if truncated:
-            cleaned = cleaned.rstrip() + "\n\n[truncated — repeated text removed]"
-            logger.warning(
-                "Deduplicated model response — removed repeated lines "
-                "(threshold=%d)",
-                threshold,
-            )
-        return cleaned
-
-    def _build_chat_history(self) -> list[Any]:
-        """Convert agent conversation history to Gemini Content list.
-
-        Unlike SpecialistAgent which uses ChatMessage, InfraAgent works
-        directly with Content objects because the history may contain
-        function call/response Parts (not just text).
-        """
-        contents: list[types.Content] = []
-        for msg in self._conversation:
-            role = "user" if msg.role == "user" else "model"
-            contents.append(
-                types.Content(role=role, parts=[types.Part.from_text(text=msg.content)])
-            )
-        return contents
+        """Remove repeated lines — delegates to shared ``deduplicate_response``."""
+        return deduplicate_response(text, threshold=threshold)

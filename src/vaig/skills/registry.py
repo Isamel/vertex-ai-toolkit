@@ -14,41 +14,36 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Built-in skills mapped by name → module path
-_BUILTIN_SKILLS: dict[str, str] = {
-    "rca": "vaig.skills.rca.skill",
-    "anomaly": "vaig.skills.anomaly.skill",
-    "migration": "vaig.skills.migration.skill",
-    "log-analysis": "vaig.skills.log_analysis.skill",
-    "error-triage": "vaig.skills.error_triage.skill",
-    "config-audit": "vaig.skills.config_audit.skill",
-    "slo-review": "vaig.skills.slo_review.skill",
-    "postmortem": "vaig.skills.postmortem.skill",
-    "code-review": "vaig.skills.code_review.skill",
-    "iac-review": "vaig.skills.iac_review.skill",
-    "cost-analysis": "vaig.skills.cost_analysis.skill",
-    "capacity-planning": "vaig.skills.capacity_planning.skill",
-    "test-generation": "vaig.skills.test_generation.skill",
-    "compliance-check": "vaig.skills.compliance_check.skill",
-    "api-design": "vaig.skills.api_design.skill",
-    "runbook-generator": "vaig.skills.runbook_generator.skill",
-    "dependency-audit": "vaig.skills.dependency_audit.skill",
-    "db-review": "vaig.skills.db_review.skill",
-    "pipeline-review": "vaig.skills.pipeline_review.skill",
-    "perf-analysis": "vaig.skills.perf_analysis.skill",
-    "threat-model": "vaig.skills.threat_model.skill",
-    "change-risk": "vaig.skills.change_risk.skill",
-    "alert-tuning": "vaig.skills.alert_tuning.skill",
-    "resilience-review": "vaig.skills.resilience_review.skill",
-    "incident-comms": "vaig.skills.incident_comms.skill",
-    "toil-analysis": "vaig.skills.toil_analysis.skill",
-    "network-review": "vaig.skills.network_review.skill",
-    "adr-generator": "vaig.skills.adr_generator.skill",
-    "service-health": "vaig.skills.service_health.skill",
-}
+# Directory containing built-in skill packages (each has a ``skill.py`` module).
+_SKILLS_DIR = Path(__file__).parent
 
 # Skill class name convention: <Name>Skill (e.g., RCASkill, AnomalySkill)
 _SKILL_CLASS_SUFFIXES = ("Skill",)
+
+
+def _discover_builtin_skills() -> dict[str, str]:
+    """Auto-discover built-in skills by scanning subdirectories of the skills package.
+
+    Each subdirectory that contains a ``skill.py`` file is treated as a skill
+    package.  The module path is derived from the directory name, following
+    the pattern ``vaig.skills.<dir_name>.skill``.
+
+    Returns a mapping of ``skill_name → module_path`` where ``skill_name``
+    comes from the directory name with underscores replaced by hyphens
+    (matching the convention used in ``SkillMetadata.name``).
+    """
+    skills: dict[str, str] = {}
+    for entry in sorted(_SKILLS_DIR.iterdir()):
+        if not entry.is_dir():
+            continue
+        skill_file = entry / "skill.py"
+        if not skill_file.exists():
+            continue
+        # Derive the skill name from the directory (e.g. log_analysis → log-analysis)
+        skill_name = entry.name.replace("_", "-")
+        module_path = f"vaig.skills.{entry.name}.skill"
+        skills[skill_name] = module_path
+    return skills
 
 
 class SkillRegistry:
@@ -65,10 +60,16 @@ class SkillRegistry:
         self._loaded = False
 
     def _load_builtin_skills(self) -> None:
-        """Load built-in skills that are enabled in config."""
-        enabled = self._settings.skills.enabled
+        """Load built-in skills that are enabled in config.
 
-        for name, module_path in _BUILTIN_SKILLS.items():
+        Skills are auto-discovered by scanning subdirectories of the
+        ``vaig.skills`` package for ``skill.py`` modules, eliminating
+        the need to maintain a hardcoded registry dict.
+        """
+        enabled = self._settings.skills.enabled
+        discovered = _discover_builtin_skills()
+
+        for name, module_path in discovered.items():
             if name not in enabled:
                 logger.debug("Skipping disabled built-in skill: %s", name)
                 continue

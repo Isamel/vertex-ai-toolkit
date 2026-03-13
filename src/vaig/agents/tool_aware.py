@@ -240,25 +240,3 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         )
         result = self.execute(prompt, context=context)
         yield result.content
-
-    # ── Internal helpers ─────────────────────────────────────
-
-    def _build_prompt(self, prompt: str, context: str) -> str:
-        """Build the full prompt with optional upstream context."""
-        if context:
-            return f"## Context\n\n{context}\n\n## Task\n\n{prompt}"
-        return prompt
-
-    def _build_chat_history(self) -> list[Any]:
-        """Convert conversation history to Gemini Content list.
-
-        Works with ``types.Content`` objects directly because the history
-        may contain function call / response Parts (not just text).
-        """
-        contents: list[types.Content] = []
-        for msg in self._conversation:
-            role = "user" if msg.role == "user" else "model"
-            contents.append(
-                types.Content(role=role, parts=[types.Part.from_text(text=msg.content)]),
-            )
-        return contents

@@ -11,6 +11,13 @@ from vaig.core.config import GKEConfig
 from vaig.tools.base import ToolDef, ToolResult
 
 
+@pytest.fixture(autouse=True)
+def _clear_k8s_cache() -> None:
+    """Clear the K8s client cache before each test to avoid cross-test pollution."""
+    from vaig.tools.gke_tools import clear_k8s_client_cache
+    clear_k8s_client_cache()
+
+
 # ── Helpers ──────────────────────────────────────────────────
 
 def _make_gke_config(**kwargs) -> GKEConfig:
@@ -191,7 +198,7 @@ class TestKubectlGet:
         core_v1 = MagicMock()
         apps_v1 = MagicMock()
         custom_api = MagicMock()
-        mock_clients.return_value = (core_v1, apps_v1, custom_api)
+        mock_clients.return_value = (core_v1, apps_v1, custom_api, MagicMock())
 
         # Mock the list response
         pod = _mock_pod()
@@ -213,7 +220,7 @@ class TestKubectlGet:
         core_v1 = MagicMock()
         apps_v1 = MagicMock()
         custom_api = MagicMock()
-        mock_clients.return_value = (core_v1, apps_v1, custom_api)
+        mock_clients.return_value = (core_v1, apps_v1, custom_api, MagicMock())
 
         # Return empty list
         api_response = MagicMock()
@@ -250,7 +257,7 @@ class TestKubectlGet:
             api_response = MagicMock()
             api_response.items = [_mock_deployment()]
             apps_v1.list_namespaced_deployment.return_value = api_response
-            mock_clients.return_value = (MagicMock(), apps_v1, MagicMock())
+            mock_clients.return_value = (MagicMock(), apps_v1, MagicMock(), MagicMock())
 
             result = kubectl_get("deploy", gke_config=cfg)
 
@@ -290,7 +297,7 @@ class TestKubectlDescribe:
         cfg = _make_gke_config()
         core_v1 = MagicMock()
         apps_v1 = MagicMock()
-        mock_clients.return_value = (core_v1, apps_v1, MagicMock())
+        mock_clients.return_value = (core_v1, apps_v1, MagicMock(), MagicMock())
 
         pod = _mock_pod(name="web-server")
         core_v1.read_namespaced_pod.return_value = pod
@@ -331,7 +338,7 @@ class TestKubectlLogs:
 
         cfg = _make_gke_config()
         core_v1 = MagicMock()
-        mock_clients.return_value = (core_v1, MagicMock(), MagicMock())
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
         core_v1.read_namespaced_pod_log.return_value = "2025-01-01 INFO Starting server\n2025-01-01 INFO Ready"
 
@@ -347,7 +354,7 @@ class TestKubectlLogs:
 
         cfg = _make_gke_config()
         core_v1 = MagicMock()
-        mock_clients.return_value = (core_v1, MagicMock(), MagicMock())
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
         core_v1.read_namespaced_pod_log.return_value = ""
 
@@ -363,7 +370,7 @@ class TestKubectlLogs:
         cfg = _make_gke_config()
         with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True), \
              patch("vaig.tools.gke_tools._create_k8s_clients") as mock_clients:
-            mock_clients.return_value = (MagicMock(), MagicMock(), MagicMock())
+            mock_clients.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock())
 
             result = kubectl_logs("my-pod", gke_config=cfg, since="invalid")
 
@@ -376,7 +383,7 @@ class TestKubectlLogs:
 
         cfg = _make_gke_config(log_limit=50)
         core_v1 = MagicMock()
-        mock_clients.return_value = (core_v1, MagicMock(), MagicMock())
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
         core_v1.read_namespaced_pod_log.return_value = "some logs"
 
         with patch("vaig.tools.gke_tools._K8S_AVAILABLE", True):
@@ -417,7 +424,7 @@ class TestKubectlTop:
 
         cfg = _make_gke_config()
         custom_api = MagicMock()
-        mock_clients.return_value = (MagicMock(), MagicMock(), custom_api)
+        mock_clients.return_value = (MagicMock(), MagicMock(), custom_api, MagicMock())
 
         custom_api.list_namespaced_custom_object.return_value = {
             "items": [
@@ -443,7 +450,7 @@ class TestKubectlTop:
 
         cfg = _make_gke_config()
         custom_api = MagicMock()
-        mock_clients.return_value = (MagicMock(), MagicMock(), custom_api)
+        mock_clients.return_value = (MagicMock(), MagicMock(), custom_api, MagicMock())
 
         custom_api.list_cluster_custom_object.return_value = {
             "items": [
@@ -466,7 +473,7 @@ class TestKubectlTop:
 
         cfg = _make_gke_config()
         custom_api = MagicMock()
-        mock_clients.return_value = (MagicMock(), MagicMock(), custom_api)
+        mock_clients.return_value = (MagicMock(), MagicMock(), custom_api, MagicMock())
 
         custom_api.list_namespaced_custom_object.return_value = {"items": []}
 
@@ -481,7 +488,7 @@ class TestKubectlTop:
 
         cfg = _make_gke_config()
         custom_api = MagicMock()
-        mock_clients.return_value = (MagicMock(), MagicMock(), custom_api)
+        mock_clients.return_value = (MagicMock(), MagicMock(), custom_api, MagicMock())
 
         custom_api.list_namespaced_custom_object.return_value = {
             "items": [

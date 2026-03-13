@@ -143,11 +143,15 @@ class SessionStore:
         return dict(row) if row else None
 
     def delete_session(self, session_id: str) -> bool:
-        """Delete a session and all its messages."""
+        """Delete a session and all its messages.
+
+        Returns:
+            True if the session existed and was deleted, False otherwise.
+        """
         conn = self._get_conn()
-        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        cursor = conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         conn.commit()
-        return True
+        return cursor.rowcount > 0
 
     def add_context_file(
         self,

@@ -416,6 +416,7 @@ def _build_gke_config(
         context=gke.context,
         log_limit=gke.log_limit,
         metrics_interval_minutes=gke.metrics_interval_minutes,
+        proxy_url=gke.proxy_url,
     )
 
 
@@ -689,60 +690,17 @@ def _execute_code_mode(
 
 
 def _cli_confirm(tool_name: str, args: dict) -> bool:
-    """Rich-based confirmation prompt for destructive tool operations (Task 5.3)."""
-    # Build a readable summary of what the tool will do
-    if tool_name == "write_file":
-        desc = f"Write file: [cyan]{args.get('path', '?')}[/cyan]"
-    elif tool_name == "edit_file":
-        desc = f"Edit file: [cyan]{args.get('path', '?')}[/cyan]"
-    elif tool_name == "run_command":
-        desc = f"Run command: [cyan]{args.get('command', '?')}[/cyan]"
-    else:
-        desc = f"Execute: [cyan]{tool_name}[/cyan]"
+    """Confirm destructive tool operations — delegates to shared display helper."""
+    from vaig.cli.display import confirm_tool_operation
 
-    console.print(f"\n[bold yellow]⚡ {desc}[/bold yellow]")
-    return typer.confirm("  Allow this operation?", default=True)
+    return confirm_tool_operation(tool_name, args, console=console)
 
 
 def _show_coding_summary(result: "AgentResult") -> None:
-    """Display tool execution feedback and token usage (Tasks 5.5 + 5.6)."""
-    metadata = result.metadata or {}
-    tools_executed = metadata.get("tools_executed", [])
-    iterations = metadata.get("iterations", 0)
+    """Display tool execution feedback — delegates to shared display helper."""
+    from vaig.cli.display import show_tool_execution_summary
 
-    if tools_executed:
-        table = Table(title="🔧 Tools Executed", show_lines=False, title_style="bold")
-        table.add_column("#", style="dim", width=3)
-        table.add_column("Tool", style="cyan")
-        table.add_column("Target", style="white")
-        table.add_column("Status", justify="center")
-
-        for i, tool in enumerate(tools_executed, 1):
-            name = tool.get("name", "?")
-            args = tool.get("args", {})
-            error = tool.get("error", False)
-
-            # Extract the most relevant arg for display
-            target = args.get("path", args.get("command", args.get("pattern", "")))
-            if len(str(target)) > 60:
-                target = str(target)[:57] + "..."
-
-            status = "[red]✗[/red]" if error else "[green]✓[/green]"
-            table.add_row(str(i), name, str(target), status)
-
-        console.print(table)
-
-    # Usage summary
-    usage = result.usage or {}
-    prompt_tokens = usage.get("prompt_tokens", 0)
-    completion_tokens = usage.get("completion_tokens", 0)
-    total_tokens = usage.get("total_tokens", 0)
-
-    console.print(
-        f"[dim]Completed in {iterations} iteration{'s' if iterations != 1 else ''} "
-        f"| Tokens: {total_tokens:,} total "
-        f"({prompt_tokens:,} prompt + {completion_tokens:,} completion)[/dim]"
-    )
+    show_tool_execution_summary(result, console=console)
 
 
 # ── Chunked file analysis helper ──────────────────────────────

@@ -415,6 +415,13 @@ class GeminiClient:
     ) -> Iterator[str]:
         """Generate a streaming response, yielding text chunks.
 
+        The stream is materialised into a list inside ``_call()`` so that the
+        **entire iteration** falls within the retryable boundary.  Without
+        this, a transient network error mid-stream would surface as an
+        unrecoverable ``google.api_core`` exception.  The tradeoff is that peak
+        memory equals the full response size rather than a single chunk, but
+        for typical LLM responses (< 100 KB) this is negligible.
+
         Args:
             prompt: Text prompt or list of multimodal Parts.
             system_instruction: System-level instruction for the model.
