@@ -4547,7 +4547,7 @@ class TestAutopilotToolBehavior:
 
         result = top_tool.execute(resource_type="nodes")
         assert "GKE Autopilot cluster detected" in result.output
-        assert "node-level metrics are not available" in result.output
+        assert "kubectl top nodes is not available" in result.output
         assert result.error is False
 
     @patch("vaig.tools.gke_tools.detect_autopilot", return_value=True)
@@ -4565,17 +4565,20 @@ class TestAutopilotToolBehavior:
         assert result.output == "pod metrics here"
 
     @patch("vaig.tools.gke_tools.detect_autopilot", return_value=True)
-    def test_get_node_conditions_skipped_on_autopilot(self, _mock_detect: MagicMock) -> None:
+    @patch("vaig.tools.gke_tools.get_node_conditions")
+    def test_get_node_conditions_works_on_autopilot(self, mock_nodes: MagicMock, _mock_detect: MagicMock) -> None:
+        """On Autopilot, get_node_conditions calls the real function (node reads are allowed)."""
         from vaig.tools.gke_tools import create_gke_tools
+
+        mock_nodes.return_value = ToolResult(output="node conditions here")
 
         cfg = _make_gke_config()
         tools = create_gke_tools(cfg)
         node_tool = self._get_tool(tools, "get_node_conditions")
 
         result = node_tool.execute()
-        assert "GKE Autopilot cluster detected" in result.output
-        assert "node conditions are managed by Google" in result.output
-        assert result.error is False
+        assert result.output == "node conditions here"
+        mock_nodes.assert_called_once()
 
     @patch("vaig.tools.gke_tools.detect_autopilot", return_value=False)
     @patch("vaig.tools.gke_tools.kubectl_top")

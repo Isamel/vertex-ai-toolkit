@@ -678,3 +678,98 @@ class TestVerboseDebugFlags:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "--verbose" in result.output
+
+    def test_debug_flag_after_ask_subcommand(self) -> None:
+        """``vaig ask "Hello" -d`` sets DEBUG level (flag after subcommand)."""
+        import logging
+
+        mock_agent_result = MagicMock()
+        mock_agent_result.content = "Answer"
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_single.return_value = mock_agent_result
+
+        with (
+            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
+        ):
+            result = runner.invoke(app, ["ask", "Hello", "--no-stream", "-d"])
+
+        assert result.exit_code == 0
+        vaig_logger = logging.getLogger("vaig")
+        assert vaig_logger.level == logging.DEBUG
+
+    def test_verbose_flag_after_ask_subcommand(self) -> None:
+        """``vaig ask "Hello" -V`` sets INFO level (flag after subcommand)."""
+        import logging
+
+        mock_agent_result = MagicMock()
+        mock_agent_result.content = "Answer"
+
+        mock_orchestrator = MagicMock()
+        mock_orchestrator.execute_single.return_value = mock_agent_result
+
+        with (
+            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
+        ):
+            result = runner.invoke(app, ["ask", "Hello", "--no-stream", "-V"])
+
+        assert result.exit_code == 0
+        vaig_logger = logging.getLogger("vaig")
+        assert vaig_logger.level == logging.INFO
+
+    def test_debug_flag_shows_in_live_help(self) -> None:
+        """--debug flag should appear in live subcommand help output."""
+        result = runner.invoke(app, ["live", "--help"])
+        assert result.exit_code == 0
+        assert "--debug" in result.output
+
+    def test_verbose_flag_shows_in_live_help(self) -> None:
+        """--verbose flag should appear in live subcommand help output."""
+        result = runner.invoke(app, ["live", "--help"])
+        assert result.exit_code == 0
+        assert "--verbose" in result.output
+
+    def test_debug_flag_shows_in_ask_help(self) -> None:
+        """--debug flag should appear in ask subcommand help output."""
+        result = runner.invoke(app, ["ask", "--help"])
+        assert result.exit_code == 0
+        assert "--debug" in result.output
+
+
+# ══════════════════════════════════════════════════════════════
+# LOCATION FLAG
+# ══════════════════════════════════════════════════════════════
+class TestLocationFlag:
+    """Tests for the --location CLI flag on live and ask commands."""
+
+    def test_location_flag_shows_in_live_help(self) -> None:
+        """--location flag should appear in live subcommand help output."""
+        result = runner.invoke(app, ["live", "--help"])
+        assert result.exit_code == 0
+        assert "--location" in result.output
+
+    def test_location_flag_shows_in_ask_help(self) -> None:
+        """--location flag should appear in ask subcommand help output."""
+        result = runner.invoke(app, ["ask", "--help"])
+        assert result.exit_code == 0
+        assert "--location" in result.output
+
+    def test_build_gke_config_with_location(self) -> None:
+        """_build_gke_config passes location override to GKEConfig."""
+        from vaig.cli.app import _build_gke_config
+        from vaig.core.config import Settings
+
+        settings = Settings()
+        gke_config = _build_gke_config(settings, location="us-central1-a")
+        assert gke_config.location == "us-central1-a"
+
+    def test_build_gke_config_without_location_uses_default(self) -> None:
+        """_build_gke_config falls back to settings.gke.location when no override."""
+        from vaig.cli.app import _build_gke_config
+        from vaig.core.config import Settings
+
+        settings = Settings()
+        gke_config = _build_gke_config(settings)
+        assert gke_config.location == settings.gke.location

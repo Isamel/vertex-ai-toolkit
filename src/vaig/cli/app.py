@@ -112,6 +112,27 @@ def main(
     setup_logging(level, show_path=show_path)
 
 
+def _apply_subcommand_log_flags(*, verbose: bool, debug: bool) -> None:
+    """Apply --verbose / --debug flags from a subcommand.
+
+    Subcommand-level flags override the global callback flags so that
+    ``vaig live "query" -d`` works the same as ``vaig -d live "query"``.
+    Only overrides if a flag is actually set (non-default).
+    """
+    if not verbose and not debug:
+        return
+
+    from vaig.core.log import reset_logging, setup_logging
+
+    # Reset the idempotent guard so we can reconfigure with the subcommand flags.
+    reset_logging()
+
+    if debug:
+        setup_logging("DEBUG", show_path=True)
+    elif verbose:
+        setup_logging("INFO", show_path=False)
+
+
 # ══════════════════════════════════════════════════════════════
 # CHAT — Interactive REPL
 # ══════════════════════════════════════════════════════════════
@@ -202,6 +223,17 @@ def ask(
     project_id: Annotated[
         Optional[str], typer.Option("--project-id", help="GCP project ID (overrides config)")
     ] = None,
+    location: Annotated[
+        Optional[str], typer.Option("--location", help="GKE cluster location/zone/region (overrides config)")
+    ] = None,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-V", help="Enable verbose logging (INFO level)"),
+    ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option("--debug", "-d", help="Enable debug logging (DEBUG level, shows paths and full tracebacks)"),
+    ] = False,
 ) -> None:
     """Ask a single question and get a response.
 
@@ -216,6 +248,8 @@ def ask(
         vaig ask "Check OOM kills in prod" --live --namespace=production
         vaig ask "Explain this code" -f main.py --format json -o report.json
     """
+    _apply_subcommand_log_flags(verbose=verbose, debug=debug)
+
     settings = _get_settings(config)
 
     if model:
@@ -256,7 +290,9 @@ def ask(
 
     # Live infrastructure mode — use InfraAgent
     if live:
-        gke_config = _build_gke_config(settings, cluster=cluster, namespace=namespace, project_id=project_id)
+        gke_config = _build_gke_config(
+            settings, cluster=cluster, namespace=namespace, project_id=project_id, location=location,
+        )
         _execute_live_mode(
             client,
             gke_config,
@@ -493,6 +529,17 @@ def live(
     project_id: Annotated[
         Optional[str], typer.Option("--project-id", help="GCP project ID (overrides config)")
     ] = None,
+    location: Annotated[
+        Optional[str], typer.Option("--location", help="GKE cluster location/zone/region (overrides config)")
+    ] = None,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-V", help="Enable verbose logging (INFO level)"),
+    ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option("--debug", "-d", help="Enable debug logging (DEBUG level, shows paths and full tracebacks)"),
+    ] = False,
 ) -> None:
     """Investigate live GKE/GCP infrastructure using AI with read-only tools.
 
@@ -510,6 +557,8 @@ def live(
         vaig live "Why is the payment service returning 503s?" -o report.md
         vaig live "Investigate pod crashes" --format json -o report.json
     """
+    _apply_subcommand_log_flags(verbose=verbose, debug=debug)
+
     settings = _get_settings(config)
 
     if model:
@@ -518,7 +567,9 @@ def live(
     from vaig.core.client import GeminiClient
 
     client = GeminiClient(settings)
-    gke_config = _build_gke_config(settings, cluster=cluster, namespace=namespace, project_id=project_id)
+    gke_config = _build_gke_config(
+        settings, cluster=cluster, namespace=namespace, project_id=project_id, location=location,
+    )
 
     # Auto-detect skill if requested and no explicit skill specified
     if auto_skill and not skill:
@@ -593,6 +644,7 @@ def _build_gke_config(
     cluster: str | None = None,
     namespace: str | None = None,
     project_id: str | None = None,
+    location: str | None = None,
 ) -> "GKEConfig":
     """Build a GKEConfig, applying CLI overrides on top of config file defaults.
 
@@ -601,6 +653,7 @@ def _build_gke_config(
         cluster: Optional cluster name override.
         namespace: Optional default namespace override.
         project_id: Optional GCP project ID override.
+        location: Optional GKE cluster location/zone/region override.
 
     Returns:
         GKEConfig with CLI overrides applied.
@@ -613,6 +666,7 @@ def _build_gke_config(
         cluster_name=cluster or gke.cluster_name,
         project_id=project_id or gke.project_id or settings.gcp.project_id,
         default_namespace=namespace or gke.default_namespace,
+        location=location or gke.location,
         kubeconfig_path=gke.kubeconfig_path,
         context=gke.context,
         log_limit=gke.log_limit,

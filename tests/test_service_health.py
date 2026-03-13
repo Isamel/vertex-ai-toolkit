@@ -1750,10 +1750,10 @@ class TestServiceHealthAutopilotAwareness:
         assert "Autopilot" in HEALTH_GATHERER_PROMPT
 
     def test_gatherer_skip_node_investigation_on_autopilot(self) -> None:
-        """Gatherer must skip node-level investigation on Autopilot."""
+        """Gatherer must read node data but note kubectl top nodes is not available on Autopilot."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        assert "node management handled by Google" in HEALTH_GATHERER_PROMPT
+        assert "node infrastructure managed by Google" in HEALTH_GATHERER_PROMPT
 
     def test_gatherer_autopilot_mandatory_resource_requests(self) -> None:
         """Gatherer must note that resource requests are mandatory on Autopilot."""
@@ -1774,10 +1774,10 @@ class TestServiceHealthAutopilotAwareness:
         assert "GKE Autopilot Context" in HEALTH_ANALYZER_PROMPT
 
     def test_analyzer_no_flag_missing_node_data_on_autopilot(self) -> None:
-        """Analyzer must not flag missing node data as issue on Autopilot."""
+        """Analyzer must not flag missing node metrics from kubectl_top as issue on Autopilot."""
         from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
-        assert "Do NOT flag missing node data" in HEALTH_ANALYZER_PROMPT
+        assert "Do NOT flag missing node metrics" in HEALTH_ANALYZER_PROMPT
 
     def test_analyzer_no_node_remediation_on_autopilot(self) -> None:
         """Analyzer must not suggest node-level remediation on Autopilot."""
@@ -1792,10 +1792,11 @@ class TestServiceHealthAutopilotAwareness:
         assert "GKE Autopilot Awareness" in HEALTH_VERIFIER_PROMPT
 
     def test_verifier_skip_node_verification_on_autopilot(self) -> None:
-        """Verifier must not attempt node-level verification on Autopilot."""
+        """Verifier must not use kubectl_top for nodes on Autopilot but can use get_node_conditions."""
         from vaig.skills.service_health.prompts import HEALTH_VERIFIER_PROMPT
 
-        assert "Do NOT attempt node-level verification" in HEALTH_VERIFIER_PROMPT
+        assert "Do NOT use" in HEALTH_VERIFIER_PROMPT
+        assert "kubectl_top" in HEALTH_VERIFIER_PROMPT
 
     def test_reporter_has_autopilot_cluster_overview(self) -> None:
         """Reporter prompt must include Autopilot cluster overview guidance."""

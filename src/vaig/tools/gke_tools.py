@@ -2878,27 +2878,13 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
         if is_autopilot and resource_type == "nodes":
             return ToolResult(
                 output=(
-                    "GKE Autopilot cluster detected — node-level metrics are not available. "
-                    "Google manages node infrastructure on Autopilot. "
-                    "Use kubectl_top(resource_type='pods') for workload-level metrics."
+                    "GKE Autopilot cluster detected — kubectl top nodes is not available. "
+                    "Node infrastructure is managed by Google on Autopilot. "
+                    "Use kubectl get nodes and get_node_conditions for node status, "
+                    "or kubectl_top(resource_type='pods') for workload-level metrics."
                 ),
             )
         return kubectl_top(resource_type, gke_config=_cfg, name=name, namespace=namespace)
-
-    def _autopilot_get_node_conditions(
-        name: str | None = None,
-        _cfg: GKEConfig = gke_config,
-    ) -> ToolResult:
-        """Autopilot-aware get_node_conditions wrapper."""
-        if is_autopilot:
-            return ToolResult(
-                output=(
-                    "GKE Autopilot cluster detected — node conditions are managed by Google. "
-                    "Node-level inspection is not applicable on Autopilot clusters. "
-                    "Focus on pod-level and workload-level health instead."
-                ),
-            )
-        return get_node_conditions(gke_config=_cfg, name=name)
 
     return [
         ToolDef(
@@ -3311,7 +3297,9 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
-            execute=lambda name=None: _autopilot_get_node_conditions(name=name),
+            execute=lambda name=None, _cfg=gke_config: get_node_conditions(
+                gke_config=_cfg, name=name,
+            ),
         ),
         ToolDef(
             name="get_container_status",

@@ -180,10 +180,13 @@ def build_autopilot_instruction(is_autopilot: bool | None) -> str:
         "This cluster has been **confirmed as GKE Autopilot** via the GKE API. "
         "Node infrastructure is fully managed by Google.\n\n"
         "**Autopilot rules:**\n"
-        "- Do NOT attempt node-level operations (`kubectl_top(resource_type='nodes')`, "
-        "`get_node_conditions()`) — they will return an informational message, not data.\n"
-        "- Do NOT flag missing node data as an issue — this is expected on Autopilot.\n"
-        "- Do NOT suggest node-level remediation (add nodes, drain, cordon, check node capacity).\n"
+        "- You CAN read node data normally: `kubectl_get(resource='nodes')` and "
+        "`get_node_conditions()` work on Autopilot and return real data.\n"
+        "- `kubectl_top(resource_type='nodes')` is NOT available on Autopilot — "
+        "it will return an informational message, not metrics data.\n"
+        "- Do NOT flag missing node metrics from `kubectl_top` as an issue — this is expected on Autopilot.\n"
+        "- Do NOT suggest node-level ACTIONS (scaling node pools, changing machine types, "
+        "adding/draining/cordoning nodes) — these are managed by Google.\n"
         "- Focus on **pod-level and workload-level health**: pod status, resource requests/limits, "
         "deployment rollout, HPA behavior.\n"
         "- Resource requests are **mandatory** on Autopilot — check that pods have explicit requests.\n"
@@ -217,13 +220,5 @@ def inject_autopilot_into_config(
             config["system_prompt"] = instruction + config["system_prompt"]
         if "system_instruction" in config:
             config["system_instruction"] = instruction + config["system_instruction"]
-
     return agent_configs
 
-    for config in agent_configs:
-        if "system_prompt" in config:
-            config["system_prompt"] = instruction + config["system_prompt"]
-        if "system_instruction" in config:
-            config["system_instruction"] = instruction + config["system_instruction"]
-
-    return agent_configs
