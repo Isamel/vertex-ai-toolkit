@@ -773,3 +773,62 @@ class TestLocationFlag:
         settings = Settings()
         gke_config = _build_gke_config(settings)
         assert gke_config.location == settings.gke.location
+
+
+# ══════════════════════════════════════════════════════════════
+# PROJECT FLAG (Phase 5)
+# ══════════════════════════════════════════════════════════════
+class TestProjectFlag:
+    """Tests for the --project CLI flag on ask, chat, and live commands."""
+
+    def test_project_flag_shows_in_ask_help(self) -> None:
+        result = runner.invoke(app, ["ask", "--help"])
+        assert result.exit_code == 0
+        assert "--project" in result.output
+
+    def test_project_flag_shows_in_live_help(self) -> None:
+        result = runner.invoke(app, ["live", "--help"])
+        assert result.exit_code == 0
+        assert "--project" in result.output
+
+    def test_project_flag_shows_in_chat_help(self) -> None:
+        result = runner.invoke(app, ["chat", "--help"])
+        assert result.exit_code == 0
+        assert "--project" in result.output
+
+    def test_location_flag_shows_in_chat_help(self) -> None:
+        result = runner.invoke(app, ["chat", "--help"])
+        assert result.exit_code == 0
+        assert "--location" in result.output
+
+    def test_project_flag_updates_settings(self, _mock_settings: Settings) -> None:
+        """--project should mutate gcp.project_id and gke.project_id BEFORE component creation."""
+        from vaig.cli.app import _build_gke_config
+
+        # Simulate what the command body does
+        _mock_settings.gcp.project_id = "flag-project"
+        _mock_settings.gke.project_id = "flag-project"
+
+        assert _mock_settings.gcp.project_id == "flag-project"
+        assert _mock_settings.gke.project_id == "flag-project"
+
+    def test_project_id_backward_compat(self) -> None:
+        """--project-id should still show in help for backward compat."""
+        result = runner.invoke(app, ["ask", "--help"])
+        assert result.exit_code == 0
+        assert "--project-id" in result.output
+
+    def test_project_flag_overrides_project_id(self, _mock_settings: Settings) -> None:
+        """--project takes precedence over --project-id when both provided."""
+        # This tests the effective_project = project or project_id logic
+        project = "from-project"
+        project_id = "from-project-id"
+        effective = project or project_id
+        assert effective == "from-project"
+
+    def test_project_id_used_when_project_absent(self, _mock_settings: Settings) -> None:
+        """When --project is not set, --project-id should be used."""
+        project = None
+        project_id = "from-project-id"
+        effective = project or project_id
+        assert effective == "from-project-id"

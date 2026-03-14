@@ -148,6 +148,12 @@ def chat(
         Optional[Path],
         typer.Option("--workspace", "-w", help="Workspace root directory for /code mode"),
     ] = None,
+    project: Annotated[
+        Optional[str], typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)")
+    ] = None,
+    location: Annotated[
+        Optional[str], typer.Option("--location", help="GCP location (overrides config)")
+    ] = None,
 ) -> None:
     """Start an interactive chat session (REPL mode).
 
@@ -158,11 +164,21 @@ def chat(
         vaig chat --session abc123
         vaig chat --resume
         vaig chat -w ./my-project
+        vaig chat --project my-project --location europe-west1
     """
     from vaig.cli.repl import start_repl
 
     _banner()
     settings = _get_settings(config)
+
+    # Apply --project: mutate gcp.project_id AND gke.project_id
+    if project:
+        settings.gcp.project_id = project
+        settings.gke.project_id = project
+
+    # Apply --location: mutate gcp.location before component creation
+    if location:
+        settings.gcp.location = location
 
     if model:
         settings.models.default = model
@@ -220,11 +236,14 @@ def ask(
     namespace: Annotated[
         Optional[str], typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)")
     ] = None,
+    project: Annotated[
+        Optional[str], typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)")
+    ] = None,
     project_id: Annotated[
-        Optional[str], typer.Option("--project-id", help="GCP project ID (overrides config)")
+        Optional[str], typer.Option("--project-id", help="GCP project ID for GKE (overrides config, alias for --project)")
     ] = None,
     location: Annotated[
-        Optional[str], typer.Option("--location", help="GKE cluster location/zone/region (overrides config)")
+        Optional[str], typer.Option("--location", help="GCP location (overrides config)")
     ] = None,
     verbose: Annotated[
         bool,
@@ -251,6 +270,16 @@ def ask(
     _apply_subcommand_log_flags(verbose=verbose, debug=debug)
 
     settings = _get_settings(config)
+
+    # Apply --project / --project-id: mutate gcp.project_id AND gke.project_id
+    effective_project = project or project_id
+    if effective_project:
+        settings.gcp.project_id = effective_project
+        settings.gke.project_id = effective_project
+
+    # Apply --location: mutate gcp.location before component creation
+    if location:
+        settings.gcp.location = location
 
     if model:
         settings.models.default = model
@@ -291,7 +320,7 @@ def ask(
     # Live infrastructure mode — use InfraAgent
     if live:
         gke_config = _build_gke_config(
-            settings, cluster=cluster, namespace=namespace, project_id=project_id, location=location,
+            settings, cluster=cluster, namespace=namespace, project_id=effective_project, location=location,
         )
         _execute_live_mode(
             client,
@@ -598,11 +627,14 @@ def live(
     namespace: Annotated[
         Optional[str], typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)")
     ] = None,
+    project: Annotated[
+        Optional[str], typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)")
+    ] = None,
     project_id: Annotated[
-        Optional[str], typer.Option("--project-id", help="GCP project ID (overrides config)")
+        Optional[str], typer.Option("--project-id", help="GCP project ID (overrides config, alias for --project)")
     ] = None,
     location: Annotated[
-        Optional[str], typer.Option("--location", help="GKE cluster location/zone/region (overrides config)")
+        Optional[str], typer.Option("--location", help="GCP location (overrides config)")
     ] = None,
     verbose: Annotated[
         bool,
@@ -633,6 +665,16 @@ def live(
 
     settings = _get_settings(config)
 
+    # Apply --project / --project-id: mutate gcp.project_id AND gke.project_id
+    effective_project = project or project_id
+    if effective_project:
+        settings.gcp.project_id = effective_project
+        settings.gke.project_id = effective_project
+
+    # Apply --location: mutate gcp.location before component creation
+    if location:
+        settings.gcp.location = location
+
     if model:
         settings.models.default = model
 
@@ -640,7 +682,7 @@ def live(
 
     client = GeminiClient(settings)
     gke_config = _build_gke_config(
-        settings, cluster=cluster, namespace=namespace, project_id=project_id, location=location,
+        settings, cluster=cluster, namespace=namespace, project_id=effective_project, location=location,
     )
 
     # Auto-detect skill if requested and no explicit skill specified

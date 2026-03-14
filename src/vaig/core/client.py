@@ -267,6 +267,60 @@ class GeminiClient:
         logger.info("Model switched: %s → %s", old, model_id)
         return model_id
 
+    def reinitialize(
+        self,
+        project: str | None = None,
+        location: str | None = None,
+    ) -> None:
+        """Reinitialize the genai Client with updated project/location.
+
+        Creates a new ``genai.Client`` bound to the updated project and/or
+        location.  Thread-safe: uses the existing ``_fallback_lock``.
+
+        Args:
+            project: New GCP project ID. If ``None``, keeps current.
+            location: New GCP location. If ``None``, keeps current.
+
+        Raises:
+            GeminiClientError: If reinitialization fails.
+        """
+        with self._fallback_lock:
+            old_project = self._settings.gcp.project_id
+            old_location = self._active_location
+
+            if project is not None:
+                self._settings.gcp.project_id = project
+            if location is not None:
+                self._active_location = location
+                self._settings.gcp.location = location
+
+            try:
+                credentials = get_credentials(self._settings)
+                new_client = genai.Client(
+                    vertexai=True,
+                    project=self._settings.gcp.project_id,
+                    location=self._active_location,
+                    credentials=credentials,
+                )
+                self._client = new_client
+                self._initialized = True
+                # Reset fallback state since this is an explicit switch
+                self._using_fallback = False
+                logger.info(
+                    "Client reinitialized — project=%s, location=%s",
+                    self._settings.gcp.project_id,
+                    self._active_location,
+                )
+            except Exception as exc:
+                # Rollback internal state on failure
+                self._settings.gcp.project_id = old_project
+                self._active_location = old_location
+                self._settings.gcp.location = old_location
+                raise GeminiClientError(
+                    f"Failed to reinitialize client: {exc}",
+                    original_error=exc,
+                ) from exc
+
     def _build_generation_config(
         self,
         *,

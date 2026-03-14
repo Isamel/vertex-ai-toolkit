@@ -43,9 +43,13 @@ PROMPT_STYLE = Style.from_dict(
 # ── Slash Command Completer ──────────────────────────────────
 SLASH_COMMANDS = [
     "/add",
+    "/cluster",
     "/code",
+    "/config",
     "/cost",
+    "/location",
     "/model",
+    "/project",
     "/skill",
     "/phase",
     "/agents",
@@ -102,7 +106,11 @@ class REPLState:
     @property
     def prompt_prefix(self) -> str:
         """Build the prompt prefix showing current state."""
-        parts = [f"[{self.model}]"]
+        project = self.settings.gcp.project_id
+        parts: list[str] = []
+        if project:
+            parts.append(f"[{project}]")
+        parts.append(f"[{self.model}]")
         if self.code_mode:
             parts.append("(🔧code)")
         if self.active_skill:
@@ -262,9 +270,13 @@ def _handle_command(state: REPLState, raw_input: str) -> bool:
 
     handlers: dict[str, object] = {
         "/add": lambda: _cmd_add(state, args),
+        "/cluster": lambda: _cmd_cluster(state, args),
         "/code": lambda: _cmd_code(state),
+        "/config": lambda: _cmd_config(state),
         "/cost": lambda: _cmd_cost(state),
+        "/location": lambda: _cmd_location(state, args),
         "/model": lambda: _cmd_model(state, args),
+        "/project": lambda: _cmd_project(state, args),
         "/skill": lambda: _cmd_skill(state, args),
         "/phase": lambda: _cmd_phase(state, args),
         "/agents": lambda: _cmd_agents(state),
@@ -541,6 +553,115 @@ def _show_repl_coding_summary(result: AgentResult) -> None:
 # ══════════════════════════════════════════════════════════════
 # Slash Command Handlers
 # ══════════════════════════════════════════════════════════════
+
+
+def _cmd_project(state: REPLState, args: str) -> None:
+    """Switch the active GCP project."""
+    if not args:
+        console.print(f"[cyan]Current project: {state.settings.gcp.project_id}[/cyan]")
+        if state.settings.gcp.available_projects:
+            console.print("[dim]Available projects:[/dim]")
+            for p in state.settings.gcp.available_projects:
+                marker = " ← current" if p.project_id == state.settings.gcp.project_id else ""
+                desc = f" ({p.description})" if p.description else ""
+                console.print(f"  [dim]{p.project_id}{desc}{marker}[/dim]")
+        console.print("[dim]Usage: /project <project-id>[/dim]")
+        return
+
+    from vaig.core.config_switcher import switch_project
+
+    result = switch_project(state.settings, args.strip(), client=state.client)
+
+    if result.success:
+        console.print(f"[green]✓ {result.message}[/green]")
+        if result.reinitialized:
+            console.print(f"[dim]Reinitialized: {', '.join(result.reinitialized)}[/dim]")
+        # Warn about stale tools/agents
+        console.print(
+            "[yellow]Note: Tools and agents will use the new project on next creation. "
+            "Use /clear to reset agents now.[/yellow]"
+        )
+    else:
+        console.print(f"[red]✗ {result.message}[/red]")
+
+
+def _cmd_location(state: REPLState, args: str) -> None:
+    """Switch the active GCP location."""
+    if not args:
+        console.print(f"[cyan]Current location: {state.settings.gcp.location}[/cyan]")
+        console.print("[dim]Usage: /location <location>  (e.g. us-central1, europe-west1)[/dim]")
+        return
+
+    from vaig.core.config_switcher import switch_location
+
+    result = switch_location(state.settings, args.strip(), client=state.client)
+
+    if result.success:
+        console.print(f"[green]✓ {result.message}[/green]")
+        if result.reinitialized:
+            console.print(f"[dim]Reinitialized: {', '.join(result.reinitialized)}[/dim]")
+    else:
+        console.print(f"[red]✗ {result.message}[/red]")
+
+
+def _cmd_cluster(state: REPLState, args: str) -> None:
+    """Switch the active GKE cluster."""
+    if not args:
+        console.print(f"[cyan]Current cluster: {state.settings.gke.cluster_name}[/cyan]")
+        if state.settings.gke.context:
+            console.print(f"[dim]Context: {state.settings.gke.context}[/dim]")
+        console.print("[dim]Usage: /cluster <name> [context][/dim]")
+        return
+
+    from vaig.core.config_switcher import switch_cluster
+
+    parts = args.strip().split(maxsplit=1)
+    cluster_name = parts[0]
+    new_context = parts[1] if len(parts) > 1 else None
+
+    result = switch_cluster(state.settings, cluster_name, new_context)
+
+    if result.success:
+        console.print(f"[green]✓ {result.message}[/green]")
+        if result.reinitialized:
+            console.print(f"[dim]Cleared caches: {', '.join(result.reinitialized)}[/dim]")
+        console.print(
+            "[yellow]Note: Infrastructure tools will use the new cluster on next invocation.[/yellow]"
+        )
+    else:
+        console.print(f"[red]✗ {result.message}[/red]")
+
+
+def _cmd_config(state: REPLState) -> None:
+    """Show current config snapshot."""
+    from vaig.core.config_switcher import get_config_snapshot
+
+    snap = get_config_snapshot(state.settings)
+
+    table = Table(title="⚙ Current Configuration", show_lines=False)
+    table.add_column("Setting", style="cyan")
+    table.add_column("Value", style="bold")
+
+    # Display labels that are more user-friendly than the raw dict keys
+    labels = {
+        "project": "GCP Project",
+        "location": "GCP Location",
+        "fallback_location": "Fallback Location",
+        "model": "Model",
+        "cluster": "GKE Cluster",
+        "context": "Kube Context",
+        "gke_project": "GKE Project",
+        "gke_location": "GKE Location",
+    }
+
+    for key, value in snap.items():
+        label = labels.get(key, key)
+        display_value = value if value else "[dim]—[/dim]"
+        table.add_row(label, display_value)
+
+    console.print(table)
+
+
 def _cmd_add(state: REPLState, args: str) -> None:
     """Add files or directories to context."""
     if not args:
@@ -1004,11 +1125,18 @@ def _cmd_help() -> None:
   [cyan]/help[/cyan]            — Show this help
   [cyan]/quit[/cyan]            — Exit the REPL
 
+[bold cyan]Config Commands[/bold cyan]
+  [cyan]/project [id][/cyan]    — Show or switch the active GCP project
+  [cyan]/location [name][/cyan] — Show or switch the GCP location (e.g. us-central1)
+  [cyan]/cluster [name] [ctx][/cyan] — Show or switch the GKE cluster (optional kubeconfig context)
+  [cyan]/config[/cyan]          — Show current configuration snapshot
+
 [bold cyan]Tips[/bold cyan]
   • Add files before asking questions: [dim]/add src/ logs.txt[/dim]
   • Use skills for specialized tasks: [dim]/skill rca[/dim] then describe the incident
   • Switch models anytime: [dim]/model gemini-2.5-flash[/dim]
   • Enable code mode for file operations: [dim]/code[/dim] then describe the task
   • Resume your last session: [dim]/resume[/dim] or [dim]vaig chat --resume[/dim]
+  • Switch projects at runtime: [dim]/project my-other-project[/dim]
 """
     console.print(Panel(help_text.strip(), title="📖 Help", border_style="bright_blue"))

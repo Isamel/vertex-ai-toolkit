@@ -196,6 +196,127 @@ class TestSwitchModel:
         assert client.current_model == "gemini-2.5-pro"
 
 
+# ── TestReinitialize ────────────────────────────────────────
+
+
+class TestReinitialize:
+    """Tests for reinitialize() method."""
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    def test_reinitialize_with_new_project(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+
+        client.reinitialize(project="new-project")
+
+        mock_genai_client_cls.assert_called_once_with(
+            vertexai=True,
+            project="new-project",
+            location="us-central1",
+            credentials=mock_get_creds.return_value,
+        )
+        assert client._initialized is True
+        assert client._settings.gcp.project_id == "new-project"
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    def test_reinitialize_with_new_location(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+
+        client.reinitialize(location="europe-west1")
+
+        mock_genai_client_cls.assert_called_once_with(
+            vertexai=True,
+            project="test-project",
+            location="europe-west1",
+            credentials=mock_get_creds.return_value,
+        )
+        assert client._active_location == "europe-west1"
+        assert client._settings.gcp.location == "europe-west1"
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    def test_reinitialize_with_both(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+
+        client.reinitialize(project="proj-2", location="asia-east1")
+
+        mock_genai_client_cls.assert_called_once_with(
+            vertexai=True,
+            project="proj-2",
+            location="asia-east1",
+            credentials=mock_get_creds.return_value,
+        )
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    def test_reinitialize_resets_fallback_flag(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+        client._using_fallback = True
+
+        client.reinitialize(project="new-project")
+
+        assert client._using_fallback is False
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    def test_reinitialize_replaces_client(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+        old_client = MagicMock()
+        client._client = old_client
+
+        client.reinitialize(project="new-project")
+
+        assert client._client is not old_client
+        assert client._client is mock_genai_client_cls.return_value
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    def test_reinitialize_failure_rolls_back(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+        mock_genai_client_cls.side_effect = Exception("auth failed")
+
+        from vaig.core.exceptions import GeminiClientError
+
+        with pytest.raises(GeminiClientError, match="auth failed"):
+            client.reinitialize(project="bad-project", location="bad-loc")
+
+        # Settings must be rolled back
+        assert client._settings.gcp.project_id == "test-project"
+        assert client._active_location == "us-central1"
+        assert client._settings.gcp.location == "us-central1"
+
+
 # ── TestBuildGenerationConfig ────────────────────────────────
 
 
