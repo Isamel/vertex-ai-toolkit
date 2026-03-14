@@ -21,9 +21,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
+
+if TYPE_CHECKING:
+    from vaig.core.config import MCPConfig
 
 logger = logging.getLogger(__name__)
 
@@ -229,3 +232,78 @@ def create_mcp_tool_defs(
         defs.append(tool_def)
 
     return defs
+
+
+def create_mcp_tools(mcp_config: MCPConfig) -> list[ToolDef]:
+    """Discover and create ToolDefs from all configured MCP servers.
+
+    This is the factory function for MCP auto-registration.  It iterates
+    over ``mcp_config.servers`` when ``auto_register`` is enabled, connects
+    to each server to discover its tools, and converts them to ``ToolDef``
+    objects ready for registration in a ``ToolRegistry``.
+
+    Servers that are unreachable or produce errors are skipped with a
+    warning — one broken server does not block the rest.
+
+    Args:
+        mcp_config: The ``MCPConfig`` from application settings.
+
+    Returns:
+        A list of ``ToolDef`` objects from all reachable MCP servers.
+    """
+    if not mcp_config.enabled or not mcp_config.auto_register:
+        return []
+
+    if not _MCP_AVAILABLE:
+        logger.warning(
+            "MCP auto_register is enabled but the MCP SDK is not installed. "
+            "Install it with: pip install mcp"
+        )
+        return []
+
+    if not mcp_config.servers:
+        logger.debug("MCP auto_register is enabled but no servers are configured.")
+        return []
+
+    all_tools: list[ToolDef] = []
+
+    for server in mcp_config.servers:
+        try:
+            mcp_tools = asyncio.run(
+                discover_tools(
+                    command=server.command,
+                    args=server.args,
+                    env=server.env or None,
+                )
+            )
+        except Exception:
+            logger.warning(
+                "Failed to discover tools from MCP server '%s' (%s). Skipping.",
+                server.name,
+                server.command,
+                exc_info=True,
+            )
+            continue
+
+        if not mcp_tools:
+            logger.debug(
+                "MCP server '%s' returned no tools.",
+                server.name,
+            )
+            continue
+
+        defs = create_mcp_tool_defs(
+            server_name=server.name,
+            command=server.command,
+            tools=mcp_tools,
+            args=server.args,
+            env=server.env or None,
+        )
+        all_tools.extend(defs)
+        logger.info(
+            "Auto-registered %d tool(s) from MCP server '%s'.",
+            len(defs),
+            server.name,
+        )
+
+    return all_tools

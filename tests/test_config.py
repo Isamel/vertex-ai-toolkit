@@ -14,8 +14,10 @@ from vaig.core.config import (
     GCPConfig,
     GenerationConfig,
     LoggingConfig,
+    MCPConfig,
     ModelInfo,
     ModelsConfig,
+    PluginConfig,
     SessionConfig,
     Settings,
     SkillsConfig,
@@ -437,3 +439,86 @@ class TestBudgetConfig:
         assert config.max_cost_usd == 50.0
         assert config.warn_threshold == 0.9
         assert config.action == "stop"
+
+
+# ══════════════════════════════════════════════════════════════
+# MCPConfig — auto_register field
+# ══════════════════════════════════════════════════════════════
+
+
+class TestMCPConfigAutoRegister:
+    """Tests for the auto_register field added to MCPConfig."""
+
+    def test_default_auto_register_is_false(self) -> None:
+        cfg = MCPConfig()
+        assert cfg.auto_register is False
+
+    def test_auto_register_enabled(self) -> None:
+        cfg = MCPConfig(auto_register=True)
+        assert cfg.auto_register is True
+
+    def test_auto_register_in_settings_default(self) -> None:
+        settings = Settings()
+        assert settings.mcp.auto_register is False
+
+    def test_auto_register_from_yaml_data(self) -> None:
+        settings = Settings(
+            mcp={"enabled": True, "auto_register": True, "servers": []},  # type: ignore[arg-type]
+        )
+        assert settings.mcp.enabled is True
+        assert settings.mcp.auto_register is True
+
+    def test_backward_compat_without_auto_register(self) -> None:
+        """Existing configs without auto_register should still work."""
+        cfg = MCPConfig(enabled=True)
+        assert cfg.enabled is True
+        assert cfg.auto_register is False
+
+
+# ══════════════════════════════════════════════════════════════
+# PluginConfig
+# ══════════════════════════════════════════════════════════════
+
+
+class TestPluginConfig:
+    """Tests for the new PluginConfig model."""
+
+    def test_defaults(self) -> None:
+        cfg = PluginConfig()
+        assert cfg.enabled is False
+        assert cfg.directories == []
+
+    def test_enabled(self) -> None:
+        cfg = PluginConfig(enabled=True)
+        assert cfg.enabled is True
+
+    def test_with_directories(self) -> None:
+        cfg = PluginConfig(enabled=True, directories=["./plugins", "~/.vaig/plugins"])
+        assert cfg.enabled is True
+        assert len(cfg.directories) == 2
+        assert "./plugins" in cfg.directories
+        assert "~/.vaig/plugins" in cfg.directories
+
+    def test_empty_directories(self) -> None:
+        cfg = PluginConfig(enabled=True, directories=[])
+        assert cfg.directories == []
+
+    def test_plugins_in_settings_defaults(self) -> None:
+        settings = Settings()
+        assert hasattr(settings, "plugins")
+        assert isinstance(settings.plugins, PluginConfig)
+        assert settings.plugins.enabled is False
+        assert settings.plugins.directories == []
+
+    def test_plugins_from_yaml_data(self) -> None:
+        settings = Settings(
+            plugins={"enabled": True, "directories": ["./my-plugins"]},  # type: ignore[arg-type]
+        )
+        assert settings.plugins.enabled is True
+        assert settings.plugins.directories == ["./my-plugins"]
+
+    def test_backward_compat_without_plugins(self) -> None:
+        """Existing configs without plugins section should use defaults."""
+        settings = Settings()
+        assert settings.plugins.enabled is False
+        assert settings.plugins.directories == []

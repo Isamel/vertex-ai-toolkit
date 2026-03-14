@@ -485,6 +485,7 @@ def _handle_code_chat(state: REPLState, user_input: str, context: str) -> None:
     agent = CodingAgent(
         state.client,
         coding_config,
+        settings=state.settings,
         confirm_fn=_repl_confirm,
         model_id=state.model,
     )

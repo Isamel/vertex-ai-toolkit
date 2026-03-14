@@ -193,7 +193,19 @@ class MCPConfig(BaseModel):
     """MCP (Model Context Protocol) integration configuration."""
 
     enabled: bool = False
+    auto_register: bool = False
     servers: list[MCPServerConfig] = Field(default_factory=list)
+
+
+class PluginConfig(BaseModel):
+    """Plugin tool registration configuration.
+
+    Allows users to register custom tools from Python modules
+    without modifying vaig source code.
+    """
+
+    enabled: bool = False
+    directories: list[str] = Field(default_factory=list)
 
 
 class BudgetConfig(BaseModel):
@@ -267,6 +279,7 @@ class Settings(BaseSettings):
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     gke: GKEConfig = Field(default_factory=GKEConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
+    plugins: PluginConfig = Field(default_factory=PluginConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
 
     @classmethod

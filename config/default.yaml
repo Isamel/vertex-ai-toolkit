@@ -148,6 +148,7 @@ gke:
 
 mcp:
   enabled: false                    # Set to true to enable MCP integration
+  auto_register: false              # Auto-register MCP server tools into agent pipelines
   servers: []                       # List of MCP servers — example:
   # - name: "filesystem"
   #   command: "npx"
@@ -159,3 +160,9 @@ mcp:
   #   env:
   #     GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_..."
   #   description: "GitHub API via MCP"
+
+plugins:
+  enabled: false                    # Set to true to enable Python plugin loading
+  directories: []                   # Paths to directories containing plugin modules
+  # - "./plugins"
+  # - "~/.vaig/plugins"

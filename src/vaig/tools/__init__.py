@@ -9,6 +9,7 @@ from vaig.tools.file_tools import (
     search_files,
     write_file,
 )
+from vaig.tools.plugin_loader import load_all_plugin_tools
 from vaig.tools.shell_tools import create_shell_tools, run_command
 
 # GKE tools — optional dependency (kubernetes package)
@@ -43,6 +44,7 @@ __all__ = [
     "create_shell_tools",
     "edit_file",
     "list_files",
+    "load_all_plugin_tools",
     "read_file",
     "run_command",
     "search_files",

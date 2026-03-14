@@ -18,6 +18,7 @@ from vaig.tools.mcp_bridge import (
     _mcp_tool_to_tool_def,
     _mcp_type_to_tool_param_type,
     create_mcp_tool_defs,
+    create_mcp_tools,
     is_mcp_available,
 )
 
@@ -873,3 +874,193 @@ class TestMCPYAMLConfig:
         settings = Settings()
         assert settings.mcp.enabled is False
         assert settings.mcp.servers == []
+
+
+# ═══════════════════════════════════════════════════════════════
+# create_mcp_tools factory tests
+# ═══════════════════════════════════════════════════════════════
+
+class TestCreateMCPTools:
+    """Tests for the create_mcp_tools factory function."""
+
+    def test_returns_empty_when_disabled(self) -> None:
+        """auto_register=False should return no tools."""
+        cfg = MCPConfig(enabled=True, auto_register=False)
+        result = create_mcp_tools(cfg)
+        assert result == []
+
+    def test_returns_empty_when_mcp_not_enabled(self) -> None:
+        """enabled=False should return no tools even with auto_register=True."""
+        cfg = MCPConfig(enabled=False, auto_register=True)
+        result = create_mcp_tools(cfg)
+        assert result == []
+
+    def test_returns_empty_when_both_disabled(self) -> None:
+        cfg = MCPConfig(enabled=False, auto_register=False)
+        result = create_mcp_tools(cfg)
+        assert result == []
+
+    def test_returns_empty_when_mcp_sdk_unavailable(self) -> None:
+        """When MCP SDK is not installed, should log warning and return []."""
+        cfg = MCPConfig(
+            enabled=True,
+            auto_register=True,
+            servers=[MCPServerConfig(name="test", command="echo")],
+        )
+        with patch("vaig.tools.mcp_bridge._MCP_AVAILABLE", False):
+            result = create_mcp_tools(cfg)
+        assert result == []
+
+    def test_returns_empty_when_no_servers(self) -> None:
+        """auto_register=True but no servers configured."""
+        cfg = MCPConfig(enabled=True, auto_register=True, servers=[])
+        # Need MCP available for this path
+        with patch("vaig.tools.mcp_bridge._MCP_AVAILABLE", True):
+            result = create_mcp_tools(cfg)
+        assert result == []
+
+    def test_discovers_and_creates_tools_from_single_server(self) -> None:
+        """Happy path: one server with two tools."""
+        cfg = MCPConfig(
+            enabled=True,
+            auto_register=True,
+            servers=[
+                MCPServerConfig(name="fs", command="npx", args=["-y", "fs-server"]),
+            ],
+        )
+        fake_tools = [
+            FakeMCPTool(
+                name="read_file",
+                description="Read a file",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"path": {"type": "string", "description": "File path"}},
+                    "required": ["path"],
+                },
+            ),
+            FakeMCPTool(name="list_dir", description="List directory"),
+        ]
+
+        with patch("vaig.tools.mcp_bridge._MCP_AVAILABLE", True), \
+             patch("vaig.tools.mcp_bridge.asyncio") as mock_asyncio:
+            mock_asyncio.run.return_value = fake_tools
+            result = create_mcp_tools(cfg)
+
+        assert len(result) == 2
+        assert result[0].name == "mcp_fs_read_file"
+        assert result[1].name == "mcp_fs_list_dir"
+        assert result[0].description == "[MCP:fs] Read a file"
+
+    def test_discovers_tools_from_multiple_servers(self) -> None:
+        """Multiple servers each return tools."""
+        cfg = MCPConfig(
+            enabled=True,
+            auto_register=True,
+            servers=[
+                MCPServerConfig(name="fs", command="npx"),
+                MCPServerConfig(name="github", command="node"),
+            ],
+        )
+        fs_tools = [FakeMCPTool(name="read", description="Read")]
+        gh_tools = [FakeMCPTool(name="list_repos", description="List repos")]
+
+        with patch("vaig.tools.mcp_bridge._MCP_AVAILABLE", True), \
+             patch("vaig.tools.mcp_bridge.asyncio") as mock_asyncio:
+            mock_asyncio.run.side_effect = [fs_tools, gh_tools]
+            result = create_mcp_tools(cfg)
+
+        assert len(result) == 2
+        names = [t.name for t in result]
+        assert "mcp_fs_read" in names
+        assert "mcp_github_list_repos" in names
+
+    def test_skips_unreachable_server(self) -> None:
+        """One server fails, the other succeeds — only working server's tools returned."""
+        cfg = MCPConfig(
+            enabled=True,
+            auto_register=True,
+            servers=[
+                MCPServerConfig(name="broken", command="nonexistent"),
+                MCPServerConfig(name="working", command="echo"),
+            ],
+        )
+        good_tools = [FakeMCPTool(name="ping", description="Ping")]
+
+        with patch("vaig.tools.mcp_bridge._MCP_AVAILABLE", True), \
+             patch("vaig.tools.mcp_bridge.asyncio") as mock_asyncio:
+            mock_asyncio.run.side_effect = [ConnectionError("refused"), good_tools]
+            result = create_mcp_tools(cfg)
+
+        assert len(result) == 1
+        assert result[0].name == "mcp_working_ping"
+
+    def test_skips_server_returning_no_tools(self) -> None:
+        """Server returns empty tool list — no tools added for that server."""
+        cfg = MCPConfig(
+            enabled=True,
+            auto_register=True,
+            servers=[
+                MCPServerConfig(name="empty", command="echo"),
+            ],
+        )
+
+        with patch("vaig.tools.mcp_bridge._MCP_AVAILABLE", True), \
+             patch("vaig.tools.mcp_bridge.asyncio") as mock_asyncio:
+            mock_asyncio.run.return_value = []
+            result = create_mcp_tools(cfg)
+
+        assert result == []
+
+    def test_tool_execute_closure_calls_mcp_tool(self) -> None:
+        """Each ToolDef's execute should be a callable."""
+        cfg = MCPConfig(
+            enabled=True,
+            auto_register=True,
+            servers=[
+                MCPServerConfig(name="srv", command="cmd", args=["--flag"]),
+            ],
+        )
+        fake_tools = [
+            FakeMCPTool(
+                name="greet",
+                description="Greet",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"name": {"type": "string", "description": "Name"}},
+                    "required": ["name"],
+                },
+            ),
+        ]
+
+        with patch("vaig.tools.mcp_bridge._MCP_AVAILABLE", True), \
+             patch("vaig.tools.mcp_bridge.asyncio") as mock_asyncio:
+            mock_asyncio.run.return_value = fake_tools
+            result = create_mcp_tools(cfg)
+
+        assert len(result) == 1
+        assert callable(result[0].execute)
+        assert result[0].parameters[0].name == "name"
+        assert result[0].parameters[0].required is True
+
+    def test_passes_server_env_to_discover(self) -> None:
+        """Server env dict should be passed through to discover_tools."""
+        cfg = MCPConfig(
+            enabled=True,
+            auto_register=True,
+            servers=[
+                MCPServerConfig(
+                    name="auth-srv",
+                    command="node",
+                    args=["server.js"],
+                    env={"API_KEY": "secret123"},
+                ),
+            ],
+        )
+
+        with patch("vaig.tools.mcp_bridge._MCP_AVAILABLE", True), \
+             patch("vaig.tools.mcp_bridge.asyncio") as mock_asyncio:
+            mock_asyncio.run.return_value = [FakeMCPTool(name="test", description="Test")]
+            create_mcp_tools(cfg)
+
+            # Verify asyncio.run was called with the discover_tools coroutine
+            mock_asyncio.run.assert_called_once()

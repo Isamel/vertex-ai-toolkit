@@ -10,7 +10,7 @@ from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import ToolLoopMixin
 from vaig.agents.utils import deduplicate_response
 from vaig.core.client import GeminiClient
-from vaig.core.config import CodingConfig, DEFAULT_MAX_OUTPUT_TOKENS
+from vaig.core.config import CodingConfig, DEFAULT_MAX_OUTPUT_TOKENS, Settings
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools import ToolRegistry, ToolResult, create_file_tools, create_shell_tools
 
@@ -114,6 +114,7 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
         client: GeminiClient,
         coding_config: CodingConfig,
         *,
+        settings: Settings | None = None,
         confirm_fn: Callable[[str, dict[str, Any]], bool] | None = None,
         model_id: str | None = None,
     ) -> None:
@@ -122,6 +123,7 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
         Args:
             client: The GeminiClient for API calls.
             coding_config: Coding-specific configuration (workspace, limits, etc.).
+            settings: Full application settings (used for plugin tool loading).
             confirm_fn: Optional callback for confirming destructive operations.
                         Signature: (tool_name, args) -> bool. If None or if
                         confirm_actions is False, all actions are auto-approved.
@@ -156,6 +158,19 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
             allowed_commands=coding_config.allowed_commands or None,
         ):
             self._registry.register(tool)
+
+        # Plugin tools — MCP auto-registration and Python module plugins
+        if settings is not None:
+            try:
+                from vaig.tools.plugin_loader import load_all_plugin_tools  # noqa: WPS433
+
+                for tool in load_all_plugin_tools(settings):
+                    self._registry.register(tool)
+            except Exception:
+                logger.warning(
+                    "Failed to load plugin tools for CodingAgent. Skipping.",
+                    exc_info=True,
+                )
 
         logger.info(
             "CodingAgent initialized — workspace=%s, max_iterations=%d, "

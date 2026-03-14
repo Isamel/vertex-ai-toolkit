@@ -12,7 +12,7 @@ from vaig.agents.utils import deduplicate_response
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import ToolLoopMixin
 from vaig.core.client import GeminiClient
-from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS, GKEConfig
+from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS, GKEConfig, Settings
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools import ToolRegistry, ToolResult
 
@@ -145,6 +145,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
         client: GeminiClient,
         gke_config: GKEConfig,
         *,
+        settings: Settings | None = None,
         max_tool_iterations: int = 25,
         model_id: str | None = None,
     ) -> None:
@@ -153,6 +154,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
         Args:
             client: The GeminiClient for API calls.
             gke_config: GKE configuration (cluster connection, defaults, etc.).
+            settings: Full application settings (used for plugin tool loading).
             max_tool_iterations: Maximum tool-use loop iterations per turn.
             model_id: Override the default model for this agent.
         """
@@ -167,6 +169,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
         super().__init__(config, client)
 
         self._gke_config = gke_config
+        self._settings = settings
         self._max_iterations = max_tool_iterations
 
         # Build tool registry with GKE and GCP tools
@@ -213,6 +216,19 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
                 "GCP observability tools unavailable. "
                 "Install with: pip install google-cloud-logging google-cloud-monitoring"
             )
+
+        # Plugin tools — MCP auto-registration and Python module plugins
+        if self._settings is not None:
+            try:
+                from vaig.tools.plugin_loader import load_all_plugin_tools  # noqa: WPS433
+
+                for tool in load_all_plugin_tools(self._settings):
+                    self._registry.register(tool)
+            except Exception:
+                logger.warning(
+                    "Failed to load plugin tools for InfraAgent. Skipping.",
+                    exc_info=True,
+                )
 
     @property
     def gke_config(self) -> GKEConfig:

@@ -298,6 +298,7 @@ def ask(
             gke_config,
             question,
             context_str,
+            settings=settings,
             output=output,
             model_id=model,
         )
@@ -628,6 +629,7 @@ def live(
         gke_config,
         question,
         context_str,
+        settings=settings,
         output=output,
         format_=format_,
         skill_name=skill,
@@ -675,11 +677,15 @@ def _build_gke_config(
     )
 
 
-def _register_live_tools(gke_config: "GKEConfig") -> "ToolRegistry":
-    """Create a ToolRegistry and register GKE + GCloud tools.
+def _register_live_tools(gke_config: "GKEConfig", settings: "Settings | None" = None) -> "ToolRegistry":
+    """Create a ToolRegistry and register GKE + GCloud + plugin tools.
 
     Follows the same try/except ImportError pattern as InfraAgent._register_tools()
     so missing optional dependencies degrade gracefully.
+
+    Args:
+        gke_config: GKE configuration for tool creation.
+        settings: Full application settings (used for plugin tool loading).
 
     Returns:
         Populated ToolRegistry (may be empty if no optional deps installed).
@@ -710,6 +716,19 @@ def _register_live_tools(gke_config: "GKEConfig") -> "ToolRegistry":
     except ImportError as exc:
         logger.warning("Could not load GCloud observability tools: %s", exc)
 
+    # Plugin tools — MCP auto-registration and Python module plugins
+    if settings is not None:
+        try:
+            from vaig.tools.plugin_loader import load_all_plugin_tools  # noqa: WPS433
+
+            for tool in load_all_plugin_tools(settings):
+                registry.register(tool)
+        except Exception:
+            logger.warning(
+                "Failed to load plugin tools for live mode. Skipping.",
+                exc_info=True,
+            )
+
     return registry
 
 
@@ -737,7 +756,7 @@ def _execute_orchestrated_skill(
     skill_meta = skill.get_metadata()
 
     # Build tool registry with live tools
-    tool_registry = _register_live_tools(gke_config)
+    tool_registry = _register_live_tools(gke_config, settings=settings)
 
     # Detect Autopilot mode (result is cached from create_gke_tools)
     is_autopilot: bool | None = None
@@ -832,6 +851,7 @@ def _execute_live_mode(
     question: str,
     context: str,
     *,
+    settings: "Settings | None" = None,
     output: Path | None = None,
     format_: str | None = None,
     skill_name: str | None = None,
@@ -859,6 +879,7 @@ def _execute_live_mode(
     agent = InfraAgent(
         client,
         gke_config,
+        settings=settings,
         model_id=model_id or client.current_model,
     )
 
@@ -936,6 +957,7 @@ def _execute_code_mode(
     agent = CodingAgent(
         client,
         coding_config,
+        settings=settings,
         confirm_fn=_cli_confirm,
         model_id=settings.models.default,
     )
