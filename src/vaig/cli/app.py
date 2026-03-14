@@ -347,6 +347,11 @@ def ask(
         console.print()
         if result.output:
             console.print(Markdown(result.output))
+
+        # Show cost summary for skill execution
+        skill_usage = (result.metadata or {}).get("total_usage")
+        _show_cost_line(skill_usage, settings.models.default)
+
         _handle_export_output(
             response_text=result.output,
             question=question,
@@ -355,6 +360,8 @@ def ask(
             context_files=context_file_paths,
             format_=format_,
             output=output,
+            tokens=skill_usage,
+            cost=_compute_cost_str(skill_usage, settings.models.default),
         )
     else:
         # Direct chat — single agent
@@ -366,6 +373,11 @@ def ask(
             console.print()
             if hasattr(result, "content") and result.content:
                 console.print(Markdown(result.content))  # type: ignore[union-attr]
+
+                # Show cost summary
+                result_usage = getattr(result, "usage", None)
+                _show_cost_line(result_usage, settings.models.default)
+
                 _handle_export_output(
                     response_text=result.content,  # type: ignore[union-attr]
                     question=question,
@@ -374,6 +386,8 @@ def ask(
                     context_files=context_file_paths,
                     format_=format_,
                     output=output,
+                    tokens=result_usage,
+                    cost=_compute_cost_str(result_usage, settings.models.default),
                 )
         else:
             stream = orchestrator.execute_single(question, context=context_str, stream=True)
@@ -383,6 +397,11 @@ def ask(
                 console.print(chunk, end="")
                 response_parts.append(chunk)
             console.print()
+
+            # Show cost summary (usage available after stream exhaustion)
+            stream_usage = getattr(stream, "usage", None)
+            _show_cost_line(stream_usage, settings.models.default)
+
             _handle_export_output(
                 response_text="".join(response_parts),
                 question=question,
@@ -391,6 +410,8 @@ def ask(
                 context_files=context_file_paths,
                 format_=format_,
                 output=output,
+                tokens=stream_usage,
+                cost=_compute_cost_str(stream_usage, settings.models.default),
             )
 
 
@@ -399,6 +420,46 @@ def _save_output(output: Path, content: str) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(content, encoding="utf-8")
     console.print(f"[green]✓ Response saved to {output}[/green]")
+
+
+def _build_cost_markdown_section(
+    tokens: dict[str, int],
+    model_id: str,
+    cost: str | None = None,
+) -> str | None:
+    """Build a ``## Cost & Usage Summary`` markdown section for plain file saves.
+
+    Returns ``None`` if no meaningful token data is available.
+    """
+    prompt_tokens = tokens.get("prompt_tokens", 0)
+    completion_tokens = tokens.get("completion_tokens", 0)
+    thinking_tokens = tokens.get("thinking_tokens", 0)
+    total_tokens = tokens.get("total_tokens", 0)
+
+    if total_tokens == 0 and prompt_tokens == 0 and completion_tokens == 0:
+        return None
+
+    lines = [
+        "---",
+        "## Cost & Usage Summary",
+        "",
+        "| Metric | Value |",
+        "|--------|-------|",
+        f"| Input tokens | {prompt_tokens:,} |",
+        f"| Output tokens | {completion_tokens:,} |",
+    ]
+
+    if thinking_tokens:
+        lines.append(f"| Thinking tokens | {thinking_tokens:,} |")
+
+    lines.append(f"| Total tokens | {total_tokens:,} |")
+    lines.append(f"| Model | {model_id} |")
+
+    if cost:
+        lines.append(f"| Estimated cost | {cost} |")
+
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _format_session_date(iso_str: str) -> str:
@@ -481,6 +542,8 @@ def _handle_export_output(
     context_files: list[str] | None = None,
     format_: str | None = None,
     output: Path | None = None,
+    tokens: dict[str, int] | None = None,
+    cost: str | None = None,
 ) -> None:
     """Handle exporting/saving output based on --format and --output flags.
 
@@ -501,6 +564,8 @@ def _handle_export_output(
             model_id=model_id,
             skill_name=skill_name,
             context_files=context_files,
+            tokens=tokens,
+            cost=cost,
         )
         content = format_export(payload, format_)
         if output:
@@ -508,7 +573,13 @@ def _handle_export_output(
         else:
             console.print(content)
     elif output:
-        _save_output(output, response_text)
+        # Plain file save — append cost summary section if data is available
+        save_content = response_text
+        if isinstance(tokens, dict) and tokens:
+            cost_section = _build_cost_markdown_section(tokens, model_id, cost)
+            if cost_section:
+                save_content = f"{response_text}\n\n{cost_section}"
+        _save_output(output, save_content)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -813,10 +884,12 @@ def _execute_orchestrated_skill(
             skill_name=skill_meta.name,
             format_=format_,
             output=output,
+            tokens=orch_result.total_usage or None,
+            cost=_compute_cost_str(orch_result.total_usage, settings.models.default),
         )
 
-        # Show agent pipeline summary
-        _show_orchestrated_summary(orch_result)
+        # Show agent pipeline summary (includes cost line)
+        _show_orchestrated_summary(orch_result, model_id=settings.models.default)
 
     except MaxIterationsError as exc:
         err_console.print(
@@ -827,7 +900,7 @@ def _execute_orchestrated_skill(
         raise typer.Exit(1)  # noqa: B904
 
 
-def _show_orchestrated_summary(orch_result: "OrchestratorResult") -> None:
+def _show_orchestrated_summary(orch_result: "OrchestratorResult", *, model_id: str = "") -> None:
     """Display a summary table for an orchestrated skill execution."""
     table = Table(title="Pipeline Summary", show_lines=True)
     table.add_column("Agent", style="cyan")
@@ -840,6 +913,9 @@ def _show_orchestrated_summary(orch_result: "OrchestratorResult") -> None:
         table.add_row(agent_result.agent_name, role, status)
 
     console.print(table)
+
+    # Show cost summary for the full pipeline
+    _show_cost_line(orch_result.total_usage or None, model_id)
 
     if not orch_result.success:
         err_console.print("[bold red]⚠ Pipeline completed with errors[/bold red]")
@@ -913,6 +989,8 @@ def _execute_live_mode(
             skill_name=skill_name,
             format_=format_,
             output=output,
+            tokens=result.usage or None,
+            cost=_compute_cost_str(result.usage, model_id or client.current_model),
         )
 
         # Show summary (reuse coding summary — same metadata shape)
@@ -975,7 +1053,17 @@ def _execute_code_mode(
         console.print()
 
         if output:
-            _save_output(output, result.content)
+            # Append cost summary to saved file
+            save_content = result.content
+            result_usage = result.usage or None
+            if result_usage:
+                cost_section = _build_cost_markdown_section(
+                    result_usage, settings.models.default,
+                    _compute_cost_str(result_usage, settings.models.default),
+                )
+                if cost_section:
+                    save_content = f"{result.content}\n\n{cost_section}"
+            _save_output(output, save_content)
 
         # Task 5.5 + 5.6: Show tool execution feedback and usage summary
         _show_coding_summary(result)
@@ -1003,6 +1091,31 @@ def _show_coding_summary(result: "AgentResult") -> None:
     from vaig.cli.display import show_tool_execution_summary
 
     show_tool_execution_summary(result, console=console)
+
+
+def _show_cost_line(usage: dict[str, int] | None, model_id: str) -> None:
+    """Show a compact cost/token summary line — delegates to display helper."""
+    if not isinstance(usage, dict):
+        return
+    from vaig.cli.display import show_cost_summary
+
+    show_cost_summary(usage, model_id, console=console)
+
+
+def _compute_cost_str(usage: dict[str, int] | None, model_id: str) -> str | None:
+    """Compute a formatted cost string from usage metadata.
+
+    Returns ``None`` if usage is empty or cost cannot be calculated.
+    """
+    if not isinstance(usage, dict) or not usage:
+        return None
+    from vaig.core.pricing import calculate_cost, format_cost
+
+    prompt_tokens = usage.get("prompt_tokens", 0)
+    completion_tokens = usage.get("completion_tokens", 0)
+    thinking_tokens = usage.get("thinking_tokens", 0)
+    cost = calculate_cost(model_id, prompt_tokens, completion_tokens, thinking_tokens)
+    return format_cost(cost)
 
 
 # ── Chunked file analysis helper ──────────────────────────────

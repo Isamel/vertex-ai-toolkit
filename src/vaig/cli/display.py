@@ -108,3 +108,51 @@ def show_tool_execution_summary(
         f"({' + '.join(token_parts)})"
         f" | Cost: {cost_str}[/dim]"
     )
+
+
+def show_cost_summary(
+    usage_metadata: dict[str, int] | None,
+    model_id: str,
+    *,
+    console: Console | None = None,
+) -> None:
+    """Display a compact cost/token summary line.
+
+    Designed for one-shot CLI commands (``ask``, ``live``) where the full
+    tool-execution table from :func:`show_tool_execution_summary` isn't
+    needed — just the token counts and estimated cost.
+
+    Args:
+        usage_metadata: Dict with keys like ``prompt_tokens``,
+            ``completion_tokens``, ``thinking_tokens``, ``total_tokens``.
+            If ``None`` or empty the call is a silent no-op.
+        model_id: Model identifier used for cost calculation.
+        console: Optional Rich Console; defaults to module-level instance.
+    """
+    if not usage_metadata:
+        return
+
+    con = console or _default_console
+
+    prompt_tokens = usage_metadata.get("prompt_tokens", 0)
+    completion_tokens = usage_metadata.get("completion_tokens", 0)
+    thinking_tokens = usage_metadata.get("thinking_tokens", 0)
+    total_tokens = usage_metadata.get("total_tokens", 0)
+
+    if total_tokens == 0 and prompt_tokens == 0 and completion_tokens == 0:
+        return
+
+    from vaig.core.pricing import calculate_cost, format_cost
+
+    cost = calculate_cost(model_id, prompt_tokens, completion_tokens, thinking_tokens)
+    cost_str = format_cost(cost)
+
+    # Build compact token breakdown
+    parts = [f"{prompt_tokens:,} in", f"{completion_tokens:,} out"]
+    if thinking_tokens:
+        parts.append(f"{thinking_tokens:,} thinking")
+
+    con.print(
+        f"[dim]📊 Tokens: {' / '.join(parts)} "
+        f"({total_tokens:,} total) │ Cost: {cost_str}[/dim]"
+    )
