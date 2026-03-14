@@ -43,6 +43,7 @@ PROMPT_STYLE = Style.from_dict(
 # ── Slash Command Completer ──────────────────────────────────
 SLASH_COMMANDS = [
     "/add",
+    "/cache",
     "/cluster",
     "/code",
     "/config",
@@ -273,6 +274,7 @@ def _handle_command(state: REPLState, raw_input: str) -> bool:
 
     handlers: dict[str, object] = {
         "/add": lambda: _cmd_add(state, args),
+        "/cache": lambda: _cmd_cache(state, args),
         "/cluster": lambda: _cmd_cluster(state, args),
         "/code": lambda: _cmd_code(state),
         "/config": lambda: _cmd_config(state),
@@ -1055,8 +1057,54 @@ def _cmd_clear(state: REPLState) -> None:
     state.context_builder.clear()
     state.session_manager.clear_history()
     state.orchestrator.reset_agents()
+    state.client.clear_cache()
     state.code_mode = False
-    console.print("[green]✓ Cleared context, history, agent states, and code mode[/green]")
+    console.print("[green]✓ Cleared context, history, agent states, cache, and code mode[/green]")
+
+
+def _cmd_cache(state: REPLState, args: str) -> None:
+    """Show cache status, stats, or clear the cache.
+
+    Usage:
+        /cache          — show cache status and stats
+        /cache clear    — clear all cached responses
+    """
+    sub = args.strip().lower()
+
+    if sub == "clear":
+        count = state.client.clear_cache()
+        if count > 0:
+            console.print(f"[green]✓ Cleared {count} cached response(s)[/green]")
+        else:
+            console.print("[dim]Cache is already empty (or caching is disabled).[/dim]")
+        return
+
+    # Default: show status + stats
+    if not state.client.cache_enabled:
+        console.print(
+            "[dim]Response cache is disabled.[/dim]\n"
+            "[dim]Enable via config: cache.enabled = true[/dim]"
+        )
+        return
+
+    stats = state.client.cache_stats()
+    if stats is None:
+        return
+
+    table = Table(title="Response Cache", show_lines=False, title_style="bold")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="bold", justify="right")
+
+    table.add_row("Status", "[green]enabled[/green]")
+    table.add_row("Entries", f"{stats.size} / {stats.max_size}")
+    table.add_row("Hits", str(stats.hits))
+    table.add_row("Misses", str(stats.misses))
+    table.add_row("Hit Rate", f"{stats.hit_rate:.1%}")
+    table.add_row("Evictions", str(stats.evictions))
+
+    console.print()
+    console.print(table)
+    console.print()
 
 
 def _cmd_context(state: REPLState) -> None:
@@ -1186,6 +1234,7 @@ def _cmd_help() -> None:
 
 [bold cyan]Slash Commands[/bold cyan]
   [cyan]/add <path>[/cyan]      — Add files or directories as context
+  [cyan]/cache [clear][/cyan]   — Show cache stats or clear the response cache
   [cyan]/code[/cyan]            — Toggle coding agent mode (read/write/edit files)
   [cyan]/cost[/cyan]            — Show session cost summary and budget status
   [cyan]/model [id][/cyan]      — Show or switch the current model

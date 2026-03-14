@@ -294,6 +294,20 @@ class BudgetConfig(BaseModel):
     action: Literal["warn", "stop"] = "warn"
 
 
+class CacheConfig(BaseModel):
+    """Response caching configuration.
+
+    Controls the in-memory LRU cache for non-streaming, non-tool-use
+    Gemini API responses.  Disabled by default because LLM responses
+    often depend on conversation context — enable only when appropriate
+    (e.g. repeated stateless queries).
+    """
+
+    enabled: bool = False
+    max_size: int = 128
+    ttl_seconds: int = 300
+
+
 class TelemetryConfig(BaseModel):
     """Local usage telemetry configuration.
 
@@ -367,6 +381,7 @@ class Settings(BaseSettings):
     plugins: PluginConfig = Field(default_factory=PluginConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
+    cache: CacheConfig = Field(default_factory=CacheConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
 
     @classmethod

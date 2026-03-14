@@ -16,6 +16,7 @@ from google.api_core import exceptions as google_exceptions
 from google.genai import types
 
 from vaig.core.auth import get_credentials
+from vaig.core.cache import CacheStats, ResponseCache, _make_cache_key
 from vaig.core.exceptions import (
     GeminiClientError,
     GeminiConnectionError,
@@ -194,6 +195,26 @@ class GeminiClient:
         self._active_location: str = settings.gcp.location
         self._using_fallback: bool = False
         self._fallback_lock = threading.Lock()
+
+        # Response cache — disabled by default (opt-in via config).
+        try:
+            cache_cfg = settings.cache
+            if cache_cfg.enabled is True:
+                self._cache: ResponseCache | None = ResponseCache(
+                    max_size=int(cache_cfg.max_size),
+                    ttl_seconds=int(cache_cfg.ttl_seconds),
+                )
+                logger.info(
+                    "Response cache enabled — max_size=%d, ttl=%ds",
+                    cache_cfg.max_size,
+                    cache_cfg.ttl_seconds,
+                )
+            else:
+                self._cache = None
+        except (TypeError, ValueError, AttributeError):
+            # Defensive: if settings is a mock or cache config is invalid,
+            # silently disable caching rather than crashing.
+            self._cache = None
 
     def initialize(self) -> None:
         """Initialize the google-genai Client with Vertex AI credentials."""
@@ -501,6 +522,10 @@ class GeminiClient:
     ) -> GenerationResult:
         """Generate a response (non-streaming).
 
+        When the response cache is enabled and the call is cacheable
+        (string prompt, no conversation history), cached results are
+        returned without making an API call.
+
         Args:
             prompt: Text prompt or list of multimodal Parts.
             system_instruction: System-level instruction for the model.
@@ -513,6 +538,19 @@ class GeminiClient:
 
         mid = model_id or self._current_model_id
         logger.debug("generate() → model=%s, has_history=%s", mid, bool(history))
+
+        # ── Cache lookup (only for stateless, text-only prompts) ─────
+        cache_key: str | None = None
+        if (
+            self._cache is not None
+            and isinstance(prompt, str)
+            and not history
+        ):
+            cache_key = _make_cache_key(prompt, mid, system_instruction)
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                logger.info("Cache hit — skipping API call (model=%s)", mid)
+                return cached
 
         def _call() -> GenerationResult:
             client = self._get_client()
@@ -542,7 +580,13 @@ class GeminiClient:
                 ),
             )
 
-        return self._retry_with_backoff(_call, timeout=timeout)
+        result = self._retry_with_backoff(_call, timeout=timeout)
+
+        # ── Store in cache ───────────────────────────────────────────
+        if cache_key is not None and self._cache is not None:
+            self._cache.put(cache_key, result)
+
+        return result
 
     def generate_stream(
         self,
@@ -792,3 +836,22 @@ class GeminiClient:
             {"id": m.id, "description": m.description}
             for m in self._settings.models.available
         ]
+
+    # ── Cache management ─────────────────────────────────────
+
+    @property
+    def cache_enabled(self) -> bool:
+        """Whether the response cache is active."""
+        return self._cache is not None
+
+    def clear_cache(self) -> int:
+        """Clear the response cache. Returns the number of entries removed."""
+        if self._cache is None:
+            return 0
+        return self._cache.clear()
+
+    def cache_stats(self) -> CacheStats | None:
+        """Return cache statistics, or ``None`` if caching is disabled."""
+        if self._cache is None:
+            return None
+        return self._cache.stats()

@@ -1,7 +1,8 @@
 """Core package."""
 
+from vaig.core.cache import CacheStats, ResponseCache
 from vaig.core.client import ChatMessage, GeminiClient, GenerationResult, StreamResult, ToolCallResult
-from vaig.core.config import BudgetConfig, CodingConfig, Settings, get_settings
+from vaig.core.config import BudgetConfig, CacheConfig, CodingConfig, Settings, get_settings
 from vaig.core.config_switcher import SwitchResult, get_config_snapshot, switch_cluster, switch_location, switch_project
 from vaig.core.cost_tracker import BudgetStatus, CostRecord, CostTracker
 from vaig.core.exceptions import (
@@ -16,6 +17,8 @@ from vaig.core.exceptions import (
 __all__ = [
     "BudgetConfig",
     "BudgetStatus",
+    "CacheConfig",
+    "CacheStats",
     "ChatMessage",
     "CodingConfig",
     "CostRecord",
@@ -26,6 +29,7 @@ __all__ = [
     "GeminiRateLimitError",
     "GenerationResult",
     "MaxIterationsError",
+    "ResponseCache",
     "Settings",
     "StreamResult",
     "SwitchResult",
