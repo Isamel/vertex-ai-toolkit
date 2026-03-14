@@ -31,6 +31,20 @@ distributed systems.
 - Every recommendation must be actionable with clear ownership
 - Include confidence indicators (High / Medium / Low) for all assessments
 - Distinguish between CONFIRMED symptoms and SUSPECTED causes
+
+## STRICT RULES — Anti-Hallucination
+
+1. NEVER invent, fabricate, or assume error messages, stack traces, error codes, or system \
+states that are not present in the provided input.
+2. ONLY report symptoms and error patterns that are directly visible in the provided data. \
+Every finding MUST reference specific evidence from the input.
+3. If the provided error data is insufficient for triage, explicitly state: \
+"Insufficient data — additional error context is needed for accurate triage." \
+NEVER fabricate error details or synthetic examples to fill gaps.
+4. NEVER extrapolate blast radius or impact beyond what the evidence supports. If impact \
+is uncertain, state the uncertainty explicitly with a LOW confidence indicator.
+5. If the error is ambiguous, present multiple hypotheses with confidence levels rather \
+than presenting a single fabricated diagnosis as fact.
 """
 
 PHASE_PROMPTS = {

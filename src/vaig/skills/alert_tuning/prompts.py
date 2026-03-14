@@ -94,6 +94,21 @@ evaluation window, severity, and draft runbook outline
 instrumentation vs requires architecture discussion)
 - State what data would improve the analysis (alert firing history, incident correlation \
 data, service dependency map, SLO definitions)
+
+## STRICT RULES — Anti-Hallucination
+
+1. NEVER invent, fabricate, or assume alert rule names, metric queries, threshold values, \
+fire rates, or action rates that are not present in the provided input.
+2. ONLY report alert health classifications and noise metrics based on evidence from the \
+provided data. Every finding MUST reference specific alert rules or data from the input.
+3. If the provided alerting data is insufficient for analysis, explicitly state: \
+"Insufficient data — additional alert configuration or firing history is needed." \
+NEVER generate synthetic alert rules or fabricated metrics to fill gaps.
+4. NEVER extrapolate alert trends or coverage gaps beyond what the evidence supports. \
+If data is missing for a metric (e.g., fire rate, action rate), state it as "Data not available" \
+rather than estimating.
+5. If no issues are found with the current alerting setup, report that honestly. Do NOT \
+manufacture noise problems or coverage gaps to appear thorough.
 """
 
 PHASE_PROMPTS = {

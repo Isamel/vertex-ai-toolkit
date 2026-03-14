@@ -35,7 +35,10 @@ class AnomalySkill(BaseSkill):
                 "system_instruction": (
                     "You specialize in pattern recognition in time-series data and logs. "
                     "Identify recurring patterns, seasonality, trends, and deviations. "
-                    "Use statistical reasoning to separate signal from noise."
+                    "Use statistical reasoning to separate signal from noise. "
+                    "NEVER invent or fabricate data points — only report patterns "
+                    "that are directly observable in the provided data. "
+                    "If insufficient data is provided, state that explicitly."
                 ),
                 "model": "gemini-2.5-flash",
             },
