@@ -83,6 +83,154 @@ class TestDetectLanguageSpanish:
         assert detect_language("Como esta el cluster de produccion") == "es"
 
 
+class TestDetectLanguagePortuguese:
+    """Queries that should be classified as Portuguese."""
+
+    def test_portuguese_simple(self) -> None:
+        assert detect_language("Verifique o estado dos serviços") == "pt"
+
+    def test_portuguese_question(self) -> None:
+        assert detect_language("Qual é o estado do cluster?") == "pt"
+
+    def test_portuguese_imperative(self) -> None:
+        assert detect_language("Mostre o relatório de saúde dos pods") == "pt"
+
+    def test_portuguese_casual(self) -> None:
+        assert detect_language("Preciso saber se os pods estão bem") == "pt"
+
+    def test_portuguese_formal(self) -> None:
+        assert detect_language("Você pode analisar o serviço para mim?") == "pt"
+
+    def test_portuguese_with_negation(self) -> None:
+        assert detect_language("Não consigo ver os serviços no namespace") == "pt"
+
+
+class TestDetectLanguageFrench:
+    """Queries that should be classified as French."""
+
+    def test_french_simple(self) -> None:
+        assert detect_language("Vérifiez l'état des services") == "fr"
+
+    def test_french_question(self) -> None:
+        assert detect_language("Quel est l'état du cluster?") == "fr"
+
+    def test_french_imperative(self) -> None:
+        assert detect_language("Montrez le rapport de santé des pods") == "fr"
+
+    def test_french_casual(self) -> None:
+        assert detect_language("Je veux voir les services dans le namespace") == "fr"
+
+    def test_french_polite(self) -> None:
+        assert detect_language("Pouvez-vous analyser les problèmes pour nous?") == "fr"
+
+    def test_french_with_comment(self) -> None:
+        assert detect_language("Comment est la santé du cluster maintenant?") == "fr"
+
+
+class TestDetectLanguageGerman:
+    """Queries that should be classified as German."""
+
+    def test_german_simple(self) -> None:
+        assert detect_language("Zeige den Zustand der Dienste") == "de"
+
+    def test_german_question(self) -> None:
+        assert detect_language("Wie ist der Zustand des Clusters?") == "de"
+
+    def test_german_imperative(self) -> None:
+        assert detect_language("Überprüfen Sie den Bericht der Pods") == "de"
+
+    def test_german_casual(self) -> None:
+        assert detect_language("Ich muss wissen ob die Pods in Ordnung sind") == "de"
+
+    def test_german_with_bitte(self) -> None:
+        assert detect_language("Bitte zeige mir alle Fehler im Cluster") == "de"
+
+    def test_german_formal(self) -> None:
+        assert detect_language("Können Sie den Dienst analysieren?") == "de"
+
+
+class TestDetectLanguageItalian:
+    """Queries that should be classified as Italian."""
+
+    def test_italian_simple(self) -> None:
+        assert detect_language("Verifica lo stato dei servizi") == "it"
+
+    def test_italian_question(self) -> None:
+        assert detect_language("Qual è lo stato del cluster?") == "it"
+
+    def test_italian_imperative(self) -> None:
+        assert detect_language("Mostrami il rapporto di stato dei pods") == "it"
+
+    def test_italian_casual(self) -> None:
+        assert detect_language("Ho bisogno di sapere se i pods sono tutti in ordine") == "it"
+
+    def test_italian_polite(self) -> None:
+        assert detect_language("Può verificare il servizio per favore?") == "it"
+
+    def test_italian_with_grazie(self) -> None:
+        assert detect_language("Grazie per il rapporto sui servizi") == "it"
+
+
+class TestDetectLanguageJapanese:
+    """Queries that should be classified as Japanese."""
+
+    def test_japanese_hiragana(self) -> None:
+        assert detect_language("クラスターの状態を確認してください") == "ja"
+
+    def test_japanese_katakana(self) -> None:
+        assert detect_language("ポッドのステータスを見せて") == "ja"
+
+    def test_japanese_mixed(self) -> None:
+        assert detect_language("サービスの健全性レポートをお願いします") == "ja"
+
+    def test_japanese_with_english(self) -> None:
+        """Japanese text mixed with English technical terms."""
+        assert detect_language("CrashLoopBackOff の pod を確認して") == "ja"
+
+    def test_japanese_short(self) -> None:
+        assert detect_language("状態は？") == "ja"
+
+
+class TestDetectLanguageChinese:
+    """Queries that should be classified as Chinese."""
+
+    def test_chinese_simple(self) -> None:
+        assert detect_language("检查集群的健康状态") == "zh"
+
+    def test_chinese_question(self) -> None:
+        assert detect_language("集群的状态是什么？") == "zh"
+
+    def test_chinese_imperative(self) -> None:
+        assert detect_language("显示服务健康报告") == "zh"
+
+    def test_chinese_with_english(self) -> None:
+        """Chinese text mixed with English technical terms."""
+        assert detect_language("查看 namespace production 中的 pod 状态") == "zh"
+
+    def test_chinese_traditional(self) -> None:
+        assert detect_language("檢查叢集的健康狀態") == "zh"
+
+
+class TestDetectLanguageKorean:
+    """Queries that should be classified as Korean."""
+
+    def test_korean_simple(self) -> None:
+        assert detect_language("클러스터 상태를 확인해 주세요") == "ko"
+
+    def test_korean_question(self) -> None:
+        assert detect_language("클러스터의 상태는 어떤가요?") == "ko"
+
+    def test_korean_imperative(self) -> None:
+        assert detect_language("서비스 건강 보고서를 보여주세요") == "ko"
+
+    def test_korean_with_english(self) -> None:
+        """Korean text mixed with English technical terms."""
+        assert detect_language("CrashLoopBackOff 상태인 pod를 확인해") == "ko"
+
+    def test_korean_short(self) -> None:
+        assert detect_language("상태 확인") == "ko"
+
+
 class TestDetectLanguageEdgeCases:
     """Edge cases and boundary conditions."""
 
@@ -137,9 +285,30 @@ class TestBuildLanguageInstruction:
 
     def test_unknown_language_uses_code(self) -> None:
         """Unknown language codes should still produce an instruction."""
-        instruction = build_language_instruction("fr")
+        instruction = build_language_instruction("sw")
         assert "LANGUAGE INSTRUCTION" in instruction
-        assert "fr" in instruction
+        assert "sw" in instruction
+
+    @pytest.mark.parametrize(
+        ("lang_code", "lang_name"),
+        [
+            ("pt", "Portuguese"),
+            ("fr", "French"),
+            ("de", "German"),
+            ("it", "Italian"),
+            ("ja", "Japanese"),
+            ("zh", "Chinese"),
+            ("ko", "Korean"),
+        ],
+    )
+    def test_new_languages_return_instruction(
+        self, lang_code: str, lang_name: str,
+    ) -> None:
+        """All newly supported languages should produce a proper instruction."""
+        instruction = build_language_instruction(lang_code)
+        assert "LANGUAGE INSTRUCTION" in instruction
+        assert lang_name in instruction
+        assert f"MUST respond entirely in {lang_name}" in instruction
 
 
 # ===========================================================================

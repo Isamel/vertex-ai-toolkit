@@ -5,20 +5,40 @@ that can be prepended to agent system prompts at runtime.  This ensures
 the entire pipeline responds in the same language the user used — without
 modifying the underlying prompt constants.
 
-Only ``"es"`` (Spanish) and ``"en"`` (English, default) are supported.
-The detection uses a lightweight heuristic based on common words and
-patterns — no external libraries required.
+Supported languages: ``"es"`` (Spanish), ``"pt"`` (Portuguese),
+``"fr"`` (French), ``"de"`` (German), ``"it"`` (Italian),
+``"ja"`` (Japanese), ``"zh"`` (Chinese), ``"ko"`` (Korean),
+and ``"en"`` (English, default).
+
+The detection uses a lightweight heuristic based on common words,
+Unicode script ranges, and special punctuation — no external libraries
+required.
 """
 
 from __future__ import annotations
 
 import re
 
-# ── Spanish indicator words ──────────────────────────────────
-# Common words that strongly signal Spanish.  Includes question markers,
-# articles, prepositions, pronouns, and verbs that rarely overlap with
-# English.  The set is deliberately broad to catch casual queries like
-# "revisá el estado de los pods".
+# ── CJK Unicode ranges ──────────────────────────────────────
+# Used for script-based detection of Japanese, Chinese, and Korean.
+# These are compiled once at import time for performance.
+
+# Hiragana (U+3040–U+309F) and Katakana (U+30A0–U+30FF) are unique to Japanese.
+_RE_JAPANESE = re.compile(r"[\u3040-\u309F\u30A0-\u30FF]")
+
+# Hangul Syllables (U+AC00–U+D7AF) and Hangul Jamo (U+1100–U+11FF,
+# U+3130–U+318F) are unique to Korean.
+_RE_KOREAN = re.compile(r"[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]")
+
+# CJK Unified Ideographs (U+4E00–U+9FFF).  Shared by Chinese and Japanese,
+# but Japanese also uses Hiragana/Katakana — so we check Japanese first.
+_RE_CJK_IDEOGRAPHS = re.compile(r"[\u4E00-\u9FFF]")
+
+# ── Latin-script indicator words ─────────────────────────────
+# Each set contains common words that strongly signal a specific language.
+# Words are chosen to minimise overlap with English AND with each other.
+# The threshold approach (≥2 matches) handles the few inevitable overlaps.
+
 _SPANISH_INDICATORS: frozenset[str] = frozenset({
     # Articles & prepositions
     "el", "la", "los", "las", "del", "al", "un", "una", "unos", "unas",
@@ -46,55 +66,193 @@ _SPANISH_INDICATORS: frozenset[str] = frozenset({
     "si", "y", "o", "ni",
 })
 
-# Words that exist in both languages and should NOT count as Spanish
-# indicators (e.g. "no", "en", "cluster" could be English too).
-# We handle this by requiring a THRESHOLD of matches rather than a
-# single match.
+_PORTUGUESE_INDICATORS: frozenset[str] = frozenset({
+    # Articles & prepositions
+    "o", "os", "as", "um", "uma", "uns", "umas",
+    "do", "da", "dos", "das", "no", "na", "nos", "nas",
+    "ao", "aos", "pelo", "pela", "pelos", "pelas",
+    "com", "sem", "sobre", "entre", "desde", "até",
+    # Pronouns & determiners — uniquely Portuguese forms
+    "eu", "você", "vocês", "nós", "eles", "elas",
+    "ele", "ela", "isso", "isto", "esse", "essa",
+    "este", "esta", "estes", "estas", "esses", "essas",
+    "qual", "quais", "quem", "onde", "quando", "quanto",
+    # Common verbs — Portuguese-specific conjugations
+    "é", "são", "está", "estão", "tem", "têm", "há",
+    "pode", "podem", "fazer", "mostre", "mostra",
+    "verificar", "analisar", "mostrar", "preciso",
+    "quero", "consegue",
+    # Portuguese-unique words (not shared with Spanish)
+    "também", "agora", "aqui", "mais", "muito", "muitos",
+    "tudo", "cada", "outro", "outra", "outros", "outras",
+    "mas", "porém", "então", "ainda", "já", "sim", "não",
+    "obrigado", "obrigada", "serviço", "serviços",
+    "relatório", "saúde",
+})
 
-# Minimum number of Spanish indicator words required to classify as Spanish.
-_SPANISH_THRESHOLD = 2
+_FRENCH_INDICATORS: frozenset[str] = frozenset({
+    # Articles & prepositions
+    "le", "la", "les", "un", "une", "des",
+    "du", "de", "au", "aux",
+    "dans", "sur", "avec", "pour", "par", "entre", "sans",
+    "chez", "vers", "depuis", "après", "avant",
+    # Pronouns & determiners
+    "je", "tu", "il", "elle", "nous", "vous", "ils", "elles",
+    "ce", "cette", "ces", "mon", "ton", "son", "notre", "votre",
+    "quel", "quelle", "quels", "quelles", "qui", "quoi", "où",
+    "comment", "combien", "pourquoi",
+    # Common verbs
+    "est", "sont", "suis", "avez", "ont", "fait", "faire",
+    "peut", "peuvent", "veux", "veut", "faut",
+    "vérifier", "analyser", "montrer", "montrez",
+    # French-unique words
+    "oui", "non", "mais", "aussi", "maintenant", "ici",
+    "très", "plus", "tout", "tous", "toutes", "chaque",
+    "autre", "autres", "bien", "encore", "toujours",
+    "rapport", "état", "santé", "service", "services",
+    "bonjour", "merci", "problème",
+})
+
+_GERMAN_INDICATORS: frozenset[str] = frozenset({
+    # Articles & prepositions
+    "der", "die", "das", "den", "dem", "des",
+    "ein", "eine", "einen", "einem", "einer",
+    "in", "auf", "mit", "für", "von", "zu", "an",
+    "bei", "nach", "über", "unter", "zwischen", "vor",
+    # Pronouns & determiners
+    "ich", "du", "er", "sie", "wir", "ihr",
+    "mein", "dein", "sein", "unser", "euer",
+    "dieser", "diese", "dieses", "welcher", "welche", "welches",
+    "was", "wer", "wo", "wie", "wann", "warum",
+    # Common verbs
+    "ist", "sind", "bin", "hat", "haben", "kann", "können",
+    "muss", "müssen", "soll", "sollen", "wird", "werden",
+    "zeige", "zeigen", "prüfen", "überprüfen", "analysieren",
+    # German-unique words
+    "ja", "nein", "nicht", "auch", "jetzt", "hier",
+    "sehr", "mehr", "alle", "alles", "jeder", "jede",
+    "andere", "anderer", "gut", "noch", "immer",
+    "bericht", "zustand", "dienst", "dienste",
+    "bitte", "danke", "fehler",
+})
+
+_ITALIAN_INDICATORS: frozenset[str] = frozenset({
+    # Articles & prepositions
+    "il", "lo", "la", "gli", "le",
+    "uno", "una", "dei", "delle", "degli",
+    "del", "dello", "della", "nel", "nella", "nei", "nelle",
+    "di", "da", "in", "con", "su", "per", "tra", "fra",
+    # Pronouns & determiners
+    "io", "tu", "lui", "lei", "noi", "voi", "loro",
+    "questo", "questa", "questi", "queste",
+    "quello", "quella", "quelli", "quelle",
+    "quale", "quali", "chi", "dove", "quando", "quanto",
+    "perché",
+    # Common verbs
+    "è", "sono", "sei", "ha", "hanno", "può", "possono",
+    "fare", "mostra", "mostrami", "verifica", "verificare",
+    "analizzare", "controllare",
+    # Italian-unique words
+    "sì", "non", "anche", "adesso", "qui",
+    "molto", "più", "tutto", "tutti", "tutte", "ogni",
+    "altro", "altra", "altri", "altre", "bene", "ancora",
+    "sempre", "rapporto", "stato", "servizio", "servizi",
+    "grazie", "prego", "problema",
+})
+
+# Mapping from language code to its indicator set.  Checked in order;
+# languages with more distinctive words are checked first to reduce
+# false positives between closely related languages (es vs pt, fr vs it).
+_INDICATOR_SETS: list[tuple[str, frozenset[str]]] = [
+    ("es", _SPANISH_INDICATORS),
+    ("pt", _PORTUGUESE_INDICATORS),
+    ("de", _GERMAN_INDICATORS),
+    ("fr", _FRENCH_INDICATORS),
+    ("it", _ITALIAN_INDICATORS),
+]
+
+# Minimum number of indicator words required to classify a language.
+_INDICATOR_THRESHOLD = 2
+
+# ── Tokenisation regex ───────────────────────────────────────
+# Matches Latin-script words including accented characters from all
+# supported Latin-script languages (es, pt, fr, de, it).
+_RE_LATIN_TOKEN = re.compile(
+    r"[a-záàâãéèêíïîóòôõúùûüçñœæß]+",
+    re.IGNORECASE,
+)
 
 # ── Public API ───────────────────────────────────────────────
 
 _LANGUAGE_NAMES: dict[str, str] = {
-    "es": "Spanish",
     "en": "English",
+    "es": "Spanish",
+    "pt": "Portuguese",
+    "fr": "French",
+    "de": "German",
+    "it": "Italian",
+    "ja": "Japanese",
+    "zh": "Chinese",
+    "ko": "Korean",
 }
 
 
 def detect_language(query: str) -> str:
-    """Detect whether a query is in Spanish or English.
+    """Detect the language of a user query.
 
-    Uses a heuristic based on the presence of common Spanish words.
-    Returns ``"es"`` for Spanish or ``"en"`` for English (default).
+    Uses lightweight heuristics — no external NLP libraries required:
 
-    The algorithm:
-    1. Normalise the query to lowercase and tokenise on word boundaries.
-    2. Count how many tokens appear in the Spanish indicator set.
-    3. If the count meets or exceeds the threshold, classify as Spanish.
-    4. Additionally, detect inverted question/exclamation marks (``¿``, ``¡``)
-       which are uniquely Spanish — a single occurrence is sufficient.
+    * **CJK scripts**: Japanese is detected via Hiragana/Katakana characters,
+      Korean via Hangul, and Chinese via CJK Ideographs (when no
+      Hiragana/Katakana are present).
+    * **Latin-script languages**: Detected via indicator-word matching with
+      a threshold of 2.  Spanish inverted punctuation (``¿``, ``¡``) is a
+      special-case shortcut.
+
+    Supported return values: ``"es"``, ``"pt"``, ``"fr"``, ``"de"``,
+    ``"it"``, ``"ja"``, ``"zh"``, ``"ko"``, ``"en"`` (default).
 
     Args:
         query: The user's input text.
 
     Returns:
-        ``"es"`` or ``"en"``.
+        A BCP-47 language code string.
     """
     if not query or not query.strip():
         return "en"
 
-    # Inverted punctuation is a dead giveaway for Spanish
+    # ── CJK script detection (highest priority) ─────────────
+    # Japanese: presence of Hiragana or Katakana is unambiguous.
+    if _RE_JAPANESE.search(query):
+        return "ja"
+
+    # Korean: Hangul syllables/jamo are unambiguous.
+    if _RE_KOREAN.search(query):
+        return "ko"
+
+    # Chinese: CJK Ideographs without Japanese/Korean script markers.
+    if _RE_CJK_IDEOGRAPHS.search(query):
+        return "zh"
+
+    # ── Spanish inverted punctuation shortcut ────────────────
     if "¿" in query or "¡" in query:
         return "es"
 
-    # Tokenise: split on non-alphanumeric characters (preserving accented chars)
-    tokens = re.findall(r"[a-záéíóúüñ]+", query.lower())
+    # ── Latin-script indicator-word matching ─────────────────
+    tokens = _RE_LATIN_TOKEN.findall(query.lower())
 
-    spanish_count = sum(1 for token in tokens if token in _SPANISH_INDICATORS)
+    # Score each language and pick the best match above threshold.
+    best_lang = "en"
+    best_count = 0
 
-    if spanish_count >= _SPANISH_THRESHOLD:
-        return "es"
+    for lang_code, indicators in _INDICATOR_SETS:
+        count = sum(1 for token in tokens if token in indicators)
+        if count > best_count:
+            best_count = count
+            best_lang = lang_code
+
+    if best_count >= _INDICATOR_THRESHOLD:
+        return best_lang
 
     return "en"
 
@@ -103,7 +261,9 @@ def build_language_instruction(lang: str) -> str:
     """Build a language instruction to prepend to agent system prompts.
 
     Args:
-        lang: Language code (``"es"`` or ``"en"``).
+        lang: Language code — any of the supported codes (``"es"``,
+            ``"pt"``, ``"fr"``, ``"de"``, ``"it"``, ``"ja"``, ``"zh"``,
+            ``"ko"``, ``"en"``).
 
     Returns:
         A system-level instruction telling the agent which language to use.
