@@ -1,6 +1,6 @@
 # VAIG — Vertex AI Gemini Toolkit
 
-Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interactive CLI with pluggable skills for incident analysis, anomaly detection, and code migration.
+Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interactive CLI with pluggable skills for incident analysis, anomaly detection, code migration, GKE diagnostics, and more.
 
 ## Features
 
@@ -12,8 +12,18 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
   - **RCA** — Root Cause Analysis with 5 Whys + Fishbone methodology
   - **Anomaly Detection** — detect unusual patterns in logs, metrics, and data
   - **Code Migration** — migrate between platforms (e.g., Pentaho KTR/KJB → AWS Glue PySpark)
+  - **Service Health** — comprehensive GKE service diagnostics
+  - Plus 25+ built-in skills for SRE, DevOps, and platform engineering
 - **Multi-agent orchestration** — skills spawn specialized agents with different roles and models
+- **Async fanout** — true parallel agent execution via ThreadPoolExecutor for multi-agent workflows
+- **Cost tracking** — per-request token and cost tracking with live CLI display and export report summaries
+- **Token budget enforcement** — configurable spending limits per session with warn/stop actions
+- **Plugin tool registration** — extend the toolkit with custom Python modules or MCP servers
+- **Safety settings** — configurable harm category thresholds for Gemini API content filtering
+- **Dual-auth** — separate GCP project authentication for Vertex AI vs GKE observability via SA impersonation
+- **GKE live diagnostics** — connect to GKE clusters for pod inspection, log analysis, and metric queries
 - **Configurable auth** — Application Default Credentials (ADC) for GKE, service account impersonation for local dev
+- **Cross-platform** — UTF-8 enforcement on all file I/O for Windows compatibility
 
 ## Requirements
 
@@ -80,6 +90,7 @@ Options:
   -m, --model TEXT     Model to use
   -f, --file PATH      Files to include as context (repeatable)
   -s, --skill TEXT     Use a specific skill
+  -o, --output PATH    Save response to file (includes cost summary footer)
   --no-stream          Disable streaming output
 ```
 
@@ -114,6 +125,7 @@ Inside the interactive chat (`vaig chat`):
 | `/skill <name>`      | Activate a skill                             |
 | `/phase <phase>`     | Set the skill phase (analyze/plan/execute)   |
 | `/agents`            | Show active agents                           |
+| `/cost`              | Show session cost summary and budget status  |
 | `/sessions`          | List saved sessions                          |
 | `/new [name]`        | Start a new session                          |
 | `/load <id>`         | Load a previous session                      |
@@ -134,6 +146,13 @@ Default location: `config/default.yaml` or specify with `--config`.
 gcp:
   project_id: "my-project"
   location: "us-central1"
+  available_projects:             # Optional: catalog of GCP projects you work with
+    # - project_id: "my-vertex-project"
+    #   description: "Vertex AI / Gemini billing"
+    #   role: "vertex-ai"
+    # - project_id: "my-gke-project"
+    #   description: "GKE clusters and monitoring"
+    #   role: "gke"
 
 auth:
   mode: "adc"  # "adc" | "impersonate"
@@ -162,11 +181,11 @@ skills:
 All settings can be overridden with `VAIG_` prefixed env vars:
 
 ```bash
-export VAIG_GCP_PROJECT_ID="my-project"
-export VAIG_GCP_LOCATION="us-central1"
-export VAIG_AUTH_MODE="impersonate"
-export VAIG_AUTH_IMPERSONATE_SA="my-sa@my-project.iam.gserviceaccount.com"
-export VAIG_MODELS_DEFAULT="gemini-2.5-flash"
+export VAIG_GCP__PROJECT_ID="my-project"
+export VAIG_GCP__LOCATION="us-central1"
+export VAIG_AUTH__MODE="impersonate"
+export VAIG_AUTH__IMPERSONATE_SA="my-sa@my-project.iam.gserviceaccount.com"
+export VAIG_MODELS__DEFAULT="gemini-2.5-flash"
 ```
 
 ## Authentication
@@ -190,13 +209,133 @@ Use **service account impersonation** — your user account impersonates a servi
 gcloud auth application-default login
 
 # Configure impersonation
-export VAIG_AUTH_MODE="impersonate"
-export VAIG_AUTH_IMPERSONATE_SA="vaig-sa@my-project.iam.gserviceaccount.com"
+export VAIG_AUTH__MODE="impersonate"
+export VAIG_AUTH__IMPERSONATE_SA="vaig-sa@my-project.iam.gserviceaccount.com"
 ```
 
 Required IAM roles on the service account:
 - `roles/aiplatform.user` — Vertex AI API access
 - Your user needs `roles/iam.serviceAccountTokenCreator` on the SA
+
+### Dual-Auth (Separate Projects for Vertex AI and GKE)
+
+For environments where Vertex AI billing and GKE clusters live in different GCP projects, configure independent SA impersonation:
+
+```yaml
+# config/default.yaml
+gcp:
+  project_id: "vertex-ai-project"    # Used for Gemini API calls
+
+auth:
+  mode: "impersonate"
+  impersonate_sa: "vertex-sa@vertex-ai-project.iam.gserviceaccount.com"
+
+gke:
+  project_id: "gke-infra-project"    # Used for GKE observability APIs
+  cluster_name: "prod-cluster"
+  impersonate_sa: "gke-sa@gke-infra-project.iam.gserviceaccount.com"
+```
+
+When `gke.impersonate_sa` is set, GKE tools (Cloud Logging, Cloud Monitoring, GKE cluster API) use that SA instead of `auth.impersonate_sa`. This enables true dual-auth: one identity for Vertex AI, another for GKE observability.
+
+Required IAM roles for the GKE SA:
+- `roles/logging.viewer` — Cloud Logging read access
+- `roles/monitoring.viewer` — Cloud Monitoring read access
+- `roles/container.viewer` — GKE cluster read access
+- Your ADC identity needs `roles/iam.serviceAccountTokenCreator` on both SAs
+
+## Cost Tracking and Budget
+
+VAIG tracks token usage and estimated costs for every API request.
+
+### Live feedback
+
+After each agent execution in the CLI, a cost summary line is displayed:
+
+```
+Tokens: 1,234 in / 567 out | Cost: $0.0042
+```
+
+### Export reports
+
+When saving output with `-o`, a `## Cost & Usage Summary` section is appended:
+
+```bash
+vaig ask "Analyze this service" -s service-health -f app.log -o report.md
+```
+
+### Budget enforcement
+
+Set spending limits per session:
+
+```yaml
+budget:
+  enabled: true
+  max_cost_usd: 5.0          # Maximum spend per session
+  warn_threshold: 0.8        # Warn at 80% of budget
+  action: "warn"             # "warn" or "stop" — stop blocks further requests
+```
+
+Use `/cost` in the REPL to check current session spend at any time.
+
+## Safety Settings
+
+Configure content filtering thresholds for Gemini API responses:
+
+```yaml
+safety:
+  enabled: true
+  settings:
+    - category: "HARM_CATEGORY_HARASSMENT"
+      threshold: "BLOCK_MEDIUM_AND_ABOVE"
+    - category: "HARM_CATEGORY_HATE_SPEECH"
+      threshold: "BLOCK_MEDIUM_AND_ABOVE"
+    - category: "HARM_CATEGORY_SEXUALLY_EXPLICIT"
+      threshold: "BLOCK_MEDIUM_AND_ABOVE"
+    - category: "HARM_CATEGORY_DANGEROUS_CONTENT"
+      threshold: "BLOCK_MEDIUM_AND_ABOVE"
+```
+
+Available thresholds: `BLOCK_LOW_AND_ABOVE`, `BLOCK_MEDIUM_AND_ABOVE`, `BLOCK_ONLY_HIGH`, `BLOCK_NONE`, `OFF`.
+
+> **Note:** `BLOCK_NONE`/`OFF` may be rejected by some Vertex AI projects. `HARM_CATEGORY_CIVIC_INTEGRITY` is not supported in all regions.
+
+Set `safety.enabled: false` to skip sending safety settings entirely (uses Gemini server defaults).
+
+## Plugin Tool Registration
+
+Extend the toolkit with external tools via MCP servers or Python plugin modules.
+
+### MCP servers
+
+```yaml
+mcp:
+  enabled: true
+  auto_register: true       # Auto-register MCP tools into agent pipelines
+  servers:
+    - name: "filesystem"
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      description: "Filesystem access via MCP"
+    - name: "github"
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_..."
+      description: "GitHub API via MCP"
+```
+
+### Python plugins
+
+```yaml
+plugins:
+  enabled: true
+  directories:
+    - "./plugins"
+    - "~/.vaig/plugins"
+```
+
+Place Python modules in the configured directories. Each module can export tool functions that are auto-discovered and registered into the agent pipeline.
 
 ## Skills Architecture
 
@@ -289,8 +428,9 @@ vertex-ai-toolkit/
 │   ├── __main__.py
 │   ├── core/
 │   │   ├── config.py       # Pydantic Settings (layered config)
-│   │   ├── auth.py         # ADC + SA impersonation
-│   │   └── client.py       # GeminiClient (streaming, multi-model)
+│   │   ├── auth.py         # ADC + SA impersonation + dual-auth
+│   │   ├── client.py       # GeminiClient (streaming, multi-model)
+│   │   └── cost_tracker.py # Per-request cost tracking (SQLite)
 │   ├── context/
 │   │   ├── filters.py      # .gitignore patterns, binary detection
 │   │   ├── loader.py       # File loaders (text, PDF, image, audio, ETL)
@@ -303,11 +443,12 @@ vertex-ai-toolkit/
 │   │   ├── registry.py     # Discovery, loading, lazy initialization
 │   │   ├── rca/            # Root Cause Analysis skill
 │   │   ├── anomaly/        # Anomaly Detection skill
-│   │   └── migration/      # Code Migration skill
+│   │   ├── migration/      # Code Migration skill
+│   │   └── ...             # 25+ additional built-in skills
 │   ├── agents/
 │   │   ├── base.py         # AgentRole, AgentConfig, BaseAgent ABC
 │   │   ├── specialist.py   # SpecialistAgent (wraps GeminiClient)
-│   │   ├── orchestrator.py # Multi-agent coordination
+│   │   ├── orchestrator.py # Multi-agent coordination + async fanout
 │   │   └── registry.py     # Agent factory
 │   └── cli/
 │       ├── app.py          # Typer commands
