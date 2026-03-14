@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -28,6 +29,31 @@ _BLOCKED_ARG_PATTERNS: tuple[str, ...] = (
     "/etc/sudoers",
     "~root",
 )
+
+
+def _check_denied_command(
+    command: str,
+    denied_patterns: list[str],
+) -> str | None:
+    """Check *command* against a list of denied regex patterns.
+
+    Returns a human-readable reason string if the command matches any
+    denied pattern, or ``None`` if it is allowed through.
+
+    The check runs against the **raw command string** (before ``shlex``
+    splitting) so that patterns can match shell operators, pipes, and
+    multi-token sequences.
+    """
+    for pattern in denied_patterns:
+        try:
+            if re.search(pattern, command):
+                return (
+                    f"Command denied — matches blocked pattern: {pattern!r}. "
+                    "This command is not allowed for security reasons."
+                )
+        except re.error:
+            logger.warning("Invalid denied_commands regex pattern: %r", pattern)
+    return None
 
 
 def _is_arg_safe(arg: str, workspace: Path) -> tuple[bool, str]:
@@ -62,17 +88,27 @@ def run_command(
     *,
     workspace: Path,
     allowed_commands: list[str] | None = None,
+    denied_commands: list[str] | None = None,
     timeout: int = _DEFAULT_TIMEOUT,
 ) -> ToolResult:
     """Run a shell command inside *workspace*.
 
-    If *allowed_commands* is provided and non-empty, the first token of the
-    command must appear in the allowlist.
+    Security checks are applied in order:
 
-    Arguments are validated to prevent path traversal outside the workspace
-    and access to sensitive system files.
+    1. **Denylist** — if *denied_commands* is provided and the raw command
+       string matches any regex pattern, the command is rejected immediately.
+    2. **Allowlist** — if *allowed_commands* is provided and non-empty, the
+       first token must appear in the allowlist.
+    3. **Argument safety** — each argument is validated to prevent path
+       traversal outside the workspace and access to sensitive system files.
     """
     logger.debug("run_command: command=%r workspace=%s", command, workspace)
+
+    # ── Denylist check (runs on raw string BEFORE parsing) ────
+    if denied_commands:
+        denied_reason = _check_denied_command(command, denied_commands)
+        if denied_reason:
+            return ToolResult(output=denied_reason, error=True)
 
     try:
         args = shlex.split(command)
@@ -147,6 +183,7 @@ def run_command(
 def create_shell_tools(
     workspace: Path,
     allowed_commands: list[str] | None = None,
+    denied_commands: list[str] | None = None,
 ) -> list[ToolDef]:
     """Create shell tool definitions bound to a workspace."""
     return [
@@ -163,8 +200,8 @@ def create_shell_tools(
                     description="The shell command to execute",
                 ),
             ],
-            execute=lambda command, _ws=workspace, _ac=allowed_commands: run_command(
-                command, workspace=_ws, allowed_commands=_ac
+            execute=lambda command, _ws=workspace, _ac=allowed_commands, _dc=denied_commands: run_command(
+                command, workspace=_ws, allowed_commands=_ac, denied_commands=_dc
             ),
         ),
     ]

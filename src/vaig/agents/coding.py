@@ -156,6 +156,7 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
         for tool in create_shell_tools(
             self._workspace,
             allowed_commands=coding_config.allowed_commands or None,
+            denied_commands=coding_config.denied_commands or None,
         ):
             self._registry.register(tool)
 

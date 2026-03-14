@@ -134,6 +134,36 @@ class CodingConfig(BaseModel):
     confirm_actions: bool = True
     allowed_commands: list[str] = Field(default_factory=list)
     blocked_paths: list[str] = Field(default_factory=list)
+    denied_commands: list[str] = Field(
+        default_factory=lambda: [
+            # Destructive disk / filesystem operations
+            r"\brm\s+(-\w*\s+)*-\w*r\w*\s+/\s*$",  # rm -rf /
+            r"\brm\s+(-\w*\s+)*-\w*r\w*\s+/\w",     # rm -rf /anything
+            r"\bmkfs\b",
+            r"\bdd\b\s+",
+            r"\bformat\b",
+            r"\bfdisk\b",
+            # Fork bomb patterns
+            r":\(\)\s*\{",
+            # Insecure permission patterns
+            r"\bchmod\s+(-\w+\s+)*777\b",
+            # Piped remote execution
+            r"\bcurl\b.*\|\s*(sh|bash|zsh)\b",
+            r"\bwget\b.*\|\s*(sh|bash|zsh)\b",
+            # System control
+            r"\bshutdown\b",
+            r"\breboot\b",
+            r"\bhalt\b",
+            r"\bpoweroff\b",
+            # Privilege escalation
+            r"^\s*sudo\b",
+        ],
+        description=(
+            "Regex patterns for commands that should NEVER be executed. "
+            "Checked against the full command string before execution. "
+            "Extend this list in config to add project-specific denials."
+        ),
+    )
 
 
 class LoggingConfig(BaseModel):

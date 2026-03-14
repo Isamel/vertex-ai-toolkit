@@ -299,10 +299,13 @@ class TestCodingAgentInit:
 
         CodingAgent(client, config)
 
-        mock_shell_tools.assert_called_once_with(
-            Path("/tmp/test-workspace").resolve(),
-            allowed_commands=["pytest", "ruff"],
-        )
+        mock_shell_tools.assert_called_once()
+        call_args = mock_shell_tools.call_args
+        assert call_args[0][0] == Path("/tmp/test-workspace").resolve()
+        assert call_args[1]["allowed_commands"] == ["pytest", "ruff"]
+        # denied_commands should be the non-empty defaults from CodingConfig
+        assert call_args[1]["denied_commands"] is not None
+        assert len(call_args[1]["denied_commands"]) > 0
 
     @patch("vaig.agents.coding.create_shell_tools")
     @patch("vaig.agents.coding.create_file_tools", return_value=[])
@@ -318,10 +321,12 @@ class TestCodingAgentInit:
 
         CodingAgent(client, config)
 
-        mock_shell_tools.assert_called_once_with(
-            Path("/tmp/test-workspace").resolve(),
-            allowed_commands=None,
-        )
+        mock_shell_tools.assert_called_once()
+        call_args = mock_shell_tools.call_args
+        assert call_args[0][0] == Path("/tmp/test-workspace").resolve()
+        assert call_args[1]["allowed_commands"] is None
+        # denied_commands should still be the defaults
+        assert call_args[1]["denied_commands"] is not None
 
 
 # ===========================================================================
