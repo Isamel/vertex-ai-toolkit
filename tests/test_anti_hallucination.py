@@ -19,7 +19,7 @@ class TestAnomalyAntiHallucination:
 
         assert "NEVER invent" in SYSTEM_INSTRUCTION
         assert "fabricate" in SYSTEM_INSTRUCTION
-        assert "placeholder" in SYSTEM_INSTRUCTION.lower()
+        assert "No placeholder names" in SYSTEM_INSTRUCTION
         assert "Insufficient data" in SYSTEM_INSTRUCTION
 
     def test_system_instruction_requires_evidence(self) -> None:
