@@ -522,7 +522,7 @@ class TestCreateGkeTools:
         cfg = _make_gke_config()
         tools = create_gke_tools(cfg)
 
-        assert len(tools) == 18
+        assert len(tools) == 22
         assert all(isinstance(t, ToolDef) for t in tools)
 
     def test_tool_names(self) -> None:
@@ -538,6 +538,7 @@ class TestCreateGkeTools:
             "get_events", "get_rollout_status", "get_node_conditions", "get_container_status",
             "exec_command", "check_rbac", "get_rollout_history", "discover_workloads",
             "discover_service_mesh", "discover_network_topology",
+            "get_mesh_overview", "get_mesh_config", "get_mesh_security", "get_sidecar_status",
         }
 
     def test_all_have_descriptions(self) -> None:
@@ -3898,7 +3899,7 @@ class TestCreateGkeToolsPhase3:
         cfg = _make_gke_config()
         with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             tools = create_gke_tools(cfg)
-            assert len(tools) == 18
+        assert len(tools) == 22
 
     def test_exec_command_registered(self) -> None:
         from vaig.tools.gke_tools import create_gke_tools
@@ -4617,7 +4618,7 @@ class TestAutopilotToolBehavior:
 
         cfg = _make_gke_config()
         tools = create_gke_tools(cfg)
-        assert len(tools) == 18
+        assert len(tools) == 22
 
 
 # ── Discovery cache helpers ──────────────────────────────────

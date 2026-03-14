@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
 
-from . import _clients, diagnostics, discovery, kubectl, mutations, security
+from . import _clients, diagnostics, discovery, kubectl, mesh, mutations, security
 
 if TYPE_CHECKING:
     from vaig.core.config import GKEConfig
@@ -729,6 +729,134 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             ],
             execute=lambda namespace="", force_refresh=False,
                     _cfg=gke_config: discovery.discover_network_topology(
+                gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
+            ),
+        ),
+        # ── Mesh introspection tools ─────────────────────────
+        ToolDef(
+            name="get_mesh_overview",
+            description=(
+                "Show Istio/ASM mesh overview: presence, version, control-plane health, "
+                "and per-namespace sidecar injection status. Detects both open-source "
+                "Istio and Google-managed Anthos Service Mesh (ASM). Returns 'No service "
+                "mesh detected' when no mesh is found. Use BEFORE investigating mesh "
+                "config or security to confirm a mesh is installed. Results are cached "
+                "for 30 seconds. Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description=(
+                        "Filter injection status to a specific namespace. "
+                        "Leave empty for all namespaces."
+                    ),
+                    required=False,
+                ),
+                ToolParam(
+                    name="force_refresh",
+                    type="boolean",
+                    description="Bypass cache and re-scan the cluster (default: false).",
+                    required=False,
+                ),
+            ],
+            execute=lambda namespace="", force_refresh=False,
+                    _cfg=gke_config: mesh.get_mesh_overview(
+                gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
+            ),
+        ),
+        ToolDef(
+            name="get_mesh_config",
+            description=(
+                "Show Istio/ASM traffic management configuration: VirtualServices, "
+                "DestinationRules, and Gateways. Displays routing rules, traffic "
+                "splitting weights, load balancer settings, circuit breakers, and "
+                "TLS configuration. Auto-detects the CRD API version. Use for "
+                "debugging traffic routing issues, canary deployments, and service "
+                "connectivity problems. Results are cached for 30 seconds. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description=(
+                        "Filter to a specific namespace. Leave empty for all namespaces."
+                    ),
+                    required=False,
+                ),
+                ToolParam(
+                    name="force_refresh",
+                    type="boolean",
+                    description="Bypass cache and re-scan the cluster (default: false).",
+                    required=False,
+                ),
+            ],
+            execute=lambda namespace="", force_refresh=False,
+                    _cfg=gke_config: mesh.get_mesh_config(
+                gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
+            ),
+        ),
+        ToolDef(
+            name="get_mesh_security",
+            description=(
+                "Show Istio/ASM security configuration: PeerAuthentication (mTLS "
+                "enforcement), AuthorizationPolicy (RBAC rules), and "
+                "RequestAuthentication (JWT validation). Use to verify mTLS is "
+                "enforced, check authorization rules, and audit JWT policies. "
+                "Auto-detects the CRD API version. Results are cached for 30 seconds. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description=(
+                        "Filter to a specific namespace. Leave empty for all namespaces."
+                    ),
+                    required=False,
+                ),
+                ToolParam(
+                    name="force_refresh",
+                    type="boolean",
+                    description="Bypass cache and re-scan the cluster (default: false).",
+                    required=False,
+                ),
+            ],
+            execute=lambda namespace="", force_refresh=False,
+                    _cfg=gke_config: mesh.get_mesh_security(
+                gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
+            ),
+        ),
+        ToolDef(
+            name="get_sidecar_status",
+            description=(
+                "Show sidecar injection status for every pod in the cluster. "
+                "Checks for istio-proxy container presence, extracts sidecar version, "
+                "identifies pod owners (ReplicaSet, Deployment), and detects injection "
+                "anomalies: MISSING (pod in injection-enabled namespace without sidecar) "
+                "or UNEXPECTED (pod with sidecar in non-injected namespace). Use to "
+                "audit sidecar coverage and find misconfigured workloads. Results are "
+                "cached for 30 seconds. Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description=(
+                        "Filter to a specific namespace. Leave empty for all namespaces."
+                    ),
+                    required=False,
+                ),
+                ToolParam(
+                    name="force_refresh",
+                    type="boolean",
+                    description="Bypass cache and re-scan the cluster (default: false).",
+                    required=False,
+                ),
+            ],
+            execute=lambda namespace="", force_refresh=False,
+                    _cfg=gke_config: mesh.get_sidecar_status(
                 gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
             ),
         ),
