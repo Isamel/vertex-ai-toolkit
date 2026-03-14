@@ -26,7 +26,7 @@ runner = CliRunner()
 def _mock_settings() -> Settings:
     """Provide a default Settings object, avoiding real config."""
     settings = Settings()
-    with patch("vaig.cli.app._get_settings", return_value=settings):
+    with patch("vaig.cli._helpers._get_settings", return_value=settings):
         yield settings
 
 
@@ -53,8 +53,8 @@ class TestRegisterLiveTools:
         gke_config = MagicMock()
 
         with (
-            patch("vaig.cli.app.create_gke_tools", side_effect=ImportError, create=True),
-            patch("vaig.cli.app.create_gcloud_tools", side_effect=ImportError, create=True),
+            patch("vaig.cli.commands.live.create_gke_tools", side_effect=ImportError, create=True),
+            patch("vaig.cli.commands.live.create_gcloud_tools", side_effect=ImportError, create=True),
             patch.dict("sys.modules", {"vaig.tools.gke_tools": None, "vaig.tools.gcloud_tools": None}),
         ):
             # Force ImportError by patching the import target
@@ -153,7 +153,7 @@ class TestLiveSkillRouting:
         with (
             patch("vaig.core.client.GeminiClient"),
             patch("vaig.skills.registry.SkillRegistry", return_value=mock_registry),
-            patch("vaig.cli.app._register_live_tools", return_value=mock_tool_registry),
+            patch("vaig.cli.commands.live._register_live_tools", return_value=mock_tool_registry),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["live", "Check service health", "--skill", "test-skill"])
@@ -242,7 +242,7 @@ class TestLiveSkillRouting:
         with (
             patch("vaig.core.client.GeminiClient"),
             patch("vaig.skills.registry.SkillRegistry", return_value=mock_registry),
-            patch("vaig.cli.app._register_live_tools", return_value=mock_tool_registry),
+            patch("vaig.cli.commands.live._register_live_tools", return_value=mock_tool_registry),
         ):
             result = runner.invoke(app, ["live", "Check health", "--skill", "test-skill"])
 
@@ -272,7 +272,7 @@ class TestLiveSkillRouting:
         with (
             patch("vaig.core.client.GeminiClient"),
             patch("vaig.skills.registry.SkillRegistry", return_value=mock_registry),
-            patch("vaig.cli.app._register_live_tools", return_value=mock_tool_registry),
+            patch("vaig.cli.commands.live._register_live_tools", return_value=mock_tool_registry),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(
@@ -315,7 +315,7 @@ class TestLiveSkillRouting:
         with (
             patch("vaig.core.client.GeminiClient"),
             patch("vaig.skills.registry.SkillRegistry", return_value=mock_registry),
-            patch("vaig.cli.app._register_live_tools", return_value=mock_tool_registry),
+            patch("vaig.cli.commands.live._register_live_tools", return_value=mock_tool_registry),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["live", "Check health", "--skill", "test-skill"])
@@ -351,7 +351,7 @@ class TestLiveSkillRouting:
         with (
             patch("vaig.core.client.GeminiClient"),
             patch("vaig.skills.registry.SkillRegistry", return_value=mock_registry),
-            patch("vaig.cli.app._register_live_tools", return_value=mock_tool_registry),
+            patch("vaig.cli.commands.live._register_live_tools", return_value=mock_tool_registry),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["live", "Check health", "--skill", "test-skill"])
@@ -380,7 +380,7 @@ class TestLiveSkillRouting:
         with (
             patch("vaig.core.client.GeminiClient"),
             patch("vaig.skills.registry.SkillRegistry", return_value=mock_registry),
-            patch("vaig.cli.app._register_live_tools", return_value=mock_tool_registry),
+            patch("vaig.cli.commands.live._register_live_tools", return_value=mock_tool_registry),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["live", "Check health", "--skill", "test-skill"])

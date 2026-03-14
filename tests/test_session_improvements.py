@@ -236,7 +236,7 @@ class TestCLISessionsRename:
         runner = CliRunner()
         settings = _make_settings(tmp_path)
 
-        with patch("vaig.cli.app._get_settings", return_value=settings):
+        with patch("vaig.cli._helpers._get_settings", return_value=settings):
             # Create a session first
             from vaig.session.manager import SessionManager
 
@@ -255,7 +255,7 @@ class TestCLISessionsRename:
         runner = CliRunner()
         settings = _make_settings(tmp_path)
 
-        with patch("vaig.cli.app._get_settings", return_value=settings):
+        with patch("vaig.cli._helpers._get_settings", return_value=settings):
             result = runner.invoke(app, ["sessions", "rename", "bad-id", "name"])
             assert "not found" in result.output.lower() or result.exit_code == 0
 
@@ -268,7 +268,7 @@ class TestCLISessionsSearch:
         runner = CliRunner()
         settings = _make_settings(tmp_path)
 
-        with patch("vaig.cli.app._get_settings", return_value=settings):
+        with patch("vaig.cli._helpers._get_settings", return_value=settings):
             from vaig.session.store import SessionStore
 
             store = SessionStore(settings.db_path_resolved)
@@ -287,7 +287,7 @@ class TestCLISessionsSearch:
         runner = CliRunner()
         settings = _make_settings(tmp_path)
 
-        with patch("vaig.cli.app._get_settings", return_value=settings):
+        with patch("vaig.cli._helpers._get_settings", return_value=settings):
             result = runner.invoke(app, ["sessions", "search", "nonexistent"])
             assert result.exit_code == 0
             assert "No sessions" in result.output
@@ -301,7 +301,7 @@ class TestCLISessionsShow:
         runner = CliRunner()
         settings = _make_settings(tmp_path)
 
-        with patch("vaig.cli.app._get_settings", return_value=settings):
+        with patch("vaig.cli._helpers._get_settings", return_value=settings):
             from vaig.session.store import SessionStore
 
             store = SessionStore(settings.db_path_resolved)
@@ -322,7 +322,7 @@ class TestCLISessionsShow:
         runner = CliRunner()
         settings = _make_settings(tmp_path)
 
-        with patch("vaig.cli.app._get_settings", return_value=settings):
+        with patch("vaig.cli._helpers._get_settings", return_value=settings):
             result = runner.invoke(app, ["sessions", "show", "nonexistent-id"])
             assert "not found" in result.output.lower()
 
@@ -335,7 +335,7 @@ class TestCLISessionsList:
         runner = CliRunner()
         settings = _make_settings(tmp_path)
 
-        with patch("vaig.cli.app._get_settings", return_value=settings):
+        with patch("vaig.cli._helpers._get_settings", return_value=settings):
             from vaig.session.store import SessionStore
 
             store = SessionStore(settings.db_path_resolved)

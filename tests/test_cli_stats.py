@@ -47,7 +47,7 @@ def _mock_settings_and_collector(collector: TelemetryCollector) -> None:
     """Patch _get_settings and get_telemetry_collector for all stats tests."""
     settings = Settings()
     with (
-        patch("vaig.cli.app._get_settings", return_value=settings),
+        patch("vaig.cli._helpers._get_settings", return_value=settings),
         patch("vaig.core.telemetry.get_telemetry_collector", return_value=collector),
     ):
         yield

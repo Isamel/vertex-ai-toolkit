@@ -20,7 +20,7 @@ runner = CliRunner()
 def _mock_settings() -> Settings:
     """Provide a default Settings object to all CLI commands, avoiding real config."""
     settings = Settings()
-    with patch("vaig.cli.app._get_settings", return_value=settings):
+    with patch("vaig.cli._helpers._get_settings", return_value=settings):
         yield settings
 
 

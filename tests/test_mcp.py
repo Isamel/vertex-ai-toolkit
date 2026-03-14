@@ -539,7 +539,7 @@ class TestMCPListServers:
         settings = _make_settings_with_mcp(enabled=False)
         with (
             _patch_mcp_available(True),
-            patch("vaig.cli.app._get_settings", return_value=settings),
+            patch("vaig.cli._helpers._get_settings", return_value=settings),
         ):
             result = runner.invoke(app, ["mcp", "list-servers"])
 
@@ -552,7 +552,7 @@ class TestMCPListServers:
         settings = _make_settings_with_mcp(enabled=True, servers=[])
         with (
             _patch_mcp_available(True),
-            patch("vaig.cli.app._get_settings", return_value=settings),
+            patch("vaig.cli._helpers._get_settings", return_value=settings),
         ):
             result = runner.invoke(app, ["mcp", "list-servers"])
 
@@ -571,7 +571,7 @@ class TestMCPListServers:
         )
         with (
             _patch_mcp_available(True),
-            patch("vaig.cli.app._get_settings", return_value=settings),
+            patch("vaig.cli._helpers._get_settings", return_value=settings),
         ):
             result = runner.invoke(app, ["mcp", "list-servers"])
 
@@ -585,7 +585,7 @@ class TestMCPListServers:
 
         with (
             _patch_mcp_available(False),
-            patch("vaig.cli.app._get_settings", return_value=Settings()),
+            patch("vaig.cli._helpers._get_settings", return_value=Settings()),
         ):
             result = runner.invoke(app, ["mcp", "list-servers"])
 
@@ -602,7 +602,7 @@ class TestMCPDiscover:
         settings = _make_settings_with_mcp(enabled=True, servers=[])
         with (
             _patch_mcp_available(True),
-            patch("vaig.cli.app._get_settings", return_value=settings),
+            patch("vaig.cli._helpers._get_settings", return_value=settings),
         ):
             result = runner.invoke(app, ["mcp", "discover", "nonexistent"])
 
@@ -615,7 +615,7 @@ class TestMCPDiscover:
         settings = _make_settings_with_mcp(enabled=False)
         with (
             _patch_mcp_available(True),
-            patch("vaig.cli.app._get_settings", return_value=settings),
+            patch("vaig.cli._helpers._get_settings", return_value=settings),
         ):
             result = runner.invoke(app, ["mcp", "discover", "any"])
 
@@ -644,7 +644,7 @@ class TestMCPDiscover:
 
         with (
             _patch_mcp_available(True),
-            patch("vaig.cli.app._get_settings", return_value=settings),
+            patch("vaig.cli._helpers._get_settings", return_value=settings),
             patch("asyncio.run", return_value=fake_tools),
         ):
             result = runner.invoke(app, ["mcp", "discover", "test"])
@@ -663,7 +663,7 @@ class TestMCPDiscover:
 
         with (
             _patch_mcp_available(True),
-            patch("vaig.cli.app._get_settings", return_value=settings),
+            patch("vaig.cli._helpers._get_settings", return_value=settings),
             patch("asyncio.run", return_value=[]),
         ):
             result = runner.invoke(app, ["mcp", "discover", "empty"])
@@ -681,7 +681,7 @@ class TestMCPDiscover:
 
         with (
             _patch_mcp_available(True),
-            patch("vaig.cli.app._get_settings", return_value=settings),
+            patch("vaig.cli._helpers._get_settings", return_value=settings),
             patch("asyncio.run", side_effect=ConnectionError("refused")),
         ):
             result = runner.invoke(app, ["mcp", "discover", "broken"])
@@ -699,7 +699,7 @@ class TestMCPCall:
         settings = _make_settings_with_mcp(enabled=True, servers=[])
         with (
             _patch_mcp_available(True),
-            patch("vaig.cli.app._get_settings", return_value=settings),
+            patch("vaig.cli._helpers._get_settings", return_value=settings),
         ):
             result = runner.invoke(app, ["mcp", "call", "missing", "tool"])
 
@@ -712,7 +712,7 @@ class TestMCPCall:
         settings = _make_settings_with_mcp(enabled=False)
         with (
             _patch_mcp_available(True),
-            patch("vaig.cli.app._get_settings", return_value=settings),
+            patch("vaig.cli._helpers._get_settings", return_value=settings),
         ):
             result = runner.invoke(app, ["mcp", "call", "srv", "tool"])
 
@@ -728,7 +728,7 @@ class TestMCPCall:
         )
         with (
             _patch_mcp_available(True),
-            patch("vaig.cli.app._get_settings", return_value=settings),
+            patch("vaig.cli._helpers._get_settings", return_value=settings),
         ):
             result = runner.invoke(app, ["mcp", "call", "srv", "tool", "{bad json"])
 
@@ -745,7 +745,7 @@ class TestMCPCall:
 
         with (
             _patch_mcp_available(True),
-            patch("vaig.cli.app._get_settings", return_value=settings),
+            patch("vaig.cli._helpers._get_settings", return_value=settings),
             patch("asyncio.run", return_value=ToolResult(output="result text")),
         ):
             result = runner.invoke(app, ["mcp", "call", "srv", "my-tool", '{"key": "val"}'])
@@ -763,7 +763,7 @@ class TestMCPCall:
 
         with (
             _patch_mcp_available(True),
-            patch("vaig.cli.app._get_settings", return_value=settings),
+            patch("vaig.cli._helpers._get_settings", return_value=settings),
             patch("asyncio.run", return_value=ToolResult(output="pong")),
         ):
             result = runner.invoke(app, ["mcp", "call", "srv", "ping"])
@@ -781,7 +781,7 @@ class TestMCPCall:
 
         with (
             _patch_mcp_available(True),
-            patch("vaig.cli.app._get_settings", return_value=settings),
+            patch("vaig.cli._helpers._get_settings", return_value=settings),
             patch("asyncio.run", return_value=ToolResult(output="access denied", error=True)),
         ):
             result = runner.invoke(app, ["mcp", "call", "srv", "restricted"])
@@ -794,7 +794,7 @@ class TestMCPCall:
 
         with (
             _patch_mcp_available(False),
-            patch("vaig.cli.app._get_settings", return_value=Settings()),
+            patch("vaig.cli._helpers._get_settings", return_value=Settings()),
         ):
             result = runner.invoke(app, ["mcp", "call", "srv", "tool"])
 
