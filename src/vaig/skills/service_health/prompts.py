@@ -337,6 +337,9 @@ Note: exec_command requires gke.exec_enabled=true in config. If exec is disabled
 2. ONLY reference data that appears in the gathered output. If the gatherer did not return data for something, say "Data not collected" — never infer or fabricate.
 3. Every finding MUST have all fields (What, Evidence, Impact, Affected Resources, Verification Gap). If you cannot fill Evidence with real data, do NOT create the finding.
 4. Never speculate without evidence. State what the data shows, not what you assume.
+5. In the Structured Summary and Findings Overview, counts and statistics MUST be derived by counting actual findings — NEVER estimate or invent numbers. If you identified 2 findings, write "Total findings: 2" — not a round number you made up.
+6. In the Service Status Summary, the Status column MUST reflect ONLY what the gathered data shows. If no data was collected for a service, write "Unknown — data not collected" instead of guessing its health.
+7. NEVER create a finding to "fill in" a severity category. If there are no CRITICAL findings, the CRITICAL section should be empty — do NOT manufacture one to make the report look complete.
 """
 
 HEALTH_VERIFIER_PROMPT = """You are a Kubernetes verification agent. Your job is to VERIFY findings from the analyzer by making targeted tool calls specified in each finding's Verification Gap field.
@@ -667,6 +670,9 @@ If no UNVERIFIABLE findings exist, omit this subsection.
 - ONLY report pod names, events, metrics, and timestamps that appear in the analysis input you received.
 - If data is not available for a section, write "Data not available — not returned by diagnostic tools." NEVER create fake examples or placeholder data.
 - Every claim MUST be traceable to evidence from the analysis input.
+- In Cluster Overview and Service Status tables, if the upstream analysis did not provide a specific number (pod count, CPU %, memory %), write "N/A" — NEVER estimate, calculate, or invent percentages or counts that were not in the input data.
+- NEVER fill table cells with plausible-looking numbers that you generated. If the upstream data says "3 pods running" but does not give CPU usage, the CPU column MUST say "N/A", not "45%" or any other invented value.
+- If the upstream data is sparse or incomplete, produce a shorter report that is 100% accurate rather than a longer report with fabricated details.
 
 ### Actionability (Problem 2)
 - In Recommended Actions, ALWAYS provide exact kubectl commands ready to copy-paste. Use the correct namespace, resource names, and container names from the findings.
@@ -790,6 +796,13 @@ Analyze the current health status of Kubernetes services.
 4. List all observable health issues with severity
 5. Note any gaps in monitoring or data
 
+### CRITICAL RULES:
+- Base ALL findings exclusively on the provided context data. NEVER invent pod names, \
+metrics, timestamps, or events.
+- If the context data is empty or insufficient, state that clearly instead of fabricating \
+a health assessment.
+- Every finding MUST cite specific evidence from the context data above.
+
 Format your response as a structured health assessment.
 """,
 
@@ -808,6 +821,12 @@ Collect and analyze service health data from the Kubernetes cluster.
 2. Analyze the collected data for health issues
 3. Identify patterns and correlations
 4. Assess overall cluster health
+
+### CRITICAL RULES:
+- Report ONLY data returned by the tools. NEVER fabricate tool outputs, pod names, \
+metrics, or events.
+- If a tool call fails or returns no data, record that fact — do NOT invent substitute data.
+- Every claim in the assessment MUST be traceable to actual tool output.
 
 Provide a comprehensive health assessment with evidence.
 """,
@@ -830,6 +849,13 @@ Generate a structured markdown report including:
 - Root Cause Hypotheses
 - Recommended Actions with kubectl commands
 - Event Timeline
+
+### CRITICAL RULES:
+- ONLY include data that appears in the analysis results above. NEVER invent pod names, \
+metrics, percentages, or timestamps.
+- If the analysis results do not provide data for a report section, write "Data not \
+available" rather than fabricating content.
+- A shorter, accurate report is always preferred over a longer report with fabricated details.
 
 Make every finding specific and every recommendation actionable.
 """,

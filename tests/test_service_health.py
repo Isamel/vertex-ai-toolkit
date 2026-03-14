@@ -1803,3 +1803,83 @@ class TestServiceHealthAutopilotAwareness:
         assert "full depth" in result
         # Must NOT contain the old scope-narrowing language
         assert "Focus on pod-level and workload-level health" not in result
+
+
+class TestServiceHealthAntiDataFabrication:
+    """Validate strengthened anti-fabrication rules in service_health prompts.
+
+    These tests target specific gaps where the model may still invent data:
+    - Fabricating numbers for summary tables and statistics
+    - Inventing metrics (CPU %, memory %) not present in upstream data
+    - Manufacturing findings to fill severity categories
+    - Filling phase prompts without evidence constraints
+    """
+
+    # ── Analyzer: no fabricated counts or statistics ──────────
+
+    def test_analyzer_forbids_fabricated_counts(self) -> None:
+        """Analyzer must not invent numbers for Findings Overview."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "NEVER estimate or invent numbers" in HEALTH_ANALYZER_PROMPT
+
+    def test_analyzer_forbids_guessing_service_status(self) -> None:
+        """Analyzer must use 'Unknown' when data was not collected."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "Unknown" in HEALTH_ANALYZER_PROMPT
+        assert "data not collected" in HEALTH_ANALYZER_PROMPT.lower()
+
+    def test_analyzer_forbids_manufacturing_findings(self) -> None:
+        """Analyzer must not create findings just to fill a severity category."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "NEVER create a finding" in HEALTH_ANALYZER_PROMPT
+
+    # ── Reporter: no fabricated table values ──────────────────
+
+    def test_reporter_forbids_fabricated_percentages(self) -> None:
+        """Reporter must use N/A for missing metrics, not invented numbers."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "N/A" in HEALTH_REPORTER_PROMPT
+        assert "NEVER estimate" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_forbids_invented_table_values(self) -> None:
+        """Reporter must not fill table cells with plausible-looking numbers."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "NEVER fill table cells" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_prefers_accuracy_over_completeness(self) -> None:
+        """Reporter must prefer a shorter accurate report over fabricated details."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "shorter" in HEALTH_REPORTER_PROMPT.lower()
+        assert "accurate" in HEALTH_REPORTER_PROMPT.lower()
+
+    # ── Phase prompts: anti-hallucination in entry points ─────
+
+    def test_analyze_phase_has_anti_fabrication(self) -> None:
+        """Analyze phase prompt must have anti-fabrication rules."""
+        from vaig.skills.service_health.prompts import PHASE_PROMPTS
+
+        analyze = PHASE_PROMPTS["analyze"]
+        assert "NEVER invent" in analyze
+        assert "evidence" in analyze.lower()
+
+    def test_execute_phase_has_anti_fabrication(self) -> None:
+        """Execute phase prompt must have anti-fabrication rules."""
+        from vaig.skills.service_health.prompts import PHASE_PROMPTS
+
+        execute = PHASE_PROMPTS["execute"]
+        assert "NEVER fabricate" in execute
+        assert "tool output" in execute.lower()
+
+    def test_report_phase_has_anti_fabrication(self) -> None:
+        """Report phase prompt must have anti-fabrication rules."""
+        from vaig.skills.service_health.prompts import PHASE_PROMPTS
+
+        report = PHASE_PROMPTS["report"]
+        assert "NEVER invent" in report
+        assert "Data not" in report

@@ -88,6 +88,21 @@ for less latency)
 heap dumps, GC logs, load test results, historical metrics)
 - Always include a "Quick Wins vs Strategic" classification — some gains are easy, others need \
 architectural rethinking
+
+## STRICT RULES — Anti-Hallucination
+
+1. NEVER invent, fabricate, or assume performance numbers, trace IDs, span names, function \
+names, or latency values that are not present in the provided input.
+2. ONLY report bottlenecks and optimization opportunities backed by evidence from the provided \
+data. Every finding MUST reference specific data points from the input.
+3. If the provided performance data is insufficient for analysis, explicitly state: \
+"Insufficient data — additional profiling data is needed for this analysis." \
+NEVER generate synthetic traces, flame graphs, or fabricated metrics to fill gaps.
+4. NEVER extrapolate performance trends beyond what the data shows. Distinguish between \
+MEASURED impacts (from profiling data) and ESTIMATED impacts (from code analysis), and \
+NEVER present estimates as measurements.
+5. If no performance issues are found in the data, report that honestly. Do NOT manufacture \
+bottlenecks to appear thorough.
 """
 
 PHASE_PROMPTS = {
