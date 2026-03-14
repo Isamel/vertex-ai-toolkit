@@ -20,20 +20,7 @@ runner = CliRunner()
 
 
 # ── Fixtures ──────────────────────────────────────────────────
-
-
-@pytest.fixture()
-def db_path(tmp_path: Path) -> Path:
-    """Return a fresh temporary database path."""
-    return tmp_path / "test_telemetry.db"
-
-
-@pytest.fixture()
-def collector(db_path: Path) -> TelemetryCollector:
-    """Create an enabled collector with small buffer for fast testing."""
-    c = TelemetryCollector(db_path=db_path, enabled=True, buffer_size=5)
-    yield c  # type: ignore[misc]
-    c.close()
+# db_path and collector are provided by conftest.py
 
 
 @pytest.fixture()

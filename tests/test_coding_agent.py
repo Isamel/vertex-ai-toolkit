@@ -16,18 +16,13 @@ from vaig.agents.coding import (
     _default_confirm,
 )
 from vaig.core.client import ToolCallResult
-from vaig.core.config import CodingConfig, reset_settings
+from vaig.core.config import CodingConfig
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools import ToolDef, ToolParam, ToolRegistry, ToolResult
 
 
 # ── Fixtures ─────────────────────────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def _reset() -> None:
-    """Reset the settings singleton between tests."""
-    reset_settings()
+# _reset_settings is provided by conftest.py (autouse)
 
 
 def _make_mock_client(current_model: str = "gemini-2.5-pro") -> MagicMock:

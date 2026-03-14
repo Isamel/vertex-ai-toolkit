@@ -15,17 +15,11 @@ from vaig.core.config import (
     SafetyConfig,
     SafetySettingConfig,
     Settings,
-    reset_settings,
 )
 
 
 # ── Fixtures ─────────────────────────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def _reset() -> None:
-    """Reset the settings singleton between tests."""
-    reset_settings()
+# _reset_settings is provided by conftest.py (autouse)
 
 
 @pytest.fixture()

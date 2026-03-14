@@ -12,7 +12,6 @@ from vaig.core.config import (
     ModelsConfig,
     ProjectEntry,
     Settings,
-    reset_settings,
 )
 from vaig.core.config_switcher import (
     SwitchResult,
@@ -25,12 +24,8 @@ from vaig.core.exceptions import GeminiClientError
 
 
 # ── Fixtures ─────────────────────────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def _reset() -> None:
-    """Reset the settings singleton between tests."""
-    reset_settings()
+# _reset_settings is provided by conftest.py (autouse)
+# mock_client is provided by conftest.py
 
 
 @pytest.fixture()
@@ -53,14 +48,6 @@ def settings() -> Settings:
         ),
         models=ModelsConfig(default="gemini-2.5-pro"),
     )
-
-
-@pytest.fixture()
-def mock_client() -> MagicMock:
-    """Mock GeminiClient with reinitialize method."""
-    client = MagicMock()
-    client.reinitialize = MagicMock()
-    return client
 
 
 # ── SwitchResult ─────────────────────────────────────────────

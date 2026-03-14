@@ -26,14 +26,9 @@ from vaig.core.config import (
     SkillsConfig,
     _strip_empty_strings,
     _strip_empty_strings_in_list,
-    reset_settings,
 )
 
-
-@pytest.fixture(autouse=True)
-def _reset() -> None:
-    """Reset the settings singleton between tests."""
-    reset_settings()
+# _reset_settings is provided by conftest.py (autouse)
 
 
 class TestAuthMode:

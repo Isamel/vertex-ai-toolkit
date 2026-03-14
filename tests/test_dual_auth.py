@@ -6,13 +6,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vaig.core.config import AuthConfig, AuthMode, GKEConfig, Settings, reset_settings
+from vaig.core.config import AuthConfig, AuthMode, GKEConfig, Settings
 
-
-@pytest.fixture(autouse=True)
-def _reset() -> None:
-    """Reset the settings singleton between tests."""
-    reset_settings()
+# _reset_settings is provided by conftest.py (autouse)
 
 
 # ══════════════════════════════════════════════════════════════

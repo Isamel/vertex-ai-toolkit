@@ -10,14 +10,7 @@ import pytest
 
 from vaig.session.store import SessionStore
 
-
-@pytest.fixture
-def store(tmp_path: Path) -> SessionStore:
-    """Create a session store with a temporary database."""
-    db = tmp_path / "test_sessions.db"
-    s = SessionStore(db)
-    yield s
-    s.close()
+# store fixture is provided by conftest.py
 
 
 @pytest.fixture

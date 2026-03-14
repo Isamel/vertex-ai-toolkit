@@ -15,7 +15,6 @@ from vaig.core.config import (
     ModelsConfig,
     RetryConfig,
     Settings,
-    reset_settings,
 )
 from vaig.core.exceptions import (
     GeminiClientError,
@@ -26,12 +25,7 @@ from vaig.core.exceptions import (
 
 
 # ── Fixtures ─────────────────────────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def _reset() -> None:
-    """Reset the settings singleton between tests."""
-    reset_settings()
+# _reset_settings is provided by conftest.py (autouse)
 
 
 @pytest.fixture()
