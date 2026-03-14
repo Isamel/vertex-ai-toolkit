@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import re
 from dataclasses import dataclass, field
@@ -219,10 +220,12 @@ class Orchestrator:
         context: str,
         user_input: str,
     ) -> OrchestratorResult:
-        """Execute all agents independently and merge their outputs.
+        """Execute all agents concurrently and merge their outputs.
 
-        Good for parallel analysis: each agent looks at the same data
-        from a different perspective.
+        Each agent gets the same prompt and context, running in parallel
+        via a :class:`~concurrent.futures.ThreadPoolExecutor`.  Results are
+        collected in submission order for deterministic merging.  Usage
+        is accumulated serially after all futures complete.
         """
         agents = self.create_agents_for_skill(skill)
         result = OrchestratorResult(
@@ -232,15 +235,33 @@ class Orchestrator:
 
         prompt = skill.get_phase_prompt(phase, context, user_input)
 
-        # Each agent gets the same prompt and context
-        for agent in agents:
-            logger.info("Fan-out: agent=%s", agent.name)
-            agent_result = agent.execute(prompt, context=context)
-            result.agent_results.append(agent_result)
-            _accumulate_usage(result, agent_result)
+        # Submit all agents concurrently, collect in submission order
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(agents)) as executor:
+            futures = []
+            for agent in agents:
+                logger.info("Fan-out: submitting agent=%s", agent.name)
+                futures.append(executor.submit(agent.execute, prompt, context=context))
 
-            if not agent_result.success:
-                logger.warning("Agent %s failed (non-fatal in fan-out): %s", agent.name, agent_result.content)
+            for agent, future in zip(agents, futures):
+                try:
+                    agent_result = future.result()
+                except Exception:
+                    logger.exception(
+                        "Agent %s raised an exception during fan-out execution",
+                        agent.name,
+                    )
+                    agent_result = AgentResult(
+                        agent_name=agent.name,
+                        content=f"Agent '{agent.name}' failed with an unexpected error.",
+                        success=False,
+                    )
+                result.agent_results.append(agent_result)
+                if not agent_result.success:
+                    logger.warning("Agent %s failed (non-fatal in fan-out): %s", agent.name, agent_result.content)
+
+        # Accumulate usage serially after all agents complete
+        for agent_result in result.agent_results:
+            _accumulate_usage(result, agent_result)
 
         # Merge all agent outputs
         result.success = any(r.success for r in result.agent_results)
@@ -395,16 +416,37 @@ class Orchestrator:
             )
 
         if strategy == "fanout":
-            for agent in agents:
-                logger.info("Fan-out (tools): agent=%s", agent.name)
-                agent_result = agent.execute(query, context=query)
-                result.agent_results.append(agent_result)
+            # Submit all agents concurrently, collect in submission order
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(agents)) as executor:
+                futures = []
+                for agent in agents:
+                    logger.info("Fan-out (tools): submitting agent=%s", agent.name)
+                    futures.append(executor.submit(agent.execute, query, context=query))
+
+                for agent, future in zip(agents, futures):
+                    try:
+                        agent_result = future.result()
+                    except Exception:
+                        logger.exception(
+                            "Agent %s raised an exception during fan-out (tools) execution",
+                            agent.name,
+                        )
+                        agent_result = AgentResult(
+                            agent_name=agent.name,
+                            content=f"Agent '{agent.name}' failed with an unexpected error.",
+                            success=False,
+                        )
+                    result.agent_results.append(agent_result)
+                    if not agent_result.success:
+                        logger.warning(
+                            "Agent %s failed (non-fatal in fan-out): %s",
+                            agent.name, agent_result.content,
+                        )
+
+            # Accumulate usage serially after all agents complete
+            for agent_result in result.agent_results:
                 _accumulate_usage(result, agent_result)
-                if not agent_result.success:
-                    logger.warning(
-                        "Agent %s failed (non-fatal in fan-out): %s",
-                        agent.name, agent_result.content,
-                    )
+
             result.success = any(r.success for r in result.agent_results)
             result.synthesized_output = self._merge_agent_outputs(result.agent_results)
 

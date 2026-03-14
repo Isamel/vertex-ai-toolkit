@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import random
 import ssl
+import threading
 import time
 from dataclasses import dataclass, field
 from collections.abc import Sequence
@@ -192,6 +193,7 @@ class GeminiClient:
         self._current_model_id: str = settings.models.default
         self._active_location: str = settings.gcp.location
         self._using_fallback: bool = False
+        self._fallback_lock = threading.Lock()
 
     def initialize(self) -> None:
         """Initialize the google-genai Client with Vertex AI credentials."""
@@ -218,23 +220,29 @@ class GeminiClient:
         """Re-initialize with the fallback location.
 
         Creates a new Client bound to the fallback location and marks
-        the client as using the fallback.
+        the client as using the fallback.  Thread-safe: uses double-checked
+        locking so concurrent callers don't race on the fallback switch.
         """
         fallback = self._settings.gcp.fallback_location
         if self._using_fallback or not fallback or fallback == self._active_location:
             return  # already on fallback or no fallback configured
 
-        logger.warning(
-            "Primary location '%s' failed — falling back to '%s'",
-            self._active_location,
-            fallback,
-        )
+        with self._fallback_lock:
+            # Re-check after acquiring the lock (another thread may have switched)
+            if self._using_fallback:
+                return
 
-        self._active_location = fallback
-        self._using_fallback = True
-        self._initialized = False
-        self._client = None
-        self.initialize()
+            logger.warning(
+                "Primary location '%s' failed — falling back to '%s'",
+                self._active_location,
+                fallback,
+            )
+
+            self._active_location = fallback
+            self._using_fallback = True
+            self._initialized = False
+            self._client = None
+            self.initialize()
 
     def _ensure_initialized(self) -> None:
         """Ensure the SDK is initialized before making calls."""
