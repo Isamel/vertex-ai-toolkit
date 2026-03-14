@@ -107,6 +107,7 @@ class SessionConfig(BaseModel):
     """Session persistence configuration."""
 
     db_path: str = "~/.vaig/sessions.db"
+    repl_history_path: str = "~/.vaig/repl_history"
     auto_save: bool = True
     max_history_messages: int = 100
 

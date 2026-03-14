@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
-from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.markdown import Markdown
@@ -212,9 +212,12 @@ def start_repl(
     # Print help hint
     console.print("[dim]Type /help for commands. Ctrl+D or /quit to exit.[/dim]\n")
 
-    # Start prompt loop
+    # Start prompt loop — use FileHistory so arrow-up recalls commands
+    # across sessions.
+    history_path = Path(settings.session.repl_history_path).expanduser()
+    history_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_session: PromptSession[str] = PromptSession(
-        history=InMemoryHistory(),
+        history=FileHistory(str(history_path)),
         completer=command_completer,
         style=PROMPT_STYLE,
     )
