@@ -40,12 +40,25 @@ class AuthMode(StrEnum):
     IMPERSONATE = "impersonate"
 
 
+class ProjectEntry(BaseModel):
+    """A GCP project the user has access to.
+
+    Used to maintain a catalog of available projects in config,
+    with optional description and role annotation.
+    """
+
+    project_id: str
+    description: str = ""
+    role: str = ""  # e.g., "vertex-ai", "gke", "both"
+
+
 class GCPConfig(BaseModel):
     """GCP project configuration."""
 
     project_id: str = ""
     location: str = "us-central1"
     fallback_location: str = "us-central1"
+    available_projects: list[ProjectEntry] = Field(default_factory=list)
 
     def model_post_init(self, _context: Any) -> None:
         """Warn when project_id is unset (will fall back to ADC default)."""

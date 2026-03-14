@@ -18,6 +18,7 @@ from vaig.core.config import (
     ModelInfo,
     ModelsConfig,
     PluginConfig,
+    ProjectEntry,
     SafetyConfig,
     SafetySettingConfig,
     SessionConfig,
@@ -48,11 +49,108 @@ class TestGCPConfig:
         cfg = GCPConfig()
         assert cfg.project_id == ""
         assert cfg.location == "us-central1"
+        assert cfg.available_projects == []
 
     def test_custom_values(self) -> None:
         cfg = GCPConfig(project_id="my-project", location="europe-west1")
         assert cfg.project_id == "my-project"
         assert cfg.location == "europe-west1"
+
+    def test_available_projects(self) -> None:
+        projects = [
+            ProjectEntry(project_id="proj-a", description="Vertex AI", role="vertex-ai"),
+            ProjectEntry(project_id="proj-b", description="GKE infra", role="gke"),
+        ]
+        cfg = GCPConfig(available_projects=projects)
+        assert len(cfg.available_projects) == 2
+        assert cfg.available_projects[0].project_id == "proj-a"
+        assert cfg.available_projects[1].role == "gke"
+
+
+class TestProjectEntry:
+    """Tests for ProjectEntry model."""
+
+    def test_minimal(self) -> None:
+        entry = ProjectEntry(project_id="my-project")
+        assert entry.project_id == "my-project"
+        assert entry.description == ""
+        assert entry.role == ""
+
+    def test_full(self) -> None:
+        entry = ProjectEntry(
+            project_id="my-project",
+            description="Production Vertex AI",
+            role="vertex-ai",
+        )
+        assert entry.project_id == "my-project"
+        assert entry.description == "Production Vertex AI"
+        assert entry.role == "vertex-ai"
+
+    def test_requires_project_id(self) -> None:
+        with pytest.raises(Exception):
+            ProjectEntry()  # type: ignore[call-arg]
+
+    def test_role_values(self) -> None:
+        for role in ("vertex-ai", "gke", "both", ""):
+            entry = ProjectEntry(project_id="p", role=role)
+            assert entry.role == role
+
+    def test_serialization_round_trip(self) -> None:
+        entry = ProjectEntry(
+            project_id="proj-1",
+            description="Test project",
+            role="both",
+        )
+        data = entry.model_dump()
+        restored = ProjectEntry(**data)
+        assert restored.project_id == entry.project_id
+        assert restored.description == entry.description
+        assert restored.role == entry.role
+
+    def test_available_projects_in_settings_defaults(self) -> None:
+        settings = Settings()
+        assert settings.gcp.available_projects == []
+
+    def test_available_projects_from_yaml_data(self) -> None:
+        settings = Settings(
+            gcp={  # type: ignore[arg-type]
+                "project_id": "main",
+                "available_projects": [
+                    {"project_id": "proj-a", "description": "Vertex AI", "role": "vertex-ai"},
+                    {"project_id": "proj-b"},
+                ],
+            },
+        )
+        assert len(settings.gcp.available_projects) == 2
+        assert settings.gcp.available_projects[0].project_id == "proj-a"
+        assert settings.gcp.available_projects[0].description == "Vertex AI"
+        assert settings.gcp.available_projects[1].project_id == "proj-b"
+        assert settings.gcp.available_projects[1].description == ""
+
+    def test_available_projects_from_yaml_file(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "gcp:\n"
+            "  project_id: test-proj\n"
+            "  available_projects:\n"
+            "    - project_id: alpha\n"
+            "      description: Alpha project\n"
+            "      role: vertex-ai\n"
+            "    - project_id: beta\n"
+            "      role: gke\n"
+        )
+        s = Settings.load(config_file)
+        assert s.gcp.project_id == "test-proj"
+        assert len(s.gcp.available_projects) == 2
+        assert s.gcp.available_projects[0].project_id == "alpha"
+        assert s.gcp.available_projects[0].role == "vertex-ai"
+        assert s.gcp.available_projects[1].project_id == "beta"
+        assert s.gcp.available_projects[1].description == ""
+
+    def test_backward_compat_without_available_projects(self) -> None:
+        """Existing configs without available_projects should use empty list."""
+        settings = Settings()
+        assert settings.gcp.available_projects == []
 
 
 class TestAuthConfig:

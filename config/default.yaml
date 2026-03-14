@@ -3,6 +3,13 @@ gcp:
   project_id: ""  # Override via VAIG_GCP__PROJECT_ID or --project
   location: "us-central1"  # Override via VAIG_GCP__LOCATION; use "global" for Gemini 3.1 models
   fallback_location: "us-central1"  # Fallback if primary location fails (SSL/connection errors)
+  available_projects: []  # Catalog of GCP projects you have access to — example:
+  # - project_id: "my-vertex-project"
+  #   description: "Vertex AI / Gemini billing"
+  #   role: "vertex-ai"
+  # - project_id: "my-gke-project"
+  #   description: "GKE clusters and monitoring"
+  #   role: "gke"
 
 auth:
   mode: "adc"  # "adc" | "impersonate"
