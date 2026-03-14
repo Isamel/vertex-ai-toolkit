@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from google.genai import types
@@ -201,15 +202,18 @@ class ToolLoopMixin:
         Never raises -- returns a ``ToolResult`` with ``error=True``
         on failure so the model can see errors and self-correct.
         """
+        t0 = time.perf_counter()
         tool = tool_registry.get(tool_name)
 
         if tool is None:
             logger.warning("Unknown tool requested: %s", tool_name)
-            return ToolResult(
+            result = ToolResult(
                 output=f"Unknown tool: {tool_name}. Available tools: "
                 f"{', '.join(t.name for t in tool_registry.list_tools())}",
                 error=True,
             )
+            self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="UnknownTool")
+            return result
 
         try:
             logger.debug("Executing tool: %s(%s)", tool_name, tool_args)
@@ -220,20 +224,51 @@ class ToolLoopMixin:
                 result.error,
                 len(result.output),
             )
+            self._emit_tool_telemetry(tool_name, tool_args, result, t0)
             return result
         except TypeError as exc:
             logger.warning("Tool %s type error: %s", tool_name, exc)
-            return ToolResult(
+            result = ToolResult(
                 output=f"Invalid arguments for {tool_name}: {exc}. "
                 f"Expected parameters: {', '.join(p.name for p in tool.parameters)}",
                 error=True,
             )
+            self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="TypeError", error_message=str(exc))
+            return result
         except Exception as exc:
             logger.warning("Tool %s unexpected error: %s", tool_name, exc)
-            return ToolResult(
+            result = ToolResult(
                 output=f"Tool execution error ({tool_name}): {exc}",
                 error=True,
             )
+            self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type=type(exc).__name__, error_message=str(exc))
+            return result
+
+    @staticmethod
+    def _emit_tool_telemetry(
+        tool_name: str,
+        tool_args: dict[str, Any],
+        result: ToolResult,
+        t0: float,
+        *,
+        error_type: str = "",
+        error_message: str = "",
+    ) -> None:
+        """Emit a tool_call telemetry event. Never raises."""
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            duration_ms = (time.perf_counter() - t0) * 1000
+            collector = get_telemetry_collector()
+            collector.emit_tool_call(
+                tool_name,
+                duration_ms=duration_ms,
+                metadata={"args_keys": sorted(tool_args.keys()), "error": result.error},
+                error_type=error_type,
+                error_message=error_message,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     # ── Message builders ─────────────────────────────────────
 

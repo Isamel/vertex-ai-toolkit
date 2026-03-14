@@ -65,6 +65,21 @@ class SessionManager:
         )
 
         logger.info("New session started: %s (model=%s, skill=%s)", name, model, skill)
+
+        # Telemetry: set session ID and emit session_start
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            collector = get_telemetry_collector()
+            collector.set_session_id(session_id)
+            collector.emit(
+                event_type="session",
+                event_name="session_start",
+                metadata={"name": name, "model": model, "skill": skill or ""},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
         return self._active
 
     def add_message(self, role: str, content: str, *, model: str | None = None, token_count: int = 0) -> None:
@@ -186,4 +201,17 @@ class SessionManager:
 
     def close(self) -> None:
         """Close the session store."""
+        # Telemetry: emit session_end and flush
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            collector = get_telemetry_collector()
+            collector.emit(
+                event_type="session",
+                event_name="session_end",
+            )
+            collector.flush()
+        except Exception:  # noqa: BLE001
+            pass
+
         self._store.close()

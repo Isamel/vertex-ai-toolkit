@@ -261,6 +261,17 @@ class BudgetConfig(BaseModel):
     action: Literal["warn", "stop"] = "warn"
 
 
+class TelemetryConfig(BaseModel):
+    """Local usage telemetry configuration.
+
+    Controls the in-process event collector that persists usage data
+    to a local SQLite database for analytics and self-diagnostics.
+    """
+
+    enabled: bool = True
+    buffer_size: int = 50
+
+
 def _strip_empty_strings(data: dict[str, Any]) -> dict[str, Any]:
     """Recursively remove keys whose value is an empty string.
 
@@ -323,6 +334,7 @@ class Settings(BaseSettings):
     plugins: PluginConfig = Field(default_factory=PluginConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> Settings:

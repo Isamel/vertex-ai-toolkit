@@ -86,6 +86,21 @@ class CostTracker:
             self._total_thinking_tokens += thinking_tokens
             self._total_cost += cost_value
 
+        # Telemetry: emit api_call event
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            collector = get_telemetry_collector()
+            collector.emit_api_call(
+                model_id,
+                tokens_in=prompt_tokens,
+                tokens_out=completion_tokens,
+                cost_usd=cost_value,
+                metadata={"thinking_tokens": thinking_tokens},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
         return rec
 
     # ── Queries ───────────────────────────────────────────────

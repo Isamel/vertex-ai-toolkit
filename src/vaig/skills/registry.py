@@ -154,6 +154,15 @@ class SkillRegistry:
         self._skills[meta.name] = skill
         self._metadata_cache[meta.name] = meta
 
+        # Telemetry: emit skill_use event
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            collector = get_telemetry_collector()
+            collector.emit_skill_use(meta.name)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _ensure_loaded(self) -> None:
         """Ensure skills are loaded (lazy initialization)."""
         if self._loaded:

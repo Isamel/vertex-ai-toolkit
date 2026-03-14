@@ -5,6 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -322,17 +323,38 @@ class Orchestrator:
 
         This is the main entry point for skill-based execution.
         """
+        skill_name = skill.get_metadata().name
         logger.info(
             "Executing skill=%s phase=%s strategy=%s",
-            skill.get_metadata().name,
+            skill_name,
             phase,
             strategy,
         )
 
+        t0 = time.perf_counter()
         if strategy == "fanout":
             orch_result = self.execute_fanout(skill, phase, context, user_input)
         else:
             orch_result = self.execute_sequential(skill, phase, context, user_input)
+
+        # Telemetry: emit orchestrator event
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            duration_ms = (time.perf_counter() - t0) * 1000
+            collector = get_telemetry_collector()
+            collector.emit(
+                event_type="orchestrator",
+                event_name="execute_skill_phase",
+                duration_ms=duration_ms,
+                metadata={
+                    "skill": skill_name,
+                    "phase": phase.value if hasattr(phase, "value") else str(phase),
+                    "strategy": strategy,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
         return orch_result.to_skill_result()
 
@@ -372,6 +394,8 @@ class Orchestrator:
             skill.get_metadata().name,
             strategy,
         )
+
+        t0_ewt = time.perf_counter()
 
         # ── Dynamic language detection & injection ───────────
         # Detect the user's language and inject a language instruction
@@ -552,6 +576,26 @@ class Orchestrator:
 
             if result.agent_results:
                 result.synthesized_output = result.agent_results[-1].content
+
+        # Telemetry: emit orchestrator event for execute_with_tools
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            duration_ms = (time.perf_counter() - t0_ewt) * 1000
+            collector = get_telemetry_collector()
+            collector.emit(
+                event_type="orchestrator",
+                event_name="execute_with_tools",
+                duration_ms=duration_ms,
+                metadata={
+                    "skill": skill.get_metadata().name,
+                    "strategy": strategy,
+                    "agents_count": len(agents),
+                    "success": result.success,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
         return result
 

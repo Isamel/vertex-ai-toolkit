@@ -378,6 +378,13 @@ def _handle_direct_chat(state: REPLState, user_input: str, context: str) -> None
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         logger.exception("Chat error")
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            collector = get_telemetry_collector()
+            collector.emit_error(type(e).__name__, str(e), metadata={"source": "direct_chat"})
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _try_chunked_chat(state: REPLState, user_input: str, context: str) -> bool:
@@ -479,6 +486,13 @@ def _handle_skill_chat(state: REPLState, user_input: str, context: str) -> None:
     except Exception as e:
         console.print(f"[red]Error during {state.current_phase.value}: {e}[/red]")
         logger.exception("Skill execution error")
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            collector = get_telemetry_collector()
+            collector.emit_error(type(e).__name__, str(e), metadata={"source": "skill_chat"})
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _handle_code_chat(state: REPLState, user_input: str, context: str) -> None:
@@ -534,6 +548,13 @@ def _handle_code_chat(state: REPLState, user_input: str, context: str) -> None:
     except Exception as e:
         console.print(f"[red]Error in code mode: {e}[/red]")
         logger.exception("Code mode error")
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            collector = get_telemetry_collector()
+            collector.emit_error(type(e).__name__, str(e), metadata={"source": "code_chat"})
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _repl_confirm(tool_name: str, args: dict[str, Any]) -> bool:
