@@ -117,6 +117,8 @@ class SkillsConfig(BaseModel):
 
     enabled: list[str] = Field(default_factory=lambda: ["rca", "anomaly", "migration", "log-analysis", "error-triage", "config-audit", "slo-review", "postmortem", "code-review", "iac-review", "cost-analysis", "capacity-planning", "test-generation", "compliance-check", "api-design", "runbook-generator", "dependency-audit", "db-review", "pipeline-review", "perf-analysis", "threat-model", "change-risk", "alert-tuning", "resilience-review", "incident-comms", "toil-analysis", "network-review", "adr-generator", "service-health"])
     custom_dir: str | None = None
+    auto_routing: bool = True
+    auto_routing_threshold: float = 1.5
 
 
 class AgentsConfig(BaseModel):

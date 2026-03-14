@@ -321,8 +321,62 @@ def _handle_chat(state: REPLState, user_input: str) -> None:
         # Skill-based execution
         _handle_skill_chat(state, user_input, context_str)
     else:
-        # Direct chat
-        _handle_direct_chat(state, user_input, context_str)
+        # Auto-route to a skill if confidence is high enough
+        auto_skill = _try_auto_route_skill(state, user_input)
+        if auto_skill:
+            _handle_skill_chat(state, user_input, context_str)
+            # Clear auto-routed skill after use — it's per-message, not sticky
+            state.active_skill = None
+            state.current_phase = SkillPhase.ANALYZE
+        else:
+            # Direct chat
+            _handle_direct_chat(state, user_input, context_str)
+
+
+def _try_auto_route_skill(state: REPLState, user_input: str) -> bool:
+    """Attempt to auto-route the query to a skill based on keyword matching.
+
+    Only activates when ``skills.auto_routing`` is enabled in config and the
+    best suggestion score exceeds ``skills.auto_routing_threshold``.
+
+    The skill is set as ``active_skill`` for this single message — it's
+    cleared after the chat handler completes so subsequent messages go
+    through the same routing logic.
+
+    Returns ``True`` if a skill was auto-selected (caller should use
+    skill-based execution), ``False`` otherwise.
+    """
+    skills_config = state.settings.skills
+    if not skills_config.auto_routing:
+        return False
+
+    suggestions = state.skill_registry.suggest_skill(user_input)
+    if not suggestions:
+        return False
+
+    best_name, best_score = suggestions[0]
+    threshold = skills_config.auto_routing_threshold
+
+    if best_score < threshold:
+        logger.debug(
+            "Auto-routing: best skill %s scored %.2f (threshold %.2f) — skipping",
+            best_name, best_score, threshold,
+        )
+        return False
+
+    skill = state.skill_registry.get(best_name)
+    if not skill:
+        return False
+
+    state.active_skill = skill
+    state.current_phase = SkillPhase.ANALYZE
+    console.print(
+        f"[dim]🎯 Auto-routing to skill: [cyan]{best_name}[/cyan] "
+        f"(score: {best_score:.1f})[/dim]"
+    )
+    logger.info("Auto-routed query to skill: %s (score: %.2f)", best_name, best_score)
+
+    return True
 
 
 def _handle_direct_chat(state: REPLState, user_input: str, context: str) -> None:

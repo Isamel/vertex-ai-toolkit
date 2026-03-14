@@ -375,15 +375,20 @@ def ask(
     # Execute with or without skill
     context_file_paths = [str(f) for f in files] if files else []
 
-    # Auto-detect skill if requested and no explicit skill specified
-    if auto_skill and not skill:
+    # Auto-detect skill if requested (or enabled in config) and no explicit skill specified
+    effective_auto_skill = auto_skill or settings.skills.auto_routing
+    if effective_auto_skill and not skill:
         registry = SkillRegistry(settings)
         suggestions = registry.suggest_skill(question)
         if suggestions:
             best_name, best_score = suggestions[0]
-            if best_score >= 1.0:  # Only auto-select if score is meaningful
+            threshold = settings.skills.auto_routing_threshold
+            if best_score >= threshold:
                 skill = best_name
-                console.print(f"[dim]Auto-selected skill: [cyan]{skill}[/cyan] (score: {best_score:.1f})[/dim]")
+                console.print(
+                    f"[dim]🎯 Auto-routing to skill: [cyan]{skill}[/cyan] "
+                    f"(score: {best_score:.1f})[/dim]"
+                )
             else:
                 console.print(
                     f"[dim]Suggested skills: {', '.join(f'{n} ({s:.1f})' for n, s in suggestions)}[/dim]"
@@ -719,17 +724,22 @@ def live(
         settings, cluster=cluster, namespace=namespace, project_id=effective_project, location=location,
     )
 
-    # Auto-detect skill if requested and no explicit skill specified
-    if auto_skill and not skill:
+    # Auto-detect skill if requested (or enabled in config) and no explicit skill specified
+    effective_auto_skill = auto_skill or settings.skills.auto_routing
+    if effective_auto_skill and not skill:
         from vaig.skills.registry import SkillRegistry
 
         registry = SkillRegistry(settings)
         suggestions = registry.suggest_skill(question)
         if suggestions:
             best_name, best_score = suggestions[0]
-            if best_score >= 1.0:  # Only auto-select if score is meaningful
+            threshold = settings.skills.auto_routing_threshold
+            if best_score >= threshold:
                 skill = best_name
-                console.print(f"[dim]Auto-selected skill: [cyan]{skill}[/cyan] (score: {best_score:.1f})[/dim]")
+                console.print(
+                    f"[dim]🎯 Auto-routing to skill: [cyan]{skill}[/cyan] "
+                    f"(score: {best_score:.1f})[/dim]"
+                )
             else:
                 console.print(
                     f"[dim]Suggested skills: {', '.join(f'{n} ({s:.1f})' for n, s in suggestions)}[/dim]"

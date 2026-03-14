@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from vaig.skills.base import SkillMetadata, SkillPhase
@@ -232,3 +234,244 @@ class TestSuggestSkill:
         # Query that matches many skills via "sre" tag
         suggestions = _mock_registry.suggest_skill("sre incident logs debugging metrics cost audit")
         assert len(suggestions) <= 3
+
+
+# ── SkillsConfig auto_routing defaults ──────────────────────
+
+
+class TestSkillsConfigAutoRouting:
+    def test_auto_routing_default_enabled(self) -> None:
+        from vaig.core.config import SkillsConfig
+
+        cfg = SkillsConfig()
+        assert cfg.auto_routing is True
+
+    def test_auto_routing_default_threshold(self) -> None:
+        from vaig.core.config import SkillsConfig
+
+        cfg = SkillsConfig()
+        assert cfg.auto_routing_threshold == 1.5
+
+    def test_auto_routing_can_be_disabled(self) -> None:
+        from vaig.core.config import SkillsConfig
+
+        cfg = SkillsConfig(auto_routing=False)
+        assert cfg.auto_routing is False
+
+    def test_auto_routing_threshold_configurable(self) -> None:
+        from vaig.core.config import SkillsConfig
+
+        cfg = SkillsConfig(auto_routing_threshold=2.0)
+        assert cfg.auto_routing_threshold == 2.0
+
+
+# ── _try_auto_route_skill (REPL integration) ────────────────
+
+
+def _make_repl_state(
+    *,
+    auto_routing: bool = True,
+    threshold: float = 1.5,
+) -> MagicMock:
+    """Create a mock REPLState for auto-routing tests."""
+    from vaig.core.config import SkillsConfig
+
+    state = MagicMock()
+    state.settings.skills = SkillsConfig(
+        enabled=[],
+        auto_routing=auto_routing,
+        auto_routing_threshold=threshold,
+    )
+    state.active_skill = None
+    state.current_phase = SkillPhase.ANALYZE
+    return state
+
+
+class TestTryAutoRouteSkill:
+    """Tests for the _try_auto_route_skill REPL function."""
+
+    def test_returns_false_when_disabled(self) -> None:
+        from vaig.cli.repl import _try_auto_route_skill
+
+        state = _make_repl_state(auto_routing=False)
+        result = _try_auto_route_skill(state, "debug my incident logs")
+        assert result is False
+
+    def test_returns_false_when_no_suggestions(self) -> None:
+        from vaig.cli.repl import _try_auto_route_skill
+
+        state = _make_repl_state()
+        state.skill_registry.suggest_skill.return_value = []
+        result = _try_auto_route_skill(state, "meaning of life")
+        assert result is False
+
+    def test_returns_false_when_below_threshold(self) -> None:
+        from vaig.cli.repl import _try_auto_route_skill
+
+        state = _make_repl_state(threshold=2.0)
+        state.skill_registry.suggest_skill.return_value = [("rca", 1.5)]
+        result = _try_auto_route_skill(state, "debug pods")
+        assert result is False
+        # Should NOT have set active_skill
+        assert state.active_skill is None
+
+    def test_returns_true_and_sets_skill_when_above_threshold(self) -> None:
+        from vaig.cli.repl import _try_auto_route_skill
+
+        state = _make_repl_state(threshold=1.0)
+        fake_skill = MagicMock()
+        state.skill_registry.suggest_skill.return_value = [("rca", 2.0)]
+        state.skill_registry.get.return_value = fake_skill
+
+        result = _try_auto_route_skill(state, "debug incident logs")
+        assert result is True
+        assert state.active_skill is fake_skill
+        assert state.current_phase == SkillPhase.ANALYZE
+
+    def test_returns_false_when_skill_not_found(self) -> None:
+        from vaig.cli.repl import _try_auto_route_skill
+
+        state = _make_repl_state(threshold=1.0)
+        state.skill_registry.suggest_skill.return_value = [("nonexistent", 2.0)]
+        state.skill_registry.get.return_value = None
+
+        result = _try_auto_route_skill(state, "something")
+        assert result is False
+
+    def test_uses_config_threshold(self) -> None:
+        from vaig.cli.repl import _try_auto_route_skill
+
+        # Threshold is 1.5, score is 1.4 — should NOT route
+        state = _make_repl_state(threshold=1.5)
+        state.skill_registry.suggest_skill.return_value = [("rca", 1.4)]
+        result = _try_auto_route_skill(state, "debug logs")
+        assert result is False
+
+        # Now threshold is 1.0, score is 1.4 — should route
+        state2 = _make_repl_state(threshold=1.0)
+        fake_skill = MagicMock()
+        state2.skill_registry.suggest_skill.return_value = [("rca", 1.4)]
+        state2.skill_registry.get.return_value = fake_skill
+        result2 = _try_auto_route_skill(state2, "debug logs")
+        assert result2 is True
+
+    def test_does_not_override_explicit_skill(self) -> None:
+        """When a user explicitly set a skill, _handle_chat should skip auto-routing."""
+        # This tests the _handle_chat logic path — if active_skill is set,
+        # it goes to _handle_skill_chat directly without calling _try_auto_route_skill
+        from vaig.cli.repl import _try_auto_route_skill
+
+        state = _make_repl_state()
+        # Simulate explicit skill already set — _try_auto_route_skill
+        # should never be called in this case (tested via _handle_chat)
+        # But if called anyway, it would still work normally
+        state.skill_registry.suggest_skill.return_value = [("cost-analysis", 2.0)]
+        fake_skill = MagicMock()
+        state.skill_registry.get.return_value = fake_skill
+        result = _try_auto_route_skill(state, "cloud cost optimization")
+        assert result is True
+
+    def test_picks_highest_scoring_skill(self) -> None:
+        from vaig.cli.repl import _try_auto_route_skill
+
+        state = _make_repl_state(threshold=1.0)
+        fake_skill = MagicMock()
+        # suggest_skill returns sorted by score desc — first is best
+        state.skill_registry.suggest_skill.return_value = [
+            ("rca", 2.5),
+            ("log-analysis", 2.0),
+            ("config-audit", 1.0),
+        ]
+        state.skill_registry.get.return_value = fake_skill
+
+        result = _try_auto_route_skill(state, "incident debugging with logs")
+        assert result is True
+        # Should have called get with the FIRST (highest scoring) skill
+        state.skill_registry.get.assert_called_once_with("rca")
+
+
+# ── Auto-routing in _handle_chat (integration) ──────────────
+
+
+class TestHandleChatAutoRouting:
+    """Integration tests verifying auto-routing wiring in _handle_chat."""
+
+    def test_auto_route_activates_skill_then_clears(self) -> None:
+        """Auto-routed skill should be active during chat, cleared after."""
+        from vaig.cli.repl import _handle_chat
+
+        state = _make_repl_state(threshold=1.0)
+        fake_skill = MagicMock()
+        fake_skill.get_metadata.return_value = SkillMetadata(
+            name="rca", display_name="RCA", description="Root cause analysis",
+        )
+        state.skill_registry.suggest_skill.return_value = [("rca", 2.0)]
+        state.skill_registry.get.return_value = fake_skill
+        state.code_mode = False
+        state.context_builder.bundle.file_count = 0
+
+        with patch("vaig.cli.repl._handle_skill_chat") as mock_skill_chat, \
+             patch("vaig.cli.repl._handle_direct_chat") as mock_direct_chat:
+            _handle_chat(state, "incident debugging logs")
+
+            # Should have used skill chat, NOT direct chat
+            mock_skill_chat.assert_called_once()
+            mock_direct_chat.assert_not_called()
+
+        # After _handle_chat, skill should be cleared
+        assert state.active_skill is None
+        assert state.current_phase == SkillPhase.ANALYZE
+
+    def test_no_auto_route_when_disabled(self) -> None:
+        """When auto_routing is False, should fall through to direct chat."""
+        from vaig.cli.repl import _handle_chat
+
+        state = _make_repl_state(auto_routing=False)
+        state.code_mode = False
+        state.context_builder.bundle.file_count = 0
+
+        with patch("vaig.cli.repl._handle_direct_chat") as mock_direct, \
+             patch("vaig.cli.repl._handle_skill_chat") as mock_skill:
+            _handle_chat(state, "incident debugging logs")
+
+            mock_direct.assert_called_once()
+            mock_skill.assert_not_called()
+
+    def test_explicit_skill_not_overridden(self) -> None:
+        """When user already activated a skill, auto-routing should NOT interfere."""
+        from vaig.cli.repl import _handle_chat
+
+        state = _make_repl_state(threshold=1.0)
+        explicit_skill = MagicMock()
+        explicit_skill.get_metadata.return_value = SkillMetadata(
+            name="cost-analysis", display_name="Cost Analysis",
+            description="Analyze costs",
+        )
+        state.active_skill = explicit_skill  # User set this explicitly
+        state.code_mode = False
+        state.context_builder.bundle.file_count = 0
+
+        with patch("vaig.cli.repl._handle_skill_chat") as mock_skill, \
+             patch("vaig.cli.repl._try_auto_route_skill") as mock_auto:
+            _handle_chat(state, "some query")
+
+            # Should use skill chat with the explicit skill
+            mock_skill.assert_called_once()
+            # Should NOT have called auto-route at all
+            mock_auto.assert_not_called()
+
+    def test_low_score_falls_to_direct_chat(self) -> None:
+        """When auto-routing scores below threshold, should use direct chat."""
+        from vaig.cli.repl import _handle_chat
+
+        state = _make_repl_state(threshold=1.5)
+        state.skill_registry.suggest_skill.return_value = [("rca", 0.5)]
+        state.code_mode = False
+        state.context_builder.bundle.file_count = 0
+
+        with patch("vaig.cli.repl._handle_direct_chat") as mock_direct, \
+             patch("vaig.cli.repl._handle_skill_chat") as mock_skill:
+            _handle_chat(state, "what is kubernetes")
+
+            mock_direct.assert_called_once()
+            mock_skill.assert_not_called()
