@@ -17,6 +17,7 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
 - **Multi-agent orchestration** — skills spawn specialized agents with different roles and models
 - **Async fanout** — true parallel agent execution via ThreadPoolExecutor for multi-agent workflows
 - **Cost tracking** — per-request token and cost tracking with live CLI display and export report summaries
+- **Usage telemetry** — local-only event capture (tool calls, API usage, errors) with `vaig stats` for analytics and export
 - **Token budget enforcement** — configurable spending limits per session with warn/stop actions
 - **Plugin tool registration** — extend the toolkit with custom Python modules or MCP servers
 - **Safety settings** — configurable harm category thresholds for Gemini API content filtering
@@ -119,6 +120,18 @@ List available skills.
 ### `vaig skills info SKILL_NAME`
 
 Show detailed info about a skill, including its agents.
+
+### `vaig stats show`
+
+Show usage telemetry summary (event counts, tokens, costs). Supports `--since` and `--until` date filters.
+
+### `vaig stats export`
+
+Export telemetry events as JSONL or CSV. Supports `--type`, `--since`, `--format`, and `--output` filters.
+
+### `vaig stats clear --days N --confirm`
+
+Delete telemetry events older than N days.
 
 ## REPL Slash Commands
 
@@ -253,6 +266,10 @@ generation:
 session:
   db_path: "~/.vaig/sessions.db"
   auto_save: true
+
+telemetry:
+  enabled: true            # Disable with false; or env VAIG_TELEMETRY_ENABLED=false
+  buffer_size: 50          # Events buffered before flush to SQLite
 
 skills:
   enabled: [rca, anomaly, migration]

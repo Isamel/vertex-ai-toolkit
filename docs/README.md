@@ -16,6 +16,7 @@
 | [Sessions Guide](sessions-guide.md) | Session persistence, search, and history management |
 | [Export Guide](export-guide.md) | Export results to JSON, Markdown, or HTML |
 | [MCP Guide](mcp-guide.md) | Model Context Protocol server integration |
+| [Telemetry Guide](telemetry-guide.md) | Local-only usage telemetry, analytics, and event export |
 | [Advanced Usage](advanced.md) | Composite skills, chunked processing, custom skills, and workspace mode |
 
 ## Architecture Overview

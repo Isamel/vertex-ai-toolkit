@@ -295,6 +295,57 @@ vaig skills create my-audit -d "Custom security audit" -t "security,audit"
 vaig skills create etl-review -d "ETL pipeline review" -o ./skills/
 ```
 
+### `vaig stats`
+
+View and manage usage telemetry data. See [Telemetry Guide](telemetry-guide.md) for full details.
+
+#### `vaig stats show`
+
+```bash
+vaig stats show [--since DATE] [--until DATE]
+```
+
+Display a usage summary with event counts, token totals, and cost estimates.
+
+```bash
+vaig stats show
+vaig stats show --since 2024-01-01 --until 2024-12-31
+```
+
+#### `vaig stats export`
+
+```bash
+vaig stats export [OPTIONS]
+```
+
+Export raw telemetry events for external analysis.
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--format` | `-f` | Export format: `jsonl`, `csv` | `jsonl` |
+| `--output` | `-o` | Output file path | stdout |
+| `--type` | `-t` | Filter by event type | All types |
+| `--since` | | Start date (ISO 8601) | — |
+| `--until` | | End date (ISO 8601) | — |
+
+```bash
+vaig stats export
+vaig stats export --format csv --output usage.csv
+vaig stats export --type tool_call --since 2024-01-01
+```
+
+#### `vaig stats clear`
+
+```bash
+vaig stats clear --days N --confirm
+```
+
+Remove telemetry events older than N days. Requires `--confirm` flag.
+
+```bash
+vaig stats clear --days 30 --confirm
+```
+
 ### `vaig mcp`
 
 Manage MCP (Model Context Protocol) servers.
