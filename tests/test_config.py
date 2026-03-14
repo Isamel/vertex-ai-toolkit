@@ -18,6 +18,8 @@ from vaig.core.config import (
     ModelInfo,
     ModelsConfig,
     PluginConfig,
+    SafetyConfig,
+    SafetySettingConfig,
     SessionConfig,
     Settings,
     SkillsConfig,
@@ -522,3 +524,105 @@ class TestPluginConfig:
         settings = Settings()
         assert settings.plugins.enabled is False
         assert settings.plugins.directories == []
+
+
+# ══════════════════════════════════════════════════════════════
+# SafetyConfig / SafetySettingConfig
+# ══════════════════════════════════════════════════════════════
+
+
+class TestSafetySettingConfig:
+    """Tests for SafetySettingConfig model."""
+
+    def test_requires_category(self) -> None:
+        cfg = SafetySettingConfig(category="HARM_CATEGORY_HARASSMENT")
+        assert cfg.category == "HARM_CATEGORY_HARASSMENT"
+        assert cfg.threshold == "BLOCK_MEDIUM_AND_ABOVE"
+
+    def test_custom_threshold(self) -> None:
+        cfg = SafetySettingConfig(
+            category="HARM_CATEGORY_HATE_SPEECH",
+            threshold="BLOCK_ONLY_HIGH",
+        )
+        assert cfg.category == "HARM_CATEGORY_HATE_SPEECH"
+        assert cfg.threshold == "BLOCK_ONLY_HIGH"
+
+    def test_block_none_threshold(self) -> None:
+        cfg = SafetySettingConfig(
+            category="HARM_CATEGORY_DANGEROUS_CONTENT",
+            threshold="BLOCK_NONE",
+        )
+        assert cfg.threshold == "BLOCK_NONE"
+
+
+class TestSafetyConfig:
+    """Tests for SafetyConfig model."""
+
+    def test_defaults(self) -> None:
+        cfg = SafetyConfig()
+        assert cfg.enabled is True
+        assert cfg.settings == []
+
+    def test_disabled(self) -> None:
+        cfg = SafetyConfig(enabled=False)
+        assert cfg.enabled is False
+
+    def test_with_settings(self) -> None:
+        cfg = SafetyConfig(
+            enabled=True,
+            settings=[
+                SafetySettingConfig(category="HARM_CATEGORY_HARASSMENT"),
+                SafetySettingConfig(
+                    category="HARM_CATEGORY_HATE_SPEECH",
+                    threshold="BLOCK_LOW_AND_ABOVE",
+                ),
+            ],
+        )
+        assert len(cfg.settings) == 2
+        assert cfg.settings[0].category == "HARM_CATEGORY_HARASSMENT"
+        assert cfg.settings[0].threshold == "BLOCK_MEDIUM_AND_ABOVE"
+        assert cfg.settings[1].threshold == "BLOCK_LOW_AND_ABOVE"
+
+    def test_safety_in_settings_defaults(self) -> None:
+        settings = Settings()
+        assert hasattr(settings, "safety")
+        assert isinstance(settings.safety, SafetyConfig)
+        assert settings.safety.enabled is True
+        assert settings.safety.settings == []
+
+    def test_safety_from_yaml_data(self) -> None:
+        settings = Settings(
+            safety={  # type: ignore[arg-type]
+                "enabled": True,
+                "settings": [
+                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
+                ],
+            },
+        )
+        assert settings.safety.enabled is True
+        assert len(settings.safety.settings) == 1
+        assert settings.safety.settings[0].category == "HARM_CATEGORY_HARASSMENT"
+        assert settings.safety.settings[0].threshold == "BLOCK_ONLY_HIGH"
+
+    def test_backward_compat_without_safety(self) -> None:
+        """Existing configs without safety section should use defaults."""
+        settings = Settings()
+        assert settings.safety.enabled is True
+        assert settings.safety.settings == []
+
+    def test_safety_from_yaml_file(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "safety:\n"
+            "  enabled: true\n"
+            "  settings:\n"
+            "    - category: HARM_CATEGORY_HARASSMENT\n"
+            "      threshold: BLOCK_LOW_AND_ABOVE\n"
+            "    - category: HARM_CATEGORY_HATE_SPEECH\n"
+        )
+        s = Settings.load(config_file)
+        assert s.safety.enabled is True
+        assert len(s.safety.settings) == 2
+        assert s.safety.settings[0].threshold == "BLOCK_LOW_AND_ABOVE"
+        # Second entry uses default threshold
+        assert s.safety.settings[1].threshold == "BLOCK_MEDIUM_AND_ABOVE"

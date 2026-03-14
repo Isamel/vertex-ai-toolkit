@@ -166,3 +166,24 @@ plugins:
   directories: []                   # Paths to directories containing plugin modules
   # - "./plugins"
   # - "~/.vaig/plugins"
+
+safety:
+  enabled: true                     # Set to false to skip sending safety settings entirely
+  settings: []                      # List of safety settings — example:
+  # Available categories:
+  #   HARM_CATEGORY_HARASSMENT, HARM_CATEGORY_HATE_SPEECH,
+  #   HARM_CATEGORY_SEXUALLY_EXPLICIT, HARM_CATEGORY_DANGEROUS_CONTENT,
+  #   HARM_CATEGORY_CIVIC_INTEGRITY
+  # Available thresholds:
+  #   BLOCK_LOW_AND_ABOVE, BLOCK_MEDIUM_AND_ABOVE, BLOCK_ONLY_HIGH, BLOCK_NONE, OFF
+  # Notes:
+  #   - BLOCK_NONE/OFF may be rejected by some Vertex AI projects
+  #   - HARM_CATEGORY_CIVIC_INTEGRITY is not supported in all regions
+  # - category: "HARM_CATEGORY_HARASSMENT"
+  #   threshold: "BLOCK_MEDIUM_AND_ABOVE"
+  # - category: "HARM_CATEGORY_HATE_SPEECH"
+  #   threshold: "BLOCK_MEDIUM_AND_ABOVE"
+  # - category: "HARM_CATEGORY_SEXUALLY_EXPLICIT"
+  #   threshold: "BLOCK_MEDIUM_AND_ABOVE"
+  # - category: "HARM_CATEGORY_DANGEROUS_CONTENT"
+  #   threshold: "BLOCK_MEDIUM_AND_ABOVE"

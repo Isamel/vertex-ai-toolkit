@@ -297,6 +297,18 @@ class GeminiClient:
             kwargs["system_instruction"] = system_instruction
         if tools is not None:
             kwargs["tools"] = tools
+
+        # ── Safety settings ───────────────────────────────────
+        safety_cfg = self._settings.safety
+        if safety_cfg.enabled and safety_cfg.settings:
+            kwargs["safety_settings"] = [
+                types.SafetySetting(
+                    category=s.category,
+                    threshold=s.threshold,
+                )
+                for s in safety_cfg.settings
+            ]
+
         return types.GenerateContentConfig(**kwargs)
 
     # ── Retry logic ───────────────────────────────────────────

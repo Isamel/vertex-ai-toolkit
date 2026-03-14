@@ -208,6 +208,29 @@ class PluginConfig(BaseModel):
     directories: list[str] = Field(default_factory=list)
 
 
+class SafetySettingConfig(BaseModel):
+    """A single safety setting mapping a harm category to a block threshold.
+
+    Attributes:
+        category: Harm category name (e.g. ``HARM_CATEGORY_HARASSMENT``).
+        threshold: Block threshold (e.g. ``BLOCK_MEDIUM_AND_ABOVE``).
+    """
+
+    category: str
+    threshold: str = "BLOCK_MEDIUM_AND_ABOVE"
+
+
+class SafetyConfig(BaseModel):
+    """Safety settings for Gemini API content filtering.
+
+    When ``enabled`` is True and ``settings`` is non-empty, the configured
+    safety thresholds are passed to every ``GenerateContentConfig``.
+    """
+
+    enabled: bool = True
+    settings: list[SafetySettingConfig] = Field(default_factory=list)
+
+
 class BudgetConfig(BaseModel):
     """Token budget tracking configuration.
 
@@ -281,6 +304,7 @@ class Settings(BaseSettings):
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     plugins: PluginConfig = Field(default_factory=PluginConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
+    safety: SafetyConfig = Field(default_factory=SafetyConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> Settings:

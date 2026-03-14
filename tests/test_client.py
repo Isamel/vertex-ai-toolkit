@@ -12,6 +12,8 @@ from vaig.core.config import (
     GenerationConfig,
     ModelInfo,
     ModelsConfig,
+    SafetyConfig,
+    SafetySettingConfig,
     Settings,
     reset_settings,
 )
@@ -327,6 +329,78 @@ class TestBuildGenerationConfig:
 
         call_kwargs = mock_gen_config_cls.call_args[1]
         assert call_kwargs["system_instruction"] == "Be concise."
+
+    @patch("vaig.core.client.types.SafetySetting")
+    @patch("vaig.core.client.types.GenerateContentConfig")
+    def test_safety_settings_included_when_configured(
+        self,
+        mock_gen_config_cls: MagicMock,
+        mock_safety_setting_cls: MagicMock,
+        settings: Settings,
+    ) -> None:
+        """safety_settings are passed to GenerateContentConfig when enabled + non-empty."""
+        settings.safety = SafetyConfig(
+            enabled=True,
+            settings=[
+                SafetySettingConfig(
+                    category="HARM_CATEGORY_HARASSMENT",
+                    threshold="BLOCK_ONLY_HIGH",
+                ),
+                SafetySettingConfig(
+                    category="HARM_CATEGORY_HATE_SPEECH",
+                    threshold="BLOCK_LOW_AND_ABOVE",
+                ),
+            ],
+        )
+        client = GeminiClient(settings)
+
+        mock_safety_setting_cls.side_effect = lambda **kw: kw
+
+        client._build_generation_config()
+
+        call_kwargs = mock_gen_config_cls.call_args[1]
+        assert "safety_settings" in call_kwargs
+        assert len(call_kwargs["safety_settings"]) == 2
+        assert call_kwargs["safety_settings"][0] == {
+            "category": "HARM_CATEGORY_HARASSMENT",
+            "threshold": "BLOCK_ONLY_HIGH",
+        }
+        assert call_kwargs["safety_settings"][1] == {
+            "category": "HARM_CATEGORY_HATE_SPEECH",
+            "threshold": "BLOCK_LOW_AND_ABOVE",
+        }
+
+    @patch("vaig.core.client.types.GenerateContentConfig")
+    def test_safety_settings_omitted_when_disabled(
+        self,
+        mock_gen_config_cls: MagicMock,
+        settings: Settings,
+    ) -> None:
+        """safety_settings NOT passed when safety.enabled is False."""
+        settings.safety = SafetyConfig(
+            enabled=False,
+            settings=[
+                SafetySettingConfig(category="HARM_CATEGORY_HARASSMENT"),
+            ],
+        )
+        client = GeminiClient(settings)
+
+        client._build_generation_config()
+
+        call_kwargs = mock_gen_config_cls.call_args[1]
+        assert "safety_settings" not in call_kwargs
+
+    @patch("vaig.core.client.types.GenerateContentConfig")
+    def test_safety_settings_omitted_when_empty(
+        self,
+        mock_gen_config_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """safety_settings NOT passed when settings list is empty (default)."""
+        client._build_generation_config()
+
+        call_kwargs = mock_gen_config_cls.call_args[1]
+        assert "safety_settings" not in call_kwargs
 
 
 # ── TestBuildHistory ─────────────────────────────────────────
