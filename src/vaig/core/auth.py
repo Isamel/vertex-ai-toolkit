@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from typing import TYPE_CHECKING
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any
 
 import google.auth
+from google.auth import exceptions as auth_exceptions
 from google.auth import impersonated_credentials
 from google.auth.credentials import Credentials
 from google.oauth2.credentials import Credentials as OAuth2Credentials
@@ -18,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 # Scopes required for Vertex AI
 _VERTEX_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
+
+# gcloud access tokens typically expire after 1 hour
+_GCLOUD_TOKEN_LIFETIME = timedelta(hours=1)
 
 
 def get_credentials(settings: Settings) -> Credentials:
@@ -80,12 +85,12 @@ def _get_adc_credentials() -> Credentials:
         return _get_gcloud_token_credentials()
 
 
-def _get_gcloud_token_credentials() -> Credentials:
-    """Get credentials from the active gcloud CLI session.
+def _fetch_gcloud_access_token() -> str:
+    """Run ``gcloud auth print-access-token`` and return the raw token string.
 
-    Runs ``gcloud auth print-access-token`` to obtain a short-lived
-    OAuth2 access token.  This is a convenience fallback — the token
-    is NOT automatically refreshed and will expire (typically 1 h).
+    Raises:
+        RuntimeError: If gcloud is not installed, not authenticated, or
+            the command fails for any reason.
     """
     try:
         result = subprocess.run(  # noqa: S603, S607
@@ -94,23 +99,91 @@ def _get_gcloud_token_credentials() -> Credentials:
             text=True,
             timeout=10,
         )
-        token = result.stdout.strip()
-
-        if not token or result.returncode != 0:
-            msg = (
-                "Could not obtain credentials. Either:\n"
-                "  1. Run: gcloud auth application-default login\n"
-                "  2. Run: gcloud auth login\n"
-                "  3. Set GOOGLE_APPLICATION_CREDENTIALS env var"
-            )
-            raise RuntimeError(msg)
-
-        logger.info("Using gcloud CLI access token (short-lived, ~1h)")
-        return OAuth2Credentials(token=token)
-
     except FileNotFoundError as exc:
         msg = "gcloud CLI not found. Install Google Cloud SDK or set up ADC."
         raise RuntimeError(msg) from exc
+    except subprocess.TimeoutExpired as exc:
+        msg = "gcloud auth print-access-token timed out after 10s."
+        raise RuntimeError(msg) from exc
+
+    token = result.stdout.strip()
+
+    if not token or result.returncode != 0:
+        stderr_hint = result.stderr.strip() if result.stderr else ""
+        msg = (
+            "Could not obtain credentials. Either:\n"
+            "  1. Run: gcloud auth application-default login\n"
+            "  2. Run: gcloud auth login\n"
+            "  3. Set GOOGLE_APPLICATION_CREDENTIALS env var"
+        )
+        if stderr_hint:
+            msg += f"\n\ngcloud stderr: {stderr_hint}"
+        raise RuntimeError(msg)
+
+    return token
+
+
+def _gcloud_refresh_handler(
+    request: Any,  # noqa: ARG001 — unused but required by google-auth API
+    scopes: Any = None,  # noqa: ARG001
+) -> tuple[str, datetime]:
+    """Refresh handler that fetches a fresh token via gcloud CLI.
+
+    This callback is invoked by ``google.oauth2.credentials.Credentials.refresh()``
+    when the current access token is expired or about to expire.  It is
+    thread-safe: ``google-auth`` serialises calls to ``before_request()``
+    internally, and our ``_fetch_gcloud_access_token()`` is stateless.
+
+    Returns:
+        Tuple of (access_token, expiry_datetime_utc).
+
+    Raises:
+        google.auth.exceptions.RefreshError: If the token cannot be refreshed
+            (wraps the underlying RuntimeError with a user-friendly message).
+    """
+    try:
+        token = _fetch_gcloud_access_token()
+    except RuntimeError as exc:
+        raise auth_exceptions.RefreshError(
+            "Failed to refresh gcloud access token. "
+            "Please re-authenticate with: gcloud auth login"
+        ) from exc
+
+    # google-auth internally uses naive UTC datetimes (via _helpers.utcnow()),
+    # so the refresh_handler must return a naive UTC expiry to avoid
+    # comparison errors in Credentials.refresh().
+    expiry = datetime.now(tz=timezone.utc).replace(tzinfo=None) + _GCLOUD_TOKEN_LIFETIME
+    logger.debug("gcloud token refreshed, new expiry: %s", expiry)
+    return token, expiry
+
+
+def _get_gcloud_token_credentials() -> Credentials:
+    """Get credentials from the active gcloud CLI session with auto-refresh.
+
+    Runs ``gcloud auth print-access-token`` to obtain a short-lived
+    OAuth2 access token.  Unlike the previous implementation, this version
+    registers a ``refresh_handler`` so that the google-auth library
+    automatically re-fetches a fresh token when the current one expires
+    (typically after 1 hour).
+
+    The refresh is handled transparently by ``Credentials.before_request()``,
+    which checks token expiry before every API call.  The ``refresh_handler``
+    callback runs ``gcloud auth print-access-token`` again to obtain a new
+    token — no user interaction required as long as the gcloud session is
+    still valid.
+    """
+    token = _fetch_gcloud_access_token()
+    # Use naive UTC to match google-auth's internal convention
+    expiry = datetime.now(tz=timezone.utc).replace(tzinfo=None) + _GCLOUD_TOKEN_LIFETIME
+
+    credentials = OAuth2Credentials(
+        token=token,
+        expiry=expiry,
+        refresh_handler=_gcloud_refresh_handler,
+    )
+
+    logger.info("Using gcloud CLI access token (auto-refresh enabled, ~1h lifetime)")
+    return credentials
 
 
 def _get_impersonated_credentials(
