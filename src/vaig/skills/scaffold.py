@@ -168,12 +168,14 @@ def scaffold_skill(
 
     # __init__.py
     (skill_dir / "__init__.py").write_text(
-        _INIT_TEMPLATE.format(display_name=display_name, description=description)
+        _INIT_TEMPLATE.format(display_name=display_name, description=description),
+        encoding="utf-8",
     )
 
     # prompts.py
     (skill_dir / "prompts.py").write_text(
-        _PROMPTS_TEMPLATE.format(display_name=display_name)
+        _PROMPTS_TEMPLATE.format(display_name=display_name),
+        encoding="utf-8",
     )
 
     # skill.py — determine the import path
@@ -194,7 +196,8 @@ def scaffold_skill(
             skill_name=kebab,
             tags=tags_repr,
             prompts_import=prompts_import,
-        )
+        ),
+        encoding="utf-8",
     )
 
     return skill_dir

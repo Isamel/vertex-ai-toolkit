@@ -397,7 +397,7 @@ def ask(
 def _save_output(output: Path, content: str) -> None:
     """Write response content to a file and print confirmation."""
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(content)
+    output.write_text(content, encoding="utf-8")
     console.print(f"[green]✓ Response saved to {output}[/green]")
 
 

@@ -66,7 +66,7 @@ def build_file_filter(settings: Settings, root_dir: Path) -> pathspec.PathSpec:
     gitignore = root_dir / ".gitignore"
     if gitignore.exists():
         try:
-            gitignore_patterns = gitignore.read_text().splitlines()
+            gitignore_patterns = gitignore.read_text(encoding="utf-8").splitlines()
             patterns.extend(gitignore_patterns)
             logger.debug("Loaded %d patterns from .gitignore", len(gitignore_patterns))
         except OSError:

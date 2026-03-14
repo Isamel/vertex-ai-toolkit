@@ -306,7 +306,7 @@ class Settings(BaseSettings):
             if p is not None:
                 resolved = Path(p).expanduser()
                 if resolved.exists():
-                    yaml_data = yaml.safe_load(resolved.read_text()) or {}
+                    yaml_data = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
                     break
 
         # Strip empty strings so env vars can take precedence

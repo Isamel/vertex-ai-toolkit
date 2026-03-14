@@ -166,7 +166,7 @@ class TaskManager:
     def save(self) -> None:
         """Save tasks to the JSON file."""
         data = [t.to_dict() for t in self.tasks]
-        self.storage_path.write_text(json.dumps(data, indent=2))
+        self.storage_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         logger.info("Saved %d tasks to %s", len(data), self.storage_path)
 
     def stats(self) -> dict[str, int]:
