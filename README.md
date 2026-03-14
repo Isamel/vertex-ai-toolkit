@@ -23,6 +23,7 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
 - **Dual-auth** — separate GCP project authentication for Vertex AI vs GKE observability via SA impersonation
 - **Runtime config switching** — change GCP project, location, or GKE cluster at runtime without restarting
 - **GKE live diagnostics** — connect to GKE clusters for pod inspection, log analysis, and metric queries
+- **ASM/Istio mesh introspection** — service mesh overview, traffic config, security policies, and sidecar status
 - **Configurable auth** — Application Default Credentials (ADC) for GKE, service account impersonation for local dev
 - **Cross-platform** — UTF-8 enforcement on all file I/O for Windows compatibility
 
@@ -498,6 +499,96 @@ skills:
   custom_dir: "~/.vaig/skills"
 ```
 
+## Anthos Service Mesh / Istio Introspection
+
+VAIG includes 4 read-only diagnostic tools for GKE clusters running Anthos Service Mesh (ASM) or open-source Istio. All tools are safe to run in production — they only read cluster state, never mutate it.
+
+### Prerequisites
+
+- A GKE cluster with ASM or Istio installed
+- RBAC permissions to read Istio CRDs (`networking.istio.io`, `security.istio.io`) and pods/namespaces
+- When ASM/Istio is **not** installed, tools return `"No service mesh detected"` gracefully — no errors
+
+### Tools
+
+#### `get_mesh_overview`
+
+Shows mesh presence, version, control plane health, and per-namespace sidecar injection status.
+
+| Parameter       | Type   | Default | Description                          |
+| --------------- | ------ | ------- | ------------------------------------ |
+| `namespace`     | `str`  | `""`    | Filter to a single namespace         |
+| `force_refresh` | `bool` | `false` | Bypass 30s TTL cache                 |
+
+What the agent can diagnose:
+- Is a service mesh installed? Managed ASM or open-source Istio?
+- What Istio version is running? Is istiod healthy (replica count)?
+- Which namespaces have sidecar injection enabled vs disabled?
+- Are any namespaces using a specific revision label (e.g., `asm-managed-rapid`)?
+
+#### `get_mesh_config`
+
+Lists VirtualServices, DestinationRules, and Gateways with traffic routing details.
+
+| Parameter       | Type   | Default | Description                          |
+| --------------- | ------ | ------- | ------------------------------------ |
+| `namespace`     | `str`  | `""`    | Filter to a single namespace         |
+| `force_refresh` | `bool` | `false` | Bypass 30s TTL cache                 |
+
+What the agent can diagnose:
+- Traffic splitting: which VirtualService routes what percentage to which subset?
+- Gateway configuration: ports, TLS mode, host bindings
+- DestinationRule policies: load balancer settings, connection pools, outlier detection
+- Missing or misconfigured routing rules causing 503s or unexpected traffic behavior
+
+#### `get_mesh_security`
+
+Shows PeerAuthentication (mTLS), AuthorizationPolicy (RBAC), and RequestAuthentication (JWT) resources.
+
+| Parameter       | Type   | Default | Description                          |
+| --------------- | ------ | ------- | ------------------------------------ |
+| `namespace`     | `str`  | `""`    | Filter to a single namespace         |
+| `force_refresh` | `bool` | `false` | Bypass 30s TTL cache                 |
+
+What the agent can diagnose:
+- mTLS enforcement: which namespaces use STRICT vs PERMISSIVE mode?
+- Port-level mTLS overrides that might create security gaps
+- Authorization policies: who can call what (principals, namespaces, methods, paths)?
+- JWT validation rules: expected issuers and audiences
+- Conflicting allow/deny policies that block legitimate traffic
+
+#### `get_sidecar_status`
+
+Checks per-pod sidecar injection status and identifies anomalies.
+
+| Parameter       | Type   | Default | Description                          |
+| --------------- | ------ | ------- | ------------------------------------ |
+| `namespace`     | `str`  | `""`    | Filter to a single namespace         |
+| `force_refresh` | `bool` | `false` | Bypass 30s TTL cache                 |
+
+What the agent can diagnose:
+- Which pods have the `istio-proxy` sidecar and which don't?
+- **MISSING** anomaly: pod in an injection-enabled namespace without a sidecar (likely needs a restart)
+- **UNEXPECTED** anomaly: pod with a sidecar in a non-injected namespace
+- Sidecar version mismatches across pods
+- Coverage statistics: what percentage of pods are in the mesh?
+
+### Use Cases
+
+- **mTLS debugging** — "Why can't service A talk to service B?" → check PeerAuthentication mode, look for STRICT mTLS blocking a non-mesh client
+- **Traffic routing analysis** — "Why is canary getting 0% traffic?" → inspect VirtualService weight distribution and DestinationRule subsets
+- **Sidecar injection issues** — "New deployment isn't in the mesh" → verify namespace labels and check for MISSING anomalies in sidecar status
+- **Mesh health check** — "Is our mesh healthy?" → get overview for version, istiod status, and injection coverage across namespaces
+- **Security audit** — "What authorization policies are in place?" → list all AuthorizationPolicies with their allow/deny rules
+
+### Cross-Cutting Behavior
+
+- **Auto-detects CRD API versions**: tries v1 → v1beta1 → v1alpha3 for each resource type
+- **Fail-open per resource type**: if VirtualServices return 403 but Gateways work, you still get Gateway results with a warning
+- **30s TTL caching**: repeated calls within 30 seconds return cached results (use `force_refresh` to bypass)
+- **Truncation**: large clusters are capped at 50 resources per type to keep responses manageable
+- **Works with both** managed ASM and open-source Istio installations
+
 ## Project Structure
 
 ```
@@ -533,6 +624,21 @@ vertex-ai-toolkit/
 │   │   ├── specialist.py   # SpecialistAgent (wraps GeminiClient)
 │   │   ├── orchestrator.py # Multi-agent coordination + async fanout
 │   │   └── registry.py     # Agent factory
+│   ├── tools/
+│   │   ├── base.py          # ToolResult, tool registration helpers
+│   │   ├── gke_tools.py     # GKE tool wrappers
+│   │   └── gke/
+│   │       ├── _cache.py      # TTL cache for discovery/mesh resources
+│   │       ├── _clients.py    # K8s client factory + auth
+│   │       ├── _formatters.py # Output formatters for GKE resources
+│   │       ├── _registry.py   # Tool registration
+│   │       ├── _resources.py  # Core resource readers
+│   │       ├── diagnostics.py # Pod/workload diagnostics
+│   │       ├── discovery.py   # Cluster discovery tools
+│   │       ├── kubectl.py     # kubectl-style operations
+│   │       ├── mesh.py        # ASM/Istio mesh introspection tools
+│   │       ├── mutations.py   # Write operations (scale, restart, etc.)
+│   │       └── security.py    # K8s security scanning
 │   └── cli/
 │       ├── app.py          # Typer commands
 │       └── repl.py         # Interactive REPL (prompt-toolkit)
