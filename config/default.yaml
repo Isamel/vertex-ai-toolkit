@@ -145,6 +145,7 @@ gke:
   log_limit: 100                  # Max number of log lines to retrieve per pod
   metrics_interval_minutes: 60    # Time window (minutes) for Cloud Monitoring queries
   proxy_url: ""                   # Proxy URL for private clusters (kubernetes client ignores kubeconfig proxy-url)
+  impersonate_sa: ""               # SA email for GKE/GCP observability APIs — overrides auth.impersonate_sa for GKE tools only
 
 mcp:
   enabled: false                    # Set to true to enable MCP integration

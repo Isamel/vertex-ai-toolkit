@@ -12,6 +12,8 @@ import yaml
 from vaig.tools.base import ToolResult
 
 if TYPE_CHECKING:
+    from google.auth.credentials import Credentials
+
     from vaig.core.config import GKEConfig
 
 logger = logging.getLogger(__name__)
@@ -53,11 +55,23 @@ def _k8s_unavailable() -> ToolResult:
 # ── Autopilot detection ──────────────────────────────────────
 
 
-def _query_autopilot_status(project: str, location: str, cluster: str) -> bool:
+def _query_autopilot_status(
+    project: str,
+    location: str,
+    cluster: str,
+    credentials: Credentials | None = None,
+) -> bool:
     """Query the GKE API for the Autopilot status of a cluster.
 
     This is an internal helper extracted so tests can mock it without
     fighting Python's import machinery.
+
+    Args:
+        project: GCP project ID.
+        location: GKE cluster location (zone or region).
+        cluster: GKE cluster name.
+        credentials: Optional GCP credentials.  When ``None``, the
+            ``ClusterManagerClient`` uses Application Default Credentials.
 
     Raises:
         ImportError: If ``google-cloud-container`` is not installed.
@@ -65,13 +79,19 @@ def _query_autopilot_status(project: str, location: str, cluster: str) -> bool:
     """
     from google.cloud import container_v1  # noqa: WPS433
 
-    client = container_v1.ClusterManagerClient()
+    kwargs: dict[str, Any] = {}
+    if credentials is not None:
+        kwargs["credentials"] = credentials
+    client = container_v1.ClusterManagerClient(**kwargs)
     name = f"projects/{project}/locations/{location}/clusters/{cluster}"
     cluster_obj = client.get_cluster(name=name)
     return bool(cluster_obj.autopilot and cluster_obj.autopilot.enabled)
 
 
-def detect_autopilot(gke_config: GKEConfig) -> bool | None:
+def detect_autopilot(
+    gke_config: GKEConfig,
+    credentials: Credentials | None = None,
+) -> bool | None:
     """Detect whether the GKE cluster is running in Autopilot mode.
 
     Uses the ``google-cloud-container`` library to query the GKE API for
@@ -81,6 +101,8 @@ def detect_autopilot(gke_config: GKEConfig) -> bool | None:
     Args:
         gke_config: GKE configuration with ``project_id``, ``location``,
             and ``cluster_name`` populated.
+        credentials: Optional GCP credentials for the GKE API.
+            When ``None``, the client uses Application Default Credentials.
 
     Returns:
         ``True`` if Autopilot, ``False`` if Standard, ``None`` if detection
@@ -102,7 +124,7 @@ def detect_autopilot(gke_config: GKEConfig) -> bool | None:
         return _AUTOPILOT_CACHE[cache_key]
 
     try:
-        is_autopilot = _query_autopilot_status(project, location, cluster)
+        is_autopilot = _query_autopilot_status(project, location, cluster, credentials=credentials)
         _AUTOPILOT_CACHE[cache_key] = is_autopilot
         logger.info("GKE Autopilot detection: cluster=%s autopilot=%s", cluster, is_autopilot)
         return is_autopilot

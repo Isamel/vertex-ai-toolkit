@@ -745,6 +745,7 @@ def _build_gke_config(
         log_limit=gke.log_limit,
         metrics_interval_minutes=gke.metrics_interval_minutes,
         proxy_url=gke.proxy_url,
+        impersonate_sa=gke.impersonate_sa,
     )
 
 
@@ -765,6 +766,13 @@ def _register_live_tools(gke_config: "GKEConfig", settings: "Settings | None" = 
 
     registry = ToolRegistry()
 
+    # Resolve GKE-specific credentials (SA impersonation or ADC)
+    gke_credentials = None
+    if settings is not None:
+        from vaig.core.auth import get_gke_credentials
+
+        gke_credentials = get_gke_credentials(settings)
+
     # GKE tools — requires 'kubernetes' package
     try:
         from vaig.tools.gke_tools import create_gke_tools  # noqa: WPS433
@@ -782,6 +790,7 @@ def _register_live_tools(gke_config: "GKEConfig", settings: "Settings | None" = 
             project=gke_config.project_id,
             log_limit=gke_config.log_limit,
             metrics_interval_minutes=gke_config.metrics_interval_minutes,
+            credentials=gke_credentials,
         ):
             registry.register(tool)
     except ImportError as exc:
@@ -830,11 +839,18 @@ def _execute_orchestrated_skill(
     tool_registry = _register_live_tools(gke_config, settings=settings)
 
     # Detect Autopilot mode (result is cached from create_gke_tools)
+    # Pass GKE credentials so the Container API call uses the right SA.
+    gke_credentials = None
+    if settings is not None:
+        from vaig.core.auth import get_gke_credentials as _get_gke_creds
+
+        gke_credentials = _get_gke_creds(settings)
+
     is_autopilot: bool | None = None
     try:
         from vaig.tools.gke_tools import detect_autopilot  # noqa: WPS433
 
-        is_autopilot = detect_autopilot(gke_config)
+        is_autopilot = detect_autopilot(gke_config, credentials=gke_credentials)
     except ImportError:
         pass
 

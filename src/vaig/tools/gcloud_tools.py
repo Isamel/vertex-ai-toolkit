@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
+
+if TYPE_CHECKING:
+    from google.auth.credentials import Credentials
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +19,10 @@ logger = logging.getLogger(__name__)
 # We defer imports to execution time so the module can always be loaded.
 
 
-def _get_logging_client(project: str | None = None) -> tuple[Any, str | None]:
+def _get_logging_client(
+    project: str | None = None,
+    credentials: Credentials | None = None,
+) -> tuple[Any, str | None]:
     """Create a Cloud Logging client with lazy import."""
     try:
         from google.cloud import logging as cloud_logging  # noqa: I001
@@ -24,13 +30,21 @@ def _get_logging_client(project: str | None = None) -> tuple[Any, str | None]:
         return None, "google-cloud-logging SDK is not installed. Run: pip install google-cloud-logging"
 
     try:
-        client = cloud_logging.Client(project=project) if project else cloud_logging.Client()
+        kwargs: dict[str, Any] = {}
+        if project:
+            kwargs["project"] = project
+        if credentials is not None:
+            kwargs["credentials"] = credentials
+        client = cloud_logging.Client(**kwargs)
         return client, None
     except Exception as exc:
         return None, f"Failed to create Cloud Logging client: {exc}"
 
 
-def _get_monitoring_client(project: str | None = None) -> tuple[Any, str | None]:
+def _get_monitoring_client(
+    project: str | None = None,
+    credentials: Credentials | None = None,
+) -> tuple[Any, str | None]:
     """Create a Cloud Monitoring client with lazy import."""
     try:
         from google.cloud import monitoring_v3  # noqa: I001
@@ -38,7 +52,10 @@ def _get_monitoring_client(project: str | None = None) -> tuple[Any, str | None]
         return None, "google-cloud-monitoring SDK is not installed. Run: pip install google-cloud-monitoring"
 
     try:
-        client = monitoring_v3.MetricServiceClient()
+        kwargs: dict[str, Any] = {}
+        if credentials is not None:
+            kwargs["credentials"] = credentials
+        client = monitoring_v3.MetricServiceClient(**kwargs)
         return client, None
     except Exception as exc:
         return None, f"Failed to create Cloud Monitoring client: {exc}"
@@ -179,6 +196,7 @@ def gcloud_logging_query(
     project: str = "",
     limit: int = 100,
     order_by: str = "timestamp desc",
+    credentials: Credentials | None = None,
 ) -> ToolResult:
     """Query Cloud Logging entries using a filter expression.
 
@@ -211,7 +229,7 @@ def gcloud_logging_query(
         )
 
     effective_project = project if project else None
-    client, err = _get_logging_client(effective_project)
+    client, err = _get_logging_client(effective_project, credentials=credentials)
     if err:
         return ToolResult(output=err, error=True)
 
@@ -278,6 +296,7 @@ def gcloud_monitoring_query(
     interval_minutes: int = 60,
     aggregation: str = "",
     filter_str: str = "",
+    credentials: Credentials | None = None,
 ) -> ToolResult:
     """Query Cloud Monitoring time series data for a given metric.
 
@@ -306,7 +325,7 @@ def gcloud_monitoring_query(
     elif interval_minutes > 10080:  # max 7 days
         interval_minutes = 10080
 
-    client, err = _get_monitoring_client()
+    client, err = _get_monitoring_client(credentials=credentials)
     if err:
         return ToolResult(output=err, error=True)
 
@@ -436,6 +455,7 @@ def create_gcloud_tools(
     project: str = "",
     log_limit: int = 100,
     metrics_interval_minutes: int = 60,
+    credentials: Credentials | None = None,
 ) -> list[ToolDef]:
     """Create all GCP observability tool definitions.
 
@@ -443,6 +463,8 @@ def create_gcloud_tools(
         project: GCP project ID (from GKEConfig). Falls back to ADC default if empty.
         log_limit: Default log entry limit (from GKEConfig).
         metrics_interval_minutes: Default monitoring interval (from GKEConfig).
+        credentials: Optional GCP credentials for Cloud Logging / Monitoring clients.
+            When ``None``, clients use Application Default Credentials.
 
     Returns:
         List of ToolDef instances for Cloud Logging and Cloud Monitoring queries.
@@ -487,11 +509,12 @@ def create_gcloud_tools(
                     required=False,
                 ),
             ],
-            execute=lambda filter_expr, project="", limit=0, order_by="timestamp desc", _dp=project, _dl=log_limit: gcloud_logging_query(
+            execute=lambda filter_expr, project="", limit=0, order_by="timestamp desc", _dp=project, _dl=log_limit, _dc=credentials: gcloud_logging_query(
                 filter_expr,
                 project=project or _dp,
                 limit=limit or _dl,
                 order_by=order_by,
+                credentials=_dc,
             ),
         ),
         ToolDef(
@@ -543,12 +566,13 @@ def create_gcloud_tools(
                     required=False,
                 ),
             ],
-            execute=lambda metric_type, project="", interval_minutes=0, aggregation="", filter_str="", _dp=project, _di=metrics_interval_minutes: gcloud_monitoring_query(
+            execute=lambda metric_type, project="", interval_minutes=0, aggregation="", filter_str="", _dp=project, _di=metrics_interval_minutes, _dc=credentials: gcloud_monitoring_query(
                 metric_type,
                 project=project or _dp,
                 interval_minutes=interval_minutes or _di,
                 aggregation=aggregation,
                 filter_str=filter_str,
+                credentials=_dc,
             ),
         ),
     ]

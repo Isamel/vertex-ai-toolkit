@@ -33,6 +33,33 @@ def get_credentials(settings: Settings) -> Credentials:
     return _get_adc_credentials()
 
 
+def get_gke_credentials(settings: Settings) -> Credentials | None:
+    """Get GCP credentials for GKE/observability APIs (Cloud Logging, Monitoring, GKE API).
+
+    Implements a 3-tier fallback:
+    1. If ``gke.impersonate_sa`` is set → impersonate that SA (GKE-specific override).
+    2. Elif ``auth.mode == "impersonate"`` and ``auth.impersonate_sa`` is set → reuse that SA.
+    3. Else → return ``None`` (let GCP clients use ADC default).
+
+    Returning ``None`` preserves backward compatibility: GCP client constructors
+    treat ``credentials=None`` as "use Application Default Credentials".
+    """
+    gke_sa = settings.gke.impersonate_sa
+    if gke_sa:
+        logger.info("GKE credentials: impersonating GKE-specific SA %s", gke_sa)
+        return _get_impersonated_credentials(gke_sa)
+
+    if settings.auth.mode == "impersonate" and settings.auth.impersonate_sa:
+        logger.info(
+            "GKE credentials: reusing auth.impersonate_sa %s",
+            settings.auth.impersonate_sa,
+        )
+        return _get_impersonated_credentials(settings.auth.impersonate_sa)
+
+    logger.info("GKE credentials: using ADC (no SA impersonation configured)")
+    return None
+
+
 def _get_adc_credentials() -> Credentials:
     """Get Application Default Credentials with gcloud CLI fallback.
 
@@ -86,7 +113,10 @@ def _get_gcloud_token_credentials() -> Credentials:
         raise RuntimeError(msg) from exc
 
 
-def _get_impersonated_credentials(target_sa: str) -> Credentials:
+def _get_impersonated_credentials(
+    target_sa: str,
+    scopes: list[str] | None = None,
+) -> Credentials:
     """Impersonate a Service Account using local credentials.
 
     This is the recommended approach for local development:
@@ -95,6 +125,11 @@ def _get_impersonated_credentials(target_sa: str) -> Credentials:
     3. All API calls are made AS the Service Account
 
     The developer needs `roles/iam.serviceAccountTokenCreator` on the target SA.
+
+    Args:
+        target_sa: Service account email to impersonate.
+        scopes: OAuth2 scopes for the impersonated credential.
+            Defaults to ``_VERTEX_SCOPES`` (``cloud-platform``).
     """
     if not target_sa:
         msg = (
@@ -110,7 +145,7 @@ def _get_impersonated_credentials(target_sa: str) -> Credentials:
     target_credentials = impersonated_credentials.Credentials(
         source_credentials=source_credentials,
         target_principal=target_sa,
-        target_scopes=_VERTEX_SCOPES,
+        target_scopes=scopes or _VERTEX_SCOPES,
     )
 
     logger.info("Impersonating SA: %s", target_sa)

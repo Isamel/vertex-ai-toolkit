@@ -186,6 +186,13 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
 
     def _register_tools(self) -> None:
         """Register GKE and GCP tools, handling missing optional dependencies gracefully."""
+        # Resolve GKE-specific credentials (SA impersonation or ADC)
+        gke_credentials = None
+        if self._settings is not None:
+            from vaig.core.auth import get_gke_credentials
+
+            gke_credentials = get_gke_credentials(self._settings)
+
         # GKE tools — requires 'kubernetes' package
         try:
             from vaig.tools.gke_tools import create_gke_tools  # noqa: WPS433
@@ -207,6 +214,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
                 project=self._gke_config.project_id,
                 log_limit=self._gke_config.log_limit,
                 metrics_interval_minutes=self._gke_config.metrics_interval_minutes,
+                credentials=gke_credentials,
             ):
                 self._registry.register(tool)
             logger.debug("Registered GCP observability tools")

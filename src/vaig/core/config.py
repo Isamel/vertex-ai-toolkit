@@ -174,6 +174,11 @@ class GKEConfig(BaseModel):
     # ignores the ``proxy-url`` field in kubeconfig; this setting lets
     # users provide an explicit override via config/CLI.
     proxy_url: str = ""
+    # Service account email to impersonate for GKE/GCP observability APIs
+    # (Cloud Logging, Cloud Monitoring, GKE cluster API).  When set, this
+    # overrides ``auth.impersonate_sa`` for GKE tools only, enabling
+    # dual-auth scenarios where Vertex AI and GKE use different SAs.
+    impersonate_sa: str = ""
     # Allow exec_command tool to execute diagnostic commands inside containers.
     # Disabled by default for security — must be explicitly opted-in.
     exec_enabled: bool = False

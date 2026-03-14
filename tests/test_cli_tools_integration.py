@@ -109,6 +109,7 @@ class TestRegisterLiveTools:
             project="test-project",
             log_limit=100,
             metrics_interval_minutes=30,
+            credentials=None,
         )
 
 
@@ -426,4 +427,5 @@ class TestDualToolRegistration:
             project="test-project",
             log_limit=100,
             metrics_interval_minutes=30,
+            credentials=None,
         )
