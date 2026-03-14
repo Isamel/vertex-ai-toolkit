@@ -185,6 +185,17 @@ def start_repl(
     context_builder = ContextBuilder(settings)
     skill_registry = SkillRegistry(settings)
 
+    # Eagerly initialize the telemetry collector with settings so that
+    # downstream modules (agents, session, cost_tracker) that call
+    # get_telemetry_collector() without args get the pre-warmed singleton
+    # instead of falling back to get_settings().
+    try:
+        from vaig.core.telemetry import get_telemetry_collector
+
+        get_telemetry_collector(settings)
+    except Exception:  # noqa: BLE001
+        pass
+
     state = REPLState(
         settings=settings,
         client=client,
@@ -440,7 +451,7 @@ def _handle_direct_chat(state: REPLState, user_input: str, context: str) -> None
         try:
             from vaig.core.telemetry import get_telemetry_collector
 
-            collector = get_telemetry_collector()
+            collector = get_telemetry_collector(state.settings)
             collector.emit_error(type(e).__name__, str(e), metadata={"source": "direct_chat"})
         except Exception:  # noqa: BLE001
             pass
@@ -548,7 +559,7 @@ def _handle_skill_chat(state: REPLState, user_input: str, context: str) -> None:
         try:
             from vaig.core.telemetry import get_telemetry_collector
 
-            collector = get_telemetry_collector()
+            collector = get_telemetry_collector(state.settings)
             collector.emit_error(type(e).__name__, str(e), metadata={"source": "skill_chat"})
         except Exception:  # noqa: BLE001
             pass
@@ -610,7 +621,7 @@ def _handle_code_chat(state: REPLState, user_input: str, context: str) -> None:
         try:
             from vaig.core.telemetry import get_telemetry_collector
 
-            collector = get_telemetry_collector()
+            collector = get_telemetry_collector(state.settings)
             collector.emit_error(type(e).__name__, str(e), metadata={"source": "code_chat"})
         except Exception:  # noqa: BLE001
             pass

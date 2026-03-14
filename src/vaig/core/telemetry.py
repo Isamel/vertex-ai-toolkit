@@ -548,6 +548,11 @@ def get_telemetry_collector(
         if settings is None:
             from vaig.core.config import get_settings
 
+            logger.debug(
+                "get_telemetry_collector() called without settings — "
+                "falling back to get_settings() singleton. "
+                "Prefer initializing with settings from the CLI layer."
+            )
             settings = get_settings()
 
         # Env var override: VAIG_TELEMETRY_ENABLED=false disables
