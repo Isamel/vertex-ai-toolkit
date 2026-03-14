@@ -21,6 +21,7 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
 - **Plugin tool registration** — extend the toolkit with custom Python modules or MCP servers
 - **Safety settings** — configurable harm category thresholds for Gemini API content filtering
 - **Dual-auth** — separate GCP project authentication for Vertex AI vs GKE observability via SA impersonation
+- **Runtime config switching** — change GCP project, location, or GKE cluster at runtime without restarting
 - **GKE live diagnostics** — connect to GKE clusters for pod inspection, log analysis, and metric queries
 - **Configurable auth** — Application Default Credentials (ADC) for GKE, service account impersonation for local dev
 - **Cross-platform** — UTF-8 enforcement on all file I/O for Windows compatibility
@@ -76,6 +77,8 @@ Options:
   -s, --skill TEXT     Activate a skill
   --session TEXT       Resume an existing session by ID
   -n, --name TEXT      Name for new session (default: "chat")
+  -p, --project TEXT   GCP project ID (overrides config)
+  --location TEXT      GCP location (overrides config)
 ```
 
 ### `vaig ask`
@@ -91,6 +94,8 @@ Options:
   -f, --file PATH      Files to include as context (repeatable)
   -s, --skill TEXT     Use a specific skill
   -o, --output PATH    Save response to file (includes cost summary footer)
+  -p, --project TEXT   GCP project ID (overrides config)
+  --location TEXT      GCP location (overrides config)
   --no-stream          Disable streaming output
 ```
 
@@ -118,21 +123,98 @@ Show detailed info about a skill, including its agents.
 
 Inside the interactive chat (`vaig chat`):
 
-| Command              | Description                                 |
-| -------------------- | ------------------------------------------- |
-| `/add <path>`        | Add a file or directory as context           |
-| `/model <name>`      | Switch to a different model                  |
-| `/skill <name>`      | Activate a skill                             |
-| `/phase <phase>`     | Set the skill phase (analyze/plan/execute)   |
-| `/agents`            | Show active agents                           |
-| `/cost`              | Show session cost summary and budget status  |
-| `/sessions`          | List saved sessions                          |
-| `/new [name]`        | Start a new session                          |
-| `/load <id>`         | Load a previous session                      |
-| `/clear`             | Clear current context files                  |
-| `/context`           | Show loaded context files                    |
-| `/help`              | Show all commands                            |
-| `/quit`              | Exit the REPL                                |
+| Command                  | Description                                      |
+| ------------------------ | ------------------------------------------------ |
+| `/add <path>`            | Add a file or directory as context                |
+| `/model <name>`          | Switch to a different model                       |
+| `/skill <name>`          | Activate a skill                                  |
+| `/phase <phase>`         | Set the skill phase (analyze/plan/execute)        |
+| `/agents`                | Show active agents                                |
+| `/cost`                  | Show session cost summary and budget status       |
+| `/project [id]`          | Show or switch the active GCP project             |
+| `/location [name]`       | Show or switch the GCP location                   |
+| `/cluster [name] [ctx]`  | Show or switch the GKE cluster                    |
+| `/config`                | Show current configuration snapshot               |
+| `/sessions`              | List saved sessions                               |
+| `/new [name]`            | Start a new session                               |
+| `/load <id>`             | Load a previous session                           |
+| `/clear`                 | Clear current context files                       |
+| `/context`               | Show loaded context files                         |
+| `/help`                  | Show all commands                                 |
+| `/quit`                  | Exit the REPL                                     |
+
+## Runtime Config Switching
+
+Change GCP project, location, or GKE cluster at runtime without restarting the CLI. The Gemini client is automatically reinitialized, and settings are validated with rollback on failure.
+
+### REPL commands
+
+Use slash commands inside `vaig chat` to switch config on the fly:
+
+```
+# Show current project (and list available_projects from config)
+/project
+
+# Switch to a different GCP project
+/project my-other-project
+
+# Show current location
+/location
+
+# Switch location
+/location europe-west1
+
+# Show current GKE cluster
+/cluster
+
+# Switch cluster (optional kubeconfig context as second arg)
+/cluster staging-cluster gke_my-project_us-east1_staging-cluster
+
+# Show full config snapshot (project, location, model, cluster, etc.)
+/config
+```
+
+When `available_projects` is defined in your config YAML, `/project` without arguments lists them and marks the current one. Tab completion in the REPL covers all slash commands including `/project`, `/location`, `/cluster`, and `/config`.
+
+### CLI flags
+
+Override project and location from the command line on `ask`, `chat`, and `live` subcommands:
+
+```bash
+# Start a chat session targeting a specific project and location
+vaig chat --project my-other-project --location europe-west1
+
+# Single-shot question against a different project
+vaig ask "List running pods" -p my-gke-project
+
+# Live infrastructure investigation with project override
+vaig live "Check pod health" --project infra-project --location us-east1
+```
+
+The `--project`/`-p` flag overrides both `gcp.project_id` and `gke.project_id`. The `--location` flag overrides `gcp.location`.
+
+### Prompt prefix
+
+The REPL prompt displays the active project so you always know which project you're targeting:
+
+```
+[my-project] [gemini-2.5-pro] > what pods are running?
+```
+
+### After switching
+
+When you switch project or location, the Gemini client is reinitialized automatically. However, previously created tools and agents may still hold references to the old config. The CLI warns you after each switch:
+
+```
+Note: Tools and agents will use the new project on next creation.
+Use /clear to reset agents now.
+```
+
+For GKE cluster switches, internal Kubernetes caches are cleared so the next tool invocation picks up the new cluster. Infrastructure tools will warn similarly:
+
+```
+Note: Infrastructure tools will use the new cluster on next invocation.
+```
 
 ## Configuration
 
@@ -428,6 +510,7 @@ vertex-ai-toolkit/
 │   ├── __main__.py
 │   ├── core/
 │   │   ├── config.py       # Pydantic Settings (layered config)
+│   │   ├── config_switcher.py # Runtime config switching (project, location, cluster)
 │   │   ├── auth.py         # ADC + SA impersonation + dual-auth
 │   │   ├── client.py       # GeminiClient (streaming, multi-model)
 │   │   └── cost_tracker.py # Per-request cost tracking (SQLite)
