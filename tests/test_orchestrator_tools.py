@@ -330,7 +330,7 @@ class TestExecuteWithToolsSequential:
         agent2.name = "agent-2"
         agent2.role = "Second"
         agent2.execute.return_value = AgentResult(
-            agent_name="agent-2", content="Final output", success=True,
+            agent_name="agent-2", content="Final output.", success=True,
             usage={"prompt_tokens": 8, "completion_tokens": 12, "total_tokens": 20},
         )
 
@@ -342,8 +342,8 @@ class TestExecuteWithToolsSequential:
         assert result.success is True
         assert len(result.agent_results) == 2
         assert result.agent_results[0].content == "First output"
-        assert result.agent_results[1].content == "Final output"
-        assert result.synthesized_output == "Final output"
+        assert result.agent_results[1].content == "Final output."
+        assert result.synthesized_output == "Final output."
 
         # First agent gets empty context
         agent1.execute.assert_called_once_with("do something", context="")
@@ -2624,3 +2624,243 @@ class TestChecklistRetryPromptIntegration:
         retry_prompt = agent1.execute.call_args_list[1].args[0]
         # The retry prompt should include checklist feedback about Step 4
         assert "Step 4" in retry_prompt
+
+
+# ===========================================================================
+# P3 — Reporter output validation & retry
+# ===========================================================================
+
+
+class TestValidateReporterOutput:
+    """Test Orchestrator._validate_reporter_output()."""
+
+    def _make_orchestrator(self) -> Orchestrator:
+        return Orchestrator(_make_mock_client(), _make_mock_settings())
+
+    def test_clean_output_returns_empty(self) -> None:
+        """Clean Markdown with proper tables and ending → no issues."""
+        orch = self._make_orchestrator()
+        output = (
+            "# Report\n\n"
+            "| Col1 | Col2 |\n"
+            "|------|------|\n"
+            "| a    | b    |\n\n"
+            "All good."
+        )
+        assert orch._validate_reporter_output(output) == []
+
+    def test_broken_table_row_detected(self) -> None:
+        """Table row starting with | but not ending with | → detected."""
+        orch = self._make_orchestrator()
+        output = (
+            "| Col1 | Col2 |\n"
+            "|------|------|\n"
+            "| a    | b\n"  # broken — no trailing |
+            "| c    | d    |\n"
+        )
+        issues = orch._validate_reporter_output(output)
+        assert any("Broken table row at line 3" in i for i in issues)
+
+    def test_truncated_output_detected(self) -> None:
+        """Output ending with a non-punctuation char → truncation warning."""
+        orch = self._make_orchestrator()
+        # Must be >100 chars to trigger truncation check
+        output = (
+            "# Service Health Report\n\n"
+            "This report covers the cluster status including all nodes, "
+            "pods, and services running in the default namespac"
+        )
+        issues = orch._validate_reporter_output(output)
+        assert any("truncated" in i.lower() for i in issues)
+
+    def test_unclosed_code_block_detected(self) -> None:
+        """Odd number of ``` markers → unclosed code block."""
+        orch = self._make_orchestrator()
+        output = "```bash\nkubectl get pods\n\nDone."
+        issues = orch._validate_reporter_output(output)
+        assert any("Unclosed code block" in i for i in issues)
+
+    def test_closed_code_block_ok(self) -> None:
+        """Even number of ``` markers → no issue."""
+        orch = self._make_orchestrator()
+        output = "```bash\nkubectl get pods\n```\n\nDone."
+        assert orch._validate_reporter_output(output) == []
+
+    def test_multiple_issues_reported(self) -> None:
+        """Multiple problems → all reported at once."""
+        orch = self._make_orchestrator()
+        output = (
+            "| Col |\n"
+            "|-----|\n"
+            "| val\n"  # broken table row
+            "```\n"  # opens code block
+            "some code\n"
+            "Truncated mid-wor"  # truncated + unclosed code block
+        )
+        issues = orch._validate_reporter_output(output)
+        assert len(issues) >= 2  # at least broken row + unclosed code block
+
+    def test_output_ending_with_backtick_ok(self) -> None:
+        """Output ending with ``` is valid (closing code block)."""
+        orch = self._make_orchestrator()
+        output = "```bash\nkubectl get pods\n```"
+        assert orch._validate_reporter_output(output) == []
+
+    def test_output_ending_with_pipe_ok(self) -> None:
+        """Output ending with | is valid (end of table)."""
+        orch = self._make_orchestrator()
+        output = (
+            "| Col1 |\n"
+            "|------|\n"
+            "| val  |"
+        )
+        assert orch._validate_reporter_output(output) == []
+
+
+class TestReporterRetryIntegration:
+    """Test that reporter retry is triggered in execute_with_tools."""
+
+    def _make_orchestrator(self) -> Orchestrator:
+        return Orchestrator(_make_mock_client(), _make_mock_settings())
+
+    def test_broken_table_triggers_retry(self) -> None:
+        """Reporter output with broken table row triggers a retry."""
+        orchestrator = self._make_orchestrator()
+        registry = _make_mock_registry()
+
+        broken_output = (
+            "| Col1 | Col2 |\n"
+            "|------|------|\n"
+            "| a    | b\n"  # broken row
+            "\nDone."
+        )
+        clean_output = (
+            "| Col1 | Col2 |\n"
+            "|------|------|\n"
+            "| a    | b    |\n"
+            "\nDone."
+        )
+
+        # Gatherer agent — passes validation (no required_sections)
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.return_value = AgentResult(
+            agent_name="gatherer",
+            content=_make_complete_output(),
+            success=True,
+            usage={"total_tokens": 100},
+        )
+
+        # Reporter agent — first call returns broken, second returns clean
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.side_effect = [
+            AgentResult(
+                agent_name="reporter", content=broken_output, success=True,
+                usage={"total_tokens": 50},
+            ),
+            AgentResult(
+                agent_name="reporter", content=clean_output, success=True,
+                usage={"total_tokens": 60},
+            ),
+        ]
+
+        skill = StubToolSkill()
+        # No required output sections → gatherer validation won't trigger
+        skill.get_required_output_sections = MagicMock(return_value=[])
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check health", skill, registry)
+
+        assert result.success is True
+        # Reporter was retried
+        assert agent2.execute.call_count == 2
+        assert agent2.reset.call_count == 1
+        # Final output is the clean one
+        assert "| b    |" in result.synthesized_output
+
+    def test_max_tokens_triggers_retry(self) -> None:
+        """finish_reason=MAX_TOKENS on reporter triggers a retry."""
+        orchestrator = self._make_orchestrator()
+        registry = _make_mock_registry()
+
+        truncated_output = "# Report\n\nThis is truncat"
+        clean_output = "# Report\n\nThis is complete."
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.return_value = AgentResult(
+            agent_name="gatherer",
+            content=_make_complete_output(),
+            success=True,
+            usage={"total_tokens": 100},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.side_effect = [
+            AgentResult(
+                agent_name="reporter", content=truncated_output, success=True,
+                usage={"total_tokens": 50},
+                metadata={"finish_reason": "MAX_TOKENS"},
+            ),
+            AgentResult(
+                agent_name="reporter", content=clean_output, success=True,
+                usage={"total_tokens": 60},
+            ),
+        ]
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(return_value=[])
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check health", skill, registry)
+
+        assert result.success is True
+        assert agent2.execute.call_count == 2
+        assert "complete." in result.synthesized_output
+
+    def test_clean_output_no_retry(self) -> None:
+        """Clean reporter output → no retry."""
+        orchestrator = self._make_orchestrator()
+        registry = _make_mock_registry()
+
+        clean_output = (
+            "| Col1 | Col2 |\n"
+            "|------|------|\n"
+            "| a    | b    |\n\n"
+            "All good."
+        )
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.return_value = AgentResult(
+            agent_name="gatherer",
+            content=_make_complete_output(),
+            success=True,
+            usage={"total_tokens": 100},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content=clean_output, success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(return_value=[])
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check health", skill, registry)
+
+        assert result.success is True
+        # Reporter was NOT retried
+        assert agent2.execute.call_count == 1
+        assert agent2.reset.call_count == 0

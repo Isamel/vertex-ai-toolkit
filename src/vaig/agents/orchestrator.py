@@ -596,6 +596,54 @@ class Orchestrator:
                         retry_result.usage.get("total_tokens", "?"),
                     )
 
+                # ── Reporter output validation + retry ──────
+                is_reporter = "report" in getattr(agent, "role", "").lower()
+                if i == len(agents) - 1 and agent_result.success and is_reporter:
+                    finish_reason = agent_result.metadata.get("finish_reason", "")
+                    md_issues = self._validate_reporter_output(agent_result.content)
+
+                    if finish_reason == "MAX_TOKENS" or md_issues:
+                        reasons: list[str] = []
+                        if finish_reason == "MAX_TOKENS":
+                            reasons.append("finish_reason=MAX_TOKENS")
+                        if md_issues:
+                            reasons.extend(md_issues)
+                        logger.warning(
+                            "Reporter output has %d issue(s): %s — retrying once",
+                            len(reasons), "; ".join(reasons),
+                        )
+
+                        reporter_retry_prompt = (
+                            "Your previous report had formatting issues "
+                            f"({'; '.join(reasons)}). "
+                            "Regenerate the report more concisely:\n"
+                            "- Focus on CONFIRMED and HIGH severity findings only\n"
+                            "- Close ALL table rows with a trailing |\n"
+                            "- Close ALL code blocks with ```\n"
+                            "- Keep total output under 12 000 tokens\n\n"
+                            f"## Previous Analysis\n\n{current_context}"
+                        )
+                        agent.reset()
+                        kw_rr: dict[str, Any] = {"context": ""}
+                        reporter_retry = agent.execute(
+                            reporter_retry_prompt, **kw_rr,
+                        )
+                        _accumulate_usage(result, reporter_retry)
+                        result.agent_results[-1] = reporter_retry
+
+                        if not reporter_retry.success:
+                            result.success = False
+                            logger.warning(
+                                "Reporter %s retry also failed: %s",
+                                agent.name, reporter_retry.content,
+                            )
+                            break
+                        logger.info(
+                            "Reporter %s retry succeeded — tokens=%s",
+                            agent.name,
+                            reporter_retry.usage.get("total_tokens", "?"),
+                        )
+
             if result.agent_results:
                 result.synthesized_output = result.agent_results[-1].content
 
@@ -1056,6 +1104,54 @@ class Orchestrator:
                         retry_result.usage.get("total_tokens", "?"),
                     )
 
+                # ── Reporter output validation + retry (async) ──────
+                is_reporter = "report" in getattr(agent, "role", "").lower()
+                if i == len(agents) - 1 and agent_result.success and is_reporter:
+                    finish_reason = agent_result.metadata.get("finish_reason", "")
+                    md_issues = self._validate_reporter_output(agent_result.content)
+
+                    if finish_reason == "MAX_TOKENS" or md_issues:
+                        reasons: list[str] = []
+                        if finish_reason == "MAX_TOKENS":
+                            reasons.append("finish_reason=MAX_TOKENS")
+                        if md_issues:
+                            reasons.extend(md_issues)
+                        logger.warning(
+                            "Reporter output has %d issue(s): %s — retrying once",
+                            len(reasons), "; ".join(reasons),
+                        )
+
+                        reporter_retry_prompt = (
+                            "Your previous report had formatting issues "
+                            f"({'; '.join(reasons)}). "
+                            "Regenerate the report more concisely:\n"
+                            "- Focus on CONFIRMED and HIGH severity findings only\n"
+                            "- Close ALL table rows with a trailing |\n"
+                            "- Close ALL code blocks with ```\n"
+                            "- Keep total output under 12 000 tokens\n\n"
+                            f"## Previous Analysis\n\n{current_context}"
+                        )
+                        agent.reset()
+                        kw_rr: dict[str, Any] = {"context": ""}
+                        reporter_retry = await asyncio.to_thread(
+                            agent.execute, reporter_retry_prompt, **kw_rr,
+                        )
+                        _accumulate_usage(result, reporter_retry)
+                        result.agent_results[-1] = reporter_retry
+
+                        if not reporter_retry.success:
+                            result.success = False
+                            logger.warning(
+                                "Reporter %s retry also failed: %s",
+                                agent.name, reporter_retry.content,
+                            )
+                            break
+                        logger.info(
+                            "Reporter %s retry succeeded — tokens=%s",
+                            agent.name,
+                            reporter_retry.usage.get("total_tokens", "?"),
+                        )
+
             if result.agent_results:
                 result.synthesized_output = result.agent_results[-1].content
 
@@ -1447,6 +1543,50 @@ class Orchestrator:
             f"=== FIRST PASS OUTPUT ===\n{first_pass_output}\n\n"
             f"=== ORIGINAL QUERY ===\n{query}"
         )
+
+    def _validate_reporter_output(self, output: str) -> list[str]:
+        """Check reporter output for broken Markdown.
+
+        Detects:
+        - Table rows that start with ``|`` but do not end with ``|``
+        - Output that appears truncated (does not end with sentence-ending
+          punctuation such as ``.``, ``!``, ``?``, triple-backtick, ``|``,
+          or ``)``).  Only checked when the output is longer than 100
+          characters to avoid false positives on short/mock outputs.
+        - Unclosed code blocks (odd number of ````` ``` ````` markers)
+
+        Returns:
+            A list of human-readable issue descriptions (empty = clean).
+        """
+        issues: list[str] = []
+
+        # ── Broken table rows ──
+        lines = output.split("\n")
+        in_table = False
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("|") and stripped.endswith("|"):
+                in_table = True
+            elif in_table and stripped and not stripped.startswith("|"):
+                in_table = False
+            elif in_table and stripped.startswith("|") and not stripped.endswith("|"):
+                issues.append(f"Broken table row at line {i + 1}")
+
+        # ── Truncated output (only for substantial outputs) ──
+        stripped_output = output.rstrip()
+        if len(stripped_output) > 100:
+            last_char = stripped_output[-1] if stripped_output else ""
+            if last_char and last_char not in ".!?\n`|)":
+                issues.append(
+                    "Output appears truncated "
+                    "(does not end with sentence-ending punctuation)"
+                )
+
+        # ── Unclosed code blocks ──
+        if output.count("```") % 2 != 0:
+            issues.append("Unclosed code block (odd number of ``` markers)")
+
+        return issues
 
     def default_system_instruction(self) -> str:
         """Default system instruction for general chat mode."""
