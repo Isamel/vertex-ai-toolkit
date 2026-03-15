@@ -106,7 +106,7 @@ def _fetch_gcloud_access_token() -> str:
         msg = "gcloud auth print-access-token timed out after 10s."
         raise RuntimeError(msg) from exc
 
-    token = result.stdout.strip()
+    token = (result.stdout or "").strip()
 
     if not token or result.returncode != 0:
         stderr_hint = result.stderr.strip() if result.stderr else ""

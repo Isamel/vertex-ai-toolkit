@@ -149,8 +149,9 @@ class TestToolCallLogger:
         mock_console.print.assert_called_once()
         output = mock_console.print.call_args[0][0]
         assert "kubectl_get" in output
-        assert "OK" in output
+        assert "✓" in output
         assert "1.2s" in output
+        assert "🔧" in output
 
     @patch("vaig.cli.commands.live.console")
     def test_call_prints_fail_for_error(self, mock_console: MagicMock) -> None:
@@ -158,6 +159,7 @@ class TestToolCallLogger:
         logger("kubectl_get", {}, 0.5, False)
         output = mock_console.print.call_args[0][0]
         assert "FAIL" in output
+        assert "🔧" in output
 
     @patch("vaig.cli.commands.live.console")
     def test_print_summary_no_errors(self, mock_console: MagicMock) -> None:
@@ -176,12 +178,13 @@ class TestToolCallLogger:
     def test_print_summary_with_errors(self, mock_console: MagicMock) -> None:
         logger = ToolCallLogger()
         logger("t1", {}, 1.0, True)
-        logger("t2", {}, 0.5, False)
+        logger("t2", {}, 0.5, False, "Connection refused")
         mock_console.print.reset_mock()
         logger.print_summary()
         output = mock_console.print.call_args[0][0]
         assert "Pipeline complete with errors" in output
         assert "1 failed" in output
+        assert "Connection refused" in output
 
     @patch("vaig.cli.commands.live.console")
     def test_print_summary_single_tool(self, mock_console: MagicMock) -> None:
@@ -201,6 +204,71 @@ class TestToolCallLogger:
         callback("test", {}, 0.1, True)
         assert logger.tool_count == 1
 
+    def test_backward_compat_four_args(self) -> None:
+        """ToolCallLogger works when called with only 4 positional args (no error_message)."""
+        logger = ToolCallLogger()
+        # Simulates an old caller that doesn't pass error_message
+        logger("kubectl_get", {"resource": "pods"}, 1.0, False)
+        assert logger.errors == 1
+        # Should record "unknown" as reason since no error_message provided
+        assert len(logger._error_reasons) == 1
+        assert logger._error_reasons[0] == "unknown"
+
+    @patch("vaig.cli.commands.live.console")
+    def test_error_message_displayed(self, mock_console: MagicMock) -> None:
+        """Error message is shown when tool fails with error_message."""
+        logger = ToolCallLogger()
+        logger("kubectl_get", {}, 0.5, False, "AuthenticationError: token expired")
+        output = mock_console.print.call_args[0][0]
+        assert "AuthenticationError: token expired" in output
+        assert "FAIL" in output
+
+    @patch("vaig.cli.commands.live.console")
+    def test_error_message_truncated(self, mock_console: MagicMock) -> None:
+        """Long error messages are truncated to ~80 chars."""
+        logger = ToolCallLogger()
+        long_error = "x" * 200
+        logger("kubectl_get", {}, 0.5, False, long_error)
+        output = mock_console.print.call_args[0][0]
+        # Should end with "..." after truncation
+        assert "..." in output
+        # Original 200-char message should NOT appear in full
+        assert long_error not in output
+
+    @patch("vaig.cli.commands.live.console")
+    def test_error_reasons_grouped_in_summary(self, mock_console: MagicMock) -> None:
+        """print_summary groups failures by reason."""
+        logger = ToolCallLogger()
+        # 3 auth errors, 1 timeout
+        for _ in range(3):
+            logger("tool_a", {}, 0.1, False, "auth error: token expired")
+        logger("tool_b", {}, 0.1, False, "timeout after 30s")
+        logger("tool_c", {}, 0.1, True)
+        mock_console.print.reset_mock()
+        logger.print_summary()
+        output = mock_console.print.call_args[0][0]
+        assert "4 failed" in output
+        assert "×" in output  # Unicode multiplication sign
+        assert "auth error" in output
+        assert "timeout" in output
+
+    @patch("vaig.cli.commands.live.console")
+    def test_extract_reason_truncates_long_messages(self, mock_console: MagicMock) -> None:
+        """_extract_reason truncates to 40 chars."""
+        reason = ToolCallLogger._extract_reason("a" * 100)
+        assert len(reason) <= 44  # 40 + "..."
+        assert reason.endswith("...")
+
+    def test_extract_reason_empty(self) -> None:
+        """_extract_reason returns 'unknown' for empty string."""
+        assert ToolCallLogger._extract_reason("") == "unknown"
+
+    def test_extract_reason_multiline(self) -> None:
+        """_extract_reason takes only first line."""
+        reason = ToolCallLogger._extract_reason("first line\nsecond line\nthird")
+        assert "second" not in reason
+        assert "first line" in reason
+
 
 # ══════════════════════════════════════════════════════════════
 # on_tool_call callback in sync _run_tool_loop
@@ -211,7 +279,7 @@ class TestOnToolCallSync:
     """Tests for on_tool_call callback in the sync _run_tool_loop."""
 
     def test_callback_invoked_with_correct_args(self) -> None:
-        """Callback receives (tool_name, tool_args, duration, success)."""
+        """Callback receives (tool_name, tool_args, duration, success, error_message)."""
 
         def search(query: str) -> ToolResult:
             return ToolResult(output=f"Found: {query}")
@@ -251,6 +319,7 @@ class TestOnToolCallSync:
         assert args[1] == {"query": "python"}  # tool_args
         assert isinstance(args[2], float) and args[2] >= 0  # duration
         assert args[3] is True  # success
+        assert args[4] == ""  # error_message (empty on success)
 
     def test_callback_invoked_for_each_tool(self) -> None:
         """Callback is called once per tool call in a multi-tool turn."""
@@ -298,7 +367,7 @@ class TestOnToolCallSync:
         assert callback.call_args_list[1][0][0] == "b"
 
     def test_callback_reports_failure(self) -> None:
-        """When a tool fails, callback receives success=False."""
+        """When a tool fails, callback receives success=False and error_message."""
 
         def failing(query: str) -> ToolResult:
             msg = "boom"
@@ -331,6 +400,7 @@ class TestOnToolCallSync:
 
         callback.assert_called_once()
         assert callback.call_args[0][3] is False  # success=False
+        assert "boom" in callback.call_args[0][4]  # error_message contains the error
 
     def test_callback_error_does_not_break_loop(self) -> None:
         """If the callback itself raises, the loop continues normally."""
@@ -401,7 +471,7 @@ class TestOnToolCallAsync:
     """Tests for on_tool_call callback in the async _async_run_tool_loop."""
 
     async def test_callback_invoked_with_correct_args(self) -> None:
-        """Callback receives (tool_name, tool_args, duration, success)."""
+        """Callback receives (tool_name, tool_args, duration, success, error_message)."""
 
         def search(query: str) -> ToolResult:
             return ToolResult(output=f"Found: {query}")
@@ -441,6 +511,7 @@ class TestOnToolCallAsync:
         assert args[1] == {"query": "k8s"}
         assert isinstance(args[2], float)
         assert args[3] is True
+        assert args[4] == ""  # error_message empty on success
 
     async def test_callback_error_does_not_break_async_loop(self) -> None:
         """If the callback raises, the async loop continues normally."""
@@ -479,7 +550,7 @@ class TestOnToolCallAsync:
         assert result.text == "final"
 
     async def test_callback_reports_failure_async(self) -> None:
-        """When a tool fails in async loop, callback receives success=False."""
+        """When a tool fails in async loop, callback receives success=False and error_message."""
 
         def failing(query: str) -> ToolResult:
             msg = "fail"
@@ -512,3 +583,136 @@ class TestOnToolCallAsync:
 
         callback.assert_called_once()
         assert callback.call_args[0][3] is False
+        assert "fail" in callback.call_args[0][4]  # error_message contains the error
+
+
+# ══════════════════════════════════════════════════════════════
+# Bug 5: None output guard in _execute_single_tool
+# ══════════════════════════════════════════════════════════════
+
+
+class TestNoneOutputGuard:
+    """Tests for the None output guard in tool execution."""
+
+    def test_none_output_replaced_sync(self) -> None:
+        """When a tool returns ToolResult with output=None, it is replaced."""
+
+        def bad_tool(x: str) -> ToolResult:
+            r = ToolResult(output="ok")
+            r.output = None  # type: ignore[assignment]  # simulate buggy tool
+            return r
+
+        tool = ToolDef(
+            name="bad",
+            description="Bad tool",
+            parameters=[ToolParam(name="x", type="string", description="x")],
+            execute=bad_tool,
+        )
+        registry = _make_registry(tool)
+
+        client = MagicMock()
+        client.generate_with_tools = MagicMock(
+            side_effect=[
+                _make_fc_result([{"name": "bad", "args": {"x": "1"}}]),
+                _make_text_result("done"),
+            ],
+        )
+
+        host = MixinHost()
+        history: list[Any] = []
+
+        # Should NOT raise — None output is guarded
+        result = host._run_tool_loop(
+            client=client,
+            prompt="test",
+            tool_registry=registry,
+            system_instruction="sys",
+            history=history,
+        )
+
+        assert result.text == "done"
+        # The tool_result should have been replaced with "(no output)"
+        assert result.tools_executed[0]["output"] == "(no output)"
+
+
+# ══════════════════════════════════════════════════════════════
+# Bug 5: auth.py stdout None guard
+# ══════════════════════════════════════════════════════════════
+
+
+class TestAuthStdoutGuard:
+    """Tests for the None stdout guard in _fetch_gcloud_access_token."""
+
+    @patch("vaig.core.auth.subprocess.run")
+    def test_none_stdout_does_not_crash(self, mock_run: MagicMock) -> None:
+        """When subprocess returns stdout=None, it should raise RuntimeError not AttributeError."""
+        from vaig.core.auth import _fetch_gcloud_access_token
+
+        mock_run.return_value = MagicMock(
+            stdout=None,
+            stderr="some error",
+            returncode=1,
+        )
+
+        with pytest.raises(RuntimeError, match="Could not obtain credentials"):
+            _fetch_gcloud_access_token()
+
+    @patch("vaig.core.auth.subprocess.run")
+    def test_empty_stdout_raises_runtime_error(self, mock_run: MagicMock) -> None:
+        """When subprocess returns empty stdout, it should raise RuntimeError."""
+        from vaig.core.auth import _fetch_gcloud_access_token
+
+        mock_run.return_value = MagicMock(
+            stdout="",
+            stderr="",
+            returncode=1,
+        )
+
+        with pytest.raises(RuntimeError, match="Could not obtain credentials"):
+            _fetch_gcloud_access_token()
+
+
+# ══════════════════════════════════════════════════════════════
+# Bug 3: stderr suppression context manager
+# ══════════════════════════════════════════════════════════════
+
+
+class TestSuppressStderr:
+    """Tests for the _suppress_stderr context manager."""
+
+    def test_stderr_suppressed(self) -> None:
+        """stderr output inside _suppress_stderr should not reach terminal."""
+        import io
+        import os
+
+        from vaig.tools.gke._clients import _suppress_stderr
+
+        # Capture what fd 2 points to after _suppress_stderr exits
+        # (it should be restored to original)
+        original_fd = os.dup(2)
+        try:
+            with _suppress_stderr():
+                # Writing to fd 2 inside the context should go to /dev/null
+                os.write(2, b"this should be suppressed\n")
+            # After exiting, fd 2 should be restored
+            # Verify by writing to fd 2 — it should work normally
+            os.write(2, b"")  # Should not raise
+        finally:
+            os.close(original_fd)
+
+    def test_stderr_restored_after_exception(self) -> None:
+        """stderr is restored even if an exception is raised inside the context."""
+        import os
+
+        from vaig.tools.gke._clients import _suppress_stderr
+
+        original_fd = os.dup(2)
+        try:
+            with pytest.raises(ValueError, match="test"):
+                with _suppress_stderr():
+                    msg = "test"
+                    raise ValueError(msg)
+            # fd 2 should still be restored
+            os.write(2, b"")  # Should not raise
+        finally:
+            os.close(original_fd)

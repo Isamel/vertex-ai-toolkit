@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Callable
@@ -78,7 +79,19 @@ class ToolCallLogger:
         self.tool_count: int = 0
         self.total_duration: float = 0.0
         self.errors: int = 0
+        self._error_reasons: list[str] = []
         self._pipeline_start: float = time.perf_counter()
+
+    @staticmethod
+    def _extract_reason(error_message: str) -> str:
+        """Extract a short reason category from an error message."""
+        if not error_message:
+            return "unknown"
+        # Take the first line, truncated to 40 chars
+        first_line = error_message.split("\n", 1)[0].strip()
+        if len(first_line) > 40:
+            first_line = first_line[:40] + "..."
+        return first_line
 
     def __call__(
         self,
@@ -86,18 +99,31 @@ class ToolCallLogger:
         tool_args: dict[str, Any],
         duration: float,
         success: bool,
+        error_message: str = "",
     ) -> None:
         """Print a single tool execution line."""
         self.tool_count += 1
         self.total_duration += duration
 
         args_str = _truncate_args(tool_args)
-        status = "[green]OK[/green]" if success else "[red]FAIL[/red]"
-        if not success:
+
+        if success:
+            status = "[green]✓[/green]"
+        else:
             self.errors += 1
+            # Build error detail for display (truncated to 80 chars)
+            if error_message:
+                err_short = error_message.split("\n", 1)[0].strip()
+                if len(err_short) > 80:
+                    err_short = err_short[:80] + "..."
+                status = f"[red]✗ FAIL[/red] [dim]{err_short}[/dim]"
+                self._error_reasons.append(self._extract_reason(error_message))
+            else:
+                status = "[red]✗ FAIL[/red]"
+                self._error_reasons.append("unknown")
 
         console.print(
-            f"  [dim]tool[/dim] [cyan]{tool_name}[/cyan]"
+            f"  🔧 [cyan]{tool_name}[/cyan]"
             f"({args_str}) "
             f"{status} [dim]({duration:.1f}s)[/dim]"
         )
@@ -106,11 +132,24 @@ class ToolCallLogger:
         """Print the final pipeline summary line."""
         total_wall = time.perf_counter() - self._pipeline_start
         status = "[green]Pipeline complete[/green]" if self.errors == 0 else "[yellow]Pipeline complete with errors[/yellow]"
+
+        # Build failure detail with grouped reasons
+        fail_detail = ""
+        if self.errors:
+            reason_counts = Counter(self._error_reasons)
+            if reason_counts:
+                grouped = ", ".join(
+                    f"{count}\u00d7 {reason}" for reason, count in reason_counts.most_common()
+                )
+                fail_detail = f", {self.errors} failed ({grouped})"
+            else:
+                fail_detail = f", {self.errors} failed"
+
         console.print(
             f"\n{status} "
             f"[dim]({total_wall:.1f}s total, "
             f"{self.tool_count} tool{'s' if self.tool_count != 1 else ''} executed"
-            f"{f', {self.errors} failed' if self.errors else ''})[/dim]"
+            f"{fail_detail})[/dim]"
         )
 
 

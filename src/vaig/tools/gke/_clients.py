@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -214,6 +216,27 @@ def clear_k8s_client_cache() -> None:
     _CLIENT_CACHE.clear()
 
 
+@contextlib.contextmanager
+def _suppress_stderr():
+    """Suppress stderr at the file-descriptor level.
+
+    The kubernetes Python client may spawn a Go-based credential helper
+    (e.g. ``gke-gcloud-auth-plugin``) whose fatal log messages (``F0315
+    cred.go ...``) are written directly to fd 2, bypassing Python's
+    ``sys.stderr``.  This context manager redirects the *real* fd 2 to
+    ``/dev/null`` so those messages never reach the terminal.
+    """
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    old_stderr_fd = os.dup(2)
+    try:
+        os.dup2(devnull_fd, 2)
+        yield
+    finally:
+        os.dup2(old_stderr_fd, 2)
+        os.close(old_stderr_fd)
+        os.close(devnull_fd)
+
+
 def _create_k8s_clients(
     gke_config: GKEConfig,
 ) -> tuple[Any, Any, Any, Any] | ToolResult:
@@ -245,48 +268,49 @@ def _create_k8s_clients(
         return _CLIENT_CACHE[key]
 
     try:
-        kubeconfig_path = gke_config.kubeconfig_path or None
-        context = gke_config.context or None
+        with _suppress_stderr():
+            kubeconfig_path = gke_config.kubeconfig_path or None
+            context = gke_config.context or None
 
-        # ── Resolve proxy URL ────────────────────────────────
-        proxy_url = _extract_proxy_url_from_kubeconfig(kubeconfig_path, context)
+            # ── Resolve proxy URL ────────────────────────────────
+            proxy_url = _extract_proxy_url_from_kubeconfig(kubeconfig_path, context)
 
-        # Explicit GKEConfig override takes precedence
-        if gke_config.proxy_url:
-            proxy_url = gke_config.proxy_url
+            # Explicit GKEConfig override takes precedence
+            if gke_config.proxy_url:
+                proxy_url = gke_config.proxy_url
 
-        # ── Build a Configuration object with proxy ──────────
-        config = k8s_client.Configuration()
-        if proxy_url:
-            config.proxy = proxy_url
-            logger.info("Using proxy URL for K8s API: %s", proxy_url)
+            # ── Build a Configuration object with proxy ──────────
+            config = k8s_client.Configuration()
+            if proxy_url:
+                config.proxy = proxy_url
+                logger.info("Using proxy URL for K8s API: %s", proxy_url)
 
-        # ── Load kubeconfig into the Configuration ───────────
-        if kubeconfig_path:
-            k8s_config.load_kube_config(
-                config_file=kubeconfig_path,
-                context=context,
-                client_configuration=config,
-            )
-        else:
-            try:
+            # ── Load kubeconfig into the Configuration ───────────
+            if kubeconfig_path:
                 k8s_config.load_kube_config(
+                    config_file=kubeconfig_path,
                     context=context,
                     client_configuration=config,
                 )
-            except k8s_config.ConfigException:
-                # Fallback to in-cluster config (workload identity)
-                k8s_config.load_incluster_config()
-                # In-cluster doesn't need proxy — return plain clients
-                api_client_ic = k8s_client.ApiClient()
-                clients = (
-                    k8s_client.CoreV1Api(api_client_ic),
-                    k8s_client.AppsV1Api(api_client_ic),
-                    k8s_client.CustomObjectsApi(api_client_ic),
-                    api_client_ic,
-                )
-                _CLIENT_CACHE[key] = clients
-                return clients
+            else:
+                try:
+                    k8s_config.load_kube_config(
+                        context=context,
+                        client_configuration=config,
+                    )
+                except k8s_config.ConfigException:
+                    # Fallback to in-cluster config (workload identity)
+                    k8s_config.load_incluster_config()
+                    # In-cluster doesn't need proxy — return plain clients
+                    api_client_ic = k8s_client.ApiClient()
+                    clients = (
+                        k8s_client.CoreV1Api(api_client_ic),
+                        k8s_client.AppsV1Api(api_client_ic),
+                        k8s_client.CustomObjectsApi(api_client_ic),
+                        api_client_ic,
+                    )
+                    _CLIENT_CACHE[key] = clients
+                    return clients
     except Exception as exc:
         return ToolResult(
             output=f"Failed to configure Kubernetes client: {exc}",

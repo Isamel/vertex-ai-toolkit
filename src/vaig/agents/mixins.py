@@ -26,6 +26,10 @@ class OnToolCall(Protocol):
         tool_args: Arguments passed to the tool.
         duration: Wall-clock seconds the tool took.
         success: ``True`` when the tool returned without error.
+        error_message: Short error description when ``success`` is ``False``.
+            Empty string when the tool succeeded.  Optional for backward
+            compatibility — existing callbacks that accept only 4 positional
+            args will continue to work.
     """
 
     def __call__(
@@ -34,6 +38,7 @@ class OnToolCall(Protocol):
         tool_args: dict[str, Any],
         duration: float,
         success: bool,
+        error_message: str = "",
     ) -> None: ...
 
 
@@ -187,14 +192,21 @@ class ToolLoopMixin:
                 # Notify caller about this tool execution
                 if on_tool_call is not None:
                     try:
-                        on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error)
+                        err_msg = (tool_result.output or "")[:200] if tool_result.error else ""
+                        on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg)
+                    except TypeError:
+                        # Backward compat: caller may not accept error_message
+                        try:
+                            on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error)
+                        except Exception:  # noqa: BLE001
+                            logger.debug("on_tool_call callback raised; ignoring")
                     except Exception:  # noqa: BLE001
                         logger.debug("on_tool_call callback raised; ignoring")
 
                 tools_executed.append({
                     "name": tool_name,
                     "args": tool_args,
-                    "output": tool_result.output[:200],  # Truncate for metadata
+                    "output": (tool_result.output or "")[:200],  # Truncate for metadata
                     "error": tool_result.error,
                 })
 
@@ -252,6 +264,9 @@ class ToolLoopMixin:
         try:
             logger.debug("Executing tool: %s(%s)", tool_name, tool_args)
             result = tool.execute(**tool_args)
+            # Guard against tools returning None output
+            if result.output is None:
+                result = ToolResult(output="(no output)", error=result.error)
             logger.debug(
                 "Tool %s result: error=%s, output_len=%d",
                 tool_name,
@@ -411,14 +426,21 @@ class ToolLoopMixin:
                 # Notify caller about this tool execution
                 if on_tool_call is not None:
                     try:
-                        on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error)
+                        err_msg = (tool_result.output or "")[:200] if tool_result.error else ""
+                        on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg)
+                    except TypeError:
+                        # Backward compat: caller may not accept error_message
+                        try:
+                            on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error)
+                        except Exception:  # noqa: BLE001
+                            logger.debug("on_tool_call callback raised; ignoring")
                     except Exception:  # noqa: BLE001
                         logger.debug("on_tool_call callback raised; ignoring")
 
                 tools_executed.append({
                     "name": tool_name,
                     "args": tool_args,
-                    "output": tool_result.output[:200],  # Truncate for metadata
+                    "output": (tool_result.output or "")[:200],  # Truncate for metadata
                     "error": tool_result.error,
                 })
 
@@ -484,6 +506,10 @@ class ToolLoopMixin:
                 # Tool is sync — wrap to avoid blocking the event loop
                 async_execute = to_async(tool.execute)
                 result = await async_execute(**tool_args)
+
+            # Guard against tools returning None output
+            if result.output is None:
+                result = ToolResult(output="(no output)", error=result.error)
 
             logger.debug(
                 "Tool %s async result: error=%s, output_len=%d",
