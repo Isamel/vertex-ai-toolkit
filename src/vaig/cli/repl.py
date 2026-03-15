@@ -252,6 +252,337 @@ def start_repl(
         console.print("[dim]Session saved. Goodbye! 👋[/dim]")
 
 
+# ══════════════════════════════════════════════════════════════
+# Async REPL
+# ══════════════════════════════════════════════════════════════
+
+
+async def async_start_repl(
+    settings: Settings,
+    *,
+    skill_name: str | None = None,
+    session_id: str | None = None,
+    session_name: str = "chat",
+) -> None:
+    """Start the interactive REPL loop using async I/O.
+
+    Async counterpart of :func:`start_repl`.  Uses
+    ``PromptSession.prompt_async()`` for non-blocking input and
+    async agent / session methods throughout.
+
+    All existing REPL features are preserved: FileHistory, completions,
+    toolbar, slash commands, budget checking, skill routing, code mode,
+    and cost tracking.
+    """
+    # Initialize components (same as sync start_repl)
+    client = GeminiClient(settings)
+    orchestrator = Orchestrator(client, settings)
+    session_manager = SessionManager(settings)
+    context_builder = ContextBuilder(settings)
+    skill_registry = SkillRegistry(settings)
+
+    # Eagerly initialize the telemetry collector
+    try:
+        from vaig.core.telemetry import get_telemetry_collector
+
+        get_telemetry_collector(settings)
+    except Exception:  # noqa: BLE001
+        pass
+
+    state = REPLState(
+        settings=settings,
+        client=client,
+        orchestrator=orchestrator,
+        session_manager=session_manager,
+        context_builder=context_builder,
+        skill_registry=skill_registry,
+    )
+
+    # Load or create session (async)
+    if session_id:
+        loaded = await session_manager.async_load_session(session_id)
+        if loaded:
+            console.print(f"[green]✓ Resumed session: {loaded.name} ({len(loaded.history)} messages)[/green]")
+        else:
+            console.print(f"[red]Session not found: {session_id}. Starting new session.[/red]")
+            await session_manager.async_new_session(session_name, model=settings.models.default)
+    else:
+        await session_manager.async_new_session(session_name, model=settings.models.default, skill=skill_name)
+        console.print(f"[green]✓ New session: {session_name}[/green]")
+
+    # Activate skill if requested
+    if skill_name:
+        _cmd_skill(state, skill_name)
+
+    # Print help hint
+    console.print("[dim]Type /help for commands. Ctrl+D or /quit to exit.[/dim]\n")
+
+    # FileHistory for cross-session arrow-up recall
+    history_path = Path(settings.session.repl_history_path).expanduser()
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_session: PromptSession[str] = PromptSession(
+        history=FileHistory(str(history_path)),
+        completer=command_completer,
+        style=PROMPT_STYLE,
+    )
+
+    # Restore cost data if resuming
+    if session_id:
+        cost_data = await session_manager.async_load_cost_data(session_id)
+        if cost_data:
+            state.cost_tracker = CostTracker.from_dict(cost_data)
+            console.print(f"[dim]Restored cost tracking: {state.cost_tracker.request_count} prior API calls[/dim]")
+
+    try:
+        await _async_repl_loop(prompt_session, state)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted.[/yellow]")
+    finally:
+        _show_session_cost_summary(state)
+        await _async_save_cost_data(state)
+        await session_manager.async_close()
+        console.print("[dim]Session saved. Goodbye! 👋[/dim]")
+
+
+async def _async_repl_loop(prompt_session: PromptSession[str], state: REPLState) -> None:
+    """Async main REPL input loop.
+
+    Uses ``prompt_async()`` for non-blocking input so the event loop
+    stays available for concurrent tasks.
+    """
+    while True:
+        try:
+            user_input = (await prompt_session.prompt_async(state.prompt_prefix)).strip()
+        except EOFError:
+            break
+        except KeyboardInterrupt:
+            console.print("[yellow]^C[/yellow]")
+            continue
+
+        if not user_input:
+            continue
+
+        # Handle slash commands (sync — they're lightweight)
+        if user_input.startswith("/"):
+            should_quit = _handle_command(state, user_input)
+            if should_quit:
+                break
+            continue
+
+        # Regular chat message (async)
+        await _async_handle_chat(state, user_input)
+
+
+async def _async_handle_chat(state: REPLState, user_input: str) -> None:
+    """Async version of :func:`_handle_chat`."""
+    context_str = ""
+    if state.context_builder.bundle.file_count > 0:
+        context_str = state.context_builder.bundle.to_context_string()
+
+    # Record user message (async)
+    await state.session_manager.async_add_message("user", user_input)
+
+    if state.code_mode:
+        await _async_handle_code_chat(state, user_input, context_str)
+    elif state.active_skill:
+        await _async_handle_skill_chat(state, user_input, context_str)
+    else:
+        # Auto-route to a skill if confidence is high enough
+        auto_skill = _try_auto_route_skill(state, user_input)
+        if auto_skill:
+            await _async_handle_skill_chat(state, user_input, context_str)
+            # Clear auto-routed skill after use — per-message, not sticky
+            state.active_skill = None
+            state.current_phase = SkillPhase.ANALYZE
+        else:
+            await _async_handle_direct_chat(state, user_input, context_str)
+
+
+async def _async_handle_direct_chat(state: REPLState, user_input: str, context: str) -> None:
+    """Async version of :func:`_handle_direct_chat`."""
+    if not _check_budget(state):
+        return
+
+    try:
+        # Chunked processing for oversized context (sync — CPU-bound)
+        if context and _try_chunked_chat(state, user_input, context):
+            return
+
+        if state.stream_enabled:
+            status = console.status(
+                f"[bold cyan]Thinking ({state.model})...[/bold cyan]"
+            )
+            status.start()
+
+            stream = await state.orchestrator.async_execute_single(
+                user_input, context=context, stream=True,
+            )
+            response_parts: list[str] = []
+            async for chunk in stream:  # type: ignore[union-attr]
+                if status is not None:
+                    status.stop()
+                    status = None  # type: ignore[assignment]
+                console.print(chunk, end="")
+                response_parts.append(chunk)
+
+            # Edge case: stream yielded nothing — stop the spinner
+            if status is not None:
+                status.stop()
+
+            console.print()
+            full_response = "".join(response_parts)
+
+            # Record cost from stream usage
+            if isinstance(stream, StreamResult):
+                _record_cost(state.cost_tracker, stream.model, stream.usage)
+        else:
+            with console.status(
+                f"[bold cyan]Generating response with {state.model}...[/bold cyan]"
+            ):
+                result = await state.orchestrator.async_execute_single(
+                    user_input, context=context,
+                )
+            full_response = result.content  # type: ignore[union-attr]
+            console.print(Markdown(full_response))
+
+            # Record cost from non-streaming result
+            _record_cost(state.cost_tracker, state.model, result.usage)  # type: ignore[union-attr]
+
+        # Record model response (async)
+        await state.session_manager.async_add_message("model", full_response, model=state.model)
+        console.print()
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        logger.exception("Async chat error")
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            collector = get_telemetry_collector(state.settings)
+            collector.emit_error(type(e).__name__, str(e), metadata={"source": "async_direct_chat"})
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _async_handle_skill_chat(state: REPLState, user_input: str, context: str) -> None:
+    """Async version of :func:`_handle_skill_chat`."""
+    if not _check_budget(state):
+        return
+
+    skill = state.active_skill
+    if not skill:
+        return
+
+    meta = skill.get_metadata()
+    console.print(f"[dim]Running {meta.display_name} → {state.current_phase.value} on {state.model}...[/dim]")
+
+    try:
+        with console.status(
+            f"[bold cyan]{meta.display_name} ({state.current_phase.value}) on {state.model}...[/bold cyan]"
+        ):
+            result = await state.orchestrator.async_execute_skill_phase(
+                skill,
+                state.current_phase,
+                context,
+                user_input,
+            )
+
+        console.print()
+        console.print(Markdown(result.output))
+        console.print()
+
+        # Record cost from skill execution
+        total_usage = result.metadata.get("total_usage") if result.metadata else None
+        if total_usage:
+            _record_cost(state.cost_tracker, state.model, total_usage)
+
+        # Record model response (async)
+        await state.session_manager.async_add_message("model", result.output, model=state.model)
+
+        # Suggest next phase
+        if result.next_phase:
+            console.print(f"[dim]Suggested next phase: /phase {result.next_phase.value}[/dim]")
+
+    except Exception as e:
+        console.print(f"[red]Error during {state.current_phase.value}: {e}[/red]")
+        logger.exception("Async skill execution error")
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            collector = get_telemetry_collector(state.settings)
+            collector.emit_error(type(e).__name__, str(e), metadata={"source": "async_skill_chat"})
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _async_handle_code_chat(state: REPLState, user_input: str, context: str) -> None:
+    """Async version of :func:`_handle_code_chat`."""
+    if not _check_budget(state):
+        return
+
+    from vaig.agents.coding import CodingAgent
+    from vaig.core.exceptions import MaxIterationsError
+
+    coding_config = state.settings.coding
+    agent = CodingAgent(
+        state.client,
+        coding_config,
+        settings=state.settings,
+        confirm_fn=_repl_confirm,
+        model_id=state.model,
+    )
+
+    try:
+        console.print("[bold cyan]🤖 Coding agent working (async)...[/bold cyan]")
+        result = await agent.async_execute(user_input, context=context)
+
+        # Display final response
+        console.print()
+        console.print(Markdown(result.content))
+        console.print()
+
+        # Show tool feedback and usage summary
+        _show_repl_coding_summary(result)
+
+        # Record cost
+        _record_cost(state.cost_tracker, state.model, result.usage)
+
+        # Record model response (async)
+        await state.session_manager.async_add_message("model", result.content, model=state.model)
+
+    except MaxIterationsError as exc:
+        console.print(
+            f"\n[bold red]⚠ Max iterations reached ({exc.iterations})[/bold red]\n"
+            "[yellow]The coding agent hit its iteration limit. "
+            "Try breaking the task into smaller steps.[/yellow]"
+        )
+    except Exception as e:
+        console.print(f"[red]Error in async code mode: {e}[/red]")
+        logger.exception("Async code mode error")
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            collector = get_telemetry_collector(state.settings)
+            collector.emit_error(type(e).__name__, str(e), metadata={"source": "async_code_chat"})
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _async_save_cost_data(state: REPLState) -> None:
+    """Async version of :func:`_save_cost_data`."""
+    if state.cost_tracker.request_count == 0:
+        return
+
+    try:
+        saved = await state.session_manager.async_save_cost_data(state.cost_tracker.to_dict())
+        if saved:
+            logger.debug("Cost data persisted to session (async).")
+        else:
+            logger.debug("No active session — cost data not persisted (async).")
+    except Exception:
+        logger.exception("Failed to persist cost data (async)")
+
+
 def _repl_loop(prompt_session: PromptSession[str], state: REPLState) -> None:
     """Main REPL input loop."""
     while True:

@@ -500,3 +500,182 @@ def _execute_live_mode(
             "Try narrowing the scope of your question or specifying a namespace/resource.[/yellow]"
         )
         raise typer.Exit(1)  # noqa: B904
+
+
+# ── Async Live Mode Implementations ──────────────────────────
+
+
+async def _async_execute_live_mode(
+    client: "GeminiClient",
+    gke_config: "GKEConfig",
+    question: str,
+    context: str,
+    *,
+    settings: "Settings | None" = None,
+    output: Path | None = None,
+    format_: str | None = None,
+    skill_name: str | None = None,
+    model_id: str | None = None,
+) -> None:
+    """Async version of :func:`_execute_live_mode`.
+
+    Uses ``InfraAgent.async_execute()`` for non-blocking tool loops.
+    """
+    from vaig.agents.infra_agent import InfraAgent
+    from vaig.core.exceptions import MaxIterationsError
+
+    console.print(
+        Panel.fit(
+            "[bold green]🔍 Live Infrastructure Mode (async)[/bold green]\n"
+            f"[dim]Cluster: {gke_config.cluster_name or '(kubeconfig default)'}[/dim]\n"
+            f"[dim]Namespace: {gke_config.default_namespace} | "
+            f"Project: {gke_config.project_id or '(auto-detect)'}[/dim]\n"
+            "[dim]All tools are READ-ONLY[/dim]",
+            border_style="green",
+        )
+    )
+
+    agent = InfraAgent(
+        client,
+        gke_config,
+        settings=settings,
+        model_id=model_id or client.current_model,
+    )
+
+    tool_count = len(agent.registry.list_tools())
+    if tool_count == 0:
+        err_console.print(
+            "[bold red]No infrastructure tools available![/bold red]\n"
+            "[yellow]Install optional dependencies:[/yellow]\n"
+            "  pip install vertex-ai-toolkit[live]       # GKE tools\n"
+            "  pip install google-cloud-logging google-cloud-monitoring  # GCP observability"
+        )
+        raise typer.Exit(1)
+
+    console.print(f"[dim]{tool_count} tools loaded[/dim]")
+
+    try:
+        console.print("[bold cyan]🤖 Infrastructure agent investigating (async)...[/bold cyan]")
+        result = await agent.async_execute(question, context=context)
+
+        console.print()
+        if result.content:
+            console.print(Markdown(result.content))
+        console.print()
+
+        _handle_export_output(
+            response_text=result.content or "",
+            question=question,
+            model_id=model_id or client.current_model,
+            skill_name=skill_name,
+            format_=format_,
+            output=output,
+            tokens=result.usage or None,
+            cost=_compute_cost_str(result.usage, model_id or client.current_model),
+        )
+
+        _show_coding_summary(result)
+
+    except MaxIterationsError as exc:
+        err_console.print(
+            f"\n[bold red]⚠ Max iterations reached ({exc.iterations})[/bold red]\n"
+            "[yellow]The infrastructure agent hit its tool-use iteration limit. "
+            "Try narrowing the scope of your question or specifying a namespace/resource.[/yellow]"
+        )
+        raise typer.Exit(1)  # noqa: B904
+
+
+async def _async_execute_orchestrated_skill(
+    client: "GeminiClient",
+    settings: "Settings",
+    gke_config: "GKEConfig",
+    skill: "BaseSkill",
+    question: str,
+    *,
+    output: Path | None = None,
+    format_: str | None = None,
+    model_id: str | None = None,
+) -> None:
+    """Async version of :func:`_execute_orchestrated_skill`.
+
+    Uses ``Orchestrator.async_execute_with_tools()`` for non-blocking execution.
+    """
+    from vaig.agents.orchestrator import Orchestrator
+    from vaig.core.exceptions import MaxIterationsError
+
+    skill_meta = skill.get_metadata()
+
+    tool_registry = _register_live_tools(gke_config, settings=settings)
+
+    gke_credentials = None
+    if settings is not None:
+        from vaig.core.auth import get_gke_credentials as _get_gke_creds
+
+        gke_credentials = _get_gke_creds(settings)
+
+    is_autopilot: bool | None = None
+    try:
+        from vaig.tools.gke_tools import detect_autopilot
+
+        is_autopilot = detect_autopilot(gke_config, credentials=gke_credentials)
+    except ImportError:
+        pass
+
+    tool_count = len(tool_registry.list_tools())
+    if tool_count == 0:
+        err_console.print(
+            "[bold red]No infrastructure tools available![/bold red]\n"
+            "[yellow]Install optional dependencies:[/yellow]\n"
+            "  pip install vertex-ai-toolkit[live]       # GKE tools\n"
+            "  pip install google-cloud-logging google-cloud-monitoring  # GCP observability"
+        )
+        raise typer.Exit(1)
+
+    console.print(
+        Panel.fit(
+            f"[bold green]🔍 Orchestrated Skill: {skill_meta.display_name} (async)[/bold green]\n"
+            f"[dim]Cluster: {gke_config.cluster_name or '(kubeconfig default)'}[/dim]\n"
+            f"[dim]Namespace: {gke_config.default_namespace} | "
+            f"Project: {gke_config.project_id or '(auto-detect)'}[/dim]\n"
+            f"[dim]{tool_count} tools loaded | Strategy: sequential[/dim]",
+            border_style="green",
+        )
+    )
+
+    orchestrator = Orchestrator(client, settings)
+
+    try:
+        console.print(f"[bold cyan]🤖 Running {skill_meta.display_name} pipeline (async)...[/bold cyan]")
+        orch_result = await orchestrator.async_execute_with_tools(
+            query=question,
+            skill=skill,
+            tool_registry=tool_registry,
+            strategy="sequential",
+            is_autopilot=is_autopilot,
+        )
+
+        console.print()
+        if orch_result.synthesized_output:
+            console.print(Markdown(orch_result.synthesized_output))
+        console.print()
+
+        _handle_export_output(
+            response_text=orch_result.synthesized_output or "",
+            question=question,
+            model_id=settings.models.default,
+            skill_name=skill_meta.name,
+            format_=format_,
+            output=output,
+            tokens=orch_result.total_usage or None,
+            cost=_compute_cost_str(orch_result.total_usage, settings.models.default),
+        )
+
+        _show_orchestrated_summary(orch_result, model_id=settings.models.default)
+
+    except MaxIterationsError as exc:
+        err_console.print(
+            f"\n[bold red]⚠ Max iterations reached ({exc.iterations})[/bold red]\n"
+            "[yellow]The orchestrated skill pipeline hit its tool-use iteration limit. "
+            "Try narrowing the scope of your question or specifying a namespace/resource.[/yellow]"
+        )
+        raise typer.Exit(1)  # noqa: B904

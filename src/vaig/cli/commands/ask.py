@@ -1,4 +1,4 @@
-"""Ask command — single-shot question."""
+"""Ask command — single-shot question with async support."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from vaig.cli._helpers import (
     _compute_cost_str,
     _handle_export_output,
     _show_cost_line,
+    async_run_command,
     console,
     err_console,
     track_command,
@@ -268,3 +269,219 @@ def register(app: typer.Typer) -> None:
                     tokens=stream_usage,
                     cost=_compute_cost_str(stream_usage, settings.models.default),
                 )
+
+
+# ── Async Ask Implementation ─────────────────────────────────
+
+
+async def _async_ask_impl(
+    question: str,
+    *,
+    config: str | None = None,
+    model: str | None = None,
+    files: list[Path] | None = None,
+    output: Path | None = None,
+    format_: str | None = None,
+    skill: str | None = None,
+    auto_skill: bool = False,
+    no_stream: bool = False,
+    code: bool = False,
+    live: bool = False,
+    workspace: Path | None = None,
+    cluster: str | None = None,
+    namespace: str | None = None,
+    project: str | None = None,
+    location: str | None = None,
+) -> None:
+    """Async implementation of the ask command.
+
+    Uses async agent methods (``async_execute()``, ``async_execute_stream()``)
+    for non-blocking I/O.  Called from the sync Typer entry point via
+    ``async_run_command()``.
+
+    All parameters mirror the sync ``ask`` command.
+    """
+    settings = _helpers._get_settings(config)
+
+    # Initialize telemetry eagerly
+    try:
+        from vaig.core.telemetry import get_telemetry_collector
+
+        get_telemetry_collector(settings)
+    except Exception:  # noqa: BLE001
+        pass
+
+    if project:
+        settings.gcp.project_id = project
+        settings.gke.project_id = project
+    if location:
+        settings.gcp.location = location
+    if model:
+        settings.models.default = model
+
+    from vaig.agents.orchestrator import Orchestrator
+    from vaig.context.builder import ContextBuilder
+    from vaig.core.client import GeminiClient
+    from vaig.skills.base import SkillPhase
+    from vaig.skills.registry import SkillRegistry
+
+    client = GeminiClient(settings)
+    orchestrator = Orchestrator(client, settings)
+
+    # Build context from files (async file loading)
+    context_str = ""
+    if files:
+        builder = ContextBuilder(settings)
+        for f in files:
+            try:
+                await builder.async_add_file(f)
+            except FileNotFoundError:
+                err_console.print(f"[red]File not found: {f}[/red]")
+                raise typer.Exit(1)  # noqa: B904
+        builder.show_summary()
+        context_str = builder.bundle.to_context_string()
+
+    # Code mode — async CodingAgent
+    if code:
+        if workspace:
+            resolved_ws = workspace.resolve()
+            if not resolved_ws.is_dir():
+                err_console.print(f"[red]Workspace directory not found: {resolved_ws}[/red]")
+                raise typer.Exit(1)
+            settings.coding.workspace_root = str(resolved_ws)
+
+        from vaig.cli.commands._code import _async_execute_code_mode
+
+        await _async_execute_code_mode(client, settings, question, context_str, output=output)
+        return
+
+    # Live infrastructure mode — async InfraAgent
+    if live:
+        from vaig.cli.commands.live import _async_execute_live_mode
+
+        gke_config = _build_gke_config(
+            settings, cluster=cluster, namespace=namespace, project_id=project, location=location,
+        )
+        await _async_execute_live_mode(
+            client,
+            gke_config,
+            question,
+            context_str,
+            settings=settings,
+            output=output,
+            model_id=model,
+        )
+        return
+
+    # Chunked file analysis (async)
+    if context_str:
+        from vaig.cli.commands._code import _async_try_chunked_ask
+
+        if await _async_try_chunked_ask(client, settings, question, context_str, model_id=model, output=output):
+            return
+
+    # Execute with or without skill
+    context_file_paths = [str(f) for f in files] if files else []
+
+    # Auto-detect skill
+    effective_auto_skill = auto_skill or settings.skills.auto_routing
+    if effective_auto_skill and not skill:
+        registry = SkillRegistry(settings)
+        suggestions = registry.suggest_skill(question)
+        if suggestions:
+            best_name, best_score = suggestions[0]
+            threshold = settings.skills.auto_routing_threshold
+            if best_score >= threshold:
+                skill = best_name
+                console.print(
+                    f"[dim]🎯 Auto-routing to skill: [cyan]{skill}[/cyan] "
+                    f"(score: {best_score:.1f})[/dim]"
+                )
+            else:
+                console.print(
+                    f"[dim]Suggested skills: {', '.join(f'{n} ({s:.1f})' for n, s in suggestions)}[/dim]"
+                )
+
+    if skill:
+        registry = SkillRegistry(settings)
+        active_skill = registry.get(skill)
+        if not active_skill:
+            err_console.print(f"[red]Skill not found: {skill}[/red]")
+            err_console.print(f"[dim]Available: {', '.join(registry.list_names())}[/dim]")
+            raise typer.Exit(1)
+
+        with console.status(
+            f"[bold cyan]Running {skill} skill on {settings.models.default} (async)...[/bold cyan]"
+        ):
+            result = await orchestrator.async_execute_skill_phase(
+                active_skill,
+                SkillPhase.ANALYZE,
+                context_str,
+                question,
+            )
+        console.print()
+        if result.output:
+            console.print(Markdown(result.output))
+
+        skill_usage = (result.metadata or {}).get("total_usage")
+        _show_cost_line(skill_usage, settings.models.default)
+
+        _handle_export_output(
+            response_text=result.output,
+            question=question,
+            model_id=settings.models.default,
+            skill_name=skill,
+            context_files=context_file_paths,
+            format_=format_,
+            output=output,
+            tokens=skill_usage,
+            cost=_compute_cost_str(skill_usage, settings.models.default),
+        )
+    else:
+        # Direct chat — async single agent
+        if no_stream:
+            with console.status(
+                f"[bold cyan]Generating response with {settings.models.default} (async)...[/bold cyan]"
+            ):
+                result = await orchestrator.async_execute_single(question, context=context_str)
+            console.print()
+            if hasattr(result, "content") and result.content:
+                console.print(Markdown(result.content))  # type: ignore[union-attr]
+
+                result_usage = getattr(result, "usage", None)
+                _show_cost_line(result_usage, settings.models.default)
+
+                _handle_export_output(
+                    response_text=result.content,  # type: ignore[union-attr]
+                    question=question,
+                    model_id=settings.models.default,
+                    skill_name=skill,
+                    context_files=context_file_paths,
+                    format_=format_,
+                    output=output,
+                    tokens=result_usage,
+                    cost=_compute_cost_str(result_usage, settings.models.default),
+                )
+        else:
+            stream = await orchestrator.async_execute_single(question, context=context_str, stream=True)
+            console.print()
+            response_parts: list[str] = []
+            async for chunk in stream:  # type: ignore[union-attr]
+                console.print(chunk, end="")
+                response_parts.append(chunk)
+            console.print()
+
+            stream_usage = getattr(stream, "usage", None)
+            _show_cost_line(stream_usage, settings.models.default)
+
+            _handle_export_output(
+                response_text="".join(response_parts),
+                question=question,
+                model_id=settings.models.default,
+                skill_name=skill,
+                context_files=context_file_paths,
+                format_=format_,
+                output=output,
+                tokens=stream_usage,
+                cost=_compute_cost_str(stream_usage, settings.models.default),
+            )

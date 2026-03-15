@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -180,6 +181,35 @@ class ContextBuilder:
             console.print("[yellow]No files loaded in context.[/yellow]")
             return
         console.print(self._bundle.summary_table())
+
+    # ── Async Methods ─────────────────────────────────────────
+    # These mirror the sync methods above but use ``asyncio.to_thread()``
+    # for blocking file I/O so the event loop stays unblocked.
+
+    async def async_add_directory(self, dir_path: str | Path, *, recursive: bool = True) -> int:
+        """Async version of :meth:`add_directory`.
+
+        Runs the blocking file I/O in a thread via ``asyncio.to_thread()``.
+
+        Returns the number of files added.
+        """
+        return await asyncio.to_thread(self.add_directory, dir_path, recursive=recursive)
+
+    async def async_add_file(self, file_path: str | Path) -> LoadedFile:
+        """Async version of :meth:`add_file`.
+
+        Runs the blocking file I/O in a thread via ``asyncio.to_thread()``.
+        """
+        return await asyncio.to_thread(self.add_file, file_path)
+
+    async def async_add_text(self, text: str, *, label: str = "inline") -> LoadedFile:
+        """Async version of :meth:`add_text`.
+
+        While ``add_text()`` doesn't do disk I/O, this async wrapper
+        exists for API symmetry so callers can ``await`` any add method
+        consistently.
+        """
+        return self.add_text(text, label=label)
 
 
 def _format_size(size_bytes: int) -> str:

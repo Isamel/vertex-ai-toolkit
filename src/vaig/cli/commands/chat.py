@@ -1,4 +1,4 @@
-"""Chat command — interactive REPL session."""
+"""Chat command — interactive REPL session with async support."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import typer
 from vaig.cli import _helpers
 from vaig.cli._helpers import (
     _banner,
+    async_run_command,
     console,
     err_console,
     track_command,
@@ -99,6 +100,93 @@ def register(app: typer.Typer) -> None:
                 console.print("[yellow]No previous sessions found. Starting new session.[/yellow]")
 
         start_repl(
+            settings=settings,
+            skill_name=skill,
+            session_id=resume_session_id,
+            session_name=name,
+        )
+
+
+# ── Async Chat Implementation ────────────────────────────────
+
+
+async def _async_chat_impl(
+    *,
+    config: str | None = None,
+    model: str | None = None,
+    skill: str | None = None,
+    session: str | None = None,
+    resume: bool = False,
+    name: str = "chat",
+    workspace: Path | None = None,
+    project: str | None = None,
+    location: str | None = None,
+) -> None:
+    """Async implementation of the chat command.
+
+    Prepares settings and delegates to ``async_start_repl()`` (when
+    available) for a fully async REPL loop using ``prompt_async()``.
+
+    Falls back to ``start_repl()`` in a thread if ``async_start_repl``
+    is not yet available (parallel task 4.1).
+    """
+    import asyncio
+
+    _banner()
+    settings = _helpers._get_settings(config)
+
+    try:
+        from vaig.core.telemetry import get_telemetry_collector
+
+        get_telemetry_collector(settings)
+    except Exception:  # noqa: BLE001
+        pass
+
+    if project:
+        settings.gcp.project_id = project
+        settings.gke.project_id = project
+    if location:
+        settings.gcp.location = location
+    if model:
+        settings.models.default = model
+
+    if workspace:
+        resolved_ws = workspace.resolve()
+        if not resolved_ws.is_dir():
+            err_console.print(f"[red]Workspace directory not found: {resolved_ws}[/red]")
+            raise typer.Exit(1)
+        settings.coding.workspace_root = str(resolved_ws)
+
+    # Resolve --resume to a session ID
+    resume_session_id = session
+    if resume and not session:
+        from vaig.session.manager import SessionManager
+
+        mgr = SessionManager(settings)
+        last = await mgr.async_get_last_session()
+        await mgr.async_close()
+        if last:
+            resume_session_id = last["id"]
+            console.print(f"[dim]Resuming last session: {last['name']} ({last['id'][:12]})[/dim]")
+        else:
+            console.print("[yellow]No previous sessions found. Starting new session.[/yellow]")
+
+    # Try to use async_start_repl if available (Task 4.1),
+    # otherwise fall back to sync start_repl in a thread.
+    try:
+        from vaig.cli.repl import async_start_repl
+
+        await async_start_repl(
+            settings=settings,
+            skill_name=skill,
+            session_id=resume_session_id,
+            session_name=name,
+        )
+    except ImportError:
+        from vaig.cli.repl import start_repl
+
+        await asyncio.to_thread(
+            start_repl,
             settings=settings,
             skill_name=skill,
             session_id=resume_session_id,

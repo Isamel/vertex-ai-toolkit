@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 
 from rich.console import Console
 
@@ -47,6 +48,63 @@ def track_command(fn: Callable[..., Any]) -> Callable[..., Any]:
                 pass
 
     return wrapper
+
+
+def track_command_async(fn: Callable[..., Coroutine[Any, Any, Any]]) -> Callable[..., Coroutine[Any, Any, Any]]:
+    """Async version of :func:`track_command`.
+
+    Wraps an ``async def`` command function, emitting a ``cli_command``
+    telemetry event with timing.  Telemetry failures are silenced.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        t0 = time.perf_counter()
+        try:
+            return await fn(*args, **kwargs)
+        finally:
+            try:
+                from vaig.core.telemetry import get_telemetry_collector
+
+                duration_ms = (time.perf_counter() - t0) * 1000
+                collector = get_telemetry_collector()
+                collector.emit_cli_command(fn.__name__, duration_ms=duration_ms)
+            except Exception:  # noqa: BLE001
+                pass
+
+    return wrapper
+
+
+def async_run_command(coro: Coroutine[Any, Any, Any]) -> Any:
+    """Run an async command implementation from a sync Typer entry point.
+
+    This is the standard bridge for ``sync Typer command → async internals``.
+    Uses ``asyncio.run()`` to create a new event loop and execute the
+    coroutine.  If an event loop is already running (e.g. Jupyter),
+    falls back to the thread-based approach in :func:`run_sync`.
+
+    Usage::
+
+        def ask_command(...):
+            async_run_command(_async_ask_impl(...))
+
+    Args:
+        coro: The async coroutine to execute.
+
+    Returns:
+        The coroutine's return value.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop running — safe to use asyncio.run()
+        return asyncio.run(coro)
+
+    # Already inside a running loop — delegate to run_sync which
+    # handles the nested-loop case via a background thread.
+    from vaig.core.async_utils import run_sync
+
+    return run_sync(coro)
 
 
 # ── Shared State ──────────────────────────────────────────────

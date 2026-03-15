@@ -47,13 +47,17 @@ from vaig.cli._helpers import (  # noqa: F401
     _save_output,
     _show_coding_summary,
     _show_cost_line,
+    async_run_command,
     console,
     err_console,
     track_command,
+    track_command_async,
 )
 
 # Re-export live mode helpers (tests import _build_gke_config, _register_live_tools)
 from vaig.cli.commands.live import (  # noqa: F401
+    _async_execute_live_mode,
+    _async_execute_orchestrated_skill,
     _build_gke_config,
     _execute_live_mode,
     _execute_orchestrated_skill,
@@ -63,6 +67,8 @@ from vaig.cli.commands.live import (  # noqa: F401
 
 # Re-export code mode helpers
 from vaig.cli.commands._code import (  # noqa: F401
+    _async_execute_code_mode,
+    _async_try_chunked_ask,
     _execute_code_mode,
     _try_chunked_ask,
 )

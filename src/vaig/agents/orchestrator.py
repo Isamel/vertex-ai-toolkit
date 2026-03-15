@@ -621,6 +621,46 @@ class Orchestrator:
     # native async_execute methods are wrapped via
     # ``asyncio.to_thread()`` so the event loop stays unblocked.
 
+    async def async_execute_single(
+        self,
+        prompt: str,
+        *,
+        context: str = "",
+        system_instruction: str = "",
+        model_id: str | None = None,
+        stream: bool = False,
+    ) -> "AgentResult | StreamResult":
+        """Async version of :meth:`execute_single`.
+
+        Uses ``SpecialistAgent.async_execute()`` or
+        ``GeminiClient.async_generate_stream()`` for non-blocking I/O.
+
+        When *stream* is ``True``, returns a :class:`StreamResult` that
+        supports ``async for`` iteration and exposes ``.usage`` after
+        iteration completes.
+        """
+        from vaig.core.client import StreamResult
+
+        config = AgentConfig(
+            name="assistant",
+            role="General Assistant",
+            system_instruction=system_instruction or self.default_system_instruction(),
+            model=model_id or self._settings.models.default,
+        )
+
+        agent = SpecialistAgent(config, self._client)
+
+        if stream:
+            full_prompt = agent._build_prompt(prompt, context)
+            return await self._client.async_generate_stream(
+                full_prompt,
+                system_instruction=config.system_instruction,
+                model_id=config.model,
+                temperature=config.temperature,
+                max_output_tokens=config.max_output_tokens,
+            )
+        return await agent.async_execute(prompt, context=context)
+
     async def async_execute_fanout(
         self,
         skill: BaseSkill,
