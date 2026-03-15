@@ -9,13 +9,15 @@ Fixtures extracted here were previously duplicated in multiple test modules.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Generator
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from vaig.core.config import Settings, reset_settings
+from vaig.core.client import GenerationResult
 from vaig.session.store import SessionStore
 from vaig.core.telemetry import TelemetryCollector
 
@@ -81,4 +83,62 @@ def mock_client() -> MagicMock:
     client = MagicMock()
     client.reinitialize = MagicMock()
     client.current_model = "gemini-2.5-pro"
+    return client
+
+
+# ── Async fixtures ───────────────────────────────────────────
+# These fixtures support pytest-asyncio (mode=auto, configured in
+# pyproject.toml).  They provide async-aware store and collector
+# instances with proper async cleanup.
+
+
+@pytest.fixture()
+async def async_store(tmp_path: Path) -> AsyncGenerator[SessionStore, None]:
+    """Create a ``SessionStore`` with async cleanup for async tests.
+
+    The store supports both sync and async methods.  This fixture
+    ensures ``async_close()`` is called on teardown.
+    """
+    db = tmp_path / "test_async_sessions.db"
+    s = SessionStore(db)
+    yield s
+    await s.async_close()
+
+
+@pytest.fixture()
+async def async_collector(tmp_path: Path) -> AsyncGenerator[TelemetryCollector, None]:
+    """Create an enabled ``TelemetryCollector`` with async cleanup.
+
+    Uses a small buffer (5) for fast flushing in tests.
+    """
+    c = TelemetryCollector(
+        db_path=tmp_path / "test_async_telemetry.db",
+        enabled=True,
+        buffer_size=5,
+    )
+    yield c
+    await c.async_close()
+
+
+@pytest.fixture()
+def mock_async_client() -> MagicMock:
+    """Mock ``GeminiClient`` with both sync and async methods.
+
+    Provides:
+    - ``generate`` (sync) and ``async_generate`` (async) returning a ``GenerationResult``
+    - ``generate_stream`` (sync) and ``async_generate_stream`` (async)
+    - ``current_model`` property
+    - ``reinitialize`` method
+    """
+    client = MagicMock()
+    gen_result = GenerationResult(
+        text="mocked response",
+        model="gemini-2.5-pro",
+        finish_reason="STOP",
+        usage={"prompt_tokens": 10, "candidates_tokens": 20, "total_tokens": 30},
+    )
+    client.generate.return_value = gen_result
+    client.async_generate = AsyncMock(return_value=gen_result)
+    client.current_model = "gemini-2.5-pro"
+    client.reinitialize = MagicMock()
     return client
