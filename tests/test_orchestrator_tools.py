@@ -19,6 +19,7 @@ from vaig.agents.orchestrator import (
     GathererValidationResult,
     Orchestrator,
     OrchestratorResult,
+    _build_tools_summary,
 )
 from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.tool_aware import ToolAwareAgent
@@ -119,6 +120,7 @@ def _make_mock_client() -> MagicMock:
 def _make_mock_settings() -> MagicMock:
     settings = MagicMock()
     settings.models.default = "gemini-2.5-pro"
+    settings.agents.max_iterations_retry = 10
     return settings
 
 
@@ -737,15 +739,19 @@ class TestGathererRetryLogic:
         assert result.success is True
         # Agent1 should have been called twice (original + deepening pass)
         assert agent1.execute.call_count == 2
-        agent1.reset.assert_called_once()
+        # Deepening pass should NOT call reset (incremental — keeps history)
+        agent1.reset.assert_not_called()
         # Retry prompt should be a DEEPENING prompt, not a missing-sections prompt
         retry_call = agent1.execute.call_args_list[1]
         retry_prompt = retry_call.args[0]
-        assert "second pass is MANDATORY" in retry_prompt
-        assert "FIRST PASS OUTPUT" in retry_prompt
-        assert "ORIGINAL QUERY" in retry_prompt
+        assert "first diagnostic pass" in retry_prompt
+        assert "Do NOT repeat tool calls" in retry_prompt
+        assert "Second Pass" in retry_prompt
         # Should NOT mention missing sections
         assert "missing the following sections" not in retry_prompt
+        # Result should be MERGED (first + second pass content)
+        final_content = result.agent_results[0].content
+        assert complete_output in final_content
 
     def test_no_retry_when_skill_has_no_required_sections(self) -> None:
         """Skills without required sections skip validation entirely."""
@@ -2056,11 +2062,12 @@ class TestAsyncSyncParity:
 class TestBuildDeepeningPrompt:
     """Test Orchestrator._build_deepening_prompt()."""
 
-    def test_includes_first_pass_output(self) -> None:
-        """The deepening prompt includes the full first pass output."""
+    def test_references_conversation_history(self) -> None:
+        """The incremental deepening prompt references conversation history."""
         first_pass = "## Cluster Overview\nSome data about the cluster.\n"
         prompt = Orchestrator._build_deepening_prompt("check health", first_pass)
-        assert first_pass in prompt
+        assert "first diagnostic pass" in prompt
+        assert "conversation history" in prompt.lower()
 
     def test_includes_original_query(self) -> None:
         """The deepening prompt includes the original query."""
@@ -2069,10 +2076,10 @@ class TestBuildDeepeningPrompt:
         )
         assert "check health of my-app in prod" in prompt
 
-    def test_contains_mandatory_language(self) -> None:
-        """The prompt states the second pass is mandatory."""
+    def test_contains_no_repeat_instruction(self) -> None:
+        """The prompt instructs NOT to repeat tool calls."""
         prompt = Orchestrator._build_deepening_prompt("query", "output")
-        assert "second pass is MANDATORY" in prompt
+        assert "Do NOT repeat tool calls" in prompt
 
     def test_contains_diagnostic_instructions(self) -> None:
         """The prompt mentions specific diagnostic areas to check."""
@@ -2081,17 +2088,25 @@ class TestBuildDeepeningPrompt:
         assert "HPA" in prompt
         assert "Cloud Logging" in prompt
 
-    def test_has_delimiters(self) -> None:
-        """The prompt uses clear delimiters for first pass output and query."""
+    def test_requests_only_new_findings(self) -> None:
+        """The prompt asks for ONLY new findings from second pass."""
         prompt = Orchestrator._build_deepening_prompt("my query", "my output")
-        assert "=== FIRST PASS OUTPUT ===" in prompt
-        assert "=== ORIGINAL QUERY ===" in prompt
+        assert "Second Pass" in prompt
+        assert "ONLY" in prompt
 
     def test_no_bracket_markers(self) -> None:
         """The deepening prompt has no bracket-prefixed markers."""
         prompt = Orchestrator._build_deepening_prompt("query", "output")
         for marker in ("[WARNING]", "[ERROR]", "[IMPORTANT]", "[CRITICAL]", "[ALERT]"):
             assert marker not in prompt
+
+    def test_does_not_embed_first_pass_output(self) -> None:
+        """The incremental prompt does NOT embed the first pass output
+        inline — the agent has it in conversation history already."""
+        first_pass = "UNIQUE_FIRST_PASS_CONTENT_abc123xyz"
+        prompt = Orchestrator._build_deepening_prompt("query", first_pass)
+        # The original content should NOT appear in the prompt itself
+        assert first_pass not in prompt
 
 
 # ===========================================================================
@@ -2146,12 +2161,17 @@ class TestAlwaysRetryGatherer:
 
         assert result.success is True
         assert agent1.execute.call_count == 2
-        agent1.reset.assert_called_once()
+        # Deepening pass: NO reset (incremental)
+        agent1.reset.assert_not_called()
 
         # Deepening prompt sent, not missing-sections prompt
         retry_prompt = agent1.execute.call_args_list[1].args[0]
-        assert "second pass is MANDATORY" in retry_prompt
-        assert "FIRST PASS OUTPUT" in retry_prompt
+        assert "first diagnostic pass" in retry_prompt
+        assert "Do NOT repeat tool calls" in retry_prompt
+
+        # Result should be MERGED
+        final_content = result.agent_results[0].content
+        assert complete_output in final_content
 
     async def test_async_always_retries_with_deepening_when_valid(self) -> None:
         """Async: even when validation passes, gatherer retries with deepening prompt."""
@@ -2199,11 +2219,16 @@ class TestAlwaysRetryGatherer:
 
         assert result.success is True
         assert agent1.execute.call_count == 2
-        agent1.reset.assert_called_once()
+        # Deepening pass: NO reset (incremental)
+        agent1.reset.assert_not_called()
 
         # Deepening prompt
         retry_prompt = agent1.execute.call_args_list[1].args[0]
-        assert "second pass is MANDATORY" in retry_prompt
+        assert "first diagnostic pass" in retry_prompt
+
+        # Result should be MERGED
+        final_content = result.agent_results[0].content
+        assert complete_output in final_content
 
     def test_sync_uses_retry_prompt_when_validation_fails(self) -> None:
         """Sync: when validation fails, uses retry prompt (not deepening)."""
@@ -2247,11 +2272,13 @@ class TestAlwaysRetryGatherer:
 
         assert result.success is True
         assert agent1.execute.call_count == 2
+        # Validation retry: reset IS called
+        agent1.reset.assert_called_once()
 
         # Missing-sections retry prompt, NOT deepening
         retry_prompt = agent1.execute.call_args_list[1].args[0]
         assert "missing the following sections" in retry_prompt
-        assert "second pass is MANDATORY" not in retry_prompt
+        assert "first diagnostic pass" not in retry_prompt
 
     def test_deepening_retry_failure_stops_pipeline(self) -> None:
         """If the deepening retry fails (success=False), pipeline stops."""
@@ -2296,8 +2323,261 @@ class TestAlwaysRetryGatherer:
 
 
 # ===========================================================================
-# Investigation Checklist validation — P1-C tests
+# Incremental deepening + max_iterations_retry — Causa 1 tests
 # ===========================================================================
+
+
+class TestIncrementalDeepening:
+    """Validate the incremental second-pass behavior:
+    - Deepening pass does NOT reset agent (keeps conversation history)
+    - Deepening pass merges first + second pass content
+    - Validation retry DOES reset agent
+    - max_iterations_retry is applied during second pass
+    - max_iterations is restored after second pass (try/finally)
+    """
+
+    def test_deepening_merges_content(self) -> None:
+        """Deepening pass merges first-pass + second-pass content."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        complete_output = _make_complete_output()
+        second_pass_output = "### Second Pass — Additional Findings\nNew data here."
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1._max_iterations = 15
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content=complete_output,
+                success=True,
+                usage={"total_tokens": 100},
+            ),
+            AgentResult(
+                agent_name="gatherer",
+                content=second_pass_output,
+                success=True,
+                usage={"total_tokens": 80},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check health", skill, registry)
+
+        assert result.success is True
+        # Merged content: first pass + "\n\n" + second pass
+        final_content = result.agent_results[0].content
+        assert complete_output in final_content
+        assert second_pass_output in final_content
+        assert f"{complete_output}\n\n{second_pass_output}" == final_content
+
+    def test_validation_retry_replaces_content(self) -> None:
+        """Validation retry (missing sections) replaces — does NOT merge."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        retry_output = _make_complete_output()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1._max_iterations = 15
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content="incomplete — no sections",
+                success=True,
+                usage={"total_tokens": 50},
+            ),
+            AgentResult(
+                agent_name="gatherer",
+                content=retry_output,
+                success=True,
+                usage={"total_tokens": 150},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check health", skill, registry)
+
+        assert result.success is True
+        # Validation retry: content is REPLACED, NOT merged
+        final_content = result.agent_results[0].content
+        assert final_content == retry_output
+        assert "incomplete — no sections" not in final_content
+
+    def test_max_iterations_retry_applied_during_deepening(self) -> None:
+        """max_iterations_retry config is set on agent during second pass."""
+        client = _make_mock_client()
+        settings = _make_mock_settings()
+        settings.agents.max_iterations_retry = 7
+        orchestrator = Orchestrator(client, settings)
+        registry = _make_mock_registry()
+
+        complete_output = _make_complete_output()
+        iterations_seen: list[int] = []
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1._max_iterations = 15
+
+        def _capture_execute(prompt: str, **kwargs: Any) -> AgentResult:
+            iterations_seen.append(agent1._max_iterations)
+            return AgentResult(
+                agent_name="gatherer",
+                content=complete_output,
+                success=True,
+                usage={"total_tokens": 100},
+            )
+
+        agent1.execute.side_effect = _capture_execute
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            orchestrator.execute_with_tools("check health", skill, registry)
+
+        # First call: original max_iterations (15)
+        # Second call: max_iterations_retry (7)
+        assert iterations_seen == [15, 7]
+
+    def test_max_iterations_restored_after_deepening(self) -> None:
+        """max_iterations is restored to original value after second pass."""
+        client = _make_mock_client()
+        settings = _make_mock_settings()
+        settings.agents.max_iterations_retry = 5
+        orchestrator = Orchestrator(client, settings)
+        registry = _make_mock_registry()
+
+        complete_output = _make_complete_output()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1._max_iterations = 20
+
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content=complete_output,
+                success=True,
+                usage={"total_tokens": 100},
+            ),
+            AgentResult(
+                agent_name="gatherer",
+                content="more data",
+                success=True,
+                usage={"total_tokens": 80},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            orchestrator.execute_with_tools("check health", skill, registry)
+
+        # max_iterations should be restored to original value
+        assert agent1._max_iterations == 20
+
+    def test_max_iterations_restored_on_failure(self) -> None:
+        """max_iterations is restored even when the second pass raises."""
+        client = _make_mock_client()
+        settings = _make_mock_settings()
+        settings.agents.max_iterations_retry = 5
+        orchestrator = Orchestrator(client, settings)
+        registry = _make_mock_registry()
+
+        complete_output = _make_complete_output()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1._max_iterations = 20
+
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content=complete_output,
+                success=True,
+                usage={"total_tokens": 100},
+            ),
+            RuntimeError("API explosion"),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            with pytest.raises(RuntimeError, match="API explosion"):
+                orchestrator.execute_with_tools("check health", skill, registry)
+
+        # max_iterations should STILL be restored (try/finally)
+        assert agent1._max_iterations == 20
+
+    def test_config_default_max_iterations_retry(self) -> None:
+        """AgentsConfig has max_iterations_retry with default 10."""
+        from vaig.core.config import AgentsConfig
+        config = AgentsConfig()
+        assert config.max_iterations_retry == 10
 
 
 def _make_checklist(
@@ -2562,6 +2842,10 @@ class TestChecklistRetryPromptIntegration:
         steps = dict(_ALL_STEPS_COMPLETE)
         steps["4"] = (" ", "Deployment deep-dive (SKIPPED — no issues)")
         checklist = _make_checklist(steps)
+        # Strip the "### Investigation Checklist" header from _make_checklist
+        # since the test already has "## Investigation Checklist" — a duplicate
+        # heading would cause body extraction to stop too early.
+        checklist_items = "\n".join(checklist.splitlines()[1:])
         # The Investigation Checklist section body must be >200 chars so
         # it passes the depth check — only then will the dedicated
         # checklist validator flag the invalid skip.
@@ -2578,7 +2862,7 @@ class TestChecklistRetryPromptIntegration:
             "Details: app-frontend 0/3 replicas unavailable.\n"
             f"## Events Timeline\n{_EVENTS_BODY}\n"
             f"## Investigation Checklist\n{checklist_padding}\n\n"
-            f"{checklist}\n"
+            f"{checklist_items}\n"
         )
 
         agent1 = MagicMock(spec=ToolAwareAgent)
@@ -2621,6 +2905,8 @@ class TestChecklistRetryPromptIntegration:
         assert result.success is True
         # Gatherer was retried (checklist issue triggers needs_retry)
         assert agent1.execute.call_count == 2
+        # Validation retry: reset IS called (not incremental deepening)
+        agent1.reset.assert_called_once()
         retry_prompt = agent1.execute.call_args_list[1].args[0]
         # The retry prompt should include checklist feedback about Step 4
         assert "Step 4" in retry_prompt
@@ -2864,3 +3150,273 @@ class TestReporterRetryIntegration:
         # Reporter was NOT retried
         assert agent2.execute.call_count == 1
         assert agent2.reset.call_count == 0
+
+
+# ===========================================================================
+# Causa 4 — Tool call metadata injected into sequential pipeline context
+# ===========================================================================
+
+
+class TestBuildToolsSummary:
+    """Test the _build_tools_summary() helper function."""
+
+    def test_metadata_with_tools_executed(self) -> None:
+        """When metadata has tools_executed, returns a Tools Executed section."""
+        metadata: dict[str, Any] = {
+            "tools_executed": [
+                {"name": "kubectl_get", "args": {"resource": "pods"}, "output": "OK", "error": False},
+                {"name": "kubectl_describe", "args": {"resource": "pod/x"}, "output": "Details", "error": False},
+                {"name": "kubectl_get", "args": {"resource": "svc"}, "output": "OK", "error": False},
+            ],
+        }
+        summary = _build_tools_summary("Gatherer", metadata)
+        assert "## Tools Executed by Gatherer" in summary
+        assert "Total tool calls: 3" in summary
+        assert "kubectl_describe, kubectl_get" in summary  # sorted, unique
+
+    def test_metadata_with_failed_tools(self) -> None:
+        """When metadata has failed tools, includes failure details."""
+        metadata: dict[str, Any] = {
+            "tools_executed": [
+                {"name": "kubectl_get", "args": {"resource": "pods"}, "output": "OK", "error": False},
+                {
+                    "name": "kubectl_logs",
+                    "args": {"pod": "my-pod"},
+                    "output": "Error: container not found in pod my-pod",
+                    "error": True,
+                },
+            ],
+        }
+        summary = _build_tools_summary("Gatherer", metadata)
+        assert "Failed calls: 1" in summary
+        assert "kubectl_logs" in summary
+        assert "tool gaps" in summary
+        assert "data gaps" in summary
+
+    def test_metadata_none_returns_empty(self) -> None:
+        """When metadata is None, returns empty string."""
+        summary = _build_tools_summary("Gatherer", None)
+        assert summary == ""
+
+    def test_metadata_empty_dict_returns_empty(self) -> None:
+        """When metadata is empty dict, returns empty string."""
+        summary = _build_tools_summary("Gatherer", {})
+        assert summary == ""
+
+    def test_metadata_no_tools_executed_key(self) -> None:
+        """When metadata exists but has no tools_executed key, returns empty."""
+        summary = _build_tools_summary("Gatherer", {"finish_reason": "STOP"})
+        assert summary == ""
+
+    def test_metadata_empty_tools_list(self) -> None:
+        """When tools_executed is an empty list, returns empty string."""
+        summary = _build_tools_summary("Gatherer", {"tools_executed": []})
+        assert summary == ""
+
+    def test_failed_tool_output_truncated_to_80_chars(self) -> None:
+        """Failed tool output is truncated to 80 characters in summary."""
+        long_output = "A" * 200
+        metadata: dict[str, Any] = {
+            "tools_executed": [
+                {"name": "kubectl_get", "args": {}, "output": long_output, "error": True},
+            ],
+        }
+        summary = _build_tools_summary("Worker", metadata)
+        # The truncated portion should be at most 80 chars
+        # Find the output after "→ " in the summary
+        arrow_idx = summary.index("→ ")
+        after_arrow = summary[arrow_idx + 2:]
+        # Up to the newline
+        truncated_output = after_arrow.split("\n")[0]
+        assert len(truncated_output) <= 80
+
+    def test_unique_tools_sorted(self) -> None:
+        """Unique tools are listed in sorted order."""
+        metadata: dict[str, Any] = {
+            "tools_executed": [
+                {"name": "z_tool", "args": {}, "output": "ok", "error": False},
+                {"name": "a_tool", "args": {}, "output": "ok", "error": False},
+                {"name": "m_tool", "args": {}, "output": "ok", "error": False},
+                {"name": "a_tool", "args": {}, "output": "ok", "error": False},
+            ],
+        }
+        summary = _build_tools_summary("Agent", metadata)
+        assert "a_tool, m_tool, z_tool" in summary
+
+    def test_failed_tool_with_none_output_uses_fallback(self) -> None:
+        """Failed tool with output=None uses 'error' as fallback text."""
+        metadata: dict[str, Any] = {
+            "tools_executed": [
+                {"name": "kubectl_get", "args": {}, "output": None, "error": True},
+            ],
+        }
+        summary = _build_tools_summary("Worker", metadata)
+        assert "Failed calls: 1" in summary
+        assert "error" in summary
+
+
+class TestToolMetadataInSequentialPipeline:
+    """Integration: verify tool metadata is injected in sequential context."""
+
+    def test_sync_execute_with_tools_injects_metadata(self) -> None:
+        """Sync sequential pipeline injects tool metadata in downstream context."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.return_value = AgentResult(
+            agent_name="gatherer",
+            content="Gathered data here.",
+            success=True,
+            usage={"total_tokens": 100},
+            metadata={
+                "tools_executed": [
+                    {"name": "kubectl_get", "args": {"resource": "pods"}, "output": "OK", "error": False},
+                    {"name": "kubectl_logs", "args": {"pod": "x"}, "output": "Error: not found", "error": True},
+                ],
+            },
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report.", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        # No required sections to skip gatherer validation retry
+        skill.get_required_output_sections = MagicMock(return_value=[])
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check pods", skill, registry)
+
+        assert result.success is True
+        # Second agent should receive context with tool metadata
+        second_call_context = agent2.execute.call_args.kwargs["context"]
+        assert "## Tools Executed by Gatherer" in second_call_context
+        assert "Total tool calls: 2" in second_call_context
+        assert "kubectl_get, kubectl_logs" in second_call_context
+        assert "Failed calls: 1" in second_call_context
+        assert "tool gaps" in second_call_context
+
+    def test_sync_no_metadata_no_tools_summary(self) -> None:
+        """When agent result has no metadata, no tools summary is added."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.return_value = AgentResult(
+            agent_name="gatherer",
+            content="Gathered data.",
+            success=True,
+            usage={"total_tokens": 100},
+            # No metadata → default empty dict
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report.", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(return_value=[])
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check pods", skill, registry)
+
+        assert result.success is True
+        second_call_context = agent2.execute.call_args.kwargs["context"]
+        assert "Tools Executed" not in second_call_context
+
+    async def test_async_execute_with_tools_injects_metadata(self) -> None:
+        """Async sequential pipeline injects tool metadata in downstream context."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.return_value = AgentResult(
+            agent_name="gatherer",
+            content="Gathered data here.",
+            success=True,
+            usage={"total_tokens": 100},
+            metadata={
+                "tools_executed": [
+                    {"name": "kubectl_get", "args": {"resource": "pods"}, "output": "OK", "error": False},
+                    {"name": "gcloud_logs", "args": {}, "output": "Logs retrieved", "error": False},
+                ],
+            },
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report.", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(return_value=[])
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_with_tools(
+                "check pods", skill, registry,
+            )
+
+        assert result.success is True
+        second_call_context = agent2.execute.call_args.kwargs["context"]
+        assert "## Tools Executed by Gatherer" in second_call_context
+        assert "Total tool calls: 2" in second_call_context
+        assert "gcloud_logs, kubectl_get" in second_call_context
+        # No failures in this test
+        assert "Failed calls" not in second_call_context
+
+    async def test_async_no_metadata_no_tools_summary(self) -> None:
+        """Async: no metadata means no tools summary injected."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.return_value = AgentResult(
+            agent_name="gatherer",
+            content="Gathered data.",
+            success=True,
+            usage={"total_tokens": 100},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report.", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(return_value=[])
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_with_tools(
+                "check pods", skill, registry,
+            )
+
+        assert result.success is True
+        second_call_context = agent2.execute.call_args.kwargs["context"]
+        assert "Tools Executed" not in second_call_context

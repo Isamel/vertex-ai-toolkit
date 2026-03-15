@@ -193,7 +193,16 @@ class Orchestrator:
                 agent_result = agent.execute(prompt, context=current_context)
             else:
                 # Feed previous agent's output as additional context
-                accumulated = f"{current_context}\n\n## Previous Analysis ({agents[i - 1].role})\n\n{result.agent_results[-1].content}"
+                prev = result.agent_results[-1]
+                tools_summary = _build_tools_summary(
+                    agents[i - 1].role, prev.metadata,
+                )
+                accumulated = (
+                    f"{current_context}\n\n"
+                    f"## Previous Analysis ({agents[i - 1].role})\n\n"
+                    f"{prev.content}"
+                    f"{tools_summary}"
+                )
                 agent_result = agent.execute(prompt, context=accumulated)
 
             result.agent_results.append(agent_result)
@@ -512,9 +521,13 @@ class Orchestrator:
                 )
                 if i > 0 and result.agent_results:
                     prev = result.agent_results[-1]
+                    tools_summary = _build_tools_summary(
+                        agents[i - 1].role, prev.metadata,
+                    )
                     current_context = (
                         f"## Previous Analysis ({agents[i - 1].role})\n\n"
                         f"{prev.content}"
+                        f"{tools_summary}"
                     )
 
                 kw_seq: dict[str, Any] = {"context": current_context}
@@ -573,14 +586,53 @@ class Orchestrator:
                         )
 
                     logger.debug("Retry prompt: %s", retry_prompt[:200])
-                    agent.reset()
+
+                    is_deepening = not validation.needs_retry
+                    if not is_deepening:
+                        # Validation retry: reset agent state so it starts fresh
+                        agent.reset()
+
+                    # Use configurable max_iterations for the second pass
                     kw_retry: dict[str, Any] = {"context": ""}
                     if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
                         kw_retry["on_tool_call"] = on_tool_call
-                    retry_result = agent.execute(retry_prompt, **kw_retry)
+
+                    original_max_iters: int | None = None
+                    if (
+                        isinstance(agent, ToolAwareAgent)
+                        and hasattr(agent, "_max_iterations")
+                    ):
+                        original_max_iters = agent._max_iterations
+                        agent._max_iterations = (
+                            self._settings.agents.max_iterations_retry
+                        )
+
+                    try:
+                        retry_result = agent.execute(retry_prompt, **kw_retry)
+                    finally:
+                        if (
+                            isinstance(agent, ToolAwareAgent)
+                            and original_max_iters is not None
+                        ):
+                            agent._max_iterations = original_max_iters
+
                     _accumulate_usage(result, retry_result)
 
-                    # Replace the original result with the retry
+                    if is_deepening:
+                        # Merge: concatenate first-pass + second-pass content
+                        merged_content = (
+                            agent_result.content
+                            + "\n\n"
+                            + retry_result.content
+                        )
+                        retry_result = AgentResult(
+                            agent_name=retry_result.agent_name,
+                            content=merged_content,
+                            success=retry_result.success,
+                            usage=retry_result.usage,
+                            metadata=retry_result.metadata,
+                        )
+
                     result.agent_results[-1] = retry_result
 
                     if not retry_result.success:
@@ -826,10 +878,15 @@ class Orchestrator:
                     agent.execute, prompt, context=current_context,
                 )
             else:
+                prev = result.agent_results[-1]
+                tools_summary = _build_tools_summary(
+                    agents[i - 1].role, prev.metadata,
+                )
                 accumulated = (
                     f"{current_context}\n\n"
                     f"## Previous Analysis ({agents[i - 1].role})\n\n"
-                    f"{result.agent_results[-1].content}"
+                    f"{prev.content}"
+                    f"{tools_summary}"
                 )
                 agent_result = await asyncio.to_thread(
                     agent.execute, prompt, context=accumulated,
@@ -1031,9 +1088,13 @@ class Orchestrator:
                 )
                 if i > 0 and result.agent_results:
                     prev = result.agent_results[-1]
+                    tools_summary = _build_tools_summary(
+                        agents[i - 1].role, prev.metadata,
+                    )
                     current_context = (
                         f"## Previous Analysis ({agents[i - 1].role})\n\n"
                         f"{prev.content}"
+                        f"{tools_summary}"
                     )
 
                 kw_seq: dict[str, Any] = {"context": current_context}
@@ -1079,16 +1140,51 @@ class Orchestrator:
                             query, agent_result.content,
                         )
 
-                    agent.reset()
+                    is_deepening = not validation.needs_retry
+                    if not is_deepening:
+                        agent.reset()
+
                     kw_retry: dict[str, Any] = {"context": ""}
                     if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
                         kw_retry["on_tool_call"] = on_tool_call
-                    retry_result = await asyncio.to_thread(
-                        agent.execute, retry_prompt, **kw_retry,
-                    )
+
+                    original_max_iters: int | None = None
+                    if (
+                        isinstance(agent, ToolAwareAgent)
+                        and hasattr(agent, "_max_iterations")
+                    ):
+                        original_max_iters = agent._max_iterations
+                        agent._max_iterations = (
+                            self._settings.agents.max_iterations_retry
+                        )
+
+                    try:
+                        retry_result = await asyncio.to_thread(
+                            agent.execute, retry_prompt, **kw_retry,
+                        )
+                    finally:
+                        if (
+                            isinstance(agent, ToolAwareAgent)
+                            and original_max_iters is not None
+                        ):
+                            agent._max_iterations = original_max_iters
+
                     _accumulate_usage(result, retry_result)
 
-                    # Replace the original result with the retry
+                    if is_deepening:
+                        merged_content = (
+                            agent_result.content
+                            + "\n\n"
+                            + retry_result.content
+                        )
+                        retry_result = AgentResult(
+                            agent_name=retry_result.agent_name,
+                            content=merged_content,
+                            success=retry_result.success,
+                            usage=retry_result.usage,
+                            metadata=retry_result.metadata,
+                        )
+
                     result.agent_results[-1] = retry_result
 
                     if not retry_result.success:
@@ -1509,39 +1605,42 @@ class Orchestrator:
 
     @staticmethod
     def _build_deepening_prompt(query: str, first_pass_output: str) -> str:
-        """Build a deepening prompt for a mandatory second pass.
+        """Build an incremental deepening prompt for a mandatory second pass.
 
         When the first pass already covers all required sections with
-        sufficient depth, this prompt instructs the gatherer to go deeper
-        — collecting additional evidence and running more diagnostic
-        commands — rather than re-collecting what it already has.
+        sufficient depth, this prompt instructs the gatherer to fill gaps
+        WITHOUT repeating tool calls already in the conversation history.
+
+        The agent keeps its conversation history (no reset), so the prompt
+        references "your conversation history above" rather than embedding
+        the full first-pass output.
 
         Args:
             query: The original user query.
-            first_pass_output: The full text produced by the first pass.
+            first_pass_output: The full text produced by the first pass
+                (kept for API compatibility but NOT embedded in the prompt
+                since the conversation history already contains it).
 
         Returns:
-            A prompt string for the second (deepening) pass.
+            A prompt string for the second (incremental deepening) pass.
         """
         return (
-            "You completed a first diagnostic pass. Your output covered the "
-            "required sections, but a second pass is MANDATORY to ensure "
-            "thoroughness.\n\n"
-            "INSTRUCTIONS FOR THIS SECOND PASS:\n"
-            "1. Review your first pass output below and identify any areas "
-            "where you could collect MORE evidence\n"
-            "2. Specifically look for:\n"
-            "   - ReplicaSet events and conditions (kubectl_describe on "
-            "ReplicaSets)\n"
-            "   - HPA status and scaling events\n"
-            "   - Pod events for any pods in non-Running state\n"
-            "   - Mutating webhook configurations that may affect pod specs\n"
-            "   - Cloud Logging entries for any errors or warnings\n"
-            "3. Run additional diagnostic commands to fill gaps\n"
-            "4. Your output MUST include ALL the data from the first pass "
-            "PLUS any new findings\n\n"
-            f"=== FIRST PASS OUTPUT ===\n{first_pass_output}\n\n"
-            f"=== ORIGINAL QUERY ===\n{query}"
+            "You already completed a first diagnostic pass (see your conversation "
+            "history above). A second pass is now running to fill any gaps.\n\n"
+            "RULES FOR THIS SECOND PASS:\n"
+            "1. Do NOT repeat tool calls you already made — the results are in your "
+            "history. Only call tools you have NOT called yet.\n"
+            "2. Review your Investigation Checklist from the first pass. For any "
+            "step marked SKIPPED, evaluate if it should now be executed.\n"
+            "3. Look for these specific gaps:\n"
+            "   - Deployments with unavailable replicas that lack ReplicaSet describe\n"
+            "   - Warning events that lack corresponding YAML inspection\n"
+            "   - HPAs that lack describe output\n"
+            "   - Missing Cloud Logging queries for namespaces with issues\n"
+            "4. Output ONLY the NEW findings from this second pass. Start with:\n"
+            "   ### Second Pass — Additional Findings\n"
+            "   Then list only the new tool call results and updated checklist.\n\n"
+            f"Original query: {query}"
         )
 
     def _validate_reporter_output(self, output: str) -> list[str]:
@@ -1610,6 +1709,53 @@ class Orchestrator:
             "6. **Admit uncertainty** — If you're not sure about something, say so. Don't "
             "fabricate information."
         )
+
+
+def _build_tools_summary(agent_role: str, metadata: dict[str, Any] | None) -> str:
+    """Build a summary of tool calls for downstream agents.
+
+    When an agent's metadata includes ``tools_executed``, this function
+    produces a short Markdown section listing total calls, unique tools,
+    and any failures — so the next agent in a sequential pipeline can
+    reason about data gaps.
+
+    Args:
+        agent_role: The human-readable role of the agent whose tools
+            are being summarised (e.g. ``"Gatherer"``).
+        metadata: The ``AgentResult.metadata`` dict.
+
+    Returns:
+        A Markdown string ready to be appended to the downstream
+        context.  Empty string when there is nothing to report.
+    """
+    if not metadata or not metadata.get("tools_executed"):
+        return ""
+
+    tools: list[dict[str, Any]] = metadata["tools_executed"]
+    tool_names = [t["name"] for t in tools]
+    failed_tools = [t for t in tools if t.get("error")]
+
+    summary = (
+        f"\n\n## Tools Executed by {agent_role}\n"
+        f"- Total tool calls: {len(tools)}\n"
+        f"- Unique tools: {', '.join(sorted(set(tool_names)))}\n"
+    )
+    if failed_tools:
+        summary += (
+            f"- Failed calls: {len(failed_tools)} — "
+            + ", ".join(
+                f"{t['name']}({t.get('args', {})}) → "
+                f"{(t.get('output') or 'error')[:80]}"
+                for t in failed_tools
+            )
+            + "\n"
+        )
+        summary += (
+            "NOTE: Failed tool calls may indicate tool gaps "
+            "(real K8s resources not yet supported) or agent errors. "
+            "Consider these as potential data gaps in your analysis.\n"
+        )
+    return summary
 
 
 def _accumulate_usage(result: OrchestratorResult, agent_result: AgentResult) -> None:

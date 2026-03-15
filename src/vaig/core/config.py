@@ -127,6 +127,7 @@ class AgentsConfig(BaseModel):
     max_concurrent: int = 3
     orchestrator_model: str = "gemini-2.5-pro"
     specialist_model: str = "gemini-2.5-flash"
+    max_iterations_retry: int = 10
 
 
 class CodingConfig(BaseModel):
