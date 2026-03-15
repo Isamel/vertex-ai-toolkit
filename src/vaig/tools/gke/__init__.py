@@ -125,6 +125,8 @@ from ._cache import (
 
 # ── Layer 0: resources ──────────────────────────────────────
 from ._resources import (
+    _CLUSTER_SCOPED_RESOURCES,
+    _KNOWN_K8S_RESOURCES,
     _RESOURCE_ALIASES,
     _RESOURCE_API_MAP,
     _list_resource,
@@ -134,6 +136,7 @@ from ._resources import (
 # ── Layer 0: formatters ─────────────────────────────────────
 from ._formatters import (
     _age,
+    _format_crds_table,
     _format_deployments_table,
     _format_generic_table,
     _format_items,
@@ -141,6 +144,8 @@ from ._formatters import (
     _format_nodes_table,
     _format_pods_table,
     _format_services_table,
+    _format_webhook_config,
+    _format_webhooks_table,
     _pod_ready_count,
     _pod_restarts,
     _pod_status,
@@ -243,6 +248,8 @@ __all__ = [
     # Resources
     "_RESOURCE_API_MAP",
     "_RESOURCE_ALIASES",
+    "_CLUSTER_SCOPED_RESOURCES",
+    "_KNOWN_K8S_RESOURCES",
     "_normalise_resource",
     "_list_resource",
     # Formatters
@@ -257,4 +264,7 @@ __all__ = [
     "_format_generic_table",
     "_format_items",
     "_format_memory",
+    "_format_webhook_config",
+    "_format_webhooks_table",
+    "_format_crds_table",
 ]

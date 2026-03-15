@@ -32,6 +32,12 @@ _RESOURCE_API_MAP: dict[str, str] = {
     "networkpolicies": "networking",
     "poddisruptionbudgets": "policy",
     "resourcequotas": "core",
+    # Admission registration (webhook configurations)
+    "mutatingwebhookconfigurations": "admissionregistration",
+    "validatingwebhookconfigurations": "admissionregistration",
+    # Custom Resource Definitions
+    "customresourcedefinitions": "apiextensions",
+    "crds": "apiextensions",
 }
 
 # Canonical aliases so users can type short names
@@ -73,6 +79,12 @@ _RESOURCE_ALIASES: dict[str, str] = {
     "resourcequota": "resourcequotas",
     "quota": "resourcequotas",
     "quotas": "resourcequotas",
+    "mutatingwebhookconfiguration": "mutatingwebhookconfigurations",
+    "mwc": "mutatingwebhookconfigurations",
+    "validatingwebhookconfiguration": "validatingwebhookconfigurations",
+    "vwc": "validatingwebhookconfigurations",
+    "customresourcedefinition": "customresourcedefinitions",
+    "crd": "customresourcedefinitions",
 }
 
 # Allowed resource types for write operations (intentionally restrictive).
@@ -81,6 +93,24 @@ _RESTARTABLE_RESOURCES = frozenset({"deployments", "statefulsets", "daemonsets"}
 _LABELABLE_RESOURCES = frozenset({
     "pods", "deployments", "services", "configmaps", "secrets",
     "statefulsets", "daemonsets", "namespaces", "nodes",
+})
+
+# Cluster-scoped resources (no namespace parameter for list/describe).
+_CLUSTER_SCOPED_RESOURCES = frozenset({
+    "nodes", "namespaces", "pv", "persistentvolumes",
+    "mutatingwebhookconfigurations", "validatingwebhookconfigurations",
+    "customresourcedefinitions", "crds",
+})
+
+# Real K8s resources we haven't implemented yet.
+# Used to distinguish "gap in our tools" from "hallucinated resource".
+_KNOWN_K8S_RESOURCES = frozenset({
+    "limitranges", "events", "componentstatuses",
+    "replicationcontrollers", "podtemplates",
+    "controllerrevisions", "leases",
+    "clusterroles", "clusterrolebindings", "roles", "rolebindings",
+    "storageclasses", "volumeattachments", "csidrivers", "csinodes",
+    "priorityclasses", "runtimeclasses",
 })
 
 
@@ -108,7 +138,7 @@ def _list_resource(
         kwargs["field_selector"] = field_selector
 
     api_group = _RESOURCE_API_MAP.get(resource, "core")
-    is_cluster_scoped = resource in ("nodes", "namespaces", "pv", "persistentvolumes")
+    is_cluster_scoped = resource in _CLUSTER_SCOPED_RESOURCES
 
     # ── Core V1 resources ─────────────────────────────────────
     if api_group == "core":
@@ -206,5 +236,23 @@ def _list_resource(
         if namespace in ("", "all"):
             return policy_v1.list_pod_disruption_budget_for_all_namespaces(**kwargs)
         return policy_v1.list_namespaced_pod_disruption_budget(namespace=namespace, **kwargs)
+
+    # ── AdmissionRegistration V1 resources ───────────────────
+    if api_group == "admissionregistration":
+        from kubernetes.client import AdmissionregistrationV1Api  # noqa: WPS433
+
+        admission_v1 = AdmissionregistrationV1Api(api_client=api_client)
+        if resource == "mutatingwebhookconfigurations":
+            return admission_v1.list_mutating_webhook_configuration(**kwargs)
+        if resource == "validatingwebhookconfigurations":
+            return admission_v1.list_validating_webhook_configuration(**kwargs)
+        return ToolResult(output=f"Unsupported admissionregistration resource type: {resource}", error=True)
+
+    # ── ApiExtensions V1 resources ───────────────────────────
+    if api_group == "apiextensions":
+        from kubernetes.client import ApiextensionsV1Api  # noqa: WPS433
+
+        ext_v1 = ApiextensionsV1Api(api_client=api_client)
+        return ext_v1.list_custom_resource_definition(**kwargs)
 
     return ToolResult(output=f"Unknown API group for resource: {resource}", error=True)

@@ -197,6 +197,63 @@ def _format_generic_table(items: list[Any]) -> str:
     return "\n".join(lines)
 
 
+def _format_webhook_config(item: Any) -> str:
+    """Format a MutatingWebhookConfiguration or ValidatingWebhookConfiguration."""
+    lines = [f"Name: {item.metadata.name}"]
+    for webhook in (item.webhooks or []):
+        lines.append(f"  Webhook: {webhook.name}")
+        if webhook.namespace_selector:
+            lines.append(f"    NamespaceSelector: {webhook.namespace_selector}")
+        if webhook.object_selector:
+            lines.append(f"    ObjectSelector: {webhook.object_selector}")
+        rules = webhook.rules or []
+        for rule in rules:
+            resources = rule.resources or ["*"]
+            operations = rule.operations or ["*"]
+            lines.append(f"    Rules: {', '.join(operations)} on {', '.join(resources)}")
+        if webhook.failure_policy:
+            lines.append(f"    FailurePolicy: {webhook.failure_policy}")
+    return "\n".join(lines)
+
+
+def _format_webhooks_table(items: list[Any], wide: bool = False) -> str:
+    """Format webhook configuration list as a kubectl-style table."""
+    if not items:
+        return "No resources found."
+    lines: list[str] = []
+    lines.append("NAME                                     WEBHOOKS   AGE")
+    for item in items:
+        name = item.metadata.name or ""
+        webhook_count = len(item.webhooks or [])
+        age = _age(item.metadata.creation_timestamp)
+        line = f"{name:<41}{webhook_count:<11}{age}"
+        if wide:
+            line += "\n" + _format_webhook_config(item)
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _format_crds_table(items: list[Any], wide: bool = False) -> str:
+    """Format CustomResourceDefinition list as a kubectl-style table."""
+    if not items:
+        return "No resources found."
+    lines: list[str] = []
+    header = "NAME                                                         CREATED AT"
+    if wide:
+        header += "   GROUP                         SCOPE"
+    lines.append(header)
+    for item in items:
+        name = item.metadata.name or ""
+        age = _age(item.metadata.creation_timestamp)
+        line = f"{name:<61}{age}"
+        if wide and item.spec:
+            group = item.spec.group or ""
+            scope = item.spec.scope or ""
+            line += f"   {group:<30}{scope}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _format_items(resource: str, items: list[Any], output_format: str) -> str:
     """Format a list of K8s items into the requested output_format."""
     import json as _json
@@ -225,6 +282,10 @@ def _format_items(resource: str, items: list[Any], output_format: str) -> str:
         "deployments": _format_deployments_table,
         "services": _format_services_table,
         "nodes": _format_nodes_table,
+        "mutatingwebhookconfigurations": _format_webhooks_table,
+        "validatingwebhookconfigurations": _format_webhooks_table,
+        "customresourcedefinitions": _format_crds_table,
+        "crds": _format_crds_table,
     }.get(resource)
 
     if formatter:

@@ -49,6 +49,14 @@ def kubectl_get(
 
     resource = _resources._normalise_resource(resource)
     if resource not in _resources._RESOURCE_API_MAP:
+        if resource in _resources._KNOWN_K8S_RESOURCES:
+            return ToolResult(
+                output=(
+                    f"Resource type '{resource}' is a valid Kubernetes resource but is not yet "
+                    f"supported by this tool. Consider using kubectl directly for this resource."
+                ),
+                error=True,
+            )
         supported = sorted(_resources._RESOURCE_API_MAP.keys())
         return ToolResult(
             output=f"Unsupported resource type: '{resource}'. Supported: {', '.join(supported)}",
@@ -120,7 +128,7 @@ def _describe_resource(
 ) -> Any:
     """Read a single resource by name for describe output."""
     api_group = _resources._RESOURCE_API_MAP.get(resource, "core")
-    is_cluster_scoped = resource in ("nodes", "namespaces", "pv", "persistentvolumes")
+    is_cluster_scoped = resource in _resources._CLUSTER_SCOPED_RESOURCES
 
     # ── Core V1 ───────────────────────────────────────────────
     if api_group == "core":
@@ -204,6 +212,23 @@ def _describe_resource(
         return PolicyV1Api(api_client=api_client).read_namespaced_pod_disruption_budget(
             name=name, namespace=namespace,
         )
+
+    # ── AdmissionRegistration V1 ─────────────────────────────
+    if api_group == "admissionregistration":
+        from kubernetes.client import AdmissionregistrationV1Api  # noqa: WPS433
+
+        admission_v1 = AdmissionregistrationV1Api(api_client=api_client)
+        if resource == "mutatingwebhookconfigurations":
+            return admission_v1.read_mutating_webhook_configuration(name=name)
+        if resource == "validatingwebhookconfigurations":
+            return admission_v1.read_validating_webhook_configuration(name=name)
+        return None
+
+    # ── ApiExtensions V1 ─────────────────────────────────────
+    if api_group == "apiextensions":
+        from kubernetes.client import ApiextensionsV1Api  # noqa: WPS433
+
+        return ApiextensionsV1Api(api_client=api_client).read_custom_resource_definition(name=name)
 
     return None
 
@@ -348,6 +373,14 @@ def kubectl_describe(
 
     resource = _resources._normalise_resource(resource)
     if resource not in _resources._RESOURCE_API_MAP:
+        if resource in _resources._KNOWN_K8S_RESOURCES:
+            return ToolResult(
+                output=(
+                    f"Resource type '{resource}' is a valid Kubernetes resource but is not yet "
+                    f"supported by this tool. Consider using kubectl directly for this resource."
+                ),
+                error=True,
+            )
         supported = sorted(_resources._RESOURCE_API_MAP.keys())
         return ToolResult(
             output=f"Unsupported resource type: '{resource}'. Supported: {', '.join(supported)}",

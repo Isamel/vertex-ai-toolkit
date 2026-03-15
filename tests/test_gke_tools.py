@@ -5223,3 +5223,564 @@ class TestDiscoverNetworkTopology:
 
         assert "Partial errors" in result.output or "Error" in result.output
         assert "Forbidden" in result.output
+
+
+# ══════════════════════════════════════════════════════════════
+# Causa 2 — Admission registration, CRDs, and gap detection
+# ══════════════════════════════════════════════════════════════
+
+
+class TestAdmissionRegistrationResourceMap:
+    """Verify webhook configuration entries in _RESOURCE_API_MAP and aliases."""
+
+    def test_mutatingwebhookconfigurations_in_map(self) -> None:
+        from vaig.tools.gke_tools import _RESOURCE_API_MAP
+
+        assert "mutatingwebhookconfigurations" in _RESOURCE_API_MAP
+        assert _RESOURCE_API_MAP["mutatingwebhookconfigurations"] == "admissionregistration"
+
+    def test_validatingwebhookconfigurations_in_map(self) -> None:
+        from vaig.tools.gke_tools import _RESOURCE_API_MAP
+
+        assert "validatingwebhookconfigurations" in _RESOURCE_API_MAP
+        assert _RESOURCE_API_MAP["validatingwebhookconfigurations"] == "admissionregistration"
+
+    def test_mutating_webhook_aliases(self) -> None:
+        from vaig.tools.gke_tools import _normalise_resource
+
+        aliases = ("mwc", "mutatingwebhookconfiguration", "mutatingwebhookconfigurations")
+        for alias in aliases:
+            assert _normalise_resource(alias) == "mutatingwebhookconfigurations", (
+                f"alias '{alias}' did not resolve to 'mutatingwebhookconfigurations'"
+            )
+
+    def test_validating_webhook_aliases(self) -> None:
+        from vaig.tools.gke_tools import _normalise_resource
+
+        aliases = ("vwc", "validatingwebhookconfiguration", "validatingwebhookconfigurations")
+        for alias in aliases:
+            assert _normalise_resource(alias) == "validatingwebhookconfigurations", (
+                f"alias '{alias}' did not resolve to 'validatingwebhookconfigurations'"
+            )
+
+    def test_webhook_aliases_case_insensitive(self) -> None:
+        from vaig.tools.gke_tools import _normalise_resource
+
+        assert _normalise_resource("MWC") == "mutatingwebhookconfigurations"
+        assert _normalise_resource("VWC") == "validatingwebhookconfigurations"
+
+
+class TestCrdResourceMap:
+    """Verify CRD entries in _RESOURCE_API_MAP and aliases."""
+
+    def test_crds_in_map(self) -> None:
+        from vaig.tools.gke_tools import _RESOURCE_API_MAP
+
+        assert "customresourcedefinitions" in _RESOURCE_API_MAP
+        assert _RESOURCE_API_MAP["customresourcedefinitions"] == "apiextensions"
+        assert "crds" in _RESOURCE_API_MAP
+        assert _RESOURCE_API_MAP["crds"] == "apiextensions"
+
+    def test_crd_aliases(self) -> None:
+        from vaig.tools.gke_tools import _normalise_resource
+
+        aliases = ("crd", "customresourcedefinition", "customresourcedefinitions")
+        for alias in aliases:
+            assert _normalise_resource(alias) == "customresourcedefinitions", (
+                f"alias '{alias}' did not resolve to 'customresourcedefinitions'"
+            )
+
+    def test_crd_aliases_case_insensitive(self) -> None:
+        from vaig.tools.gke_tools import _normalise_resource
+
+        assert _normalise_resource("CRD") == "customresourcedefinitions"
+        # "CRDs" lowercases to "crds" which is a direct key in _RESOURCE_API_MAP
+        assert _normalise_resource("CRDs") == "crds"
+
+
+class TestClusterScopedResources:
+    """Verify that webhook configs and CRDs are cluster-scoped."""
+
+    def test_webhook_resources_are_cluster_scoped(self) -> None:
+        from vaig.tools.gke_tools import _CLUSTER_SCOPED_RESOURCES
+
+        assert "mutatingwebhookconfigurations" in _CLUSTER_SCOPED_RESOURCES
+        assert "validatingwebhookconfigurations" in _CLUSTER_SCOPED_RESOURCES
+
+    def test_crd_resources_are_cluster_scoped(self) -> None:
+        from vaig.tools.gke_tools import _CLUSTER_SCOPED_RESOURCES
+
+        assert "customresourcedefinitions" in _CLUSTER_SCOPED_RESOURCES
+        assert "crds" in _CLUSTER_SCOPED_RESOURCES
+
+    def test_existing_cluster_scoped_preserved(self) -> None:
+        from vaig.tools.gke_tools import _CLUSTER_SCOPED_RESOURCES
+
+        assert "nodes" in _CLUSTER_SCOPED_RESOURCES
+        assert "namespaces" in _CLUSTER_SCOPED_RESOURCES
+        assert "pv" in _CLUSTER_SCOPED_RESOURCES
+        assert "persistentvolumes" in _CLUSTER_SCOPED_RESOURCES
+
+
+class TestListMutatingWebhookConfigurations:
+    """Tests for listing MutatingWebhookConfigurations."""
+
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
+    def test_list_mutating_webhook_configurations(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_get
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        apps_v1 = MagicMock()
+        custom_api = MagicMock()
+        api_client = MagicMock()
+        mock_clients.return_value = (core_v1, apps_v1, custom_api, api_client)
+
+        mock_item = MagicMock()
+        mock_item.metadata.name = "my-webhook"
+        mock_item.metadata.namespace = None
+        mock_item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_item.webhooks = [MagicMock(name="wh1")]
+
+        mock_list = MagicMock()
+        mock_list.items = [mock_item]
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.AdmissionregistrationV1Api") as mock_admission:
+            mock_admission.return_value.list_mutating_webhook_configuration.return_value = mock_list
+            result = kubectl_get("mutatingwebhookconfigurations", gke_config=cfg)
+
+        assert result.error is not True
+        assert "my-webhook" in result.output
+
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
+    def test_list_via_mwc_alias(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_get
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        apps_v1 = MagicMock()
+        custom_api = MagicMock()
+        api_client = MagicMock()
+        mock_clients.return_value = (core_v1, apps_v1, custom_api, api_client)
+
+        mock_list = MagicMock()
+        mock_list.items = []
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.AdmissionregistrationV1Api") as mock_admission:
+            mock_admission.return_value.list_mutating_webhook_configuration.return_value = mock_list
+            result = kubectl_get("mwc", gke_config=cfg)
+
+        assert result.error is not True
+        # Should call the same API as "mutatingwebhookconfigurations"
+        mock_admission.return_value.list_mutating_webhook_configuration.assert_called_once()
+
+
+class TestListValidatingWebhookConfigurations:
+    """Tests for listing ValidatingWebhookConfigurations."""
+
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
+    def test_list_validating_webhook_configurations(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_get
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        apps_v1 = MagicMock()
+        custom_api = MagicMock()
+        api_client = MagicMock()
+        mock_clients.return_value = (core_v1, apps_v1, custom_api, api_client)
+
+        mock_item = MagicMock()
+        mock_item.metadata.name = "validation-hook"
+        mock_item.metadata.namespace = None
+        mock_item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_item.webhooks = []
+
+        mock_list = MagicMock()
+        mock_list.items = [mock_item]
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.AdmissionregistrationV1Api") as mock_admission:
+            mock_admission.return_value.list_validating_webhook_configuration.return_value = mock_list
+            result = kubectl_get("validatingwebhookconfigurations", gke_config=cfg)
+
+        assert result.error is not True
+        assert "validation-hook" in result.output
+
+
+class TestListCustomResourceDefinitions:
+    """Tests for listing CustomResourceDefinitions."""
+
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
+    def test_list_crds(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_get
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        apps_v1 = MagicMock()
+        custom_api = MagicMock()
+        api_client = MagicMock()
+        mock_clients.return_value = (core_v1, apps_v1, custom_api, api_client)
+
+        mock_item = MagicMock()
+        mock_item.metadata.name = "certificates.cert-manager.io"
+        mock_item.metadata.namespace = None
+        mock_item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_item.spec.group = "cert-manager.io"
+        mock_item.spec.scope = "Namespaced"
+
+        mock_list = MagicMock()
+        mock_list.items = [mock_item]
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api") as mock_ext:
+            mock_ext.return_value.list_custom_resource_definition.return_value = mock_list
+            result = kubectl_get("crds", gke_config=cfg)
+
+        assert result.error is not True
+        assert "certificates.cert-manager.io" in result.output
+
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
+    def test_list_via_crd_alias(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_get
+
+        cfg = _make_gke_config()
+        mock_clients.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock())
+
+        mock_list = MagicMock()
+        mock_list.items = []
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api") as mock_ext:
+            mock_ext.return_value.list_custom_resource_definition.return_value = mock_list
+            result = kubectl_get("crd", gke_config=cfg)
+
+        assert result.error is not True
+        mock_ext.return_value.list_custom_resource_definition.assert_called_once()
+
+
+class TestDescribeWebhookConfigurations:
+    """Tests for describing webhook configurations."""
+
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
+    def test_describe_mutating_webhook(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_describe
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        apps_v1 = MagicMock()
+        api_client = MagicMock()
+        mock_clients.return_value = (core_v1, apps_v1, MagicMock(), api_client)
+
+        mock_obj = MagicMock()
+        mock_obj.metadata.name = "my-webhook"
+        mock_obj.metadata.namespace = None
+        mock_obj.metadata.labels = {}
+        mock_obj.metadata.annotations = {}
+        mock_obj.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_obj.spec = None
+        mock_obj.status = None
+
+        # Mock events
+        mock_events = MagicMock()
+        mock_events.items = []
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.AdmissionregistrationV1Api") as mock_admission, \
+             patch("kubernetes.client.CoreV1Api") as mock_events_api:
+            mock_admission.return_value.read_mutating_webhook_configuration.return_value = mock_obj
+            mock_events_api.return_value.list_event_for_all_namespaces.return_value = mock_events
+            result = kubectl_describe("mutatingwebhookconfigurations", "my-webhook", gke_config=cfg)
+
+        assert result.error is not True
+        assert "my-webhook" in result.output
+
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
+    def test_describe_validating_webhook(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_describe
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        apps_v1 = MagicMock()
+        api_client = MagicMock()
+        mock_clients.return_value = (core_v1, apps_v1, MagicMock(), api_client)
+
+        mock_obj = MagicMock()
+        mock_obj.metadata.name = "val-hook"
+        mock_obj.metadata.namespace = None
+        mock_obj.metadata.labels = {}
+        mock_obj.metadata.annotations = {}
+        mock_obj.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_obj.spec = None
+        mock_obj.status = None
+
+        mock_events = MagicMock()
+        mock_events.items = []
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.AdmissionregistrationV1Api") as mock_admission, \
+             patch("kubernetes.client.CoreV1Api") as mock_events_api:
+            mock_admission.return_value.read_validating_webhook_configuration.return_value = mock_obj
+            mock_events_api.return_value.list_event_for_all_namespaces.return_value = mock_events
+            result = kubectl_describe("validatingwebhookconfigurations", "val-hook", gke_config=cfg)
+
+        assert result.error is not True
+        assert "val-hook" in result.output
+
+
+class TestDescribeCustomResourceDefinition:
+    """Tests for describing CRDs."""
+
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
+    def test_describe_crd(self, mock_clients: MagicMock) -> None:
+        from vaig.tools.gke_tools import kubectl_describe
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        apps_v1 = MagicMock()
+        api_client = MagicMock()
+        mock_clients.return_value = (core_v1, apps_v1, MagicMock(), api_client)
+
+        mock_obj = MagicMock()
+        mock_obj.metadata.name = "certificates.cert-manager.io"
+        mock_obj.metadata.namespace = None
+        mock_obj.metadata.labels = {"app": "cert-manager"}
+        mock_obj.metadata.annotations = {}
+        mock_obj.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_obj.spec = None
+        mock_obj.status = None
+
+        mock_events = MagicMock()
+        mock_events.items = []
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api") as mock_ext, \
+             patch("kubernetes.client.CoreV1Api") as mock_events_api:
+            mock_ext.return_value.read_custom_resource_definition.return_value = mock_obj
+            mock_events_api.return_value.list_event_for_all_namespaces.return_value = mock_events
+            result = kubectl_describe("customresourcedefinitions", "certificates.cert-manager.io", gke_config=cfg)
+
+        assert result.error is not True
+        assert "certificates.cert-manager.io" in result.output
+
+
+class TestWebhookFormatter:
+    """Tests for the webhook configuration formatter."""
+
+    def test_format_webhook_config_basic(self) -> None:
+        from vaig.tools.gke_tools import _format_webhook_config
+
+        item = MagicMock()
+        item.metadata.name = "istio-sidecar-injector"
+        webhook = MagicMock()
+        webhook.name = "sidecar-injector.istio.io"
+        webhook.namespace_selector = MagicMock()
+        webhook.object_selector = None
+        rule = MagicMock()
+        rule.resources = ["pods"]
+        rule.operations = ["CREATE"]
+        webhook.rules = [rule]
+        webhook.failure_policy = "Fail"
+        item.webhooks = [webhook]
+
+        result = _format_webhook_config(item)
+
+        assert "Name: istio-sidecar-injector" in result
+        assert "Webhook: sidecar-injector.istio.io" in result
+        assert "Rules: CREATE on pods" in result
+        assert "FailurePolicy: Fail" in result
+
+    def test_format_webhook_config_no_webhooks(self) -> None:
+        from vaig.tools.gke_tools import _format_webhook_config
+
+        item = MagicMock()
+        item.metadata.name = "empty-config"
+        item.webhooks = []
+
+        result = _format_webhook_config(item)
+
+        assert "Name: empty-config" in result
+
+    def test_format_webhook_config_multiple_rules(self) -> None:
+        from vaig.tools.gke_tools import _format_webhook_config
+
+        item = MagicMock()
+        item.metadata.name = "multi-rule"
+        webhook = MagicMock()
+        webhook.name = "wh1"
+        webhook.namespace_selector = None
+        webhook.object_selector = None
+        webhook.failure_policy = "Ignore"
+        rule1 = MagicMock()
+        rule1.resources = ["pods", "deployments"]
+        rule1.operations = ["CREATE", "UPDATE"]
+        rule2 = MagicMock()
+        rule2.resources = ["services"]
+        rule2.operations = ["DELETE"]
+        webhook.rules = [rule1, rule2]
+        item.webhooks = [webhook]
+
+        result = _format_webhook_config(item)
+
+        assert "CREATE, UPDATE on pods, deployments" in result
+        assert "DELETE on services" in result
+
+    def test_format_webhooks_table(self) -> None:
+        from vaig.tools.gke_tools import _format_webhooks_table
+
+        item = MagicMock()
+        item.metadata.name = "my-webhook-config"
+        item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        item.webhooks = [MagicMock(), MagicMock()]
+
+        result = _format_webhooks_table([item])
+
+        assert "my-webhook-config" in result
+        assert "WEBHOOKS" in result
+        assert "2" in result
+
+    def test_format_webhooks_table_empty(self) -> None:
+        from vaig.tools.gke_tools import _format_webhooks_table
+
+        result = _format_webhooks_table([])
+        assert "No resources found." in result
+
+
+class TestCrdsFormatter:
+    """Tests for the CRD formatter."""
+
+    def test_format_crds_table(self) -> None:
+        from vaig.tools.gke_tools import _format_crds_table
+
+        item = MagicMock()
+        item.metadata.name = "certificates.cert-manager.io"
+        item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        item.spec.group = "cert-manager.io"
+        item.spec.scope = "Namespaced"
+
+        result = _format_crds_table([item])
+
+        assert "certificates.cert-manager.io" in result
+        assert "CREATED AT" in result
+
+    def test_format_crds_table_wide(self) -> None:
+        from vaig.tools.gke_tools import _format_crds_table
+
+        item = MagicMock()
+        item.metadata.name = "certificates.cert-manager.io"
+        item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        item.spec.group = "cert-manager.io"
+        item.spec.scope = "Namespaced"
+
+        result = _format_crds_table([item], wide=True)
+
+        assert "cert-manager.io" in result
+        assert "Namespaced" in result
+        assert "GROUP" in result
+        assert "SCOPE" in result
+
+    def test_format_crds_table_empty(self) -> None:
+        from vaig.tools.gke_tools import _format_crds_table
+
+        result = _format_crds_table([])
+        assert "No resources found." in result
+
+
+class TestGapDetection:
+    """Tests for gap detection vs hallucination error messages."""
+
+    def test_known_k8s_resource_gives_informative_message(self) -> None:
+        """Real K8s resources not yet supported should get a specific message."""
+        from vaig.tools.gke_tools import kubectl_get
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
+            result = kubectl_get("clusterroles", gke_config=cfg)
+
+        assert result.error is True
+        assert "valid Kubernetes resource" in result.output
+        assert "not yet supported" in result.output
+        assert "Unsupported resource type" not in result.output
+
+    def test_hallucinated_resource_gives_standard_error(self) -> None:
+        """Completely invented resource types get the standard error."""
+        from vaig.tools.gke_tools import kubectl_get
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
+            result = kubectl_get("foobarwidgets", gke_config=cfg)
+
+        assert result.error is True
+        assert "Unsupported resource type" in result.output
+        assert "valid Kubernetes resource" not in result.output
+
+    def test_known_k8s_resource_describe_gives_informative_message(self) -> None:
+        """Real K8s resources not yet supported should get a specific message in describe too."""
+        from vaig.tools.gke_tools import kubectl_describe
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
+            result = kubectl_describe("storageclasses", "fast-ssd", gke_config=cfg)
+
+        assert result.error is True
+        assert "valid Kubernetes resource" in result.output
+        assert "not yet supported" in result.output
+
+    def test_hallucinated_resource_describe_gives_standard_error(self) -> None:
+        """Invented resource types get the standard error in describe too."""
+        from vaig.tools.gke_tools import kubectl_describe
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
+            result = kubectl_describe("unicornpods", "my-unicorn", gke_config=cfg)
+
+        assert result.error is True
+        assert "Unsupported resource type" in result.output
+
+    def test_all_known_k8s_resources_produce_gap_message(self) -> None:
+        """Every resource in _KNOWN_K8S_RESOURCES should trigger the gap message."""
+        from vaig.tools.gke_tools import _KNOWN_K8S_RESOURCES, kubectl_get
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
+            for resource in _KNOWN_K8S_RESOURCES:
+                result = kubectl_get(resource, gke_config=cfg)
+                assert result.error is True
+                assert "valid Kubernetes resource" in result.output, (
+                    f"resource '{resource}' should produce gap message"
+                )
+
+    def test_supported_resources_are_not_in_known_set(self) -> None:
+        """No overlap between supported resources and the 'known but unsupported' set."""
+        from vaig.tools.gke_tools import _KNOWN_K8S_RESOURCES, _RESOURCE_API_MAP
+
+        overlap = set(_RESOURCE_API_MAP.keys()) & _KNOWN_K8S_RESOURCES
+        assert overlap == set(), f"Resources in both maps: {overlap}"
+
+    def test_cluster_scoped_no_namespace_for_webhooks(self) -> None:
+        """Webhook list should NOT pass namespace to the API call."""
+        from vaig.tools.gke_tools import kubectl_get
+
+        cfg = _make_gke_config()
+        core_v1 = MagicMock()
+        apps_v1 = MagicMock()
+        custom_api = MagicMock()
+        api_client = MagicMock()
+
+        mock_list = MagicMock()
+        mock_list.items = []
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients, \
+             patch("kubernetes.client.AdmissionregistrationV1Api") as mock_admission:
+            mock_clients.return_value = (core_v1, apps_v1, custom_api, api_client)
+            mock_admission.return_value.list_mutating_webhook_configuration.return_value = mock_list
+            result = kubectl_get("mutatingwebhookconfigurations", gke_config=cfg, namespace="kube-system")
+
+        # Cluster-scoped: no namespace should be passed to the K8s API
+        call_kwargs = mock_admission.return_value.list_mutating_webhook_configuration.call_args
+        if call_kwargs:
+            assert "namespace" not in (call_kwargs.kwargs or {}), (
+                "Cluster-scoped resource should not receive a namespace parameter"
+            )
