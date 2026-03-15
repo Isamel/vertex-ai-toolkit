@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ── Gatherer output validation constants ────────────────────────────────
-DEFAULT_MIN_CONTENT_CHARS = 50
+DEFAULT_MIN_CONTENT_CHARS = 200
 
 EMPTY_MARKERS: tuple[str, ...] = (
     "n/a",
@@ -537,7 +537,7 @@ class Orchestrator:
                     logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
                     break
 
-                # ── Gatherer output validation + retry ───────────
+                # ── Gatherer output validation + mandatory retry ──────
                 if i == 0 and required_sections and agent_result.success:
                     validation = self._validate_gatherer_output(
                         agent_result.content, required_sections,
@@ -563,35 +563,38 @@ class Orchestrator:
                             validation.missing_sections,
                             shallow_sections=validation.shallow_sections,
                         )
-                        logger.debug("Retry prompt: %s", retry_prompt[:200])
-                        agent.reset()
-                        kw_retry: dict[str, Any] = {"context": ""}
-                        if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
-                            kw_retry["on_tool_call"] = on_tool_call
-                        retry_result = agent.execute(retry_prompt, **kw_retry)
-                        _accumulate_usage(result, retry_result)
-
-                        # Replace the original result with the retry
-                        result.agent_results[-1] = retry_result
-
-                        if not retry_result.success:
-                            result.success = False
-                            logger.warning(
-                                "Agent %s retry also failed: %s",
-                                agent.name, retry_result.content,
-                            )
-                            break
-                        logger.info(
-                            "Agent %s retry succeeded — tokens=%s",
-                            agent.name,
-                            retry_result.usage.get("total_tokens", "?"),
-                        )
                     else:
-                        logger.debug(
-                            "Gatherer validation passed: all %d required sections "
-                            "present with sufficient depth",
-                            len(required_sections),
+                        logger.info(
+                            "Gatherer validation passed — running mandatory "
+                            "deepening second pass for thoroughness",
                         )
+                        retry_prompt = self._build_deepening_prompt(
+                            query, agent_result.content,
+                        )
+
+                    logger.debug("Retry prompt: %s", retry_prompt[:200])
+                    agent.reset()
+                    kw_retry: dict[str, Any] = {"context": ""}
+                    if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
+                        kw_retry["on_tool_call"] = on_tool_call
+                    retry_result = agent.execute(retry_prompt, **kw_retry)
+                    _accumulate_usage(result, retry_result)
+
+                    # Replace the original result with the retry
+                    result.agent_results[-1] = retry_result
+
+                    if not retry_result.success:
+                        result.success = False
+                        logger.warning(
+                            "Agent %s retry also failed: %s",
+                            agent.name, retry_result.content,
+                        )
+                        break
+                    logger.info(
+                        "Agent %s retry succeeded — tokens=%s",
+                        agent.name,
+                        retry_result.usage.get("total_tokens", "?"),
+                    )
 
             if result.agent_results:
                 result.synthesized_output = result.agent_results[-1].content
@@ -1000,7 +1003,7 @@ class Orchestrator:
                     logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
                     break
 
-                # ── Gatherer output validation + retry ───────────
+                # ── Gatherer output validation + mandatory retry ──────
                 if i == 0 and required_sections and agent_result.success:
                     validation = self._validate_gatherer_output(
                         agent_result.content, required_sections,
@@ -1019,30 +1022,39 @@ class Orchestrator:
                             validation.missing_sections,
                             shallow_sections=validation.shallow_sections,
                         )
-                        agent.reset()
-                        kw_retry: dict[str, Any] = {"context": ""}
-                        if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
-                            kw_retry["on_tool_call"] = on_tool_call
-                        retry_result = await asyncio.to_thread(
-                            agent.execute, retry_prompt, **kw_retry,
-                        )
-                        _accumulate_usage(result, retry_result)
-
-                        # Replace the original result with the retry
-                        result.agent_results[-1] = retry_result
-
-                        if not retry_result.success:
-                            result.success = False
-                            logger.warning(
-                                "Agent %s retry also failed: %s",
-                                agent.name, retry_result.content,
-                            )
-                            break
+                    else:
                         logger.info(
-                            "Agent %s retry succeeded — tokens=%s",
-                            agent.name,
-                            retry_result.usage.get("total_tokens", "?"),
+                            "Gatherer validation passed — running mandatory "
+                            "deepening second pass for thoroughness",
                         )
+                        retry_prompt = self._build_deepening_prompt(
+                            query, agent_result.content,
+                        )
+
+                    agent.reset()
+                    kw_retry: dict[str, Any] = {"context": ""}
+                    if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
+                        kw_retry["on_tool_call"] = on_tool_call
+                    retry_result = await asyncio.to_thread(
+                        agent.execute, retry_prompt, **kw_retry,
+                    )
+                    _accumulate_usage(result, retry_result)
+
+                    # Replace the original result with the retry
+                    result.agent_results[-1] = retry_result
+
+                    if not retry_result.success:
+                        result.success = False
+                        logger.warning(
+                            "Agent %s retry also failed: %s",
+                            agent.name, retry_result.content,
+                        )
+                        break
+                    logger.info(
+                        "Agent %s retry succeeded — tokens=%s",
+                        agent.name,
+                        retry_result.usage.get("total_tokens", "?"),
+                    )
 
             if result.agent_results:
                 result.synthesized_output = result.agent_results[-1].content
@@ -1252,6 +1264,43 @@ class Orchestrator:
         )
 
         return "\n".join(parts)
+
+    @staticmethod
+    def _build_deepening_prompt(query: str, first_pass_output: str) -> str:
+        """Build a deepening prompt for a mandatory second pass.
+
+        When the first pass already covers all required sections with
+        sufficient depth, this prompt instructs the gatherer to go deeper
+        — collecting additional evidence and running more diagnostic
+        commands — rather than re-collecting what it already has.
+
+        Args:
+            query: The original user query.
+            first_pass_output: The full text produced by the first pass.
+
+        Returns:
+            A prompt string for the second (deepening) pass.
+        """
+        return (
+            "You completed a first diagnostic pass. Your output covered the "
+            "required sections, but a second pass is MANDATORY to ensure "
+            "thoroughness.\n\n"
+            "INSTRUCTIONS FOR THIS SECOND PASS:\n"
+            "1. Review your first pass output below and identify any areas "
+            "where you could collect MORE evidence\n"
+            "2. Specifically look for:\n"
+            "   - ReplicaSet events and conditions (kubectl_describe on "
+            "ReplicaSets)\n"
+            "   - HPA status and scaling events\n"
+            "   - Pod events for any pods in non-Running state\n"
+            "   - Mutating webhook configurations that may affect pod specs\n"
+            "   - Cloud Logging entries for any errors or warnings\n"
+            "3. Run additional diagnostic commands to fill gaps\n"
+            "4. Your output MUST include ALL the data from the first pass "
+            "PLUS any new findings\n\n"
+            f"=== FIRST PASS OUTPUT ===\n{first_pass_output}\n\n"
+            f"=== ORIGINAL QUERY ===\n{query}"
+        )
 
     def default_system_instruction(self) -> str:
         """Default system instruction for general chat mode."""

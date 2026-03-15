@@ -78,6 +78,8 @@ class ServiceHealthSkill(BaseSkill):
             "Cluster Overview",
             "Service Status",
             "Events Timeline",
+            "Raw Findings",
+            "Cloud Logging Findings",
         ]
 
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:

@@ -31,6 +31,57 @@ from vaig.tools.base import ToolRegistry
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Section body with >200 chars for tests that need validation to pass depth check
+_CLUSTER_BODY = (
+    "Nodes: 3, all healthy. CPU usage is at 45% across the cluster. "
+    "Memory utilization is stable at 60%. No node pressure conditions "
+    "detected. Disk pressure: none. PID pressure: none. All kubelet "
+    "versions match v1.28.4. Network policies are active."
+)
+_SERVICE_BODY = (
+    "All services running smoothly. app-frontend: 3/3 replicas ready, "
+    "0 restarts in last 24h. app-backend: 2/2 replicas ready, 1 restart "
+    "(OOMKilled 6h ago, recovered). redis-cache: 1/1 ready, 0 restarts. "
+    "All health checks passing. No pending rollouts detected."
+)
+_EVENTS_BODY = (
+    "10:00 Normal SuccessfulCreate: Created pod app-frontend-abc123 on "
+    "node gke-pool-1. 10:05 Normal ScalingReplicaSet: Scaled up deployment "
+    "app-frontend to 3 replicas. 10:10 Normal Pulling: Pulling image "
+    "gcr.io/project/frontend:v2.1. 10:12 Normal Pulled: Successfully pulled."
+)
+_RAW_FINDINGS_BODY = (
+    "kubectl get pods returned 12 pods across 4 deployments. "
+    "kubectl top pods shows app-backend-xyz789 using 450Mi/512Mi memory "
+    "(88% utilization). kubectl describe node gke-pool-1 shows allocatable "
+    "CPU: 3800m, requests: 3200m (84%). No eviction signals active."
+)
+_CLOUD_LOGGING_BODY = (
+    "Cloud Logging query for severity>=WARNING returned 3 entries in last "
+    "1h. Entry 1: 'Connection pool exhausted' from app-backend at 09:55. "
+    "Entry 2: 'Slow query detected (2.3s)' from app-backend at 10:02. "
+    "Entry 3: 'Health check timeout' from redis-cache at 10:08. No ERROR "
+    "or CRITICAL entries found."
+)
+
+
+def _make_complete_output(
+    *,
+    include_raw: bool = False,
+    include_logging: bool = False,
+) -> str:
+    """Build gatherer output that passes validation (all sections >200 chars)."""
+    parts = [
+        f"## Cluster Overview\n{_CLUSTER_BODY}\n",
+        f"## Service Status\n{_SERVICE_BODY}\n",
+        f"## Events Timeline\n{_EVENTS_BODY}\n",
+    ]
+    if include_raw:
+        parts.append(f"## Raw Findings\n{_RAW_FINDINGS_BODY}\n")
+    if include_logging:
+        parts.append(f"## Cloud Logging Findings\n{_CLOUD_LOGGING_BODY}\n")
+    return "\n".join(parts)
+
 
 def _make_generation_result(
     text: str = "Agent response",
@@ -517,17 +568,7 @@ class TestValidateGathererOutput:
     def test_complete_output_returns_empty_lists(self) -> None:
         """All required sections present with sufficient content → no issues."""
         orch = self._make_orchestrator()
-        output = (
-            "## Cluster Overview\n"
-            "Nodes: 3, all healthy. CPU usage is at 45% across the cluster. Memory is stable.\n\n"
-            "## Service Status\n"
-            "| Deployment | Ready | Restarts |\n"
-            "| app-frontend | 3/3 | 0 |\n"
-            "| app-backend | 2/2 | 1 |\n\n"
-            "## Events Timeline\n"
-            "10:00 Normal pod started successfully on node-1\n"
-            "10:05 Normal deployment scaled to 3 replicas\n"
-        )
+        output = _make_complete_output()
         required = ["Cluster Overview", "Service Status", "Events Timeline"]
         result = orch._validate_gatherer_output(output, required)
         assert result.missing_sections == []
@@ -537,10 +578,7 @@ class TestValidateGathererOutput:
     def test_missing_sections_detected(self) -> None:
         """Missing sections are returned in missing_sections list."""
         orch = self._make_orchestrator()
-        output = (
-            "## Cluster Overview\n"
-            "Nodes: 3, all healthy. CPU usage is at 45% across the cluster. Memory is stable.\n"
-        )
+        output = f"## Cluster Overview\n{_CLUSTER_BODY}\n"
         required = ["Cluster Overview", "Service Status", "Events Timeline"]
         result = orch._validate_gatherer_output(output, required)
         assert "Service Status" in result.missing_sections
@@ -552,12 +590,9 @@ class TestValidateGathererOutput:
         """Section matching is case-insensitive."""
         orch = self._make_orchestrator()
         output = (
-            "## CLUSTER OVERVIEW\n"
-            "Nodes: 3, all healthy. CPU usage is at 45% across the cluster. Memory is stable.\n"
-            "## service status\n"
-            "All services running smoothly, 100% uptime across all deployments in the namespace.\n"
-            "## events timeline\n"
-            "10:00 Normal pod started, 10:05 scaling complete, 10:10 health check passed.\n"
+            f"## CLUSTER OVERVIEW\n{_CLUSTER_BODY}\n"
+            f"## service status\n{_SERVICE_BODY}\n"
+            f"## events timeline\n{_EVENTS_BODY}\n"
         )
         required = ["Cluster Overview", "Service Status", "Events Timeline"]
         result = orch._validate_gatherer_output(output, required)
@@ -599,23 +634,14 @@ class TestGathererRetryLogic:
         agent1.execute.side_effect = [
             AgentResult(
                 agent_name="gatherer",
-                content=(
-                    "## Cluster Overview\n"
-                    "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
-                ),  # Missing Service Status, Events Timeline
+                content=f"## Cluster Overview\n{_CLUSTER_BODY}\n",
+                # Missing Service Status, Events Timeline
                 success=True,
                 usage={"total_tokens": 100},
             ),
             AgentResult(
                 agent_name="gatherer",
-                content=(
-                    "## Cluster Overview\n"
-                    "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
-                    "## Service Status\n"
-                    "All services running. Frontend 3/3, Backend 2/2, DB 1/1. No crashloops.\n"
-                    "## Events Timeline\n"
-                    "10:00 Normal pod started. 10:05 Scaling complete. 10:10 Health checks pass.\n"
-                ),
+                content=_make_complete_output(),
                 success=True,
                 usage={"total_tokens": 150},
             ),
@@ -650,28 +676,32 @@ class TestGathererRetryLogic:
         assert "Service Status" in retry_prompt
         assert "Events Timeline" in retry_prompt
 
-    def test_no_retry_when_output_is_complete(self) -> None:
-        """When gatherer output is complete with sufficient depth, no retry happens."""
+    def test_always_retries_with_deepening_prompt_when_complete(self) -> None:
+        """When gatherer output is complete with sufficient depth, the
+        orchestrator STILL retries with a deepening prompt (mandatory 2nd pass)."""
         client = _make_mock_client()
         orchestrator = Orchestrator(client, _make_mock_settings())
         registry = _make_mock_registry()
 
+        complete_output = _make_complete_output()
+
         agent1 = MagicMock(spec=ToolAwareAgent)
         agent1.name = "gatherer"
         agent1.role = "Gatherer"
-        agent1.execute.return_value = AgentResult(
-            agent_name="gatherer",
-            content=(
-                "## Cluster Overview\n"
-                "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
-                "## Service Status\n"
-                "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
-                "## Events Timeline\n"
-                "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content=complete_output,
+                success=True,
+                usage={"total_tokens": 100},
             ),
-            success=True,
-            usage={"total_tokens": 100},
-        )
+            AgentResult(
+                agent_name="gatherer",
+                content=complete_output + "\n## Extra Findings\nMore data collected.\n",
+                success=True,
+                usage={"total_tokens": 150},
+            ),
+        ]
 
         agent2 = MagicMock(spec=SpecialistAgent)
         agent2.name = "reporter"
@@ -690,8 +720,17 @@ class TestGathererRetryLogic:
             result = orchestrator.execute_with_tools("check health", skill, registry)
 
         assert result.success is True
-        assert agent1.execute.call_count == 1
-        agent1.reset.assert_not_called()
+        # Agent1 should have been called twice (original + deepening pass)
+        assert agent1.execute.call_count == 2
+        agent1.reset.assert_called_once()
+        # Retry prompt should be a DEEPENING prompt, not a missing-sections prompt
+        retry_call = agent1.execute.call_args_list[1]
+        retry_prompt = retry_call.args[0]
+        assert "second pass is MANDATORY" in retry_prompt
+        assert "FIRST PASS OUTPUT" in retry_prompt
+        assert "ORIGINAL QUERY" in retry_prompt
+        # Should NOT mention missing sections
+        assert "missing the following sections" not in retry_prompt
 
     def test_no_retry_when_skill_has_no_required_sections(self) -> None:
         """Skills without required sections skip validation entirely."""
@@ -892,23 +931,14 @@ class TestRetryPromptCleanInPipeline:
         agent1.execute.side_effect = [
             AgentResult(
                 agent_name="gatherer",
-                content=(
-                    "## Cluster Overview\n"
-                    "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
-                ),
+                content=f"## Cluster Overview\n{_CLUSTER_BODY}\n",
+                # Missing Service Status, Events Timeline
                 success=True,
                 usage={"total_tokens": 100},
             ),
             AgentResult(
                 agent_name="gatherer",
-                content=(
-                    "## Cluster Overview\n"
-                    "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
-                    "## Service Status\n"
-                    "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
-                    "## Events Timeline\n"
-                    "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
-                ),
+                content=_make_complete_output(),
                 success=True,
                 usage={"total_tokens": 150},
             ),
@@ -942,7 +972,6 @@ class TestRetryPromptCleanInPipeline:
 
         # No all-caps imperative language from the old prompt
         assert "IMPORTANT:" not in retry_prompt
-        assert "MANDATORY" not in retry_prompt
         assert "You MUST" not in retry_prompt
 
         # The prompt DOES contain the expected clean language
@@ -968,10 +997,8 @@ class TestShallowSectionDetection:
         output = (
             "## Cluster Overview\n"
             "\n"
-            "## Service Status\n"
-            "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
-            "## Events Timeline\n"
-            "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+            f"## Service Status\n{_SERVICE_BODY}\n"
+            f"## Events Timeline\n{_EVENTS_BODY}\n"
         )
         required = ["Cluster Overview", "Service Status", "Events Timeline"]
         result = orch._validate_gatherer_output(output, required)
@@ -986,10 +1013,8 @@ class TestShallowSectionDetection:
         output = (
             "## Cluster Overview\n"
             "N/A\n"
-            "## Service Status\n"
-            "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
-            "## Events Timeline\n"
-            "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+            f"## Service Status\n{_SERVICE_BODY}\n"
+            f"## Events Timeline\n{_EVENTS_BODY}\n"
         )
         required = ["Cluster Overview", "Service Status", "Events Timeline"]
         result = orch._validate_gatherer_output(output, required)
@@ -1000,12 +1025,10 @@ class TestShallowSectionDetection:
         """Section body is 'Data not available' → shallow."""
         orch = self._make_orchestrator()
         output = (
-            "## Cluster Overview\n"
-            "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
+            f"## Cluster Overview\n{_CLUSTER_BODY}\n"
             "## Service Status\n"
             "Data not available\n"
-            "## Events Timeline\n"
-            "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+            f"## Events Timeline\n{_EVENTS_BODY}\n"
         )
         required = ["Cluster Overview", "Service Status", "Events Timeline"]
         result = orch._validate_gatherer_output(output, required)
@@ -1025,14 +1048,12 @@ class TestShallowSectionDetection:
     def test_short_content_is_shallow(self) -> None:
         """Section with fewer than min_content_chars is shallow."""
         orch = self._make_orchestrator()
-        # "OK" is only 2 chars, well below the 50-char default
+        # "OK" is only 2 chars, well below the 200-char default
         output = (
             "## Cluster Overview\n"
             "OK\n"
-            "## Service Status\n"
-            "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
-            "## Events Timeline\n"
-            "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+            f"## Service Status\n{_SERVICE_BODY}\n"
+            f"## Events Timeline\n{_EVENTS_BODY}\n"
         )
         required = ["Cluster Overview", "Service Status", "Events Timeline"]
         result = orch._validate_gatherer_output(output, required)
@@ -1046,7 +1067,7 @@ class TestShallowSectionDetection:
         output = f"## Cluster Overview\n{body_text}\n"
         required = ["Cluster Overview"]
 
-        # With default (50), it should be shallow
+        # With default (200), it should be shallow
         result_default = orch._validate_gatherer_output(output, required)
         assert "Cluster Overview" in result_default.shallow_sections
 
@@ -1060,11 +1081,7 @@ class TestShallowSectionDetection:
     def test_sufficient_content_passes(self) -> None:
         """Section with adequate content (>= min chars) passes depth check."""
         orch = self._make_orchestrator()
-        output = (
-            "## Cluster Overview\n"
-            "The cluster has 3 nodes running Kubernetes v1.28. CPU usage averages 45% across all nodes. "
-            "Memory utilization is stable at 60%. No node pressure conditions detected.\n"
-        )
+        output = f"## Cluster Overview\n{_CLUSTER_BODY}\n"
         required = ["Cluster Overview"]
         result = orch._validate_gatherer_output(output, required)
         assert result.missing_sections == []
@@ -1077,8 +1094,7 @@ class TestShallowSectionDetection:
         output = (
             "## Cluster Overview\n"
             "N/A\n"
-            "## Service Status\n"
-            "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
+            f"## Service Status\n{_SERVICE_BODY}\n"
             # Events Timeline is completely missing
         )
         required = ["Cluster Overview", "Service Status", "Events Timeline"]
@@ -1103,8 +1119,7 @@ class TestShallowSectionDetection:
             "## Cluster Overview\n"
             "   \n"
             "  \t  \n"
-            "## Service Status\n"
-            "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
+            f"## Service Status\n{_SERVICE_BODY}\n"
         )
         required = ["Cluster Overview", "Service Status"]
         result = orch._validate_gatherer_output(output, required)
@@ -1310,24 +1325,15 @@ class TestShallowRetryIntegration:
                 content=(
                     "## Cluster Overview\n"
                     "N/A\n"  # Shallow — empty marker
-                    "## Service Status\n"
-                    "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
-                    "## Events Timeline\n"
-                    "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
+                    f"## Service Status\n{_SERVICE_BODY}\n"
+                    f"## Events Timeline\n{_EVENTS_BODY}\n"
                 ),
                 success=True,
                 usage={"total_tokens": 100},
             ),
             AgentResult(
                 agent_name="gatherer",
-                content=(
-                    "## Cluster Overview\n"
-                    "Nodes: 3 running k8s v1.28. CPU 45%. Memory 60%. No node pressure detected.\n"
-                    "## Service Status\n"
-                    "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
-                    "## Events Timeline\n"
-                    "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
-                ),
+                content=_make_complete_output(),
                 success=True,
                 usage={"total_tokens": 200},
             ),
@@ -1376,8 +1382,7 @@ class TestShallowRetryIntegration:
                 content=(
                     "## Cluster Overview\n"
                     "No data available\n"  # Shallow — empty marker
-                    "## Service Status\n"
-                    "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
+                    f"## Service Status\n{_SERVICE_BODY}\n"
                     # Events Timeline is completely missing
                 ),
                 success=True,
@@ -1385,14 +1390,7 @@ class TestShallowRetryIntegration:
             ),
             AgentResult(
                 agent_name="gatherer",
-                content=(
-                    "## Cluster Overview\n"
-                    "Nodes: 3 running k8s v1.28. CPU 45%. Memory 60%. No node pressure.\n"
-                    "## Service Status\n"
-                    "All services running. Frontend 3/3, Backend 2/2. No crashloops detected.\n"
-                    "## Events Timeline\n"
-                    "10:00 Normal pod started. 10:05 Scaling complete. Health checks passing.\n"
-                ),
+                content=_make_complete_output(),
                 success=True,
                 usage={"total_tokens": 200},
             ),
@@ -1884,23 +1882,14 @@ class TestAsyncExecuteWithTools:
         agent1.execute.side_effect = [
             AgentResult(
                 agent_name="gatherer",
-                content=(
-                    "## Cluster Overview\n"
-                    "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
-                ),  # Missing Service Status, Events Timeline
+                content=f"## Cluster Overview\n{_CLUSTER_BODY}\n",
+                # Missing Service Status, Events Timeline
                 success=True,
                 usage={"total_tokens": 100},
             ),
             AgentResult(
                 agent_name="gatherer",
-                content=(
-                    "## Cluster Overview\n"
-                    "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
-                    "## Service Status\n"
-                    "All services running. Frontend 3/3, Backend 2/2, DB 1/1. No crashloops.\n"
-                    "## Events Timeline\n"
-                    "10:00 Normal pod started. 10:05 Scaling complete. Health checks pass.\n"
-                ),
+                content=_make_complete_output(),
                 success=True,
                 usage={"total_tokens": 150},
             ),
@@ -2038,3 +2027,250 @@ class TestAsyncSyncParity:
         assert sync_result.success == async_result.success
         assert sync_result.synthesized_output == async_result.synthesized_output
         assert sync_result.total_usage == async_result.total_usage
+
+
+# ===========================================================================
+# Deepening prompt — mandatory second pass
+# ===========================================================================
+
+
+class TestBuildDeepeningPrompt:
+    """Test Orchestrator._build_deepening_prompt()."""
+
+    def test_includes_first_pass_output(self) -> None:
+        """The deepening prompt includes the full first pass output."""
+        first_pass = "## Cluster Overview\nSome data about the cluster.\n"
+        prompt = Orchestrator._build_deepening_prompt("check health", first_pass)
+        assert first_pass in prompt
+
+    def test_includes_original_query(self) -> None:
+        """The deepening prompt includes the original query."""
+        prompt = Orchestrator._build_deepening_prompt(
+            "check health of my-app in prod", "first pass data",
+        )
+        assert "check health of my-app in prod" in prompt
+
+    def test_contains_mandatory_language(self) -> None:
+        """The prompt states the second pass is mandatory."""
+        prompt = Orchestrator._build_deepening_prompt("query", "output")
+        assert "second pass is MANDATORY" in prompt
+
+    def test_contains_diagnostic_instructions(self) -> None:
+        """The prompt mentions specific diagnostic areas to check."""
+        prompt = Orchestrator._build_deepening_prompt("query", "output")
+        assert "ReplicaSet" in prompt
+        assert "HPA" in prompt
+        assert "Cloud Logging" in prompt
+
+    def test_has_delimiters(self) -> None:
+        """The prompt uses clear delimiters for first pass output and query."""
+        prompt = Orchestrator._build_deepening_prompt("my query", "my output")
+        assert "=== FIRST PASS OUTPUT ===" in prompt
+        assert "=== ORIGINAL QUERY ===" in prompt
+
+    def test_no_bracket_markers(self) -> None:
+        """The deepening prompt has no bracket-prefixed markers."""
+        prompt = Orchestrator._build_deepening_prompt("query", "output")
+        for marker in ("[WARNING]", "[ERROR]", "[IMPORTANT]", "[CRITICAL]", "[ALERT]"):
+            assert marker not in prompt
+
+
+# ===========================================================================
+# Always-retry behavior — gatherer ALWAYS gets a second pass
+# ===========================================================================
+
+
+class TestAlwaysRetryGatherer:
+    """Test that the gatherer ALWAYS retries regardless of validation result."""
+
+    def test_sync_always_retries_with_deepening_when_valid(self) -> None:
+        """Sync: even when validation passes, gatherer retries with deepening prompt."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        complete_output = _make_complete_output()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content=complete_output,
+                success=True,
+                usage={"total_tokens": 100},
+            ),
+            AgentResult(
+                agent_name="gatherer",
+                content=complete_output + "\nMore data.\n",
+                success=True,
+                usage={"total_tokens": 150},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check health", skill, registry)
+
+        assert result.success is True
+        assert agent1.execute.call_count == 2
+        agent1.reset.assert_called_once()
+
+        # Deepening prompt sent, not missing-sections prompt
+        retry_prompt = agent1.execute.call_args_list[1].args[0]
+        assert "second pass is MANDATORY" in retry_prompt
+        assert "FIRST PASS OUTPUT" in retry_prompt
+
+    async def test_async_always_retries_with_deepening_when_valid(self) -> None:
+        """Async: even when validation passes, gatherer retries with deepening prompt."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        complete_output = _make_complete_output()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content=complete_output,
+                success=True,
+                usage={"total_tokens": 100},
+            ),
+            AgentResult(
+                agent_name="gatherer",
+                content=complete_output + "\nMore data.\n",
+                success=True,
+                usage={"total_tokens": 150},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_with_tools(
+                "check health", skill, registry,
+            )
+
+        assert result.success is True
+        assert agent1.execute.call_count == 2
+        agent1.reset.assert_called_once()
+
+        # Deepening prompt
+        retry_prompt = agent1.execute.call_args_list[1].args[0]
+        assert "second pass is MANDATORY" in retry_prompt
+
+    def test_sync_uses_retry_prompt_when_validation_fails(self) -> None:
+        """Sync: when validation fails, uses retry prompt (not deepening)."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content="Some random text without sections",
+                success=True,
+                usage={"total_tokens": 50},
+            ),
+            AgentResult(
+                agent_name="gatherer",
+                content=_make_complete_output(),
+                success=True,
+                usage={"total_tokens": 150},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check health", skill, registry)
+
+        assert result.success is True
+        assert agent1.execute.call_count == 2
+
+        # Missing-sections retry prompt, NOT deepening
+        retry_prompt = agent1.execute.call_args_list[1].args[0]
+        assert "missing the following sections" in retry_prompt
+        assert "second pass is MANDATORY" not in retry_prompt
+
+    def test_deepening_retry_failure_stops_pipeline(self) -> None:
+        """If the deepening retry fails (success=False), pipeline stops."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        complete_output = _make_complete_output()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content=complete_output,
+                success=True,
+                usage={"total_tokens": 100},
+            ),
+            AgentResult(
+                agent_name="gatherer",
+                content="API error",
+                success=False,
+                usage={"total_tokens": 10},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check health", skill, registry)
+
+        assert result.success is False
+        agent2.execute.assert_not_called()
