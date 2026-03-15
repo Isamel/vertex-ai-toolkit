@@ -197,3 +197,143 @@ class TestPrintColoredReport:
         output = _capture_report(report)
         assert "Report" in output
         assert "Item 1" in output
+
+
+# ── Table & code-fence awareness tests ───────────────────────
+
+
+class TestTableAwareness:
+    """Severity keywords inside Markdown tables must NOT break rendering."""
+
+    def test_table_with_severity_keywords_stays_intact(self) -> None:
+        """A table with severity words in cells should render as a single table."""
+        report = (
+            "| Status  | Count |\n"
+            "|---------+-------|\n"
+            "| Healthy | 38    |\n"
+            "| Warning | 5     |\n"
+            "| Error   | 2     |\n"
+        )
+        output = _capture_report(report)
+        # All keywords should appear in the output
+        assert "Healthy" in output
+        assert "Warning" in output
+        assert "Error" in output
+        # The numbers should appear — proves the rows weren't ripped out
+        assert "38" in output
+        assert "5" in output
+        assert "2" in output
+
+    def test_mixed_text_table_text(self) -> None:
+        """Text with severity → table with severity → text with severity."""
+        report = (
+            "## Summary\n"
+            "\n"
+            "Overall status: CRITICAL\n"
+            "\n"
+            "| Service | Status  |\n"
+            "|---------+---------|\n"
+            "| API     | Healthy |\n"
+            "| DB      | Error   |\n"
+            "\n"
+            "Action needed: HIGH priority\n"
+        )
+        output = _capture_report(report)
+        # Pre-table severity line — should be colored (appears as plain text)
+        assert "CRITICAL" in output
+        # Table cells — should appear (kept in Markdown buffer)
+        assert "Healthy" in output
+        assert "Error" in output
+        assert "API" in output
+        assert "DB" in output
+        # Post-table severity line — should be colored
+        assert "HIGH" in output
+
+    def test_table_to_non_table_transition_resumes_coloring(self) -> None:
+        """After a table ends, severity coloring resumes for regular text."""
+        report = (
+            "| Name | Status  |\n"
+            "|------+---------|\n"
+            "| svc  | Healthy |\n"
+            "\n"
+            "Overall: CRITICAL failure detected\n"
+        )
+        output = _capture_report(report)
+        assert "Healthy" in output
+        assert "CRITICAL" in output
+
+    def test_back_to_back_tables(self) -> None:
+        """Two tables separated only by a blank line both render correctly."""
+        report = (
+            "| A       | B |\n"
+            "|---------+---|\n"
+            "| Healthy | 1 |\n"
+            "\n"
+            "| C       | D |\n"
+            "|---------+---|\n"
+            "| Warning | 2 |\n"
+        )
+        output = _capture_report(report)
+        assert "Healthy" in output
+        assert "1" in output
+        assert "Warning" in output
+        assert "2" in output
+
+
+class TestCodeFenceAwareness:
+    """Severity keywords inside code fences must NOT be extracted."""
+
+    def test_code_fence_preserves_severity_keywords(self) -> None:
+        """Keywords inside ``` blocks should NOT have coloring applied."""
+        report = (
+            "## Example\n"
+            "\n"
+            "```\n"
+            "if status == CRITICAL:\n"
+            "    raise Error('system down')\n"
+            "```\n"
+            "\n"
+            "This is fine.\n"
+        )
+        output = _capture_report(report)
+        # The code content should appear in the output (rendered by Markdown)
+        assert "CRITICAL" in output
+        assert "Example" in output
+
+    def test_code_fence_with_language_tag(self) -> None:
+        """Fenced code with language tag (```python) should also be protected."""
+        report = (
+            "```python\n"
+            "severity = 'HIGH'\n"
+            "print(f'WARNING: {severity}')\n"
+            "```\n"
+        )
+        output = _capture_report(report)
+        assert "HIGH" in output
+        assert "WARNING" in output
+
+    def test_tilde_code_fence(self) -> None:
+        """~~~ fences should also be handled."""
+        report = (
+            "~~~\n"
+            "HEALTHY check passed\n"
+            "~~~\n"
+        )
+        output = _capture_report(report)
+        assert "HEALTHY" in output
+
+    def test_severity_before_and_after_code_fence(self) -> None:
+        """Severity coloring works outside code fences but not inside."""
+        report = (
+            "Status: CRITICAL\n"
+            "\n"
+            "```\n"
+            "debug: INFO level log\n"
+            "```\n"
+            "\n"
+            "Result: PASSED\n"
+        )
+        output = _capture_report(report)
+        assert "CRITICAL" in output
+        assert "INFO" in output
+        assert "PASSED" in output

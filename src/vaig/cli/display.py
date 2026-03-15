@@ -73,6 +73,11 @@ def print_colored_report(
     are accumulated and flushed as Markdown blocks to preserve
     headings, tables, code fences, etc.
 
+    **Table & code-fence awareness**: when inside a multi-line Markdown
+    structure (table or fenced code block), lines are ALWAYS kept in the
+    Markdown buffer — severity coloring is never applied inside these
+    structures so that Rich can render them correctly.
+
     Args:
         text: Raw Markdown report text (e.g. from an agent response).
         console: Optional Rich Console; defaults to module-level instance.
@@ -87,7 +92,37 @@ def print_colored_report(
             con.print(Markdown(block))
             md_buffer.clear()
 
+    in_table = False
+    in_code_fence = False
+
     for line in text.splitlines():
+        stripped = line.strip()
+
+        # Track code fence state (``` or ~~~, optionally with language tag)
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_fence = not in_code_fence
+            md_buffer.append(line)
+            continue
+
+        # Inside code fence — never apply severity coloring
+        if in_code_fence:
+            md_buffer.append(line)
+            continue
+
+        # Detect table lines (starts with | and has at least one more |)
+        is_table_line = stripped.startswith("|") and "|" in stripped[1:]
+
+        if is_table_line:
+            if not in_table:
+                in_table = True
+            md_buffer.append(line)
+            continue
+
+        # Exiting table — a non-table line after table rows
+        if in_table and not is_table_line:
+            in_table = False
+
+        # Normal line processing — severity coloring only outside structures
         if _line_has_severity(line):
             _flush_md()
             con.print(colorize_severity(line))
