@@ -1214,3 +1214,14 @@ def get_sidecar_status(
     output = "\n".join(sections)
     _cache._set_cache(cache_key, output)
     return ToolResult(output=output, error=False)
+
+
+# ── Task 3.4 — async wrappers ───────────────────────────────
+# Offload blocking kubernetes-client calls to a thread pool via to_async.
+
+from vaig.core.async_utils import to_async  # noqa: E402
+
+async_get_mesh_overview = to_async(get_mesh_overview)
+async_get_mesh_config = to_async(get_mesh_config)
+async_get_mesh_security = to_async(get_mesh_security)
+async_get_sidecar_status = to_async(get_sidecar_status)

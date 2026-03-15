@@ -302,3 +302,12 @@ def check_rbac(
         return ToolResult(output=f"K8s API error ({exc.status}): {exc.reason}", error=True)
     except Exception as exc:  # noqa: BLE001
         return ToolResult(output=f"Error checking RBAC: {exc}", error=True)
+
+
+# ── Task 3.4 — async wrappers ───────────────────────────────
+# Offload blocking kubernetes-client calls to a thread pool via to_async.
+
+from vaig.core.async_utils import to_async  # noqa: E402
+
+async_exec_command = to_async(exec_command)
+async_check_rbac = to_async(check_rbac)

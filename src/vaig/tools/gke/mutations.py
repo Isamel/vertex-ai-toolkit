@@ -404,3 +404,14 @@ def kubectl_annotate(
     except Exception as exc:
         logger.exception("kubectl_annotate failed")
         return ToolResult(output=f"Error annotating {resource}/{name}: {exc}", error=True)
+
+
+# ── Task 3.4 — async wrappers ───────────────────────────────
+# Offload blocking kubernetes-client calls to a thread pool via to_async.
+
+from vaig.core.async_utils import to_async  # noqa: E402
+
+async_kubectl_scale = to_async(kubectl_scale)
+async_kubectl_restart = to_async(kubectl_restart)
+async_kubectl_label = to_async(kubectl_label)
+async_kubectl_annotate = to_async(kubectl_annotate)

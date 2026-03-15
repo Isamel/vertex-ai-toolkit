@@ -648,3 +648,13 @@ def discover_network_topology(
     output = "\n".join(sections)
     _cache._set_cache(cache_key, output)
     return ToolResult(output=output, error=bool(errors and svc_count == 0 and ep_count == 0))
+
+
+# ── Task 3.4 — async wrappers ───────────────────────────────
+# Offload blocking kubernetes-client calls to a thread pool via to_async.
+
+from vaig.core.async_utils import to_async  # noqa: E402
+
+async_discover_workloads = to_async(discover_workloads)
+async_discover_service_mesh = to_async(discover_service_mesh)
+async_discover_network_topology = to_async(discover_network_topology)

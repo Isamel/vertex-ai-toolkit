@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import concurrent.futures
 import logging
 import re
@@ -12,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
 from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.tool_aware import ToolAwareAgent
+from vaig.core.async_utils import gather_with_errors
 from vaig.core.client import GeminiClient, StreamResult
 from vaig.core.language import (
     detect_language,
@@ -611,6 +613,388 @@ class Orchestrator:
         """Reset all agent conversation histories."""
         for agent in self._agents.values():
             agent.reset()
+
+    # ── Async methods ──────────────────────────────────────────
+    # These mirror the sync methods above but use ``asyncio.gather``
+    # (via ``gather_with_errors``) instead of ``ThreadPoolExecutor``
+    # for concurrent agent execution.  Agents that don't yet have
+    # native async_execute methods are wrapped via
+    # ``asyncio.to_thread()`` so the event loop stays unblocked.
+
+    async def async_execute_fanout(
+        self,
+        skill: BaseSkill,
+        phase: SkillPhase,
+        context: str,
+        user_input: str,
+    ) -> OrchestratorResult:
+        """Async version of :meth:`execute_fanout`.
+
+        Uses ``gather_with_errors()`` instead of ``ThreadPoolExecutor``
+        for true async-native parallelism.  Each agent's ``execute``
+        is wrapped in ``asyncio.to_thread()`` since agents don't yet
+        have native ``async_execute`` methods.
+
+        Args:
+            skill: The skill defining agents.
+            phase: Skill phase to execute.
+            context: Context data for the agents.
+            user_input: The user's original input.
+
+        Returns:
+            :class:`OrchestratorResult` with merged agent outputs.
+        """
+        agents = self.create_agents_for_skill(skill)
+        result = OrchestratorResult(
+            skill_name=skill.get_metadata().name,
+            phase=phase,
+        )
+
+        prompt = skill.get_phase_prompt(phase, context, user_input)
+
+        async def _run_agent(agent: BaseAgent) -> AgentResult:
+            logger.info("Async fan-out: launching agent=%s", agent.name)
+            try:
+                return await asyncio.to_thread(agent.execute, prompt, context=context)
+            except Exception:
+                logger.exception(
+                    "Agent %s raised an exception during async fan-out execution",
+                    agent.name,
+                )
+                return AgentResult(
+                    agent_name=agent.name,
+                    content=f"Agent '{agent.name}' failed with an unexpected error.",
+                    success=False,
+                )
+
+        coros = [_run_agent(agent) for agent in agents]
+        agent_results = await gather_with_errors(*coros, return_exceptions=False)
+
+        for agent_result in agent_results:
+            result.agent_results.append(agent_result)
+            _accumulate_usage(result, agent_result)
+            if not agent_result.success:
+                logger.warning(
+                    "Agent %s failed (non-fatal in async fan-out): %s",
+                    agent_result.agent_name,
+                    agent_result.content,
+                )
+
+        result.success = any(r.success for r in result.agent_results)
+        result.synthesized_output = self._merge_agent_outputs(result.agent_results)
+
+        return result
+
+    async def async_execute_sequential(
+        self,
+        skill: BaseSkill,
+        phase: SkillPhase,
+        context: str,
+        user_input: str,
+    ) -> OrchestratorResult:
+        """Async version of :meth:`execute_sequential`.
+
+        Runs agents sequentially (each builds on the previous output)
+        but uses ``asyncio.to_thread()`` to avoid blocking the event
+        loop during each agent's execution.
+        """
+        agents = self.create_agents_for_skill(skill)
+        result = OrchestratorResult(
+            skill_name=skill.get_metadata().name,
+            phase=phase,
+        )
+
+        current_context = context
+        prompt = skill.get_phase_prompt(phase, context, user_input)
+
+        for i, agent in enumerate(agents):
+            logger.info(
+                "Async sequential step %d/%d: agent=%s",
+                i + 1, len(agents), agent.name,
+            )
+
+            if i == 0:
+                agent_result = await asyncio.to_thread(
+                    agent.execute, prompt, context=current_context,
+                )
+            else:
+                accumulated = (
+                    f"{current_context}\n\n"
+                    f"## Previous Analysis ({agents[i - 1].role})\n\n"
+                    f"{result.agent_results[-1].content}"
+                )
+                agent_result = await asyncio.to_thread(
+                    agent.execute, prompt, context=accumulated,
+                )
+
+            result.agent_results.append(agent_result)
+            _accumulate_usage(result, agent_result)
+
+            if not agent_result.success:
+                result.success = False
+                logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
+                break
+
+        if result.agent_results:
+            result.synthesized_output = result.agent_results[-1].content
+
+        return result
+
+    async def async_execute_skill_phase(
+        self,
+        skill: BaseSkill,
+        phase: SkillPhase,
+        context: str,
+        user_input: str,
+        *,
+        strategy: str = "sequential",
+    ) -> SkillResult:
+        """Async version of :meth:`execute_skill_phase`.
+
+        Delegates to :meth:`async_execute_fanout` or
+        :meth:`async_execute_sequential` based on *strategy*.
+        """
+        skill_name = skill.get_metadata().name
+        logger.info(
+            "Async executing skill=%s phase=%s strategy=%s",
+            skill_name, phase, strategy,
+        )
+
+        t0 = time.perf_counter()
+        if strategy == "fanout":
+            orch_result = await self.async_execute_fanout(skill, phase, context, user_input)
+        else:
+            orch_result = await self.async_execute_sequential(skill, phase, context, user_input)
+
+        # Telemetry
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            duration_ms = (time.perf_counter() - t0) * 1000
+            collector = get_telemetry_collector()
+            collector.emit(
+                event_type="orchestrator",
+                event_name="async_execute_skill_phase",
+                duration_ms=duration_ms,
+                metadata={
+                    "skill": skill_name,
+                    "phase": phase.value if hasattr(phase, "value") else str(phase),
+                    "strategy": strategy,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        return orch_result.to_skill_result()
+
+    async def async_execute_with_tools(
+        self,
+        query: str,
+        skill: BaseSkill,
+        tool_registry: ToolRegistry,
+        *,
+        strategy: str = "sequential",
+        is_autopilot: bool | None = None,
+    ) -> OrchestratorResult:
+        """Async version of :meth:`execute_with_tools`.
+
+        Uses ``gather_with_errors()`` for fan-out parallelism and
+        ``asyncio.to_thread()`` for sequential / single agent execution.
+        All sync agent methods are offloaded to threads so the event
+        loop stays responsive.
+
+        Args:
+            query: The user query / task to execute.
+            skill: The skill defining agent configs and system prompts.
+            tool_registry: Pre-configured tool registry for tool-aware agents.
+            strategy: ``"sequential"`` (default), ``"fanout"``, or ``"single"``.
+            is_autopilot: Autopilot detection result.
+
+        Returns:
+            :class:`OrchestratorResult` with the aggregated outcome.
+        """
+        logger.info(
+            "async_execute_with_tools: skill=%s strategy=%s",
+            skill.get_metadata().name,
+            strategy,
+        )
+
+        t0_ewt = time.perf_counter()
+
+        # ── Dynamic language detection & injection ───────────
+        lang = detect_language(query)
+        agent_configs = skill.get_agents_config()
+        if lang != "en":
+            inject_language_into_config(agent_configs, lang)
+            logger.info(
+                "Language detected: %s — injected language instruction into %d agent(s)",
+                lang, len(agent_configs),
+            )
+
+        # ── Autopilot context injection ──────────────────────
+        if is_autopilot:
+            inject_autopilot_into_config(agent_configs, is_autopilot)
+            logger.info(
+                "GKE Autopilot detected — injected Autopilot instruction into %d agent(s)",
+                len(agent_configs),
+            )
+
+        agents = self.create_agents_for_skill(
+            skill, tool_registry, agent_configs=agent_configs,
+        )
+        result = OrchestratorResult(
+            skill_name=skill.get_metadata().name,
+            phase=SkillPhase.EXECUTE,
+        )
+
+        known_strategies = {"sequential", "fanout", "single"}
+        if strategy not in known_strategies:
+            logger.warning(
+                "Unknown strategy '%s' — falling back to sequential. "
+                "Valid strategies: %s",
+                strategy,
+                ", ".join(sorted(known_strategies)),
+            )
+
+        if strategy == "fanout":
+            # ── Async fan-out: all agents concurrently via gather ──
+            async def _run_agent(agent: BaseAgent) -> AgentResult:
+                logger.info("Async fan-out (tools): launching agent=%s", agent.name)
+                try:
+                    return await asyncio.to_thread(agent.execute, query, context=query)
+                except Exception:
+                    logger.exception(
+                        "Agent %s raised an exception during async fan-out (tools) execution",
+                        agent.name,
+                    )
+                    return AgentResult(
+                        agent_name=agent.name,
+                        content=f"Agent '{agent.name}' failed with an unexpected error.",
+                        success=False,
+                    )
+
+            coros = [_run_agent(agent) for agent in agents]
+            agent_results = await gather_with_errors(*coros, return_exceptions=False)
+
+            for agent_result in agent_results:
+                result.agent_results.append(agent_result)
+                if not agent_result.success:
+                    logger.warning(
+                        "Agent %s failed (non-fatal in async fan-out): %s",
+                        agent_result.agent_name,
+                        agent_result.content,
+                    )
+
+            # Accumulate usage after all agents complete
+            for agent_result in result.agent_results:
+                _accumulate_usage(result, agent_result)
+
+            result.success = any(r.success for r in result.agent_results)
+            result.synthesized_output = self._merge_agent_outputs(result.agent_results)
+
+        elif strategy == "single":
+            if agents:
+                agent_result = await asyncio.to_thread(agents[0].execute, query)
+                result.agent_results.append(agent_result)
+                _accumulate_usage(result, agent_result)
+                result.success = agent_result.success
+                result.synthesized_output = agent_result.content
+            else:
+                result.success = False
+                result.synthesized_output = "No agents created for skill."
+
+        else:  # sequential (default)
+            current_context = ""
+            required_sections = skill.get_required_output_sections()
+
+            for i, agent in enumerate(agents):
+                logger.info(
+                    "Async sequential (tools) step %d/%d: agent=%s",
+                    i + 1, len(agents), agent.name,
+                )
+                if i > 0 and result.agent_results:
+                    prev = result.agent_results[-1]
+                    current_context = (
+                        f"## Previous Analysis ({agents[i - 1].role})\n\n"
+                        f"{prev.content}"
+                    )
+
+                agent_result = await asyncio.to_thread(
+                    agent.execute, query, context=current_context,
+                )
+                result.agent_results.append(agent_result)
+                _accumulate_usage(result, agent_result)
+
+                if not agent_result.success:
+                    result.success = False
+                    logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
+                    break
+
+                # ── Gatherer output validation + retry ───────────
+                if i == 0 and required_sections and agent_result.success:
+                    validation = self._validate_gatherer_output(
+                        agent_result.content, required_sections,
+                    )
+                    if validation.needs_retry:
+                        all_issues = validation.missing_sections + validation.shallow_sections
+                        logger.warning(
+                            "Gatherer output has %d issue(s): "
+                            "missing=%s, shallow=%s — retrying once",
+                            len(all_issues),
+                            ", ".join(validation.missing_sections) or "(none)",
+                            ", ".join(validation.shallow_sections) or "(none)",
+                        )
+                        retry_prompt = self._build_retry_prompt(
+                            query,
+                            validation.missing_sections,
+                            shallow_sections=validation.shallow_sections,
+                        )
+                        agent.reset()
+                        retry_result = await asyncio.to_thread(
+                            agent.execute, retry_prompt, context="",
+                        )
+                        _accumulate_usage(result, retry_result)
+
+                        # Replace the original result with the retry
+                        result.agent_results[-1] = retry_result
+
+                        if not retry_result.success:
+                            result.success = False
+                            logger.warning(
+                                "Agent %s retry also failed: %s",
+                                agent.name, retry_result.content,
+                            )
+                            break
+                        logger.info(
+                            "Agent %s retry succeeded — tokens=%s",
+                            agent.name,
+                            retry_result.usage.get("total_tokens", "?"),
+                        )
+
+            if result.agent_results:
+                result.synthesized_output = result.agent_results[-1].content
+
+        # Telemetry
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            duration_ms = (time.perf_counter() - t0_ewt) * 1000
+            collector = get_telemetry_collector()
+            collector.emit(
+                event_type="orchestrator",
+                event_name="async_execute_with_tools",
+                duration_ms=duration_ms,
+                metadata={
+                    "skill": skill.get_metadata().name,
+                    "strategy": strategy,
+                    "agents_count": len(agents),
+                    "success": result.success,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        return result
 
     def _merge_agent_outputs(self, results: list[AgentResult]) -> str:
         """Merge outputs from multiple agents into a coherent summary."""

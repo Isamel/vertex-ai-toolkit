@@ -17,7 +17,7 @@ from vaig.core.exceptions import MaxIterationsError
 from vaig.tools import ToolRegistry, ToolResult
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import AsyncIterator, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -337,6 +337,100 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
         """
         logger.debug("InfraAgent.execute_stream() — falling back to non-streaming")
         result = self.execute(prompt, context=context)
+        yield result.content
+
+    # ── Async methods ────────────────────────────────────────
+
+    async def async_execute(self, prompt: str, *, context: str = "") -> AgentResult:
+        """Execute an infrastructure investigation using the async tool-use loop.
+
+        Async version of :meth:`execute`.  Delegates to
+        :meth:`ToolLoopMixin._async_run_tool_loop` for non-blocking LLM
+        calls and tool execution.
+
+        Args:
+            prompt: The infrastructure question or investigation task.
+            context: Optional additional context (cluster info, incident details, etc.).
+
+        Returns:
+            AgentResult with the final text response and metadata.
+
+        Raises:
+            MaxIterationsError: If the tool loop exceeds max_iterations.
+        """
+        full_prompt = self._build_prompt(prompt, context)
+        self._add_to_conversation("user", full_prompt)
+
+        history = self._build_chat_history()
+
+        logger.debug(
+            "InfraAgent.async_execute() — starting async tool loop (max=%d)",
+            self._max_iterations,
+        )
+
+        try:
+            loop_result = await self._async_run_tool_loop(
+                client=self._client,
+                prompt=full_prompt,
+                tool_registry=self._registry,
+                system_instruction=self._config.system_instruction,
+                history=history,
+                max_iterations=self._max_iterations,
+                model=self._config.model,
+                temperature=self._config.temperature,
+                max_output_tokens=self._config.max_output_tokens,
+                frequency_penalty=0.15,
+            )
+        except MaxIterationsError:
+            raise
+        except Exception as exc:
+            logger.exception("InfraAgent async API call failed")
+            return AgentResult(
+                agent_name=self.name,
+                content=f"Error during API call: {exc}",
+                success=False,
+                usage={
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                },
+                metadata={"error": str(exc)},
+            )
+
+        clean_text = self._deduplicate_response(loop_result.text)
+        logger.info(
+            "InfraAgent async completed — %d iterations, %d tool calls, %s total tokens",
+            loop_result.iterations,
+            len(loop_result.tools_executed),
+            loop_result.usage.get("total_tokens", "?"),
+        )
+        self._add_to_conversation("agent", clean_text)
+        return AgentResult(
+            agent_name=self.name,
+            content=clean_text,
+            success=True,
+            usage=loop_result.usage,
+            metadata={
+                "model": loop_result.model,
+                "finish_reason": loop_result.finish_reason,
+                "iterations": loop_result.iterations,
+                "tools_executed": loop_result.tools_executed,
+            },
+        )
+
+    async def async_execute_stream(
+        self, prompt: str, *, context: str = "",
+    ) -> AsyncIterator[str]:
+        """Async streaming — falls back to async_execute.
+
+        Tool-use loops are inherently non-streamable because the model
+        needs to receive function execution results between turns.
+        Falls back to :meth:`async_execute` and yields the result.
+        """
+        logger.debug(
+            "InfraAgent.async_execute_stream() — falling back to async non-streaming",
+        )
+        result = await self.async_execute(prompt, context=context)
         yield result.content
 
     # ── Tool execution with error handling ───────────────────

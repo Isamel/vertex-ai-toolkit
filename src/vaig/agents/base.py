@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from google.genai import types
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import AsyncIterator, Iterator
 
     from vaig.core.client import GeminiClient
 
@@ -135,6 +135,43 @@ class BaseAgent(ABC):
         self._conversation.append(
             AgentMessage(role=role, content=content, agent_name=self.name)
         )
+
+    # ── Async abstract methods ─────────────────────────────────
+
+    @abstractmethod
+    async def async_execute(self, prompt: str, *, context: str = "") -> AgentResult:
+        """Execute a task and return a result (async).
+
+        Async version of :meth:`execute`.  Uses non-blocking I/O for
+        LLM API calls and tool execution.
+
+        Args:
+            prompt: The task or question for the agent.
+            context: Optional context (files, data, previous results).
+
+        Returns:
+            AgentResult with the agent's response.
+        """
+        ...
+
+    @abstractmethod
+    async def async_execute_stream(self, prompt: str, *, context: str = "") -> AsyncIterator[str]:
+        """Execute a task with streaming output (async).
+
+        Async version of :meth:`execute_stream`.  Uses non-blocking I/O
+        for LLM API calls.
+
+        Args:
+            prompt: The task or question for the agent.
+            context: Optional context.
+
+        Yields:
+            Text chunks as they are generated.
+        """
+        ...
+        # Trick: yield inside an abstract async generator so Python treats
+        # this as an async generator function rather than a plain coroutine.
+        yield ""  # type: ignore[misc]  # pragma: no cover
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} name={self.name!r} role={self.role!r} model={self.model!r}>"

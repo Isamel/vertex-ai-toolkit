@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
@@ -125,6 +125,137 @@ class SpecialistAgent(BaseAgent):
 
         except Exception as e:
             logger.exception("Agent %s streaming failed", self.name)
+            yield f"\n[Error: {e}]"
+
+    # ── Async methods ────────────────────────────────────────
+
+    async def async_execute(self, prompt: str, *, context: str = "") -> AgentResult:
+        """Execute a task using the configured model (async).
+
+        Async version of :meth:`execute`.  Uses ``client.async_generate()``
+        for non-blocking LLM calls.  Same error handling and conversation
+        tracking as the sync counterpart.
+        """
+        full_prompt = self._build_prompt(prompt, context)
+        history = self._build_chat_history()
+
+        self._add_to_conversation("user", full_prompt)
+        logger.debug(
+            "Agent %s async_execute (model=%s, history=%d)",
+            self.name,
+            self._config.model,
+            len(history),
+        )
+
+        try:
+            result = await self._client.async_generate(
+                full_prompt,
+                system_instruction=self._config.system_instruction,
+                history=history,
+                model_id=self._config.model,
+                temperature=self._config.temperature,
+                max_output_tokens=self._config.max_output_tokens,
+            )
+
+            self._add_to_conversation("agent", result.text)
+            logger.info(
+                "Agent %s async completed — %s tokens",
+                self.name,
+                result.usage.get("total_tokens", "?"),
+            )
+
+            return AgentResult(
+                agent_name=self.name,
+                content=result.text,
+                success=True,
+                usage=result.usage,
+                metadata={"model": result.model, "finish_reason": result.finish_reason},
+            )
+
+        except GeminiRateLimitError as e:
+            logger.warning(
+                "Agent %s async rate-limited after %d retries",
+                self.name,
+                e.retries_attempted,
+            )
+            return AgentResult(
+                agent_name=self.name,
+                content=f"Rate limit exceeded (retried {e.retries_attempted}x): {e}",
+                success=False,
+                metadata={"error": str(e), "error_type": "rate_limit"},
+            )
+
+        except GeminiConnectionError as e:
+            logger.warning(
+                "Agent %s async connection error after %d retries",
+                self.name,
+                e.retries_attempted,
+            )
+            return AgentResult(
+                agent_name=self.name,
+                content=f"Connection error (retried {e.retries_attempted}x): {e}",
+                success=False,
+                metadata={"error": str(e), "error_type": "connection"},
+            )
+
+        except Exception as e:
+            logger.exception("Agent %s async failed", self.name)
+            return AgentResult(
+                agent_name=self.name,
+                content=f"Error: {e}",
+                success=False,
+                metadata={"error": str(e)},
+            )
+
+    async def async_execute_stream(self, prompt: str, *, context: str = "") -> AsyncIterator[str]:
+        """Execute a task with async streaming output.
+
+        Async version of :meth:`execute_stream`.  Uses
+        ``client.async_generate_stream()`` for non-blocking streaming.
+        Yields text chunks as they arrive from Gemini.
+        """
+        full_prompt = self._build_prompt(prompt, context)
+        history = self._build_chat_history()
+
+        self._add_to_conversation("user", full_prompt)
+
+        accumulated: list[str] = []
+
+        try:
+            stream_result = await self._client.async_generate_stream(
+                full_prompt,
+                system_instruction=self._config.system_instruction,
+                history=history,
+                model_id=self._config.model,
+                temperature=self._config.temperature,
+                max_output_tokens=self._config.max_output_tokens,
+            )
+
+            async for chunk in stream_result:
+                accumulated.append(chunk)
+                yield chunk
+
+            full_response = "".join(accumulated)
+            self._add_to_conversation("agent", full_response)
+
+        except GeminiRateLimitError as e:
+            logger.warning(
+                "Agent %s async streaming rate-limited after %d retries",
+                self.name,
+                e.retries_attempted,
+            )
+            yield f"\n[Rate limit exceeded (retried {e.retries_attempted}x): {e}]"
+
+        except GeminiConnectionError as e:
+            logger.warning(
+                "Agent %s async streaming connection error after %d retries",
+                self.name,
+                e.retries_attempted,
+            )
+            yield f"\n[Connection error (retried {e.retries_attempted}x): {e}]"
+
+        except Exception as e:
+            logger.exception("Agent %s async streaming failed", self.name)
             yield f"\n[Error: {e}]"
 
     def _build_chat_history(self) -> list[ChatMessage]:

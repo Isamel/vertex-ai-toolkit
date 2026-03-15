@@ -6,6 +6,7 @@ Verifies that the orchestrator correctly creates mixed pipelines
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -1423,3 +1424,617 @@ class TestShallowRetryIntegration:
         assert "Events Timeline" in retry_prompt
         assert "insufficient data" in retry_prompt
         assert "Cluster Overview" in retry_prompt
+
+
+# ===========================================================================
+# Task 3.2 — Async orchestrator methods (asyncio.gather instead of ThreadPool)
+# ===========================================================================
+
+
+class TestAsyncExecuteFanout:
+    """Test async_execute_fanout() using gather_with_errors."""
+
+    async def test_fanout_executes_all_agents_concurrently(self) -> None:
+        """All agents run concurrently via asyncio.gather, results merged."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+
+        agent1 = MagicMock(spec=SpecialistAgent)
+        agent1.name = "agent-1"
+        agent1.role = "Analyzer"
+        agent1.execute.return_value = AgentResult(
+            agent_name="agent-1", content="Analysis A", success=True,
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "agent-2"
+        agent2.role = "Summarizer"
+        agent2.execute.return_value = AgentResult(
+            agent_name="agent-2", content="Summary B", success=True,
+            usage={"prompt_tokens": 8, "completion_tokens": 12, "total_tokens": 20},
+        )
+
+        skill = StubToolSkill()
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_fanout(
+                skill, SkillPhase.ANALYZE, "ctx", "user task",
+            )
+
+        assert result.success is True
+        assert len(result.agent_results) == 2
+        assert result.agent_results[0].content == "Analysis A"
+        assert result.agent_results[1].content == "Summary B"
+        # Merged output contains both agents
+        assert "agent-1" in result.synthesized_output
+        assert "agent-2" in result.synthesized_output
+        # Usage accumulated
+        assert result.total_usage["total_tokens"] == 35
+
+    async def test_fanout_partial_failure_still_succeeds(self) -> None:
+        """If one agent fails in fanout, overall result succeeds when others succeed."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+
+        agent1 = MagicMock(spec=SpecialistAgent)
+        agent1.name = "agent-1"
+        agent1.execute.return_value = AgentResult(
+            agent_name="agent-1", content="Error occurred", success=False, usage={},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "agent-2"
+        agent2.execute.return_value = AgentResult(
+            agent_name="agent-2", content="All good", success=True,
+            usage={"total_tokens": 10},
+        )
+
+        skill = StubToolSkill()
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_fanout(
+                skill, SkillPhase.ANALYZE, "ctx", "task",
+            )
+
+        assert result.success is True  # at least one succeeded
+        assert len(result.agent_results) == 2
+
+    async def test_fanout_all_failures(self) -> None:
+        """If all agents fail in fanout, result.success is False."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+
+        agent1 = MagicMock(spec=SpecialistAgent)
+        agent1.name = "agent-1"
+        agent1.execute.return_value = AgentResult(
+            agent_name="agent-1", content="Error A", success=False, usage={},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "agent-2"
+        agent2.execute.return_value = AgentResult(
+            agent_name="agent-2", content="Error B", success=False, usage={},
+        )
+
+        skill = StubToolSkill()
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_fanout(
+                skill, SkillPhase.ANALYZE, "ctx", "task",
+            )
+
+        assert result.success is False
+
+    async def test_fanout_handles_agent_exception(self) -> None:
+        """Agent raising an exception during fanout produces a failed AgentResult."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+
+        agent1 = MagicMock(spec=SpecialistAgent)
+        agent1.name = "agent-1"
+        agent1.execute.side_effect = RuntimeError("boom")
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "agent-2"
+        agent2.execute.return_value = AgentResult(
+            agent_name="agent-2", content="OK", success=True,
+            usage={"total_tokens": 5},
+        )
+
+        skill = StubToolSkill()
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_fanout(
+                skill, SkillPhase.ANALYZE, "ctx", "task",
+            )
+
+        # One succeeded, so overall success
+        assert result.success is True
+        assert len(result.agent_results) == 2
+        # First result is the error fallback
+        assert result.agent_results[0].success is False
+        assert "failed with an unexpected error" in result.agent_results[0].content
+
+    async def test_fanout_no_agents(self) -> None:
+        """Fan-out with empty agent list returns success=False."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        skill = StubToolSkill()
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[]):
+            result = await orchestrator.async_execute_fanout(
+                skill, SkillPhase.ANALYZE, "ctx", "task",
+            )
+
+        assert result.success is False
+        assert len(result.agent_results) == 0
+
+
+class TestAsyncExecuteSequential:
+    """Test async_execute_sequential()."""
+
+    async def test_sequential_executes_in_order(self) -> None:
+        """Agents run sequentially with context chaining."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+
+        agent1 = MagicMock(spec=SpecialistAgent)
+        agent1.name = "agent-1"
+        agent1.role = "First"
+        agent1.execute.return_value = AgentResult(
+            agent_name="agent-1", content="Step 1 output", success=True,
+            usage={"total_tokens": 10},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "agent-2"
+        agent2.role = "Second"
+        agent2.execute.return_value = AgentResult(
+            agent_name="agent-2", content="Step 2 output", success=True,
+            usage={"total_tokens": 15},
+        )
+
+        skill = StubToolSkill()
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_sequential(
+                skill, SkillPhase.ANALYZE, "ctx", "task",
+            )
+
+        assert result.success is True
+        assert len(result.agent_results) == 2
+        assert result.synthesized_output == "Step 2 output"
+
+        # Second agent gets context with first agent's output
+        second_call_context = agent2.execute.call_args.kwargs["context"]
+        assert "Previous Analysis" in second_call_context
+        assert "Step 1 output" in second_call_context
+
+    async def test_sequential_stops_on_failure(self) -> None:
+        """Sequential execution stops at the first failed agent."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+
+        agent1 = MagicMock(spec=SpecialistAgent)
+        agent1.name = "agent-1"
+        agent1.role = "First"
+        agent1.execute.return_value = AgentResult(
+            agent_name="agent-1", content="Error", success=False, usage={},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "agent-2"
+        agent2.role = "Second"
+
+        skill = StubToolSkill()
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_sequential(
+                skill, SkillPhase.ANALYZE, "ctx", "task",
+            )
+
+        assert result.success is False
+        assert len(result.agent_results) == 1
+        agent2.execute.assert_not_called()
+
+
+class TestAsyncExecuteSkillPhase:
+    """Test async_execute_skill_phase()."""
+
+    async def test_uses_fanout_strategy(self) -> None:
+        """strategy='fanout' delegates to async_execute_fanout."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+
+        agent1 = MagicMock(spec=SpecialistAgent)
+        agent1.name = "a1"
+        agent1.execute.return_value = AgentResult(
+            agent_name="a1", content="Out", success=True,
+            usage={"total_tokens": 5},
+        )
+
+        skill = StubToolSkill()
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1]):
+            result = await orchestrator.async_execute_skill_phase(
+                skill, SkillPhase.ANALYZE, "ctx", "task", strategy="fanout",
+            )
+
+        assert result.success is True
+        assert result.output  # Non-empty output
+
+    async def test_default_strategy_is_sequential(self) -> None:
+        """Default strategy uses async_execute_sequential."""
+        client = _make_mock_client()
+        client.generate.return_value = _make_generation_result(text="Done")
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        skill = StubToolSkill()
+
+        # Let it create real SpecialistAgents
+        result = await orchestrator.async_execute_skill_phase(
+            skill, SkillPhase.ANALYZE, "ctx", "task",
+        )
+
+        assert result.success is True
+
+
+class TestAsyncExecuteWithTools:
+    """Test async_execute_with_tools()."""
+
+    async def test_fanout_strategy_uses_gather(self) -> None:
+        """Fanout strategy runs agents concurrently via asyncio.gather."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "agent-1"
+        agent1.execute.return_value = AgentResult(
+            agent_name="agent-1", content="Perspective A", success=True,
+            usage={"total_tokens": 10},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "agent-2"
+        agent2.execute.return_value = AgentResult(
+            agent_name="agent-2", content="Perspective B", success=True,
+            usage={"total_tokens": 15},
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_with_tools(
+                "analyze this", StubToolSkill(), registry, strategy="fanout",
+            )
+
+        assert result.success is True
+        assert len(result.agent_results) == 2
+        # Both agents called with same query
+        agent1.execute.assert_called_once_with("analyze this", context="analyze this")
+        agent2.execute.assert_called_once_with("analyze this", context="analyze this")
+        # Merged output
+        assert "agent-1" in result.synthesized_output
+        assert "agent-2" in result.synthesized_output
+        # Usage accumulated
+        assert result.total_usage["total_tokens"] == 25
+
+    async def test_fanout_partial_failure(self) -> None:
+        """Partial failure in async fanout with tools still succeeds."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "agent-1"
+        agent1.execute.return_value = AgentResult(
+            agent_name="agent-1", content="Error", success=False, usage={},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "agent-2"
+        agent2.execute.return_value = AgentResult(
+            agent_name="agent-2", content="OK", success=True, usage={},
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_with_tools(
+                "go", StubToolSkill(), registry, strategy="fanout",
+            )
+
+        assert result.success is True
+
+    async def test_sequential_strategy(self) -> None:
+        """Sequential strategy runs agents in order with context chaining."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "agent-1"
+        agent1.role = "First"
+        agent1.execute.return_value = AgentResult(
+            agent_name="agent-1", content="First output", success=True,
+            usage={"prompt_tokens": 5, "completion_tokens": 10, "total_tokens": 15},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "agent-2"
+        agent2.role = "Second"
+        agent2.execute.return_value = AgentResult(
+            agent_name="agent-2", content="Final output", success=True,
+            usage={"prompt_tokens": 8, "completion_tokens": 12, "total_tokens": 20},
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_with_tools(
+                "do something", StubToolSkill(), registry, strategy="sequential",
+            )
+
+        assert result.success is True
+        assert result.synthesized_output == "Final output"
+        # Context chaining works
+        second_call_context = agent2.execute.call_args.kwargs["context"]
+        assert "Previous Analysis" in second_call_context
+        assert "First output" in second_call_context
+
+    async def test_sequential_stops_on_failure(self) -> None:
+        """Sequential stops when an agent fails."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "agent-1"
+        agent1.role = "First"
+        agent1.execute.return_value = AgentResult(
+            agent_name="agent-1", content="Error", success=False, usage={},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "agent-2"
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_with_tools(
+                "do something", StubToolSkill(), registry,
+            )
+
+        assert result.success is False
+        assert len(result.agent_results) == 1
+        agent2.execute.assert_not_called()
+
+    async def test_single_strategy(self) -> None:
+        """Single strategy runs only the first agent."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "agent-1"
+        agent1.execute.return_value = AgentResult(
+            agent_name="agent-1", content="Solo output", success=True,
+            usage={"total_tokens": 10},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "agent-2"
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_with_tools(
+                "query", StubToolSkill(), registry, strategy="single",
+            )
+
+        assert result.success is True
+        assert result.synthesized_output == "Solo output"
+        agent2.execute.assert_not_called()
+
+    async def test_single_no_agents(self) -> None:
+        """Single strategy with no agents returns failure."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[]):
+            result = await orchestrator.async_execute_with_tools(
+                "query", StubToolSkill(), registry, strategy="single",
+            )
+
+        assert result.success is False
+        assert "No agents" in result.synthesized_output
+
+    async def test_usage_accumulated(self) -> None:
+        """Token usage is accumulated across agents in async mode."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "a1"
+        agent1.role = "R1"
+        agent1.execute.return_value = AgentResult(
+            agent_name="a1", content="x", success=True,
+            usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "a2"
+        agent2.role = "R2"
+        agent2.execute.return_value = AgentResult(
+            agent_name="a2", content="y", success=True,
+            usage={"prompt_tokens": 15, "completion_tokens": 25, "total_tokens": 40},
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_with_tools(
+                "q", StubToolSkill(), registry,
+            )
+
+        assert result.total_usage["prompt_tokens"] == 25
+        assert result.total_usage["completion_tokens"] == 45
+        assert result.total_usage["total_tokens"] == 70
+
+    async def test_gatherer_retry_on_incomplete_output(self) -> None:
+        """Async sequential with tools retries gatherer when output is incomplete."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content=(
+                    "## Cluster Overview\n"
+                    "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
+                ),  # Missing Service Status, Events Timeline
+                success=True,
+                usage={"total_tokens": 100},
+            ),
+            AgentResult(
+                agent_name="gatherer",
+                content=(
+                    "## Cluster Overview\n"
+                    "Nodes: 3, all healthy. CPU at 45%. Memory stable across the cluster.\n"
+                    "## Service Status\n"
+                    "All services running. Frontend 3/3, Backend 2/2, DB 1/1. No crashloops.\n"
+                    "## Events Timeline\n"
+                    "10:00 Normal pod started. 10:05 Scaling complete. Health checks pass.\n"
+                ),
+                success=True,
+                usage={"total_tokens": 150},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Final report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=["Cluster Overview", "Service Status", "Events Timeline"],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_with_tools(
+                "check health", skill, registry,
+            )
+
+        assert result.success is True
+        # Agent1 called twice (original + retry)
+        assert agent1.execute.call_count == 2
+        agent1.reset.assert_called_once()
+
+    async def test_fanout_exception_handling(self) -> None:
+        """Agent raising exception in async fanout produces error result."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "agent-1"
+        agent1.execute.side_effect = RuntimeError("connection lost")
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "agent-2"
+        agent2.execute.return_value = AgentResult(
+            agent_name="agent-2", content="OK", success=True,
+            usage={"total_tokens": 5},
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_with_tools(
+                "query", StubToolSkill(), registry, strategy="fanout",
+            )
+
+        assert result.success is True
+        assert len(result.agent_results) == 2
+        assert result.agent_results[0].success is False
+        assert "failed with an unexpected error" in result.agent_results[0].content
+
+
+class TestAsyncSyncParity:
+    """Verify that async methods produce the same results as sync methods."""
+
+    async def test_fanout_parity(self) -> None:
+        """async_execute_fanout produces same result structure as execute_fanout."""
+        client = _make_mock_client()
+        settings = _make_mock_settings()
+        registry = _make_mock_registry()
+
+        # Same agent setup for both
+        def make_agents():
+            a1 = MagicMock(spec=SpecialistAgent)
+            a1.name = "agent-1"
+            a1.role = "R1"
+            a1.execute.return_value = AgentResult(
+                agent_name="agent-1", content="Output A", success=True,
+                usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+            )
+            a2 = MagicMock(spec=SpecialistAgent)
+            a2.name = "agent-2"
+            a2.role = "R2"
+            a2.execute.return_value = AgentResult(
+                agent_name="agent-2", content="Output B", success=True,
+                usage={"prompt_tokens": 5, "completion_tokens": 10, "total_tokens": 15},
+            )
+            return [a1, a2]
+
+        skill = StubToolSkill()
+
+        # Sync
+        sync_orch = Orchestrator(client, settings)
+        with patch.object(sync_orch, "create_agents_for_skill", return_value=make_agents()):
+            sync_result = sync_orch.execute_fanout(
+                skill, SkillPhase.ANALYZE, "ctx", "task",
+            )
+
+        # Async
+        async_orch = Orchestrator(client, settings)
+        with patch.object(async_orch, "create_agents_for_skill", return_value=make_agents()):
+            async_result = await async_orch.async_execute_fanout(
+                skill, SkillPhase.ANALYZE, "ctx", "task",
+            )
+
+        # Both should have same structure
+        assert sync_result.success == async_result.success
+        assert len(sync_result.agent_results) == len(async_result.agent_results)
+        assert sync_result.total_usage == async_result.total_usage
+        assert sync_result.synthesized_output == async_result.synthesized_output
+
+    async def test_sequential_parity(self) -> None:
+        """async_execute_sequential produces same result as execute_sequential."""
+        client = _make_mock_client()
+        settings = _make_mock_settings()
+
+        def make_agents():
+            a = MagicMock(spec=SpecialistAgent)
+            a.name = "solo"
+            a.role = "Worker"
+            a.execute.return_value = AgentResult(
+                agent_name="solo", content="Done", success=True,
+                usage={"total_tokens": 20},
+            )
+            return [a]
+
+        skill = StubToolSkill()
+
+        sync_orch = Orchestrator(client, settings)
+        with patch.object(sync_orch, "create_agents_for_skill", return_value=make_agents()):
+            sync_result = sync_orch.execute_sequential(
+                skill, SkillPhase.ANALYZE, "ctx", "task",
+            )
+
+        async_orch = Orchestrator(client, settings)
+        with patch.object(async_orch, "create_agents_for_skill", return_value=make_agents()):
+            async_result = await async_orch.async_execute_sequential(
+                skill, SkillPhase.ANALYZE, "ctx", "task",
+            )
+
+        assert sync_result.success == async_result.success
+        assert sync_result.synthesized_output == async_result.synthesized_output
+        assert sync_result.total_usage == async_result.total_usage

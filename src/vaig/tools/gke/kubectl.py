@@ -579,3 +579,14 @@ def kubectl_top(
     except Exception as exc:
         logger.exception("kubectl_top failed")
         return ToolResult(output=f"Error fetching metrics: {exc}", error=True)
+
+
+# ── Task 3.4 — async wrappers ───────────────────────────────
+# Offload blocking kubernetes-client calls to a thread pool via to_async.
+
+from vaig.core.async_utils import to_async  # noqa: E402
+
+async_kubectl_get = to_async(kubectl_get)
+async_kubectl_describe = to_async(kubectl_describe)
+async_kubectl_logs = to_async(kubectl_logs)
+async_kubectl_top = to_async(kubectl_top)

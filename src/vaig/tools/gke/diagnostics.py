@@ -946,3 +946,15 @@ def _format_container_section(container: Any, status: Any | None, lines: list[st
         lines.append("    Env Var References:")
         lines.extend(env_refs)
 
+
+# ── Task 3.4 — async wrappers ───────────────────────────────
+# Offload blocking kubernetes-client calls to a thread pool via to_async.
+
+from vaig.core.async_utils import to_async  # noqa: E402
+
+async_get_events = to_async(get_events)
+async_get_rollout_status = to_async(get_rollout_status)
+async_get_node_conditions = to_async(get_node_conditions)
+async_get_container_status = to_async(get_container_status)
+async_get_rollout_history = to_async(get_rollout_history)
+

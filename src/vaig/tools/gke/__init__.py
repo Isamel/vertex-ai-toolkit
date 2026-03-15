@@ -16,6 +16,10 @@ from .kubectl import (
     _describe_resource,
     _format_describe,
     _parse_since,
+    async_kubectl_describe,
+    async_kubectl_get,
+    async_kubectl_logs,
+    async_kubectl_top,
     kubectl_describe,
     kubectl_get,
     kubectl_logs,
@@ -29,6 +33,11 @@ from .diagnostics import (
     _format_node_detail,
     _format_nodes_summary,
     _format_revision_detail,
+    async_get_container_status,
+    async_get_events,
+    async_get_node_conditions,
+    async_get_rollout_history,
+    async_get_rollout_status,
     get_container_status,
     get_events,
     get_node_conditions,
@@ -38,6 +47,10 @@ from .diagnostics import (
 
 # ── Layer 1: mutations ──────────────────────────────────────
 from .mutations import (
+    async_kubectl_annotate,
+    async_kubectl_label,
+    async_kubectl_restart,
+    async_kubectl_scale,
     kubectl_annotate,
     kubectl_label,
     kubectl_restart,
@@ -46,6 +59,9 @@ from .mutations import (
 
 # ── Layer 1: discovery ──────────────────────────────────────
 from .discovery import (
+    async_discover_network_topology,
+    async_discover_service_mesh,
+    async_discover_workloads,
     discover_network_topology,
     discover_service_mesh,
     discover_workloads,
@@ -57,8 +73,22 @@ from .security import (
     DENIED_PATTERNS,
     _check_allowed,
     _check_denied,
+    async_check_rbac,
+    async_exec_command,
     check_rbac,
     exec_command,
+)
+
+# ── Layer 1: mesh introspection ─────────────────────────────
+from .mesh import (
+    async_get_mesh_config,
+    async_get_mesh_overview,
+    async_get_mesh_security,
+    async_get_sidecar_status,
+    get_mesh_config,
+    get_mesh_overview,
+    get_mesh_security,
+    get_sidecar_status,
 )
 
 # ── Layer 0: client infrastructure ──────────────────────────
@@ -119,7 +149,7 @@ from ._formatters import (
 __all__ = [
     # Factory
     "create_gke_tools",
-    # kubectl read ops
+    # kubectl read ops (sync)
     "kubectl_get",
     "kubectl_describe",
     "kubectl_logs",
@@ -127,7 +157,12 @@ __all__ = [
     "_describe_resource",
     "_format_describe",
     "_parse_since",
-    # Diagnostics
+    # kubectl read ops (async)
+    "async_kubectl_get",
+    "async_kubectl_describe",
+    "async_kubectl_logs",
+    "async_kubectl_top",
+    # Diagnostics (sync)
     "get_events",
     "get_rollout_status",
     "get_node_conditions",
@@ -138,22 +173,50 @@ __all__ = [
     "_format_node_detail",
     "_find_current_revision",
     "_format_revision_detail",
-    # Mutations
+    # Diagnostics (async)
+    "async_get_events",
+    "async_get_rollout_status",
+    "async_get_node_conditions",
+    "async_get_container_status",
+    "async_get_rollout_history",
+    # Mutations (sync)
     "kubectl_scale",
     "kubectl_restart",
     "kubectl_label",
     "kubectl_annotate",
-    # Discovery
+    # Mutations (async)
+    "async_kubectl_scale",
+    "async_kubectl_restart",
+    "async_kubectl_label",
+    "async_kubectl_annotate",
+    # Discovery (sync)
     "discover_workloads",
     "discover_service_mesh",
     "discover_network_topology",
-    # Security
+    # Discovery (async)
+    "async_discover_workloads",
+    "async_discover_service_mesh",
+    "async_discover_network_topology",
+    # Security (sync)
     "exec_command",
     "check_rbac",
     "_check_denied",
     "_check_allowed",
     "DENIED_PATTERNS",
     "ALLOWED_EXEC_COMMANDS",
+    # Security (async)
+    "async_exec_command",
+    "async_check_rbac",
+    # Mesh introspection (sync)
+    "get_mesh_overview",
+    "get_mesh_config",
+    "get_mesh_security",
+    "get_sidecar_status",
+    # Mesh introspection (async)
+    "async_get_mesh_overview",
+    "async_get_mesh_config",
+    "async_get_mesh_security",
+    "async_get_sidecar_status",
     # Client infrastructure
     "_K8S_AVAILABLE",
     "_K8S_IMPORT_ERROR",

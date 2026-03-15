@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import shlex
@@ -171,6 +172,108 @@ def run_command(
     if result.returncode != 0:
         return ToolResult(
             output=f"{combined}\n(exit code {result.returncode})",
+            error=True,
+        )
+
+    return ToolResult(output=combined)
+
+
+# ── Task 3.4 — async_run_command ─────────────────────────────
+
+
+async def async_run_command(
+    command: str,
+    *,
+    workspace: Path,
+    allowed_commands: list[str] | None = None,
+    denied_commands: list[str] | None = None,
+    timeout: int = _DEFAULT_TIMEOUT,
+) -> ToolResult:
+    """Async version of :func:`run_command` using ``asyncio.create_subprocess_exec``.
+
+    All validation logic (denylist, allowlist, argument safety) runs inline
+    since it is pure CPU work.  Only the subprocess execution itself is async.
+    """
+    logger.debug("async_run_command: command=%r workspace=%s", command, workspace)
+
+    # ── Denylist check (runs on raw string BEFORE parsing) ────
+    if denied_commands:
+        denied_reason = _check_denied_command(command, denied_commands)
+        if denied_reason:
+            return ToolResult(output=denied_reason, error=True)
+
+    try:
+        args = shlex.split(command)
+    except ValueError as exc:
+        return ToolResult(output=f"Failed to parse command: {exc}", error=True)
+
+    if not args:
+        return ToolResult(output="Empty command", error=True)
+
+    if allowed_commands and args[0] not in allowed_commands:
+        return ToolResult(
+            output=(
+                f"Command '{args[0]}' is not in the allowed commands list. "
+                f"Allowed: {', '.join(allowed_commands)}"
+            ),
+            error=True,
+        )
+
+    # Validate all arguments for safety
+    for arg in args[1:]:
+        safe, reason = _is_arg_safe(arg, workspace)
+        if not safe:
+            return ToolResult(output=f"Argument rejected: {reason}", error=True)
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=workspace,
+        )
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            # Kill the process on timeout to avoid zombies
+            try:
+                process.kill()
+                await process.wait()
+            except ProcessLookupError:
+                pass
+            return ToolResult(
+                output=f"Command timed out after {timeout} seconds: {command}",
+                error=True,
+            )
+    except FileNotFoundError:
+        return ToolResult(
+            output=f"Command not found: {args[0]}",
+            error=True,
+        )
+    except OSError as exc:
+        return ToolResult(output=f"Error running command: {exc}", error=True)
+
+    stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
+    stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+
+    output_parts: list[str] = []
+    if stdout:
+        output_parts.append(stdout)
+    if stderr:
+        output_parts.append(stderr)
+
+    combined = "\n".join(output_parts).rstrip("\n") if output_parts else "(no output)"
+
+    # Truncate excessive output to prevent memory issues
+    if len(combined) > _MAX_OUTPUT_CHARS:
+        combined = combined[:_MAX_OUTPUT_CHARS] + f"\n... (truncated — output exceeded {_MAX_OUTPUT_CHARS} chars)"
+
+    if process.returncode != 0:
+        return ToolResult(
+            output=f"{combined}\n(exit code {process.returncode})",
             error=True,
         )
 
