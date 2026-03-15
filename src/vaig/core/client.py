@@ -1,7 +1,14 @@
-"""Gemini client — google-genai SDK wrapper with streaming, multimodal, and model switching."""
+"""Gemini client — google-genai SDK wrapper with streaming, multimodal, and model switching.
+
+Provides both **async** and **sync** APIs.  Async methods use the ``async_``
+prefix (e.g. ``async_generate``).  The original sync methods (``generate``,
+``generate_stream``, etc.) delegate to the async versions via ``run_sync()``
+so that existing callers work without changes.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import ssl
@@ -15,6 +22,7 @@ from google import genai
 from google.api_core import exceptions as google_exceptions
 from google.genai import types
 
+from vaig.core.async_utils import run_sync
 from vaig.core.auth import get_credentials
 from vaig.core.cache import CacheStats, ResponseCache, _make_cache_key
 from vaig.core.exceptions import (
@@ -24,7 +32,7 @@ from vaig.core.exceptions import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 
     from vaig.core.config import Settings
 
@@ -108,15 +116,17 @@ class ChatMessage:
 class StreamResult:
     """Wraps a materialized streaming response to capture usage metadata.
 
-    Iterable: ``for chunk in stream_result`` yields text strings — exactly
-    like the old ``generate_stream()`` generator, preserving backward compat.
+    Supports **both** sync and async iteration:
+
+    - Sync:  ``for chunk in stream_result``
+    - Async: ``async for chunk in stream_result``
 
     After iteration, ``.usage`` contains the token-usage dict extracted from
     the **last** chunk (where the Gemini SDK reports totals), and ``.text``
     holds the full accumulated response.
     """
 
-    __slots__ = ("_chunks", "_usage", "_text_parts", "_model", "_exhausted")
+    __slots__ = ("_chunks", "_usage", "_text_parts", "_model", "_exhausted", "_iter_index")
 
     def __init__(self, raw_chunks: Sequence[Any], model: str) -> None:
         self._chunks = raw_chunks
@@ -124,24 +134,46 @@ class StreamResult:
         self._usage: dict[str, int] = {}
         self._text_parts: list[str] = []
         self._exhausted = False
+        self._iter_index = 0
+
+    def _process_chunk(self, chunk: Any) -> str | None:
+        """Extract text and usage from a single chunk. Returns text or None."""
+        if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+            um = chunk.usage_metadata
+            self._usage = {
+                "prompt_tokens": um.prompt_token_count or 0,
+                "completion_tokens": um.candidates_token_count or 0,
+                "total_tokens": um.total_token_count or 0,
+                "thinking_tokens": _safe_int(getattr(um, "thoughts_token_count", None)),
+            }
+        if chunk.text:
+            self._text_parts.append(chunk.text)
+            return chunk.text
+        return None
 
     def __iter__(self) -> Iterator[str]:
-        """Yield text strings from each chunk, capturing usage from the last."""
+        """Yield text strings from each chunk (sync iteration)."""
         for chunk in self._chunks:
-            # Capture usage from every chunk — the last one wins
-            # (Gemini SDK reports cumulative totals on the final chunk).
-            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
-                um = chunk.usage_metadata
-                self._usage = {
-                    "prompt_tokens": um.prompt_token_count or 0,
-                    "completion_tokens": um.candidates_token_count or 0,
-                    "total_tokens": um.total_token_count or 0,
-                    "thinking_tokens": _safe_int(getattr(um, "thoughts_token_count", None)),
-                }
-            if chunk.text:
-                self._text_parts.append(chunk.text)
-                yield chunk.text
+            text = self._process_chunk(chunk)
+            if text is not None:
+                yield text
         self._exhausted = True
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        """Return self for ``async for`` iteration."""
+        self._iter_index = 0
+        return self
+
+    async def __anext__(self) -> str:
+        """Yield next text string (async iteration)."""
+        while self._iter_index < len(self._chunks):
+            chunk = self._chunks[self._iter_index]
+            self._iter_index += 1
+            text = self._process_chunk(chunk)
+            if text is not None:
+                return text
+        self._exhausted = True
+        raise StopAsyncIteration
 
     @property
     def usage(self) -> dict[str, int]:
@@ -217,7 +249,7 @@ class GeminiClient:
             self._cache = None
 
     def initialize(self) -> None:
-        """Initialize the google-genai Client with Vertex AI credentials."""
+        """Initialize the google-genai Client with Vertex AI credentials (sync)."""
         if self._initialized:
             return
 
@@ -237,8 +269,34 @@ class GeminiClient:
             self._active_location,
         )
 
+    async def async_initialize(self) -> None:
+        """Initialize the google-genai Client with Vertex AI credentials (async).
+
+        ``genai.Client()`` construction is CPU-bound (no I/O), so we call it
+        directly.  ``get_credentials()`` may do I/O (gcloud subprocess), so
+        we wrap it in ``asyncio.to_thread()``.
+        """
+        if self._initialized:
+            return
+
+        credentials = await asyncio.to_thread(get_credentials, self._settings)
+
+        self._client = genai.Client(
+            vertexai=True,
+            project=self._settings.gcp.project_id,
+            location=self._active_location,
+            credentials=credentials,
+        )
+
+        self._initialized = True
+        logger.info(
+            "Vertex AI initialized (async) — project=%s, location=%s",
+            self._settings.gcp.project_id,
+            self._active_location,
+        )
+
     def _reinitialize_with_fallback(self) -> None:
-        """Re-initialize with the fallback location.
+        """Re-initialize with the fallback location (sync).
 
         Creates a new Client bound to the fallback location and marks
         the client as using the fallback.  Thread-safe: uses double-checked
@@ -265,10 +323,34 @@ class GeminiClient:
             self._client = None
             self.initialize()
 
+    async def _async_reinitialize_with_fallback(self) -> None:
+        """Re-initialize with the fallback location (async)."""
+        fallback = self._settings.gcp.fallback_location
+        if self._using_fallback or not fallback or fallback == self._active_location:
+            return
+
+        # No lock needed in async — single-threaded event loop.
+        logger.warning(
+            "Primary location '%s' failed — falling back to '%s'",
+            self._active_location,
+            fallback,
+        )
+
+        self._active_location = fallback
+        self._using_fallback = True
+        self._initialized = False
+        self._client = None
+        await self.async_initialize()
+
     def _ensure_initialized(self) -> None:
-        """Ensure the SDK is initialized before making calls."""
+        """Ensure the SDK is initialized before making calls (sync)."""
         if not self._initialized:
             self.initialize()
+
+    async def _async_ensure_initialized(self) -> None:
+        """Ensure the SDK is initialized before making calls (async)."""
+        if not self._initialized:
+            await self.async_initialize()
 
     def _get_client(self) -> genai.Client:
         """Get the initialized genai Client, initializing if needed."""
@@ -389,7 +471,7 @@ class GeminiClient:
     # ── Retry logic ───────────────────────────────────────────
 
     def _retry_with_backoff(self, fn: Callable[[], T], *, timeout: float | None = None) -> T:
-        """Execute *fn* with exponential backoff on retryable Google API errors.
+        """Execute *fn* with exponential backoff on retryable Google API errors (sync).
 
         If an SSL or connection error is detected and a fallback location is
         configured, the client re-initializes with the fallback location and
@@ -424,10 +506,6 @@ class GeminiClient:
                 return fn()
             except _RETRYABLE_EXCEPTIONS as exc:
                 last_exception = exc
-                # A retryable exception (e.g. ServiceUnavailable) may wrap
-                # the real cause — an SSL/proxy error.  If so, fallback to
-                # the alternate location instead of burning retries against
-                # the same broken endpoint.
                 if _is_ssl_or_connection_error(exc) and not self._using_fallback:
                     logger.warning(
                         "Retryable error wraps SSL/proxy error (%s: %s) "
@@ -454,9 +532,7 @@ class GeminiClient:
                     )
                     time.sleep(sleep_time)
                     delay *= retry_cfg.backoff_multiplier
-                # else: last attempt failed, fall through to raise below.
             except Exception as exc:
-                # Check for SSL/connection/proxy errors that warrant a location fallback.
                 if _is_ssl_or_connection_error(exc) and not self._using_fallback:
                     logger.warning(
                         "SSL/connection error detected (%s: %s) — attempting location fallback",
@@ -464,7 +540,6 @@ class GeminiClient:
                         exc,
                     )
                     self._reinitialize_with_fallback()
-                    # Retry the call once with the new location.
                     try:
                         return fn()
                     except Exception as fallback_exc:
@@ -473,6 +548,96 @@ class GeminiClient:
                 raise  # Non-SSL, non-retryable — propagate immediately.
 
         # All retries exhausted — raise the appropriate custom exception.
+        assert last_exception is not None  # noqa: S101
+        retries = retry_cfg.max_retries
+        msg = f"All {retries} retries exhausted. Last error: {last_exception}"
+
+        if isinstance(last_exception, google_exceptions.ResourceExhausted):
+            raise GeminiRateLimitError(
+                msg,
+                original_error=last_exception,
+                retries_attempted=retries,
+            ) from last_exception
+
+        raise GeminiConnectionError(
+            msg,
+            original_error=last_exception,
+            retries_attempted=retries,
+        ) from last_exception
+
+    async def _async_retry_with_backoff(
+        self,
+        fn: Callable[[], Awaitable[T]],
+        *,
+        timeout: float | None = None,
+    ) -> T:
+        """Execute async *fn* with exponential backoff on retryable errors.
+
+        Async counterpart of ``_retry_with_backoff``.  Uses
+        ``asyncio.sleep`` instead of ``time.sleep`` so the event loop is
+        never blocked.
+
+        Args:
+            fn: Zero-argument async callable that performs the API call.
+            timeout: Optional wall-clock timeout in seconds for the entire
+                     retry loop (not per-attempt).
+        """
+        retry_cfg = self._settings.retry
+        delay = retry_cfg.initial_delay
+        last_exception: Exception | None = None
+        start_time = time.monotonic() if timeout is not None else None
+
+        for attempt in range(retry_cfg.max_retries + 1):
+            if start_time is not None and attempt > 0:
+                elapsed = time.monotonic() - start_time
+                if elapsed >= timeout:  # type: ignore[operator]
+                    break
+
+            try:
+                return await fn()
+            except _RETRYABLE_EXCEPTIONS as exc:
+                last_exception = exc
+                if _is_ssl_or_connection_error(exc) and not self._using_fallback:
+                    logger.warning(
+                        "Retryable error wraps SSL/proxy error (%s: %s) "
+                        "— attempting location fallback instead of retry",
+                        type(exc).__name__,
+                        exc,
+                    )
+                    await self._async_reinitialize_with_fallback()
+                    try:
+                        return await fn()
+                    except Exception as fallback_exc:
+                        last_exception = fallback_exc
+                        break
+                if attempt < retry_cfg.max_retries:
+                    jitter = random.uniform(0, 0.5)  # noqa: S311
+                    sleep_time = min(delay, retry_cfg.max_delay) + jitter
+                    logger.warning(
+                        "Retryable error on attempt %d/%d (%s: %s) — retrying in %.2fs",
+                        attempt + 1,
+                        retry_cfg.max_retries + 1,
+                        type(exc).__name__,
+                        exc,
+                        sleep_time,
+                    )
+                    await asyncio.sleep(sleep_time)
+                    delay *= retry_cfg.backoff_multiplier
+            except Exception as exc:
+                if _is_ssl_or_connection_error(exc) and not self._using_fallback:
+                    logger.warning(
+                        "SSL/connection error detected (%s: %s) — attempting location fallback",
+                        type(exc).__name__,
+                        exc,
+                    )
+                    await self._async_reinitialize_with_fallback()
+                    try:
+                        return await fn()
+                    except Exception as fallback_exc:
+                        last_exception = fallback_exc
+                        break
+                raise
+
         assert last_exception is not None  # noqa: S101
         retries = retry_cfg.max_retries
         msg = f"All {retries} retries exhausted. Last error: {last_exception}"
@@ -823,7 +988,7 @@ class GeminiClient:
         return history
 
     def count_tokens(self, prompt: str | list[types.Part], *, model_id: str | None = None) -> int:
-        """Count tokens in a prompt."""
+        """Count tokens in a prompt (sync)."""
         client = self._get_client()
         mid = model_id or self._current_model_id
         response = client.models.count_tokens(model=mid, contents=prompt)  # type: ignore[arg-type]
@@ -836,6 +1001,249 @@ class GeminiClient:
             {"id": m.id, "description": m.description}
             for m in self._settings.models.available
         ]
+
+    # ── Async Public API ─────────────────────────────────────
+
+    async def async_generate(
+        self,
+        prompt: str | list[types.Part],
+        *,
+        system_instruction: str | None = None,
+        history: list[ChatMessage] | None = None,
+        model_id: str | None = None,
+        timeout: float | None = None,
+        **gen_kwargs: Any,
+    ) -> GenerationResult:
+        """Generate a response (non-streaming, async).
+
+        Uses the native ``client.aio.models`` async API.  Same semantics as
+        the sync ``generate()`` method, including cache support.
+        """
+        await self._async_ensure_initialized()
+
+        mid = model_id or self._current_model_id
+        logger.debug("async_generate() → model=%s, has_history=%s", mid, bool(history))
+
+        # ── Cache lookup ────────────────────────────────────────
+        cache_key: str | None = None
+        if (
+            self._cache is not None
+            and isinstance(prompt, str)
+            and not history
+        ):
+            cache_key = _make_cache_key(prompt, mid, system_instruction)
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                logger.info("Cache hit — skipping API call (model=%s)", mid)
+                return cached
+
+        async def _call() -> GenerationResult:
+            client = self._get_client()
+            config = self._build_generation_config(
+                system_instruction=system_instruction, **gen_kwargs,
+            )
+
+            if history:
+                chat_history = self._build_history(history)
+                chat = client.aio.chats.create(
+                    model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
+                )
+                response = await chat.send_message(prompt)
+            else:
+                response = await client.aio.models.generate_content(
+                    model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
+                )
+
+            usage = GeminiClient._extract_usage(response)
+
+            return GenerationResult(
+                text=response.text or "",
+                model=mid,
+                usage=usage,
+                finish_reason=(
+                    str(response.candidates[0].finish_reason) if response.candidates else ""
+                ),
+            )
+
+        result = await self._async_retry_with_backoff(_call, timeout=timeout)
+
+        if cache_key is not None and self._cache is not None:
+            self._cache.put(cache_key, result)
+
+        return result
+
+    async def async_generate_stream(
+        self,
+        prompt: str | list[types.Part],
+        *,
+        system_instruction: str | None = None,
+        history: list[ChatMessage] | None = None,
+        model_id: str | None = None,
+        timeout: float | None = None,
+        **gen_kwargs: Any,
+    ) -> StreamResult:
+        """Generate a streaming response (async), returning a ``StreamResult``.
+
+        Uses the native ``client.aio.models.generate_content_stream`` API.
+        The async stream is materialised into a list inside the retry boundary,
+        matching the sync ``generate_stream()`` behaviour.
+        """
+        await self._async_ensure_initialized()
+
+        mid = model_id or self._current_model_id
+        logger.debug("async_generate_stream() → model=%s, has_history=%s", mid, bool(history))
+
+        async def _call() -> list[Any]:
+            client = self._get_client()
+            config = self._build_generation_config(
+                system_instruction=system_instruction, **gen_kwargs,
+            )
+
+            if history:
+                chat_history = self._build_history(history)
+                chat = client.aio.chats.create(
+                    model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
+                )
+                response_stream = await chat.send_message_stream(prompt)
+            else:
+                response_stream = await client.aio.models.generate_content_stream(
+                    model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
+                )
+            # Materialise the async stream inside the retryable boundary.
+            return [chunk async for chunk in response_stream]
+
+        raw_chunks = await self._async_retry_with_backoff(_call, timeout=timeout)
+        return StreamResult(raw_chunks, model=mid)
+
+    async def async_generate_with_tools(
+        self,
+        prompt: str | list[types.Part],
+        *,
+        tool_declarations: list[Any],
+        system_instruction: str | None = None,
+        history: list[ChatMessage] | None = None,
+        model_id: str | None = None,
+        timeout: float | None = None,
+        **gen_kwargs: Any,
+    ) -> ToolCallResult:
+        """Generate a response that may include function calls (async).
+
+        Uses the native ``client.aio.models`` async API.  Same semantics as
+        the sync ``generate_with_tools()`` method.
+        """
+        await self._async_ensure_initialized()
+
+        mid = model_id or self._current_model_id
+        logger.debug(
+            "async_generate_with_tools() → model=%s, has_history=%s, num_tools=%d",
+            mid,
+            bool(history),
+            len(tool_declarations),
+        )
+
+        async def _call() -> ToolCallResult:
+            client = self._get_client()
+            tools = [types.Tool(function_declarations=tool_declarations)]
+            config = self._build_generation_config(
+                system_instruction=system_instruction,
+                tools=tools,
+                **gen_kwargs,
+            )
+
+            try:
+                if history:
+                    chat_history = self._build_history(history)
+
+                    actual_prompt: Any = prompt
+                    if not prompt and chat_history:
+                        last_entry = chat_history.pop()
+                        actual_prompt = last_entry.parts
+
+                    chat = client.aio.chats.create(
+                        model=mid, history=chat_history, config=config,
+                    )
+                    response = await chat.send_message(actual_prompt)
+                else:
+                    response = await client.aio.models.generate_content(
+                        model=mid, contents=prompt, config=config,
+                    )
+            except Exception as exc:
+                exc_name = type(exc).__name__
+                if "validation" in exc_name.lower() or "blocked" in str(exc).lower():
+                    logger.warning(
+                        "Response validation/blocked error caught — %s: %s",
+                        exc_name,
+                        exc,
+                    )
+                    return ToolCallResult(
+                        text=f"Model response was blocked: {exc}",
+                        model=mid,
+                        function_calls=[],
+                        usage={},
+                        finish_reason="BLOCKED",
+                    )
+                raise
+
+            usage = GeminiClient._extract_usage(response)
+
+            candidate = response.candidates[0] if response.candidates else None
+            content = candidate.content if candidate and candidate.content else None
+            if not content or not content.parts:
+                logger.debug("async_generate_with_tools() — empty response")
+                return ToolCallResult(
+                    text="",
+                    model=mid,
+                    function_calls=[],
+                    usage=usage,
+                    finish_reason=(
+                        str(candidate.finish_reason) if candidate else ""
+                    ),
+                )
+
+            function_calls: list[dict[str, Any]] = []
+            text_parts: list[str] = []
+
+            for part in content.parts:
+                fc = part.function_call
+                if fc and fc.name:
+                    function_calls.append({
+                        "name": fc.name,
+                        "args": dict(fc.args) if fc.args else {},
+                    })
+                elif part.text:
+                    text_parts.append(part.text)
+
+            logger.debug(
+                "async_generate_with_tools() — %d function call(s), %d text part(s)",
+                len(function_calls),
+                len(text_parts),
+            )
+
+            return ToolCallResult(
+                text="".join(text_parts),
+                model=mid,
+                function_calls=function_calls,
+                usage=usage,
+                finish_reason=str(response.candidates[0].finish_reason),
+            )
+
+        return await self._async_retry_with_backoff(_call, timeout=timeout)
+
+    async def async_count_tokens(
+        self,
+        prompt: str | list[types.Part],
+        *,
+        model_id: str | None = None,
+    ) -> int:
+        """Count tokens in a prompt (async)."""
+        await self._async_ensure_initialized()
+        client = self._get_client()
+        mid = model_id or self._current_model_id
+        response = await client.aio.models.count_tokens(
+            model=mid, contents=prompt,  # type: ignore[arg-type]
+        )
+        total: int = response.total_tokens if response.total_tokens is not None else 0
+        return total
 
     # ── Cache management ─────────────────────────────────────
 

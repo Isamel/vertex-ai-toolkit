@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, PropertyMock, call, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, call, patch
 
 import pytest
+from google.api_core import exceptions as google_exceptions
 
 from vaig.core.client import ChatMessage, GeminiClient, GenerationResult, StreamResult
 from vaig.core.config import (
@@ -1169,3 +1171,410 @@ class TestGenerationResult:
         r2 = GenerationResult(text="b", model="m")
         r1.usage["x"] = 1
         assert r2.usage == {}
+
+
+# ── Async API Tests ─────────────────────────────────────────
+
+
+class TestAsyncInitialize:
+    """Tests for async_initialize()."""
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_initialize_creates_client(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        fake_creds = MagicMock()
+        mock_get_creds.return_value = fake_creds
+
+        await client.async_initialize()
+
+        mock_get_creds.assert_called_once_with(client._settings)
+        mock_genai_client_cls.assert_called_once_with(
+            vertexai=True,
+            project="test-project",
+            location="us-central1",
+            credentials=fake_creds,
+        )
+        assert client._initialized is True
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_initialize_is_idempotent(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+
+        await client.async_initialize()
+        await client.async_initialize()
+
+        assert mock_genai_client_cls.call_count == 1
+
+
+class TestAsyncGenerate:
+    """Tests for async_generate() — async non-streaming generation."""
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_single_turn_generation(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+        mock_response = _make_mock_response(
+            text="Async generated text",
+            prompt_tokens=5,
+            completion_tokens=10,
+            total_tokens=15,
+            finish_reason="STOP",
+        )
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.aio.models.generate_content = AsyncMock(return_value=mock_response)
+
+        result = await client.async_generate("Tell me a joke")
+
+        assert isinstance(result, GenerationResult)
+        assert result.text == "Async generated text"
+        assert result.model == "gemini-2.5-pro"
+        assert result.usage["prompt_tokens"] == 5
+        assert result.finish_reason == "STOP"
+        mock_genai.aio.models.generate_content.assert_awaited_once()
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_generate_with_history(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+        mock_response = _make_mock_response(text="Async follow-up")
+
+        mock_chat = MagicMock()
+        mock_chat.send_message = AsyncMock(return_value=mock_response)
+
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.aio.chats.create.return_value = mock_chat
+
+        history = [
+            ChatMessage(role="user", content="What is Python?"),
+            ChatMessage(role="model", content="A programming language."),
+        ]
+
+        result = await client.async_generate("Tell me more", history=history)
+
+        assert result.text == "Async follow-up"
+        mock_genai.aio.chats.create.assert_called_once()
+        mock_chat.send_message.assert_awaited_once()
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_generate_with_model_override(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+        mock_response = _make_mock_response(text="Flash async response")
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.aio.models.generate_content = AsyncMock(return_value=mock_response)
+
+        result = await client.async_generate("Hello", model_id="gemini-2.5-flash")
+
+        assert result.model == "gemini-2.5-flash"
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_generate_auto_initializes(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+        mock_response = _make_mock_response()
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.aio.models.generate_content = AsyncMock(return_value=mock_response)
+
+        assert client._initialized is False
+        await client.async_generate("Hello")
+        assert client._initialized is True
+
+
+class TestAsyncGenerateStream:
+    """Tests for async_generate_stream() — async streaming generation."""
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_stream_yields_text_chunks(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+        chunks = _make_mock_stream_chunks(["Hello ", "world", "!"])
+
+        # The SDK's async generate_content_stream is a coroutine that returns
+        # an async iterator — we simulate it by returning an async generator.
+        async def _fake_stream(**kw: Any) -> Any:
+            for c in chunks:
+                yield c
+
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.aio.models.generate_content_stream = AsyncMock(
+            return_value=_fake_stream(),
+        )
+
+        stream_result = await client.async_generate_stream("Say hello")
+
+        assert isinstance(stream_result, StreamResult)
+        collected = list(stream_result)  # sync iteration works on materialised chunks
+        assert collected == ["Hello ", "world", "!"]
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_stream_with_history(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+        chunks = _make_mock_stream_chunks(["More ", "info"])
+
+        async def _fake_stream(*a: Any, **kw: Any) -> Any:
+            for c in chunks:
+                yield c
+
+        mock_chat = MagicMock()
+        mock_chat.send_message_stream = AsyncMock(return_value=_fake_stream())
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.aio.chats.create.return_value = mock_chat
+
+        history = [
+            ChatMessage(role="user", content="What is Python?"),
+            ChatMessage(role="model", content="A language."),
+        ]
+
+        stream_result = await client.async_generate_stream("Tell me more", history=history)
+
+        collected = list(stream_result)
+        assert collected == ["More ", "info"]
+        mock_genai.aio.chats.create.assert_called_once()
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_stream_captures_usage(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+        usage = {
+            "prompt_tokens": 15,
+            "completion_tokens": 30,
+            "total_tokens": 45,
+            "thinking_tokens": 0,
+        }
+        chunks = _make_mock_stream_chunks(["Hello ", "world"], last_usage=usage)
+
+        async def _fake_stream(**kw: Any) -> Any:
+            for c in chunks:
+                yield c
+
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.aio.models.generate_content_stream = AsyncMock(
+            return_value=_fake_stream(),
+        )
+
+        stream_result = await client.async_generate_stream("Say hello")
+        list(stream_result)  # exhaust
+
+        assert stream_result.usage == usage
+        assert stream_result.text == "Hello world"
+
+
+class TestAsyncCountTokens:
+    """Tests for async_count_tokens()."""
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_count_tokens_returns_total(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+        mock_token_response = MagicMock()
+        mock_token_response.total_tokens = 42
+
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.aio.models.count_tokens = AsyncMock(return_value=mock_token_response)
+
+        count = await client.async_count_tokens("How many tokens?")
+
+        assert count == 42
+        mock_genai.aio.models.count_tokens.assert_awaited_once()
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_count_tokens_with_model_override(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+        mock_token_response = MagicMock()
+        mock_token_response.total_tokens = 10
+        mock_genai = mock_genai_client_cls.return_value
+        mock_genai.aio.models.count_tokens = AsyncMock(return_value=mock_token_response)
+
+        count = await client.async_count_tokens("Hello", model_id="gemini-2.5-flash")
+
+        assert count == 10
+
+
+class TestStreamResultAsyncIteration:
+    """Tests for StreamResult async iteration (``async for``)."""
+
+    async def test_async_iteration_yields_text_chunks(self) -> None:
+        chunks = _make_mock_stream_chunks(["Hello ", "world", "!"])
+        result = StreamResult(chunks, model="gemini-2.5-pro")
+
+        collected = []
+        async for text in result:
+            collected.append(text)
+
+        assert collected == ["Hello ", "world", "!"]
+
+    async def test_async_iteration_skips_empty_chunks(self) -> None:
+        chunks = _make_mock_stream_chunks(["Hello ", "", "world"])
+        chunks[1].text = ""
+        result = StreamResult(chunks, model="gemini-2.5-pro")
+
+        collected = []
+        async for text in result:
+            collected.append(text)
+
+        assert collected == ["Hello ", "world"]
+
+    async def test_async_iteration_captures_usage(self) -> None:
+        usage = {
+            "prompt_tokens": 10,
+            "completion_tokens": 25,
+            "total_tokens": 35,
+            "thinking_tokens": 5,
+        }
+        chunks = _make_mock_stream_chunks(["Hello ", "world"], last_usage=usage)
+        result = StreamResult(chunks, model="gemini-2.5-pro")
+
+        collected = []
+        async for text in result:
+            collected.append(text)
+
+        assert result.usage == usage
+        assert result.text == "Hello world"
+
+    async def test_async_iteration_text_property(self) -> None:
+        chunks = _make_mock_stream_chunks(["a", "b", "c"])
+        result = StreamResult(chunks, model="gemini-2.5-pro")
+
+        async for _ in result:
+            pass
+
+        assert result.text == "abc"
+
+
+class TestAsyncRetryWithBackoff:
+    """Tests for _async_retry_with_backoff()."""
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_retry_succeeds_on_first_attempt(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+
+        async def _fn() -> str:
+            return "success"
+
+        result = await client._async_retry_with_backoff(_fn)
+        assert result == "success"
+
+    @patch("vaig.core.client.asyncio.sleep", new_callable=AsyncMock)
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_retry_retries_on_retryable_error(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        mock_sleep: AsyncMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+        call_count = 0
+
+        async def _fn() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise google_exceptions.ServiceUnavailable("503")
+            return "recovered"
+
+        result = await client._async_retry_with_backoff(_fn)
+        assert result == "recovered"
+        assert call_count == 2
+        mock_sleep.assert_awaited_once()  # asyncio.sleep, not time.sleep
+
+    @patch("vaig.core.client.asyncio.sleep", new_callable=AsyncMock)
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_retry_exhaustion_raises(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        mock_sleep: AsyncMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+
+        async def _fn() -> str:
+            raise google_exceptions.ServiceUnavailable("503 always")
+
+        from vaig.core.exceptions import GeminiConnectionError
+
+        with pytest.raises(GeminiConnectionError, match="retries exhausted"):
+            await client._async_retry_with_backoff(_fn)
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    async def test_async_retry_propagates_non_retryable(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        mock_get_creds.return_value = MagicMock()
+
+        async def _fn() -> str:
+            raise ValueError("bad input")
+
+        with pytest.raises(ValueError, match="bad input"):
+            await client._async_retry_with_backoff(_fn)
