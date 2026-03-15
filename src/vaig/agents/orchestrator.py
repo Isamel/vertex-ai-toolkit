@@ -1139,6 +1139,13 @@ class Orchestrator:
             if self._is_section_shallow(body, min_content_chars):
                 result.shallow_sections.append(section)
 
+        # ── Investigation checklist validation ───────────────────
+        checklist_warnings = self._validate_investigation_checklist(output, output)
+        if checklist_warnings:
+            # Treat invalid skips as shallow content — triggers retry
+            for warning in checklist_warnings:
+                result.shallow_sections.append(f"Investigation Checklist: {warning}")
+
         return result
 
     @staticmethod
@@ -1217,6 +1224,121 @@ class Orchestrator:
         # Check minimum character threshold
         return len(body) < min_content_chars
 
+    # ── Investigation checklist validation ──────────────────────────────
+
+    # Steps that are ALWAYS mandatory — can never be skipped.
+    _MANDATORY_STEPS: frozenset[str] = frozenset({"1", "2", "3", "7a", "7b"})
+
+    # Evidence patterns that invalidate a skip for conditional steps.
+    _SKIP_CONTRADICTION_PATTERNS: dict[str, list[re.Pattern[str]]] = {
+        "4": [
+            re.compile(r"unavailable\s+replicas?", re.IGNORECASE),
+            re.compile(r"\b0/\d+", re.IGNORECASE),  # "0/3" replica counts
+            re.compile(r"FailedCreate", re.IGNORECASE),
+        ],
+        "5": [
+            re.compile(r"CrashLoopBackOff", re.IGNORECASE),
+            re.compile(r"\bError\b"),
+            re.compile(r"\bPending\b"),
+            re.compile(r"ImagePullBackOff", re.IGNORECASE),
+        ],
+        "6": [
+            re.compile(r"\bHPA\b", re.IGNORECASE),
+            re.compile(r"ScalingLimited", re.IGNORECASE),
+            re.compile(r"FailedGetExternalMetric", re.IGNORECASE),
+        ],
+    }
+
+    @staticmethod
+    def _validate_investigation_checklist(
+        output: str,
+        gatherer_output: str,
+    ) -> list[str]:
+        """Validate the Investigation Checklist in gatherer output.
+
+        Parses the checklist section, identifies SKIPPED steps, and
+        cross-references them against the gatherer's earlier data to
+        detect invalid skips (e.g., Step 4 skipped but output mentions
+        "unavailable replicas").
+
+        Args:
+            output: The gatherer output containing the checklist.
+            gatherer_output: The full gatherer output to scan for
+                contradicting evidence. Usually the same as *output*,
+                but separated for testability.
+
+        Returns:
+            A list of warning strings for each invalid skip found.
+            Empty list means no problems.
+        """
+        warnings: list[str] = []
+
+        # ── Locate the Investigation Checklist section ───────────
+        checklist_match = re.search(
+            r"###?\s*Investigation\s+Checklist",
+            output,
+            re.IGNORECASE,
+        )
+        if not checklist_match:
+            warnings.append(
+                "Investigation Checklist section is missing from the output."
+            )
+            return warnings
+
+        # Extract everything after the checklist header
+        checklist_text = output[checklist_match.end():]
+        # Stop at the next markdown heading (if any)
+        next_heading = re.search(r"^#{1,6}\s+", checklist_text, re.MULTILINE)
+        if next_heading:
+            checklist_text = checklist_text[:next_heading.start()]
+
+        # ── Parse checklist items ────────────────────────────────
+        # Match lines like:
+        #   - [x] Step 1: ...
+        #   - [ ] Step 4: ... (SKIPPED — reason: ...)
+        item_pattern = re.compile(
+            r"-\s*\[(?P<status>[x ])\]\s*Step\s+(?P<step>\w+):\s*(?P<desc>.*)",
+            re.IGNORECASE,
+        )
+
+        parsed_steps: dict[str, tuple[str, str]] = {}  # step_id -> (status, description)
+        for match in item_pattern.finditer(checklist_text):
+            step_id = match.group("step").lower()
+            status = match.group("status").strip().lower()
+            desc = match.group("desc").strip()
+            parsed_steps[step_id] = (status, desc)
+
+        # ── Validate mandatory steps ─────────────────────────────
+        for step_id in Orchestrator._MANDATORY_STEPS:
+            if step_id not in parsed_steps:
+                continue  # Step not listed — will be caught by section validation
+            status, desc = parsed_steps[step_id]
+            if status != "x":
+                warnings.append(
+                    f"Step {step_id} is MANDATORY and cannot be skipped. "
+                    f"Reason given: {desc}"
+                )
+
+        # ── Validate conditional step skips against evidence ─────
+        for step_id, patterns in Orchestrator._SKIP_CONTRADICTION_PATTERNS.items():
+            if step_id not in parsed_steps:
+                continue
+            status, desc = parsed_steps[step_id]
+            if status == "x":
+                continue  # Step was completed — no issue
+
+            # Step was skipped — check for contradicting evidence
+            for pattern in patterns:
+                if pattern.search(gatherer_output):
+                    warnings.append(
+                        f"Step {step_id} was SKIPPED but output contains "
+                        f"evidence matching '{pattern.pattern}' — this step "
+                        f"should NOT be skipped."
+                    )
+                    break  # One contradiction is enough
+
+        return warnings
+
     def _build_retry_prompt(
         self,
         original_query: str,
@@ -1236,7 +1358,8 @@ class Orchestrator:
             missing_sections: Section names absent from the first attempt.
             shallow_sections: Section names present but with insufficient
                 content depth.  ``None`` or empty list means no shallow
-                sections.
+                sections.  Items prefixed with ``"Investigation Checklist: "``
+                are treated as checklist warnings and rendered separately.
 
         Returns:
             A prompt string free of bracket-prefixed markers.
@@ -1250,12 +1373,35 @@ class Orchestrator:
                 f"{sections_list}."
             )
 
-        if shallow_sections:
-            sections_list = ", ".join(shallow_sections)
+        # Separate regular shallow sections from checklist warnings
+        regular_shallow: list[str] = []
+        checklist_warnings: list[str] = []
+        for item in (shallow_sections or []):
+            if item.startswith("Investigation Checklist: "):
+                checklist_warnings.append(
+                    item.removeprefix("Investigation Checklist: ")
+                )
+            else:
+                regular_shallow.append(item)
+
+        if regular_shallow:
+            sections_list = ", ".join(regular_shallow)
             parts.append(
                 f"The following sections had insufficient data and need more "
                 f"detail: {sections_list}. Please collect more detailed data "
                 f"for these sections."
+            )
+
+        if checklist_warnings:
+            parts.append(
+                "Your Investigation Checklist had the following issues:"
+            )
+            for warning in checklist_warnings:
+                parts.append(f"  - {warning}")
+            parts.append(
+                "Please re-run the skipped steps that have contradicting "
+                "evidence in your output. Do not skip a step when the data "
+                "shows it is needed."
             )
 
         parts.append(

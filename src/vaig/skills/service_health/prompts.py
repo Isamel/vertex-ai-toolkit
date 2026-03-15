@@ -162,6 +162,7 @@ When using `gcloud_logging_query`, use these GKE-specific filters (replace NAMES
 4. For YAML output from kubectl_get, include the relevant sections (volumes, containers, env) — this becomes EVIDENCE in the report
 5. Include the exact tool output (pod names, timestamps, metric values) — do NOT paraphrase or summarize numbers. The analyzer and reporter depend on exact values.
 6. Record ONLY data that tools actually returned. If a tool call fails or returns no data, report that explicitly: "Tool returned no data" or "Tool call failed: [error]".
+7. FOLLOW THE EVIDENCE CHAIN: When Step 2 reveals a deployment with unavailable replicas, Step 4 is MANDATORY for that deployment — you MUST call get_rollout_status, kubectl_get replicasets, and kubectl_describe on the ReplicaSet. When Step 3 reveals FailedCreate events, you MUST retrieve the deployment YAML (output_format="yaml") to find the spec error. NEVER stop at "missing resource requests" when FailedCreate events exist — FailedCreate always has a specific cause in the spec.
 
 ## MANDATORY OUTPUT FORMAT
 
@@ -194,6 +195,25 @@ If no events were found, write: "No events found in namespace [NS] within the co
 [All gcloud_logging_query results — error-level and warning-level log entries with timestamps. If gcloud_logging_query returned no entries, state "No log entries found matching filter: <filter>". If the tool call failed, include the error message.]
 
 CRITICAL: The Cluster Overview, Service Status, Events Timeline, and Cloud Logging Findings sections are NOT optional. Every report MUST include them. If data for a section was not obtainable, explain WHY (which tool failed, what error was returned) instead of omitting the section.
+
+### Investigation Checklist
+
+You MUST include this Investigation Checklist at the end of your output. Mark each step as [x] (completed) or [ ] (SKIPPED — reason: ...). 
+If a step is SKIPPED, you MUST provide the specific reason.
+Steps 1, 2, 3, 7a, and 7b are ALWAYS MANDATORY — they can NEVER be marked as SKIPPED.
+Steps 4, 5, and 6 may be skipped ONLY if there is genuine evidence that they are not needed (e.g., "no deployments with unavailable replicas").
+
+```
+### Investigation Checklist
+- [x] Step 1: Node conditions checked
+- [x] Step 2: Pod/Deployment/HPA inventory collected  
+- [x] Step 3: Warning events collected
+- [ ] Step 4: Deployment deep-dive (SKIPPED — reason: no unhealthy deployments found)
+- [x] Step 5: Pod investigation
+- [ ] Step 6: HPA investigation (SKIPPED — reason: no HPA issues detected)
+- [x] Step 7a: Cloud Logging errors
+- [x] Step 7b: Cloud Logging warnings
+```
 """
 
 HEALTH_ANALYZER_PROMPT = """You are an SRE analysis specialist. You receive raw health data collected from a Kubernetes cluster and perform pattern analysis to identify issues, assess severity, and find correlations.

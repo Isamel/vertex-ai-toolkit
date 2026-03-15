@@ -63,12 +63,23 @@ _CLOUD_LOGGING_BODY = (
     "Entry 3: 'Health check timeout' from redis-cache at 10:08. No ERROR "
     "or CRITICAL entries found."
 )
+_INVESTIGATION_CHECKLIST_BODY = (
+    "- [x] Step 1: Cluster-wide resource snapshot — collected\n"
+    "- [x] Step 2: Service-level status — collected\n"
+    "- [x] Step 3: Event timeline — collected\n"
+    "- [x] Step 4: Deployment deep-dive — investigated\n"
+    "- [x] Step 5: Pod-level diagnostics — investigated\n"
+    "- [x] Step 6: HPA & scaling — investigated\n"
+    "- [x] Step 7a: Cloud Logging query — completed\n"
+    "- [x] Step 7b: Cross-reference findings — completed"
+)
 
 
 def _make_complete_output(
     *,
     include_raw: bool = False,
     include_logging: bool = False,
+    include_checklist: bool = True,
 ) -> str:
     """Build gatherer output that passes validation (all sections >200 chars)."""
     parts = [
@@ -80,6 +91,8 @@ def _make_complete_output(
         parts.append(f"## Raw Findings\n{_RAW_FINDINGS_BODY}\n")
     if include_logging:
         parts.append(f"## Cloud Logging Findings\n{_CLOUD_LOGGING_BODY}\n")
+    if include_checklist:
+        parts.append(f"### Investigation Checklist\n{_INVESTIGATION_CHECKLIST_BODY}\n")
     return "\n".join(parts)
 
 
@@ -593,6 +606,7 @@ class TestValidateGathererOutput:
             f"## CLUSTER OVERVIEW\n{_CLUSTER_BODY}\n"
             f"## service status\n{_SERVICE_BODY}\n"
             f"## events timeline\n{_EVENTS_BODY}\n"
+            f"### Investigation Checklist\n{_INVESTIGATION_CHECKLIST_BODY}\n"
         )
         required = ["Cluster Overview", "Service Status", "Events Timeline"]
         result = orch._validate_gatherer_output(output, required)
@@ -611,7 +625,8 @@ class TestValidateGathererOutput:
     def test_empty_required_list(self) -> None:
         """Empty required list → nothing is missing or shallow."""
         orch = self._make_orchestrator()
-        result = orch._validate_gatherer_output("anything", [])
+        output = f"anything\n### Investigation Checklist\n{_INVESTIGATION_CHECKLIST_BODY}\n"
+        result = orch._validate_gatherer_output(output, [])
         assert result.missing_sections == []
         assert result.shallow_sections == []
         assert not result.needs_retry
@@ -1064,7 +1079,8 @@ class TestShallowSectionDetection:
         orch = self._make_orchestrator()
         # 30 chars of content: "This is some moderate content."
         body_text = "This is some moderate content."
-        output = f"## Cluster Overview\n{body_text}\n"
+        checklist = f"\n### Investigation Checklist\n{_INVESTIGATION_CHECKLIST_BODY}\n"
+        output = f"## Cluster Overview\n{body_text}\n{checklist}"
         required = ["Cluster Overview"]
 
         # With default (200), it should be shallow
@@ -1081,7 +1097,10 @@ class TestShallowSectionDetection:
     def test_sufficient_content_passes(self) -> None:
         """Section with adequate content (>= min chars) passes depth check."""
         orch = self._make_orchestrator()
-        output = f"## Cluster Overview\n{_CLUSTER_BODY}\n"
+        output = (
+            f"## Cluster Overview\n{_CLUSTER_BODY}\n"
+            f"### Investigation Checklist\n{_INVESTIGATION_CHECKLIST_BODY}\n"
+        )
         required = ["Cluster Overview"]
         result = orch._validate_gatherer_output(output, required)
         assert result.missing_sections == []
@@ -2274,3 +2293,334 @@ class TestAlwaysRetryGatherer:
 
         assert result.success is False
         agent2.execute.assert_not_called()
+
+
+# ===========================================================================
+# Investigation Checklist validation — P1-C tests
+# ===========================================================================
+
+
+def _make_checklist(
+    steps: dict[str, tuple[str, str]],
+) -> str:
+    """Build an Investigation Checklist section from step definitions.
+
+    Args:
+        steps: Mapping of step_id → (status, description).
+            status is "x" (completed) or " " (skipped).
+
+    Returns:
+        A markdown section string like::
+
+            ### Investigation Checklist
+            - [x] Step 1: Cluster-wide resource snapshot — collected
+            - [ ] Step 4: Deployment deep-dive (SKIPPED — no unhealthy deployments)
+    """
+    lines = ["### Investigation Checklist"]
+    for step_id, (status, desc) in steps.items():
+        lines.append(f"- [{status}] Step {step_id}: {desc}")
+    return "\n".join(lines)
+
+
+# All steps completed — baseline for "no warnings"
+_ALL_STEPS_COMPLETE: dict[str, tuple[str, str]] = {
+    "1": ("x", "Cluster-wide resource snapshot — collected"),
+    "2": ("x", "Service-level status — collected"),
+    "3": ("x", "Event timeline — collected"),
+    "4": ("x", "Deployment deep-dive — investigated"),
+    "5": ("x", "Pod-level diagnostics — investigated"),
+    "6": ("x", "HPA & scaling — investigated"),
+    "7a": ("x", "Cloud Logging query — completed"),
+    "7b": ("x", "Cross-reference findings — completed"),
+}
+
+
+class TestValidateInvestigationChecklist:
+    """Test Orchestrator._validate_investigation_checklist()."""
+
+    def test_all_steps_completed_no_warnings(self) -> None:
+        """All steps marked [x] → no warnings."""
+        checklist = _make_checklist(_ALL_STEPS_COMPLETE)
+        output = f"## Cluster Overview\nSome data.\n\n{checklist}\n"
+        warnings = Orchestrator._validate_investigation_checklist(output, output)
+        assert warnings == []
+
+    def test_step4_skipped_no_evidence_valid(self) -> None:
+        """Step 4 skipped, no unhealthy deployment evidence → no warning."""
+        steps = dict(_ALL_STEPS_COMPLETE)
+        steps["4"] = (" ", "Deployment deep-dive (SKIPPED — no unhealthy deployments)")
+        checklist = _make_checklist(steps)
+        # Output with NO deployment problem indicators
+        output = (
+            "## Cluster Overview\n"
+            "All 3 nodes healthy. CPU at 45%.\n\n"
+            "## Service Status\n"
+            "app-frontend: 3/3 replicas ready, all healthy.\n"
+            "app-backend: 2/2 replicas ready.\n\n"
+            f"{checklist}\n"
+        )
+        warnings = Orchestrator._validate_investigation_checklist(output, output)
+        assert warnings == []
+
+    def test_step4_skipped_but_zero_replicas_invalid(self) -> None:
+        """Step 4 skipped BUT output mentions '0/3' replicas → invalid skip."""
+        steps = dict(_ALL_STEPS_COMPLETE)
+        steps["4"] = (" ", "Deployment deep-dive (SKIPPED — no unhealthy deployments)")
+        checklist = _make_checklist(steps)
+        output = (
+            "## Service Status\n"
+            "app-frontend: 0/3 replicas ready, possible issue.\n\n"
+            f"{checklist}\n"
+        )
+        warnings = Orchestrator._validate_investigation_checklist(output, output)
+        assert len(warnings) == 1
+        assert "Step 4" in warnings[0]
+        assert "SKIPPED" in warnings[0]
+
+    def test_step4_skipped_but_failedcreate_invalid(self) -> None:
+        """Step 4 skipped BUT output mentions 'FailedCreate' → invalid skip."""
+        steps = dict(_ALL_STEPS_COMPLETE)
+        steps["4"] = (" ", "Deployment deep-dive (SKIPPED — no issues detected)")
+        checklist = _make_checklist(steps)
+        output = (
+            "## Events Timeline\n"
+            "10:00 Warning FailedCreate: Error creating pod.\n\n"
+            f"{checklist}\n"
+        )
+        warnings = Orchestrator._validate_investigation_checklist(output, output)
+        assert len(warnings) == 1
+        assert "Step 4" in warnings[0]
+
+    def test_step5_skipped_but_crashloopbackoff_invalid(self) -> None:
+        """Step 5 skipped BUT output mentions 'CrashLoopBackOff' → invalid skip."""
+        steps = dict(_ALL_STEPS_COMPLETE)
+        steps["5"] = (" ", "Pod-level diagnostics (SKIPPED — all pods running)")
+        checklist = _make_checklist(steps)
+        output = (
+            "## Service Status\n"
+            "app-backend pod is in CrashLoopBackOff state.\n\n"
+            f"{checklist}\n"
+        )
+        warnings = Orchestrator._validate_investigation_checklist(output, output)
+        assert len(warnings) == 1
+        assert "Step 5" in warnings[0]
+        assert "CrashLoopBackOff" in warnings[0]
+
+    def test_step6_skipped_but_scalinglimited_invalid(self) -> None:
+        """Step 6 skipped BUT output mentions 'ScalingLimited' → invalid skip."""
+        steps = dict(_ALL_STEPS_COMPLETE)
+        steps["6"] = (" ", "Autoscaler check (SKIPPED — no autoscaler configured)")
+        checklist = _make_checklist(steps)
+        output = (
+            "## Events Timeline\n"
+            "10:30 Warning ScalingLimited: desired 5, max 3.\n\n"
+            f"{checklist}\n"
+        )
+        warnings = Orchestrator._validate_investigation_checklist(output, output)
+        assert len(warnings) == 1
+        assert "Step 6" in warnings[0]
+        assert "ScalingLimited" in warnings[0]
+
+    def test_no_checklist_found_returns_warning(self) -> None:
+        """Output with no Investigation Checklist section → warning."""
+        output = (
+            "## Cluster Overview\nSome data.\n\n"
+            "## Service Status\nAll good.\n"
+        )
+        warnings = Orchestrator._validate_investigation_checklist(output, output)
+        assert len(warnings) == 1
+        assert "missing" in warnings[0].lower()
+
+    def test_mandatory_step_skipped_always_invalid(self) -> None:
+        """Mandatory steps (1, 2, 3, 7a, 7b) skipped → always invalid."""
+        for mandatory_step in ("1", "2", "3", "7a", "7b"):
+            steps = dict(_ALL_STEPS_COMPLETE)
+            steps[mandatory_step] = (
+                " ",
+                f"Step {mandatory_step} description (SKIPPED — reason)",
+            )
+            checklist = _make_checklist(steps)
+            output = f"## Some Data\nClean output.\n\n{checklist}\n"
+            warnings = Orchestrator._validate_investigation_checklist(output, output)
+            assert any(
+                f"Step {mandatory_step}" in w for w in warnings
+            ), f"Expected warning for mandatory step {mandatory_step}, got: {warnings}"
+            assert any(
+                "MANDATORY" in w for w in warnings
+            ), f"Expected 'MANDATORY' in warning for step {mandatory_step}"
+
+    def test_multiple_invalid_skips_returns_multiple_warnings(self) -> None:
+        """Multiple invalid skips return one warning per invalid skip."""
+        steps = dict(_ALL_STEPS_COMPLETE)
+        # Skip step 4 with contradicting evidence
+        steps["4"] = (" ", "Deployment deep-dive (SKIPPED)")
+        # Skip step 5 with contradicting evidence
+        steps["5"] = (" ", "Pod diagnostics (SKIPPED)")
+        checklist = _make_checklist(steps)
+        output = (
+            "## Service Status\n"
+            "app-frontend: 0/3 replicas ready.\n"
+            "app-backend pod is CrashLoopBackOff.\n\n"
+            f"{checklist}\n"
+        )
+        warnings = Orchestrator._validate_investigation_checklist(output, output)
+        assert len(warnings) == 2
+        step_ids = [w.split("Step ")[1][0] for w in warnings]
+        assert "4" in step_ids
+        assert "5" in step_ids
+
+    def test_step5_skipped_error_word_boundary_match(self) -> None:
+        """Step 5: \\bError\\b matches standalone 'Error' but test documents
+        that it also matches within sentences containing 'Error' as a word."""
+        steps = dict(_ALL_STEPS_COMPLETE)
+        steps["5"] = (" ", "Pod diagnostics (SKIPPED)")
+        checklist = _make_checklist(steps)
+        # "Error" as a standalone word in output
+        output = (
+            "## Events Timeline\n"
+            "10:00 Pod entered Error state.\n\n"
+            f"{checklist}\n"
+        )
+        warnings = Orchestrator._validate_investigation_checklist(output, output)
+        assert len(warnings) == 1
+        assert "Step 5" in warnings[0]
+
+    def test_conditional_steps_all_validly_skipped(self) -> None:
+        """Steps 4, 5, 6 all skipped with no contradicting evidence → no warnings."""
+        steps = dict(_ALL_STEPS_COMPLETE)
+        steps["4"] = (" ", "Deployment deep-dive (SKIPPED — all healthy)")
+        steps["5"] = (" ", "Pod diagnostics (SKIPPED — all running)")
+        steps["6"] = (" ", "Autoscaler check (SKIPPED — not configured)")
+        checklist = _make_checklist(steps)
+        # Clean output with no problem indicators
+        output = (
+            "## Cluster Overview\n"
+            "All nodes healthy. CPU 30%, Memory 40%.\n\n"
+            "## Service Status\n"
+            "All services running. 3/3 replicas for each deployment.\n\n"
+            f"{checklist}\n"
+        )
+        warnings = Orchestrator._validate_investigation_checklist(output, output)
+        assert warnings == []
+
+
+class TestChecklistRetryPromptIntegration:
+    """Test that checklist warnings flow through to the retry prompt."""
+
+    def _make_orchestrator(self) -> Orchestrator:
+        return Orchestrator(_make_mock_client(), _make_mock_settings())
+
+    def test_checklist_warnings_appear_in_retry_prompt(self) -> None:
+        """When _validate_gatherer_output adds checklist warnings to
+        shallow_sections, _build_retry_prompt renders them separately."""
+        orch = self._make_orchestrator()
+        shallow = [
+            "Investigation Checklist: Step 4 was SKIPPED but output contains "
+            "evidence matching '\\b0/\\d+' — this step should NOT be skipped.",
+        ]
+        prompt = orch._build_retry_prompt(
+            "check health",
+            [],
+            shallow_sections=shallow,
+        )
+        assert "Investigation Checklist" in prompt
+        assert "Step 4" in prompt
+        assert "re-run the skipped steps" in prompt
+        # Should NOT treat checklist warnings as regular shallow sections
+        assert "insufficient data" not in prompt
+
+    def test_checklist_warnings_mixed_with_regular_shallow(self) -> None:
+        """Both regular shallow sections and checklist warnings render correctly."""
+        orch = self._make_orchestrator()
+        shallow = [
+            "Cluster Overview",
+            "Investigation Checklist: Step 5 was SKIPPED but output contains "
+            "evidence matching 'CrashLoopBackOff' — this step should NOT be skipped.",
+        ]
+        prompt = orch._build_retry_prompt(
+            "check health",
+            [],
+            shallow_sections=shallow,
+        )
+        # Regular shallow section feedback
+        assert "insufficient data" in prompt
+        assert "Cluster Overview" in prompt
+        # Checklist feedback
+        assert "Investigation Checklist" in prompt
+        assert "Step 5" in prompt
+        assert "re-run the skipped steps" in prompt
+
+    def test_checklist_validation_triggers_retry_in_pipeline(self) -> None:
+        """Integration: checklist invalid skip detected during validation
+        triggers a retry with checklist-specific feedback."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        # Build output that passes section depth checks but has an invalid
+        # checklist skip.  Step 4 is skipped yet output mentions "0/3".
+        steps = dict(_ALL_STEPS_COMPLETE)
+        steps["4"] = (" ", "Deployment deep-dive (SKIPPED — no issues)")
+        checklist = _make_checklist(steps)
+        # The Investigation Checklist section body must be >200 chars so
+        # it passes the depth check — only then will the dedicated
+        # checklist validator flag the invalid skip.
+        checklist_padding = (
+            "Investigation checklist summary: All mandatory steps were "
+            "completed successfully. Conditional steps were evaluated "
+            "based on cluster evidence collected during the diagnostic "
+            "run. Steps with no trigger conditions were skipped as "
+            "expected. See details below for each step."
+        )
+        first_pass = (
+            f"## Cluster Overview\n{_CLUSTER_BODY}\n"
+            f"## Service Status\n{_SERVICE_BODY}\n"
+            "Details: app-frontend 0/3 replicas unavailable.\n"
+            f"## Events Timeline\n{_EVENTS_BODY}\n"
+            f"## Investigation Checklist\n{checklist_padding}\n\n"
+            f"{checklist}\n"
+        )
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.side_effect = [
+            AgentResult(
+                agent_name="gatherer",
+                content=first_pass,
+                success=True,
+                usage={"total_tokens": 100},
+            ),
+            AgentResult(
+                agent_name="gatherer",
+                content=_make_complete_output(),
+                success=True,
+                usage={"total_tokens": 200},
+            ),
+        ]
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(
+            return_value=[
+                "Cluster Overview", "Service Status",
+                "Events Timeline", "Investigation Checklist",
+            ],
+        )
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check health", skill, registry)
+
+        assert result.success is True
+        # Gatherer was retried (checklist issue triggers needs_retry)
+        assert agent1.execute.call_count == 2
+        retry_prompt = agent1.execute.call_args_list[1].args[0]
+        # The retry prompt should include checklist feedback about Step 4
+        assert "Step 4" in retry_prompt

@@ -80,6 +80,7 @@ class ServiceHealthSkill(BaseSkill):
             "Events Timeline",
             "Raw Findings",
             "Cloud Logging Findings",
+            "Investigation Checklist",
         ]
 
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
