@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime
 from pathlib import Path
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Annotated, Any, Optional
 
 import typer
@@ -35,6 +37,9 @@ if TYPE_CHECKING:
     from vaig.tools.base import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+MINIMUM_WATCH_INTERVAL = 10
+"""Minimum seconds between watch iterations to prevent abuse."""
 
 
 # ── Live tool execution logger ────────────────────────────────
@@ -135,6 +140,13 @@ def register(app: typer.Typer) -> None:
         location: Annotated[
             Optional[str], typer.Option("--location", help="GCP location (overrides config)")
         ] = None,
+        watch: Annotated[
+            Optional[int], typer.Option("--watch", "-w", help="Re-execute every N seconds (polling mode, min 10s)")
+        ] = None,
+        dry_run: Annotated[
+            bool,
+            typer.Option("--dry-run", "--dry", help="Show execution plan without running"),
+        ] = False,
         verbose: Annotated[
             bool,
             typer.Option("--verbose", "-V", help="Enable verbose logging (INFO level)"),
@@ -159,8 +171,18 @@ def register(app: typer.Typer) -> None:
             vaig live "Analyze error rate from Cloud Logging" --project-id=my-project
             vaig live "Why is the payment service returning 503s?" -o report.md
             vaig live "Investigate pod crashes" --format json -o report.json
+            vaig live "Check pod health in production" --watch 60
+            vaig live "Check service health" --dry-run
         """
         _apply_subcommand_log_flags(verbose=verbose, debug=debug)
+
+        # Validate --watch interval
+        if watch is not None and watch < MINIMUM_WATCH_INTERVAL:
+            err_console.print(
+                f"[red]--watch interval must be >= {MINIMUM_WATCH_INTERVAL}s "
+                f"(got {watch}s)[/red]"
+            )
+            raise typer.Exit(1)
 
         settings = _helpers._get_settings(config)
 
@@ -218,6 +240,7 @@ def register(app: typer.Typer) -> None:
         # If a skill is specified, check whether it needs the full orchestrated
         # pipeline (requires_live_tools=True) or the simple context-prepend approach.
         context_str = ""
+        active_skill = None
         if skill:
             from vaig.skills.registry import SkillRegistry
 
@@ -230,37 +253,137 @@ def register(app: typer.Typer) -> None:
 
             skill_meta = active_skill.get_metadata()
 
-            if skill_meta.requires_live_tools:
-                # ── Orchestrated tool-aware pipeline ──────────────
+            if not skill_meta.requires_live_tools:
+                # ── Legacy context-prepend path (requires_live_tools=False) ──
+                context_str = (
+                    f"## Active Skill: {skill_meta.display_name}\n\n"
+                    f"{skill_meta.description}\n\n"
+                    f"Apply the {skill_meta.name} analysis methodology to the investigation below."
+                )
+                active_skill = None  # Not orchestrated
+
+        # ── Dry-run: show execution plan without running ──────
+        if dry_run:
+            _display_dry_run_plan(
+                gke_config=gke_config,
+                question=question,
+                settings=settings,
+                skill=active_skill,
+                skill_name=skill,
+                model_id=model or settings.models.default,
+            )
+            return
+
+        def _run_once() -> None:
+            """Execute a single iteration of the live command."""
+            if active_skill is not None:
                 _execute_orchestrated_skill(
                     client,
                     settings,
                     gke_config,
                     active_skill,
                     question,
-                    output=output,
-                    format_=format_,
+                    output=output if not watch else None,
+                    format_=format_ if not watch else None,
                     model_id=model,
                 )
-                return
+            else:
+                _execute_live_mode(
+                    client,
+                    gke_config,
+                    question,
+                    context_str,
+                    settings=settings,
+                    output=output if not watch else None,
+                    format_=format_ if not watch else None,
+                    skill_name=skill,
+                    model_id=model,
+                )
 
-            # ── Legacy context-prepend path (requires_live_tools=False) ──
-            context_str = (
-                f"## Active Skill: {skill_meta.display_name}\n\n"
-                f"{skill_meta.description}\n\n"
-                f"Apply the {skill_meta.name} analysis methodology to the investigation below."
-            )
+        if not watch:
+            # ── Single execution (default) ────────────────────
+            _run_once()
+            return
 
-        _execute_live_mode(
-            client,
-            gke_config,
-            question,
-            context_str,
-            settings=settings,
+        # ── Watch mode: re-execute every N seconds ────────────
+        _run_watch_loop(
+            run_fn=_run_once,
+            interval=watch,
+            question=question,
             output=output,
             format_=format_,
-            skill_name=skill,
-            model_id=model,
+        )
+
+
+# ── Watch mode loop ──────────────────────────────────────────
+
+
+def _run_watch_loop(
+    *,
+    run_fn: Callable[[], None],
+    interval: int,
+    question: str,
+    output: Path | None = None,
+    format_: str | None = None,
+) -> None:
+    """Execute *run_fn* repeatedly every *interval* seconds.
+
+    Handles ``KeyboardInterrupt`` gracefully: stops the loop and prints
+    a summary of iterations run and total elapsed time.
+
+    The *output* / *format_* args are only used on the **last** iteration
+    (i.e. never — the caller passes ``None`` to *run_fn* for those during
+    watch mode, and can export manually after the loop).
+
+    Args:
+        run_fn: Zero-argument callable that executes one iteration.
+        interval: Seconds between iterations (already validated >= MINIMUM_WATCH_INTERVAL).
+        question: Original query (shown in the header).
+        output: Export path (informational — not used inside the loop).
+        format_: Export format (informational — not used inside the loop).
+    """
+    iteration = 0
+    start_time = time.monotonic()
+
+    console.print(
+        Panel.fit(
+            f"[bold cyan]Watch mode enabled — refreshing every {interval}s[/bold cyan]\n"
+            f"[dim]Query: {question[:80]}{'...' if len(question) > 80 else ''}[/dim]\n"
+            "[dim]Press Ctrl+C to stop[/dim]",
+            border_style="cyan",
+        )
+    )
+
+    try:
+        while True:
+            iteration += 1
+            console.print(f"\n{'=' * 60}")
+            console.print(
+                f"[bold cyan]Watch iteration #{iteration} — "
+                f"{datetime.now().strftime('%H:%M:%S')}[/bold cyan]"
+            )
+            console.print(f"{'=' * 60}\n")
+
+            try:
+                run_fn()
+            except (SystemExit, typer.Exit):
+                # Agent errors (MaxIterationsError etc.) raise typer.Exit —
+                # in watch mode we log and continue to the next iteration.
+                console.print(
+                    f"[yellow]Iteration #{iteration} exited with error — "
+                    f"continuing watch...[/yellow]"
+                )
+
+            console.print(
+                f"\n[dim]Next refresh in {interval}s (Ctrl+C to stop)...[/dim]"
+            )
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        elapsed = time.monotonic() - start_time
+        console.print(
+            f"\n[bold yellow]Watch stopped after {iteration} "
+            f"iteration{'s' if iteration != 1 else ''} "
+            f"({elapsed:.0f}s elapsed)[/bold yellow]"
         )
 
 
@@ -303,6 +426,110 @@ def _build_gke_config(
         proxy_url=gke.proxy_url,
         impersonate_sa=gke.impersonate_sa,
     )
+
+
+def _display_dry_run_plan(
+    *,
+    gke_config: "GKEConfig",
+    question: str,
+    settings: "Settings",
+    skill: "BaseSkill | None" = None,
+    skill_name: str | None = None,
+    model_id: str = "",
+) -> None:
+    """Render the dry-run execution plan without running anything.
+
+    Shows what *would* happen: resolved configuration, agents that
+    would be created, available tools, and estimated cost — then exits.
+
+    Args:
+        gke_config: Resolved GKE configuration.
+        question: The user's infrastructure question.
+        settings: Application settings.
+        skill: Resolved orchestrated skill instance (``None`` for InfraAgent path).
+        skill_name: Skill name string (may be set even when *skill* is ``None``
+            for context-prepend skills).
+        model_id: Model identifier to display.
+    """
+    # ── Header ────────────────────────────────────────────────
+    console.print(
+        Panel.fit(
+            f"[bold yellow]Dry Run — vaig live[/bold yellow] [dim]\"{question}\"[/dim]",
+            border_style="yellow",
+        )
+    )
+
+    # ── Configuration ─────────────────────────────────────────
+    config_table = Table(title="Configuration", show_header=False, box=None, padding=(0, 2))
+    config_table.add_column("Key", style="bold")
+    config_table.add_column("Value")
+    config_table.add_row("Cluster", gke_config.cluster_name or "(kubeconfig default)")
+    config_table.add_row("Namespace", gke_config.default_namespace or "default")
+    config_table.add_row("Project", gke_config.project_id or "(auto-detect)")
+    config_table.add_row("Location", gke_config.location or "(auto-detect)")
+    config_table.add_row("Model", model_id or settings.models.default)
+
+    if skill_name:
+        routing = "explicit (--skill)" if not (settings.skills.auto_routing) else "auto-routed"
+        config_table.add_row("Skill", f"{skill_name} ({routing})")
+
+    console.print(config_table)
+    console.print()
+
+    # ── Agents ────────────────────────────────────────────────
+    if skill is not None:
+        # Orchestrated skill — show agent pipeline
+        agents_config = skill.get_agents_config()
+        agent_table = Table(title="Agents that would be created", show_lines=True)
+        agent_table.add_column("#", style="dim", width=3)
+        agent_table.add_column("Agent", style="cyan")
+        agent_table.add_column("Role", style="dim")
+        agent_table.add_column("Tools", style="green")
+        agent_table.add_column("Model", style="dim")
+
+        for idx, agent_cfg in enumerate(agents_config, 1):
+            has_tools = agent_cfg.get("requires_tools", False)
+            tools_label = "[green]yes[/green]" if has_tools else "[dim]no (synthesis)[/dim]"
+            agent_table.add_row(
+                str(idx),
+                agent_cfg.get("name", "unknown"),
+                agent_cfg.get("role", ""),
+                tools_label,
+                agent_cfg.get("model", model_id),
+            )
+        console.print(agent_table)
+    else:
+        # InfraAgent path — single agent
+        console.print("[bold]Agent:[/bold] InfraAgent (single autonomous agent with tools)")
+
+    console.print()
+
+    # ── Tools ─────────────────────────────────────────────────
+    tool_registry = _register_live_tools(gke_config, settings=settings)
+    tools = tool_registry.list_tools()
+    tool_count = len(tools)
+
+    if tool_count == 0:
+        console.print("[bold red]No infrastructure tools available![/bold red]")
+        console.print("[yellow]Install: pip install vertex-ai-toolkit[live][/yellow]")
+    else:
+        tool_names = [t.name for t in tools]
+        # Show first 10 tools inline, then "and N more"
+        if len(tool_names) <= 10:
+            tools_str = ", ".join(tool_names)
+        else:
+            tools_str = ", ".join(tool_names[:10]) + f", ... and {len(tool_names) - 10} more"
+        console.print(f"[bold]Available tools ({tool_count}):[/bold] {tools_str}")
+
+    console.print()
+
+    # ── Cost estimate ─────────────────────────────────────────
+    console.print(
+        "[bold]Estimated cost:[/bold] [dim]depends on tool usage "
+        "(typically $0.02-0.10 per run)[/dim]"
+    )
+    console.print()
+    console.print("[dim]Run without --dry-run to execute.[/dim]")
 
 
 def _register_live_tools(gke_config: "GKEConfig", settings: "Settings | None" = None) -> "ToolRegistry":
