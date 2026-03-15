@@ -114,8 +114,15 @@ Execute the following steps to build a comprehensive health snapshot. Collect da
   f. When a deployment shows spec errors (duplicate volumes, unexpected sidecars/init-containers):
      - `kubectl_get("mutatingwebhookconfigurations")` — List ALL mutating webhooks
      - Check deployment/pod annotations for webhook indicators: admission.datadoghq.com/, sidecar.istio.io/, linkerd.io/, vault.hashicorp.com/
-     - Compare volumes/containers in spec against known webhook-injected names (datadog-auto-instrumentation, istio-proxy, linkerd-proxy, vault-agent)
-     - This data is CRITICAL for explaining WHY spec issues exist
+      - Compare volumes/containers in spec against known webhook-injected names (datadog-auto-instrumentation, istio-proxy, linkerd-proxy, vault-agent)
+      - This data is CRITICAL for explaining WHY spec issues exist
+   g. When inspecting deployment YAML, look for:
+      - `.metadata.annotations` — ArgoCD, Flux, Helm management annotations
+      - `.metadata.labels` — `app.kubernetes.io/managed-by`, `helm.sh/chart`
+      - `.metadata.ownerReferences` — operator management
+      - `.spec.template.metadata.annotations` — webhook injection annotations
+      Report these management indicators in your Raw Findings — the reporter 
+      needs them to recommend the correct remediation path.
 
 ### Step 5: Pod-Level Investigation
 - For any pod showing CrashLoopBackOff, Error, Pending, or high restart counts:
@@ -274,6 +281,16 @@ HEALTH_ANALYZER_PROMPT = """You are an SRE analysis specialist. You receive raw 
 - Do multiple pods on the same node show issues? → Node problem
 - Do pods from the same deployment all restart? → Application bug
 - Do unrelated services degrade simultaneously? → Shared dependency or infrastructure issue
+
+### Management Context Detection
+For each affected resource, identify how it is managed:
+- **GitOps-managed**: Has ArgoCD/Flux annotations → remediation must go through Git
+- **Helm-managed**: Has `managed-by: Helm` label → remediation via `helm upgrade`  
+- **Operator-managed**: Has OwnerReferences → remediation via the parent CR
+- **Manual**: No management annotations → direct kubectl is acceptable
+
+Include this in every finding's metadata:
+- **Managed by**: [GitOps (ArgoCD) | Helm | Operator (<name>) | Manual | Unknown]
 
 ### 6. Causal Mechanism Analysis (MANDATORY for every finding)
 
@@ -840,12 +857,71 @@ NEVER write "Data not available" without explanation.
 2. NEVER say "No direct kubectl command" or "Requires external investigation" when vaig tools exist that can investigate. Available tools include: kubectl_describe for HPAs, gcloud_monitoring_query for metrics, gcloud_logging_query for logs.
 3. NEVER recommend rollback without first showing rollout history. Use `get_rollout_history` to show available revisions.
 
-### Safe Action Hierarchy (IN THIS ORDER)
-1. **Show the problem** — kubectl get -o yaml, describe, get_events evidence
-2. **Show the fix** — corrected YAML diff
-3. **Safe remediation** — kubectl apply -f (from corrected file), kubectl rollout undo --to-revision=N (specific revision)
-4. **Pipeline fix** — "Fix in your Helm chart / Kustomize / deployment YAML and redeploy through CI/CD"
-5. **Last resort only** — kubectl patch (targeted, not edit)
+### Remediation Reasoning Framework
+
+When recommending actions, DO NOT jump to "edit the YAML and re-apply". 
+First, reason about the PROCESS that caused the issue:
+
+#### Step 1: Identify the Change Source
+- Is this resource managed by GitOps (ArgoCD, Flux)? Look for annotations:
+  `argocd.argoproj.io/`, `fluxcd.io/`, `kustomize.toolkit.fluxcd.io/`
+- Is this managed by Helm? Look for labels: `app.kubernetes.io/managed-by: Helm`,
+  `helm.sh/chart`
+- Is this managed by an operator? Look for `OwnerReferences` in metadata
+- Was this a manual `kubectl apply`/`kubectl edit`? (no management annotations)
+
+#### Step 2: Reason About Root Process
+For each finding, answer: "How did this bad state get into the cluster?"
+
+Example reasoning chain:
+- "Duplicate volume exists" → WHY?
+- "One is manual in the YAML, one injected by webhook" → WHY is it manual?
+- "If GitOps is in place, someone committed this to the repo" → fix is in the repo
+- "If no GitOps, someone ran kubectl apply with a stale YAML" → fix is the process
+
+#### Step 3: Recommend Actions Based on Source
+
+IF managed by GitOps:
+- Immediate: Investigate the Git source — is the conflicting definition in the 
+  repo? If yes, fix it there and let the pipeline reconcile.
+- DO NOT recommend `kubectl apply` or `kubectl patch` as first action — that would 
+  create GitOps drift and get reverted on next sync.
+- Command: Show the git-level investigation, e.g., 
+  "Search your deployment YAML in Git for the duplicate volume definition and remove it"
+
+IF managed by Helm:
+- Immediate: Check `helm get values <release>` for the conflicting value.
+- Fix in `values.yaml` and `helm upgrade`, not `kubectl apply`.
+
+IF managed by operator:
+- DO NOT edit the managed resource directly — the operator will revert it.
+- Fix the CRD/CR that the operator watches.
+
+IF manual (no management annotations):
+- Then `kubectl apply -f` with corrected YAML is appropriate.
+- But ALSO recommend establishing GitOps or at minimum version-controlling 
+  the YAML to prevent recurrence.
+
+#### Step 4: Immediate Mitigation vs Permanent Fix
+Always separate:
+- **Immediate mitigation** (stop the bleeding): The fastest safe action to restore 
+  service. For webhook conflicts, this is often disabling the injection via annotation 
+  on the affected resource. For other issues, it might be a rollback to a known-good 
+  revision.
+- **Permanent fix** (fix the process): Address WHY the bad state was introduced. 
+  This is always about the delivery pipeline, not the cluster.
+
+#### General Rules
+1. When the root cause is a conflict between a manual resource definition and an 
+   automatically injected one (webhook, operator, sidecar), the immediate mitigation 
+   is to disable the automatic injection on the specific resource via its opt-out 
+   annotation. This is preferred because it's reversible, doesn't modify the spec, 
+   and survives reconciliation.
+2. The permanent fix is ALWAYS about the source of truth (Git repo, Helm chart, 
+   operator CR) — never about patching the live cluster directly.
+3. NEVER recommend `kubectl edit` in production.
+4. If you cannot determine the management method from the gathered data, state that 
+   explicitly and provide actions for BOTH scenarios (GitOps and manual).
 
 ### Rollback Recommendations (ALWAYS include context)
 When recommending rollback:

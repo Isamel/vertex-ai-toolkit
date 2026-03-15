@@ -1164,8 +1164,9 @@ class TestPromptConsistencyFix6GathererNodeConditionsFirst:
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
         # get_node_conditions must appear in step 1 section
-        step1_start = HEALTH_GATHERER_PROMPT.find("Step 1")
-        step2_start = HEALTH_GATHERER_PROMPT.find("Step 2")
+        # Use "### Step" headers to find the actual section, not the overview line
+        step1_start = HEALTH_GATHERER_PROMPT.find("### Step 1")
+        step2_start = HEALTH_GATHERER_PROMPT.find("### Step 2")
         step1_section = HEALTH_GATHERER_PROMPT[step1_start:step2_start]
         assert "get_node_conditions" in step1_section
 
@@ -1173,8 +1174,8 @@ class TestPromptConsistencyFix6GathererNodeConditionsFirst:
         """Step 1 must be marked as MANDATORY."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        step1_start = HEALTH_GATHERER_PROMPT.find("Step 1")
-        step2_start = HEALTH_GATHERER_PROMPT.find("Step 2")
+        step1_start = HEALTH_GATHERER_PROMPT.find("### Step 1")
+        step2_start = HEALTH_GATHERER_PROMPT.find("### Step 2")
         step1_section = HEALTH_GATHERER_PROMPT[step1_start:step2_start]
         assert "MANDATORY" in step1_section
 
@@ -1182,8 +1183,8 @@ class TestPromptConsistencyFix6GathererNodeConditionsFirst:
         """Node conditions must come BEFORE deployment-specific investigations."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        step1_pos = HEALTH_GATHERER_PROMPT.find("Step 1")
-        step4_pos = HEALTH_GATHERER_PROMPT.find("Step 4")  # Deep-dive step
+        step1_pos = HEALTH_GATHERER_PROMPT.find("### Step 1")
+        step4_pos = HEALTH_GATHERER_PROMPT.find("### Step 4")  # Deep-dive step
         assert step1_pos < step4_pos
 
 
@@ -1264,7 +1265,7 @@ class TestServiceHealthTemperatureConfig:
         skill = ServiceHealthSkill()
         agents = skill.get_agents_config()
         assert agents[0]["name"] == "health_gatherer"
-        assert agents[0]["temperature"] == 0.2
+        assert agents[0]["temperature"] == 0.0
 
     def test_analyzer_temperature(self) -> None:
         from vaig.skills.service_health.skill import ServiceHealthSkill
@@ -1372,8 +1373,8 @@ class TestGathererCloudLoggingMandatory:
         """Step 7 must say ALWAYS to match Step 1's pattern."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        # Extract Step 7 header line
-        step7_start = HEALTH_GATHERER_PROMPT.find("Step 7")
+        # Extract Step 7 header line — use "### Step" to skip overview line
+        step7_start = HEALTH_GATHERER_PROMPT.find("### Step 7")
         step7_header = HEALTH_GATHERER_PROMPT[step7_start:step7_start + 100]
         assert "ALWAYS" in step7_header
 
@@ -1381,8 +1382,8 @@ class TestGathererCloudLoggingMandatory:
         """Step 7 must explicitly reference gcloud_logging_query tool."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        step7_start = HEALTH_GATHERER_PROMPT.find("Step 7")
-        step8_start = HEALTH_GATHERER_PROMPT.find("Step 8")
+        step7_start = HEALTH_GATHERER_PROMPT.find("### Step 7")
+        step8_start = HEALTH_GATHERER_PROMPT.find("### Step 8")
         step7_section = HEALTH_GATHERER_PROMPT[step7_start:step8_start]
         assert "gcloud_logging_query" in step7_section
 
@@ -1390,8 +1391,8 @@ class TestGathererCloudLoggingMandatory:
         """Step 7 must require at least one gcloud_logging_query call per namespace."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        step7_start = HEALTH_GATHERER_PROMPT.find("Step 7")
-        step8_start = HEALTH_GATHERER_PROMPT.find("Step 8")
+        step7_start = HEALTH_GATHERER_PROMPT.find("### Step 7")
+        step8_start = HEALTH_GATHERER_PROMPT.find("### Step 8")
         step7_section = HEALTH_GATHERER_PROMPT[step7_start:step8_start]
         assert "MUST call" in step7_section or "You MUST" in step7_section
 
@@ -1400,8 +1401,8 @@ class TestGathererCloudLoggingMandatory:
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
         assert "7a." in HEALTH_GATHERER_PROMPT
-        step7a_start = HEALTH_GATHERER_PROMPT.find("7a.")
-        step7b_start = HEALTH_GATHERER_PROMPT.find("7b.")
+        step7a_start = HEALTH_GATHERER_PROMPT.find("#### 7a.")
+        step7b_start = HEALTH_GATHERER_PROMPT.find("#### 7b.")
         step7a_section = HEALTH_GATHERER_PROMPT[step7a_start:step7b_start]
         assert "severity>=ERROR" in step7a_section
         assert "k8s_container" in step7a_section
@@ -1411,8 +1412,8 @@ class TestGathererCloudLoggingMandatory:
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
         assert "7b." in HEALTH_GATHERER_PROMPT
-        step7b_start = HEALTH_GATHERER_PROMPT.find("7b.")
-        step7c_start = HEALTH_GATHERER_PROMPT.find("7c.")
+        step7b_start = HEALTH_GATHERER_PROMPT.find("#### 7b.")
+        step7c_start = HEALTH_GATHERER_PROMPT.find("#### 7c.")
         step7b_section = HEALTH_GATHERER_PROMPT[step7b_start:step7c_start]
         assert "severity>=WARNING" in step7b_section
         assert "k8s_pod" in step7b_section
@@ -1422,8 +1423,8 @@ class TestGathererCloudLoggingMandatory:
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
         assert "7c." in HEALTH_GATHERER_PROMPT
-        step7c_start = HEALTH_GATHERER_PROMPT.find("7c.")
-        step7d_start = HEALTH_GATHERER_PROMPT.find("7d.")
+        step7c_start = HEALTH_GATHERER_PROMPT.find("#### 7c.")
+        step7d_start = HEALTH_GATHERER_PROMPT.find("#### 7d.")
         step7c_section = HEALTH_GATHERER_PROMPT[step7c_start:step7d_start]
         assert "container_name" in step7c_section
         assert "gcloud_logging_query" in step7c_section
@@ -1433,7 +1434,7 @@ class TestGathererCloudLoggingMandatory:
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
         assert "7d." in HEALTH_GATHERER_PROMPT
-        step7d_start = HEALTH_GATHERER_PROMPT.find("7d.")
+        step7d_start = HEALTH_GATHERER_PROMPT.find("#### 7d.")
         step8_start = HEALTH_GATHERER_PROMPT.find("Cloud Logging Query Patterns")
         step7d_section = HEALTH_GATHERER_PROMPT[step7d_start:step8_start]
         assert "correlate" in step7d_section.lower()
@@ -1443,8 +1444,8 @@ class TestGathererCloudLoggingMandatory:
         """Prompt must explicitly state Cloud Logging is a MANDATORY data source."""
         from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
-        step7_start = HEALTH_GATHERER_PROMPT.find("Step 7")
-        step8_start = HEALTH_GATHERER_PROMPT.find("Step 8")
+        step7_start = HEALTH_GATHERER_PROMPT.find("### Step 7")
+        step8_start = HEALTH_GATHERER_PROMPT.find("### Step 8")
         step7_section = HEALTH_GATHERER_PROMPT[step7_start:step8_start]
         assert "MANDATORY data source" in step7_section
 
@@ -1883,3 +1884,231 @@ class TestServiceHealthAntiDataFabrication:
         report = PHASE_PROMPTS["report"]
         assert "NEVER invent" in report
         assert "Data not" in report
+
+
+# ── Causa 3: Remediation Reasoning Framework — Regression Tests ──────────
+
+
+class TestReporterRemediationReasoningFramework:
+    """Validate that the reporter prompt contains the Remediation Reasoning Framework
+    instead of the old Safe Action Hierarchy.
+
+    Causa 3: Remediation should reason about the PROCESS (GitOps, Helm, Operator, Manual)
+    rather than hardcoding "edit the YAML and re-apply" as the fix for everything.
+    """
+
+    def test_reporter_contains_remediation_reasoning_framework(self) -> None:
+        """Reporter must contain the new Remediation Reasoning Framework section."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Remediation Reasoning Framework" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_does_not_contain_safe_action_hierarchy(self) -> None:
+        """Reporter must NOT contain the old Safe Action Hierarchy (replaced)."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Safe Action Hierarchy" not in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_mentions_gitops_management(self) -> None:
+        """Reporter must mention GitOps management (ArgoCD, Flux)."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "GitOps" in HEALTH_REPORTER_PROMPT
+        assert "ArgoCD" in HEALTH_REPORTER_PROMPT or "argocd" in HEALTH_REPORTER_PROMPT
+        assert "Flux" in HEALTH_REPORTER_PROMPT or "fluxcd" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_mentions_helm_management(self) -> None:
+        """Reporter must mention Helm management."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Helm" in HEALTH_REPORTER_PROMPT
+        assert "helm get values" in HEALTH_REPORTER_PROMPT
+        assert "helm upgrade" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_mentions_operator_management(self) -> None:
+        """Reporter must mention operator management."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "operator" in HEALTH_REPORTER_PROMPT.lower()
+        assert "OwnerReferences" in HEALTH_REPORTER_PROMPT
+        assert "CRD/CR" in HEALTH_REPORTER_PROMPT or "CR" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_mentions_manual_management(self) -> None:
+        """Reporter must mention manual (no management annotations) as a management method."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        framework_start = HEALTH_REPORTER_PROMPT.find("Remediation Reasoning Framework")
+        framework_section = HEALTH_REPORTER_PROMPT[framework_start:]
+        assert "manual" in framework_section.lower()
+        assert "no management annotations" in framework_section.lower()
+
+    def test_reporter_warns_against_kubectl_edit_in_production(self) -> None:
+        """Reporter must warn against kubectl edit in production."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "NEVER recommend `kubectl edit` in production" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_separates_immediate_mitigation_from_permanent_fix(self) -> None:
+        """Reporter must separate immediate mitigation from permanent fix."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Immediate mitigation" in HEALTH_REPORTER_PROMPT or \
+            "**Immediate mitigation**" in HEALTH_REPORTER_PROMPT
+        assert "Permanent fix" in HEALTH_REPORTER_PROMPT or \
+            "**Permanent fix**" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_warns_against_gitops_drift(self) -> None:
+        """Reporter must warn that kubectl apply creates GitOps drift."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "drift" in HEALTH_REPORTER_PROMPT.lower()
+
+    def test_reporter_mentions_change_source_identification(self) -> None:
+        """Reporter must have Step 1: Identify the Change Source."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Identify the Change Source" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_mentions_root_process_reasoning(self) -> None:
+        """Reporter must have Step 2: Reason About Root Process."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "Reason About Root Process" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_mentions_source_of_truth(self) -> None:
+        """Reporter must emphasize source of truth (Git repo, Helm chart, operator CR)."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "source of truth" in HEALTH_REPORTER_PROMPT.lower()
+
+    def test_reporter_provides_both_scenarios_when_unknown(self) -> None:
+        """Reporter must provide actions for BOTH scenarios when management method is unknown."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "BOTH scenarios" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_mentions_gitops_annotations(self) -> None:
+        """Reporter must list specific GitOps annotation prefixes."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "argocd.argoproj.io/" in HEALTH_REPORTER_PROMPT
+        assert "fluxcd.io/" in HEALTH_REPORTER_PROMPT
+        assert "kustomize.toolkit.fluxcd.io/" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_mentions_helm_labels(self) -> None:
+        """Reporter must list Helm management labels."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "app.kubernetes.io/managed-by" in HEALTH_REPORTER_PROMPT
+        assert "helm.sh/chart" in HEALTH_REPORTER_PROMPT
+
+
+class TestGathererManagementAnnotationDetection:
+    """Validate that the gatherer prompt instructs collecting management annotations
+    when inspecting deployment YAML.
+
+    Causa 3: The gatherer must report management indicators (ArgoCD, Flux, Helm,
+    OwnerReferences) so the reporter can reason about the correct remediation path.
+    """
+
+    def test_gatherer_mentions_management_annotations(self) -> None:
+        """Gatherer must instruct looking for management annotations."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "management annotations" in HEALTH_GATHERER_PROMPT.lower() or \
+            "management indicators" in HEALTH_GATHERER_PROMPT.lower()
+
+    def test_gatherer_mentions_argocd_annotations(self) -> None:
+        """Gatherer must mention ArgoCD annotations."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "ArgoCD" in HEALTH_GATHERER_PROMPT or "argocd" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_mentions_flux_annotations(self) -> None:
+        """Gatherer must mention Flux annotations."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "Flux" in HEALTH_GATHERER_PROMPT or "fluxcd" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_mentions_helm_annotations(self) -> None:
+        """Gatherer must mention Helm management annotations/labels."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "Helm" in HEALTH_GATHERER_PROMPT
+        assert "app.kubernetes.io/managed-by" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_mentions_owner_references(self) -> None:
+        """Gatherer must mention OwnerReferences for operator detection."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "ownerReferences" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_mentions_webhook_injection_annotations(self) -> None:
+        """Gatherer must mention webhook injection annotations in template metadata."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "webhook injection annotations" in HEALTH_GATHERER_PROMPT.lower() or \
+            ".spec.template.metadata.annotations" in HEALTH_GATHERER_PROMPT
+
+    def test_gatherer_reports_indicators_for_reporter(self) -> None:
+        """Gatherer must explicitly state that management indicators are for the reporter."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "reporter" in HEALTH_GATHERER_PROMPT.lower()
+        assert "remediation" in HEALTH_GATHERER_PROMPT.lower()
+
+
+class TestAnalyzerManagementContextDetection:
+    """Validate that the analyzer prompt contains the Management Context Detection
+    section for classifying how each affected resource is managed.
+
+    Causa 3: The analyzer must classify management method (GitOps, Helm, Operator, Manual)
+    so findings carry this metadata for the reporter to use in remediation reasoning.
+    """
+
+    def test_analyzer_has_management_context_detection_section(self) -> None:
+        """Analyzer must contain a Management Context Detection section."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "Management Context Detection" in HEALTH_ANALYZER_PROMPT
+
+    def test_analyzer_classifies_gitops_managed(self) -> None:
+        """Analyzer must classify GitOps-managed resources."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        mgmt_start = HEALTH_ANALYZER_PROMPT.find("Management Context Detection")
+        mgmt_section = HEALTH_ANALYZER_PROMPT[mgmt_start:mgmt_start + 600]
+        assert "GitOps-managed" in mgmt_section
+        assert "ArgoCD" in mgmt_section or "Flux" in mgmt_section
+
+    def test_analyzer_classifies_helm_managed(self) -> None:
+        """Analyzer must classify Helm-managed resources."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        mgmt_start = HEALTH_ANALYZER_PROMPT.find("Management Context Detection")
+        mgmt_section = HEALTH_ANALYZER_PROMPT[mgmt_start:mgmt_start + 600]
+        assert "Helm-managed" in mgmt_section
+        assert "helm upgrade" in mgmt_section
+
+    def test_analyzer_classifies_operator_managed(self) -> None:
+        """Analyzer must classify Operator-managed resources."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        mgmt_start = HEALTH_ANALYZER_PROMPT.find("Management Context Detection")
+        mgmt_section = HEALTH_ANALYZER_PROMPT[mgmt_start:mgmt_start + 600]
+        assert "Operator-managed" in mgmt_section
+        assert "OwnerReferences" in mgmt_section
+
+    def test_analyzer_classifies_manual(self) -> None:
+        """Analyzer must classify manually-managed resources."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        mgmt_start = HEALTH_ANALYZER_PROMPT.find("Management Context Detection")
+        mgmt_section = HEALTH_ANALYZER_PROMPT[mgmt_start:mgmt_start + 600]
+        assert "Manual" in mgmt_section
+
+    def test_analyzer_includes_managed_by_in_findings(self) -> None:
+        """Analyzer must include 'Managed by' field in finding metadata."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "**Managed by**" in HEALTH_ANALYZER_PROMPT
