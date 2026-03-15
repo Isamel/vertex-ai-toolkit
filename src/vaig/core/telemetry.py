@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import atexit
 import json
 import logging
@@ -12,6 +13,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+import aiosqlite
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +121,8 @@ class TelemetryCollector:
         self._lock = threading.Lock()
         self._buffer: list[TelemetryEvent] = []
         self._conn: sqlite3.Connection | None = None
+        self._aconn: aiosqlite.Connection | None = None
+        self._async_lock = asyncio.Lock()
         self._session_id: str = ""
         self._closed = False
 
@@ -342,6 +347,17 @@ class TelemetryCollector:
             logger.debug("Telemetry DB opened: %s", self._db_path)
         return self._conn
 
+    async def _get_aconn(self) -> aiosqlite.Connection:
+        """Get or create the async database connection (lazy, WAL mode)."""
+        if self._aconn is None:
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._aconn = await aiosqlite.connect(str(self._db_path))
+            self._aconn.row_factory = aiosqlite.Row
+            await self._aconn.execute("PRAGMA journal_mode=WAL")
+            await self._aconn.executescript(_SCHEMA)
+            logger.debug("Telemetry async DB opened: %s", self._db_path)
+        return self._aconn
+
     # ── Query & Analytics ─────────────────────────────────────
 
     def query_events(
@@ -503,6 +519,180 @@ class TelemetryCollector:
             logger.debug("Telemetry clear failed", exc_info=True)
             return 0
 
+    # ── Async methods ─────────────────────────────────────────
+
+    async def async_flush(self) -> None:
+        """Flush buffered events to SQLite asynchronously using aiosqlite.
+
+        Drains the buffer under the threading lock (to avoid races with
+        sync ``emit`` / ``_append`` calls) and writes via the async connection.
+        """
+        async with self._async_lock:
+            # Drain buffer under threading lock — emit() is sync
+            with self._lock:
+                if not self._buffer or self._closed:
+                    return
+                events = list(self._buffer)
+                self._buffer.clear()
+            try:
+                conn = await self._get_aconn()
+                await conn.executemany(_INSERT_SQL, [e.to_row() for e in events])
+                await conn.commit()
+            except Exception:  # noqa: BLE001
+                logger.debug("Telemetry async flush failed", exc_info=True)
+
+    async def async_query_events(
+        self,
+        event_type: str | None = None,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Async version of :meth:`query_events`.
+
+        Flushes the buffer asynchronously first so queries see latest data.
+        """
+        await self.async_flush()
+
+        conditions: list[str] = []
+        params: list[Any] = []
+
+        if event_type:
+            conditions.append("event_type = ?")
+            params.append(event_type)
+        if since:
+            conditions.append("timestamp >= ?")
+            params.append(since)
+        if until:
+            conditions.append("timestamp <= ?")
+            params.append(until)
+
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        sql = f"SELECT * FROM telemetry_events {where} ORDER BY timestamp DESC LIMIT ?"  # noqa: S608
+        params.append(limit)
+
+        try:
+            conn = await self._get_aconn()
+            cursor = await conn.execute(sql, params)
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception:  # noqa: BLE001
+            logger.debug("Telemetry async query failed", exc_info=True)
+            return []
+
+    async def async_get_summary(
+        self,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> dict[str, Any]:
+        """Async version of :meth:`get_summary`."""
+        await self.async_flush()
+
+        conditions: list[str] = []
+        params: list[Any] = []
+
+        if since:
+            conditions.append("timestamp >= ?")
+            params.append(since)
+        if until:
+            conditions.append("timestamp <= ?")
+            params.append(until)
+
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        try:
+            conn = await self._get_aconn()
+
+            # Total events
+            cursor = await conn.execute(
+                f"SELECT COUNT(*) FROM telemetry_events {where}",  # noqa: S608
+                params,
+            )
+            row = await cursor.fetchone()
+            total = row[0] if row else 0
+
+            # By type
+            cursor = await conn.execute(
+                f"SELECT event_type, COUNT(*) as cnt FROM telemetry_events {where} GROUP BY event_type ORDER BY cnt DESC",  # noqa: S608, E501
+                params,
+            )
+            by_type_rows = await cursor.fetchall()
+            by_type = {r["event_type"]: r["cnt"] for r in by_type_rows}
+
+            # Top tools
+            tool_where = f"{where} AND event_type = 'tool_call'" if where else "WHERE event_type = 'tool_call'"
+            cursor = await conn.execute(
+                f"SELECT tool_name, COUNT(*) as cnt FROM telemetry_events {tool_where} GROUP BY tool_name ORDER BY cnt DESC LIMIT 10",  # noqa: S608, E501
+                params,
+            )
+            top_tools_rows = await cursor.fetchall()
+            top_tools = {r["tool_name"]: r["cnt"] for r in top_tools_rows}
+
+            # API stats
+            api_where = f"{where} AND event_type = 'api_call'" if where else "WHERE event_type = 'api_call'"
+            cursor = await conn.execute(
+                f"SELECT COUNT(*) as cnt, COALESCE(SUM(tokens_in), 0) as total_in, "  # noqa: S608
+                f"COALESCE(SUM(tokens_out), 0) as total_out, "
+                f"COALESCE(SUM(cost_usd), 0.0) as total_cost "
+                f"FROM telemetry_events {api_where}",
+                params,
+            )
+            api_row = await cursor.fetchone()
+            if api_row is not None:
+                api_calls = {
+                    "count": api_row["cnt"],
+                    "total_tokens_in": api_row["total_in"],
+                    "total_tokens_out": api_row["total_out"],
+                    "total_cost_usd": api_row["total_cost"],
+                }
+            else:
+                api_calls = {"count": 0, "total_tokens_in": 0, "total_tokens_out": 0, "total_cost_usd": 0.0}
+
+            # Error count
+            error_where = f"{where} AND event_type = 'error'" if where else "WHERE event_type = 'error'"
+            cursor = await conn.execute(
+                f"SELECT COUNT(*) FROM telemetry_events {error_where}",  # noqa: S608
+                params,
+            )
+            row = await cursor.fetchone()
+            error_count = row[0] if row else 0
+
+            return {
+                "total_events": total,
+                "by_type": by_type,
+                "top_tools": top_tools,
+                "api_calls": api_calls,
+                "error_count": error_count,
+            }
+        except Exception:  # noqa: BLE001
+            logger.debug("Telemetry async summary failed", exc_info=True)
+            return {
+                "total_events": 0,
+                "by_type": {},
+                "top_tools": {},
+                "api_calls": {"count": 0, "total_tokens_in": 0, "total_tokens_out": 0, "total_cost_usd": 0.0},
+                "error_count": 0,
+            }
+
+    async def async_clear_events(self, older_than_days: int = 30) -> int:
+        """Async version of :meth:`clear_events`."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=older_than_days)).isoformat()
+        try:
+            conn = await self._get_aconn()
+            cursor = await conn.execute(
+                "DELETE FROM telemetry_events WHERE timestamp < ?",
+                (cutoff,),
+            )
+            await conn.commit()
+            deleted = cursor.rowcount
+            logger.debug("Telemetry: async cleared %d events older than %d days", deleted, older_than_days)
+            return deleted
+        except Exception:  # noqa: BLE001
+            logger.debug("Telemetry async clear failed", exc_info=True)
+            return 0
+
     # ── Lifecycle ─────────────────────────────────────────────
 
     def close(self) -> None:
@@ -510,6 +700,19 @@ class TelemetryCollector:
         with self._lock:
             self._flush_locked()
             self._closed = True
+            if self._conn:
+                self._conn.close()
+                self._conn = None
+            # Async connection is closed separately via async_close()
+
+    async def async_close(self) -> None:
+        """Flush remaining events asynchronously and close both connections."""
+        await self.async_flush()
+        self._closed = True
+        if self._aconn:
+            await self._aconn.close()
+            self._aconn = None
+        with self._lock:
             if self._conn:
                 self._conn.close()
                 self._conn = None

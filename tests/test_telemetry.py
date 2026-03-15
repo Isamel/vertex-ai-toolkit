@@ -1036,3 +1036,215 @@ class TestTelemetryNeverBreaksHost:
         # CostTracker still works
         assert rec.model_id == "gemini-2.5-pro"
         assert tracker.total_cost >= 0
+
+
+# ══════════════════════════════════════════════════════════════
+# Async methods
+# ══════════════════════════════════════════════════════════════
+
+
+class TestAsyncFlush:
+    """async_flush() drains the buffer via aiosqlite."""
+
+    async def test_async_flush_writes_to_db(self, collector: TelemetryCollector, db_path: Path) -> None:
+        collector.emit_tool_call("get_pods", duration_ms=15.0)
+        collector.emit_api_call("gemini-2.5-pro", tokens_in=100, tokens_out=50, cost_usd=0.001)
+        await collector.async_flush()
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM telemetry_events ORDER BY id").fetchall()
+        conn.close()
+
+        assert len(rows) == 2
+        assert rows[0]["event_type"] == "tool_call"
+        assert rows[0]["event_name"] == "get_pods"
+        assert rows[0]["duration_ms"] == 15.0
+        assert rows[1]["event_type"] == "api_call"
+        assert rows[1]["tokens_in"] == 100
+
+    async def test_async_flush_is_idempotent(self, collector: TelemetryCollector) -> None:
+        collector.emit_tool_call("t1")
+        await collector.async_flush()
+        await collector.async_flush()  # Second flush is a no-op
+        events = await collector.async_query_events()
+        assert len(events) == 1
+
+    async def test_async_flush_empty_buffer(self, collector: TelemetryCollector) -> None:
+        # Should not raise on empty buffer
+        await collector.async_flush()
+
+    async def test_async_flush_after_close(self, db_path: Path) -> None:
+        c = TelemetryCollector(db_path=db_path, enabled=True, buffer_size=100)
+        c.emit_tool_call("t1")
+        c.close()
+        # async_flush after sync close — buffer was already flushed + closed flag set
+        await c.async_flush()
+
+
+class TestAsyncQueryEvents:
+    """async_query_events() with filters."""
+
+    async def test_async_query_all(self, collector: TelemetryCollector) -> None:
+        collector.emit_tool_call("t1")
+        collector.emit_api_call("model-a", tokens_in=10, tokens_out=5)
+        collector.emit_error("ValueError", "bad")
+
+        events = await collector.async_query_events()
+        assert len(events) == 3
+
+    async def test_async_query_by_type(self, collector: TelemetryCollector) -> None:
+        collector.emit_tool_call("t1")
+        collector.emit_api_call("model-a", tokens_in=10, tokens_out=5)
+        collector.emit_tool_call("t2")
+
+        events = await collector.async_query_events(event_type="tool_call")
+        assert len(events) == 2
+        assert all(e["event_type"] == "tool_call" for e in events)
+
+    async def test_async_query_by_since(self, collector: TelemetryCollector) -> None:
+        old_event = TelemetryEvent(
+            event_type="tool_call",
+            event_name="old_tool",
+            timestamp="2020-01-01T00:00:00+00:00",
+        )
+        collector._append(old_event)
+        collector.emit_tool_call("new_tool")
+
+        events = await collector.async_query_events(since="2024-01-01T00:00:00+00:00")
+        assert len(events) == 1
+        assert events[0]["event_name"] == "new_tool"
+
+    async def test_async_query_by_until(self, collector: TelemetryCollector) -> None:
+        old_event = TelemetryEvent(
+            event_type="tool_call",
+            event_name="old_tool",
+            timestamp="2020-01-01T00:00:00+00:00",
+        )
+        collector._append(old_event)
+        collector.emit_tool_call("new_tool")
+
+        events = await collector.async_query_events(until="2021-01-01T00:00:00+00:00")
+        assert len(events) == 1
+        assert events[0]["event_name"] == "old_tool"
+
+    async def test_async_query_with_limit(self, collector: TelemetryCollector) -> None:
+        for i in range(10):
+            collector.emit_tool_call(f"tool_{i}")
+
+        events = await collector.async_query_events(limit=3)
+        assert len(events) == 3
+
+    async def test_async_query_combined_filters(self, collector: TelemetryCollector) -> None:
+        collector.emit_tool_call("recent_tool")
+        collector.emit_api_call("model-a", tokens_in=10, tokens_out=5)
+
+        events = await collector.async_query_events(
+            event_type="tool_call",
+            since="2024-01-01T00:00:00+00:00",
+        )
+        assert len(events) == 1
+        assert events[0]["event_name"] == "recent_tool"
+
+
+class TestAsyncGetSummary:
+    """async_get_summary() returns correct aggregations."""
+
+    async def test_async_summary_empty_db(self, collector: TelemetryCollector) -> None:
+        summary = await collector.async_get_summary()
+        assert summary["total_events"] == 0
+        assert summary["by_type"] == {}
+        assert summary["top_tools"] == {}
+        assert summary["api_calls"]["count"] == 0
+        assert summary["error_count"] == 0
+
+    async def test_async_summary_with_events(self, collector: TelemetryCollector) -> None:
+        collector.emit_tool_call("get_pods")
+        collector.emit_tool_call("get_pods")
+        collector.emit_tool_call("get_logs")
+        collector.emit_api_call("gemini-2.5-pro", tokens_in=500, tokens_out=200, cost_usd=0.01)
+        collector.emit_api_call("gemini-2.5-flash", tokens_in=100, tokens_out=50, cost_usd=0.001)
+        collector.emit_error("TimeoutError", "timed out")
+        collector.emit_cli_command("ask")
+        collector.emit_skill_use("rca")
+
+        summary = await collector.async_get_summary()
+
+        assert summary["total_events"] == 8
+        assert summary["by_type"]["tool_call"] == 3
+        assert summary["by_type"]["api_call"] == 2
+        assert summary["by_type"]["error"] == 1
+        assert summary["by_type"]["cli_command"] == 1
+        assert summary["by_type"]["skill_use"] == 1
+
+        assert summary["top_tools"]["get_pods"] == 2
+        assert summary["top_tools"]["get_logs"] == 1
+
+        assert summary["api_calls"]["count"] == 2
+        assert summary["api_calls"]["total_tokens_in"] == 600
+        assert summary["api_calls"]["total_tokens_out"] == 250
+        assert summary["api_calls"]["total_cost_usd"] == pytest.approx(0.011)
+
+        assert summary["error_count"] == 1
+
+    async def test_async_summary_with_time_filter(self, collector: TelemetryCollector) -> None:
+        old_event = TelemetryEvent(
+            event_type="tool_call",
+            event_name="old_tool",
+            tool_name="old_tool",
+            timestamp="2020-01-01T00:00:00+00:00",
+        )
+        collector._append(old_event)
+        collector.emit_tool_call("new_tool")
+
+        summary = await collector.async_get_summary(since="2024-01-01T00:00:00+00:00")
+        assert summary["total_events"] == 1
+        assert summary["top_tools"].get("old_tool") is None
+
+
+class TestAsyncClearEvents:
+    """async_clear_events() removes old data, keeps recent."""
+
+    async def test_async_clear_old_events(self, collector: TelemetryCollector) -> None:
+        for i in range(3):
+            old_event = TelemetryEvent(
+                event_type="tool_call",
+                event_name=f"old_{i}",
+                timestamp="2020-01-01T00:00:00+00:00",
+            )
+            collector._append(old_event)
+        collector.emit_tool_call("recent")
+        await collector.async_flush()
+
+        deleted = await collector.async_clear_events(older_than_days=30)
+        assert deleted == 3
+
+        events = await collector.async_query_events()
+        assert len(events) == 1
+        assert events[0]["event_name"] == "recent"
+
+    async def test_async_clear_keeps_recent(self, collector: TelemetryCollector) -> None:
+        collector.emit_tool_call("fresh")
+        await collector.async_flush()
+
+        deleted = await collector.async_clear_events(older_than_days=1)
+        assert deleted == 0
+
+        events = await collector.async_query_events()
+        assert len(events) == 1
+
+
+class TestAsyncClose:
+    """async_close() flushes and tears down connections."""
+
+    async def test_async_close_flushes_remaining(self, db_path: Path) -> None:
+        c = TelemetryCollector(db_path=db_path, enabled=True, buffer_size=100)
+        c.emit_tool_call("tool_a")
+        c.emit_tool_call("tool_b")
+        await c.async_close()
+
+        conn = sqlite3.connect(str(db_path))
+        count = conn.execute("SELECT COUNT(*) FROM telemetry_events").fetchone()[0]
+        conn.close()
+        assert count == 2
+        assert c._aconn is None
