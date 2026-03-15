@@ -215,3 +215,161 @@ class SessionManager:
             pass
 
         self._store.close()
+
+    # ── Async public methods ─────────────────────────────────
+
+    async def async_new_session(
+        self,
+        name: str,
+        *,
+        model: str | None = None,
+        skill: str | None = None,
+    ) -> ActiveSession:
+        """Async version of :meth:`new_session`."""
+        model = model or self._settings.models.default
+
+        session_id = await self._store.async_create_session(
+            name=name,
+            model=model,
+            skill=skill,
+        )
+
+        self._active = ActiveSession(
+            id=session_id,
+            name=name,
+            model=model,
+            skill=skill,
+        )
+
+        logger.info("New session started (async): %s (model=%s, skill=%s)", name, model, skill)
+
+        # Telemetry: set session ID and emit session_start
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            collector = get_telemetry_collector()
+            collector.set_session_id(session_id)
+            collector.emit(
+                event_type="session",
+                event_name="session_start",
+                metadata={"name": name, "model": model, "skill": skill or ""},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        return self._active
+
+    async def async_add_message(
+        self, role: str, content: str, *, model: str | None = None, token_count: int = 0
+    ) -> None:
+        """Async version of :meth:`add_message`."""
+        if not self._active:
+            msg = "No active session. Start one with /new or load an existing session."
+            raise RuntimeError(msg)
+
+        message = ChatMessage(role=role, content=content)
+        self._active.history.append(message)
+
+        # Persist
+        if self._settings.session.auto_save:
+            await self._store.async_add_message(
+                session_id=self._active.id,
+                role=role,
+                content=content,
+                model=model,
+                token_count=token_count,
+            )
+
+        # Trim history if needed
+        max_msgs = self._settings.session.max_history_messages
+        if len(self._active.history) > max_msgs:
+            self._active.history = self._active.history[-max_msgs:]
+
+    async def async_load_session(self, session_id: str) -> ActiveSession | None:
+        """Async version of :meth:`load_session`."""
+        session_data = await self._store.async_get_session(session_id)
+        if not session_data:
+            return None
+
+        messages = await self._store.async_get_messages(session_id)
+        history = [
+            ChatMessage(role=m["role"], content=m["content"])
+            for m in messages
+        ]
+
+        self._active = ActiveSession(
+            id=session_data["id"],
+            name=session_data["name"],
+            model=session_data["model"],
+            skill=session_data.get("skill"),
+            history=history,
+        )
+
+        logger.info("Loaded session (async): %s (%d messages)", session_data["name"], len(history))
+        return self._active
+
+    async def async_list_sessions(self, *, limit: int = 20) -> list[dict]:
+        """Async version of :meth:`list_sessions`."""
+        return await self._store.async_list_sessions(limit=limit)
+
+    async def async_get_session_messages(self, session_id: str, *, limit: int | None = None) -> list[dict]:
+        """Async version of store's ``get_messages`` — exposed at manager level."""
+        return await self._store.async_get_messages(session_id, limit=limit)
+
+    async def async_delete_session(self, session_id: str) -> bool:
+        """Async version of :meth:`delete_session`."""
+        if self._active and self._active.id == session_id:
+            self._active = None
+        return await self._store.async_delete_session(session_id)
+
+    async def async_rename_session(self, session_id: str, new_name: str) -> bool:
+        """Async version of :meth:`rename_session`."""
+        result = await self._store.async_rename_session(session_id, new_name)
+        if result and self._active and self._active.id == session_id:
+            self._active.name = new_name
+        return result
+
+    async def async_search_sessions(self, query: str) -> list[dict]:
+        """Async version of :meth:`search_sessions`."""
+        return await self._store.async_search_sessions(query)
+
+    async def async_get_last_session(self) -> dict | None:
+        """Async version of :meth:`get_last_session`."""
+        return await self._store.async_get_last_session()
+
+    async def async_resume_last_session(self) -> ActiveSession | None:
+        """Async version of :meth:`resume_last_session`."""
+        last = await self._store.async_get_last_session()
+        if not last:
+            return None
+        return await self.async_load_session(last["id"])
+
+    async def async_save_cost_data(self, cost_data: dict) -> bool:
+        """Async version of :meth:`save_cost_data`."""
+        if not self._active:
+            return False
+        return await self._store.async_update_metadata(self._active.id, {"cost_data": cost_data})
+
+    async def async_load_cost_data(self, session_id: str) -> dict | None:
+        """Async version of :meth:`load_cost_data`."""
+        metadata = await self._store.async_get_metadata(session_id)
+        if metadata is None:
+            return None
+        return metadata.get("cost_data")
+
+    async def async_close(self) -> None:
+        """Async version of :meth:`close`."""
+        # Telemetry: emit session_end and async flush
+        try:
+            from vaig.core.telemetry import get_telemetry_collector
+
+            collector = get_telemetry_collector()
+            collector.emit(
+                event_type="session",
+                event_name="session_end",
+            )
+            await collector.async_flush()
+        except Exception:  # noqa: BLE001
+            pass
+
+        await self._store.async_close()
