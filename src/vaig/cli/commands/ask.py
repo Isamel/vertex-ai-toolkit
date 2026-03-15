@@ -9,6 +9,7 @@ import typer
 from rich.markdown import Markdown
 
 from vaig.cli import _helpers
+from vaig.cli._completions import complete_namespace
 from vaig.cli._helpers import (
     _apply_subcommand_log_flags,
     _compute_cost_str,
@@ -46,7 +47,7 @@ def register(app: typer.Typer) -> None:
         ] = None,
         cluster: Annotated[Optional[str], typer.Option("--cluster", help="GKE cluster name (overrides config)")] = None,
         namespace: Annotated[
-            Optional[str], typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)")
+            Optional[str], typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)", autocompletion=complete_namespace)
         ] = None,
         project: Annotated[
             Optional[str], typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)")

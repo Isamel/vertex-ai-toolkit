@@ -10,7 +10,7 @@ from google.genai import types
 from vaig.agents.utils import deduplicate_response
 
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
-from vaig.agents.mixins import ToolLoopMixin
+from vaig.agents.mixins import OnToolCall, ToolLoopMixin
 from vaig.core.client import GeminiClient
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS, GKEConfig, Settings
 from vaig.core.exceptions import MaxIterationsError
@@ -250,7 +250,13 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
 
     # ── Tool-use loop ────────────────────────────────────────
 
-    def execute(self, prompt: str, *, context: str = "") -> AgentResult:
+    def execute(
+        self,
+        prompt: str,
+        *,
+        context: str = "",
+        on_tool_call: OnToolCall | None = None,
+    ) -> AgentResult:
         """Execute an infrastructure investigation using the tool-use loop.
 
         Sends the prompt to Gemini with tool declarations. If the model
@@ -261,6 +267,9 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
         Args:
             prompt: The infrastructure question or investigation task.
             context: Optional additional context (cluster info, incident details, etc.).
+            on_tool_call: Optional callback invoked after each tool
+                execution with ``(tool_name, tool_args, duration_secs,
+                success)``.
 
         Returns:
             AgentResult with the final text response and metadata.
@@ -290,6 +299,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
                 frequency_penalty=0.15,
+                on_tool_call=on_tool_call,
             )
         except MaxIterationsError:
             raise
@@ -341,7 +351,13 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
 
     # ── Async methods ────────────────────────────────────────
 
-    async def async_execute(self, prompt: str, *, context: str = "") -> AgentResult:
+    async def async_execute(
+        self,
+        prompt: str,
+        *,
+        context: str = "",
+        on_tool_call: OnToolCall | None = None,
+    ) -> AgentResult:
         """Execute an infrastructure investigation using the async tool-use loop.
 
         Async version of :meth:`execute`.  Delegates to
@@ -351,6 +367,9 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
         Args:
             prompt: The infrastructure question or investigation task.
             context: Optional additional context (cluster info, incident details, etc.).
+            on_tool_call: Optional callback invoked after each tool
+                execution with ``(tool_name, tool_args, duration_secs,
+                success)``.
 
         Returns:
             AgentResult with the final text response and metadata.
@@ -380,6 +399,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
                 frequency_penalty=0.15,
+                on_tool_call=on_tool_call,
             )
         except MaxIterationsError:
             raise

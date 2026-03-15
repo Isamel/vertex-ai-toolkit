@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Optional
 
@@ -12,6 +13,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from vaig.cli import _helpers
+from vaig.cli._completions import complete_namespace
 from vaig.cli._helpers import (
     _apply_subcommand_log_flags,
     _compute_cost_str,
@@ -22,6 +24,7 @@ from vaig.cli._helpers import (
     err_console,
     track_command,
 )
+from vaig.cli.display import print_colored_report
 
 if TYPE_CHECKING:
     from vaig.agents.base import AgentResult
@@ -32,6 +35,78 @@ if TYPE_CHECKING:
     from vaig.tools.base import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+
+# ── Live tool execution logger ────────────────────────────────
+
+
+def _truncate_args(args: dict[str, Any], max_len: int = 50) -> str:
+    """Format tool args into a compact, truncated string.
+
+    Shows key=value pairs, truncating values longer than *max_len* chars.
+    """
+    if not args:
+        return ""
+    parts: list[str] = []
+    for k, v in args.items():
+        v_str = str(v)
+        if len(v_str) > max_len:
+            v_str = v_str[:max_len] + "..."
+        parts.append(f"{k}={v_str}")
+    return ", ".join(parts)
+
+
+class ToolCallLogger:
+    """Callback that prints live tool execution feedback to the console.
+
+    Tracks tool call count and cumulative duration so a final summary
+    line can be printed via :meth:`print_summary`.
+
+    Usage::
+
+        tool_logger = ToolCallLogger()
+        orchestrator.execute_with_tools(..., on_tool_call=tool_logger)
+        tool_logger.print_summary()
+    """
+
+    def __init__(self) -> None:
+        self.tool_count: int = 0
+        self.total_duration: float = 0.0
+        self.errors: int = 0
+        self._pipeline_start: float = time.perf_counter()
+
+    def __call__(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        duration: float,
+        success: bool,
+    ) -> None:
+        """Print a single tool execution line."""
+        self.tool_count += 1
+        self.total_duration += duration
+
+        args_str = _truncate_args(tool_args)
+        status = "[green]OK[/green]" if success else "[red]FAIL[/red]"
+        if not success:
+            self.errors += 1
+
+        console.print(
+            f"  [dim]tool[/dim] [cyan]{tool_name}[/cyan]"
+            f"({args_str}) "
+            f"{status} [dim]({duration:.1f}s)[/dim]"
+        )
+
+    def print_summary(self) -> None:
+        """Print the final pipeline summary line."""
+        total_wall = time.perf_counter() - self._pipeline_start
+        status = "[green]Pipeline complete[/green]" if self.errors == 0 else "[yellow]Pipeline complete with errors[/yellow]"
+        console.print(
+            f"\n{status} "
+            f"[dim]({total_wall:.1f}s total, "
+            f"{self.tool_count} tool{'s' if self.tool_count != 1 else ''} executed"
+            f"{f', {self.errors} failed' if self.errors else ''})[/dim]"
+        )
 
 
 def register(app: typer.Typer) -> None:
@@ -49,7 +124,7 @@ def register(app: typer.Typer) -> None:
         auto_skill: Annotated[bool, typer.Option("--auto-skill", help="Auto-detect the best skill based on query")] = False,
         cluster: Annotated[Optional[str], typer.Option("--cluster", help="GKE cluster name (overrides config)")] = None,
         namespace: Annotated[
-            Optional[str], typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)")
+            Optional[str], typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)", autocompletion=complete_namespace)
         ] = None,
         project: Annotated[
             Optional[str], typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)")
@@ -360,18 +435,21 @@ def _execute_orchestrated_skill(
 
     try:
         console.print(f"[bold cyan]🤖 Running {skill_meta.display_name} pipeline...[/bold cyan]")
+        tool_logger = ToolCallLogger()
         orch_result = orchestrator.execute_with_tools(
             query=question,
             skill=skill,
             tool_registry=tool_registry,
             strategy="sequential",
             is_autopilot=is_autopilot,
+            on_tool_call=tool_logger,
         )
+        tool_logger.print_summary()
 
-        # Display final response
+        # Display final response with severity coloring
         console.print()
         if orch_result.synthesized_output:
-            console.print(Markdown(orch_result.synthesized_output))
+            print_colored_report(orch_result.synthesized_output, console=console)
         console.print()
 
         _handle_export_output(
@@ -471,12 +549,14 @@ def _execute_live_mode(
 
     try:
         console.print("[bold cyan]🤖 Infrastructure agent investigating...[/bold cyan]")
-        result = agent.execute(question, context=context)
+        tool_logger = ToolCallLogger()
+        result = agent.execute(question, context=context, on_tool_call=tool_logger)
+        tool_logger.print_summary()
 
-        # Display final response
+        # Display final response with severity coloring
         console.print()
         if result.content:
-            console.print(Markdown(result.content))
+            print_colored_report(result.content, console=console)
         console.print()
 
         _handle_export_output(
@@ -556,11 +636,13 @@ async def _async_execute_live_mode(
 
     try:
         console.print("[bold cyan]🤖 Infrastructure agent investigating (async)...[/bold cyan]")
-        result = await agent.async_execute(question, context=context)
+        tool_logger = ToolCallLogger()
+        result = await agent.async_execute(question, context=context, on_tool_call=tool_logger)
+        tool_logger.print_summary()
 
         console.print()
         if result.content:
-            console.print(Markdown(result.content))
+            print_colored_report(result.content, console=console)
         console.print()
 
         _handle_export_output(
@@ -646,17 +728,20 @@ async def _async_execute_orchestrated_skill(
 
     try:
         console.print(f"[bold cyan]🤖 Running {skill_meta.display_name} pipeline (async)...[/bold cyan]")
+        tool_logger = ToolCallLogger()
         orch_result = await orchestrator.async_execute_with_tools(
             query=question,
             skill=skill,
             tool_registry=tool_registry,
             strategy="sequential",
             is_autopilot=is_autopilot,
+            on_tool_call=tool_logger,
         )
+        tool_logger.print_summary()
 
         console.print()
         if orch_result.synthesized_output:
-            console.print(Markdown(orch_result.synthesized_output))
+            print_colored_report(orch_result.synthesized_output, console=console)
         console.print()
 
         _handle_export_output(

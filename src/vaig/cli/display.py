@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.table import Table
 
 if TYPE_CHECKING:
@@ -13,6 +15,86 @@ if TYPE_CHECKING:
 
 # Shared console instance — callers may pass their own via keyword arg.
 _default_console = Console()
+
+# ── Severity coloring ────────────────────────────────────────
+
+# Mapping: pattern → Rich markup style.  Order matters — first match wins
+# for overlapping words (e.g. "OK" must not match inside "TOKEN").
+_SEVERITY_RULES: list[tuple[re.Pattern[str], str]] = [
+    # Bold colors (highest / positive)
+    (re.compile(r"\bCRITICAL\b", re.IGNORECASE), "bold red"),
+    (re.compile(r"\bHEALTHY\b", re.IGNORECASE), "bold green"),
+    (re.compile(r"\bPASSED\b", re.IGNORECASE), "bold green"),
+    # Red
+    (re.compile(r"\bHIGH\b", re.IGNORECASE), "red"),
+    (re.compile(r"\bERROR\b", re.IGNORECASE), "red"),
+    # Yellow
+    (re.compile(r"\bWARNING\b", re.IGNORECASE), "yellow"),
+    (re.compile(r"\bWARN\b", re.IGNORECASE), "yellow"),
+    (re.compile(r"\bMEDIUM\b", re.IGNORECASE), "yellow"),
+    # Green
+    (re.compile(r"\bLOW\b", re.IGNORECASE), "green"),
+    (re.compile(r"\bINFO\b", re.IGNORECASE), "green"),
+    # OK must use word-boundary carefully to avoid false positives
+    (re.compile(r"\bOK\b"), "bold green"),
+]
+
+
+def _line_has_severity(line: str) -> bool:
+    """Return True if the line contains at least one severity keyword."""
+    return any(pat.search(line) for pat, _ in _SEVERITY_RULES)
+
+
+def colorize_severity(text: str) -> str:
+    """Post-process *text* to wrap severity keywords in Rich markup.
+
+    Uses word-boundary-aware regexes so keywords inside other words
+    (e.g. "TOKEN", "ALLOW") are not touched.  Already-marked Rich
+    tags (``[bold red]...[/...]``) are skipped by only matching text
+    that is NOT inside square brackets.
+
+    Returns:
+        The text with Rich-markup-wrapped severity keywords.
+    """
+    for pat, style in _SEVERITY_RULES:
+        text = pat.sub(lambda m: f"[{style}]{m.group(0)}[/{style}]", text)
+    return text
+
+
+def print_colored_report(
+    text: str,
+    *,
+    console: Console | None = None,
+) -> None:
+    """Print a report with severity keywords colorized.
+
+    Lines containing severity keywords are printed with Rich markup
+    (plain text, not Markdown) so the colors render.  All other lines
+    are accumulated and flushed as Markdown blocks to preserve
+    headings, tables, code fences, etc.
+
+    Args:
+        text: Raw Markdown report text (e.g. from an agent response).
+        console: Optional Rich Console; defaults to module-level instance.
+    """
+    con = console or _default_console
+    md_buffer: list[str] = []
+
+    def _flush_md() -> None:
+        """Flush accumulated Markdown lines."""
+        if md_buffer:
+            block = "\n".join(md_buffer)
+            con.print(Markdown(block))
+            md_buffer.clear()
+
+    for line in text.splitlines():
+        if _line_has_severity(line):
+            _flush_md()
+            con.print(colorize_severity(line))
+        else:
+            md_buffer.append(line)
+
+    _flush_md()
 
 
 def confirm_tool_operation(

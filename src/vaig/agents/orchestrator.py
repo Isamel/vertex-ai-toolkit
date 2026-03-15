@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
+from vaig.agents.mixins import OnToolCall
 from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.async_utils import gather_with_errors
@@ -368,6 +369,7 @@ class Orchestrator:
         *,
         strategy: str = "sequential",
         is_autopilot: bool | None = None,
+        on_tool_call: OnToolCall | None = None,
     ) -> OrchestratorResult:
         """Execute a skill with tool-aware agents.
 
@@ -387,6 +389,8 @@ class Orchestrator:
             is_autopilot: Autopilot detection result — ``True``, ``False``,
                 or ``None`` (unknown).  When ``True``, an Autopilot context
                 instruction is injected into each agent's system prompt.
+            on_tool_call: Optional callback invoked after each tool
+                execution.  Threaded through to each agent's tool loop.
 
         Returns:
             :class:`OrchestratorResult` with the aggregated outcome.
@@ -447,7 +451,10 @@ class Orchestrator:
                 futures = []
                 for agent in agents:
                     logger.info("Fan-out (tools): submitting agent=%s", agent.name)
-                    futures.append(executor.submit(agent.execute, query, context=query))
+                    kw: dict[str, Any] = {"context": query}
+                    if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
+                        kw["on_tool_call"] = on_tool_call
+                    futures.append(executor.submit(agent.execute, query, **kw))
 
                 for agent, future in zip(agents, futures):
                     try:
@@ -478,7 +485,10 @@ class Orchestrator:
 
         elif strategy == "single":
             if agents:
-                agent_result = agents[0].execute(query)
+                kw_single: dict[str, Any] = {}
+                if isinstance(agents[0], ToolAwareAgent) and on_tool_call is not None:
+                    kw_single["on_tool_call"] = on_tool_call
+                agent_result = agents[0].execute(query, **kw_single)
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
                 result.success = agent_result.success
@@ -507,7 +517,11 @@ class Orchestrator:
                         f"{prev.content}"
                     )
 
-                agent_result = agent.execute(query, context=current_context)
+                kw_seq: dict[str, Any] = {"context": current_context}
+                if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
+                    kw_seq["on_tool_call"] = on_tool_call
+
+                agent_result = agent.execute(query, **kw_seq)
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
 
@@ -551,7 +565,10 @@ class Orchestrator:
                         )
                         logger.debug("Retry prompt: %s", retry_prompt[:200])
                         agent.reset()
-                        retry_result = agent.execute(retry_prompt, context="")
+                        kw_retry: dict[str, Any] = {"context": ""}
+                        if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
+                            kw_retry["on_tool_call"] = on_tool_call
+                        retry_result = agent.execute(retry_prompt, **kw_retry)
                         _accumulate_usage(result, retry_result)
 
                         # Replace the original result with the retry
@@ -835,6 +852,7 @@ class Orchestrator:
         *,
         strategy: str = "sequential",
         is_autopilot: bool | None = None,
+        on_tool_call: OnToolCall | None = None,
     ) -> OrchestratorResult:
         """Async version of :meth:`execute_with_tools`.
 
@@ -849,6 +867,8 @@ class Orchestrator:
             tool_registry: Pre-configured tool registry for tool-aware agents.
             strategy: ``"sequential"`` (default), ``"fanout"``, or ``"single"``.
             is_autopilot: Autopilot detection result.
+            on_tool_call: Optional callback invoked after each tool
+                execution.  Threaded through to each agent's tool loop.
 
         Returns:
             :class:`OrchestratorResult` with the aggregated outcome.
@@ -901,7 +921,10 @@ class Orchestrator:
             async def _run_agent(agent: BaseAgent) -> AgentResult:
                 logger.info("Async fan-out (tools): launching agent=%s", agent.name)
                 try:
-                    return await asyncio.to_thread(agent.execute, query, context=query)
+                    kw: dict[str, Any] = {"context": query}
+                    if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
+                        kw["on_tool_call"] = on_tool_call
+                    return await asyncio.to_thread(agent.execute, query, **kw)
                 except Exception:
                     logger.exception(
                         "Agent %s raised an exception during async fan-out (tools) execution",
@@ -934,7 +957,10 @@ class Orchestrator:
 
         elif strategy == "single":
             if agents:
-                agent_result = await asyncio.to_thread(agents[0].execute, query)
+                kw_single: dict[str, Any] = {}
+                if isinstance(agents[0], ToolAwareAgent) and on_tool_call is not None:
+                    kw_single["on_tool_call"] = on_tool_call
+                agent_result = await asyncio.to_thread(agents[0].execute, query, **kw_single)
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
                 result.success = agent_result.success
@@ -959,8 +985,12 @@ class Orchestrator:
                         f"{prev.content}"
                     )
 
+                kw_seq: dict[str, Any] = {"context": current_context}
+                if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
+                    kw_seq["on_tool_call"] = on_tool_call
+
                 agent_result = await asyncio.to_thread(
-                    agent.execute, query, context=current_context,
+                    agent.execute, query, **kw_seq,
                 )
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
@@ -990,8 +1020,11 @@ class Orchestrator:
                             shallow_sections=validation.shallow_sections,
                         )
                         agent.reset()
+                        kw_retry: dict[str, Any] = {"context": ""}
+                        if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
+                            kw_retry["on_tool_call"] = on_tool_call
                         retry_result = await asyncio.to_thread(
-                            agent.execute, retry_prompt, context="",
+                            agent.execute, retry_prompt, **kw_retry,
                         )
                         _accumulate_usage(result, retry_result)
 

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from google.genai import types
 
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
-from vaig.agents.mixins import ToolLoopMixin
+from vaig.agents.mixins import OnToolCall, ToolLoopMixin
 from vaig.core.client import GeminiClient
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.core.exceptions import MaxIterationsError
@@ -153,7 +153,13 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
 
     # ── Execute ──────────────────────────────────────────────
 
-    def execute(self, prompt: str, *, context: str = "") -> AgentResult:
+    def execute(
+        self,
+        prompt: str,
+        *,
+        context: str = "",
+        on_tool_call: OnToolCall | None = None,
+    ) -> AgentResult:
         """Execute a task using the tool-use loop.
 
         If *context* is provided (e.g. output from an upstream agent in a
@@ -162,6 +168,9 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         Args:
             prompt: The user query or task.
             context: Optional upstream context.
+            on_tool_call: Optional callback invoked after each tool
+                execution with ``(tool_name, tool_args, duration_secs,
+                success)``.
 
         Returns:
             ``AgentResult`` with the final text response and metadata.
@@ -188,6 +197,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 model=self._config.model,
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
+                on_tool_call=on_tool_call,
             )
         except MaxIterationsError:
             raise
@@ -244,7 +254,13 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
 
     # ── Async methods ────────────────────────────────────────
 
-    async def async_execute(self, prompt: str, *, context: str = "") -> AgentResult:
+    async def async_execute(
+        self,
+        prompt: str,
+        *,
+        context: str = "",
+        on_tool_call: OnToolCall | None = None,
+    ) -> AgentResult:
         """Execute a task using the async tool-use loop.
 
         Async version of :meth:`execute`.  Delegates to
@@ -254,6 +270,9 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         Args:
             prompt: The user query or task.
             context: Optional upstream context.
+            on_tool_call: Optional callback invoked after each tool
+                execution with ``(tool_name, tool_args, duration_secs,
+                success)``.
 
         Returns:
             ``AgentResult`` with the final text response and metadata.
@@ -280,6 +299,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 model=self._config.model,
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
+                on_tool_call=on_tool_call,
             )
         except MaxIterationsError:
             raise

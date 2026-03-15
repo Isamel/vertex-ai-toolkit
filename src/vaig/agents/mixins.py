@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 import time
-from typing import Any
+from typing import Any, Protocol
 
 from google.genai import types
 
@@ -16,6 +16,25 @@ from vaig.core.exceptions import MaxIterationsError
 from vaig.tools.base import ToolRegistry, ToolResult
 
 logger = logging.getLogger(__name__)
+
+
+class OnToolCall(Protocol):
+    """Callback protocol invoked after each tool execution.
+
+    Args:
+        tool_name: Name of the tool that was executed.
+        tool_args: Arguments passed to the tool.
+        duration: Wall-clock seconds the tool took.
+        success: ``True`` when the tool returned without error.
+    """
+
+    def __call__(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        duration: float,
+        success: bool,
+    ) -> None: ...
 
 
 class ToolLoopMixin:
@@ -54,6 +73,7 @@ class ToolLoopMixin:
         temperature: float = 0.7,
         max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
         frequency_penalty: float | None = 0.15,
+        on_tool_call: OnToolCall | None = None,
     ) -> ToolLoopResult:
         """Drive a Gemini tool-use loop until text or max iterations.
 
@@ -74,6 +94,9 @@ class ToolLoopMixin:
             temperature: Sampling temperature.
             max_output_tokens: Max output token count.
             frequency_penalty: Frequency penalty (``None`` to omit).
+            on_tool_call: Optional callback invoked after each tool
+                execution with ``(tool_name, tool_args, duration_secs,
+                success)``.  Useful for live progress logging.
 
         Returns:
             ``ToolLoopResult`` with final text, usage, tool metadata,
@@ -155,9 +178,18 @@ class ToolLoopMixin:
                 tool_name = fc["name"]
                 tool_args = fc["args"]
 
+                t_tool = time.perf_counter()
                 tool_result = self._execute_single_tool(
                     tool_registry, tool_name, tool_args,
                 )
+                tool_duration = time.perf_counter() - t_tool
+
+                # Notify caller about this tool execution
+                if on_tool_call is not None:
+                    try:
+                        on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error)
+                    except Exception:  # noqa: BLE001
+                        logger.debug("on_tool_call callback raised; ignoring")
 
                 tools_executed.append({
                     "name": tool_name,
@@ -287,6 +319,7 @@ class ToolLoopMixin:
         temperature: float = 0.7,
         max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
         frequency_penalty: float | None = 0.15,
+        on_tool_call: OnToolCall | None = None,
     ) -> ToolLoopResult:
         """Async version of :meth:`_run_tool_loop`.
 
@@ -369,9 +402,18 @@ class ToolLoopMixin:
                 tool_name = fc["name"]
                 tool_args = fc["args"]
 
+                t_tool = time.perf_counter()
                 tool_result = await self._async_execute_single_tool(
                     tool_registry, tool_name, tool_args,
                 )
+                tool_duration = time.perf_counter() - t_tool
+
+                # Notify caller about this tool execution
+                if on_tool_call is not None:
+                    try:
+                        on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error)
+                    except Exception:  # noqa: BLE001
+                        logger.debug("on_tool_call callback raised; ignoring")
 
                 tools_executed.append({
                     "name": tool_name,
