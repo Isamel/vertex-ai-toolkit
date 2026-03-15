@@ -59,6 +59,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         max_iterations: int = 15,
         temperature: float = 0.7,
         max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+        frequency_penalty: float | None = None,
     ) -> None:
         """Initialise the tool-aware agent.
 
@@ -71,6 +72,8 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             max_iterations: Safety cap on tool-use loop iterations.
             temperature: Sampling temperature.
             max_output_tokens: Max output token count.
+            frequency_penalty: Frequency penalty for reducing repetitive output.
+                ``None`` falls back to the ``ToolLoopMixin`` default (0.15).
         """
         config = AgentConfig(
             name=name,
@@ -79,6 +82,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             model=model,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
+            frequency_penalty=frequency_penalty,
         )
         super().__init__(config, client)
 
@@ -114,6 +118,8 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         - ``max_iterations`` (int, optional): Override default max iterations.
         - ``temperature`` (float, optional): Override default temperature.
         - ``max_output_tokens`` (int, optional): Override default max tokens.
+        - ``frequency_penalty`` (float, optional): Frequency penalty for the
+          model.  ``None`` (default) falls back to ``ToolLoopMixin`` default.
 
         Args:
             config: Agent configuration dictionary.
@@ -137,6 +143,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             max_iterations=config.get("max_iterations", 15),
             temperature=config.get("temperature", 0.7),
             max_output_tokens=config.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS),
+            frequency_penalty=config.get("frequency_penalty"),
         )
 
     # ── Properties ───────────────────────────────────────────
@@ -187,6 +194,12 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         )
 
         try:
+            # Build optional kwargs — only pass frequency_penalty when
+            # explicitly configured to avoid overriding the mixin default.
+            loop_kwargs: dict[str, Any] = {}
+            if self._config.frequency_penalty is not None:
+                loop_kwargs["frequency_penalty"] = self._config.frequency_penalty
+
             loop_result = self._run_tool_loop(
                 client=self._client,
                 prompt=full_prompt,
@@ -198,6 +211,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
                 on_tool_call=on_tool_call,
+                **loop_kwargs,
             )
         except MaxIterationsError:
             raise
@@ -289,6 +303,12 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         )
 
         try:
+            # Build optional kwargs — only pass frequency_penalty when
+            # explicitly configured to avoid overriding the mixin default.
+            loop_kwargs: dict[str, Any] = {}
+            if self._config.frequency_penalty is not None:
+                loop_kwargs["frequency_penalty"] = self._config.frequency_penalty
+
             loop_result = await self._async_run_tool_loop(
                 client=self._client,
                 prompt=full_prompt,
@@ -300,6 +320,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
                 on_tool_call=on_tool_call,
+                **loop_kwargs,
             )
         except MaxIterationsError:
             raise

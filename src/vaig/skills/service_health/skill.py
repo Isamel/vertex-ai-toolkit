@@ -116,7 +116,8 @@ class ServiceHealthSkill(BaseSkill):
                 "requires_tools": True,
                 "system_instruction": HEALTH_GATHERER_PROMPT,
                 "model": "gemini-2.5-pro",
-                "temperature": 0.2,  # Low temp for precise data collection
+                "temperature": 0.0,  # Deterministic — gatherer follows a procedure, no creativity needed
+                "frequency_penalty": 0.3,  # Discourage repetitive tool call patterns
                 # Mandatory Cloud Logging (Steps 7a-7d) requires ~20 iterations
                 "max_iterations": 25,
             },

@@ -38,6 +38,7 @@ class AgentConfig:
     model: str = "gemini-2.5-pro"
     temperature: float = 0.7
     max_output_tokens: int = 16384
+    frequency_penalty: float | None = None
 
 
 @dataclass
