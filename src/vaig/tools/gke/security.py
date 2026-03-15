@@ -177,13 +177,13 @@ def exec_command(
         if container:
             lines.append(f"Container: {container}")
         lines.append("")
-        if stdout.strip():
+        if (stdout or "").strip():
             lines.append("--- stdout ---")
             lines.append(stdout)
-        if stderr.strip():
+        if (stderr or "").strip():
             lines.append("--- stderr ---")
             lines.append(stderr)
-        if not stdout.strip() and not stderr.strip():
+        if not (stdout or "").strip() and not (stderr or "").strip():
             lines.append("(no output)")
 
         return ToolResult(output="\n".join(lines), error=False)

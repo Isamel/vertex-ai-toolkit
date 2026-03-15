@@ -216,22 +216,58 @@ def clear_k8s_client_cache() -> None:
     _CLIENT_CACHE.clear()
 
 
+class _NonTTYStream:
+    """Wrapper around a stream that forces ``isatty()`` to return ``False``.
+
+    The ``kubernetes`` Python library's ``ExecProvider.run()`` checks
+    ``sys.stdout.isatty()`` to decide whether to capture stderr via
+    ``subprocess.PIPE`` or pass it through as ``sys.stderr``.  When it
+    passes through (TTY mode), ``process.communicate()`` returns
+    ``(stdout, None)`` and a subsequent ``stderr.strip()`` crashes with
+    ``AttributeError: 'NoneType' object has no attribute 'strip'``.
+
+    By wrapping ``sys.stdout`` with this class during kubeconfig loading,
+    we force the non-interactive path (``stderr=subprocess.PIPE``) and
+    avoid the crash.
+    """
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+
+    def isatty(self) -> bool:
+        return False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
 @contextlib.contextmanager
 def _suppress_stderr():
-    """Suppress stderr at the file-descriptor level.
+    """Suppress stderr at the file-descriptor level and force non-TTY stdout.
 
     The kubernetes Python client may spawn a Go-based credential helper
     (e.g. ``gke-gcloud-auth-plugin``) whose fatal log messages (``F0315
     cred.go ...``) are written directly to fd 2, bypassing Python's
     ``sys.stderr``.  This context manager redirects the *real* fd 2 to
     ``/dev/null`` so those messages never reach the terminal.
+
+    Additionally, ``sys.stdout`` is temporarily wrapped with
+    ``_NonTTYStream`` so that the kubernetes library's ``is_interactive``
+    check (``sys.stdout.isatty()``) returns ``False``.  This forces it
+    to capture subprocess stderr via ``subprocess.PIPE`` instead of
+    passing ``sys.stderr`` directly, which avoids an ``AttributeError``
+    when the exec plugin fails and the library tries to call
+    ``stderr.strip()`` on ``None``.
     """
     devnull_fd = os.open(os.devnull, os.O_WRONLY)
     old_stderr_fd = os.dup(2)
+    original_stdout = sys.stdout
     try:
         os.dup2(devnull_fd, 2)
+        sys.stdout = _NonTTYStream(sys.stdout)  # type: ignore[assignment]
         yield
     finally:
+        sys.stdout = original_stdout
         os.dup2(old_stderr_fd, 2)
         os.close(old_stderr_fd)
         os.close(devnull_fd)
@@ -287,17 +323,34 @@ def _create_k8s_clients(
 
             # ── Load kubeconfig into the Configuration ───────────
             if kubeconfig_path:
-                k8s_config.load_kube_config(
-                    config_file=kubeconfig_path,
-                    context=context,
-                    client_configuration=config,
-                )
+                try:
+                    k8s_config.load_kube_config(
+                        config_file=kubeconfig_path,
+                        context=context,
+                        client_configuration=config,
+                    )
+                except AttributeError as attr_err:
+                    if "'NoneType' object has no attribute 'strip'" in str(attr_err):
+                        raise RuntimeError(
+                            "Kubernetes auth plugin failed. Run "
+                            "'gcloud container clusters get-credentials' "
+                            "to refresh your credentials.",
+                        ) from attr_err
+                    raise
             else:
                 try:
                     k8s_config.load_kube_config(
                         context=context,
                         client_configuration=config,
                     )
+                except AttributeError as attr_err:
+                    if "'NoneType' object has no attribute 'strip'" in str(attr_err):
+                        raise RuntimeError(
+                            "Kubernetes auth plugin failed. Run "
+                            "'gcloud container clusters get-credentials' "
+                            "to refresh your credentials.",
+                        ) from attr_err
+                    raise
                 except k8s_config.ConfigException:
                     # Fallback to in-cluster config (workload identity)
                     k8s_config.load_incluster_config()

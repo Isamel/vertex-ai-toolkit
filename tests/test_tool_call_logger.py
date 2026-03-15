@@ -716,3 +716,89 @@ class TestSuppressStderr:
             os.write(2, b"")  # Should not raise
         finally:
             os.close(original_fd)
+
+
+# ══════════════════════════════════════════════════════════════
+# _NonTTYStream and _suppress_stderr TTY override
+# ══════════════════════════════════════════════════════════════
+
+
+class TestNonTTYStream:
+    """Tests for the _NonTTYStream wrapper class."""
+
+    def test_isatty_returns_false(self) -> None:
+        """_NonTTYStream.isatty() always returns False, even if the wrapped stream is a TTY."""
+        from vaig.tools.gke._clients import _NonTTYStream
+
+        class FakeTTY:
+            def isatty(self) -> bool:
+                return True
+
+        wrapper = _NonTTYStream(FakeTTY())
+        assert wrapper.isatty() is False
+
+    def test_delegates_other_attributes(self) -> None:
+        """_NonTTYStream delegates attribute access to the wrapped stream."""
+        from vaig.tools.gke._clients import _NonTTYStream
+
+        class FakeStream:
+            name = "fake"
+
+            def write(self, data: str) -> int:
+                return len(data)
+
+            def isatty(self) -> bool:
+                return True
+
+        wrapper = _NonTTYStream(FakeStream())
+        assert wrapper.name == "fake"
+        assert wrapper.write("hello") == 5
+
+    def test_isatty_false_even_for_real_stdout(self) -> None:
+        """Wrapping sys.stdout returns False for isatty()."""
+        import sys
+
+        from vaig.tools.gke._clients import _NonTTYStream
+
+        wrapper = _NonTTYStream(sys.stdout)
+        assert wrapper.isatty() is False
+
+
+class TestSuppressStderrTTYOverride:
+    """Tests that _suppress_stderr makes sys.stdout non-interactive."""
+
+    def test_stdout_is_non_tty_inside_context(self) -> None:
+        """Inside _suppress_stderr, sys.stdout.isatty() returns False."""
+        import sys
+
+        from vaig.tools.gke._clients import _suppress_stderr
+
+        with _suppress_stderr():
+            assert sys.stdout.isatty() is False
+
+    def test_stdout_restored_after_context(self) -> None:
+        """After _suppress_stderr exits, sys.stdout is restored to its original value."""
+        import sys
+
+        from vaig.tools.gke._clients import _suppress_stderr
+
+        original = sys.stdout
+        with _suppress_stderr():
+            # Should be wrapped
+            assert sys.stdout is not original
+        # Should be restored
+        assert sys.stdout is original
+
+    def test_stdout_restored_after_exception(self) -> None:
+        """sys.stdout is restored even when an exception is raised inside _suppress_stderr."""
+        import sys
+
+        from vaig.tools.gke._clients import _suppress_stderr
+
+        original = sys.stdout
+        with pytest.raises(RuntimeError, match="test_exc"):
+            with _suppress_stderr():
+                assert sys.stdout is not original
+                msg = "test_exc"
+                raise RuntimeError(msg)
+        assert sys.stdout is original
