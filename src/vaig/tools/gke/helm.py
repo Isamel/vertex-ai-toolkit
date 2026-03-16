@@ -9,6 +9,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from vaig.core.exceptions import HelmError
 from vaig.tools.base import ToolResult
 
 from . import _cache, _clients
@@ -24,6 +25,13 @@ try:
     from kubernetes.client import exceptions as k8s_exceptions  # noqa: WPS433, F401
 except ImportError:
     _K8S_AVAILABLE = False
+
+    class _StubExceptions:
+        """Fallback so ``except k8s_exceptions.ApiException`` never matches."""
+
+        ApiException = type(None)
+
+    k8s_exceptions = _StubExceptions()  # type: ignore[assignment]
 
 # ── Constants ────────────────────────────────────────────────
 _HELM_CACHE_TTL: int = 60  # seconds (matches _DISCOVERY_TTL)
@@ -159,7 +167,7 @@ def _extract_release_info(secret: Any) -> dict[str, Any] | None:
     labels = metadata.labels or {}
 
     # Extract revision from the secret name: sh.helm.release.v1.<name>.v<revision>
-    suffix = secret_name[len(_HELM_SECRET_NAME_PREFIX):]
+    suffix = secret_name[len(_HELM_SECRET_NAME_PREFIX) :]
     # suffix = "<release-name>.v<revision>"
     parts = suffix.rsplit(".v", 1)
     if len(parts) != 2:
@@ -192,8 +200,11 @@ def _find_release_secrets(
             namespace=namespace,
             label_selector=_HELM_SECRET_LABEL_SELECTOR,
         )
+    except k8s_exceptions.ApiException as exc:
+        logger.warning("K8s API error listing Helm secrets in %s: %s", namespace, exc)
+        raise HelmError(f"K8s API error listing Helm secrets in {namespace}: {exc}") from exc
     except Exception as exc:
-        logger.warning("Error listing Helm secrets in %s: %s", namespace, exc)
+        logger.warning("Unexpected error listing Helm secrets in %s: %s", namespace, exc)
         return []
 
     matching: list[tuple[int, Any]] = []
@@ -214,8 +225,11 @@ def _decode_secret_release_data(secret: Any) -> dict[str, Any] | None:
 
     try:
         return _decode_helm_release(secret.data["release"])
-    except Exception as exc:
+    except (base64.binascii.Error, gzip.BadGzipFile, json.JSONDecodeError, UnicodeDecodeError) as exc:
         logger.warning("Failed to decode Helm release data: %s", exc)
+        return None
+    except Exception as exc:
+        logger.warning("Unexpected error decoding Helm release data: %s", exc)
         return None
 
 
@@ -228,9 +242,7 @@ def _format_releases_table(releases: list[dict[str, Any]]) -> str:
         return "No Helm releases found."
 
     lines: list[str] = []
-    lines.append(
-        f"  {'NAME':<30} {'CHART':<30} {'VERSION':<10} {'STATUS':<12} {'APP VERSION':<15}"
-    )
+    lines.append(f"  {'NAME':<30} {'CHART':<30} {'VERSION':<10} {'STATUS':<12} {'APP VERSION':<15}")
     lines.append("  " + "-" * 97)
 
     for rel in releases:
@@ -239,9 +251,7 @@ def _format_releases_table(releases: list[dict[str, Any]]) -> str:
         version = str(rel.get("version", ""))[:9]
         status = rel["status"][:11]
         app_version = rel.get("app_version", "")[:14]
-        lines.append(
-            f"  {name:<30} {chart:<30} {version:<10} {status:<12} {app_version:<15}"
-        )
+        lines.append(f"  {name:<30} {chart:<30} {version:<10} {status:<12} {app_version:<15}")
 
     return "\n".join(lines)
 
@@ -264,9 +274,7 @@ def _format_history_table(revisions: list[dict[str, Any]]) -> str:
         app_version = rev.get("app_version", "")[:14]
         description = rev.get("description", "")[:29]
         updated = rev.get("updated", "")[:24]
-        lines.append(
-            f"  {revision:<10} {status:<14} {chart:<30} {app_version:<15} {description:<30} {updated:<25}"
-        )
+        lines.append(f"  {revision:<10} {status:<14} {chart:<30} {app_version:<15} {description:<30} {updated:<25}")
 
     return "\n".join(lines)
 
@@ -313,8 +321,12 @@ def helm_list_releases(
             namespace=namespace,
             label_selector=_HELM_SECRET_LABEL_SELECTOR,
         )
-    except Exception as exc:
+    except k8s_exceptions.ApiException as exc:
         msg = f"Error listing Helm secrets: {exc}"
+        logger.warning(msg)
+        return ToolResult(output=msg, error=True)
+    except Exception as exc:
+        msg = f"Unexpected error listing Helm secrets: {exc}"
         logger.warning(msg)
         return ToolResult(output=msg, error=True)
 
@@ -368,7 +380,10 @@ def helm_release_status(
     core_v1, _apps_v1, _custom_api, _api_client = result
 
     # Find the latest revision secret
-    release_secrets = _find_release_secrets(core_v1, release_name, namespace)
+    try:
+        release_secrets = _find_release_secrets(core_v1, release_name, namespace)
+    except HelmError as exc:
+        return ToolResult(output=str(exc), error=True)
     if not release_secrets:
         return ToolResult(
             output=f"Helm release '{release_name}' not found in namespace '{namespace}'.",
@@ -443,7 +458,10 @@ def helm_release_history(
         return result
     core_v1, _apps_v1, _custom_api, _api_client = result
 
-    release_secrets = _find_release_secrets(core_v1, release_name, namespace)
+    try:
+        release_secrets = _find_release_secrets(core_v1, release_name, namespace)
+    except HelmError as exc:
+        return ToolResult(output=str(exc), error=True)
     if not release_secrets:
         return ToolResult(
             output=f"Helm release '{release_name}' not found in namespace '{namespace}'.",
@@ -515,7 +533,10 @@ def helm_release_values(
     # ── Cache check ───────────────────────────────────────────
     values_type = "all" if all_values else "overrides"
     cache_key = _cache._cache_key_discovery(
-        "helm_values", namespace, release_name, values_type,
+        "helm_values",
+        namespace,
+        release_name,
+        values_type,
     )
     if not force_refresh:
         cached = _cache._get_cached(cache_key)
@@ -528,7 +549,10 @@ def helm_release_values(
         return result
     core_v1, _apps_v1, _custom_api, _api_client = result
 
-    release_secrets = _find_release_secrets(core_v1, release_name, namespace)
+    try:
+        release_secrets = _find_release_secrets(core_v1, release_name, namespace)
+    except HelmError as exc:
+        return ToolResult(output=str(exc), error=True)
     if not release_secrets:
         return ToolResult(
             output=f"Helm release '{release_name}' not found in namespace '{namespace}'.",
@@ -570,6 +594,7 @@ def helm_release_values(
         # (yaml is not always available, json.dumps with indent is close enough)
         try:
             import yaml as _yaml
+
             sections.append(_yaml.dump(values, default_flow_style=False, sort_keys=True))
         except ImportError:
             sections.append(json.dumps(values, indent=2, sort_keys=True))

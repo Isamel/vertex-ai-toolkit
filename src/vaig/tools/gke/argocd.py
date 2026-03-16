@@ -18,6 +18,13 @@ try:
 except ImportError:
     _K8S_AVAILABLE = False
 
+    class _StubExceptions:
+        """Fallback so ``except k8s_exceptions.ApiException`` never matches."""
+
+        ApiException = type(None)
+
+    k8s_exceptions = _StubExceptions()  # type: ignore[assignment]
+
 # ── Constants ────────────────────────────────────────────────
 _ARGOCD_CACHE_TTL: int = 30  # seconds
 _ARGOCD_GROUP = "argoproj.io"
@@ -40,10 +47,10 @@ def _get_custom_objects_api() -> Any | None:
 
     try:
         k8s_config.load_incluster_config()
-    except Exception:
+    except k8s_config.ConfigException:
         try:
             k8s_config.load_kube_config()
-        except Exception:
+        except k8s_config.ConfigException:
             return None
     return k8s_client.CustomObjectsApi()
 
@@ -64,16 +71,12 @@ def _get_argocd_client(
     """
     # Mode 1: API server
     if server and token:
-        raise NotImplementedError(
-            "ArgoCD REST API mode not yet implemented (Phase 3). "
-            "Use same-cluster mode instead."
-        )
+        raise NotImplementedError("ArgoCD REST API mode not yet implemented (Phase 3). Use same-cluster mode instead.")
 
     # Mode 2: Separate kubeconfig context
     if context:
         raise NotImplementedError(
-            "ArgoCD separate-context mode not yet implemented (Phase 3). "
-            "Use same-cluster mode instead."
+            "ArgoCD separate-context mode not yet implemented (Phase 3). Use same-cluster mode instead."
         )
 
     # Mode 3: Same-cluster (default fallback)
@@ -96,15 +99,17 @@ def _list_applications_raw(
             plural=_ARGOCD_PLURAL,
         )
         return result.get("items", [])  # type: ignore[no-any-return]  # K8s CustomObject API returns Any
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            logger.debug("ArgoCD CRD not found (404)")
+            return []
+        if exc.status == 403:
+            logger.warning("RBAC: cannot list ArgoCD applications (403 Forbidden)")
+            return []
+        logger.warning("K8s API error listing ArgoCD applications: %s", exc)
+        return []
     except Exception as exc:
-        if _K8S_AVAILABLE and isinstance(exc, k8s_exceptions.ApiException):
-            if exc.status == 404:
-                logger.debug("ArgoCD CRD not found (404)")
-                return []
-            if exc.status == 403:
-                logger.warning("RBAC: cannot list ArgoCD applications (403 Forbidden)")
-                return []
-        logger.warning("Error listing ArgoCD applications: %s", exc)
+        logger.warning("Unexpected error listing ArgoCD applications: %s", exc)
         return []
 
 
@@ -122,14 +127,16 @@ def _get_application_raw(
             name=app_name,
             plural=_ARGOCD_PLURAL,
         )
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            return None
+        if exc.status == 403:
+            logger.warning("RBAC: cannot get ArgoCD application '%s' (403 Forbidden)", app_name)
+            return None
+        logger.warning("K8s API error getting ArgoCD application '%s': %s", app_name, exc)
+        return None
     except Exception as exc:
-        if _K8S_AVAILABLE and isinstance(exc, k8s_exceptions.ApiException):
-            if exc.status == 404:
-                return None
-            if exc.status == 403:
-                logger.warning("RBAC: cannot get ArgoCD application '%s' (403 Forbidden)", app_name)
-                return None
-        logger.warning("Error getting ArgoCD application '%s': %s", app_name, exc)
+        logger.warning("Unexpected error getting ArgoCD application '%s': %s", app_name, exc)
         return None
 
 
@@ -275,9 +282,7 @@ def _format_history_table(history: list[dict[str, Any]]) -> str:
     sorted_history = sorted(history, key=lambda h: h.get("id", 0), reverse=True)
 
     lines: list[str] = []
-    lines.append(
-        f"  {'ID':<6} {'DEPLOYED AT':<25} {'REVISION':<45} {'SOURCE':<40}"
-    )
+    lines.append(f"  {'ID':<6} {'DEPLOYED AT':<25} {'REVISION':<45} {'SOURCE':<40}")
     lines.append("  " + "-" * 116)
 
     for entry in sorted_history:
@@ -291,9 +296,7 @@ def _format_history_table(history: list[dict[str, Any]]) -> str:
         if len(repo) > 39:
             repo = "..." + repo[-36:]
 
-        lines.append(
-            f"  {entry_id:<6} {deployed_at:<25} {revision:<45} {repo:<40}"
-        )
+        lines.append(f"  {entry_id:<6} {deployed_at:<25} {revision:<45} {repo:<40}")
 
     return "\n".join(lines)
 
@@ -313,9 +316,7 @@ def _format_diff_summary(resources: list[dict[str, Any]]) -> str:
         return "All resources are in sync and healthy."
 
     lines: list[str] = []
-    lines.append(
-        f"  {'KIND':<25} {'NAME':<30} {'NAMESPACE':<18} {'SYNC':<12} {'HEALTH':<12} {'HOOK':<10}"
-    )
+    lines.append(f"  {'KIND':<25} {'NAME':<30} {'NAMESPACE':<18} {'SYNC':<12} {'HEALTH':<12} {'HOOK':<10}")
     lines.append("  " + "-" * 107)
 
     for res in out_of_sync:
@@ -328,9 +329,7 @@ def _format_diff_summary(resources: list[dict[str, Any]]) -> str:
         hook = res.get("hook", False)
         hook_str = "Yes" if hook else "-"
 
-        lines.append(
-            f"  {kind:<25} {name:<30} {ns:<18} {sync_status:<12} {health_status:<12} {hook_str:<10}"
-        )
+        lines.append(f"  {kind:<25} {name:<30} {ns:<18} {sync_status:<12} {health_status:<12} {hook_str:<10}")
 
     lines.append(f"\n  Out-of-sync resources: {len(out_of_sync)}")
     return "\n".join(lines)
@@ -353,9 +352,7 @@ def _format_managed_resources_table(resources: list[dict[str, Any]]) -> str:
         group_resources = by_kind[kind]
         lines.append(f"--- {kind} ({len(group_resources)}) ---")
 
-        lines.append(
-            f"  {'GROUP':<25} {'NAME':<30} {'NAMESPACE':<18} {'SYNC':<12} {'HEALTH':<12} {'PRUNE':<8}"
-        )
+        lines.append(f"  {'GROUP':<25} {'NAME':<30} {'NAMESPACE':<18} {'SYNC':<12} {'HEALTH':<12} {'PRUNE':<8}")
         lines.append("  " + "-" * 105)
 
         for res in group_resources:
@@ -368,9 +365,7 @@ def _format_managed_resources_table(resources: list[dict[str, Any]]) -> str:
             requires_pruning = res.get("requiresPruning", False)
             prune_str = "Yes" if requires_pruning else "-"
 
-            lines.append(
-                f"  {group:<25} {name:<30} {ns:<18} {sync_status:<12} {health_status:<12} {prune_str:<8}"
-            )
+            lines.append(f"  {group:<25} {name:<30} {ns:<18} {sync_status:<12} {health_status:<12} {prune_str:<8}")
 
         lines.append("")
 
@@ -409,7 +404,7 @@ def argocd_list_applications(
     if custom_api is None:
         try:
             _, custom_api = _get_argocd_client()
-        except Exception as exc:
+        except (RuntimeError, NotImplementedError) as exc:
             return ToolResult(output=f"Failed to connect to ArgoCD: {exc}", error=True)
 
     apps = _list_applications_raw(custom_api, namespace)
@@ -459,7 +454,7 @@ def argocd_app_status(
     if custom_api is None:
         try:
             _, custom_api = _get_argocd_client()
-        except Exception as exc:
+        except (RuntimeError, NotImplementedError) as exc:
             return ToolResult(output=f"Failed to connect to ArgoCD: {exc}", error=True)
 
     app = _get_application_raw(custom_api, app_name, namespace)
@@ -510,7 +505,7 @@ def argocd_app_history(
     if custom_api is None:
         try:
             _, custom_api = _get_argocd_client()
-        except Exception as exc:
+        except (RuntimeError, NotImplementedError) as exc:
             return ToolResult(output=f"Failed to connect to ArgoCD: {exc}", error=True)
 
     app = _get_application_raw(custom_api, app_name, namespace)
@@ -566,7 +561,7 @@ def argocd_app_diff(
     if custom_api is None:
         try:
             _, custom_api = _get_argocd_client()
-        except Exception as exc:
+        except (RuntimeError, NotImplementedError) as exc:
             return ToolResult(output=f"Failed to connect to ArgoCD: {exc}", error=True)
 
     app = _get_application_raw(custom_api, app_name, namespace)
@@ -620,7 +615,7 @@ def argocd_app_managed_resources(
     if custom_api is None:
         try:
             _, custom_api = _get_argocd_client()
-        except Exception as exc:
+        except (RuntimeError, NotImplementedError) as exc:
             return ToolResult(output=f"Failed to connect to ArgoCD: {exc}", error=True)
 
     app = _get_application_raw(custom_api, app_name, namespace)
