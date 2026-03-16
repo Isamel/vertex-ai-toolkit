@@ -100,7 +100,8 @@ def _redact_sensitive_values(
         sensitive_keys = _DEFAULT_SENSITIVE_KEYS
 
     pattern = _build_sensitive_pattern(sensitive_keys)
-    return _redact_recursive(data, pattern)
+    result: dict[str, Any] = _redact_recursive(data, pattern)
+    return result
 
 
 def _redact_recursive(data: Any, pattern: re.Pattern[str]) -> Any:
