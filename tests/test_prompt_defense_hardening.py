@@ -253,9 +253,9 @@ class TestReporterConcisenessRule:
     def test_conciseness_rule_section_exists(self) -> None:
         assert "### Conciseness Rule" in HEALTH_REPORTER_PROMPT
 
-    def test_word_limits_specified(self) -> None:
-        assert "3,000 words" in HEALTH_REPORTER_PROMPT
-        assert "5,000 words" in HEALTH_REPORTER_PROMPT
+    def test_conciseness_constraints_specified(self) -> None:
+        assert "≤ 3 sentences" in HEALTH_REPORTER_PROMPT
+        assert "empty lists for unused severity levels" in HEALTH_REPORTER_PROMPT
 
     def test_no_generic_padding_rule(self) -> None:
         assert "NEVER pad with generic Kubernetes explanations" in HEALTH_REPORTER_PROMPT

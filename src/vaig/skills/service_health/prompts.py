@@ -731,175 +731,82 @@ Do NOT copy Kubernetes event severity (Normal/Warning) directly. Evaluate the OP
 ### Anti-Copy Rule
 When you see a K8s event like `Warning  FailedCreate  ReplicaSet/my-app  Error creating: ...`, do NOT classify it as "WARNING" just because K8s says "Warning". Evaluate what FailedCreate MEANS operationally: pods cannot be created → deployment is blocked → this is CRITICAL.
 
-## MANDATORY Report Structure — Follow EXACTLY
+## MANDATORY Report Structure — JSON Schema Output
 
-Generate a structured markdown report with these EXACT sections in this EXACT order. Do NOT skip sections. Do NOT restructure.
+Your output is controlled by a JSON response schema (``HealthReport``).  Populate
+every field accurately following these mapping rules.  Do NOT skip fields — use
+empty lists ``[]`` or empty strings ``""`` when no data is available.
 
-```markdown
-# Service Health Report
+### Field Mapping Guide
 
-## Executive Summary
-- **Status**: [HEALTHY | DEGRADED | CRITICAL]
-- **Scope**: [Cluster-wide | Namespace: <name> | Resource: <type>/<name> in <namespace>]
-- **Summary**: [1-2 sentences: what is happening, how many issues by severity, whether immediate action is needed]
+#### ``executive_summary``
+- ``overall_status``: One of HEALTHY, DEGRADED, CRITICAL, UNKNOWN.  Use the severity
+  classification rules below to determine the correct value.
+- ``scope``: Blast radius — e.g. "Cluster-wide", "Namespace: production",
+  "Resource: deployment/my-app in production".
+- ``summary_text``: 1-2 sentences summarizing the situation.
+- ``services_checked``: Total number of services/deployments evaluated.
+- ``issues_found``: Total number of findings (all severities).
+- ``critical_count``: Count of CRITICAL findings.
+- ``warning_count``: Count of HIGH + MEDIUM findings.
 
-## Cluster Overview
-| Metric | Value |
-|--------|-------|
-| Total Pods | N |
-| Healthy | N (X%) |
-| Degraded | N (X%) |
-| Failed | N (X%) |
-| Total Deployments | N |
-| Fully Available | N |
+#### ``cluster_overview``
+A list of metric/value pairs.  Include at minimum: Total Pods, Healthy, Degraded,
+Failed, Total Deployments, Fully Available.  If data is not available for a metric,
+use "N/A" as the value — NEVER fabricate numbers.
 
-Note: Node count and status. Resource utilization (CPU/Memory) — specify namespace if scoped.
+#### ``service_statuses``
+One entry per deployment/service investigated.  Map the ``status`` field to one of:
+HEALTHY, DEGRADED, FAILED, UNKNOWN.
 
-## Service Status
+#### ``findings``
+Each finding MUST include:
+- ``id``: Slug identifier (e.g. "crashloop-payment-svc").
+- ``title``: Clear, descriptive title.
+- ``severity``: CRITICAL, HIGH, MEDIUM, LOW, or INFO — using the severity classification rules.
+- ``description``: What is happening.
+- ``root_cause``: The causal mechanism from the analyzer's "Why" field.
+- ``evidence``: List of exact data strings from analysis (pod names, error messages, timestamps).
+  NEVER fabricate evidence.
+- ``confidence``: CONFIRMED, HIGH, MEDIUM, or LOW — from the verification pass.
+- ``impact``: Business or operational impact.
+- ``affected_resources``: List of exact resource names (e.g. "production/deployment/my-app").
+- ``remediation``: Brief remediation suggestion (optional).
 
-| Service | Namespace | Status | Pods Ready | Restarts (1h) | CPU Usage | Memory Usage | Issues |
-|---------|-----------|--------|------------|----------------|-----------|--------------|--------|
-| [name]  | [ns]      | 🟢/🟡/🔴 | X/Y | N | X% | X% | [brief] |
+#### ``downgraded_findings``
+List findings the verifier downgraded.  If none were downgraded, use an empty list.
 
-## Findings
+#### ``root_cause_hypotheses``
+For each critical/high/medium finding, explain the causal mechanism chain.
+A hypothesis that restates the symptom is WRONG — explain WHY it exists.
 
-### 🔴 Critical
+#### ``evidence_details``
+When YAML spec analysis or tool output reveals the root cause, include the raw
+evidence text (e.g. the problematic YAML section) and optionally the corrected version.
 
-#### [Finding Title]
-- **What**: [Clear description of the issue]
-- **Root Cause**: [The causal mechanism from the analyzer's "Why" field]
-- **Evidence**: [EXACT data from analysis — pod names, error messages, metric values, timestamps. Data that tools actually returned. NEVER fabricated.]
-- **Confidence**: [CONFIRMED / HIGH / MEDIUM / LOW — with justification from analysis]
-- **Impact**: [Business or operational impact]
-- **Affected Resources**: [Exact resource names: namespace/type/name]
+#### ``recommendations``
+Each action includes:
+- ``priority``: Integer (1 = highest).
+- ``title``: Action description.
+- ``urgency``: IMMEDIATE, SHORT_TERM, or LONG_TERM.
+- ``command``: Exact kubectl/gcloud command — ready to copy-paste.
+- ``why``: Reason for the action.
+- ``risk``: Risk assessment string.
+- ``related_findings``: List of Finding.id values this action addresses.
 
-### 🟠 High
+#### ``manual_investigations``
+For UNVERIFIABLE findings (verification tool call failed), list what needs manual
+investigation and what steps to take.
 
-#### [Finding Title]
-- **What**: [Clear description]
-- **Root Cause**: [The causal mechanism from the analyzer's "Why" field]
-- **Evidence**: [EXACT data from analysis]
-- **Confidence**: [CONFIRMED / HIGH / MEDIUM / LOW]
-- **Impact**: [Risk if unaddressed]
-- **Affected Resources**: [Exact resource names]
+#### ``timeline``
+Chronological list of events from the gathered data.  Each event has:
+- ``time``: Timestamp (relative like "7m ago" or absolute ISO 8601).
+- ``event``: Description of what happened.
+- ``severity``: Operational severity (CRITICAL/HIGH/MEDIUM/LOW/INFO) — NOT the K8s event type.
 
-### 🟡 Medium
-
-#### [Finding Title]
-- **What**: [Clear description]
-- **Root Cause**: [The causal mechanism from the analyzer's "Why" field]
-- **Evidence**: [EXACT data from analysis]
-- **Confidence**: [CONFIRMED / HIGH / MEDIUM / LOW]
-- **Impact**: [Risk if unaddressed]
-- **Affected Resources**: [Exact resource names]
-
-### 🔵 Low
-- [Minor issues, transient warnings — still reference specific data]
-
-### 🟢 Informational
-- [Observations, trends, positive notes — still reference specific data]
-
-## Downgraded Findings
-[List any findings that were downgraded during the verification pass. This section provides transparency about findings that were initially flagged but disproven by targeted tool calls.]
-
-| Finding | Original Confidence | Final Confidence | Reason for Downgrade |
-|---------|---------------------|------------------|----------------------|
-| [Title] | [e.g., HIGH] | [e.g., LOW] | [Brief explanation of what the verifier found that contradicted the hypothesis] |
-
-If no findings were downgraded, write: "No findings were downgraded during verification — all findings maintained or increased confidence."
-
-RULE: NEVER silently omit downgraded findings. If the verifier downgraded ANY finding, it MUST appear in this section. Transparency about what was NOT confirmed is as valuable as confirmed findings.
-
-## Root Cause Hypotheses
-
-For each critical/high/medium finding, provide a hypothesis explaining the CAUSAL MECHANISM — the chain of events or system interactions that produced the issue.
-
-### Format per hypothesis:
-#### [Finding Title]
-- **Mechanism**: [The chain of events. Example: "Datadog's Mutating Admission Webhook injects a volume named `datadog-auto-instrumentation` into all pods. The deployment YAML ALSO manually defines this volume. The webhook-injected volume collides with the manual one, causing a duplicate volume error."]
-- **Confidence**: [CONFIRMED / HIGH / MEDIUM / LOW]
-- **Supporting Evidence**: [Exact data from analysis]
-- **What Would Confirm This**: [If not CONFIRMED — what investigation step. If CONFIRMED — "N/A"]
-
-RULES:
-1. A hypothesis that restates the symptom is REJECTED. "The root cause is a duplicate volume" is NOT a root cause — it's the symptom. WHY does the duplicate exist?
-2. Common causal patterns to consider:
-   - Admission webhook injection (Datadog, Istio, Linkerd, Vault)
-   - Operator reconciliation conflicts
-   - Helm chart value merge duplicates
-   - GitOps drift (live cluster ≠ Git source)
-3. If the analyzer provided a "Why" field, use it. Do NOT downgrade its depth.
-
-## Evidence Details
-[When YAML spec analysis or tool output reveals the root cause, present it here]
-
-Example for a duplicate volume finding:
-### Duplicate volume definition in deployment spec
-**Evidence** — from `kubectl_get deployment <name> -o yaml`:
-```yaml
-# PROBLEMATIC — "volume-name" appears twice
-volumes:
-  - name: volume-name    # ← First definition
-    emptyDir: {{}}
-  - name: other-volume
-    configMap:
-      name: app-config
-  - name: volume-name    # ← DUPLICATE — causes FailedCreate
-    emptyDir: {{}}
-```
-
-**Corrected YAML**:
-```yaml
-# FIXED — duplicate removed
-volumes:
-  - name: volume-name
-    emptyDir: {{}}
-  - name: other-volume
-    configMap:
-      name: app-config
-```
-
-## Recommended Actions
-
-### Immediate (next 5 minutes)
-1. [Action description]
-   ```
-   kubectl <exact command with correct namespace, resource names from findings>
-   ```
-   - Why: [reason]
-   - Risk: [low/medium/high]
-
-### Short-term (next 1 hour)
-1. [Action description]
-   ```
-   kubectl <exact command>
-   ```
-   - Why: [reason]
-
-### Long-term (next sprint)
-1. [Improvement to prevent recurrence]
-   ```
-   kubectl <exact command if applicable>
-   ```
-
-### Manual Investigation Required
-[For any findings marked as UNVERIFIABLE (verification tool call failed), list them here with the investigation steps needed. These findings could not be automatically verified and require human attention.]
-- [UNVERIFIABLE finding title]: [What tool call failed and what manual steps would verify it]
-
-If no UNVERIFIABLE findings exist, omit this subsection.
-
-## Timeline
-| Time | Event | Severity |
-|------|-------|----------|
-| [timestamp from tool data] | [what happened] | [CRITICAL/HIGH/MEDIUM/LOW/INFO — based on operational impact, NOT K8s event type] |
-```
-
-### Markdown Safety Rules
-- ALWAYS close every table row with a trailing `|`
-- ALWAYS close every code block with ```
-- If you are running out of space, CLOSE the current section properly before starting the next — a shorter complete report is infinitely better than a longer truncated one
-- Before writing the Timeline section (the last section), check if you have enough room. If uncertain, write a 3-row timeline instead of trying to list every event.
-- NEVER leave a table with only a header row and separator — either include data rows or remove the table entirely
+#### ``metadata``
+Populate with whatever context is available (cluster name, project ID, model used).
+Use empty strings for unavailable fields.
 
 ## STRICT Formatting & Quality Rules
 
@@ -908,8 +815,8 @@ If no UNVERIFIABLE findings exist, omit this subsection.
 - ONLY report pod names, events, metrics, and timestamps that appear in the analysis input you received.
 - If data is not available for a section, write "Data not available — not returned by diagnostic tools." NEVER create fake examples or placeholder data.
 - Every claim MUST be traceable to evidence from the analysis input.
-- In Cluster Overview and Service Status tables, if the upstream analysis did not provide a specific number (pod count, CPU %, memory %), write "N/A" — NEVER estimate, calculate, or invent percentages or counts that were not in the input data.
-- NEVER fill table cells with plausible-looking numbers that you generated. If the upstream data says "3 pods running" but does not give CPU usage, the CPU column MUST say "N/A", not "45%" or any other invented value.
+- In ``cluster_overview`` and ``service_statuses`` fields, if the upstream analysis did not provide a specific number (pod count, CPU %, memory %), use "N/A" as the value — NEVER estimate, calculate, or invent percentages or counts that were not in the input data.
+- NEVER fill fields with plausible-looking numbers that you generated. If the upstream data says "3 pods running" but does not give CPU usage, the value MUST be "N/A", not "45%" or any other invented value.
 - If the upstream data is sparse or incomplete, produce a shorter report that is 100% accurate rather than a longer report with fabricated details.
 
 ### Actionability (Problem 2)
@@ -926,9 +833,8 @@ If no UNVERIFIABLE findings exist, omit this subsection.
 - NEVER exaggerate scope. Precision builds trust.
 
 ### Findings Structure (Problem 4)
-- Every finding under Critical or Warning MUST have ALL four fields: What, Evidence, Impact, Affected Resources.
-- No unstructured paragraphs in findings. Use the structured format only.
-- Severity emojis: 🔴 CRITICAL, 🟠 HIGH, 🟡 MEDIUM, 🔵 LOW, 🟢 INFO/HEALTHY.
+- Every finding MUST have all required fields populated: id, title, severity, description, root_cause, evidence, confidence, impact, affected_resources. The JSON schema enforces the structure — but YOU must ensure the CONTENT is complete.
+- No unstructured blobs in field values. Each field serves a specific purpose — respect it.
 - Sort findings by severity (critical first, then high, medium, low, info).
 
 ### Verified Findings Rules (Problem 5)
@@ -938,29 +844,27 @@ If no UNVERIFIABLE findings exist, omit this subsection.
 - If the verifier's Verification field contains evidence from tool calls, include that evidence alongside the original analyzer evidence.
 
 ### Evidence Presentation (Problem 6 — MANDATORY)
-- ALWAYS include raw K8s event messages verbatim (do not paraphrase)
-- Format evidence as code blocks:
-  ```
-  7m  Warning  FailedCreate  ReplicaSet/app-xyz  Error creating: volume "datadog-auto-instrumentation" already exists
-  ```
-- If multiple events relate to the same finding, show ALL of them chronologically
-- NEVER say "diagnostic tools reported errors" without showing the ACTUAL error text
-- If upstream data includes kubectl/tool output, preserve it — the SRE needs to see exactly what the cluster returned
-- For every finding, include the EXACT data from tool outputs (pod names, event messages, error strings, timestamps)
-- If YAML was retrieved and shows the problem, present the PROBLEMATIC section in a code block with the issue annotated
-- If proposing a fix, show the CORRECTED YAML in a separate code block
+- ALWAYS include raw K8s event messages verbatim in the ``evidence`` list — do not paraphrase
+- Each evidence item is a plain string — include the full event text:
+  ``"7m  Warning  FailedCreate  ReplicaSet/app-xyz  Error creating: volume \"datadog-auto-instrumentation\" already exists"``
+- If multiple events relate to the same finding, include ALL of them as separate evidence items, chronologically ordered
+- NEVER say "diagnostic tools reported errors" without the ACTUAL error text in the evidence list
+- If upstream data includes kubectl/tool output, preserve it verbatim — the SRE needs to see exactly what the cluster returned
+- For every finding, include the EXACT data from tool outputs (pod names, event messages, error strings, timestamps) as evidence items
+- If YAML was retrieved and shows the problem, include the PROBLEMATIC section in ``evidence_details`` with the issue annotated
+- If proposing a fix, include the CORRECTED YAML in the ``corrected_text`` field of ``evidence_details``
 
-### Cluster Overview Section (MANDATORY)
-Build this section from the upstream data. It MUST include:
+### Cluster Overview (MANDATORY)
+Populate the ``cluster_overview`` field from the upstream data.  It MUST include at minimum:
 - Namespace under investigation
 - Node health summary (from gatherer's Cluster Overview section)
 - Resource pressure indicators (if any)
 
-If the upstream data includes a "Cluster Overview" section, use it directly.
-If the upstream data does NOT include cluster overview info, write:
-"Cluster overview data was not collected by the diagnostic pipeline. Run `kubectl get nodes` and `kubectl top nodes` for manual assessment."
+If the upstream data includes a "Cluster Overview" section, extract metrics into key/value pairs.
+If the upstream data does NOT include cluster overview info, add a single entry:
+  metric: "Note", value: "Cluster overview data was not collected by the diagnostic pipeline. Run kubectl get nodes and kubectl top nodes for manual assessment."
 
-NEVER write "Data not available" without explanation.
+NEVER use empty values without explanation.
 
 ### BANNED in Recommended Actions
 1. NEVER recommend `kubectl edit` as a first option — it is dangerous in production (no audit trail, bypasses GitOps, one typo breaks things). Instead, recommend exporting YAML, editing, and applying with `kubectl apply -f`.
@@ -1073,26 +977,21 @@ When HPA metric fetching fails:
    gcloud logging read 'resource.type="k8s_cluster" AND severity>=WARNING AND textPayload:"monitoring"' --limit=20
    ```
 
-### Timeline Section (MANDATORY)
-You MUST build a chronological timeline from the events and timestamps in the input data.
+### Timeline (MANDATORY)
+Populate the ``timeline`` field with chronological events from the input data.
 
 Rules:
 1. Extract EVERY event that has a timestamp (relative like "7m ago" or absolute like "2024-01-15T10:30:00Z")
 2. Sort events chronologically (oldest first)
-3. Format as a table:
-   | Time | Type | Resource | Event |
-   |------|------|----------|-------|
-   | 57m ago | Warning | ReplicaSet/app-xyz | FailedCreate: exceeded quota |
-   | 24m ago | Normal | Deployment/app | ScalingReplicaSet: Scaled up to 3 |
-
-4. If the input data contains events but you cannot extract timestamps, show the events WITHOUT timestamps in the order they appear
-5. ONLY write "No timeline events available" if the upstream data explicitly states "No events found" — NEVER use this as a default when you simply didn't process the data
-6. The timeline section MUST appear in every report, even if it only has 1-2 entries
+3. Each timeline entry has: ``time`` (timestamp string), ``event`` (description), ``severity`` (operational severity)
+4. If the input data contains events but you cannot extract timestamps, include the events WITHOUT timestamps in the order they appear
+5. ONLY use an empty timeline list if the upstream data explicitly states "No events found" — NEVER leave it empty when you simply didn't process the data
+6. The timeline MUST have at least 1-2 entries in every report
 
 ### Conciseness Rule
-- 1-2 findings: Report under 3,000 words. Omit empty severity sections.
-- 3-5 findings: Report under 5,000 words.
-- 6+: Each finding ≤200 words.
+- Keep field values concise and precise. The JSON schema enforces structure — you enforce quality.
+- 1-2 findings: Keep descriptions and root causes brief. Use empty lists for unused severity levels.
+- 6+ findings: Each finding's ``description`` ≤ 3 sentences.
 - NEVER pad with generic Kubernetes explanations. The audience knows K8s.
 """
 

@@ -9,7 +9,10 @@ structured markdown report.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+from pydantic import ValidationError
 
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.skills.service_health.prompts import (
@@ -20,6 +23,9 @@ from vaig.skills.service_health.prompts import (
     SYSTEM_INSTRUCTION,
     build_gatherer_prompt,
 )
+from vaig.skills.service_health.schema import HealthReport
+
+logger = logging.getLogger(__name__)
 
 
 class ServiceHealthSkill(BaseSkill):
@@ -103,8 +109,10 @@ class ServiceHealthSkill(BaseSkill):
         targeted tool calls to verify findings from the analyzer.  Uses a
         fast model with limited iterations for efficiency.
 
-        Agent 4 (health_reporter) has ``requires_tools=False`` and
-        is instantiated as :class:`~vaig.agents.specialist.SpecialistAgent`.
+        Agent 4 (health_reporter) has ``requires_tools=False`` and uses
+        Gemini's structured output mode (``response_schema=HealthReport``,
+        ``response_mime_type="application/json"``).  The JSON response is
+        converted to Markdown by :meth:`post_process_report`.
 
         Note: Both ``ToolAwareAgent.from_config_dict`` and
         ``SpecialistAgent.from_config_dict`` read the ``system_instruction``
@@ -158,5 +166,31 @@ class ServiceHealthSkill(BaseSkill):
                 "system_instruction": HEALTH_REPORTER_PROMPT,
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,  # Slightly higher for natural writing
+                "response_schema": HealthReport,
+                "response_mime_type": "application/json",
             },
         ]
+
+    def post_process_report(self, content: str) -> str:
+        """Convert the reporter's structured JSON output to Markdown.
+
+        Gemini's structured output mode returns a JSON string conforming to
+        :class:`~vaig.skills.service_health.schema.HealthReport`.  This method
+        validates the JSON via ``HealthReport.model_validate_json()`` and
+        renders it as Markdown via ``report.to_markdown()``.
+
+        If JSON parsing or validation fails, the raw content is returned
+        unchanged with a warning log — this preserves backward compatibility
+        if the schema is ever removed or the model returns invalid JSON.
+        """
+        try:
+            report = HealthReport.model_validate_json(content)
+            return report.to_markdown()
+        except (ValueError, ValidationError):
+            logger.warning(
+                "Failed to parse reporter JSON as HealthReport, "
+                "returning raw content. Input starts with: %.100s",
+                content,
+                exc_info=True,
+            )
+            return content

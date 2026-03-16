@@ -40,6 +40,14 @@ class SpecialistAgent(BaseAgent):
         logger.debug("Agent %s executing (model=%s, history=%d)", self.name, self._config.model, len(history))
 
         try:
+            gen_kwargs: dict[str, Any] = {}
+            if self._config.frequency_penalty is not None:
+                gen_kwargs["frequency_penalty"] = self._config.frequency_penalty
+            if self._config.response_schema is not None:
+                gen_kwargs["response_schema"] = self._config.response_schema
+            if self._config.response_mime_type is not None:
+                gen_kwargs["response_mime_type"] = self._config.response_mime_type
+
             result = self._client.generate(
                 full_prompt,
                 system_instruction=self._config.system_instruction,
@@ -47,6 +55,7 @@ class SpecialistAgent(BaseAgent):
                 model_id=self._config.model,
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
+                **gen_kwargs,
             )
 
             self._add_to_conversation("agent", result.text)
@@ -148,6 +157,14 @@ class SpecialistAgent(BaseAgent):
         )
 
         try:
+            gen_kwargs: dict[str, Any] = {}
+            if self._config.frequency_penalty is not None:
+                gen_kwargs["frequency_penalty"] = self._config.frequency_penalty
+            if self._config.response_schema is not None:
+                gen_kwargs["response_schema"] = self._config.response_schema
+            if self._config.response_mime_type is not None:
+                gen_kwargs["response_mime_type"] = self._config.response_mime_type
+
             result = await self._client.async_generate(
                 full_prompt,
                 system_instruction=self._config.system_instruction,
@@ -155,6 +172,7 @@ class SpecialistAgent(BaseAgent):
                 model_id=self._config.model,
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
+                **gen_kwargs,
             )
 
             self._add_to_conversation("agent", result.text)
@@ -296,5 +314,8 @@ class SpecialistAgent(BaseAgent):
             model=config_dict.get("model", "gemini-2.5-pro"),
             temperature=config_dict.get("temperature", 0.7),
             max_output_tokens=config_dict.get("max_output_tokens", 16384),
+            frequency_penalty=config_dict.get("frequency_penalty"),
+            response_schema=config_dict.get("response_schema"),
+            response_mime_type=config_dict.get("response_mime_type"),
         )
         return cls(agent_config, client)

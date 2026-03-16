@@ -13,6 +13,8 @@ from google.genai import types
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
+    from pydantic import BaseModel
+
     from vaig.core.client import GeminiClient
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,8 @@ class AgentConfig:
     temperature: float = 0.7
     max_output_tokens: int = 16384
     frequency_penalty: float | None = None
+    response_schema: type[BaseModel] | None = None
+    response_mime_type: str | None = None
 
 
 @dataclass

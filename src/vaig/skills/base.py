@@ -111,6 +111,19 @@ class BaseSkill(ABC):
         """
         return None
 
+    def post_process_report(self, content: str) -> str:
+        """Post-process the reporter agent's raw output before validation.
+
+        Called by the orchestrator on the last agent's output when the agent
+        has role containing ``"report"``.  Override in subclasses that use
+        Gemini's structured output mode (``response_schema``) to convert the
+        raw JSON response into the desired display format (e.g. Markdown).
+
+        The default implementation returns *content* unchanged, preserving
+        backward compatibility for skills that do not use structured output.
+        """
+        return content
+
     def format_output(self, result: SkillResult) -> str:
         """Format the skill result for display. Override for custom formatting."""
         return result.output

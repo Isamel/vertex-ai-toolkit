@@ -518,6 +518,69 @@ class TestBuildGenerationConfig:
         call_kwargs = mock_gen_config_cls.call_args[1]
         assert "safety_settings" not in call_kwargs
 
+    @patch("vaig.core.client.types.GenerateContentConfig")
+    def test_response_schema_included_when_set(
+        self,
+        mock_gen_config_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """response_schema is only sent when explicitly provided."""
+        from pydantic import BaseModel
+
+        class MyReport(BaseModel):
+            title: str
+
+        client._build_generation_config(response_schema=MyReport)
+
+        call_kwargs = mock_gen_config_cls.call_args[1]
+        assert call_kwargs["response_schema"] is MyReport
+
+    @patch("vaig.core.client.types.GenerateContentConfig")
+    def test_response_mime_type_included_when_set(
+        self,
+        mock_gen_config_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """response_mime_type is only sent when explicitly provided."""
+        client._build_generation_config(response_mime_type="application/json")
+
+        call_kwargs = mock_gen_config_cls.call_args[1]
+        assert call_kwargs["response_mime_type"] == "application/json"
+
+    @patch("vaig.core.client.types.GenerateContentConfig")
+    def test_both_schema_params_included_together(
+        self,
+        mock_gen_config_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """Both response_schema and response_mime_type included when both provided."""
+        from pydantic import BaseModel
+
+        class MyReport(BaseModel):
+            title: str
+
+        client._build_generation_config(
+            response_schema=MyReport,
+            response_mime_type="application/json",
+        )
+
+        call_kwargs = mock_gen_config_cls.call_args[1]
+        assert call_kwargs["response_schema"] is MyReport
+        assert call_kwargs["response_mime_type"] == "application/json"
+
+    @patch("vaig.core.client.types.GenerateContentConfig")
+    def test_schema_params_omitted_by_default(
+        self,
+        mock_gen_config_cls: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """Without explicit schema params, they are NOT included in kwargs."""
+        client._build_generation_config()
+
+        call_kwargs = mock_gen_config_cls.call_args[1]
+        assert "response_schema" not in call_kwargs
+        assert "response_mime_type" not in call_kwargs
+
 
 # ── TestBuildHistory ─────────────────────────────────────────
 
