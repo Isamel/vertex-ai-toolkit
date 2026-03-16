@@ -1,0 +1,66 @@
+# Dependabot configuration — https://docs.github.com/en/code-security/dependabot
+version: 2
+
+updates:
+  # ── Python (pip) dependencies ──────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "python"
+    # Group minor/patch updates to reduce PR noise
+    groups:
+      google-cloud:
+        patterns:
+          - "google-*"
+        update-types:
+          - "minor"
+          - "patch"
+      testing:
+        patterns:
+          - "pytest*"
+          - "ruff"
+          - "mypy"
+          - "types-*"
+        update-types:
+          - "minor"
+          - "patch"
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+        exclude-patterns:
+          - "google-*"
+          - "pytest*"
+          - "ruff"
+          - "mypy"
+          - "types-*"
+    # Ignore known-breaking major bumps until manually reviewed
+    ignore:
+      - dependency-name: "google-genai"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "pydantic"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "kubernetes"
+        update-types: ["version-update:semver-major"]
+
+  # ── GitHub Actions ─────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      actions:
+        patterns:
+          - "*"
