@@ -155,10 +155,12 @@ class TestPromptsImportFromCore:
 
 
 class TestAnalyzerPromptDefense:
-    """HEALTH_ANALYZER_PROMPT must include anti-injection rule and delimiters."""
+    """HEALTH_ANALYZER_PROMPT must include delimiters (anti-injection via SYSTEM_INSTRUCTION)."""
 
-    def test_anti_injection_rule_at_top(self) -> None:
-        assert HEALTH_ANALYZER_PROMPT.startswith(ANTI_INJECTION_RULE)
+    def test_anti_injection_rule_in_system_instruction(self) -> None:
+        """ANTI_INJECTION_RULE is in SYSTEM_INSTRUCTION, not in the individual prompt."""
+        assert ANTI_INJECTION_RULE in SYSTEM_INSTRUCTION
+        assert ANTI_INJECTION_RULE not in HEALTH_ANALYZER_PROMPT
 
     def test_references_data_start_delimiter(self) -> None:
         assert DELIMITER_DATA_START in HEALTH_ANALYZER_PROMPT
@@ -179,10 +181,12 @@ class TestAnalyzerPromptDefense:
 
 
 class TestVerifierPromptDefense:
-    """HEALTH_VERIFIER_PROMPT must include anti-injection rule and delimiters."""
+    """HEALTH_VERIFIER_PROMPT must include delimiters (anti-injection via SYSTEM_INSTRUCTION)."""
 
-    def test_anti_injection_rule_at_top(self) -> None:
-        assert HEALTH_VERIFIER_PROMPT.startswith(ANTI_INJECTION_RULE)
+    def test_anti_injection_rule_in_system_instruction(self) -> None:
+        """ANTI_INJECTION_RULE is in SYSTEM_INSTRUCTION, not in the individual prompt."""
+        assert ANTI_INJECTION_RULE in SYSTEM_INSTRUCTION
+        assert ANTI_INJECTION_RULE not in HEALTH_VERIFIER_PROMPT
 
     def test_references_data_start_delimiter(self) -> None:
         assert DELIMITER_DATA_START in HEALTH_VERIFIER_PROMPT
@@ -199,13 +203,15 @@ class TestVerifierPromptDefense:
 
 
 class TestReporterPromptDefense:
-    """HEALTH_REPORTER_PROMPT must include anti-injection rule and delimiters."""
+    """HEALTH_REPORTER_PROMPT must include delimiters (anti-injection via SYSTEM_INSTRUCTION)."""
 
-    def test_anti_injection_rule_present(self) -> None:
-        assert ANTI_INJECTION_RULE in HEALTH_REPORTER_PROMPT
+    def test_anti_injection_rule_in_system_instruction(self) -> None:
+        """ANTI_INJECTION_RULE is in SYSTEM_INSTRUCTION, not in the individual prompt."""
+        assert ANTI_INJECTION_RULE in SYSTEM_INSTRUCTION
+        assert ANTI_INJECTION_RULE not in HEALTH_REPORTER_PROMPT
 
-    def test_starts_with_anti_injection_rule(self) -> None:
-        assert HEALTH_REPORTER_PROMPT.startswith(ANTI_INJECTION_RULE)
+    def test_no_duplicate_anti_injection_rule(self) -> None:
+        assert ANTI_INJECTION_RULE not in HEALTH_REPORTER_PROMPT
 
     def test_references_data_start_delimiter(self) -> None:
         assert DELIMITER_DATA_START in HEALTH_REPORTER_PROMPT

@@ -20,9 +20,7 @@ from __future__ import annotations
 # ── Delimiter constants ─────────────────────────────────────────────────
 DELIMITER_SYSTEM_START = "═══════════ SYSTEM INSTRUCTIONS (TRUSTED) ═══════════"
 DELIMITER_SYSTEM_END = "═══════════ END SYSTEM INSTRUCTIONS ═══════════"
-DELIMITER_DATA_START = (
-    "═══════════ RAW FINDINGS (UNTRUSTED - EXTERNAL DATA) ═══════════"
-)
+DELIMITER_DATA_START = "═══════════ RAW FINDINGS (UNTRUSTED - EXTERNAL DATA) ═══════════"
 DELIMITER_DATA_END = "═══════════ END RAW FINDINGS ═══════════"
 
 # ── Anti-injection rule (injected into system prompts) ──────────────────
