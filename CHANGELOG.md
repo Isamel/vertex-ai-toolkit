@@ -1,0 +1,131 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2026-03-16
+
+Initial public release of the Vertex AI Toolkit (`vaig`) — a multi-agent AI
+toolkit powered by Vertex AI Gemini for GKE diagnostics, code analysis, and
+SRE workflows.
+
+### Added
+
+#### Core Platform
+- Multi-agent system with specialist and orchestrator agents (`InfraAgent`, `CodingAgent`, `ToolAwareAgent`)
+- Pluggable skill framework with RCA, anomaly detection, and migration skills
+- Interactive REPL with prompt history persistence across sessions
+- Typer CLI with `ask`, `chat`, `live`, and `code` commands
+- `--workspace/-w` flag, `--output` flag, `--dry-run`, and `--watch` modes
+- SQLite-backed session persistence and session manager
+- File filtering, context loading, and context building pipeline
+- Configurable structured logging with visual feedback
+
+#### AI & Model
+- Google GenAI SDK integration (migrated from vertexai SDK)
+- Automatic location fallback for SSL/VPN errors
+- gcloud CLI auth fallback and SA impersonation for dual-auth
+- Configurable safety settings for Gemini API
+- Gemini 3.1 series support as default models
+- Opt-in response cache for repeated queries
+- Per-request cost tracking with token budget management
+- Reduced LLM non-determinism via low temperature and frequency penalty
+
+#### Agents & Tools
+- Coding agent with filesystem tools and function calling
+- GKE live infrastructure tools — kubectl, gcloud wrappers
+- 6 GKE diagnostic tools for SRE troubleshooting
+- 3 GKE auto-discovery tools (workloads, service mesh, network topology)
+- Anthos Service Mesh / Istio introspection tools
+- Helm release introspection tools
+- ArgoCD integration tools with multi-topology support
+- `kubectl_get_labels` tool for label and annotation inspection
+- `get_rollout_history` tool for deployment rollout tracking
+- Shell tools with command denylist for security hardening
+- Plugin tool registration with MCP auto-discovery and Python module plugins
+- Parallel tool execution via `ThreadPoolExecutor`
+
+#### Skills (26 total)
+- **Wave 1** — log-analysis, error-triage, postmortem, config-audit, slo-review
+- **Wave 2** — code-review, iac-review, cost-analysis, capacity-planning, test-generation
+- **Wave 3** — compliance-check, api-design, runbook-generator
+- **Waves 4–6** — dependency-audit, db-review, pipeline-review, perf-analysis, threat-model, change-risk, alert-tuning, resilience-review, incident-comms, toil-analysis, network-review, adr-generator
+- **service-health** — Two-pass diagnostic pipeline with anti-hallucination rules, investigation checklist enforcement, causal reasoning, and remediation framework
+- Automatic skill routing via `suggest_skill()`
+
+#### Async Architecture
+- Full async foundation — `async_utils.py` and `GeminiClient` async API
+- Async telemetry with aiosqlite dependency
+- Async session layer — `SessionStore` and `SessionManager`
+- Async agent and tool layer — `ToolLoopMixin`, `Orchestrator`, `BaseAgent`
+- Async CLI and REPL entry points with `asyncio.run` wrappers
+
+#### Observability
+- Usage telemetry and analytics system
+- Per-tool-call result storage with JSONL backend
+- Cost and token usage display in CLI output and export reports
+- Severity coloring in live diagnostic output
+- Live tool execution log with namespace autocompletion
+
+#### Configuration
+- YAML-based configuration with `config/default.yaml`
+- Runtime config switching for project, location, and cluster
+- Available projects list in GCP config
+- Expanded language detection (9 languages)
+- GKE Autopilot detection via google-cloud-container API
+
+#### CI/CD
+- PyInstaller build workflow producing Linux and Windows standalone binaries
+- CI workflow with ruff lint, mypy type checking, and pytest (2902 tests)
+- CODEOWNERS file for code review enforcement
+- Branch protection rules on `main`
+- GitHub Release automation on `v*` tags
+
+#### Documentation
+- Comprehensive README with usage, architecture, and configuration
+- Architecture diagrams (agents, skills, tools)
+- CLI reference, REPL guide, export guide
+- Tools reference, skills guide, sessions guide
+- MCP guide, telemetry guide, advanced usage
+- Getting started guide and configuration reference
+
+### Fixed
+- Gatherer validation failure and quality regression from Autopilot changes
+- Gemini repetition bug mitigation with frequency penalty and deduplication
+- Empty prompt handling on iteration 2+ of tool-calling loop
+- Noisy third-party warnings suppressed at package init
+- `Part.from_function_call` replaced with `Part.from_dict` for compatibility
+- Thinking spinner for streaming chat mode
+- `ResponseValidationError` handling and SDK warning suppression
+- Frozen terminal fix in code mode spinner
+- Chunk budget calculation and rate limiting for large files
+- VPN/proxy malformed response detection with location fallback
+- `_strip_empty_strings` list recursion and defensive `.get()` guards
+- gcloud CLI auth fallback and config env var shadowing
+- Debug flag on subcommands, `--location` param, node reads on Autopilot
+- Tool parameter names in prompts and GKE Autopilot awareness
+- Gatherer `max_iterations` increase for mandatory Cloud Logging
+- Service-health pipeline reliability and deterministic output
+- Report quality constraints in service-health skill prompts
+- `NoneType.strip()` crash from kubernetes library TTY detection
+- Markdown tables and code fences preserved in severity coloring
+- UTF-8 encoding enforced on all file I/O for Windows compatibility
+- Anti-hallucination regression prevention in Helm/ArgoCD gatherer steps
+- ANSI escape codes stripped in CLI help tests for CI compatibility
+- aiosqlite connections closed in async tests to prevent CI hang
+- All 137 mypy type errors resolved; type checking now blocking in CI
+- Runtime deps included in dev dependencies for CI test execution
+- 846 ruff lint errors resolved with proper exclusion configuration
+
+### Changed
+- Migrated from `vertexai` SDK to `google-genai` SDK
+- Split monolithic `app.py` into focused CLI modules
+- Split monolithic `gke_tools.py` into `src/vaig/tools/gke/` package
+- Unified `system_prompt` to `system_instruction` across agents
+- Applied composition root pattern for telemetry settings
+- Extracted shared test fixtures into `conftest.py`
+- Applied 12 code quality improvements from audit
+
+[0.1.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.1.0
