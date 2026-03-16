@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from rich.logging import RichHandler
 
 from vaig.core.log import reset_logging, setup_logging
+
+if TYPE_CHECKING:
+    from vaig.core.config import Settings
 
 
 @pytest.fixture(autouse=True)
@@ -196,3 +202,172 @@ class TestLogCapture:
         logger.warning("stderr only warning")
         stdout, _ = capfd.readouterr()
         assert stdout == ""
+
+
+class TestFileLogging:
+    """Tests for rotating file handler support."""
+
+    def test_file_handler_created(self, tmp_path: Path) -> None:
+        """file_enabled=True should add a RotatingFileHandler."""
+        log_file = tmp_path / "test.log"
+        setup_logging("WARNING", file_enabled=True, file_path=str(log_file))
+        vaig_logger = logging.getLogger("vaig")
+        assert len(vaig_logger.handlers) == 2
+        file_handlers = [h for h in vaig_logger.handlers if isinstance(h, RotatingFileHandler)]
+        assert len(file_handlers) == 1
+
+    def test_file_handler_not_created_by_default(self) -> None:
+        """Without file_enabled, only RichHandler should be attached."""
+        setup_logging("INFO")
+        vaig_logger = logging.getLogger("vaig")
+        assert len(vaig_logger.handlers) == 1
+        assert isinstance(vaig_logger.handlers[0], RichHandler)
+
+    def test_file_handler_writes_to_disk(self, tmp_path: Path) -> None:
+        """Messages should actually be written to the log file."""
+        log_file = tmp_path / "vaig.log"
+        setup_logging("WARNING", file_enabled=True, file_path=str(log_file), file_level="DEBUG")
+        logger = logging.getLogger("vaig.test.file_write")
+        logger.info("file test message")
+
+        # Flush handlers
+        for h in logging.getLogger("vaig").handlers:
+            h.flush()
+
+        assert log_file.exists()
+        content = log_file.read_text()
+        assert "file test message" in content
+
+    def test_file_handler_level_independent_of_console(self, tmp_path: Path) -> None:
+        """File handler should capture DEBUG even when console is WARNING."""
+        log_file = tmp_path / "vaig.log"
+        setup_logging("WARNING", file_enabled=True, file_path=str(log_file), file_level="DEBUG")
+        vaig_logger = logging.getLogger("vaig")
+
+        # Logger level should be DEBUG (the minimum of WARNING and DEBUG)
+        assert vaig_logger.level == logging.DEBUG
+
+        # Console handler should be WARNING
+        rich_handlers = [h for h in vaig_logger.handlers if isinstance(h, RichHandler)]
+        assert rich_handlers[0].level == logging.WARNING
+
+        # File handler should be DEBUG
+        file_handlers = [h for h in vaig_logger.handlers if isinstance(h, RotatingFileHandler)]
+        assert file_handlers[0].level == logging.DEBUG
+
+    def test_file_handler_format(self, tmp_path: Path) -> None:
+        """File handler should use the specified format."""
+        log_file = tmp_path / "vaig.log"
+        setup_logging("WARNING", file_enabled=True, file_path=str(log_file), file_level="INFO")
+        logger = logging.getLogger("vaig.test.format")
+        logger.info("format check")
+
+        for h in logging.getLogger("vaig").handlers:
+            h.flush()
+
+        content = log_file.read_text()
+        # Format: %(asctime)s %(levelname)s %(name)s %(message)s
+        assert "INFO" in content
+        assert "vaig.test.format" in content
+        assert "format check" in content
+
+    def test_file_creates_parent_directories(self, tmp_path: Path) -> None:
+        """Should create parent directories if they don't exist."""
+        log_file = tmp_path / "deep" / "nested" / "dir" / "vaig.log"
+        setup_logging("WARNING", file_enabled=True, file_path=str(log_file))
+        vaig_logger = logging.getLogger("vaig")
+        file_handlers = [h for h in vaig_logger.handlers if isinstance(h, RotatingFileHandler)]
+        assert len(file_handlers) == 1
+        assert log_file.parent.exists()
+
+    def test_file_handler_max_bytes_and_backups(self, tmp_path: Path) -> None:
+        """Verify maxBytes and backupCount are passed through."""
+        log_file = tmp_path / "vaig.log"
+        setup_logging(
+            "WARNING",
+            file_enabled=True,
+            file_path=str(log_file),
+            file_max_bytes=1024,
+            file_backup_count=5,
+        )
+        vaig_logger = logging.getLogger("vaig")
+        file_handlers = [h for h in vaig_logger.handlers if isinstance(h, RotatingFileHandler)]
+        assert file_handlers[0].maxBytes == 1024
+        assert file_handlers[0].backupCount == 5
+
+    def test_file_handler_failure_does_not_crash(self, tmp_path: Path) -> None:
+        """If the file path is invalid, setup should log a warning but not crash."""
+        # Use a path that can't be created (file as directory)
+        blocker = tmp_path / "blocker"
+        blocker.write_text("I am a file")
+        bad_path = str(blocker / "subdir" / "vaig.log")
+
+        # This should not raise
+        setup_logging("WARNING", file_enabled=True, file_path=bad_path)
+        vaig_logger = logging.getLogger("vaig")
+        # Should still have the console handler
+        assert len(vaig_logger.handlers) >= 1
+
+    def test_reset_clears_file_handler(self, tmp_path: Path) -> None:
+        """reset_logging() should remove all handlers including file handler."""
+        log_file = tmp_path / "vaig.log"
+        setup_logging("WARNING", file_enabled=True, file_path=str(log_file))
+        vaig_logger = logging.getLogger("vaig")
+        assert len(vaig_logger.handlers) == 2
+        reset_logging()
+        assert len(vaig_logger.handlers) == 0
+
+
+class TestCreateToolCallStore:
+    """Tests for _create_tool_call_store() in live.py."""
+
+    def _make_settings(self, *, tool_results: bool = True, tool_results_dir: str = "") -> Settings:
+        """Create a minimal settings-like object with logging config."""
+        from vaig.core.config import Settings
+
+        settings = Settings()
+        settings.logging.tool_results = tool_results
+        if tool_results_dir:
+            settings.logging.tool_results_dir = tool_results_dir
+        return settings
+
+    def test_returns_store_when_enabled(self, tmp_path: Path) -> None:
+        """When tool_results=True, returns a ToolCallStore (run not yet started)."""
+        from vaig.cli.commands.live import _create_tool_call_store
+
+        settings = self._make_settings(tool_results=True, tool_results_dir=str(tmp_path))
+        store = _create_tool_call_store(settings)
+        assert store is not None
+        # start_run() is deferred to the Orchestrator, so run_id is empty here
+        assert store.run_id == ""
+
+    def test_returns_none_when_disabled(self, tmp_path: Path) -> None:
+        """When tool_results=False, returns None."""
+        from vaig.cli.commands.live import _create_tool_call_store
+
+        settings = self._make_settings(tool_results=False, tool_results_dir=str(tmp_path))
+        store = _create_tool_call_store(settings)
+        assert store is None
+
+    def test_returns_store_even_with_bad_dir(self, tmp_path: Path) -> None:
+        """Store creation succeeds even with a bad dir; error deferred to start_run()."""
+        from vaig.cli.commands.live import _create_tool_call_store
+
+        # Use a file as dir — error is now deferred to Orchestrator.start_run()
+        blocker = tmp_path / "blocker"
+        blocker.write_text("I am a file")
+        settings = self._make_settings(tool_results=True, tool_results_dir=str(blocker))
+        store = _create_tool_call_store(settings)
+        # Store is created (start_run is deferred), but will fail later
+        assert store is not None
+
+    def test_expands_home_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The tool_results_dir should expand ~ to the user's home directory."""
+        from vaig.cli.commands.live import _create_tool_call_store
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        settings = self._make_settings(tool_results=True, tool_results_dir="~/my-vaig-data")
+        store = _create_tool_call_store(settings)
+        assert store is not None
+        # Dir creation is deferred to start_run(); verify ~ was expanded in base_dir
+        assert "my-vaig-data" in str(store._base_dir)

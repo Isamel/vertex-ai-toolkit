@@ -312,15 +312,27 @@ def gcloud_monitoring_query(
     interval_minutes: int = 60,
     aggregation: str = "",
     filter_str: str = "",
+    resource_labels: dict[str, str] | None = None,
     credentials: Credentials | None = None,
 ) -> ToolResult:
     """Query Cloud Monitoring time series data for a given metric.
 
     Returns formatted time series with timestamps, values, and labels.
+
+    Args:
+        metric_type: Fully qualified metric type (e.g. ``istio.io/service/server/request_count``).
+        project: GCP project ID.  Falls back to ADC default if empty.
+        interval_minutes: Time window in minutes (1–10080).
+        aggregation: Cross-series aggregation (mean/max/min/sum/count).
+        filter_str: Raw additional monitoring filter string to AND with the metric type.
+        resource_labels: Dict of resource label key→value pairs to filter on.
+            Converted to ``resource.labels.<key> = "<value>"`` filter clauses.
+            Example: ``{"namespace_name": "production", "cluster_name": "prod-1"}``.
+        credentials: Optional GCP credentials for the Monitoring client.
     """
     logger.debug(
-        "gcloud_monitoring_query: metric=%s project=%s interval=%d",
-        metric_type, project, interval_minutes,
+        "gcloud_monitoring_query: metric=%s project=%s interval=%d resource_labels=%s",
+        metric_type, project, interval_minutes, resource_labels,
     )
 
     if not metric_type.strip():
@@ -387,6 +399,21 @@ def gcloud_monitoring_query(
     monitoring_filter = f'metric.type = "{metric_type}"'
     if filter_str.strip():
         monitoring_filter += f" AND {filter_str}"
+
+    # Append resource.labels filters from dict
+    if resource_labels:
+        import re
+
+        for label_key, label_value in resource_labels.items():
+            # Validate label_key: only alphanumeric and underscores
+            if not re.fullmatch(r"[A-Za-z_]\w*", label_key):
+                return ToolResult(
+                    output=f"Invalid resource label key: '{label_key}'. Only alphanumeric characters and underscores are allowed.",
+                    error=True,
+                )
+            # Escape backslashes and double quotes in label_value
+            escaped_value = str(label_value).replace("\\", "\\\\").replace('"', '\\"')
+            monitoring_filter += f' AND resource.labels.{label_key} = "{escaped_value}"'
 
     # Build request
     request = monitoring_types.ListTimeSeriesRequest(
@@ -509,7 +536,9 @@ def create_gcloud_tools(
                 "Common metrics: compute.googleapis.com/instance/cpu/utilization, "
                 "kubernetes.io/container/memory/used_bytes, "
                 "kubernetes.io/container/cpu/core_usage_time, "
-                "kubernetes.io/container/restart_count."
+                "kubernetes.io/container/restart_count, "
+                "istio.io/service/server/request_count. "
+                "Use resource_labels to filter by resource dimensions (e.g. namespace, cluster)."
             ),
             parameters=[
                 ToolParam(
@@ -519,7 +548,8 @@ def create_gcloud_tools(
                         "Fully qualified metric type. Examples: "
                         "'compute.googleapis.com/instance/cpu/utilization', "
                         "'kubernetes.io/container/memory/used_bytes', "
-                        "'kubernetes.io/container/restart_count'"
+                        "'kubernetes.io/container/restart_count', "
+                        "'istio.io/service/server/request_count'"
                     ),
                 ),
                 ToolParam(
@@ -549,13 +579,26 @@ def create_gcloud_tools(
                     ),
                     required=False,
                 ),
+                ToolParam(
+                    name="resource_labels",
+                    type="object",
+                    description=(
+                        "Dict of resource label key-value pairs to filter by. "
+                        "Each entry becomes a 'resource.labels.<key> = \"<value>\"' filter clause. "
+                        "Common keys: namespace_name, cluster_name, container_name, pod_name, "
+                        "destination_workload_namespace, location. "
+                        "Example: {\"namespace_name\": \"production\", \"cluster_name\": \"prod-1\"}"
+                    ),
+                    required=False,
+                ),
             ],
-            execute=lambda metric_type, project="", interval_minutes=0, aggregation="", filter_str="", _dp=project, _di=metrics_interval_minutes, _dc=credentials: gcloud_monitoring_query(
+            execute=lambda metric_type, project="", interval_minutes=0, aggregation="", filter_str="", resource_labels=None, _dp=project, _di=metrics_interval_minutes, _dc=credentials: gcloud_monitoring_query(
                 metric_type,
                 project=project or _dp,
                 interval_minutes=interval_minutes or _di,
                 aggregation=aggregation,
                 filter_str=filter_str,
+                resource_labels=resource_labels,
                 credentials=_dc,
             ),
         ),

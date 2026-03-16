@@ -175,6 +175,169 @@ class TestGcloudMonitoringQuery:
         assert result.error is True
         assert "No GCP project" in result.output
 
+    @patch("vaig.tools.gcloud_tools._get_monitoring_client")
+    def test_resource_labels_added_to_filter(self, mock_client: MagicMock) -> None:
+        """resource_labels dict should be converted to resource.labels.xxx filter clauses."""
+        from vaig.tools.gcloud_tools import gcloud_monitoring_query
+
+        client = MagicMock()
+        mock_client.return_value = (client, None)
+
+        # We need to test that the filter is built correctly.
+        # Since the function tries to import monitoring_v3, we'll use a
+        # simpler approach: verify filter construction by checking what
+        # gets passed to list_time_series.
+        fake_monitoring = MagicMock()
+        fake_interval = MagicMock()
+        fake_monitoring.TimeInterval.return_value = fake_interval
+        fake_monitoring.ListTimeSeriesRequest = MagicMock()
+        fake_monitoring.Aggregation = MagicMock()
+        fake_monitoring.ListTimeSeriesRequest.TimeSeriesView.FULL = "FULL"
+
+        fake_duration = MagicMock()
+
+        # The function does `from google.cloud.monitoring_v3 import types`,
+        # so the parent module's .types attribute must point to fake_monitoring.
+        # Similarly, `from google.protobuf import duration_pb2` needs the
+        # parent's .duration_pb2 to point to fake_duration.
+        fake_monitoring_v3 = MagicMock()
+        fake_monitoring_v3.types = fake_monitoring
+        fake_protobuf = MagicMock()
+        fake_protobuf.duration_pb2 = fake_duration
+
+        with patch.dict("sys.modules", {
+            "google.cloud.monitoring_v3": fake_monitoring_v3,
+            "google.cloud.monitoring_v3.types": fake_monitoring,
+            "google.protobuf": fake_protobuf,
+            "google.protobuf.duration_pb2": fake_duration,
+        }):
+            result = gcloud_monitoring_query(
+                "istio.io/service/server/request_count",
+                project="my-project",
+                resource_labels={"namespace_name": "production", "cluster_name": "prod-1"},
+            )
+
+        # The request should have been constructed with resource_labels in the filter
+        assert fake_monitoring.ListTimeSeriesRequest.called, (
+            "ListTimeSeriesRequest was never called — filter was not constructed"
+        )
+        call_kwargs = fake_monitoring.ListTimeSeriesRequest.call_args
+        filter_used = call_kwargs.kwargs.get("filter", "") if call_kwargs.kwargs else ""
+        assert 'resource.labels.namespace_name' in filter_used, (
+            f"Expected 'resource.labels.namespace_name' in filter, got: {filter_used}"
+        )
+        assert 'resource.labels.cluster_name' in filter_used, (
+            f"Expected 'resource.labels.cluster_name' in filter, got: {filter_used}"
+        )
+
+    def test_resource_labels_none_no_effect(self) -> None:
+        """resource_labels=None should not modify the filter."""
+        from vaig.tools.gcloud_tools import gcloud_monitoring_query
+
+        # This should not crash — just hits the "no project" path
+        with patch("vaig.tools.gcloud_tools._get_monitoring_client") as mock_client:
+            client = MagicMock()
+            mock_client.return_value = (client, None)
+
+            fake_google = MagicMock()
+            fake_google.auth.default.side_effect = Exception("no credentials")
+
+            with patch.dict("sys.modules", {"google": fake_google, "google.auth": fake_google.auth}):
+                result = gcloud_monitoring_query(
+                    "compute.googleapis.com/instance/cpu/utilization",
+                    project="",
+                    resource_labels=None,
+                )
+            assert result.error is True
+
+    def test_resource_labels_empty_dict_no_effect(self) -> None:
+        """resource_labels={} should not modify the filter."""
+        from vaig.tools.gcloud_tools import gcloud_monitoring_query
+
+        with patch("vaig.tools.gcloud_tools._get_monitoring_client") as mock_client:
+            client = MagicMock()
+            mock_client.return_value = (client, None)
+
+            fake_google = MagicMock()
+            fake_google.auth.default.side_effect = Exception("no credentials")
+
+            with patch.dict("sys.modules", {"google": fake_google, "google.auth": fake_google.auth}):
+                result = gcloud_monitoring_query(
+                    "compute.googleapis.com/instance/cpu/utilization",
+                    project="",
+                    resource_labels={},
+                )
+            assert result.error is True
+
+    @patch("vaig.tools.gcloud_tools._get_monitoring_client")
+    def test_resource_labels_invalid_key_rejected(self, mock_client: MagicMock) -> None:
+        """resource_labels with invalid key (injection attempt) should return error."""
+        from vaig.tools.gcloud_tools import gcloud_monitoring_query
+
+        client = MagicMock()
+        mock_client.return_value = (client, None)
+
+        fake_monitoring = MagicMock()
+        fake_monitoring.ListTimeSeriesRequest = MagicMock()
+        fake_monitoring.ListTimeSeriesRequest.TimeSeriesView.FULL = "FULL"
+        fake_monitoring.Aggregation = MagicMock()
+
+        fake_monitoring_v3 = MagicMock()
+        fake_monitoring_v3.types = fake_monitoring
+
+        with patch.dict("sys.modules", {
+            "google.cloud.monitoring_v3": fake_monitoring_v3,
+            "google.cloud.monitoring_v3.types": fake_monitoring,
+            "google.protobuf": MagicMock(),
+            "google.protobuf.duration_pb2": MagicMock(),
+        }):
+            result = gcloud_monitoring_query(
+                "compute.googleapis.com/instance/cpu/utilization",
+                project="my-project",
+                resource_labels={"bad.key!": "value"},
+            )
+        assert result.error is True
+        assert "Invalid resource label key" in result.output
+
+    @patch("vaig.tools.gcloud_tools._get_monitoring_client")
+    def test_resource_labels_value_with_quotes_escaped(self, mock_client: MagicMock) -> None:
+        """resource_labels values containing quotes/backslashes should be escaped."""
+        from vaig.tools.gcloud_tools import gcloud_monitoring_query
+
+        client = MagicMock()
+        mock_client.return_value = (client, None)
+
+        fake_monitoring = MagicMock()
+        fake_monitoring.TimeInterval.return_value = MagicMock()
+        fake_monitoring.ListTimeSeriesRequest = MagicMock()
+        fake_monitoring.Aggregation = MagicMock()
+        fake_monitoring.ListTimeSeriesRequest.TimeSeriesView.FULL = "FULL"
+
+        fake_monitoring_v3 = MagicMock()
+        fake_monitoring_v3.types = fake_monitoring
+
+        with patch.dict("sys.modules", {
+            "google.cloud.monitoring_v3": fake_monitoring_v3,
+            "google.cloud.monitoring_v3.types": fake_monitoring,
+            "google.protobuf": MagicMock(),
+            "google.protobuf.duration_pb2": MagicMock(),
+        }):
+            result = gcloud_monitoring_query(
+                "compute.googleapis.com/instance/cpu/utilization",
+                project="my-project",
+                resource_labels={"namespace_name": 'prod"inject'},
+            )
+
+        assert fake_monitoring.ListTimeSeriesRequest.called, (
+            "ListTimeSeriesRequest was never called"
+        )
+        call_kwargs = fake_monitoring.ListTimeSeriesRequest.call_args
+        filter_used = call_kwargs.kwargs.get("filter", "") if call_kwargs.kwargs else ""
+        # The double quote in the value should be escaped
+        assert r'prod\"inject' in filter_used, (
+            f"Expected escaped quote in filter, got: {filter_used}"
+        )
+
 
 # ── _format_log_entry ────────────────────────────────────────
 
@@ -297,3 +460,32 @@ class TestCreateGcloudTools:
         )
         # Just verify it doesn't crash and still returns 2 tools
         assert len(tools) == 2
+
+    def test_monitoring_tool_has_resource_labels_param(self) -> None:
+        """gcloud_monitoring_query tool should expose resource_labels parameter."""
+        from vaig.tools.gcloud_tools import create_gcloud_tools
+
+        tools = create_gcloud_tools()
+        monitoring_tool = next(t for t in tools if t.name == "gcloud_monitoring_query")
+        param_names = {p.name for p in monitoring_tool.parameters}
+        assert "resource_labels" in param_names
+
+        rl_param = next(p for p in monitoring_tool.parameters if p.name == "resource_labels")
+        assert rl_param.type == "object"
+        assert rl_param.required is False
+
+    def test_monitoring_tool_lambda_accepts_resource_labels(self) -> None:
+        """The monitoring tool lambda should accept resource_labels without TypeError."""
+        from vaig.tools.gcloud_tools import create_gcloud_tools
+
+        tools = create_gcloud_tools()
+        monitoring_tool = next(t for t in tools if t.name == "gcloud_monitoring_query")
+
+        # Call with resource_labels — should not raise TypeError.
+        # Will fail on empty metric type (expected), but NOT a TypeError.
+        result = monitoring_tool.execute(
+            metric_type="",
+            resource_labels={"namespace_name": "test"},
+        )
+        assert result.error is True
+        assert "empty" in result.output.lower() or "Metric type" in result.output
