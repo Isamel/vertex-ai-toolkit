@@ -18,6 +18,7 @@ required.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 # ── CJK Unicode ranges ──────────────────────────────────────
 # Used for script-based detection of Japanese, Chinese, and Korean.
@@ -288,9 +289,9 @@ def build_language_instruction(lang: str) -> str:
 
 
 def inject_language_into_config(
-    agent_configs: list[dict],
+    agent_configs: list[dict[str, Any]],
     lang: str,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Prepend a language instruction to every agent's system prompt.
 
     Modifies the config dicts **in place** — this is safe because the
@@ -352,9 +353,9 @@ def build_autopilot_instruction(is_autopilot: bool | None) -> str:
 
 
 def inject_autopilot_into_config(
-    agent_configs: list[dict],
+    agent_configs: list[dict[str, Any]],
     is_autopilot: bool | None,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Prepend an Autopilot context instruction to every agent's system prompt.
 
     Follows the same in-place mutation pattern as

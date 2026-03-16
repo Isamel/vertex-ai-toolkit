@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from vaig.core.client import ChatMessage
 from vaig.core.config import Settings
@@ -135,7 +136,7 @@ class SessionManager:
         logger.info("Loaded session: %s (%d messages)", session_data["name"], len(history))
         return self._active
 
-    def list_sessions(self, *, limit: int = 20) -> list[dict]:
+    def list_sessions(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """List recent sessions."""
         return self._store.list_sessions(limit=limit)
 
@@ -152,11 +153,11 @@ class SessionManager:
             self._active.name = new_name
         return result
 
-    def search_sessions(self, query: str) -> list[dict]:
+    def search_sessions(self, query: str) -> list[dict[str, Any]]:
         """Search sessions by name or message content."""
         return self._store.search_sessions(query)
 
-    def get_last_session(self) -> dict | None:
+    def get_last_session(self) -> dict[str, Any] | None:
         """Get the most recently updated session."""
         return self._store.get_last_session()
 
@@ -172,7 +173,7 @@ class SessionManager:
         if self._active:
             self._active.history.clear()
 
-    def save_cost_data(self, cost_data: dict) -> bool:
+    def save_cost_data(self, cost_data: dict[str, Any]) -> bool:
         """Persist cost tracker data to the active session's metadata.
 
         Args:
@@ -185,7 +186,7 @@ class SessionManager:
             return False
         return self._store.update_metadata(self._active.id, {"cost_data": cost_data})
 
-    def load_cost_data(self, session_id: str) -> dict | None:
+    def load_cost_data(self, session_id: str) -> dict[str, Any] | None:
         """Load cost tracker data from a session's metadata.
 
         Args:
@@ -308,11 +309,11 @@ class SessionManager:
         logger.info("Loaded session (async): %s (%d messages)", session_data["name"], len(history))
         return self._active
 
-    async def async_list_sessions(self, *, limit: int = 20) -> list[dict]:
+    async def async_list_sessions(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """Async version of :meth:`list_sessions`."""
         return await self._store.async_list_sessions(limit=limit)
 
-    async def async_get_session_messages(self, session_id: str, *, limit: int | None = None) -> list[dict]:
+    async def async_get_session_messages(self, session_id: str, *, limit: int | None = None) -> list[dict[str, Any]]:
         """Async version of store's ``get_messages`` — exposed at manager level."""
         return await self._store.async_get_messages(session_id, limit=limit)
 
@@ -329,11 +330,11 @@ class SessionManager:
             self._active.name = new_name
         return result
 
-    async def async_search_sessions(self, query: str) -> list[dict]:
+    async def async_search_sessions(self, query: str) -> list[dict[str, Any]]:
         """Async version of :meth:`search_sessions`."""
         return await self._store.async_search_sessions(query)
 
-    async def async_get_last_session(self) -> dict | None:
+    async def async_get_last_session(self) -> dict[str, Any] | None:
         """Async version of :meth:`get_last_session`."""
         return await self._store.async_get_last_session()
 
@@ -344,13 +345,13 @@ class SessionManager:
             return None
         return await self.async_load_session(last["id"])
 
-    async def async_save_cost_data(self, cost_data: dict) -> bool:
+    async def async_save_cost_data(self, cost_data: dict[str, Any]) -> bool:
         """Async version of :meth:`save_cost_data`."""
         if not self._active:
             return False
         return await self._store.async_update_metadata(self._active.id, {"cost_data": cost_data})
 
-    async def async_load_cost_data(self, session_id: str) -> dict | None:
+    async def async_load_cost_data(self, session_id: str) -> dict[str, Any] | None:
         """Async version of :meth:`load_cost_data`."""
         metadata = await self._store.async_get_metadata(session_id)
         if metadata is None:

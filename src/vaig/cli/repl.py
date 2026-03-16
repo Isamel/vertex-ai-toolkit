@@ -440,11 +440,12 @@ async def _async_handle_direct_chat(state: REPLState, user_input: str, context: 
                 result = await state.orchestrator.async_execute_single(
                     user_input, context=context,
                 )
-            full_response = result.content  # type: ignore[union-attr]
+            assert not isinstance(result, StreamResult)  # non-streaming path
+            full_response = result.content
             console.print(Markdown(full_response))
 
             # Record cost from non-streaming result
-            _record_cost(state.cost_tracker, state.model, result.usage)  # type: ignore[union-attr]
+            _record_cost(state.cost_tracker, state.model, result.usage)
 
         # Record model response (async)
         await state.session_manager.async_add_message("model", full_response, model=state.model)
@@ -764,11 +765,12 @@ def _handle_direct_chat(state: REPLState, user_input: str, context: str) -> None
                 f"[bold cyan]Generating response with {state.model}...[/bold cyan]"
             ):
                 result = state.orchestrator.execute_single(user_input, context=context)
-            full_response = result.content  # type: ignore[union-attr]
+            assert not isinstance(result, StreamResult)  # non-streaming path
+            full_response = result.content
             console.print(Markdown(full_response))
 
             # Record cost from non-streaming result
-            _record_cost(state.cost_tracker, state.model, result.usage)  # type: ignore[union-attr]
+            _record_cost(state.cost_tracker, state.model, result.usage)
 
         # Record model response
         state.session_manager.add_message("model", full_response, model=state.model)

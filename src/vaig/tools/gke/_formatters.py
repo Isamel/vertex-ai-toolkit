@@ -31,14 +31,14 @@ def _pod_status(pod: Any) -> str:
     if pod.status is None:
         return "Unknown"
     if pod.status.phase in ("Succeeded", "Failed"):
-        return pod.status.phase
+        return str(pod.status.phase)
     # Check container statuses for waiting reasons
     for cs in pod.status.container_statuses or []:
         if cs.state and cs.state.waiting and cs.state.waiting.reason:
-            return cs.state.waiting.reason
+            return str(cs.state.waiting.reason)
         if cs.state and cs.state.terminated and cs.state.terminated.reason:
-            return cs.state.terminated.reason
-    return pod.status.phase or "Unknown"
+            return str(cs.state.terminated.reason)
+    return str(pod.status.phase or "Unknown")
 
 
 def _pod_restarts(pod: Any) -> int:
@@ -273,7 +273,7 @@ def _format_items(resource: str, items: list[Any], output_format: str) -> str:
             return "PyYAML is not installed. Use output_format='json' instead."
         api = k8s_client.ApiClient()
         serialised = [api.sanitize_for_serialization(i) for i in items]
-        return _yaml.dump_all(serialised, default_flow_style=False)
+        return str(_yaml.dump_all(serialised, default_flow_style=False))
 
     # Table or wide
     wide = output_format == "wide"

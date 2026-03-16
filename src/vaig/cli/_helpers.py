@@ -228,7 +228,7 @@ def _resolve_session_id(manager: object, prefix: str) -> str:
     sessions = manager.list_sessions(limit=100)
     matches = [s for s in sessions if s["id"].startswith(prefix)]
     if len(matches) == 1:
-        return matches[0]["id"]
+        return str(matches[0]["id"])
     if len(matches) > 1:
         err_console.print(f"[yellow]Ambiguous prefix '{prefix}' matches {len(matches)} sessions. Use more characters.[/yellow]")
     return prefix
@@ -243,7 +243,7 @@ def _build_export_payload(
     tokens: dict[str, int] | None = None,
     cost: str | None = None,
     context_files: list[str] | None = None,
-    agent_results: list[dict] | None = None,
+    agent_results: list[dict[str, Any]] | None = None,
 ) -> ExportPayload:
     """Build an ExportPayload from ask/live command results."""
     from datetime import datetime
@@ -341,7 +341,7 @@ def _compute_cost_str(usage: dict[str, int] | None, model_id: str) -> str | None
     return format_cost(cost)
 
 
-def _cli_confirm(tool_name: str, args: dict) -> bool:
+def _cli_confirm(tool_name: str, args: dict[str, Any]) -> bool:
     """Confirm destructive tool operations — delegates to shared display helper."""
     from vaig.cli.display import confirm_tool_operation
 

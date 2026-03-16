@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from vaig.skills.api_design.prompts import PHASE_PROMPTS, SYSTEM_INSTRUCTION
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 
@@ -37,7 +39,7 @@ class APIDesignSkill(BaseSkill):
         template = PHASE_PROMPTS.get(phase.value, PHASE_PROMPTS["analyze"])
         return template.format(context=context, user_input=user_input)
 
-    def get_agents_config(self) -> list[dict]:
+    def get_agents_config(self) -> list[dict[str, Any]]:
         return [
             {
                 "name": "contract_analyzer",

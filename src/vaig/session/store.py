@@ -9,6 +9,7 @@ import sqlite3
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import aiosqlite
 
@@ -77,7 +78,7 @@ class SessionStore:
         name: str,
         model: str,
         skill: str | None = None,
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """Create a new session. Returns the session ID."""
         conn = self._get_conn()
@@ -114,11 +115,11 @@ class SessionStore:
         )
         conn.commit()
 
-    def get_messages(self, session_id: str, *, limit: int | None = None) -> list[dict]:
+    def get_messages(self, session_id: str, *, limit: int | None = None) -> list[dict[str, Any]]:
         """Get all messages for a session, ordered by creation time."""
         conn = self._get_conn()
         query = "SELECT role, content, model, token_count, created_at FROM messages WHERE session_id = ? ORDER BY id ASC"
-        params: list = [session_id]
+        params: list[Any] = [session_id]
 
         if limit:
             query += " LIMIT ?"
@@ -127,7 +128,7 @@ class SessionStore:
         rows = conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
-    def list_sessions(self, *, limit: int = 20) -> list[dict]:
+    def list_sessions(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """List recent sessions."""
         conn = self._get_conn()
         rows = conn.execute(
@@ -138,7 +139,7 @@ class SessionStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def get_session(self, session_id: str) -> dict | None:
+    def get_session(self, session_id: str) -> dict[str, Any] | None:
         """Get session details by ID."""
         conn = self._get_conn()
         row = conn.execute(
@@ -174,7 +175,7 @@ class SessionStore:
         )
         conn.commit()
 
-    def get_context_files(self, session_id: str) -> list[dict]:
+    def get_context_files(self, session_id: str) -> list[dict[str, Any]]:
         """Get all context files for a session."""
         conn = self._get_conn()
         rows = conn.execute(
@@ -183,7 +184,7 @@ class SessionStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def update_metadata(self, session_id: str, metadata: dict) -> bool:
+    def update_metadata(self, session_id: str, metadata: dict[str, Any]) -> bool:
         """Update the metadata JSON for a session.
 
         Performs a **merge** — existing keys are preserved unless overwritten
@@ -201,7 +202,7 @@ class SessionStore:
         if row is None:
             return False
 
-        existing: dict = json.loads(row["metadata"] or "{}")
+        existing: dict[str, Any] = json.loads(row["metadata"] or "{}")
         existing.update(metadata)
 
         now = datetime.now(UTC).isoformat()
@@ -212,7 +213,7 @@ class SessionStore:
         conn.commit()
         return True
 
-    def get_metadata(self, session_id: str) -> dict | None:
+    def get_metadata(self, session_id: str) -> dict[str, Any] | None:
         """Get parsed metadata dict for a session.
 
         Returns:
@@ -225,7 +226,7 @@ class SessionStore:
         ).fetchone()
         if row is None:
             return None
-        return json.loads(row["metadata"] or "{}")
+        return json.loads(row["metadata"] or "{}")  # type: ignore[no-any-return]  # json.loads returns Any
 
     def rename_session(self, session_id: str, new_name: str) -> bool:
         """Rename a session.
@@ -242,7 +243,7 @@ class SessionStore:
         conn.commit()
         return cursor.rowcount > 0
 
-    def search_sessions(self, query: str) -> list[dict]:
+    def search_sessions(self, query: str) -> list[dict[str, Any]]:
         """Search sessions by name or message content."""
         conn = self._get_conn()
         rows = conn.execute(
@@ -256,7 +257,7 @@ class SessionStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def get_last_session(self) -> dict | None:
+    def get_last_session(self) -> dict[str, Any] | None:
         """Get the most recently updated session."""
         conn = self._get_conn()
         row = conn.execute(
@@ -305,7 +306,7 @@ class SessionStore:
         name: str,
         model: str,
         skill: str | None = None,
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """Async version of :meth:`create_session`."""
         async with self._async_lock:
@@ -344,12 +345,12 @@ class SessionStore:
             )
             await conn.commit()
 
-    async def async_get_messages(self, session_id: str, *, limit: int | None = None) -> list[dict]:
+    async def async_get_messages(self, session_id: str, *, limit: int | None = None) -> list[dict[str, Any]]:
         """Async version of :meth:`get_messages`."""
         async with self._async_lock:
             conn = await self._get_aconn()
             query = "SELECT role, content, model, token_count, created_at FROM messages WHERE session_id = ? ORDER BY id ASC"
-            params: list = [session_id]
+            params: list[Any] = [session_id]
 
             if limit:
                 query += " LIMIT ?"
@@ -359,7 +360,7 @@ class SessionStore:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
-    async def async_list_sessions(self, *, limit: int = 20) -> list[dict]:
+    async def async_list_sessions(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """Async version of :meth:`list_sessions`."""
         async with self._async_lock:
             conn = await self._get_aconn()
@@ -372,7 +373,7 @@ class SessionStore:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
-    async def async_get_session(self, session_id: str) -> dict | None:
+    async def async_get_session(self, session_id: str) -> dict[str, Any] | None:
         """Async version of :meth:`get_session`."""
         async with self._async_lock:
             conn = await self._get_aconn()
@@ -408,7 +409,7 @@ class SessionStore:
             )
             await conn.commit()
 
-    async def async_get_context_files(self, session_id: str) -> list[dict]:
+    async def async_get_context_files(self, session_id: str) -> list[dict[str, Any]]:
         """Async version of :meth:`get_context_files`."""
         async with self._async_lock:
             conn = await self._get_aconn()
@@ -419,7 +420,7 @@ class SessionStore:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
-    async def async_update_metadata(self, session_id: str, metadata: dict) -> bool:
+    async def async_update_metadata(self, session_id: str, metadata: dict[str, Any]) -> bool:
         """Async version of :meth:`update_metadata`.
 
         Performs a **merge** — existing keys are preserved unless overwritten.
@@ -435,7 +436,7 @@ class SessionStore:
             if row is None:
                 return False
 
-            existing: dict = json.loads(row["metadata"] or "{}")
+            existing: dict[str, Any] = json.loads(row["metadata"] or "{}")
             existing.update(metadata)
 
             now = datetime.now(UTC).isoformat()
@@ -446,7 +447,7 @@ class SessionStore:
             await conn.commit()
             return True
 
-    async def async_get_metadata(self, session_id: str) -> dict | None:
+    async def async_get_metadata(self, session_id: str) -> dict[str, Any] | None:
         """Async version of :meth:`get_metadata`."""
         async with self._async_lock:
             conn = await self._get_aconn()
@@ -457,7 +458,7 @@ class SessionStore:
             row = await cursor.fetchone()
             if row is None:
                 return None
-            return json.loads(row["metadata"] or "{}")
+            return json.loads(row["metadata"] or "{}")  # type: ignore[no-any-return]  # json.loads returns Any
 
     async def async_rename_session(self, session_id: str, new_name: str) -> bool:
         """Async version of :meth:`rename_session`."""
@@ -471,7 +472,7 @@ class SessionStore:
             await conn.commit()
             return cursor.rowcount > 0
 
-    async def async_search_sessions(self, query: str) -> list[dict]:
+    async def async_search_sessions(self, query: str) -> list[dict[str, Any]]:
         """Async version of :meth:`search_sessions`."""
         async with self._async_lock:
             conn = await self._get_aconn()
@@ -487,7 +488,7 @@ class SessionStore:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
-    async def async_get_last_session(self) -> dict | None:
+    async def async_get_last_session(self) -> dict[str, Any] | None:
         """Async version of :meth:`get_last_session`."""
         async with self._async_lock:
             conn = await self._get_aconn()

@@ -35,7 +35,7 @@ def _get_logging_client(
             kwargs["project"] = project
         if credentials is not None:
             kwargs["credentials"] = credentials
-        client = cloud_logging.Client(**kwargs)
+        client = cloud_logging.Client(**kwargs)  # type: ignore[no-untyped-call]
         return client, None
     except Exception as exc:
         return None, f"Failed to create Cloud Logging client: {exc}"
@@ -64,7 +64,7 @@ def _get_monitoring_client(
 # ── Helpers ──────────────────────────────────────────────────
 
 
-def _format_log_entry(entry) -> str:  # noqa: ANN001
+def _format_log_entry(entry: Any) -> str:  # noqa: ANN001
     """Format a single Cloud Logging entry into a readable line."""
     ts = getattr(entry, "timestamp", None)
     ts_str = ts.strftime("%Y-%m-%d %H:%M:%S") if ts else "N/A"
@@ -113,7 +113,7 @@ def _format_log_entry(entry) -> str:  # noqa: ANN001
     return f"[{ts_str}] {severity:<8} {resource_str}  {payload}"
 
 
-def _format_time_series(time_series_list, metric_type: str) -> str:
+def _format_time_series(time_series_list: Any, metric_type: str) -> str:
     """Format Cloud Monitoring time series data into a readable table."""
     if not time_series_list:
         return f"No time series data found for metric: {metric_type}"

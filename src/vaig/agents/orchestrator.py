@@ -114,7 +114,7 @@ class Orchestrator:
         skill: BaseSkill,
         tool_registry: ToolRegistry | None = None,
         *,
-        agent_configs: list[dict] | None = None,
+        agent_configs: list[dict[str, Any]] | None = None,
     ) -> list[BaseAgent]:
         """Create agents based on a skill's configuration.
 

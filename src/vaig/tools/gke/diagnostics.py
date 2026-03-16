@@ -87,7 +87,8 @@ def get_events(
             ts = ev.last_timestamp or ev.metadata.creation_timestamp
             if ts is None:
                 return datetime.min.replace(tzinfo=UTC)
-            return ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts
+            ts_aware = ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts
+            return ts_aware  # type: ignore[no-any-return]  # K8s API returns datetime via Any
 
         events.sort(key=_sort_key, reverse=True)
 
@@ -529,7 +530,7 @@ def get_rollout_history(
         all_rs = apps_v1.list_namespaced_replica_set(namespace=ns)
 
         # Filter to ReplicaSets owned by this deployment
-        owned_rs: list = []
+        owned_rs: list[tuple[int, Any]] = []
         for rs in all_rs.items:
             for owner in (rs.metadata.owner_references or []):
                 if owner.kind == "Deployment" and owner.name == name:
@@ -576,7 +577,7 @@ def get_rollout_history(
 
         for rev_num, rs in owned_rs:
             # Images
-            containers = []
+            containers: list[Any] = []
             if rs.spec and rs.spec.template and rs.spec.template.spec:
                 containers = rs.spec.template.spec.containers or []
             images = ", ".join(c.image or "<none>" for c in containers) if containers else "<none>"
@@ -672,7 +673,7 @@ def _format_revision_detail(name: str, ns: str, revision: int, rs: Any) -> ToolR
         lines.append(f"Change Cause: {change_cause}")
 
     # Pod template containers
-    containers = []
+    containers: list[Any] = []
     if rs.spec and rs.spec.template and rs.spec.template.spec:
         containers = rs.spec.template.spec.containers or []
 

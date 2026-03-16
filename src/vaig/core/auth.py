@@ -144,7 +144,7 @@ def _gcloud_refresh_handler(
     try:
         token = _fetch_gcloud_access_token()
     except RuntimeError as exc:
-        raise auth_exceptions.RefreshError(
+        raise auth_exceptions.RefreshError(  # type: ignore[no-untyped-call]
             "Failed to refresh gcloud access token. "
             "Please re-authenticate with: gcloud auth login"
         ) from exc
@@ -176,7 +176,7 @@ def _get_gcloud_token_credentials() -> Credentials:
     # Use naive UTC to match google-auth's internal convention
     expiry = datetime.now(tz=UTC).replace(tzinfo=None) + _GCLOUD_TOKEN_LIFETIME
 
-    credentials = OAuth2Credentials(
+    credentials = OAuth2Credentials(  # type: ignore[no-untyped-call]
         token=token,
         expiry=expiry,
         refresh_handler=_gcloud_refresh_handler,
@@ -215,7 +215,7 @@ def _get_impersonated_credentials(
     source_credentials, _ = google.auth.default()
 
     # Create impersonated credentials
-    target_credentials = impersonated_credentials.Credentials(
+    target_credentials = impersonated_credentials.Credentials(  # type: ignore[no-untyped-call]
         source_credentials=source_credentials,
         target_principal=target_sa,
         target_scopes=scopes or _VERTEX_SCOPES,

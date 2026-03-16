@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -49,7 +50,7 @@ except ImportError as _exc:  # pragma: no cover
     class ClientSession:  # type: ignore[no-redef]
         """Stub."""
 
-    mcp_types = None  # type: ignore[assignment]
+    mcp_types = None
 
 
 def is_mcp_available() -> bool:
@@ -65,7 +66,7 @@ class MCPServerInfo:
     command: str
     args: list[str] = field(default_factory=list)
     env: dict[str, str] | None = None
-    tools: list[mcp_types.Tool] = field(default_factory=list)  # type: ignore[name-defined]
+    tools: list[mcp_types.Tool] = field(default_factory=list)
 
 
 def _mcp_type_to_tool_param_type(json_type: str) -> str:
@@ -82,7 +83,7 @@ def _mcp_type_to_tool_param_type(json_type: str) -> str:
 
 
 def _mcp_tool_to_tool_def(
-    mcp_tool: mcp_types.Tool,  # type: ignore[name-defined]
+    mcp_tool: mcp_types.Tool,
     call_fn: Any,
     server_name: str,
 ) -> ToolDef:
@@ -119,7 +120,7 @@ async def discover_tools(
     command: str,
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
-) -> list[mcp_types.Tool]:  # type: ignore[name-defined]
+) -> list[mcp_types.Tool]:
     """Connect to an MCP server, list its tools, and disconnect.
 
     This is a one-shot discovery — it opens a connection, lists tools,
@@ -217,7 +218,7 @@ def create_mcp_tool_defs(
             _tool_name: str = mcp_tool.name,
             _args: list[str] | None = args,
             _env: dict[str, str] | None = env,
-        ):
+        ) -> Callable[..., ToolResult]:
             def executor(**kwargs: Any) -> ToolResult:
                 return asyncio.run(
                     call_mcp_tool(_cmd, _tool_name, kwargs, args=_args, env=_env)

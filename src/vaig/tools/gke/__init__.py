@@ -138,7 +138,7 @@ from .security import (
 
 # k8s module aliases — conditionally available (only when kubernetes is installed)
 try:
-    from ._clients import k8s_client, k8s_config, k8s_exceptions  # noqa: WPS433
+    from ._clients import k8s_client, k8s_config, k8s_exceptions  # type: ignore[attr-defined]  # noqa: WPS433
 except ImportError:
     pass
 

@@ -14,7 +14,8 @@ before the first ``/ask`` call).
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -36,7 +37,7 @@ class SwitchResult:
     old_value: str
     new_value: str
     message: str  # user-facing message
-    reinitialized: list[str] = field(default_factory=list)  # what was reinitialized
+    reinitialized: list[str] = dataclass_field(default_factory=list)  # what was reinitialized
 
 
 # ── Switch functions ─────────────────────────────────────────

@@ -147,7 +147,7 @@ class StreamResult:
             }
         if chunk.text:
             self._text_parts.append(chunk.text)
-            return chunk.text
+            return str(chunk.text)
         return None
 
     def __iter__(self) -> Iterator[str]:
@@ -459,8 +459,8 @@ class GeminiClient:
         if safety_cfg.enabled and safety_cfg.settings:
             kwargs["safety_settings"] = [
                 types.SafetySetting(
-                    category=s.category,
-                    threshold=s.threshold,
+                    category=s.category,  # type: ignore[arg-type]
+                    threshold=s.threshold,  # type: ignore[arg-type]
                 )
                 for s in safety_cfg.settings
             ]
@@ -714,7 +714,7 @@ class GeminiClient:
             cached = self._cache.get(cache_key)
             if cached is not None:
                 logger.info("Cache hit — skipping API call (model=%s)", mid)
-                return cached
+                return cached  # type: ignore[no-any-return]  # ResponseCache.get returns Any
 
         def _call() -> GenerationResult:
             client = self._get_client()
@@ -727,7 +727,7 @@ class GeminiClient:
                 chat = client.chats.create(
                     model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
                 )
-                response = chat.send_message(prompt)
+                response = chat.send_message(prompt)  # type: ignore[arg-type]
             else:
                 response = client.models.generate_content(
                     model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
@@ -801,7 +801,7 @@ class GeminiClient:
                 chat = client.chats.create(
                     model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
                 )
-                response_stream = chat.send_message_stream(prompt)
+                response_stream = chat.send_message_stream(prompt)  # type: ignore[arg-type]
             else:
                 response_stream = client.models.generate_content_stream(
                     model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
@@ -873,12 +873,12 @@ class GeminiClient:
                         actual_prompt = last_entry.parts
 
                     chat = client.chats.create(
-                        model=mid, history=chat_history, config=config,
+                        model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
                     )
                     response = chat.send_message(actual_prompt)
                 else:
                     response = client.models.generate_content(
-                        model=mid, contents=prompt, config=config,
+                        model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
                     )
             except Exception as exc:
                 # In the old SDK we caught ResponseValidationError for
@@ -943,7 +943,7 @@ class GeminiClient:
                 model=mid,
                 function_calls=function_calls,
                 usage=usage,
-                finish_reason=str(response.candidates[0].finish_reason),
+                finish_reason=str(response.candidates[0].finish_reason),  # type: ignore[index]
             )
 
         return self._retry_with_backoff(_call, timeout=timeout)
@@ -1034,7 +1034,7 @@ class GeminiClient:
             cached = self._cache.get(cache_key)
             if cached is not None:
                 logger.info("Cache hit — skipping API call (model=%s)", mid)
-                return cached
+                return cached  # type: ignore[no-any-return]  # ResponseCache.get returns Any
 
         async def _call() -> GenerationResult:
             client = self._get_client()
@@ -1047,7 +1047,7 @@ class GeminiClient:
                 chat = client.aio.chats.create(
                     model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
                 )
-                response = await chat.send_message(prompt)
+                response = await chat.send_message(prompt)  # type: ignore[arg-type]
             else:
                 response = await client.aio.models.generate_content(
                     model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
@@ -1103,7 +1103,7 @@ class GeminiClient:
                 chat = client.aio.chats.create(
                     model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
                 )
-                response_stream = await chat.send_message_stream(prompt)
+                response_stream = await chat.send_message_stream(prompt)  # type: ignore[arg-type]
             else:
                 response_stream = await client.aio.models.generate_content_stream(
                     model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
@@ -1159,12 +1159,12 @@ class GeminiClient:
                         actual_prompt = last_entry.parts
 
                     chat = client.aio.chats.create(
-                        model=mid, history=chat_history, config=config,
+                        model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
                     )
                     response = await chat.send_message(actual_prompt)
                 else:
                     response = await client.aio.models.generate_content(
-                        model=mid, contents=prompt, config=config,
+                        model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
                     )
             except Exception as exc:
                 exc_name = type(exc).__name__
@@ -1223,7 +1223,7 @@ class GeminiClient:
                 model=mid,
                 function_calls=function_calls,
                 usage=usage,
-                finish_reason=str(response.candidates[0].finish_reason),
+                finish_reason=str(response.candidates[0].finish_reason),  # type: ignore[index]
             )
 
         return await self._async_retry_with_backoff(_call, timeout=timeout)

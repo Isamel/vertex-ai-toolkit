@@ -225,17 +225,17 @@ def register(app: typer.Typer) -> None:
                 with console.status(
                     f"[bold cyan]Generating response with {settings.models.default}...[/bold cyan]"
                 ):
-                    result = orchestrator.execute_single(question, context=context_str)
+                    result = orchestrator.execute_single(question, context=context_str)  # type: ignore[assignment]
                 console.print()
                 if hasattr(result, "content") and result.content:
-                    console.print(Markdown(result.content))  # type: ignore[union-attr]
+                    console.print(Markdown(result.content))
 
                     # Show cost summary
                     result_usage = getattr(result, "usage", None)
                     _show_cost_line(result_usage, settings.models.default)
 
                     _handle_export_output(
-                        response_text=result.content,  # type: ignore[union-attr]
+                        response_text=result.content,
                         question=question,
                         model_id=settings.models.default,
                         skill_name=skill,
@@ -443,16 +443,16 @@ async def _async_ask_impl(
             with console.status(
                 f"[bold cyan]Generating response with {settings.models.default} (async)...[/bold cyan]"
             ):
-                result = await orchestrator.async_execute_single(question, context=context_str)
+                result = await orchestrator.async_execute_single(question, context=context_str)  # type: ignore[assignment]
             console.print()
             if hasattr(result, "content") and result.content:
-                console.print(Markdown(result.content))  # type: ignore[union-attr]
+                console.print(Markdown(result.content))
 
                 result_usage = getattr(result, "usage", None)
                 _show_cost_line(result_usage, settings.models.default)
 
                 _handle_export_output(
-                    response_text=result.content,  # type: ignore[union-attr]
+                    response_text=result.content,
                     question=question,
                     model_id=settings.models.default,
                     skill_name=skill,

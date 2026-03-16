@@ -55,7 +55,7 @@ class ToolCallStore:
 
         line = json.dumps(tool_record.to_dict(), ensure_ascii=False, default=str)
         with self._lock:
-            with open(self._current_file, "a", encoding="utf-8") as f:  # noqa: PTH123
+            with open(self._current_file, "a", encoding="utf-8") as f:  # type: ignore[arg-type]  # noqa: PTH123
                 f.write(line + "\n")
 
     def get_run_file(self) -> Path | None:

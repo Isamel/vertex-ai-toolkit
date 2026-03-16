@@ -6,6 +6,7 @@ import contextlib
 import logging
 import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -196,7 +197,7 @@ def _extract_proxy_url_from_kubeconfig(
     if not cluster_entry:
         return None
 
-    return cluster_entry.get("cluster", {}).get("proxy-url")
+    return cluster_entry.get("cluster", {}).get("proxy-url")  # type: ignore[no-any-return]  # parsed YAML dict
 
 
 def _cache_key(gke_config: GKEConfig) -> tuple[str, str, str]:
@@ -242,7 +243,7 @@ class _NonTTYStream:
 
 
 @contextlib.contextmanager
-def _suppress_stderr():
+def _suppress_stderr() -> Iterator[None]:
     """Suppress stderr at the file-descriptor level and force non-TTY stdout.
 
     The kubernetes Python client may spawn a Go-based credential helper
@@ -264,7 +265,7 @@ def _suppress_stderr():
     original_stdout = sys.stdout
     try:
         os.dup2(devnull_fd, 2)
-        sys.stdout = _NonTTYStream(sys.stdout)  # type: ignore[assignment]
+        sys.stdout = _NonTTYStream(sys.stdout)
         yield
     finally:
         sys.stdout = original_stdout

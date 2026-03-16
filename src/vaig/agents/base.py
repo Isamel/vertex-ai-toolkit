@@ -172,7 +172,7 @@ class BaseAgent(ABC):
         ...
         # Trick: yield inside an abstract async generator so Python treats
         # this as an async generator function rather than a plain coroutine.
-        yield ""  # type: ignore[misc]  # pragma: no cover
+        yield ""  # pragma: no cover
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} name={self.name!r} role={self.role!r} model={self.model!r}>"

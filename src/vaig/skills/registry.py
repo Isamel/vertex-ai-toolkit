@@ -268,7 +268,7 @@ def _find_skill_class(module: object) -> type[BaseSkill]:
 
     for _name, obj in inspect.getmembers(module, inspect.isclass):
         if issubclass(obj, BaseSkill) and obj is not BaseSkill:
-            return obj  # type: ignore[return-value]
+            return obj
 
     msg = f"No BaseSkill subclass found in module: {module}"
     raise ImportError(msg)

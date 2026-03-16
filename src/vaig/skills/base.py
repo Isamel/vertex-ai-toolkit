@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 
 class SkillPhase(StrEnum):
@@ -42,7 +43,7 @@ class SkillResult:
     success: bool
     output: str
     artifacts: dict[str, str] = field(default_factory=dict)  # name → content
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     next_phase: SkillPhase | None = None
 
 
@@ -82,7 +83,7 @@ class BaseSkill(ABC):
         """
         ...
 
-    def get_agents_config(self) -> list[dict]:
+    def get_agents_config(self) -> list[dict[str, Any]]:
         """Return agent configurations for multi-agent execution.
 
         Override this to define specialized agents for the skill.
@@ -200,9 +201,9 @@ class CompositeSkill(BaseSkill):
             + "\n\n---\n\n".join(prompts)
         )
 
-    def get_agents_config(self) -> list[dict]:
+    def get_agents_config(self) -> list[dict[str, Any]]:
         """Merge agent configs from all component skills (deduplicated by name)."""
-        agents: list[dict] = []
+        agents: list[dict[str, Any]] = []
         seen_names: set[str] = set()
         for skill in self._skills:
             for agent in skill.get_agents_config():

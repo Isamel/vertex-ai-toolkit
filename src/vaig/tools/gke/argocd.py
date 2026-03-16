@@ -95,7 +95,7 @@ def _list_applications_raw(
             namespace=namespace,
             plural=_ARGOCD_PLURAL,
         )
-        return result.get("items", [])
+        return result.get("items", [])  # type: ignore[no-any-return]  # K8s CustomObject API returns Any
     except Exception as exc:
         if _K8S_AVAILABLE and isinstance(exc, k8s_exceptions.ApiException):
             if exc.status == 404:
@@ -115,7 +115,7 @@ def _get_application_raw(
 ) -> dict[str, Any] | None:
     """Get a single ArgoCD Application CRD by name."""
     try:
-        return custom_api.get_namespaced_custom_object(
+        return custom_api.get_namespaced_custom_object(  # type: ignore[no-any-return]  # K8s API
             group=_ARGOCD_GROUP,
             version=_ARGOCD_VERSION,
             namespace=namespace,

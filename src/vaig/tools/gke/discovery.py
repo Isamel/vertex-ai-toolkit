@@ -597,7 +597,7 @@ def discover_network_topology(
                                     from_parts.append("namespace-selector")
                                 elif frm.ip_block:
                                     from_parts.append(f"cidr:{frm.ip_block.cidr}")
-                        port_parts: list[str] = []
+                        port_parts: list[str] = []  # type: ignore[no-redef]
                         if rule.ports:
                             for rp in rule.ports:
                                 port_parts.append(str(rp.port or rp.protocol or ""))

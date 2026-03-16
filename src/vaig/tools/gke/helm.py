@@ -34,7 +34,7 @@ _HELM_SECRET_NAME_PREFIX = "sh.helm.release.v1."
 # ── Helpers ──────────────────────────────────────────────────
 
 
-def _decode_helm_release(release_data: str) -> dict:
+def _decode_helm_release(release_data: str) -> dict[str, Any]:
     """Decode a Helm release from a K8s secret.
 
     Helm stores releases as: base64 → gzip → JSON.
@@ -48,7 +48,8 @@ def _decode_helm_release(release_data: str) -> dict:
     # Gzip decompress
     decompressed = gzip.decompress(decoded)
     # Parse JSON
-    return json.loads(decompressed)
+    result: dict[str, Any] = json.loads(decompressed)
+    return result
 
 
 def _extract_release_info(secret: Any) -> dict[str, Any] | None:
