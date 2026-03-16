@@ -82,7 +82,7 @@ class SpecialistAgent(BaseAgent):
             logger.exception("Agent %s failed", self.name)
             return AgentResult(
                 agent_name=self.name,
-                content=f"Error: {e}",
+                content=self.sanitize_error_for_agent(e),
                 success=False,
                 metadata={"error": str(e)},
             )
@@ -125,7 +125,7 @@ class SpecialistAgent(BaseAgent):
 
         except Exception as e:
             logger.exception("Agent %s streaming failed", self.name)
-            yield f"\n[Error: {e}]"
+            yield f"\n[Error: {self.sanitize_error_for_agent(e)}]"
 
     # ── Async methods ────────────────────────────────────────
 
@@ -202,7 +202,7 @@ class SpecialistAgent(BaseAgent):
             logger.exception("Agent %s async failed", self.name)
             return AgentResult(
                 agent_name=self.name,
-                content=f"Error: {e}",
+                content=self.sanitize_error_for_agent(e),
                 success=False,
                 metadata={"error": str(e)},
             )
@@ -256,7 +256,7 @@ class SpecialistAgent(BaseAgent):
 
         except Exception as e:
             logger.exception("Agent %s async streaming failed", self.name)
-            yield f"\n[Error: {e}]"
+            yield f"\n[Error: {self.sanitize_error_for_agent(e)}]"
 
     def _build_chat_history(self) -> list[ChatMessage]:
         """Convert agent conversation history to ChatMessage format for Gemini.

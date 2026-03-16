@@ -132,6 +132,13 @@ retry:
 logging:
   level: "WARNING"  # Override via VAIG_LOGGING__LEVEL or --verbose/-V
   show_path: false   # Show module path in log output (useful for debugging)
+  file_enabled: false         # Write logs to a rotating file for post-mortem debugging (opt-in)
+  file_path: "~/.vaig/logs/vaig.log"  # Log file location (supports ~ expansion)
+  file_level: "DEBUG"         # Always capture everything to file
+  file_max_bytes: 5242880     # 5 MB per file before rotation
+  file_backup_count: 3        # Keep 3 backup files (vaig.log.1, .2, .3)
+  tool_results: false         # Persist full tool call results as JSONL for post-session analysis (opt-in)
+  tool_results_dir: "~/.vaig" # Base directory for tool results (stored under tool_results/ subdir)
 
 coding:
   workspace_root: "."
@@ -139,6 +146,34 @@ coding:
   confirm_actions: true
   allowed_commands: []
   blocked_paths: []
+  denied_commands:
+    # Destructive disk / filesystem operations
+    - '\brm\s+(-\w*\s+)*-\w*r\w*\s+/\s*$'  # rm -rf /
+    - '\brm\s+(-\w*\s+)*-\w*r\w*\s+/\w'     # rm -rf /anything
+    - '\bmkfs\b'
+    - '\bdd\b\s+'
+    - '\bformat\b'
+    - '\bfdisk\b'
+    # Fork bomb patterns
+    - ':\(\)\s*\{'
+    # Insecure permission patterns
+    - '\bchmod\s+(-\w+\s+)*777\b'
+    # Piped remote execution
+    - '\bcurl\b.*\|\s*(sh|bash|zsh)\b'
+    - '\bwget\b.*\|\s*(sh|bash|zsh)\b'
+    # Generic pipe-to-shell
+    - '\|\s*sh\b'
+    - '\|\s*bash\b'
+    # System control
+    - '\bshutdown\b'
+    - '\breboot\b'
+    - '\bhalt\b'
+    - '\bpoweroff\b'
+    - '\binit\s+[0-6]'
+    # Privilege escalation
+    - '^\s*sudo\b'
+    # Direct device writes
+    - '>\s*/dev/sd'
 
 chunking:
   chunk_overlap_ratio: 0.1   # 10% overlap between consecutive chunks

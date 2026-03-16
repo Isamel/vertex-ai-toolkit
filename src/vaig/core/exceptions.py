@@ -75,9 +75,83 @@ class ChunkedProcessingError(VAIGError):
         self.partial_results = partial_results or []
 
 
+class VaigAuthError(VAIGError):
+    """Authentication failure — missing credentials, expired tokens, etc."""
+
+
+class GCPAuthError(VaigAuthError):
+    """GCP-specific authentication error."""
+
+    def __init__(self, message: str, fix_suggestion: str = "") -> None:
+        self.fix_suggestion = fix_suggestion
+        super().__init__(message)
+
+
+class GCPPermissionError(VaigAuthError):
+    """GCP permission denied — missing IAM roles."""
+
+    def __init__(
+        self,
+        message: str,
+        required_permissions: list[str] | None = None,
+        fix_suggestion: str = "",
+    ) -> None:
+        self.required_permissions = required_permissions or []
+        self.fix_suggestion = fix_suggestion
+        super().__init__(message)
+
+
+class K8sAuthError(VaigAuthError):
+    """Kubernetes authentication/authorization error."""
+
+
 class TokenBudgetError(VAIGError):
     """Raised when the token budget cannot be computed or is invalid.
 
     Examples: context_window is too small to fit even the system prompt,
     or count_tokens() fails and no fallback is possible.
     """
+
+
+def format_error_for_user(exc: Exception, *, debug: bool = False) -> str:
+    """Format an exception for user display using Rich markup.
+
+    In normal mode: shows a clean, actionable message with fix suggestions.
+    In debug mode: additionally includes the full traceback.
+    """
+    import traceback
+
+    lines: list[str] = []
+
+    if isinstance(exc, GCPPermissionError):
+        lines.append(f"[red]Permission Denied:[/red] {exc}")
+        if exc.required_permissions:
+            lines.append(
+                f"[yellow]Required permissions:[/yellow] {', '.join(exc.required_permissions)}"
+            )
+        if exc.fix_suggestion:
+            lines.append(f"[yellow]Fix:[/yellow] {exc.fix_suggestion}")
+    elif isinstance(exc, GCPAuthError):
+        lines.append(f"[red]Authentication Error:[/red] {exc}")
+        if exc.fix_suggestion:
+            lines.append(f"[yellow]Fix:[/yellow] {exc.fix_suggestion}")
+    elif isinstance(exc, K8sAuthError):
+        lines.append(f"[red]Kubernetes Auth Error:[/red] {exc}")
+        lines.append(
+            "[yellow]Fix:[/yellow] Check your kubeconfig: kubectl config current-context"
+        )
+    elif isinstance(exc, VaigAuthError):
+        lines.append(f"[red]Authentication Error:[/red] {exc}")
+    elif isinstance(exc, VAIGError):
+        lines.append(f"[red]Error:[/red] {exc}")
+    else:
+        lines.append(f"[red]Unexpected Error:[/red] {type(exc).__name__}: {exc}")
+
+    if debug:
+        lines.append("")
+        lines.append("[dim]Full traceback:[/dim]")
+        lines.append(traceback.format_exc())
+    else:
+        lines.append("[dim]Use --debug for full traceback[/dim]")
+
+    return "\n".join(lines)

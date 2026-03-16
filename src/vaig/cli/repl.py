@@ -20,6 +20,7 @@ from vaig.context.builder import ContextBuilder
 from vaig.core.client import GeminiClient, StreamResult
 from vaig.core.config import Settings
 from vaig.core.cost_tracker import BudgetStatus, CostTracker
+from vaig.core.exceptions import format_error_for_user
 from vaig.session.manager import SessionManager
 from vaig.skills.base import BaseSkill, SkillPhase
 from vaig.skills.registry import SkillRegistry
@@ -79,6 +80,8 @@ class REPLState:
         session_manager: SessionManager,
         context_builder: ContextBuilder,
         skill_registry: SkillRegistry,
+        *,
+        debug: bool = False,
     ) -> None:
         self.settings = settings
         self.client = client
@@ -91,6 +94,7 @@ class REPLState:
         self.stream_enabled: bool = True
         self.code_mode: bool = False
         self.cost_tracker: CostTracker = CostTracker()
+        self.debug: bool = debug
 
     @property
     def model(self) -> str:
@@ -194,6 +198,9 @@ def start_repl(
     except Exception:  # noqa: BLE001
         pass
 
+    # Auto-detect debug mode from the root logger level (set by --debug in app.py)
+    debug = logging.getLogger().getEffectiveLevel() <= logging.DEBUG
+
     state = REPLState(
         settings=settings,
         client=client,
@@ -201,6 +208,7 @@ def start_repl(
         session_manager=session_manager,
         context_builder=context_builder,
         skill_registry=skill_registry,
+        debug=debug,
     )
 
     # Load or create session
@@ -287,6 +295,9 @@ async def async_start_repl(
     except Exception:  # noqa: BLE001
         pass
 
+    # Auto-detect debug mode from the root logger level (set by --debug in app.py)
+    debug = logging.getLogger().getEffectiveLevel() <= logging.DEBUG
+
     state = REPLState(
         settings=settings,
         client=client,
@@ -294,6 +305,7 @@ async def async_start_repl(
         session_manager=session_manager,
         context_builder=context_builder,
         skill_registry=skill_registry,
+        debug=debug,
     )
 
     # Load or create session (async)
@@ -452,7 +464,7 @@ async def _async_handle_direct_chat(state: REPLState, user_input: str, context: 
         console.print()
 
     except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Async chat error")
         try:
             from vaig.core.telemetry import get_telemetry_collector
@@ -503,7 +515,7 @@ async def _async_handle_skill_chat(state: REPLState, user_input: str, context: s
             console.print(f"[dim]Suggested next phase: /phase {result.next_phase.value}[/dim]")
 
     except Exception as e:
-        console.print(f"[red]Error during {state.current_phase.value}: {e}[/red]")
+        console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Async skill execution error")
         try:
             from vaig.core.telemetry import get_telemetry_collector
@@ -556,7 +568,7 @@ async def _async_handle_code_chat(state: REPLState, user_input: str, context: st
             "Try breaking the task into smaller steps.[/yellow]"
         )
     except Exception as e:
-        console.print(f"[red]Error in async code mode: {e}[/red]")
+        console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Async code mode error")
         try:
             from vaig.core.telemetry import get_telemetry_collector
@@ -777,7 +789,7 @@ def _handle_direct_chat(state: REPLState, user_input: str, context: str) -> None
         console.print()
 
     except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Chat error")
         try:
             from vaig.core.telemetry import get_telemetry_collector
@@ -885,7 +897,7 @@ def _handle_skill_chat(state: REPLState, user_input: str, context: str) -> None:
             console.print(f"[dim]Suggested next phase: /phase {result.next_phase.value}[/dim]")
 
     except Exception as e:
-        console.print(f"[red]Error during {state.current_phase.value}: {e}[/red]")
+        console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Skill execution error")
         try:
             from vaig.core.telemetry import get_telemetry_collector
@@ -947,7 +959,7 @@ def _handle_code_chat(state: REPLState, user_input: str, context: str) -> None:
             "Try breaking the task into smaller steps.[/yellow]"
         )
     except Exception as e:
-        console.print(f"[red]Error in code mode: {e}[/red]")
+        console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Code mode error")
         try:
             from vaig.core.telemetry import get_telemetry_collector

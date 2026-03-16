@@ -179,6 +179,49 @@ class BaseAgent(ABC):
 
     # ── Shared helpers (subclasses may override) ──────────────
 
+    @staticmethod
+    def sanitize_error_for_agent(exc: Exception) -> str:
+        """Clean up exception message for agent result content.
+
+        Strips gRPC/protobuf internals and long tracebacks, keeping only
+        the actionable, human-readable portion of the error.  Used by
+        agent ``except Exception`` blocks that return
+        ``AgentResult(success=False)``.
+        """
+        from vaig.core.exceptions import GCPAuthError, GCPPermissionError
+
+        # For known auth errors, provide clean messages
+        if isinstance(exc, GCPPermissionError):
+            result = f"Permission denied: {exc}"
+            if exc.required_permissions:
+                result += f" Required: {', '.join(exc.required_permissions)}"
+            return result
+
+        if isinstance(exc, GCPAuthError):
+            result = f"Authentication failed: {exc}"
+            if exc.fix_suggestion:
+                result += f". {exc.fix_suggestion}"
+            return result
+
+        msg = str(exc)
+
+        # Strip gRPC status details
+        if "StatusCode." in msg or "grpc" in msg.lower():
+            for line in msg.split("\n"):
+                line = line.strip()
+                if line and not line.startswith("Debug") and "grpc" not in line.lower():
+                    return f"API Error: {line}"
+            return "API Error: Service unavailable. Check your credentials and network."
+
+        # Strip protobuf wire format details
+        if "proto" in msg.lower() or "field_" in msg:
+            return f"API Error: {msg.split(chr(10))[0][:200]}"
+
+        # Cap generic messages at 500 chars
+        return msg[:500] if len(msg) > 500 else msg
+
+
+
     def _build_prompt(self, prompt: str, context: str) -> str:
         """Build the full prompt with optional context.
 

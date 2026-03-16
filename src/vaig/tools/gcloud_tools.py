@@ -64,6 +64,51 @@ def _get_monitoring_client(
 # ── Helpers ──────────────────────────────────────────────────
 
 
+def _handle_gcp_api_error(exc: Exception, *, service: str = "GCP API") -> str:
+    """Handle GCP API errors with lazy imports.
+
+    Classifies the exception into a user-friendly message with actionable
+    guidance.  Uses lazy imports so the module works even when
+    ``google.api_core`` is not installed.
+
+    Args:
+        exc: The caught exception.
+        service: Human-readable service name for error messages
+            (e.g. ``"Cloud Logging"``).
+
+    Returns:
+        A user-friendly error string.
+    """
+    try:
+        from google.api_core.exceptions import (
+            Forbidden,
+            InvalidArgument,
+            NotFound,
+            PermissionDenied,
+            ResourceExhausted,
+        )
+
+        if isinstance(exc, (PermissionDenied, Forbidden)):
+            msg = getattr(exc, "message", str(exc))
+            return (
+                f"Permission denied querying {service}. "
+                f"Check IAM permissions. Error: {msg}"
+            )
+        if isinstance(exc, ResourceExhausted):
+            msg = getattr(exc, "message", str(exc))
+            return (
+                f"{service} API quota exceeded. "
+                f"Try reducing the limit or narrowing the filter. Error: {msg}"
+            )
+        if isinstance(exc, (InvalidArgument, NotFound)):
+            msg = getattr(exc, "message", str(exc))
+            return f"Invalid request to {service}: {msg}"
+    except ImportError:
+        pass  # google.api_core not available — fall through
+
+    return f"Error querying {service}: {str(exc)[:300]}"
+
+
 def _format_log_entry(entry: Any) -> str:  # noqa: ANN001
     """Format a single Cloud Logging entry into a readable line."""
     ts = getattr(entry, "timestamp", None)
@@ -242,37 +287,8 @@ def gcloud_logging_query(
             )
         )
     except Exception as exc:
-        # Attempt typed classification via google.api_core.exceptions
-        try:
-            from google.api_core.exceptions import (
-                Forbidden,
-                InvalidArgument,
-                NotFound,
-                PermissionDenied,
-                ResourceExhausted,
-            )
-        except ImportError:
-            # Fallback — SDK not installed; just report the raw error.
-            return ToolResult(output=f"Error querying Cloud Logging: {exc}", error=True)
-
-        if isinstance(exc, (PermissionDenied, Forbidden)):
-            return ToolResult(
-                output=f"Permission denied querying Cloud Logging. Ensure the service account has 'roles/logging.viewer'. Error: {exc}",
-                error=True,
-            )
-        if isinstance(exc, ResourceExhausted):
-            return ToolResult(
-                output=f"Cloud Logging API quota exceeded. Try reducing the limit or narrowing the filter. Error: {exc}",
-                error=True,
-            )
-        if isinstance(exc, (InvalidArgument, NotFound)):
-            return ToolResult(
-                output=f"Invalid filter expression: '{filter_expr}'. Check the Cloud Logging filter syntax. Error: {exc}",
-                error=True,
-            )
-
         return ToolResult(
-            output=f"Error querying Cloud Logging: {exc}",
+            output=_handle_gcp_api_error(exc, service="Cloud Logging"),
             error=True,
         )
 
@@ -296,15 +312,27 @@ def gcloud_monitoring_query(
     interval_minutes: int = 60,
     aggregation: str = "",
     filter_str: str = "",
+    resource_labels: dict[str, str] | None = None,
     credentials: Credentials | None = None,
 ) -> ToolResult:
     """Query Cloud Monitoring time series data for a given metric.
 
     Returns formatted time series with timestamps, values, and labels.
+
+    Args:
+        metric_type: Fully qualified metric type (e.g. ``istio.io/service/server/request_count``).
+        project: GCP project ID.  Falls back to ADC default if empty.
+        interval_minutes: Time window in minutes (1–10080).
+        aggregation: Cross-series aggregation (mean/max/min/sum/count).
+        filter_str: Raw additional monitoring filter string to AND with the metric type.
+        resource_labels: Dict of resource label key→value pairs to filter on.
+            Converted to ``resource.labels.<key> = "<value>"`` filter clauses.
+            Example: ``{"namespace_name": "production", "cluster_name": "prod-1"}``.
+        credentials: Optional GCP credentials for the Monitoring client.
     """
     logger.debug(
-        "gcloud_monitoring_query: metric=%s project=%s interval=%d",
-        metric_type, project, interval_minutes,
+        "gcloud_monitoring_query: metric=%s project=%s interval=%d resource_labels=%s",
+        metric_type, project, interval_minutes, resource_labels,
     )
 
     if not metric_type.strip():
@@ -372,6 +400,21 @@ def gcloud_monitoring_query(
     if filter_str.strip():
         monitoring_filter += f" AND {filter_str}"
 
+    # Append resource.labels filters from dict
+    if resource_labels:
+        import re
+
+        for label_key, label_value in resource_labels.items():
+            # Validate label_key: only alphanumeric and underscores
+            if not re.fullmatch(r"[A-Za-z_]\w*", label_key):
+                return ToolResult(
+                    output=f"Invalid resource label key: '{label_key}'. Only alphanumeric characters and underscores are allowed.",
+                    error=True,
+                )
+            # Escape backslashes and double quotes in label_value
+            escaped_value = str(label_value).replace("\\", "\\\\").replace('"', '\\"')
+            monitoring_filter += f' AND resource.labels.{label_key} = "{escaped_value}"'
+
     # Build request
     request = monitoring_types.ListTimeSeriesRequest(
         name=project_name,
@@ -407,40 +450,8 @@ def gcloud_monitoring_query(
         results = client.list_time_series(request=request)
         time_series_list = list(results)
     except Exception as exc:
-        # Attempt typed classification via google.api_core.exceptions
-        try:
-            from google.api_core.exceptions import (
-                Forbidden,
-                InvalidArgument,
-                NotFound,
-                PermissionDenied,
-                ResourceExhausted,
-            )
-        except ImportError:
-            return ToolResult(output=f"Error querying Cloud Monitoring: {exc}", error=True)
-
-        if isinstance(exc, (PermissionDenied, Forbidden)):
-            return ToolResult(
-                output=f"Permission denied querying Cloud Monitoring. Ensure the service account has 'roles/monitoring.viewer'. Error: {exc}",
-                error=True,
-            )
-        if isinstance(exc, ResourceExhausted):
-            return ToolResult(
-                output=f"Cloud Monitoring API quota exceeded. Try reducing the interval or narrowing the filter. Error: {exc}",
-                error=True,
-            )
-        if isinstance(exc, (InvalidArgument, NotFound)):
-            return ToolResult(
-                output=(
-                    f"Metric not found or invalid: '{metric_type}'. "
-                    "Check the metric name at https://cloud.google.com/monitoring/api/metrics_gcp. "
-                    f"Error: {exc}"
-                ),
-                error=True,
-            )
-
         return ToolResult(
-            output=f"Error querying Cloud Monitoring: {exc}",
+            output=_handle_gcp_api_error(exc, service="Cloud Monitoring"),
             error=True,
         )
 
@@ -525,7 +536,9 @@ def create_gcloud_tools(
                 "Common metrics: compute.googleapis.com/instance/cpu/utilization, "
                 "kubernetes.io/container/memory/used_bytes, "
                 "kubernetes.io/container/cpu/core_usage_time, "
-                "kubernetes.io/container/restart_count."
+                "kubernetes.io/container/restart_count, "
+                "istio.io/service/server/request_count. "
+                "Use resource_labels to filter by resource dimensions (e.g. namespace, cluster)."
             ),
             parameters=[
                 ToolParam(
@@ -535,7 +548,8 @@ def create_gcloud_tools(
                         "Fully qualified metric type. Examples: "
                         "'compute.googleapis.com/instance/cpu/utilization', "
                         "'kubernetes.io/container/memory/used_bytes', "
-                        "'kubernetes.io/container/restart_count'"
+                        "'kubernetes.io/container/restart_count', "
+                        "'istio.io/service/server/request_count'"
                     ),
                 ),
                 ToolParam(
@@ -565,13 +579,26 @@ def create_gcloud_tools(
                     ),
                     required=False,
                 ),
+                ToolParam(
+                    name="resource_labels",
+                    type="object",
+                    description=(
+                        "Dict of resource label key-value pairs to filter by. "
+                        "Each entry becomes a 'resource.labels.<key> = \"<value>\"' filter clause. "
+                        "Common keys: namespace_name, cluster_name, container_name, pod_name, "
+                        "destination_workload_namespace, location. "
+                        "Example: {\"namespace_name\": \"production\", \"cluster_name\": \"prod-1\"}"
+                    ),
+                    required=False,
+                ),
             ],
-            execute=lambda metric_type, project="", interval_minutes=0, aggregation="", filter_str="", _dp=project, _di=metrics_interval_minutes, _dc=credentials: gcloud_monitoring_query(
+            execute=lambda metric_type, project="", interval_minutes=0, aggregation="", filter_str="", resource_labels=None, _dp=project, _di=metrics_interval_minutes, _dc=credentials: gcloud_monitoring_query(
                 metric_type,
                 project=project or _dp,
                 interval_minutes=interval_minutes or _di,
                 aggregation=aggregation,
                 filter_str=filter_str,
+                resource_labels=resource_labels,
                 credentials=_dc,
             ),
         ),

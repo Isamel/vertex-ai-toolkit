@@ -133,19 +133,43 @@ def _apply_subcommand_log_flags(*, verbose: bool, debug: bool) -> None:
     Subcommand-level flags override the global callback flags so that
     ``vaig live "query" -d`` works the same as ``vaig -d live "query"``.
     Only overrides if a flag is actually set (non-default).
+
+    File logging settings are preserved from the loaded configuration
+    so that subcommand-level overrides only change console level/show_path.
     """
     if not verbose and not debug:
         return
 
+    from vaig.core.config import get_settings
     from vaig.core.log import reset_logging, setup_logging
 
     # Reset the idempotent guard so we can reconfigure with the subcommand flags.
     reset_logging()
 
+    # Preserve file logging settings from the loaded config
+    settings = get_settings()
+    log_cfg = settings.logging
+
     if debug:
-        setup_logging("DEBUG", show_path=True)
+        setup_logging(
+            "DEBUG",
+            show_path=True,
+            file_enabled=log_cfg.file_enabled,
+            file_path=log_cfg.file_path,
+            file_level=log_cfg.file_level,
+            file_max_bytes=log_cfg.file_max_bytes,
+            file_backup_count=log_cfg.file_backup_count,
+        )
     elif verbose:
-        setup_logging("INFO", show_path=False)
+        setup_logging(
+            "INFO",
+            show_path=False,
+            file_enabled=log_cfg.file_enabled,
+            file_path=log_cfg.file_path,
+            file_level=log_cfg.file_level,
+            file_max_bytes=log_cfg.file_max_bytes,
+            file_backup_count=log_cfg.file_backup_count,
+        )
 
 
 # ── Output / export helpers ───────────────────────────────────
@@ -353,3 +377,25 @@ def _show_coding_summary(result: object) -> None:
     from vaig.cli.display import show_tool_execution_summary
 
     show_tool_execution_summary(result, console=console)  # type: ignore[arg-type]
+
+
+def handle_cli_error(exc: Exception, *, debug: bool = False) -> None:
+    """Format and print a VAIG exception, then raise ``typer.Exit(1)``.
+
+    This is the single error-boundary function for all CLI commands.
+    It converts raw exceptions into user-friendly Rich-formatted output
+    with actionable fix suggestions.
+
+    Args:
+        exc: The exception to format and display.
+        debug: When True, includes the full traceback.
+
+    Raises:
+        typer.Exit: Always — with ``code=1`` to signal failure.
+    """
+    import typer
+
+    from vaig.core.exceptions import format_error_for_user
+
+    err_console.print(format_error_for_user(exc, debug=debug))
+    raise typer.Exit(code=1)

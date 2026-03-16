@@ -50,6 +50,7 @@ from vaig.cli._helpers import (  # noqa: F401
     async_run_command,
     console,
     err_console,
+    handle_cli_error,
     track_command,
     track_command_async,
 )
@@ -138,7 +139,21 @@ def main(
         level = "WARNING"
         show_path = False
 
-    setup_logging(level, show_path=show_path)
+    # Load settings for file logging config
+    from vaig.core.config import get_settings
+
+    settings = get_settings()
+    log_cfg = settings.logging
+
+    setup_logging(
+        level,
+        show_path=show_path,
+        file_enabled=log_cfg.file_enabled,
+        file_path=log_cfg.file_path,
+        file_level=log_cfg.file_level,
+        file_max_bytes=log_cfg.file_max_bytes,
+        file_backup_count=log_cfg.file_backup_count,
+    )
 
 
 # ── Register commands from modules ────────────────────────────

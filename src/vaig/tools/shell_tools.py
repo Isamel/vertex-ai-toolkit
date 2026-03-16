@@ -47,7 +47,7 @@ def _check_denied_command(
     """
     for pattern in denied_patterns:
         try:
-            if re.search(pattern, command):
+            if re.search(pattern, command, re.IGNORECASE):
                 return (
                     f"Command denied — matches blocked pattern: {pattern!r}. "
                     "This command is not allowed for security reasons."

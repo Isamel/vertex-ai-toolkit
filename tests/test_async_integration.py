@@ -144,7 +144,7 @@ class TestAsyncAgentExecution:
         result = await agent.async_execute("this will fail")
 
         assert result.success is False
-        assert "Error" in result.content
+        assert "API down" in result.content
 
 
 # ── 2. Async Session Lifecycle ────────────────────────────────

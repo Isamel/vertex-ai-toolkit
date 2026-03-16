@@ -6,6 +6,7 @@ import base64
 import gzip
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from vaig.tools.base import ToolResult
@@ -29,6 +30,95 @@ _HELM_CACHE_TTL: int = 60  # seconds (matches _DISCOVERY_TTL)
 _HELM_SECRET_LABEL_SELECTOR = "owner=helm"
 _HELM_SECRET_TYPE = "helm.sh/release.v1"
 _HELM_SECRET_NAME_PREFIX = "sh.helm.release.v1."
+
+_REDACTED = "[REDACTED]"
+
+_DEFAULT_SENSITIVE_KEYS: tuple[str, ...] = (
+    "password",
+    "secret",
+    "token",
+    "key",
+    "credential",
+    "apikey",
+    "api_key",
+    "private",
+    "auth",
+    "connection_string",
+    "connectionstring",
+)
+
+# Pre-compiled pattern: each sensitive word must appear as a distinct segment,
+# delimited by `_`, `-`, `.`, or at the start/end of the key.
+# E.g. "db_password" matches, "keyboard" does NOT (because "key" is embedded
+# inside the word "keyboard" without a boundary).
+_SENSITIVE_RE_CACHE: dict[tuple[str, ...], re.Pattern[str]] = {}
+
+
+def _build_sensitive_pattern(sensitive_keys: tuple[str, ...]) -> re.Pattern[str]:
+    """Build (and cache) a regex that matches any sensitive word as a segment."""
+    if sensitive_keys not in _SENSITIVE_RE_CACHE:
+        # Word-boundary-like delimiters: start/end of string, `_`, `-`, `.`
+        boundary = r"(?:^|(?<=[\-_.]))"
+        trailing = r"(?=$|[\-_.])"
+        alternatives = "|".join(re.escape(k) for k in sensitive_keys)
+        _SENSITIVE_RE_CACHE[sensitive_keys] = re.compile(
+            f"{boundary}(?:{alternatives}){trailing}",
+            re.IGNORECASE,
+        )
+    return _SENSITIVE_RE_CACHE[sensitive_keys]
+
+
+def _is_sensitive_key(key: str, pattern: re.Pattern[str]) -> bool:
+    """Return True if *key* contains a sensitive word as a distinct segment."""
+    return pattern.search(key) is not None
+
+
+def _redact_sensitive_values(
+    data: dict[str, Any],
+    sensitive_keys: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    """Recursively redact values whose keys contain sensitive words.
+
+    Keys are matched case-insensitively using word-segment boundaries
+    (``_``, ``-``, ``.``, or start/end of key).  For example
+    ``db_password`` is sensitive but ``keyboard`` is not.
+
+    Parameters
+    ----------
+    data:
+        The dictionary to redact (typically Helm values).
+    sensitive_keys:
+        Override the default set of sensitive key words.
+        Defaults to :data:`_DEFAULT_SENSITIVE_KEYS`.
+
+    Returns
+    -------
+    dict
+        A **new** dict with sensitive values replaced by ``[REDACTED]``.
+    """
+    if sensitive_keys is None:
+        sensitive_keys = _DEFAULT_SENSITIVE_KEYS
+
+    pattern = _build_sensitive_pattern(sensitive_keys)
+    result: dict[str, Any] = _redact_recursive(data, pattern)
+    return result
+
+
+def _redact_recursive(data: Any, pattern: re.Pattern[str]) -> Any:
+    """Walk *data* recursively, redacting values under sensitive keys."""
+    if isinstance(data, dict):
+        result: dict[str, Any] = {}
+        for k, v in data.items():
+            if _is_sensitive_key(k, pattern):
+                result[k] = _REDACTED
+            else:
+                result[k] = _redact_recursive(v, pattern)
+        return result
+
+    if isinstance(data, list):
+        return [_redact_recursive(item, pattern) for item in data]
+
+    return data
 
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -469,6 +559,9 @@ def helm_release_values(
     else:
         # User overrides only
         values = release_data.get("config", {}) or {}
+
+    # Redact sensitive values (passwords, tokens, etc.) before output
+    values = _redact_sensitive_values(values)
 
     if not values:
         sections.append("(no values)")

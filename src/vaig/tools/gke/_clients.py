@@ -8,7 +8,7 @@ import os
 import sys
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import yaml
 
@@ -274,36 +274,26 @@ def _suppress_stderr() -> Iterator[None]:
         os.close(devnull_fd)
 
 
-def _create_k8s_clients(
+class _InClusterClient(NamedTuple):
+    """Wrapper to distinguish an in-cluster ``ApiClient`` from a ``Configuration``."""
+
+    api_client: Any
+
+
+def _load_k8s_config(
     gke_config: GKEConfig,
-) -> tuple[Any, Any, Any, Any] | ToolResult:
-    """Create and configure Kubernetes API clients from GKEConfig.
+) -> Any | _InClusterClient | ToolResult:
+    """Load kubeconfig and return a proxy-aware ``Configuration``, or an in-cluster ``ApiClient``.
 
-    Returns a tuple of ``(CoreV1Api, AppsV1Api, CustomObjectsApi, ApiClient)``
-    on success, or a ``ToolResult`` with ``error=True`` on failure.
+    This is the shared config-loading logic used by both ``_create_k8s_clients``
+    and ``get_exec_client``.  It resolves kubeconfig path, context, proxy URL,
+    and handles the ``AttributeError`` workaround for broken auth plugins.
 
-    Results are cached per unique ``(kubeconfig_path, context, proxy_url)``
-    combination so that repeated tool invocations within the same session
-    reuse the same authenticated clients instead of rebuilding them on
-    every call.
-
-    Supports:
-    - Explicit ``kubeconfig_path`` + optional ``context``
-    - Default kubeconfig (``~/.kube/config``)
-    - In-cluster config (for workload identity / GKE pods)
-
-    The ``proxy-url`` field in kubeconfig cluster entries is **not** supported
-    by the ``kubernetes`` Python client (v35).  This function works around the
-    limitation by parsing the raw YAML, extracting ``proxy-url``, and injecting
-    it into ``kubernetes.client.Configuration.proxy``.
+    Returns:
+        - A ``kubernetes.client.Configuration`` object on success (kubeconfig mode).
+        - An ``_InClusterClient`` wrapping an ``ApiClient`` for in-cluster config.
+        - A ``ToolResult`` with ``error=True`` on failure.
     """
-    if not _K8S_AVAILABLE:
-        return _k8s_unavailable()
-
-    key = _cache_key(gke_config)
-    if key in _CLIENT_CACHE:
-        return _CLIENT_CACHE[key]
-
     try:
         with _suppress_stderr():
             kubeconfig_path = gke_config.kubeconfig_path or None
@@ -353,26 +343,68 @@ def _create_k8s_clients(
                         ) from attr_err
                     raise
                 except k8s_config.ConfigException:
-                    # Fallback to in-cluster config (workload identity)
+                    # Fallback to in-cluster config (workload identity).
+                    # Return wrapped ApiClient — caller handles this case.
                     k8s_config.load_incluster_config()
-                    # In-cluster doesn't need proxy — return plain clients
-                    api_client_ic = k8s_client.ApiClient()
-                    clients = (
-                        k8s_client.CoreV1Api(api_client_ic),
-                        k8s_client.AppsV1Api(api_client_ic),
-                        k8s_client.CustomObjectsApi(api_client_ic),
-                        api_client_ic,
-                    )
-                    _CLIENT_CACHE[key] = clients
-                    return clients
+                    return _InClusterClient(k8s_client.ApiClient())
+
     except Exception as exc:
         return ToolResult(
             output=f"Failed to configure Kubernetes client: {exc}",
             error=True,
         )
 
-    # ── Build API clients with the proxy-aware Configuration ─
-    api_client = k8s_client.ApiClient(config)
+    return config
+
+
+def _create_k8s_clients(
+    gke_config: GKEConfig,
+) -> tuple[Any, Any, Any, Any] | ToolResult:
+    """Create and configure Kubernetes API clients from GKEConfig.
+
+    Returns a tuple of ``(CoreV1Api, AppsV1Api, CustomObjectsApi, ApiClient)``
+    on success, or a ``ToolResult`` with ``error=True`` on failure.
+
+    Results are cached per unique ``(kubeconfig_path, context, proxy_url)``
+    combination so that repeated tool invocations within the same session
+    reuse the same authenticated clients instead of rebuilding them on
+    every call.
+
+    Supports:
+    - Explicit ``kubeconfig_path`` + optional ``context``
+    - Default kubeconfig (``~/.kube/config``)
+    - In-cluster config (for workload identity / GKE pods)
+
+    The ``proxy-url`` field in kubeconfig cluster entries is **not** supported
+    by the ``kubernetes`` Python client (v35).  This function works around the
+    limitation by parsing the raw YAML, extracting ``proxy-url``, and injecting
+    it into ``kubernetes.client.Configuration.proxy``.
+    """
+    if not _K8S_AVAILABLE:
+        return _k8s_unavailable()
+
+    key = _cache_key(gke_config)
+    if key in _CLIENT_CACHE:
+        return _CLIENT_CACHE[key]
+
+    result = _load_k8s_config(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+
+    # In-cluster fallback returns a wrapped ApiClient
+    if isinstance(result, _InClusterClient):
+        api_client_ic = result.api_client
+        clients = (
+            k8s_client.CoreV1Api(api_client_ic),
+            k8s_client.AppsV1Api(api_client_ic),
+            k8s_client.CustomObjectsApi(api_client_ic),
+            api_client_ic,
+        )
+        _CLIENT_CACHE[key] = clients
+        return clients
+
+    # result is a Configuration — build API clients with proxy-aware config
+    api_client = k8s_client.ApiClient(result)
     clients = (
         k8s_client.CoreV1Api(api_client),
         k8s_client.AppsV1Api(api_client),
@@ -381,6 +413,48 @@ def _create_k8s_clients(
     )
     _CLIENT_CACHE[key] = clients
     return clients
+
+
+# ── Dedicated exec client (NOT cached) ───────────────────────
+
+
+def get_exec_client(
+    gke_config: GKEConfig,
+) -> Any | ToolResult:
+    """Create a **fresh, disposable** ``CoreV1Api`` for ``kubernetes.stream.stream()``.
+
+    ``kubernetes.stream.stream()`` mutates the ``ApiClient`` instance it
+    receives — it replaces the HTTP request method to set up a WebSocket
+    connection.  If the shared (cached) client is passed, subsequent
+    non-exec API calls (list pods, get logs, etc.) may fail or behave
+    unpredictably because the underlying transport was overwritten.
+
+    This factory intentionally creates a **new** ``ApiClient`` on every
+    call and does **not** cache it.  The caller is responsible for closing
+    the client after use (``ApiClient`` supports the context-manager
+    protocol, or call ``exec_client.api_client.close()`` manually).
+
+    Uses the same kubeconfig / context / proxy resolution logic as
+    ``_create_k8s_clients`` (via ``_load_k8s_config``).
+
+    Returns:
+        A ``CoreV1Api`` wrapping a fresh ``ApiClient`` on success,
+        or a ``ToolResult`` with ``error=True`` on failure.
+    """
+    if not _K8S_AVAILABLE:
+        return _k8s_unavailable()
+
+    result = _load_k8s_config(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+
+    # In-cluster fallback returns a wrapped ApiClient
+    if isinstance(result, _InClusterClient):
+        return k8s_client.CoreV1Api(result.api_client)
+
+    # result is a Configuration — build a fresh ApiClient
+    api_client = k8s_client.ApiClient(result)
+    return k8s_client.CoreV1Api(api_client)
 
 
 # ── ArgoCD client helper ─────────────────────────────────────

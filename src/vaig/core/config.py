@@ -153,13 +153,19 @@ class CodingConfig(BaseModel):
             # Piped remote execution
             r"\bcurl\b.*\|\s*(sh|bash|zsh)\b",
             r"\bwget\b.*\|\s*(sh|bash|zsh)\b",
+            # Generic pipe-to-shell (catch-all for remote execution)
+            r"\|\s*sh\b",
+            r"\|\s*bash\b",
             # System control
             r"\bshutdown\b",
             r"\breboot\b",
             r"\bhalt\b",
             r"\bpoweroff\b",
+            r"\binit\s+[0-6]",
             # Privilege escalation
             r"^\s*sudo\b",
+            # Direct device writes
+            r">\s*/dev/sd",
         ],
         description=(
             "Regex patterns for commands that should NEVER be executed. "
@@ -174,6 +180,13 @@ class LoggingConfig(BaseModel):
 
     level: str = "WARNING"
     show_path: bool = False
+    file_enabled: bool = True
+    file_path: str = "~/.vaig/logs/vaig.log"
+    file_level: str = "DEBUG"
+    file_max_bytes: int = 5_242_880  # 5 MB
+    file_backup_count: int = 3
+    tool_results: bool = True
+    tool_results_dir: str = "~/.vaig"
 
 
 class RetryConfig(BaseModel):

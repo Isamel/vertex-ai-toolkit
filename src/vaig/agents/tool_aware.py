@@ -224,7 +224,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             logger.exception("ToolAwareAgent '%s' API call failed", self.name)
             return AgentResult(
                 agent_name=self.name,
-                content=f"Error during API call: {exc}",
+                content=f"Error during API call: {self.sanitize_error_for_agent(exc)}",
                 success=False,
                 usage={
                     "prompt_tokens": 0,
@@ -338,7 +338,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             logger.exception("ToolAwareAgent '%s' async API call failed", self.name)
             return AgentResult(
                 agent_name=self.name,
-                content=f"Error during API call: {exc}",
+                content=f"Error during API call: {self.sanitize_error_for_agent(exc)}",
                 success=False,
                 usage={
                     "prompt_tokens": 0,

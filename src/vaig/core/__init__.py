@@ -7,12 +7,17 @@ from vaig.core.config import BudgetConfig, CacheConfig, CodingConfig, Settings, 
 from vaig.core.config_switcher import SwitchResult, get_config_snapshot, switch_cluster, switch_location, switch_project
 from vaig.core.cost_tracker import BudgetStatus, CostRecord, CostTracker
 from vaig.core.exceptions import (
+    GCPAuthError,
+    GCPPermissionError,
     GeminiClientError,
     GeminiConnectionError,
     GeminiRateLimitError,
+    K8sAuthError,
     MaxIterationsError,
     ToolExecutionError,
+    VaigAuthError,
     VAIGError,
+    format_error_for_user,
 )
 
 __all__ = [
@@ -24,11 +29,14 @@ __all__ = [
     "CodingConfig",
     "CostRecord",
     "CostTracker",
+    "GCPAuthError",
+    "GCPPermissionError",
     "GeminiClient",
     "GeminiClientError",
     "GeminiConnectionError",
     "GeminiRateLimitError",
     "GenerationResult",
+    "K8sAuthError",
     "MaxIterationsError",
     "ResponseCache",
     "Settings",
@@ -37,6 +45,8 @@ __all__ = [
     "ToolCallResult",
     "ToolExecutionError",
     "VAIGError",
+    "VaigAuthError",
+    "format_error_for_user",
     "gather_with_errors",
     "get_config_snapshot",
     "get_settings",
