@@ -3420,3 +3420,362 @@ class TestToolMetadataInSequentialPipeline:
         assert result.success is True
         second_call_context = agent2.execute.call_args.kwargs["context"]
         assert "Tools Executed" not in second_call_context
+
+
+# ===========================================================================
+# Spec 1 — Tool Metadata Injection: additional coverage
+# ===========================================================================
+
+
+class TestToolMetadataInPlainExecute:
+    """Verify _build_tools_summary() works via the plain execute_sequential() path.
+
+    execute_sequential() (line ~197 in orchestrator.py) calls agent.execute()
+    directly — NOT through execute_with_tools().  These tests verify that
+    tool metadata flows through that injection point too.
+    """
+
+    def test_plain_execute_sequential_injects_metadata(self) -> None:
+        """Sync execute_sequential injects tool summary when agent.metadata
+        contains tools_executed."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+
+        agent1 = MagicMock(spec=SpecialistAgent)
+        agent1.name = "infra-worker"
+        agent1.role = "Infrastructure Worker"
+        agent1.execute.return_value = AgentResult(
+            agent_name="infra-worker",
+            content="Found 3 pods running.",
+            success=True,
+            usage={"total_tokens": 50},
+            metadata={
+                "tools_executed": [
+                    {"name": "kubectl_get", "args": {"resource": "pods"}, "output": "OK", "error": False},
+                    {"name": "kubectl_describe", "args": {"resource": "node/gke-1"}, "output": "Details", "error": False},
+                ],
+            },
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "report-writer"
+        agent2.role = "Report Writer"
+        agent2.execute.return_value = AgentResult(
+            agent_name="report-writer",
+            content="Infrastructure Report: All healthy.",
+            success=True,
+            usage={"total_tokens": 40},
+        )
+
+        skill = StubToolSkill()
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_sequential(
+                skill, SkillPhase.ANALYZE, "ctx", "check infra",
+            )
+
+        assert result.success is True
+        # Second agent should have received tool metadata in its context
+        second_call_context = agent2.execute.call_args.kwargs["context"]
+        assert "## Tools Executed by Infrastructure Worker" in second_call_context
+        assert "Total tool calls: 2" in second_call_context
+        assert "kubectl_describe, kubectl_get" in second_call_context
+
+    def test_plain_execute_sequential_no_metadata_no_summary(self) -> None:
+        """Sync execute_sequential: no metadata → no tools summary injected."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+
+        agent1 = MagicMock(spec=SpecialistAgent)
+        agent1.name = "worker"
+        agent1.role = "Worker"
+        agent1.execute.return_value = AgentResult(
+            agent_name="worker",
+            content="Data collected.",
+            success=True,
+            usage={"total_tokens": 30},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "writer"
+        agent2.role = "Writer"
+        agent2.execute.return_value = AgentResult(
+            agent_name="writer",
+            content="Report.",
+            success=True,
+            usage={"total_tokens": 20},
+        )
+
+        skill = StubToolSkill()
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_sequential(
+                skill, SkillPhase.ANALYZE, "ctx", "check",
+            )
+
+        assert result.success is True
+        second_call_context = agent2.execute.call_args.kwargs["context"]
+        assert "Tools Executed" not in second_call_context
+
+
+class TestToolMetadataInPlainAsyncExecute:
+    """Verify _build_tools_summary() works via the async_execute_sequential() path.
+
+    async_execute_sequential() (line ~882 in orchestrator.py) calls
+    agent.execute() via asyncio.to_thread — NOT through
+    async_execute_with_tools().
+    """
+
+    async def test_async_execute_sequential_injects_metadata(self) -> None:
+        """Async execute_sequential injects tool summary when agent.metadata
+        contains tools_executed."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+
+        agent1 = MagicMock(spec=SpecialistAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Data Gatherer"
+        agent1.execute.return_value = AgentResult(
+            agent_name="gatherer",
+            content="Collected cluster metrics.",
+            success=True,
+            usage={"total_tokens": 60},
+            metadata={
+                "tools_executed": [
+                    {"name": "gcloud_monitoring", "args": {"metric": "cpu"}, "output": "45%", "error": False},
+                    {"name": "kubectl_top", "args": {"resource": "nodes"}, "output": "node stats", "error": False},
+                    {"name": "gcloud_monitoring", "args": {"metric": "memory"}, "output": "60%", "error": False},
+                ],
+            },
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter",
+            content="Cluster Metrics Report.",
+            success=True,
+            usage={"total_tokens": 30},
+        )
+
+        skill = StubToolSkill()
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_sequential(
+                skill, SkillPhase.ANALYZE, "ctx", "check metrics",
+            )
+
+        assert result.success is True
+        # Second agent should have received tool metadata in its context
+        second_call_context = agent2.execute.call_args.kwargs["context"]
+        assert "## Tools Executed by Data Gatherer" in second_call_context
+        assert "Total tool calls: 3" in second_call_context
+        assert "gcloud_monitoring, kubectl_top" in second_call_context
+
+    async def test_async_execute_sequential_no_metadata_no_summary(self) -> None:
+        """Async execute_sequential: no metadata → no tools summary injected."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+
+        agent1 = MagicMock(spec=SpecialistAgent)
+        agent1.name = "worker"
+        agent1.role = "Worker"
+        agent1.execute.return_value = AgentResult(
+            agent_name="worker",
+            content="Data.",
+            success=True,
+            usage={"total_tokens": 20},
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "writer"
+        agent2.role = "Writer"
+        agent2.execute.return_value = AgentResult(
+            agent_name="writer",
+            content="Report.",
+            success=True,
+            usage={"total_tokens": 15},
+        )
+
+        skill = StubToolSkill()
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = await orchestrator.async_execute_sequential(
+                skill, SkillPhase.ANALYZE, "ctx", "check",
+            )
+
+        assert result.success is True
+        second_call_context = agent2.execute.call_args.kwargs["context"]
+        assert "Tools Executed" not in second_call_context
+
+
+class TestBuildToolsSummaryMultipleFailures:
+    """Verify _build_tools_summary() correctly lists ALL failed tools."""
+
+    def test_multiple_failed_tools_all_listed(self) -> None:
+        """When multiple tools fail, the summary lists every failure."""
+        metadata: dict[str, Any] = {
+            "tools_executed": [
+                {"name": "kubectl_get", "args": {"resource": "pods"}, "output": "OK", "error": False},
+                {
+                    "name": "kubectl_logs",
+                    "args": {"pod": "app-1"},
+                    "output": "Error: container not found",
+                    "error": True,
+                },
+                {
+                    "name": "kubectl_exec",
+                    "args": {"pod": "app-2", "command": "ls"},
+                    "output": "Error: pod not running",
+                    "error": True,
+                },
+                {
+                    "name": "gcloud_logs",
+                    "args": {"filter": "severity>=ERROR"},
+                    "output": "Permission denied",
+                    "error": True,
+                },
+            ],
+        }
+        summary = _build_tools_summary("Gatherer", metadata)
+
+        # All 3 failed tools should be counted
+        assert "Failed calls: 3" in summary
+
+        # Each failed tool name should appear in the failure details
+        assert "kubectl_logs" in summary
+        assert "kubectl_exec" in summary
+        assert "gcloud_logs" in summary
+
+        # Error outputs should be included (truncated)
+        assert "container not found" in summary
+        assert "pod not running" in summary
+        assert "Permission denied" in summary
+
+        # The tool gaps note should appear once
+        assert "tool gaps" in summary
+        assert "data gaps" in summary
+
+    def test_multiple_failed_tools_includes_args(self) -> None:
+        """Failed tool entries include their args in the summary."""
+        metadata: dict[str, Any] = {
+            "tools_executed": [
+                {
+                    "name": "kubectl_logs",
+                    "args": {"pod": "my-pod"},
+                    "output": "Error: not found",
+                    "error": True,
+                },
+                {
+                    "name": "kubectl_describe",
+                    "args": {"resource": "deploy/frontend"},
+                    "output": "Error: not found",
+                    "error": True,
+                },
+            ],
+        }
+        summary = _build_tools_summary("Worker", metadata)
+
+        assert "Failed calls: 2" in summary
+        # Args are included in the format: name({args}) → output
+        assert "kubectl_logs(" in summary
+        assert "'pod': 'my-pod'" in summary
+        assert "kubectl_describe(" in summary
+        assert "'resource': 'deploy/frontend'" in summary
+
+    def test_all_tools_failed(self) -> None:
+        """When ALL tools fail, summary still correctly reports."""
+        metadata: dict[str, Any] = {
+            "tools_executed": [
+                {"name": "tool_a", "args": {}, "output": "Error A", "error": True},
+                {"name": "tool_b", "args": {}, "output": "Error B", "error": True},
+            ],
+        }
+        summary = _build_tools_summary("Agent", metadata)
+
+        assert "Total tool calls: 2" in summary
+        assert "Failed calls: 2" in summary
+        assert "tool_a" in summary
+        assert "tool_b" in summary
+
+
+class TestBuildToolsSummaryEmptyStringOutput:
+    """Verify _build_tools_summary() handles empty string output gracefully."""
+
+    def test_successful_tool_with_empty_output(self) -> None:
+        """Tool succeeding with output='' is NOT treated as a failure."""
+        metadata: dict[str, Any] = {
+            "tools_executed": [
+                {"name": "kubectl_get", "args": {"resource": "pods"}, "output": "", "error": False},
+                {"name": "kubectl_top", "args": {"resource": "nodes"}, "output": "node stats", "error": False},
+            ],
+        }
+        summary = _build_tools_summary("Gatherer", metadata)
+
+        assert "Total tool calls: 2" in summary
+        assert "kubectl_get, kubectl_top" in summary
+        # No failures — empty output on a successful tool is fine
+        assert "Failed calls" not in summary
+
+    def test_failed_tool_with_empty_output_uses_fallback(self) -> None:
+        """Failed tool with output='' uses 'error' fallback (same as None)."""
+        metadata: dict[str, Any] = {
+            "tools_executed": [
+                {"name": "kubectl_logs", "args": {"pod": "x"}, "output": "", "error": True},
+            ],
+        }
+        summary = _build_tools_summary("Worker", metadata)
+
+        assert "Failed calls: 1" in summary
+        assert "kubectl_logs" in summary
+        # Empty string is falsy, so (output or 'error') → 'error'
+        assert "error" in summary
+
+    def test_empty_output_in_pipeline_context(self) -> None:
+        """Tool with empty-string output flows through the pipeline correctly.
+
+        The downstream agent should receive a valid tools summary even when
+        a tool returned an empty string.
+        """
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.return_value = AgentResult(
+            agent_name="gatherer",
+            content="Gathered data.",
+            success=True,
+            usage={"total_tokens": 100},
+            metadata={
+                "tools_executed": [
+                    {"name": "kubectl_get", "args": {"resource": "configmaps"}, "output": "", "error": False},
+                    {"name": "kubectl_get", "args": {"resource": "pods"}, "output": "3 pods found", "error": False},
+                ],
+            },
+        )
+
+        agent2 = MagicMock(spec=SpecialistAgent)
+        agent2.name = "reporter"
+        agent2.role = "Reporter"
+        agent2.execute.return_value = AgentResult(
+            agent_name="reporter", content="Report.", success=True,
+            usage={"total_tokens": 50},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(return_value=[])
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
+            result = orchestrator.execute_with_tools("check pods", skill, registry)
+
+        assert result.success is True
+        second_call_context = agent2.execute.call_args.kwargs["context"]
+        # Tools summary should be present and correct
+        assert "## Tools Executed by Gatherer" in second_call_context
+        assert "Total tool calls: 2" in second_call_context
+        # No failures — empty output is NOT an error
+        assert "Failed calls" not in second_call_context

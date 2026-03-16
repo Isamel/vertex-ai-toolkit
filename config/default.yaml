@@ -155,6 +155,19 @@ gke:
   proxy_url: ""                   # Proxy URL for private clusters (kubernetes client ignores kubeconfig proxy-url)
   impersonate_sa: ""               # SA email for GKE/GCP observability APIs — overrides auth.impersonate_sa for GKE tools only
 
+# Helm integration — discover Helm-managed releases via K8s secrets
+helm:
+  enabled: true                   # Set to false to disable Helm tools
+
+# ArgoCD integration — introspect ArgoCD Application CRDs
+argocd:
+  enabled: false                  # Set to true to enable ArgoCD tools
+  server: ""                      # ArgoCD server URL (for REST API mode — not yet implemented)
+  token: ""                       # ArgoCD auth token (for REST API mode — not yet implemented)
+  context: ""                     # Kubeconfig context for ArgoCD cluster (if different from GKE cluster)
+  namespace: "argocd"             # Namespace where ArgoCD Applications live
+  verify_ssl: true                # Verify SSL certificates for ArgoCD server
+
 mcp:
   enabled: false                    # Set to true to enable MCP integration
   auto_register: false              # Auto-register MCP server tools into agent pipelines

@@ -464,6 +464,15 @@ def _build_gke_config(
         metrics_interval_minutes=gke.metrics_interval_minutes,
         proxy_url=gke.proxy_url,
         impersonate_sa=gke.impersonate_sa,
+        exec_enabled=gke.exec_enabled,
+        # Helm / ArgoCD — merge Settings-level config into GKEConfig flags
+        helm_enabled=settings.helm.enabled,
+        argocd_enabled=settings.argocd.enabled,
+        argocd_server=settings.argocd.server,
+        argocd_token=settings.argocd.token,
+        argocd_context=settings.argocd.context,
+        argocd_namespace=settings.argocd.namespace,
+        argocd_verify_ssl=settings.argocd.verify_ssl,
     )
 
 

@@ -64,6 +64,16 @@ Use ONLY these parameter names when calling tools. Using wrong names (e.g. `pod_
 | `check_rbac` | `verb`, `resource`, `namespace` | `service_account`, `resource_name` |
 | `gcloud_logging_query` | `filter_expr` | `project`, `limit`, `order_by` |
 | `gcloud_monitoring_query` | `metric_type` | `project`, `interval_minutes`, `aggregation`, `filter_str` |
+| `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |
+| `helm_list_releases` | | `namespace`, `force_refresh` |
+| `helm_release_status` | `release_name` | `namespace`, `force_refresh` |
+| `helm_release_history` | `release_name` | `namespace`, `force_refresh` |
+| `helm_release_values` | `release_name` | `namespace`, `all_values`, `force_refresh` |
+| `argocd_list_applications` | | `namespace` |
+| `argocd_app_status` | `app_name` | `namespace` |
+| `argocd_app_history` | `app_name` | `namespace` |
+| `argocd_app_diff` | `app_name` | `namespace` |
+| `argocd_app_managed_resources` | `app_name` | `namespace` |
 
 IMPORTANT:
 - `kubectl_logs` uses `pod` (NOT `pod_name`)
@@ -170,6 +180,20 @@ When using `gcloud_logging_query`, use these GKE-specific filters (replace NAMES
 ### Step 8: RBAC Check (if permission errors found)
 - If any tool returned 403/Forbidden or logs show permission denied:
   a. `check_rbac(verb="<action>", resource="<type>", namespace=<ns>, service_account="<sa>")` to verify permissions
+
+### Step 9: Helm Release Assessment (if helm tools available)
+- Use `helm_list_releases(namespace=<ns>)` to discover Helm-managed deployments in the namespace
+- For each relevant release, use `helm_release_status(release_name=<release>, namespace=<ns>)` to check health
+- Use `helm_release_history(release_name=<release>, namespace=<ns>)` to identify recent changes that may correlate with issues
+- Use `helm_release_values(release_name=<release>, namespace=<ns>)` to check for misconfiguration in overrides
+- This data is CRITICAL for the reporter to recommend Helm-specific remediation (e.g., `helm upgrade` instead of `kubectl apply`)
+
+### Step 10: ArgoCD Application Assessment (if argocd tools available)
+- Use `argocd_list_applications()` to discover ArgoCD-managed apps
+- For each relevant app, use `argocd_app_status(app_name=<app>)` to check sync and health
+- Use `argocd_app_diff(app_name=<app>)` to identify out-of-sync resources
+- Use `argocd_app_history(app_name=<app>)` to correlate recent deployments with issues
+- This data is CRITICAL for the reporter to recommend GitOps-specific remediation (e.g., fix in Git repo, not manual `kubectl apply`)
 
 ## MINIMUM INVESTIGATION DEPTH
 You MUST make at least the following tool calls before producing your final output:
@@ -283,14 +307,16 @@ HEALTH_ANALYZER_PROMPT = """You are an SRE analysis specialist. You receive raw 
 - Do unrelated services degrade simultaneously? → Shared dependency or infrastructure issue
 
 ### Management Context Detection
-For each affected resource, identify how it is managed:
-- **GitOps-managed**: Has ArgoCD/Flux annotations → remediation must go through Git
-- **Helm-managed**: Has `managed-by: Helm` label → remediation via `helm upgrade`  
-- **Operator-managed**: Has OwnerReferences → remediation via the parent CR
+For each affected resource, use `kubectl_get_labels` to identify how it is managed:
+- **GitOps-managed**: Has ArgoCD annotations (`argocd.argoproj.io/`) or Flux annotations (`fluxcd.io/`) → remediation must go through Git
+- **Helm-managed**: Has `app.kubernetes.io/managed-by: Helm` label or `helm.sh/chart` → remediation via `helm upgrade`
+- **Operator-managed**: Has `OwnerReferences` in metadata → remediation via the parent CR
 - **Manual**: No management annotations → direct kubectl is acceptable
 
+Use `kubectl_get_labels(resource_type="deployment", namespace=<ns>, name=<deploy>)` to retrieve labels and annotations in a single call.
+
 Include this in every finding's metadata:
-- **Managed by**: [GitOps (ArgoCD) | Helm | Operator (<name>) | Manual | Unknown]
+- **Managed by**: [GitOps (ArgoCD) | GitOps (Flux) | Helm | Operator (<name>) | Manual | Unknown]
 
 ### 6. Causal Mechanism Analysis (MANDATORY for every finding)
 
@@ -863,6 +889,7 @@ When recommending actions, DO NOT jump to "edit the YAML and re-apply".
 First, reason about the PROCESS that caused the issue:
 
 #### Step 1: Identify the Change Source
+Use the management context from the analyzer's findings (detected via `kubectl_get_labels`):
 - Is this resource managed by GitOps (ArgoCD, Flux)? Look for annotations:
   `argocd.argoproj.io/`, `fluxcd.io/`, `kustomize.toolkit.fluxcd.io/`
 - Is this managed by Helm? Look for labels: `app.kubernetes.io/managed-by: Helm`,
@@ -886,12 +913,26 @@ IF managed by GitOps:
   repo? If yes, fix it there and let the pipeline reconcile.
 - DO NOT recommend `kubectl apply` or `kubectl patch` as first action — that would 
   create GitOps drift and get reverted on next sync.
+- If the gatherer collected ArgoCD data (Step 10), reference the app sync status
+  and diff to identify drift. If the app is OutOfSync, recommend:
+  1. Fix the issue in the Git repository (the source of truth)
+  2. Wait for ArgoCD to detect and sync, or manually trigger sync after the Git fix
+- NEVER recommend `argocd app sync` to force-apply a broken state — only sync after
+  the Git source has been corrected.
 - Command: Show the git-level investigation, e.g., 
   "Search your deployment YAML in Git for the duplicate volume definition and remove it"
 
 IF managed by Helm:
 - Immediate: Check `helm get values <release>` for the conflicting value.
 - Fix in `values.yaml` and `helm upgrade`, not `kubectl apply`.
+- NEVER recommend `kubectl apply` or `kubectl patch` for Helm-managed resources — manual
+  changes will be reverted on the next `helm upgrade` and create dangerous state drift.
+- If the gatherer collected Helm data (Step 9), reference the release status and
+  history to identify which revision introduced the issue. Recommend:
+  ```
+  helm rollback <release> <known-good-revision> -n <namespace>
+  ```
+  for immediate mitigation, and a values.yaml fix for permanent resolution.
 
 IF managed by operator:
 - DO NOT edit the managed resource directly — the operator will revert it.

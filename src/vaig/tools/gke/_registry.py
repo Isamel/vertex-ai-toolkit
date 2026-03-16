@@ -11,6 +11,29 @@ from typing import TYPE_CHECKING
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
 
 from . import _clients, diagnostics, discovery, kubectl, mesh, mutations, security
+from .kubectl import kubectl_get_labels, async_kubectl_get_labels
+from .helm import (
+    helm_list_releases,
+    helm_release_status,
+    helm_release_history,
+    helm_release_values,
+    async_helm_list_releases,
+    async_helm_release_status,
+    async_helm_release_history,
+    async_helm_release_values,
+)
+from .argocd import (
+    argocd_list_applications,
+    argocd_app_status,
+    argocd_app_history,
+    argocd_app_diff,
+    argocd_app_managed_resources,
+    async_argocd_list_applications,
+    async_argocd_app_status,
+    async_argocd_app_history,
+    async_argocd_app_diff,
+    async_argocd_app_managed_resources,
+)
 
 if TYPE_CHECKING:
     from vaig.core.config import GKEConfig
@@ -47,7 +70,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             )
         return kubectl.kubectl_top(resource_type, gke_config=_cfg, name=name, namespace=namespace)
 
-    return [
+    tools = [
         ToolDef(
             name="kubectl_get",
             description=(
@@ -860,4 +883,319 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
             ),
         ),
+        # ── Labels tool (always registered) ──────────────────
+        ToolDef(
+            name="kubectl_get_labels",
+            description=(
+                "Get labels and annotations for Kubernetes resources. Supports "
+                "server-side label filtering and client-side annotation filtering."
+            ),
+            parameters=[
+                ToolParam(
+                    name="resource_type",
+                    type="string",
+                    description="K8s resource type (pods, deployments, services, etc.)",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Namespace to query",
+                    required=False,
+                ),
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Specific resource name. If empty, lists all matching resources.",
+                    required=False,
+                ),
+                ToolParam(
+                    name="label_filter",
+                    type="string",
+                    description="Label selector for server-side filtering (e.g., 'app=nginx', 'app in (web,api)')",
+                    required=False,
+                ),
+                ToolParam(
+                    name="annotation_filter",
+                    type="string",
+                    description="Annotation key or key=value for client-side filtering",
+                    required=False,
+                ),
+            ],
+            execute=lambda resource_type, namespace="default", name="",
+                    label_filter="", annotation_filter="",
+                    _cfg=gke_config: kubectl_get_labels(
+                resource_type=resource_type,
+                gke_config=_cfg,
+                namespace=namespace,
+                name=name,
+                label_filter=label_filter,
+                annotation_filter=annotation_filter,
+            ),
+        ),
     ]
+
+    # ── Helm tools (conditional on helm_enabled) ─────────────
+    if gke_config.helm_enabled:
+        tools.extend([
+            ToolDef(
+                name="helm_list_releases",
+                description=(
+                    "List all Helm releases in a namespace. Queries Kubernetes secrets "
+                    "with owner=helm label selector. Shows name, chart, version, status, "
+                    "and app version. Only shows the latest revision per release. "
+                    "Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Kubernetes namespace (default: 'default')",
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="force_refresh",
+                        type="boolean",
+                        description="Bypass cache and re-scan (default: false).",
+                        required=False,
+                    ),
+                ],
+                execute=lambda namespace="default", force_refresh=False,
+                        _cfg=gke_config: helm_list_releases(
+                    gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
+                ),
+            ),
+            ToolDef(
+                name="helm_release_status",
+                description=(
+                    "Get detailed status of a specific Helm release. Shows chart, "
+                    "version, app version, first/last deployed timestamps, description, "
+                    "and notes. Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="release_name",
+                        type="string",
+                        description="Name of the Helm release",
+                    ),
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Kubernetes namespace (default: 'default')",
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="force_refresh",
+                        type="boolean",
+                        description="Bypass cache and re-scan (default: false).",
+                        required=False,
+                    ),
+                ],
+                execute=lambda release_name, namespace="default", force_refresh=False,
+                        _cfg=gke_config: helm_release_status(
+                    gke_config=_cfg, release_name=release_name, namespace=namespace,
+                    force_refresh=force_refresh,
+                ),
+            ),
+            ToolDef(
+                name="helm_release_history",
+                description=(
+                    "Get revision history of a Helm release. Shows revision number, "
+                    "status, chart version, app version, description, and deployment "
+                    "timestamp for each revision (newest first). "
+                    "Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="release_name",
+                        type="string",
+                        description="Name of the Helm release",
+                    ),
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Kubernetes namespace (default: 'default')",
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="force_refresh",
+                        type="boolean",
+                        description="Bypass cache and re-scan (default: false).",
+                        required=False,
+                    ),
+                ],
+                execute=lambda release_name, namespace="default", force_refresh=False,
+                        _cfg=gke_config: helm_release_history(
+                    gke_config=_cfg, release_name=release_name, namespace=namespace,
+                    force_refresh=force_refresh,
+                ),
+            ),
+            ToolDef(
+                name="helm_release_values",
+                description=(
+                    "Get the values used in a Helm release. By default returns only "
+                    "user-supplied overrides. Set all_values=true to include chart "
+                    "defaults merged with user overrides. Output is YAML formatted. "
+                    "Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="release_name",
+                        type="string",
+                        description="Name of the Helm release",
+                    ),
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Kubernetes namespace (default: 'default')",
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="all_values",
+                        type="boolean",
+                        description="Include chart defaults merged with overrides (default: false).",
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="force_refresh",
+                        type="boolean",
+                        description="Bypass cache and re-scan (default: false).",
+                        required=False,
+                    ),
+                ],
+                execute=lambda release_name, namespace="default", all_values=False,
+                        force_refresh=False,
+                        _cfg=gke_config: helm_release_values(
+                    gke_config=_cfg, release_name=release_name, namespace=namespace,
+                    all_values=all_values, force_refresh=force_refresh,
+                ),
+            ),
+        ])
+
+    # ── ArgoCD tools (conditional on argocd_enabled) ─────────
+    if gke_config.argocd_enabled:
+        tools.extend([
+            ToolDef(
+                name="argocd_list_applications",
+                description=(
+                    "List all ArgoCD Applications in the given namespace. Shows name, "
+                    "project, sync status, health status, source repo, target revision, "
+                    "and destination. Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Namespace where ArgoCD Applications live (default: 'argocd')",
+                        required=False,
+                    ),
+                ],
+                execute=lambda namespace="argocd",
+                        _cfg=gke_config: argocd_list_applications(
+                    namespace=namespace,
+                ),
+            ),
+            ToolDef(
+                name="argocd_app_status",
+                description=(
+                    "Get detailed status of a specific ArgoCD Application. Shows sync "
+                    "status, health status, source info, destination, sync policy, "
+                    "conditions, and last operation state. "
+                    "Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="app_name",
+                        type="string",
+                        description="Name of the ArgoCD Application",
+                    ),
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Namespace where ArgoCD Applications live (default: 'argocd')",
+                        required=False,
+                    ),
+                ],
+                execute=lambda app_name, namespace="argocd",
+                        _cfg=gke_config: argocd_app_status(
+                    app_name=app_name, namespace=namespace,
+                ),
+            ),
+            ToolDef(
+                name="argocd_app_history",
+                description=(
+                    "Get deployment history of an ArgoCD Application. Shows past "
+                    "deployments with revision, deployment time, and source info "
+                    "(most recent first). Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="app_name",
+                        type="string",
+                        description="Name of the ArgoCD Application",
+                    ),
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Namespace where ArgoCD Applications live (default: 'argocd')",
+                        required=False,
+                    ),
+                ],
+                execute=lambda app_name, namespace="argocd",
+                        _cfg=gke_config: argocd_app_history(
+                    app_name=app_name, namespace=namespace,
+                ),
+            ),
+            ToolDef(
+                name="argocd_app_diff",
+                description=(
+                    "Show resources that are out-of-sync for an ArgoCD Application. "
+                    "Returns resources where sync status is not Synced or health "
+                    "status is not Healthy. Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="app_name",
+                        type="string",
+                        description="Name of the ArgoCD Application",
+                    ),
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Namespace where ArgoCD Applications live (default: 'argocd')",
+                        required=False,
+                    ),
+                ],
+                execute=lambda app_name, namespace="argocd",
+                        _cfg=gke_config: argocd_app_diff(
+                    app_name=app_name, namespace=namespace,
+                ),
+            ),
+            ToolDef(
+                name="argocd_app_managed_resources",
+                description=(
+                    "List all resources managed by an ArgoCD Application. Shows "
+                    "resources grouped by kind with group, name, namespace, sync "
+                    "status, health status, and pruning requirements. "
+                    "Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="app_name",
+                        type="string",
+                        description="Name of the ArgoCD Application",
+                    ),
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Namespace where ArgoCD Applications live (default: 'argocd')",
+                        required=False,
+                    ),
+                ],
+                execute=lambda app_name, namespace="argocd",
+                        _cfg=gke_config: argocd_app_managed_resources(
+                    app_name=app_name, namespace=namespace,
+                ),
+            ),
+        ])
+
+    return tools

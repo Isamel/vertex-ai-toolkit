@@ -206,6 +206,23 @@ class ChunkingConfig(BaseModel):
     inter_chunk_delay: float = 2.0
 
 
+class HelmConfig(BaseModel):
+    """Helm integration configuration."""
+
+    enabled: bool = True  # Helm tools available by default
+
+
+class ArgoCDConfig(BaseModel):
+    """ArgoCD integration configuration."""
+
+    enabled: bool = False
+    server: str = ""
+    token: str = ""
+    context: str = ""
+    namespace: str = "argocd"
+    verify_ssl: bool = True
+
+
 class GKEConfig(BaseModel):
     """GKE live-cluster connection and query configuration."""
 
@@ -229,6 +246,15 @@ class GKEConfig(BaseModel):
     # Allow exec_command tool to execute diagnostic commands inside containers.
     # Disabled by default for security — must be explicitly opted-in.
     exec_enabled: bool = False
+    # Helm integration — enabled by default.
+    helm_enabled: bool = True
+    # ArgoCD integration — disabled by default, requires explicit opt-in.
+    argocd_enabled: bool = False
+    argocd_server: str = ""
+    argocd_token: str = ""
+    argocd_context: str = ""
+    argocd_namespace: str = "argocd"
+    argocd_verify_ssl: bool = True
 
 
 class MCPServerConfig(BaseModel):
@@ -378,6 +404,8 @@ class Settings(BaseSettings):
     coding: CodingConfig = Field(default_factory=CodingConfig)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     gke: GKEConfig = Field(default_factory=GKEConfig)
+    helm: HelmConfig = Field(default_factory=HelmConfig)
+    argocd: ArgoCDConfig = Field(default_factory=ArgoCDConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     plugins: PluginConfig = Field(default_factory=PluginConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)

@@ -91,6 +91,38 @@ from .mesh import (
     get_sidecar_status,
 )
 
+# ── Layer 1: labels ─────────────────────────────────────────
+from .kubectl import (
+    async_kubectl_get_labels,
+    kubectl_get_labels,
+)
+
+# ── Layer 1: Helm introspection ─────────────────────────────
+from .helm import (
+    async_helm_list_releases,
+    async_helm_release_history,
+    async_helm_release_status,
+    async_helm_release_values,
+    helm_list_releases,
+    helm_release_history,
+    helm_release_status,
+    helm_release_values,
+)
+
+# ── Layer 1: ArgoCD introspection ───────────────────────────
+from .argocd import (
+    argocd_app_diff,
+    argocd_app_history,
+    argocd_app_managed_resources,
+    argocd_app_status,
+    argocd_list_applications,
+    async_argocd_app_diff,
+    async_argocd_app_history,
+    async_argocd_app_managed_resources,
+    async_argocd_app_status,
+    async_argocd_list_applications,
+)
+
 # ── Layer 0: client infrastructure ──────────────────────────
 from ._clients import (
     _AUTOPILOT_CACHE,
@@ -222,6 +254,32 @@ __all__ = [
     "async_get_mesh_config",
     "async_get_mesh_security",
     "async_get_sidecar_status",
+    # Labels (sync)
+    "kubectl_get_labels",
+    # Labels (async)
+    "async_kubectl_get_labels",
+    # Helm introspection (sync)
+    "helm_list_releases",
+    "helm_release_status",
+    "helm_release_history",
+    "helm_release_values",
+    # Helm introspection (async)
+    "async_helm_list_releases",
+    "async_helm_release_status",
+    "async_helm_release_history",
+    "async_helm_release_values",
+    # ArgoCD introspection (sync)
+    "argocd_list_applications",
+    "argocd_app_status",
+    "argocd_app_history",
+    "argocd_app_diff",
+    "argocd_app_managed_resources",
+    # ArgoCD introspection (async)
+    "async_argocd_list_applications",
+    "async_argocd_app_status",
+    "async_argocd_app_history",
+    "async_argocd_app_diff",
+    "async_argocd_app_managed_resources",
     # Client infrastructure
     "_K8S_AVAILABLE",
     "_K8S_IMPORT_ERROR",
