@@ -3382,12 +3382,6 @@ class TestToolMetadataInSequentialPipeline:
         # No failures in this test
         assert "Failed calls" not in second_call_context
 
-    async def test_async_no_metadata_no_tools_summary(self) -> None:
-        """Async: no metadata means no tools summary injected."""
-        client = _make_mock_client()
-        orchestrator = Orchestrator(client, _make_mock_settings())
-        registry = _make_mock_registry()
-
         agent1 = MagicMock(spec=ToolAwareAgent)
         agent1.name = "gatherer"
         agent1.role = "Gatherer"
@@ -3776,5 +3770,3 @@ class TestBuildToolsSummaryEmptyStringOutput:
         assert "Total tool calls: 2" in second_call_context
         # No failures — empty output is NOT an error
         assert "Failed calls" not in second_call_context
-
-

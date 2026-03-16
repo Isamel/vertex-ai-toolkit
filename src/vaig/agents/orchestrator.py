@@ -675,12 +675,6 @@ class Orchestrator:
                                 "to first-pass output",
                                 agent.name,
                             )
-                            # Restore max_iterations before continuing
-                            if (
-                                isinstance(agent, ToolAwareAgent)
-                                and original_max_iters is not None
-                            ):
-                                agent._max_iterations = original_max_iters
                             # Keep first-pass result — already in
                             # result.agent_results[-1]
                             logger.info(
@@ -1313,11 +1307,6 @@ class Orchestrator:
                                 "to first-pass output",
                                 agent.name,
                             )
-                            if (
-                                isinstance(agent, ToolAwareAgent)
-                                and original_max_iters is not None
-                            ):
-                                agent._max_iterations = original_max_iters
                             logger.info(
                                 "Agent %s continuing with first-pass "
                                 "output — tokens=%s",
