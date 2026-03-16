@@ -394,6 +394,22 @@ def _strip_empty_strings_in_list(items: list[Any]) -> list[Any]:
     return cleaned
 
 
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge *override* into *base*, with override values winning.
+
+    For dict-valued keys that appear in both, the dicts are merged recursively
+    rather than replaced wholesale.  All other types (including lists) are
+    replaced by the override value.
+    """
+    merged = dict(base)
+    for key, value in override.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 class Settings(BaseSettings):
     """Root application settings — merges env vars, YAML, and CLI overrides."""
 
@@ -429,28 +445,35 @@ class Settings(BaseSettings):
     def load(cls, config_path: str | Path | None = None) -> Settings:
         """Load settings from YAML config, env vars, and defaults.
 
-        Priority: env vars > yaml config > defaults.
+        Priority (highest wins): env vars > explicit config_path > vaig.yaml
+        (cwd) > ~/.vaig/config.yaml > config/default.yaml (project defaults).
+
+        All applicable config files are loaded and deep-merged in order from
+        lowest to highest priority, so that user or project-specific files can
+        override individual keys in the project defaults without repeating
+        every setting.
 
         Empty strings in YAML are stripped so they don't shadow env vars
         (pydantic-settings treats explicit init args as higher priority
         than environment variables).
         """
-        yaml_data: dict[str, Any] = {}
-
-        # Try loading YAML config
-        paths_to_try = [
-            config_path,
-            Path.cwd() / "config" / "default.yaml",
-            Path.cwd() / "vaig.yaml",
-            Path.home() / ".vaig" / "config.yaml",
+        # Ordered from lowest priority to highest priority.
+        # Each file found is deep-merged over the accumulated result so that
+        # higher-priority files override lower-priority ones.
+        paths_by_priority: list[Path | None] = [
+            Path.cwd() / "config" / "default.yaml",   # project defaults (lowest)
+            Path.home() / ".vaig" / "config.yaml",     # user home config
+            Path.cwd() / "vaig.yaml",                  # project-specific override
+            Path(config_path).expanduser() if config_path is not None else None,  # explicit (highest)
         ]
 
-        for p in paths_to_try:
+        yaml_data: dict[str, Any] = {}
+        for p in paths_by_priority:
             if p is not None:
                 resolved = Path(p).expanduser()
                 if resolved.exists():
-                    yaml_data = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
-                    break
+                    file_data = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
+                    yaml_data = _deep_merge(yaml_data, file_data)
 
         # Strip empty strings so env vars can take precedence
         yaml_data = _strip_empty_strings(yaml_data)
