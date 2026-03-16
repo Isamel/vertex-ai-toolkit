@@ -402,8 +402,18 @@ def gcloud_monitoring_query(
 
     # Append resource.labels filters from dict
     if resource_labels:
+        import re
+
         for label_key, label_value in resource_labels.items():
-            monitoring_filter += f' AND resource.labels.{label_key} = "{label_value}"'
+            # Validate label_key: only alphanumeric and underscores
+            if not re.fullmatch(r"[A-Za-z_]\w*", label_key):
+                return ToolResult(
+                    output=f"Invalid resource label key: '{label_key}'. Only alphanumeric characters and underscores are allowed.",
+                    error=True,
+                )
+            # Escape backslashes and double quotes in label_value
+            escaped_value = str(label_value).replace("\\", "\\\\").replace('"', '\\"')
+            monitoring_filter += f' AND resource.labels.{label_key} = "{escaped_value}"'
 
     # Build request
     request = monitoring_types.ListTimeSeriesRequest(

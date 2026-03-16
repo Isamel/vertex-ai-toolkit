@@ -183,14 +183,6 @@ class TestGcloudMonitoringQuery:
         client = MagicMock()
         mock_client.return_value = (client, None)
 
-        # Mock monitoring SDK imports
-        with patch.dict("sys.modules", {
-            "google.cloud.monitoring_v3": MagicMock(),
-            "google.protobuf.duration_pb2": MagicMock(),
-        }):
-            with patch("vaig.tools.gcloud_tools.datetime") if False else patch("builtins.__import__", side_effect=ImportError):
-                pass
-
         # We need to test that the filter is built correctly.
         # Since the function tries to import monitoring_v3, we'll use a
         # simpler approach: verify filter construction by checking what
@@ -204,10 +196,19 @@ class TestGcloudMonitoringQuery:
 
         fake_duration = MagicMock()
 
+        # The function does `from google.cloud.monitoring_v3 import types`,
+        # so the parent module's .types attribute must point to fake_monitoring.
+        # Similarly, `from google.protobuf import duration_pb2` needs the
+        # parent's .duration_pb2 to point to fake_duration.
+        fake_monitoring_v3 = MagicMock()
+        fake_monitoring_v3.types = fake_monitoring
+        fake_protobuf = MagicMock()
+        fake_protobuf.duration_pb2 = fake_duration
+
         with patch.dict("sys.modules", {
-            "google.cloud.monitoring_v3": MagicMock(),
+            "google.cloud.monitoring_v3": fake_monitoring_v3,
             "google.cloud.monitoring_v3.types": fake_monitoring,
-            "google.protobuf": MagicMock(),
+            "google.protobuf": fake_protobuf,
             "google.protobuf.duration_pb2": fake_duration,
         }):
             result = gcloud_monitoring_query(
@@ -217,12 +218,17 @@ class TestGcloudMonitoringQuery:
             )
 
         # The request should have been constructed with resource_labels in the filter
-        if fake_monitoring.ListTimeSeriesRequest.called:
-            call_kwargs = fake_monitoring.ListTimeSeriesRequest.call_args
-            filter_used = call_kwargs.kwargs.get("filter", "") if call_kwargs.kwargs else ""
-            if filter_used:
-                assert 'resource.labels.namespace_name' in filter_used
-                assert 'resource.labels.cluster_name' in filter_used
+        assert fake_monitoring.ListTimeSeriesRequest.called, (
+            "ListTimeSeriesRequest was never called — filter was not constructed"
+        )
+        call_kwargs = fake_monitoring.ListTimeSeriesRequest.call_args
+        filter_used = call_kwargs.kwargs.get("filter", "") if call_kwargs.kwargs else ""
+        assert 'resource.labels.namespace_name' in filter_used, (
+            f"Expected 'resource.labels.namespace_name' in filter, got: {filter_used}"
+        )
+        assert 'resource.labels.cluster_name' in filter_used, (
+            f"Expected 'resource.labels.cluster_name' in filter, got: {filter_used}"
+        )
 
     def test_resource_labels_none_no_effect(self) -> None:
         """resource_labels=None should not modify the filter."""
@@ -262,6 +268,75 @@ class TestGcloudMonitoringQuery:
                     resource_labels={},
                 )
             assert result.error is True
+
+    @patch("vaig.tools.gcloud_tools._get_monitoring_client")
+    def test_resource_labels_invalid_key_rejected(self, mock_client: MagicMock) -> None:
+        """resource_labels with invalid key (injection attempt) should return error."""
+        from vaig.tools.gcloud_tools import gcloud_monitoring_query
+
+        client = MagicMock()
+        mock_client.return_value = (client, None)
+
+        fake_monitoring = MagicMock()
+        fake_monitoring.ListTimeSeriesRequest = MagicMock()
+        fake_monitoring.ListTimeSeriesRequest.TimeSeriesView.FULL = "FULL"
+        fake_monitoring.Aggregation = MagicMock()
+
+        fake_monitoring_v3 = MagicMock()
+        fake_monitoring_v3.types = fake_monitoring
+
+        with patch.dict("sys.modules", {
+            "google.cloud.monitoring_v3": fake_monitoring_v3,
+            "google.cloud.monitoring_v3.types": fake_monitoring,
+            "google.protobuf": MagicMock(),
+            "google.protobuf.duration_pb2": MagicMock(),
+        }):
+            result = gcloud_monitoring_query(
+                "compute.googleapis.com/instance/cpu/utilization",
+                project="my-project",
+                resource_labels={"bad.key!": "value"},
+            )
+        assert result.error is True
+        assert "Invalid resource label key" in result.output
+
+    @patch("vaig.tools.gcloud_tools._get_monitoring_client")
+    def test_resource_labels_value_with_quotes_escaped(self, mock_client: MagicMock) -> None:
+        """resource_labels values containing quotes/backslashes should be escaped."""
+        from vaig.tools.gcloud_tools import gcloud_monitoring_query
+
+        client = MagicMock()
+        mock_client.return_value = (client, None)
+
+        fake_monitoring = MagicMock()
+        fake_monitoring.TimeInterval.return_value = MagicMock()
+        fake_monitoring.ListTimeSeriesRequest = MagicMock()
+        fake_monitoring.Aggregation = MagicMock()
+        fake_monitoring.ListTimeSeriesRequest.TimeSeriesView.FULL = "FULL"
+
+        fake_monitoring_v3 = MagicMock()
+        fake_monitoring_v3.types = fake_monitoring
+
+        with patch.dict("sys.modules", {
+            "google.cloud.monitoring_v3": fake_monitoring_v3,
+            "google.cloud.monitoring_v3.types": fake_monitoring,
+            "google.protobuf": MagicMock(),
+            "google.protobuf.duration_pb2": MagicMock(),
+        }):
+            result = gcloud_monitoring_query(
+                "compute.googleapis.com/instance/cpu/utilization",
+                project="my-project",
+                resource_labels={"namespace_name": 'prod"inject'},
+            )
+
+        assert fake_monitoring.ListTimeSeriesRequest.called, (
+            "ListTimeSeriesRequest was never called"
+        )
+        call_kwargs = fake_monitoring.ListTimeSeriesRequest.call_args
+        filter_used = call_kwargs.kwargs.get("filter", "") if call_kwargs.kwargs else ""
+        # The double quote in the value should be escaped
+        assert r'prod\"inject' in filter_used, (
+            f"Expected escaped quote in filter, got: {filter_used}"
+        )
 
 
 # ── _format_log_entry ────────────────────────────────────────

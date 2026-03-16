@@ -132,12 +132,12 @@ retry:
 logging:
   level: "WARNING"  # Override via VAIG_LOGGING__LEVEL or --verbose/-V
   show_path: false   # Show module path in log output (useful for debugging)
-  file_enabled: true          # Write logs to a rotating file for post-mortem debugging
+  file_enabled: false         # Write logs to a rotating file for post-mortem debugging (opt-in)
   file_path: "~/.vaig/logs/vaig.log"  # Log file location (supports ~ expansion)
   file_level: "DEBUG"         # Always capture everything to file
   file_max_bytes: 5242880     # 5 MB per file before rotation
   file_backup_count: 3        # Keep 3 backup files (vaig.log.1, .2, .3)
-  tool_results: true          # Persist full tool call results as JSONL for post-session analysis
+  tool_results: false         # Persist full tool call results as JSONL for post-session analysis (opt-in)
   tool_results_dir: "~/.vaig" # Base directory for tool results (stored under tool_results/ subdir)
 
 coding:

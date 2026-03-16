@@ -332,14 +332,14 @@ class TestCreateToolCallStore:
         return settings
 
     def test_returns_store_when_enabled(self, tmp_path: Path) -> None:
-        """When tool_results=True, returns a ToolCallStore with an active run."""
+        """When tool_results=True, returns a ToolCallStore (run not yet started)."""
         from vaig.cli.commands.live import _create_tool_call_store
 
         settings = self._make_settings(tool_results=True, tool_results_dir=str(tmp_path))
         store = _create_tool_call_store(settings)
         assert store is not None
-        assert store.run_id  # run was started
-        assert (tmp_path / "tool_results").is_dir()
+        # start_run() is deferred to the Orchestrator, so run_id is empty here
+        assert store.run_id == ""
 
     def test_returns_none_when_disabled(self, tmp_path: Path) -> None:
         """When tool_results=False, returns None."""
@@ -349,16 +349,17 @@ class TestCreateToolCallStore:
         store = _create_tool_call_store(settings)
         assert store is None
 
-    def test_returns_none_on_creation_error(self, tmp_path: Path) -> None:
-        """If store creation fails (e.g. bad dir), returns None without crashing."""
+    def test_returns_store_even_with_bad_dir(self, tmp_path: Path) -> None:
+        """Store creation succeeds even with a bad dir; error deferred to start_run()."""
         from vaig.cli.commands.live import _create_tool_call_store
 
-        # Use a file as dir to force an error in mkdir
+        # Use a file as dir — error is now deferred to Orchestrator.start_run()
         blocker = tmp_path / "blocker"
         blocker.write_text("I am a file")
         settings = self._make_settings(tool_results=True, tool_results_dir=str(blocker))
         store = _create_tool_call_store(settings)
-        assert store is None
+        # Store is created (start_run is deferred), but will fail later
+        assert store is not None
 
     def test_expands_home_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """The tool_results_dir should expand ~ to the user's home directory."""
@@ -368,4 +369,5 @@ class TestCreateToolCallStore:
         settings = self._make_settings(tool_results=True, tool_results_dir="~/my-vaig-data")
         store = _create_tool_call_store(settings)
         assert store is not None
-        assert (tmp_path / "my-vaig-data" / "tool_results").is_dir()
+        # Dir creation is deferred to start_run(); verify ~ was expanded in base_dir
+        assert "my-vaig-data" in str(store._base_dir)

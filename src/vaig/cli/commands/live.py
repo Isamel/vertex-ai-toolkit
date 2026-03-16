@@ -28,12 +28,12 @@ from vaig.cli._helpers import (
     track_command,
 )
 from vaig.cli.display import print_colored_report
+from vaig.core.tool_call_store import ToolCallStore
 
 if TYPE_CHECKING:
     from vaig.agents.orchestrator import OrchestratorResult
     from vaig.core.client import GeminiClient
     from vaig.core.config import GKEConfig, Settings
-    from vaig.core.tool_call_store import ToolCallStore
     from vaig.skills.base import BaseSkill
     from vaig.tools.base import ToolRegistry
 
@@ -55,12 +55,9 @@ def _create_tool_call_store(settings: Settings) -> ToolCallStore | None:
         return None
 
     try:
-        from vaig.core.tool_call_store import ToolCallStore
-
         base_dir = Path(settings.logging.tool_results_dir).expanduser()
         store = ToolCallStore(base_dir=base_dir)
-        store.start_run()
-        logger.debug("ToolCallStore initialised: %s (run %s)", base_dir, store.run_id)
+        logger.debug("ToolCallStore initialised: %s", base_dir)
         return store
     except Exception:
         logger.warning("Failed to create ToolCallStore; tool results will not be persisted.", exc_info=True)
