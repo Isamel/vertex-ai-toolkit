@@ -16,7 +16,6 @@ import pytest
 from vaig.core.config import CodingConfig
 from vaig.tools.shell_tools import _check_denied_command, run_command
 
-
 # ── Helper ──────────────────────────────────────────────────
 
 

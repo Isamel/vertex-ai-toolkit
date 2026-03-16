@@ -15,8 +15,8 @@ from vaig.core.exceptions import (
     K8sAuthError,
     MaxIterationsError,
     ToolExecutionError,
-    VAIGError,
     VaigAuthError,
+    VAIGError,
     format_error_for_user,
 )
 

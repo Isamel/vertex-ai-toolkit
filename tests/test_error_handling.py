@@ -20,11 +20,10 @@ from vaig.core.exceptions import (
     GCPPermissionError,
     GeminiClientError,
     K8sAuthError,
-    VAIGError,
     VaigAuthError,
+    VAIGError,
     format_error_for_user,
 )
-
 
 # ── Exception hierarchy ──────────────────────────────────────
 

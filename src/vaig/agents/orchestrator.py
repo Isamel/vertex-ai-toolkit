@@ -16,7 +16,7 @@ from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.async_utils import gather_with_errors
 from vaig.core.client import GeminiClient, StreamResult
-from vaig.core.exceptions import VAIGError, VaigAuthError
+from vaig.core.exceptions import VaigAuthError, VAIGError
 from vaig.core.language import (
     detect_language,
     inject_autopilot_into_config,
