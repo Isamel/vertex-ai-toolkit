@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 import time
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from google.genai import types
 
@@ -13,7 +13,10 @@ from vaig.core.async_utils import to_async
 from vaig.core.client import GeminiClient, ToolCallResult
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.core.exceptions import MaxIterationsError
-from vaig.tools.base import ToolRegistry, ToolResult
+from vaig.tools.base import ToolCallRecord, ToolRegistry, ToolResult
+
+if TYPE_CHECKING:
+    from vaig.core.tool_call_store import ToolCallStore
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +82,8 @@ class ToolLoopMixin:
         max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
         frequency_penalty: float | None = 0.15,
         on_tool_call: OnToolCall | None = None,
+        agent_name: str = "",
+        tool_call_store: ToolCallStore | None = None,
     ) -> ToolLoopResult:
         """Drive a Gemini tool-use loop until text or max iterations.
 
@@ -202,6 +207,30 @@ class ToolLoopMixin:
                             logger.debug("on_tool_call callback raised; ignoring")
                     except Exception:  # noqa: BLE001
                         logger.debug("on_tool_call callback raised; ignoring")
+
+                # Record tool call for metrics/feedback storage
+                if tool_call_store is not None:
+                    try:
+                        from datetime import datetime, timezone
+
+                        err_msg_store = (tool_result.output or "")[:500] if tool_result.error else ""
+                        record = ToolCallRecord(
+                            tool_name=tool_name,
+                            tool_args=tool_args,
+                            output=tool_result.output or "",
+                            output_size_bytes=len((tool_result.output or "").encode("utf-8")),
+                            error=tool_result.error,
+                            error_type="",
+                            error_message=err_msg_store,
+                            duration_s=tool_duration,
+                            timestamp=datetime.now(timezone.utc).isoformat(),
+                            agent_name=agent_name,
+                            run_id=tool_call_store.run_id,
+                            iteration=iteration,
+                        )
+                        tool_call_store.record(record)
+                    except Exception:  # noqa: BLE001
+                        logger.debug("tool_call_store.record() failed; ignoring")
 
                 tools_executed.append({
                     "name": tool_name,
@@ -335,6 +364,8 @@ class ToolLoopMixin:
         max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
         frequency_penalty: float | None = 0.15,
         on_tool_call: OnToolCall | None = None,
+        agent_name: str = "",
+        tool_call_store: ToolCallStore | None = None,
     ) -> ToolLoopResult:
         """Async version of :meth:`_run_tool_loop`.
 
@@ -436,6 +467,30 @@ class ToolLoopMixin:
                             logger.debug("on_tool_call callback raised; ignoring")
                     except Exception:  # noqa: BLE001
                         logger.debug("on_tool_call callback raised; ignoring")
+
+                # Record tool call for metrics/feedback storage
+                if tool_call_store is not None:
+                    try:
+                        from datetime import datetime, timezone
+
+                        err_msg_store = (tool_result.output or "")[:500] if tool_result.error else ""
+                        record = ToolCallRecord(
+                            tool_name=tool_name,
+                            tool_args=tool_args,
+                            output=tool_result.output or "",
+                            output_size_bytes=len((tool_result.output or "").encode("utf-8")),
+                            error=tool_result.error,
+                            error_type="",
+                            error_message=err_msg_store,
+                            duration_s=tool_duration,
+                            timestamp=datetime.now(timezone.utc).isoformat(),
+                            agent_name=agent_name,
+                            run_id=tool_call_store.run_id,
+                            iteration=iteration,
+                        )
+                        tool_call_store.record(record)
+                    except Exception:  # noqa: BLE001
+                        logger.debug("tool_call_store.record() failed; ignoring")
 
                 tools_executed.append({
                     "name": tool_name,

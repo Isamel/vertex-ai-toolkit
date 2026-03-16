@@ -24,6 +24,8 @@ from vaig.tools.base import ToolRegistry
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
+    from vaig.core.tool_call_store import ToolCallStore
+
 logger = logging.getLogger(__name__)
 
 
@@ -166,6 +168,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         *,
         context: str = "",
         on_tool_call: OnToolCall | None = None,
+        tool_call_store: ToolCallStore | None = None,
     ) -> AgentResult:
         """Execute a task using the tool-use loop.
 
@@ -178,6 +181,8 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             on_tool_call: Optional callback invoked after each tool
                 execution with ``(tool_name, tool_args, duration_secs,
                 success)``.
+            tool_call_store: Optional store for recording full tool call
+                results for metrics and feedback.
 
         Returns:
             ``AgentResult`` with the final text response and metadata.
@@ -211,6 +216,8 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
                 on_tool_call=on_tool_call,
+                agent_name=self.name,
+                tool_call_store=tool_call_store,
                 **loop_kwargs,
             )
         except MaxIterationsError:
@@ -274,6 +281,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         *,
         context: str = "",
         on_tool_call: OnToolCall | None = None,
+        tool_call_store: ToolCallStore | None = None,
     ) -> AgentResult:
         """Execute a task using the async tool-use loop.
 
@@ -287,6 +295,8 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             on_tool_call: Optional callback invoked after each tool
                 execution with ``(tool_name, tool_args, duration_secs,
                 success)``.
+            tool_call_store: Optional store for recording full tool call
+                results for metrics and feedback.
 
         Returns:
             ``AgentResult`` with the final text response and metadata.
@@ -320,6 +330,8 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
                 on_tool_call=on_tool_call,
+                agent_name=self.name,
+                tool_call_store=tool_call_store,
                 **loop_kwargs,
             )
         except MaxIterationsError:

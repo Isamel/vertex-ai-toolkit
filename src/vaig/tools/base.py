@@ -33,6 +33,41 @@ class ToolResult:
 
 
 @dataclass
+class ToolCallRecord:
+    """Record of a single tool call execution for metrics and feedback."""
+
+    tool_name: str
+    tool_args: dict[str, Any]
+    output: str                    # Full, untruncated output
+    output_size_bytes: int         # len(output.encode('utf-8'))
+    error: bool
+    error_type: str                # Exception class name, empty if no error
+    error_message: str             # Error details, empty if no error
+    duration_s: float              # Wall clock seconds
+    timestamp: str                 # ISO 8601 UTC
+    agent_name: str                # Which agent made the call (gatherer, analyzer, etc.)
+    run_id: str                    # UUID for the execution run
+    iteration: int                 # Which iteration of the tool loop
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize for JSON storage."""
+        return {
+            "tool_name": self.tool_name,
+            "tool_args": self.tool_args,
+            "output": self.output,
+            "output_size_bytes": self.output_size_bytes,
+            "error": self.error,
+            "error_type": self.error_type,
+            "error_message": self.error_message,
+            "duration_s": round(self.duration_s, 4),
+            "timestamp": self.timestamp,
+            "agent_name": self.agent_name,
+            "run_id": self.run_id,
+            "iteration": self.iteration,
+        }
+
+
+@dataclass
 class ToolDef:
     """Definition of a tool that an agent can invoke."""
 

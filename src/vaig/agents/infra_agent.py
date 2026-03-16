@@ -19,6 +19,8 @@ from vaig.tools import ToolRegistry, ToolResult
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
+    from vaig.core.tool_call_store import ToolCallStore
+
 logger = logging.getLogger(__name__)
 
 
@@ -256,6 +258,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
         *,
         context: str = "",
         on_tool_call: OnToolCall | None = None,
+        tool_call_store: ToolCallStore | None = None,
     ) -> AgentResult:
         """Execute an infrastructure investigation using the tool-use loop.
 
@@ -300,6 +303,8 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
                 max_output_tokens=self._config.max_output_tokens,
                 frequency_penalty=0.15,
                 on_tool_call=on_tool_call,
+                agent_name=self.name,
+                tool_call_store=tool_call_store,
             )
         except MaxIterationsError:
             raise
@@ -357,6 +362,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
         *,
         context: str = "",
         on_tool_call: OnToolCall | None = None,
+        tool_call_store: ToolCallStore | None = None,
     ) -> AgentResult:
         """Execute an infrastructure investigation using the async tool-use loop.
 
@@ -400,6 +406,8 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
                 max_output_tokens=self._config.max_output_tokens,
                 frequency_penalty=0.15,
                 on_tool_call=on_tool_call,
+                agent_name=self.name,
+                tool_call_store=tool_call_store,
             )
         except MaxIterationsError:
             raise

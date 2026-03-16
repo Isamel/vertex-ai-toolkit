@@ -26,6 +26,7 @@ from vaig.tools.base import ToolRegistry
 
 if TYPE_CHECKING:
     from vaig.core.config import Settings
+    from vaig.core.tool_call_store import ToolCallStore
 
 logger = logging.getLogger(__name__)
 
@@ -379,6 +380,7 @@ class Orchestrator:
         strategy: str = "sequential",
         is_autopilot: bool | None = None,
         on_tool_call: OnToolCall | None = None,
+        tool_call_store: ToolCallStore | None = None,
     ) -> OrchestratorResult:
         """Execute a skill with tool-aware agents.
 
@@ -400,6 +402,9 @@ class Orchestrator:
                 instruction is injected into each agent's system prompt.
             on_tool_call: Optional callback invoked after each tool
                 execution.  Threaded through to each agent's tool loop.
+            tool_call_store: Optional store for recording full tool call
+                results for metrics and feedback.  When provided, the
+                store is passed to each ``ToolAwareAgent.execute()`` call.
 
         Returns:
             :class:`OrchestratorResult` with the aggregated outcome.
@@ -411,6 +416,10 @@ class Orchestrator:
         )
 
         t0_ewt = time.perf_counter()
+
+        # ── Start a tool call store run if provided ──────────
+        if tool_call_store is not None:
+            tool_call_store.start_run()
 
         # ── Dynamic language detection & injection ───────────
         # Detect the user's language and inject a language instruction
@@ -461,8 +470,11 @@ class Orchestrator:
                 for agent in agents:
                     logger.info("Fan-out (tools): submitting agent=%s", agent.name)
                     kw: dict[str, Any] = {"context": query}
-                    if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
-                        kw["on_tool_call"] = on_tool_call
+                    if isinstance(agent, ToolAwareAgent):
+                        if on_tool_call is not None:
+                            kw["on_tool_call"] = on_tool_call
+                        if tool_call_store is not None:
+                            kw["tool_call_store"] = tool_call_store
                     futures.append(executor.submit(agent.execute, query, **kw))
 
                 for agent, future in zip(agents, futures):
@@ -495,8 +507,11 @@ class Orchestrator:
         elif strategy == "single":
             if agents:
                 kw_single: dict[str, Any] = {}
-                if isinstance(agents[0], ToolAwareAgent) and on_tool_call is not None:
-                    kw_single["on_tool_call"] = on_tool_call
+                if isinstance(agents[0], ToolAwareAgent):
+                    if on_tool_call is not None:
+                        kw_single["on_tool_call"] = on_tool_call
+                    if tool_call_store is not None:
+                        kw_single["tool_call_store"] = tool_call_store
                 agent_result = agents[0].execute(query, **kw_single)
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
@@ -531,8 +546,11 @@ class Orchestrator:
                     )
 
                 kw_seq: dict[str, Any] = {"context": current_context}
-                if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
-                    kw_seq["on_tool_call"] = on_tool_call
+                if isinstance(agent, ToolAwareAgent):
+                    if on_tool_call is not None:
+                        kw_seq["on_tool_call"] = on_tool_call
+                    if tool_call_store is not None:
+                        kw_seq["tool_call_store"] = tool_call_store
 
                 agent_result = agent.execute(query, **kw_seq)
                 result.agent_results.append(agent_result)
@@ -594,8 +612,11 @@ class Orchestrator:
 
                     # Use configurable max_iterations for the second pass
                     kw_retry: dict[str, Any] = {"context": ""}
-                    if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
-                        kw_retry["on_tool_call"] = on_tool_call
+                    if isinstance(agent, ToolAwareAgent):
+                        if on_tool_call is not None:
+                            kw_retry["on_tool_call"] = on_tool_call
+                        if tool_call_store is not None:
+                            kw_retry["tool_call_store"] = tool_call_store
 
                     original_max_iters: int | None = None
                     if (
@@ -677,6 +698,11 @@ class Orchestrator:
                         )
                         agent.reset()
                         kw_rr: dict[str, Any] = {"context": ""}
+                        if isinstance(agent, ToolAwareAgent):
+                            if on_tool_call is not None:
+                                kw_rr["on_tool_call"] = on_tool_call
+                            if tool_call_store is not None:
+                                kw_rr["tool_call_store"] = tool_call_store
                         reporter_retry = agent.execute(
                             reporter_retry_prompt, **kw_rr,
                         )
@@ -961,6 +987,7 @@ class Orchestrator:
         strategy: str = "sequential",
         is_autopilot: bool | None = None,
         on_tool_call: OnToolCall | None = None,
+        tool_call_store: ToolCallStore | None = None,
     ) -> OrchestratorResult:
         """Async version of :meth:`execute_with_tools`.
 
@@ -977,6 +1004,9 @@ class Orchestrator:
             is_autopilot: Autopilot detection result.
             on_tool_call: Optional callback invoked after each tool
                 execution.  Threaded through to each agent's tool loop.
+            tool_call_store: Optional store for recording full tool call
+                results for metrics and feedback.  When provided, the
+                store is passed to each ``ToolAwareAgent.execute()`` call.
 
         Returns:
             :class:`OrchestratorResult` with the aggregated outcome.
@@ -988,6 +1018,10 @@ class Orchestrator:
         )
 
         t0_ewt = time.perf_counter()
+
+        # ── Start a tool call store run if provided ──────────
+        if tool_call_store is not None:
+            tool_call_store.start_run()
 
         # ── Dynamic language detection & injection ───────────
         lang = detect_language(query)
@@ -1030,8 +1064,11 @@ class Orchestrator:
                 logger.info("Async fan-out (tools): launching agent=%s", agent.name)
                 try:
                     kw: dict[str, Any] = {"context": query}
-                    if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
-                        kw["on_tool_call"] = on_tool_call
+                    if isinstance(agent, ToolAwareAgent):
+                        if on_tool_call is not None:
+                            kw["on_tool_call"] = on_tool_call
+                        if tool_call_store is not None:
+                            kw["tool_call_store"] = tool_call_store
                     return await asyncio.to_thread(agent.execute, query, **kw)
                 except Exception:
                     logger.exception(
@@ -1066,8 +1103,11 @@ class Orchestrator:
         elif strategy == "single":
             if agents:
                 kw_single: dict[str, Any] = {}
-                if isinstance(agents[0], ToolAwareAgent) and on_tool_call is not None:
-                    kw_single["on_tool_call"] = on_tool_call
+                if isinstance(agents[0], ToolAwareAgent):
+                    if on_tool_call is not None:
+                        kw_single["on_tool_call"] = on_tool_call
+                    if tool_call_store is not None:
+                        kw_single["tool_call_store"] = tool_call_store
                 agent_result = await asyncio.to_thread(agents[0].execute, query, **kw_single)
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
@@ -1098,8 +1138,11 @@ class Orchestrator:
                     )
 
                 kw_seq: dict[str, Any] = {"context": current_context}
-                if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
-                    kw_seq["on_tool_call"] = on_tool_call
+                if isinstance(agent, ToolAwareAgent):
+                    if on_tool_call is not None:
+                        kw_seq["on_tool_call"] = on_tool_call
+                    if tool_call_store is not None:
+                        kw_seq["tool_call_store"] = tool_call_store
 
                 agent_result = await asyncio.to_thread(
                     agent.execute, query, **kw_seq,
@@ -1145,8 +1188,11 @@ class Orchestrator:
                         agent.reset()
 
                     kw_retry: dict[str, Any] = {"context": ""}
-                    if isinstance(agent, ToolAwareAgent) and on_tool_call is not None:
-                        kw_retry["on_tool_call"] = on_tool_call
+                    if isinstance(agent, ToolAwareAgent):
+                        if on_tool_call is not None:
+                            kw_retry["on_tool_call"] = on_tool_call
+                        if tool_call_store is not None:
+                            kw_retry["tool_call_store"] = tool_call_store
 
                     original_max_iters: int | None = None
                     if (
@@ -1229,6 +1275,11 @@ class Orchestrator:
                         )
                         agent.reset()
                         kw_rr: dict[str, Any] = {"context": ""}
+                        if isinstance(agent, ToolAwareAgent):
+                            if on_tool_call is not None:
+                                kw_rr["on_tool_call"] = on_tool_call
+                            if tool_call_store is not None:
+                                kw_rr["tool_call_store"] = tool_call_store
                         reporter_retry = await asyncio.to_thread(
                             agent.execute, reporter_retry_prompt, **kw_rr,
                         )
