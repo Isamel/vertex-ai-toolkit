@@ -1,4 +1,4 @@
-"""Tests for prompt defense hardening (P1-P5, R1-R3, R5).
+"""Tests for prompt defense hardening (P1-P5, R1-R5).
 
 Validates that security fixes are correctly applied:
 - P1+P2+R1: ANTI_INJECTION_RULE moved to SYSTEM_INSTRUCTION
@@ -7,6 +7,7 @@ Validates that security fixes are correctly applied:
 - P5: Pressuring "CRITICAL" language removed from gatherer
 - R2: Management context checklist item
 - R3: HistorySummarizer wraps history with untrusted delimiters
+- R4: Dynamic tool reference table (omit disabled tools)
 - R5: Reporter conciseness rule
 """
 
@@ -32,6 +33,7 @@ from vaig.skills.service_health.prompts import (
     HEALTH_VERIFIER_PROMPT,
     PHASE_PROMPTS,
     SYSTEM_INSTRUCTION,
+    build_gatherer_prompt,
 )
 
 # ── P1+P2+R1: ANTI_INJECTION_RULE in SYSTEM_INSTRUCTION ─────
@@ -287,3 +289,124 @@ class TestAntiInjectionRuleIntegrity:
 
     def test_security_rule_prefix(self) -> None:
         assert ANTI_INJECTION_RULE.startswith("SECURITY RULE:")
+
+
+# ── R4: Dynamic tool reference table ────────────────────────
+
+# Tool name constants for assertions
+_HELM_TOOL_NAMES = [
+    "helm_list_releases",
+    "helm_release_status",
+    "helm_release_history",
+    "helm_release_values",
+]
+_ARGOCD_TOOL_NAMES = [
+    "argocd_list_applications",
+    "argocd_app_status",
+    "argocd_app_history",
+    "argocd_app_diff",
+    "argocd_app_managed_resources",
+]
+_CORE_TOOL_NAMES = [
+    "kubectl_get",
+    "kubectl_describe",
+    "kubectl_logs",
+    "kubectl_top",
+    "get_events",
+    "get_node_conditions",
+    "get_container_status",
+    "get_rollout_status",
+    "get_rollout_history",
+    "exec_command",
+    "check_rbac",
+    "gcloud_logging_query",
+    "gcloud_monitoring_query",
+    "kubectl_get_labels",
+]
+
+
+class TestDynamicToolReferenceTable:
+    """R4: Tool reference table must omit disabled Helm/ArgoCD tools."""
+
+    def test_both_disabled_only_core_tools_in_table(self) -> None:
+        """With both disabled, tool TABLE must only contain core tool rows."""
+        prompt = build_gatherer_prompt(helm_enabled=False, argocd_enabled=False)
+        # Extract just the tool reference table section (between header and IMPORTANT)
+        table_start = prompt.index("| Tool | Required Parameters")
+        table_end = prompt.index("IMPORTANT:", table_start)
+        table_section = prompt[table_start:table_end]
+
+        for tool in _CORE_TOOL_NAMES:
+            assert f"`{tool}`" in table_section, f"Core tool {tool} missing from table"
+        for tool in _HELM_TOOL_NAMES:
+            assert f"`{tool}`" not in table_section, f"Helm tool {tool} should not be in table"
+        for tool in _ARGOCD_TOOL_NAMES:
+            assert f"`{tool}`" not in table_section, f"ArgoCD tool {tool} should not be in table"
+
+    def test_helm_enabled_includes_helm_tools(self) -> None:
+        """With Helm enabled, table must include core + Helm tools."""
+        prompt = build_gatherer_prompt(helm_enabled=True, argocd_enabled=False)
+        table_start = prompt.index("| Tool | Required Parameters")
+        table_end = prompt.index("IMPORTANT:", table_start)
+        table_section = prompt[table_start:table_end]
+
+        for tool in _CORE_TOOL_NAMES:
+            assert f"`{tool}`" in table_section
+        for tool in _HELM_TOOL_NAMES:
+            assert f"`{tool}`" in table_section, f"Helm tool {tool} missing when enabled"
+        for tool in _ARGOCD_TOOL_NAMES:
+            assert f"`{tool}`" not in table_section, f"ArgoCD tool {tool} should not be in table"
+
+    def test_argocd_enabled_includes_argocd_tools(self) -> None:
+        """With ArgoCD enabled, table must include core + ArgoCD tools."""
+        prompt = build_gatherer_prompt(helm_enabled=False, argocd_enabled=True)
+        table_start = prompt.index("| Tool | Required Parameters")
+        table_end = prompt.index("IMPORTANT:", table_start)
+        table_section = prompt[table_start:table_end]
+
+        for tool in _CORE_TOOL_NAMES:
+            assert f"`{tool}`" in table_section
+        for tool in _HELM_TOOL_NAMES:
+            assert f"`{tool}`" not in table_section
+        for tool in _ARGOCD_TOOL_NAMES:
+            assert f"`{tool}`" in table_section, f"ArgoCD tool {tool} missing when enabled"
+
+    def test_both_enabled_includes_all_tools(self) -> None:
+        """With both enabled, table must include all 23 tools."""
+        prompt = build_gatherer_prompt(helm_enabled=True, argocd_enabled=True)
+        table_start = prompt.index("| Tool | Required Parameters")
+        table_end = prompt.index("IMPORTANT:", table_start)
+        table_section = prompt[table_start:table_end]
+
+        all_tools = _CORE_TOOL_NAMES + _HELM_TOOL_NAMES + _ARGOCD_TOOL_NAMES
+        for tool in all_tools:
+            assert f"`{tool}`" in table_section, f"Tool {tool} missing from full table"
+
+    def test_backward_compat_constant_has_all_tools(self) -> None:
+        """HEALTH_GATHERER_PROMPT constant must include all tools for backward compat."""
+        for tool in _CORE_TOOL_NAMES + _HELM_TOOL_NAMES + _ARGOCD_TOOL_NAMES:
+            assert f"`{tool}`" in HEALTH_GATHERER_PROMPT, f"Backward-compat constant missing tool {tool}"
+
+    def test_prompt_structure_preserved(self) -> None:
+        """Dynamic prompt must preserve the full structure (not just the table)."""
+        prompt = build_gatherer_prompt(helm_enabled=False, argocd_enabled=False)
+        # All key structural elements must survive
+        assert "## Tool Call Reference" in prompt
+        assert "## EXECUTION ORDER" in prompt
+        assert "### Step 1 (ALWAYS" in prompt
+        assert "### Step 2:" in prompt
+        assert "### Step 3:" in prompt
+        assert "## MANDATORY OUTPUT FORMAT" in prompt
+        assert "### Investigation Checklist" in prompt
+
+    def test_core_tool_count(self) -> None:
+        """Core tools section must have exactly 14 tools."""
+        assert len(_CORE_TOOL_NAMES) == 14
+
+    def test_helm_tool_count(self) -> None:
+        """Helm tools section must have exactly 4 tools."""
+        assert len(_HELM_TOOL_NAMES) == 4
+
+    def test_argocd_tool_count(self) -> None:
+        """ArgoCD tools section must have exactly 5 tools."""
+        assert len(_ARGOCD_TOOL_NAMES) == 5

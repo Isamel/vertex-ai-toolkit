@@ -301,7 +301,9 @@ class TestBuildLanguageInstruction:
         ],
     )
     def test_new_languages_return_instruction(
-        self, lang_code: str, lang_name: str,
+        self,
+        lang_code: str,
+        lang_name: str,
     ) -> None:
         """All newly supported languages should produce a proper instruction."""
         instruction = build_language_instruction(lang_code)
@@ -430,7 +432,10 @@ class TestOrchestratorLanguageIntegration:
             agent.name = "mock"
             agent.role = "Mock"
             agent.execute.return_value = AgentResult(
-                agent_name="mock", content="OK", success=True, usage={},
+                agent_name="mock",
+                content="OK",
+                success=True,
+                usage={},
             )
             return [agent]
 
@@ -440,7 +445,9 @@ class TestOrchestratorLanguageIntegration:
         class StubSkill(BaseSkill):
             def get_metadata(self) -> SkillMetadata:
                 return SkillMetadata(
-                    name="test", display_name="Test", description="Test",
+                    name="test",
+                    display_name="Test",
+                    description="Test",
                 )
 
             def get_system_instruction(self) -> str:
@@ -494,7 +501,10 @@ class TestOrchestratorLanguageIntegration:
             agent.name = "mock"
             agent.role = "Mock"
             agent.execute.return_value = AgentResult(
-                agent_name="mock", content="OK", success=True, usage={},
+                agent_name="mock",
+                content="OK",
+                success=True,
+                usage={},
             )
             return [agent]
 
@@ -503,7 +513,9 @@ class TestOrchestratorLanguageIntegration:
         class StubSkill(BaseSkill):
             def get_metadata(self) -> SkillMetadata:
                 return SkillMetadata(
-                    name="test", display_name="Test", description="Test",
+                    name="test",
+                    display_name="Test",
+                    description="Test",
                 )
 
             def get_system_instruction(self) -> str:
@@ -563,7 +575,6 @@ class TestServiceHealthLanguageIntegration:
         """English should NOT modify service-health configs."""
         from vaig.skills.service_health.prompts import (
             HEALTH_ANALYZER_PROMPT,
-            HEALTH_GATHERER_PROMPT,
             HEALTH_REPORTER_PROMPT,
             HEALTH_VERIFIER_PROMPT,
         )
@@ -572,10 +583,14 @@ class TestServiceHealthLanguageIntegration:
         skill = ServiceHealthSkill()
         configs = skill.get_agents_config()
 
+        # Capture the gatherer prompt BEFORE language injection
+        # (get_agents_config builds it dynamically based on settings)
+        gatherer_before = configs[0]["system_instruction"]
+
         inject_language_into_config(configs, "en")
 
-        # Prompts should be unchanged
-        assert configs[0]["system_instruction"] == HEALTH_GATHERER_PROMPT
+        # Prompts should be unchanged (English = no injection)
+        assert configs[0]["system_instruction"] == gatherer_before
         assert configs[1]["system_instruction"] == HEALTH_ANALYZER_PROMPT
         assert configs[2]["system_instruction"] == HEALTH_VERIFIER_PROMPT
         assert configs[3]["system_instruction"] == HEALTH_REPORTER_PROMPT
@@ -691,5 +706,6 @@ class TestInjectAutopilotIntoConfig:
         inject_autopilot_into_config(configs, True)
 
         from vaig.skills.service_health import prompts
+
         assert original == prompts.HEALTH_GATHERER_PROMPT
         assert "GKE AUTOPILOT" not in prompts.HEALTH_GATHERER_PROMPT

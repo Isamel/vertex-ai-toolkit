@@ -52,14 +52,7 @@ This principle applies to ALL agents in the pipeline.
 8. Always specify the exact scope in your assessment: which namespace, which deployment, which pod.
 """
 
-HEALTH_GATHERER_PROMPT = """You are a Kubernetes data collection specialist. Your job is to systematically gather health data from a Kubernetes cluster using the available tools.
-
-## Tool Call Reference — EXACT Parameter Names
-
-Use ONLY these parameter names when calling tools. Using wrong names (e.g. `pod_name` instead of `pod`) causes runtime errors.
-
-| Tool | Required Parameters | Optional Parameters |
-|------|---------------------|---------------------|
+_CORE_TOOLS_TABLE = """\
 | `kubectl_get` | `resource` | `name`, `namespace`, `output_format`, `label_selector`, `field_selector` |
 | `kubectl_describe` | `resource`, `name` | `namespace` |
 | `kubectl_logs` | `pod` | `namespace`, `container`, `tail_lines`, `since` |
@@ -73,16 +66,51 @@ Use ONLY these parameter names when calling tools. Using wrong names (e.g. `pod_
 | `check_rbac` | `verb`, `resource`, `namespace` | `service_account`, `resource_name` |
 | `gcloud_logging_query` | `filter_expr` | `project`, `limit`, `order_by` |
 | `gcloud_monitoring_query` | `metric_type` | `project`, `interval_minutes`, `aggregation`, `filter_str` |
-| `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |
+| `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |"""
+
+_HELM_TOOLS_TABLE = """\
 | `helm_list_releases` | | `namespace`, `force_refresh` |
 | `helm_release_status` | `release_name` | `namespace`, `force_refresh` |
 | `helm_release_history` | `release_name` | `namespace`, `force_refresh` |
-| `helm_release_values` | `release_name` | `namespace`, `all_values`, `force_refresh` |
+| `helm_release_values` | `release_name` | `namespace`, `all_values`, `force_refresh` |"""
+
+_ARGOCD_TOOLS_TABLE = """\
 | `argocd_list_applications` | | `namespace` |
 | `argocd_app_status` | `app_name` | `namespace` |
 | `argocd_app_history` | `app_name` | `namespace` |
 | `argocd_app_diff` | `app_name` | `namespace` |
-| `argocd_app_managed_resources` | `app_name` | `namespace` |
+| `argocd_app_managed_resources` | `app_name` | `namespace` |"""
+
+
+def _build_tool_reference_table(
+    *,
+    helm_enabled: bool = True,
+    argocd_enabled: bool = True,
+) -> str:
+    """Assemble the tool reference table from enabled sections.
+
+    Only includes Helm and ArgoCD tool rows when the corresponding
+    integration is enabled, keeping the prompt lean and within Vertex AI's
+    recommended 10-20 active tools guideline.
+    """
+    header = (
+        "| Tool | Required Parameters | Optional Parameters |\n|------|---------------------|---------------------|"
+    )
+    sections = [header, _CORE_TOOLS_TABLE]
+    if helm_enabled:
+        sections.append(_HELM_TOOLS_TABLE)
+    if argocd_enabled:
+        sections.append(_ARGOCD_TOOLS_TABLE)
+    return "\n".join(sections)
+
+
+_GATHERER_PROMPT_TEMPLATE = """You are a Kubernetes data collection specialist. Your job is to systematically gather health data from a Kubernetes cluster using the available tools.
+
+## Tool Call Reference — EXACT Parameter Names
+
+Use ONLY these parameter names when calling tools. Using wrong names (e.g. `pod_name` instead of `pod`) causes runtime errors.
+
+{tool_reference_table}
 
 IMPORTANT:
 - `kubectl_logs` uses `pod` (NOT `pod_name`)
@@ -289,6 +317,32 @@ Steps 9 and 10 MUST be marked as SKIPPED if the corresponding tools are not in y
 - [ ] Step 10: ArgoCD assessment (SKIPPED — reason: argocd_list_applications tool not available)
 ```
 """
+
+
+def build_gatherer_prompt(
+    *,
+    helm_enabled: bool = True,
+    argocd_enabled: bool = True,
+) -> str:
+    """Build the gatherer prompt with only the enabled tool sections.
+
+    Args:
+        helm_enabled: Include Helm tool rows in the reference table.
+        argocd_enabled: Include ArgoCD tool rows in the reference table.
+
+    Returns:
+        The fully assembled gatherer prompt string.
+    """
+    table = _build_tool_reference_table(
+        helm_enabled=helm_enabled,
+        argocd_enabled=argocd_enabled,
+    )
+    return _GATHERER_PROMPT_TEMPLATE.format(tool_reference_table=table)
+
+
+# Backward-compatible constant — includes ALL tools (Helm + ArgoCD enabled).
+# Existing code and tests that import this directly continue to work unchanged.
+HEALTH_GATHERER_PROMPT: str = build_gatherer_prompt(helm_enabled=True, argocd_enabled=True)
 
 HEALTH_ANALYZER_PROMPT = f"""You are an SRE analysis specialist. You receive raw health data collected from a Kubernetes cluster and perform pattern analysis to identify issues, assess severity, and find correlations.
 
