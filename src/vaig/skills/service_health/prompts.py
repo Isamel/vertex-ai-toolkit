@@ -181,19 +181,25 @@ When using `gcloud_logging_query`, use these GKE-specific filters (replace NAMES
 - If any tool returned 403/Forbidden or logs show permission denied:
   a. `check_rbac(verb="<action>", resource="<type>", namespace=<ns>, service_account="<sa>")` to verify permissions
 
-### Step 9: Helm Release Assessment (if helm tools available)
+### Step 9: Helm Release Assessment (ONLY if `helm_list_releases` tool exists)
+PREREQUISITE: First check if `helm_list_releases` is in your available tools list. If it is NOT available, SKIP this entire step and mark it as SKIPPED in the Investigation Checklist. Do NOT fabricate Helm release data.
+
+If the tool IS available:
 - Use `helm_list_releases(namespace=<ns>)` to discover Helm-managed deployments in the namespace
 - For each relevant release, use `helm_release_status(release_name=<release>, namespace=<ns>)` to check health
 - Use `helm_release_history(release_name=<release>, namespace=<ns>)` to identify recent changes that may correlate with issues
 - Use `helm_release_values(release_name=<release>, namespace=<ns>)` to check for misconfiguration in overrides
-- This data is CRITICAL for the reporter to recommend Helm-specific remediation (e.g., `helm upgrade` instead of `kubectl apply`)
+- This data enriches the report but is NOT required — the report is complete without it
 
-### Step 10: ArgoCD Application Assessment (if argocd tools available)
+### Step 10: ArgoCD Application Assessment (ONLY if `argocd_list_applications` tool exists)
+PREREQUISITE: First check if `argocd_list_applications` is in your available tools list. If it is NOT available, SKIP this entire step and mark it as SKIPPED in the Investigation Checklist. Do NOT fabricate ArgoCD application data.
+
+If the tool IS available:
 - Use `argocd_list_applications()` to discover ArgoCD-managed apps
 - For each relevant app, use `argocd_app_status(app_name=<app>)` to check sync and health
 - Use `argocd_app_diff(app_name=<app>)` to identify out-of-sync resources
 - Use `argocd_app_history(app_name=<app>)` to correlate recent deployments with issues
-- This data is CRITICAL for the reporter to recommend GitOps-specific remediation (e.g., fix in Git repo, not manual `kubectl apply`)
+- This data enriches the report but is NOT required — the report is complete without it
 
 ## MINIMUM INVESTIGATION DEPTH
 You MUST make at least the following tool calls before producing your final output:
@@ -257,6 +263,7 @@ You MUST include this Investigation Checklist at the end of your output. Mark ea
 If a step is SKIPPED, you MUST provide the specific reason.
 Steps 1, 2, 3, 7a, and 7b are ALWAYS MANDATORY — they can NEVER be marked as SKIPPED.
 Steps 4, 5, and 6 may be skipped ONLY if there is genuine evidence that they are not needed (e.g., "no deployments with unavailable replicas").
+Steps 9 and 10 MUST be marked as SKIPPED if the corresponding tools are not in your available tools list. Do NOT attempt to call tools that don't exist.
 
 ```
 ### Investigation Checklist
@@ -268,6 +275,8 @@ Steps 4, 5, and 6 may be skipped ONLY if there is genuine evidence that they are
 - [ ] Step 6: HPA investigation (SKIPPED — reason: no HPA issues detected)
 - [x] Step 7a: Cloud Logging errors
 - [x] Step 7b: Cloud Logging warnings
+- [ ] Step 9: Helm assessment (SKIPPED — reason: helm_list_releases tool not available)
+- [ ] Step 10: ArgoCD assessment (SKIPPED — reason: argocd_list_applications tool not available)
 ```
 """
 
