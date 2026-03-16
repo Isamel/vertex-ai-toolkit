@@ -7,6 +7,8 @@ It only depends on stdlib ``logging`` and ``rich``.
 from __future__ import annotations
 
 import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from rich.console import Console
 from rich.logging import RichHandler
@@ -18,19 +20,36 @@ _stderr_console = Console(stderr=True)
 _configured = False
 
 
-def setup_logging(level: str = "WARNING", *, show_path: bool = False) -> None:
+def setup_logging(
+    level: str = "WARNING",
+    *,
+    show_path: bool = False,
+    file_enabled: bool = False,
+    file_path: str = "~/.vaig/logs/vaig.log",
+    file_level: str = "DEBUG",
+    file_max_bytes: int = 5_242_880,
+    file_backup_count: int = 3,
+) -> None:
     """Configure the ``vaig`` logger hierarchy with a RichHandler on stderr.
 
     This attaches a single handler to the ``vaig`` root logger.  All child
     loggers (``vaig.core.client``, ``vaig.agents.orchestrator``, etc.) inherit
     the handler automatically — no per-module configuration needed.
 
+    When ``file_enabled`` is True, a ``RotatingFileHandler`` is also attached
+    that writes DEBUG-level logs to disk, independent of the console level.
+
     Calling this function multiple times is safe (idempotent).
 
     Args:
-        level: Python log level name (DEBUG, INFO, WARNING, ERROR, CRITICAL).
-               Case-insensitive.
-        show_path: If True, include the module path in log output.
+        level: Python log level name for **console** output
+            (DEBUG, INFO, WARNING, ERROR, CRITICAL).  Case-insensitive.
+        show_path: If True, include the module path in console log output.
+        file_enabled: If True, also write logs to a rotating file.
+        file_path: Path to the log file (supports ``~`` expansion).
+        file_level: Log level for the file handler (always DEBUG by default).
+        file_max_bytes: Maximum size per log file before rotation (default 5 MB).
+        file_backup_count: Number of backup files to keep (default 3).
     """
     global _configured  # noqa: PLW0603
 
@@ -40,7 +59,10 @@ def setup_logging(level: str = "WARNING", *, show_path: bool = False) -> None:
     numeric_level = getattr(logging, level.upper(), logging.WARNING)
 
     vaig_logger = logging.getLogger("vaig")
-    vaig_logger.setLevel(numeric_level)
+    # Set logger to the most permissive level among handlers so
+    # file handler can capture DEBUG even when console is WARNING.
+    file_numeric = getattr(logging, file_level.upper(), logging.DEBUG) if file_enabled else numeric_level
+    vaig_logger.setLevel(min(numeric_level, file_numeric))
     vaig_logger.propagate = False  # Don't leak to root logger
 
     handler = RichHandler(
@@ -55,6 +77,30 @@ def setup_logging(level: str = "WARNING", *, show_path: bool = False) -> None:
     handler.setLevel(numeric_level)
 
     vaig_logger.addHandler(handler)
+
+    # ── Optional file handler ────────────────────────────────
+    if file_enabled:
+        try:
+            log_path = Path(file_path).expanduser()
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+
+            file_handler = RotatingFileHandler(
+                filename=str(log_path),
+                maxBytes=file_max_bytes,
+                backupCount=file_backup_count,
+                encoding="utf-8",
+            )
+            file_handler.setLevel(file_numeric)
+            file_handler.setFormatter(
+                logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"),
+            )
+            vaig_logger.addHandler(file_handler)
+        except Exception:  # noqa: BLE001
+            # Never crash the app because of logging setup
+            vaig_logger.warning(
+                "Failed to set up file logging at %s", file_path, exc_info=True,
+            )
+
     _configured = True
 
 

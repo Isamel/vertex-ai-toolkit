@@ -1,6 +1,6 @@
 [project]
 name = "vertex-ai-toolkit"
-version = "0.1.0"
+version = "0.2.0"
 description = "Multi-agent AI toolkit powered by Vertex AI Gemini — interactive CLI with skills for RCA, anomaly detection, and code migration"
 readme = "README.md"
 requires-python = ">=3.11"

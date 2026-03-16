@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from vaig.agents.orchestrator import OrchestratorResult
     from vaig.core.client import GeminiClient
     from vaig.core.config import GKEConfig, Settings
+    from vaig.core.tool_call_store import ToolCallStore
     from vaig.skills.base import BaseSkill
     from vaig.tools.base import ToolRegistry
 
@@ -40,6 +41,30 @@ logger = logging.getLogger(__name__)
 
 MINIMUM_WATCH_INTERVAL = 10
 """Minimum seconds between watch iterations to prevent abuse."""
+
+
+def _create_tool_call_store(settings: Settings) -> ToolCallStore | None:
+    """Create a :class:`ToolCallStore` if tool-result persistence is enabled.
+
+    Reads ``settings.logging.tool_results`` and
+    ``settings.logging.tool_results_dir`` to decide whether to instantiate
+    the store.  Returns ``None`` when disabled or on any creation error
+    (never crashes the app).
+    """
+    if not settings.logging.tool_results:
+        return None
+
+    try:
+        from vaig.core.tool_call_store import ToolCallStore
+
+        base_dir = Path(settings.logging.tool_results_dir).expanduser()
+        store = ToolCallStore(base_dir=base_dir)
+        store.start_run()
+        logger.debug("ToolCallStore initialised: %s (run %s)", base_dir, store.run_id)
+        return store
+    except Exception:
+        logger.warning("Failed to create ToolCallStore; tool results will not be persisted.", exc_info=True)
+        return None
 
 
 # ── Live tool execution logger ────────────────────────────────
@@ -313,6 +338,9 @@ def register(app: typer.Typer) -> None:
                 )
                 return
 
+            # ── Tool result persistence ────────────────────────
+            tool_call_store = _create_tool_call_store(settings)
+
             def _run_once() -> None:
                 """Execute a single iteration of the live command."""
                 if active_skill is not None:
@@ -325,6 +353,7 @@ def register(app: typer.Typer) -> None:
                         output=output if not watch else None,
                         format_=format_ if not watch else None,
                         model_id=model,
+                        tool_call_store=tool_call_store,
                     )
                 else:
                     _execute_live_mode(
@@ -337,6 +366,7 @@ def register(app: typer.Typer) -> None:
                         format_=format_ if not watch else None,
                         skill_name=skill,
                         model_id=model,
+                        tool_call_store=tool_call_store,
                     )
 
             if not watch:
@@ -657,6 +687,7 @@ def _execute_orchestrated_skill(
     output: Path | None = None,
     format_: str | None = None,
     model_id: str | None = None,
+    tool_call_store: ToolCallStore | None = None,
 ) -> None:
     """Execute a skill through the Orchestrator's tool-aware pipeline.
 
@@ -722,6 +753,7 @@ def _execute_orchestrated_skill(
             strategy="sequential",
             is_autopilot=is_autopilot,
             on_tool_call=tool_logger,
+            tool_call_store=tool_call_store,
         )
         tool_logger.print_summary()
 
@@ -786,6 +818,7 @@ def _execute_live_mode(
     format_: str | None = None,
     skill_name: str | None = None,
     model_id: str | None = None,
+    tool_call_store: ToolCallStore | None = None,
 ) -> None:
     """Execute an infrastructure investigation using the InfraAgent.
 
@@ -829,7 +862,7 @@ def _execute_live_mode(
     try:
         console.print("[bold cyan]🤖 Infrastructure agent investigating...[/bold cyan]")
         tool_logger = ToolCallLogger()
-        result = agent.execute(question, context=context, on_tool_call=tool_logger)
+        result = agent.execute(question, context=context, on_tool_call=tool_logger, tool_call_store=tool_call_store)
         tool_logger.print_summary()
 
         # Display final response with severity coloring
@@ -875,6 +908,7 @@ async def _async_execute_live_mode(
     format_: str | None = None,
     skill_name: str | None = None,
     model_id: str | None = None,
+    tool_call_store: ToolCallStore | None = None,
 ) -> None:
     """Async version of :func:`_execute_live_mode`.
 
@@ -916,7 +950,7 @@ async def _async_execute_live_mode(
     try:
         console.print("[bold cyan]🤖 Infrastructure agent investigating (async)...[/bold cyan]")
         tool_logger = ToolCallLogger()
-        result = await agent.async_execute(question, context=context, on_tool_call=tool_logger)
+        result = await agent.async_execute(question, context=context, on_tool_call=tool_logger, tool_call_store=tool_call_store)
         tool_logger.print_summary()
 
         console.print()
@@ -956,6 +990,7 @@ async def _async_execute_orchestrated_skill(
     output: Path | None = None,
     format_: str | None = None,
     model_id: str | None = None,
+    tool_call_store: ToolCallStore | None = None,
 ) -> None:
     """Async version of :func:`_execute_orchestrated_skill`.
 
@@ -1015,6 +1050,7 @@ async def _async_execute_orchestrated_skill(
             strategy="sequential",
             is_autopilot=is_autopilot,
             on_tool_call=tool_logger,
+            tool_call_store=tool_call_store,
         )
         tool_logger.print_summary()
 

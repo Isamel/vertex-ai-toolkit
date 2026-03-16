@@ -180,6 +180,13 @@ class LoggingConfig(BaseModel):
 
     level: str = "WARNING"
     show_path: bool = False
+    file_enabled: bool = True
+    file_path: str = "~/.vaig/logs/vaig.log"
+    file_level: str = "DEBUG"
+    file_max_bytes: int = 5_242_880  # 5 MB
+    file_backup_count: int = 3
+    tool_results: bool = True
+    tool_results_dir: str = "~/.vaig"
 
 
 class RetryConfig(BaseModel):

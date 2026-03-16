@@ -597,7 +597,12 @@ class TestVerboseDebugFlags:
 
         assert result.exit_code == 0
         vaig_logger = logging.getLogger("vaig")
-        assert vaig_logger.level == logging.INFO
+        # Logger level is min(console_level, file_level) — file defaults to
+        # DEBUG, so logger level is DEBUG.  The console handler itself is INFO.
+        assert vaig_logger.level <= logging.INFO
+        rich_handlers = [h for h in vaig_logger.handlers if hasattr(h, "_log_render")]
+        assert rich_handlers, "Expected a RichHandler on the vaig logger"
+        assert rich_handlers[0].level == logging.INFO
 
     def test_debug_flag_sets_debug_level(self) -> None:
         """--debug / -d sets the vaig logger to DEBUG with show_path."""
@@ -618,9 +623,11 @@ class TestVerboseDebugFlags:
         assert result.exit_code == 0
         vaig_logger = logging.getLogger("vaig")
         assert vaig_logger.level == logging.DEBUG
-        # DEBUG mode should enable show_path on the handler
-        assert len(vaig_logger.handlers) == 1
-        assert vaig_logger.handlers[0]._log_render.show_path is True
+        # DEBUG mode should enable show_path on the console (Rich) handler.
+        # File logging may add a second handler.
+        rich_handlers = [h for h in vaig_logger.handlers if hasattr(h, "_log_render")]
+        assert rich_handlers, "Expected a RichHandler on the vaig logger"
+        assert rich_handlers[0]._log_render.show_path is True
 
     def test_log_level_overrides_verbose(self) -> None:
         """--log-level takes precedence over --verbose."""
@@ -640,7 +647,11 @@ class TestVerboseDebugFlags:
 
         assert result.exit_code == 0
         vaig_logger = logging.getLogger("vaig")
-        assert vaig_logger.level == logging.ERROR
+        # Logger level is min(console, file) — file defaults to DEBUG.
+        # Check the console (Rich) handler has ERROR level.
+        rich_handlers = [h for h in vaig_logger.handlers if hasattr(h, "_log_render")]
+        assert rich_handlers, "Expected a RichHandler on the vaig logger"
+        assert rich_handlers[0].level == logging.ERROR
 
     def test_log_level_overrides_debug(self) -> None:
         """--log-level takes precedence over --debug."""
@@ -660,7 +671,11 @@ class TestVerboseDebugFlags:
 
         assert result.exit_code == 0
         vaig_logger = logging.getLogger("vaig")
-        assert vaig_logger.level == logging.WARNING
+        # Logger level is min(console, file) — file defaults to DEBUG.
+        # Check the console (Rich) handler has WARNING level.
+        rich_handlers = [h for h in vaig_logger.handlers if hasattr(h, "_log_render")]
+        assert rich_handlers, "Expected a RichHandler on the vaig logger"
+        assert rich_handlers[0].level == logging.WARNING
 
     def test_default_level_is_warning(self) -> None:
         """Without flags, default level should be WARNING."""
@@ -680,7 +695,11 @@ class TestVerboseDebugFlags:
 
         assert result.exit_code == 0
         vaig_logger = logging.getLogger("vaig")
-        assert vaig_logger.level == logging.WARNING
+        # Logger level is min(console, file) — file defaults to DEBUG.
+        # Check the console (Rich) handler has WARNING level.
+        rich_handlers = [h for h in vaig_logger.handlers if hasattr(h, "_log_render")]
+        assert rich_handlers, "Expected a RichHandler on the vaig logger"
+        assert rich_handlers[0].level == logging.WARNING
 
     def test_debug_flag_shows_in_help(self) -> None:
         """--debug flag should appear in help output."""
