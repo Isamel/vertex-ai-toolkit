@@ -313,6 +313,30 @@ gke:
   log_limit: 200
   metrics_interval_minutes: 30
   exec_enabled: false                # Set true to enable exec_command tool
+  impersonate_sa: ""                 # SA for GKE/GCP observability APIs
+
+helm:
+  enabled: true                      # Enable Helm release introspection
+
+argocd:
+  enabled: true
+  context: gke_mgmt-project_us-central1_mgmt-cluster  # Management cluster
+
+budget:
+  enabled: true
+  max_cost_usd: 5.0
+  warn_threshold: 0.8
+  action: warn                       # "warn" or "stop"
+
+safety:
+  enabled: true
+  settings:
+    - category: HARM_CATEGORY_DANGEROUS_CONTENT
+      threshold: BLOCK_MEDIUM_AND_ABOVE
+
+telemetry:
+  enabled: true
+  buffer_size: 50
 
 logging:
   level: INFO
@@ -320,6 +344,79 @@ logging:
 retry:
   max_retries: 5
   initial_delay: 2.0
+```
+
+### `helm` — Helm Integration
+
+```yaml
+helm:
+  enabled: false                     # Set true to enable Helm release tools
+```
+
+When enabled, VAIG registers 4 read-only Helm tools that introspect release data from Kubernetes Secrets. No Helm binary required. See [Tools Reference](tools-reference.md#helm-tools).
+
+### `argocd` — Argo CD Integration
+
+```yaml
+argocd:
+  enabled: false                     # Set true to enable ArgoCD tools
+  server: ""                         # ArgoCD API URL (for remote ArgoCD)
+  token: ""                          # Auth token (prefer VAIG_ARGOCD__TOKEN env var)
+  insecure: false                    # Skip TLS verification
+  context: ""                        # kubeconfig context for ArgoCD management cluster
+  kubeconfig_path: ""                # kubeconfig path for ArgoCD cluster
+  namespace: argocd                  # Namespace where ArgoCD is installed
+```
+
+Supports 4 deployment topologies — see [Architecture](architecture.md#argocd-connection-topologies):
+
+| Topology | Config |
+|----------|--------|
+| Same cluster | `enabled: true` (nothing else needed) |
+| Management cluster (same project) | `enabled: true` + `context: <mgmt-context>` |
+| Management cluster (different project) | `enabled: true` + `context: <mgmt-context>` |
+| ArgoCD API server (any topology) | `enabled: true` + `server: https://...` + `token: ...` |
+
+### `budget` — Cost Budget Tracking
+
+```yaml
+budget:
+  enabled: false                     # Set true to enable budget enforcement
+  max_cost_usd: 5.0                  # Maximum spend per session (USD)
+  warn_threshold: 0.8                # Warn at 80% of max
+  action: warn                       # "warn" (proceed with warning) or "stop" (block requests)
+```
+
+Use `/cost` in the REPL to see current session cost. Budget is checked before every API call.
+
+### `safety` — Gemini Safety Settings
+
+```yaml
+safety:
+  enabled: true                      # Set false to skip sending safety settings
+  settings: []                       # List of category → threshold mappings
+  # - category: HARM_CATEGORY_HARASSMENT
+  #   threshold: BLOCK_MEDIUM_AND_ABOVE
+```
+
+### `telemetry` — Local Usage Telemetry
+
+```yaml
+telemetry:
+  enabled: true                      # Set false to disable (or VAIG_TELEMETRY_ENABLED=false)
+  buffer_size: 50                    # Events buffered before flushing to SQLite
+```
+
+All telemetry data stays local (`~/.vaig/telemetry.db`). View with `vaig stats summary`.
+
+### `plugins` — Python Plugin Tools
+
+```yaml
+plugins:
+  enabled: false                     # Set true to load custom Python tool plugins
+  directories: []                    # Paths to plugin module directories
+  # - ./plugins
+  # - ~/.vaig/plugins
 ```
 
 ---

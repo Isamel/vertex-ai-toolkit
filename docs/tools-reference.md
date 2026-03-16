@@ -436,6 +436,120 @@ gcloud_monitoring_query(
 )
 ```
 
+## Labels & Annotations Tool
+
+### `kubectl_get_labels`
+
+Get labels and annotations for Kubernetes resources. Supports filtering by label selector (server-side) or annotation prefix (client-side). Essential for detecting management context (GitOps, Helm, Operator).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `resource_type` | string | Yes | Resource type (e.g. `deployments`, `pods`, `services`) |
+| `namespace` | string | No | Namespace (default from config) |
+| `name` | string | No | Specific resource name. Omit to list all. |
+| `label_filter` | string | No | Kubernetes label selector (e.g. `app.kubernetes.io/managed-by=Helm`) |
+| `annotation_filter` | string | No | Annotation key prefix to match (client-side, e.g. `argocd.argoproj.io`) |
+
+```
+# Get labels for a specific deployment
+kubectl_get_labels(resource_type="deployments", name="my-app", namespace="production")
+
+# Find all Helm-managed deployments
+kubectl_get_labels(resource_type="deployments", namespace="production", label_filter="app.kubernetes.io/managed-by=Helm")
+
+# Find all ArgoCD-managed resources
+kubectl_get_labels(resource_type="deployments", namespace="production", annotation_filter="argocd.argoproj.io")
+```
+
+## Helm Tools
+
+**Disabled by default** — enable with `helm.enabled: true` in config.
+
+Read-only introspection of Helm releases. Reads Helm release data from Kubernetes Secrets (type `helm.sh/release.v1`). No Helm binary required.
+
+### `helm_list_releases`
+
+List all Helm releases with status, revision, and chart info.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `namespace` | string | No | Filter by namespace. Empty for all. |
+| `force_refresh` | boolean | No | Bypass cache (default: false) |
+
+### `helm_release_status`
+
+Get detailed status of a specific Helm release.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `release_name` | string | Yes | Name of the Helm release |
+| `namespace` | string | No | Namespace of the release |
+
+### `helm_release_history`
+
+Show revision history for a Helm release (when it was upgraded, rolled back, etc.).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `release_name` | string | Yes | Name of the Helm release |
+| `namespace` | string | No | Namespace of the release |
+
+### `helm_release_values`
+
+Show user-supplied values for a Helm release (overrides only, not chart defaults).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `release_name` | string | Yes | Name of the Helm release |
+| `namespace` | string | No | Namespace of the release |
+| `all_values` | boolean | No | Include chart defaults (default: false — user overrides only) |
+
+## ArgoCD Tools
+
+**Disabled by default** — enable with `argocd.enabled: true` in config.
+
+Read-only introspection of Argo CD Applications. Supports multiple connection topologies: same cluster, separate management cluster, or ArgoCD API server. See [Architecture](architecture.md) for topology diagrams.
+
+### `argocd_list_applications`
+
+List all Argo CD Applications with sync and health status.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `namespace` | string | No | Filter by destination namespace |
+
+### `argocd_app_status`
+
+Get detailed status of an ArgoCD Application: source, destination, sync status, health, conditions, and managed resources.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `app_name` | string | Yes | Name of the ArgoCD Application |
+
+### `argocd_app_history`
+
+Show sync history for an ArgoCD Application (which commits were deployed and when).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `app_name` | string | Yes | Name of the ArgoCD Application |
+
+### `argocd_app_diff`
+
+Show resources that are OutOfSync between the desired state (Git) and the live cluster.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `app_name` | string | Yes | Name of the ArgoCD Application |
+
+### `argocd_app_managed_resources`
+
+List all Kubernetes resources managed by an ArgoCD Application with per-resource sync and health status.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `app_name` | string | Yes | Name of the ArgoCD Application |
+
 ## MCP Tools
 
 See [MCP Guide](mcp-guide.md) for details on MCP server integration.

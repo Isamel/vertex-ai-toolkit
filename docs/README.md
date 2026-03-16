@@ -17,41 +17,54 @@
 | [Export Guide](export-guide.md) | Export results to JSON, Markdown, or HTML |
 | [MCP Guide](mcp-guide.md) | Model Context Protocol server integration |
 | [Telemetry Guide](telemetry-guide.md) | Local-only usage telemetry, analytics, and event export |
+| [Architecture](architecture.md) | Mermaid diagrams: system overview, pipeline flow, tool structure, ArgoCD topologies |
 | [Advanced Usage](advanced.md) | Composite skills, chunked processing, custom skills, and workspace mode |
 
 ## Architecture Overview
 
+See [Architecture](architecture.md) for detailed Mermaid diagrams.
+
 ```
-┌─────────────────────────────────────────────────┐
-│                    CLI Layer                     │
-│  chat (REPL) │ ask (single-shot) │ live (infra) │
-├─────────────────────────────────────────────────┤
-│                 Agent Layer                      │
-│  Orchestrator │ CodingAgent │ InfraAgent │ ...   │
-├─────────────────────────────────────────────────┤
-│                 Skills Layer                     │
-│  29 built-in skills with phase-based workflows   │
-├─────────────────────────────────────────────────┤
-│                 Tools Layer                      │
-│  File I/O │ Shell │ GKE │ GCloud │ MCP Bridge    │
-├─────────────────────────────────────────────────┤
-│              Google Vertex AI (Gemini)           │
-│  gemini-2.5-pro │ gemini-2.5-flash │ ...         │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                       CLI Layer                          │
+│  chat (REPL) │ ask (single-shot) │ live (infra) │ stats │
+├──────────────────────────────────────────────────────────┤
+│                     Agent Layer                          │
+│  Orchestrator │ CodingAgent │ InfraAgent │ Chunked       │
+├──────────────────────────────────────────────────────────┤
+│                     Skills Layer                         │
+│  29 built-in skills with phase-based multi-agent pipes   │
+├──────────────────────────────────────────────────────────┤
+│                     Tools Layer                          │
+│  File │ Shell │ GKE │ GCloud │ Helm │ ArgoCD │ Mesh │MCP│
+├──────────────────────────────────────────────────────────┤
+│                    Core Layer                            │
+│  GeminiClient │ Auth │ Cache │ CostTracker │ Telemetry   │
+├──────────────────────────────────────────────────────────┤
+│               Google Vertex AI (Gemini)                  │
+│  gemini-2.5-pro │ gemini-2.5-flash │ gemini-3.x         │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ## Key Features
 
 - **Multi-agent orchestration** — Sequential, fan-out, and lead-delegate strategies
+- **Async-native** — Full async stack from CLI to API calls, with sync backward compat
 - **29 SRE/DevOps skills** — From root cause analysis to threat modeling
 - **Live infrastructure** — Query GKE clusters, read logs, check metrics in real-time
+- **Helm & ArgoCD integration** — Read release status, sync state, drift detection (opt-in)
+- **Istio/ASM mesh tools** — VirtualService, DestinationRule, sidecar introspection
 - **Coding agent** — Read, write, edit files and run shell commands
 - **Session persistence** — SQLite-backed history with search and resume
+- **Response caching** — LRU + TTL cache for repeated queries (opt-in)
 - **Chunked processing** — Map-Reduce for files that exceed model context limits
 - **MCP integration** — Extend capabilities via Model Context Protocol servers
+- **Plugin system** — Python module plugins and MCP auto-registration
 - **Export** — Save analysis results as JSON, Markdown, or HTML reports
-- **Per-request cost tracking** — See estimated cost for every API call
+- **Per-session cost tracking** — Budget enforcement with warn/stop thresholds
+- **Usage telemetry** — Local SQLite analytics with `vaig stats` commands
 - **Auto-skill detection** — Automatically selects the best skill for your query
+- **9-language detection** — Responds in the user's language (es, pt, fr, de, it, ja, zh, ko)
 
 ## Requirements
 
