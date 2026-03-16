@@ -848,7 +848,7 @@ class GeminiClient:
                     history=chat_history,  # type: ignore[arg-type]
                     config=config,
                 )
-                response = chat.send_message(prompt)
+                response = chat.send_message(prompt)  # type: ignore[arg-type]
             else:
                 response = client.models.generate_content(
                     model=mid,
@@ -931,7 +931,7 @@ class GeminiClient:
                     history=chat_history,  # type: ignore[arg-type]
                     config=config,
                 )
-                response_stream = chat.send_message_stream(prompt)
+                response_stream = chat.send_message_stream(prompt)  # type: ignore[arg-type]
             else:
                 response_stream = client.models.generate_content_stream(
                     model=mid,
@@ -1224,7 +1224,7 @@ class GeminiClient:
                     history=chat_history,  # type: ignore[arg-type]
                     config=config,
                 )
-                response = await chat.send_message(prompt)
+                response = await chat.send_message(prompt)  # type: ignore[arg-type]
             else:
                 response = await client.aio.models.generate_content(
                     model=mid,
@@ -1286,7 +1286,7 @@ class GeminiClient:
                     history=chat_history,  # type: ignore[arg-type]
                     config=config,
                 )
-                response_stream = await chat.send_message_stream(prompt)
+                response_stream = await chat.send_message_stream(prompt)  # type: ignore[arg-type]
             else:
                 response_stream = await client.aio.models.generate_content_stream(
                     model=mid,
