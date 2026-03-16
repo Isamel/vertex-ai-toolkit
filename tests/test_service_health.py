@@ -325,13 +325,13 @@ class TestServiceHealthSkillAgentsConfig:
         assert len(verifier["system_instruction"]) > 0
 
     def test_verifier_agent_max_iterations(self) -> None:
-        """Verifier must have max_iterations=10 for efficient targeted calls."""
+        """Verifier must have max_iterations=15 for efficient targeted calls."""
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
         agents = skill.get_agents_config()
         verifier = agents[2]
-        assert verifier["max_iterations"] == 10
+        assert verifier["max_iterations"] == 15
 
     def test_gatherer_max_iterations(self) -> None:
         """Gatherer must have max_iterations=25 — mandatory Cloud Logging (Steps 7a-7d)

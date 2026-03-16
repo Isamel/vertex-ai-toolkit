@@ -105,7 +105,7 @@ agents:
   max_concurrent: 3
   orchestrator_model: "gemini-2.5-pro"
   specialist_model: "gemini-2.5-flash"
-  max_iterations_retry: 10
+  max_iterations_retry: 15
 
 context:
   max_file_size_mb: 50

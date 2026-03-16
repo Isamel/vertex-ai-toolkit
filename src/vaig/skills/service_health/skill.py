@@ -148,7 +148,7 @@ class ServiceHealthSkill(BaseSkill):
                 "requires_tools": True,
                 "system_instruction": HEALTH_VERIFIER_PROMPT,
                 "model": "gemini-2.5-flash",
-                "max_iterations": 10,
+                "max_iterations": 15,
                 "temperature": 0.2,  # Low temp for precise verification
             },
             {

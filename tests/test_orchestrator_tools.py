@@ -2571,10 +2571,10 @@ class TestIncrementalDeepening:
         assert agent1._max_iterations == 20
 
     def test_config_default_max_iterations_retry(self) -> None:
-        """AgentsConfig has max_iterations_retry with default 10."""
+        """AgentsConfig has max_iterations_retry with default 15."""
         from vaig.core.config import AgentsConfig
         config = AgentsConfig()
-        assert config.max_iterations_retry == 10
+        assert config.max_iterations_retry == 15
 
 
 def _make_checklist(
@@ -3776,3 +3776,5 @@ class TestBuildToolsSummaryEmptyStringOutput:
         assert "Total tool calls: 2" in second_call_context
         # No failures — empty output is NOT an error
         assert "Failed calls" not in second_call_context
+
+

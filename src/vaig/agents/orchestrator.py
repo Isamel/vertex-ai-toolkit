@@ -16,7 +16,7 @@ from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.async_utils import gather_with_errors
 from vaig.core.client import GeminiClient, StreamResult
-from vaig.core.exceptions import VaigAuthError, VAIGError
+from vaig.core.exceptions import MaxIterationsError, VaigAuthError, VAIGError
 from vaig.core.language import (
     detect_language,
     inject_autopilot_into_config,
@@ -664,44 +664,76 @@ class Orchestrator:
 
                     try:
                         retry_result = agent.execute(retry_prompt, **kw_retry)
+                    except MaxIterationsError:
+                        if is_deepening:
+                            # Deepening is optional — first pass was valid.
+                            # Fall back to first-pass output instead of
+                            # crashing the pipeline.
+                            logger.warning(
+                                "Deepening second pass for agent %s hit "
+                                "max_iterations_retry limit; falling back "
+                                "to first-pass output",
+                                agent.name,
+                            )
+                            # Restore max_iterations before continuing
+                            if (
+                                isinstance(agent, ToolAwareAgent)
+                                and original_max_iters is not None
+                            ):
+                                agent._max_iterations = original_max_iters
+                            # Keep first-pass result — already in
+                            # result.agent_results[-1]
+                            logger.info(
+                                "Agent %s continuing with first-pass "
+                                "output — tokens=%s",
+                                agent.name,
+                                agent_result.usage.get(
+                                    "total_tokens", "?",
+                                ),
+                            )
+                        else:
+                            # Genuine retry (validation failed) — propagate
+                            raise
+                    else:
+                        # No exception — process retry result normally
+                        _accumulate_usage(result, retry_result)
+
+                        if is_deepening:
+                            # Merge: concatenate first-pass + second-pass
+                            # content
+                            merged_content = (
+                                agent_result.content
+                                + "\n\n"
+                                + retry_result.content
+                            )
+                            retry_result = AgentResult(
+                                agent_name=retry_result.agent_name,
+                                content=merged_content,
+                                success=retry_result.success,
+                                usage=retry_result.usage,
+                                metadata=retry_result.metadata,
+                            )
+
+                        result.agent_results[-1] = retry_result
+
+                        if not retry_result.success:
+                            result.success = False
+                            logger.warning(
+                                "Agent %s retry also failed: %s",
+                                agent.name, retry_result.content,
+                            )
+                            break
+                        logger.info(
+                            "Agent %s retry succeeded — tokens=%s",
+                            agent.name,
+                            retry_result.usage.get("total_tokens", "?"),
+                        )
                     finally:
                         if (
                             isinstance(agent, ToolAwareAgent)
                             and original_max_iters is not None
                         ):
                             agent._max_iterations = original_max_iters
-
-                    _accumulate_usage(result, retry_result)
-
-                    if is_deepening:
-                        # Merge: concatenate first-pass + second-pass content
-                        merged_content = (
-                            agent_result.content
-                            + "\n\n"
-                            + retry_result.content
-                        )
-                        retry_result = AgentResult(
-                            agent_name=retry_result.agent_name,
-                            content=merged_content,
-                            success=retry_result.success,
-                            usage=retry_result.usage,
-                            metadata=retry_result.metadata,
-                        )
-
-                    result.agent_results[-1] = retry_result
-
-                    if not retry_result.success:
-                        result.success = False
-                        logger.warning(
-                            "Agent %s retry also failed: %s",
-                            agent.name, retry_result.content,
-                        )
-                        break
-                    logger.info(
-                        "Agent %s retry succeeded — tokens=%s",
-                        agent.name,
-                        retry_result.usage.get("total_tokens", "?"),
-                    )
 
                 # ── Reporter output validation + retry ──────
                 is_reporter = "report" in getattr(agent, "role", "").lower()
@@ -1273,43 +1305,66 @@ class Orchestrator:
                         retry_result = await asyncio.to_thread(
                             agent.execute, retry_prompt, **kw_retry,
                         )
+                    except MaxIterationsError:
+                        if is_deepening:
+                            logger.warning(
+                                "Deepening second pass for agent %s hit "
+                                "max_iterations_retry limit; falling back "
+                                "to first-pass output",
+                                agent.name,
+                            )
+                            if (
+                                isinstance(agent, ToolAwareAgent)
+                                and original_max_iters is not None
+                            ):
+                                agent._max_iterations = original_max_iters
+                            logger.info(
+                                "Agent %s continuing with first-pass "
+                                "output — tokens=%s",
+                                agent.name,
+                                agent_result.usage.get(
+                                    "total_tokens", "?",
+                                ),
+                            )
+                        else:
+                            raise
+                    else:
+                        _accumulate_usage(result, retry_result)
+
+                        if is_deepening:
+                            merged_content = (
+                                agent_result.content
+                                + "\n\n"
+                                + retry_result.content
+                            )
+                            retry_result = AgentResult(
+                                agent_name=retry_result.agent_name,
+                                content=merged_content,
+                                success=retry_result.success,
+                                usage=retry_result.usage,
+                                metadata=retry_result.metadata,
+                            )
+
+                        result.agent_results[-1] = retry_result
+
+                        if not retry_result.success:
+                            result.success = False
+                            logger.warning(
+                                "Agent %s retry also failed: %s",
+                                agent.name, retry_result.content,
+                            )
+                            break
+                        logger.info(
+                            "Agent %s retry succeeded — tokens=%s",
+                            agent.name,
+                            retry_result.usage.get("total_tokens", "?"),
+                        )
                     finally:
                         if (
                             isinstance(agent, ToolAwareAgent)
                             and original_max_iters is not None
                         ):
                             agent._max_iterations = original_max_iters
-
-                    _accumulate_usage(result, retry_result)
-
-                    if is_deepening:
-                        merged_content = (
-                            agent_result.content
-                            + "\n\n"
-                            + retry_result.content
-                        )
-                        retry_result = AgentResult(
-                            agent_name=retry_result.agent_name,
-                            content=merged_content,
-                            success=retry_result.success,
-                            usage=retry_result.usage,
-                            metadata=retry_result.metadata,
-                        )
-
-                    result.agent_results[-1] = retry_result
-
-                    if not retry_result.success:
-                        result.success = False
-                        logger.warning(
-                            "Agent %s retry also failed: %s",
-                            agent.name, retry_result.content,
-                        )
-                        break
-                    logger.info(
-                        "Agent %s retry succeeded — tokens=%s",
-                        agent.name,
-                        retry_result.usage.get("total_tokens", "?"),
-                    )
 
                 # ── Reporter output validation + retry (async) ──────
                 is_reporter = "report" in getattr(agent, "role", "").lower()

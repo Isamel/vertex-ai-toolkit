@@ -221,7 +221,7 @@ class AgentsConfig(BaseModel):
     max_concurrent: int = 3
     orchestrator_model: str = "gemini-2.5-pro"
     specialist_model: str = "gemini-2.5-flash"
-    max_iterations_retry: int = 10
+    max_iterations_retry: int = 15
     parallel_tool_calls: bool = True
     """Execute independent tool calls in parallel (async path only).
 
