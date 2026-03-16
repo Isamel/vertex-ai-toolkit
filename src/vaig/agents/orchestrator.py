@@ -22,6 +22,7 @@ from vaig.core.language import (
     inject_autopilot_into_config,
     inject_language_into_config,
 )
+from vaig.core.prompt_defense import wrap_untrusted_content
 from vaig.skills.base import BaseSkill, SkillPhase, SkillResult
 from vaig.tools.base import ToolRegistry
 
@@ -202,7 +203,7 @@ class Orchestrator:
                 accumulated = (
                     f"{current_context}\n\n"
                     f"## Previous Analysis ({agents[i - 1].role})\n\n"
-                    f"{prev.content}"
+                    f"{wrap_untrusted_content(prev.content)}"
                     f"{tools_summary}"
                 )
                 agent_result = agent.execute(prompt, context=accumulated)
@@ -574,7 +575,7 @@ class Orchestrator:
                     )
                     current_context = (
                         f"## Previous Analysis ({agents[i - 1].role})\n\n"
-                        f"{prev.content}"
+                        f"{wrap_untrusted_content(prev.content)}"
                         f"{tools_summary}"
                     )
 
@@ -943,7 +944,7 @@ class Orchestrator:
                 accumulated = (
                     f"{current_context}\n\n"
                     f"## Previous Analysis ({agents[i - 1].role})\n\n"
-                    f"{prev.content}"
+                    f"{wrap_untrusted_content(prev.content)}"
                     f"{tools_summary}"
                 )
                 agent_result = await asyncio.to_thread(
@@ -1197,7 +1198,7 @@ class Orchestrator:
                     )
                     current_context = (
                         f"## Previous Analysis ({agents[i - 1].role})\n\n"
-                        f"{prev.content}"
+                        f"{wrap_untrusted_content(prev.content)}"
                         f"{tools_summary}"
                     )
 

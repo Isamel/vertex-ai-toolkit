@@ -22,6 +22,7 @@ from ._clients import (
     clear_autopilot_cache,
     clear_k8s_client_cache,
     detect_autopilot,
+    get_exec_client,
 )
 
 # ── Layer 2: factory function ────────────────────────────────
@@ -72,6 +73,7 @@ from .discovery import (
 
 # ── Layer 1: Helm introspection ─────────────────────────────
 from .helm import (
+    _redact_sensitive_values,
     async_helm_list_releases,
     async_helm_release_history,
     async_helm_release_status,
@@ -154,6 +156,7 @@ from ._cache import (
 
 # ── Layer 0: formatters ─────────────────────────────────────
 from ._formatters import (
+    _SECRET_REDACTED,
     _age,
     _format_crds_table,
     _format_deployments_table,
@@ -168,6 +171,8 @@ from ._formatters import (
     _pod_ready_count,
     _pod_restarts,
     _pod_status,
+    _redact_k8s_secret_data,
+    _redact_secret_item,
 )
 
 # ── Layer 0: resources ──────────────────────────────────────
@@ -265,6 +270,8 @@ __all__ = [
     "async_helm_release_status",
     "async_helm_release_history",
     "async_helm_release_values",
+    # Helm redaction helper
+    "_redact_sensitive_values",
     # ArgoCD introspection (sync)
     "argocd_list_applications",
     "argocd_app_status",
@@ -290,6 +297,7 @@ __all__ = [
     "_cache_key",
     "_extract_proxy_url_from_kubeconfig",
     "_query_autopilot_status",
+    "get_exec_client",
     "k8s_client",
     "k8s_config",
     "k8s_exceptions",
@@ -322,4 +330,8 @@ __all__ = [
     "_format_webhook_config",
     "_format_webhooks_table",
     "_format_crds_table",
+    # Secret redaction
+    "_SECRET_REDACTED",
+    "_redact_secret_item",
+    "_redact_k8s_secret_data",
 ]

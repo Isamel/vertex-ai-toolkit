@@ -383,6 +383,91 @@ def _create_k8s_clients(
     return clients
 
 
+# ── Dedicated exec client (NOT cached) ───────────────────────
+
+
+def get_exec_client(
+    gke_config: GKEConfig,
+) -> Any | ToolResult:
+    """Create a **fresh, disposable** ``CoreV1Api`` for ``kubernetes.stream.stream()``.
+
+    ``kubernetes.stream.stream()`` mutates the ``ApiClient`` instance it
+    receives — it replaces the HTTP request method to set up a WebSocket
+    connection.  If the shared (cached) client is passed, subsequent
+    non-exec API calls (list pods, get logs, etc.) may fail or behave
+    unpredictably because the underlying transport was overwritten.
+
+    This factory intentionally creates a **new** ``ApiClient`` on every
+    call and does **not** cache it.  The caller is responsible for closing
+    the client after use (``ApiClient`` supports the context-manager
+    protocol, or call ``api_client.api_client.close()`` manually).
+
+    Uses the same kubeconfig / context / proxy resolution logic as
+    ``_create_k8s_clients``.
+
+    Returns:
+        A ``CoreV1Api`` wrapping a fresh ``ApiClient`` on success,
+        or a ``ToolResult`` with ``error=True`` on failure.
+    """
+    if not _K8S_AVAILABLE:
+        return _k8s_unavailable()
+
+    try:
+        with _suppress_stderr():
+            kubeconfig_path = gke_config.kubeconfig_path or None
+            context = gke_config.context or None
+
+            proxy_url = _extract_proxy_url_from_kubeconfig(kubeconfig_path, context)
+            if gke_config.proxy_url:
+                proxy_url = gke_config.proxy_url
+
+            config = k8s_client.Configuration()
+            if proxy_url:
+                config.proxy = proxy_url
+
+            if kubeconfig_path:
+                try:
+                    k8s_config.load_kube_config(
+                        config_file=kubeconfig_path,
+                        context=context,
+                        client_configuration=config,
+                    )
+                except AttributeError as attr_err:
+                    if "'NoneType' object has no attribute 'strip'" in str(attr_err):
+                        raise RuntimeError(
+                            "Kubernetes auth plugin failed. Run "
+                            "'gcloud container clusters get-credentials' "
+                            "to refresh your credentials.",
+                        ) from attr_err
+                    raise
+            else:
+                try:
+                    k8s_config.load_kube_config(
+                        context=context,
+                        client_configuration=config,
+                    )
+                except AttributeError as attr_err:
+                    if "'NoneType' object has no attribute 'strip'" in str(attr_err):
+                        raise RuntimeError(
+                            "Kubernetes auth plugin failed. Run "
+                            "'gcloud container clusters get-credentials' "
+                            "to refresh your credentials.",
+                        ) from attr_err
+                    raise
+                except k8s_config.ConfigException:
+                    k8s_config.load_incluster_config()
+                    return k8s_client.CoreV1Api(k8s_client.ApiClient())
+
+    except Exception as exc:
+        return ToolResult(
+            output=f"Failed to configure exec Kubernetes client: {exc}",
+            error=True,
+        )
+
+    api_client = k8s_client.ApiClient(config)
+    return k8s_client.CoreV1Api(api_client)
+
+
 # ── ArgoCD client helper ─────────────────────────────────────
 
 
