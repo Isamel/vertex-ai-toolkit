@@ -22,12 +22,16 @@ build workflow which:
 
 ### 1. Update the version
 
-Update the version in `pyproject.toml`:
+Update the version in `pyproject.toml` (this is the **single source of truth** —
+`vaig.__version__` reads it automatically via `importlib.metadata`):
 
 ```toml
 [project]
 version = "X.Y.Z"
 ```
+
+> **Note:** You do NOT need to update `src/vaig/__init__.py` — it reads the
+> version from `pyproject.toml` at runtime via `importlib.metadata`.
 
 ### 2. Update the changelog
 

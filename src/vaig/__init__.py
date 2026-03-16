@@ -1,6 +1,7 @@
 """Vertex AI Gemini Toolkit — Multi-agent AI toolkit powered by Vertex AI."""
 
 import warnings
+from importlib.metadata import PackageNotFoundError, version
 
 # Suppress noisy third-party warnings that pollute CLI output:
 # requests vs urllib3/charset_normalizer version mismatch (cosmetic, no impact)
@@ -10,4 +11,11 @@ warnings.filterwarnings(
     category=Warning,
 )
 
-__version__ = "0.1.0"
+# Single source of truth: pyproject.toml [project] version.
+# importlib.metadata reads it from the installed package metadata.
+# Fallback "0.0.0-dev" covers editable installs where metadata isn't available
+# (e.g. running from source without `pip install -e .`).
+try:
+    __version__ = version("vertex-ai-toolkit")
+except PackageNotFoundError:
+    __version__ = "0.0.0-dev"
