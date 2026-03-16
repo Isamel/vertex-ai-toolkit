@@ -1,6 +1,15 @@
 """Database Review Skill — prompts for schema, query, and operational database analysis."""
 
-SYSTEM_INSTRUCTION = """You are a Senior Database Reliability Engineer with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior Database Reliability Engineer with 15+ years of experience \
 optimizing database systems at scale across relational (PostgreSQL, MySQL, SQL Server, Oracle), \
 NoSQL (MongoDB, DynamoDB, Cassandra, Redis), and NewSQL (CockroachDB, TiDB, Spanner) engines.
 
@@ -82,16 +91,18 @@ table sizes, row counts, current index list, EXPLAIN ANALYZE output)
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Database Analysis
+    "analyze": f"""## Phase: Database Analysis
 
 Analyze the provided database schemas, queries, and execution plans to identify performance \
 issues, design problems, and operational risks.
 
 ### Database Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Query Performance**: Analyze any EXPLAIN output or query patterns for:
@@ -121,15 +132,17 @@ with different parameter values, ORM lazy loading patterns)
 Format your response as a structured database analysis report.
 """,
 
-    "plan": """## Phase: Optimization Plan
+    "plan": f"""## Phase: Optimization Plan
 
 Based on the database analysis, create a prioritized optimization plan.
 
 ### Database Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis so far:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Index Recommendations**: For each recommended index:
@@ -155,15 +168,17 @@ Based on the database analysis, create a prioritized optimization plan.
 Format as an actionable optimization playbook with exact SQL statements and effort estimates.
 """,
 
-    "execute": """## Phase: Execution Guidance
+    "execute": f"""## Phase: Execution Guidance
 
 Provide detailed, step-by-step execution guidance for the database optimization plan.
 
 ### Database Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Optimization plan:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Pre-Change Checklist**:
@@ -185,16 +200,18 @@ performance improvement (EXPLAIN ANALYZE comparisons)
 Provide copy-paste-ready SQL and migration scripts grouped by execution phase.
 """,
 
-    "validate": """## Phase: Review Validation
+    "validate": f"""## Phase: Review Validation
 
 Validate that the optimization recommendations are safe, complete, and will achieve the \
 expected improvements.
 
 ### Database Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Execution results:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Index Safety Check**: Verify no redundant indexes were recommended, no existing useful \
@@ -212,15 +229,17 @@ or queries were missed in the analysis
 Format as a validation checklist with pass/fail/warning status for each item.
 """,
 
-    "report": """## Phase: Database Review Report
+    "report": f"""## Phase: Database Review Report
 
 Generate a comprehensive database review report for engineering leadership and the DBA team.
 
 ### Database Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Review results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

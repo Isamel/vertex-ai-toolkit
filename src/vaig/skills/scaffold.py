@@ -28,7 +28,15 @@ _INIT_TEMPLATE = '''"""{display_name} Skill — {description}."""
 
 _PROMPTS_TEMPLATE = '''"""{display_name} Skill — prompts."""
 
-SYSTEM_INSTRUCTION = """You are a specialist in {display_name}.
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{{ANTI_INJECTION_RULE}}
+
+You are a specialist in {display_name}.
 
 ## Your Expertise
 - TODO: List your areas of expertise
@@ -43,45 +51,51 @@ SYSTEM_INSTRUCTION = """You are a specialist in {display_name}.
 """
 
 PHASE_PROMPTS = {{
-    "analyze": """## Phase: Initial Analysis
+    "analyze": f"""## Phase: Initial Analysis
 
 Analyze the following input and identify key areas of concern.
 
 ### Context
-{{context}}
+{{DELIMITER_DATA_START}}
+{{{{context}}}}
+{{DELIMITER_DATA_END}}
 
 ### User Request
-{{user_input}}
+{{{{user_input}}}}
 
 ### Instructions
 1. Review the provided context
 2. Identify patterns, issues, or opportunities
 3. Prioritize findings by severity/impact
 """,
-    "execute": """## Phase: Deep Analysis
+    "execute": f"""## Phase: Deep Analysis
 
 Perform a detailed analysis based on the initial findings.
 
 ### Context
-{{context}}
+{{DELIMITER_DATA_START}}
+{{{{context}}}}
+{{DELIMITER_DATA_END}}
 
 ### User Request
-{{user_input}}
+{{{{user_input}}}}
 
 ### Instructions
 1. Deep-dive into each identified area
 2. Provide specific, evidence-based findings
 3. Suggest concrete remediation steps
 """,
-    "report": """## Phase: Final Report
+    "report": f"""## Phase: Final Report
 
 Generate a comprehensive report with findings and recommendations.
 
 ### Context
-{{context}}
+{{DELIMITER_DATA_START}}
+{{{{context}}}}
+{{DELIMITER_DATA_END}}
 
 ### User Request
-{{user_input}}
+{{{{user_input}}}}
 
 ### Instructions
 1. Summarize all findings

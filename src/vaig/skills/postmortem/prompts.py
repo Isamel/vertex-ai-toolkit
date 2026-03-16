@@ -1,6 +1,14 @@
 """Postmortem Skill — prompts for blameless incident postmortem generation."""
 
-SYSTEM_INSTRUCTION = """\
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
 You are a Senior SRE Postmortem Facilitator with 15+ years of experience leading \
 blameless postmortems at organizations running large-scale distributed systems.
 
@@ -40,17 +48,19 @@ mitigative), priority (P0–P3), and owner type (team / role, never an individua
 """
 
 PHASE_PROMPTS = {
-    "analyze": """\
+    "analyze": f"""\
 ## Phase: Incident Data Analysis
 
 Analyze the provided incident data to reconstruct the timeline, identify root cause \
 vs contributing factors, and quantify impact.
 
 ### Incident Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's incident description:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Timeline Reconstruction**: Build a precise chronological timeline including:
@@ -81,16 +91,18 @@ vs contributing factors, and quantify impact.
 Format as a structured incident analysis with clear section headers.
 """,
 
-    "plan": """\
+    "plan": f"""\
 ## Phase: Action Item Formulation
 
 Based on the incident analysis, formulate prioritized action items to prevent recurrence.
 
 ### Incident Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis so far:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Preventive Actions**: Changes that prevent this root cause from recurring
@@ -120,16 +132,18 @@ not just this specific one?
 Format as a prioritized action plan with clear categorization.
 """,
 
-    "report": """\
+    "report": f"""\
 ## Phase: Blameless Postmortem Document
 
 Generate a complete, publication-ready blameless postmortem document.
 
 ### Incident Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis and action items:
-{user_input}
+{{user_input}}
 
 ### Generate the complete postmortem document:
 

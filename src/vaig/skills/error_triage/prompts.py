@@ -1,6 +1,15 @@
 """Error Triage Skill — prompts for rapid error classification and prioritization."""
 
-SYSTEM_INSTRUCTION = """You are a Senior SRE Triage Expert with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior SRE Triage Expert with 15+ years of experience \
 performing rapid error classification and incident prioritization across large-scale \
 distributed systems.
 
@@ -48,15 +57,17 @@ than presenting a single fabricated diagnosis as fact.
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Error Classification & Blast Radius
+    "analyze": f"""## Phase: Error Classification & Blast Radius
 
 Classify the error and estimate its blast radius.
 
 ### Error Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's description:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Error Classification**: Categorize the error:
@@ -78,15 +89,17 @@ with justification
 Format as a structured triage classification report.
 """,
 
-    "report": """## Phase: Triage Report
+    "report": f"""## Phase: Triage Report
 
 Generate a structured triage report with priority, mitigations, and escalation path.
 
 ### Error Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Triage analysis:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

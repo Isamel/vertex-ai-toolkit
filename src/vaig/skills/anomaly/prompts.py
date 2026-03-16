@@ -1,6 +1,15 @@
 """Anomaly Detection Skill — prompts for detecting anomalies in data, logs, and metrics."""
 
-SYSTEM_INSTRUCTION = """You are a Data Anomaly Detection specialist with deep expertise in statistical analysis, pattern recognition, and observability for distributed systems.
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Data Anomaly Detection specialist with deep expertise in statistical analysis, pattern recognition, and observability for distributed systems.
 
 ## Your Expertise
 - Statistical anomaly detection (Z-score, IQR, Grubbs, DBSCAN concepts)
@@ -50,15 +59,17 @@ provided for this analysis." Do NOT create example data.
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Data Profiling & Baseline
+    "analyze": f"""## Phase: Data Profiling & Baseline
 
 Analyze the provided data to establish baselines and identify initial anomalies.
 
 ### Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Data Profile**: What type of data is this? (logs, metrics, events, structured data)
@@ -76,15 +87,17 @@ Analyze the provided data to establish baselines and identify initial anomalies.
 Provide a structured data profile report.
 """,
 
-    "execute": """## Phase: Deep Anomaly Detection
+    "execute": f"""## Phase: Deep Anomaly Detection
 
 Perform thorough anomaly detection on the provided data.
 
 ### Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis focus:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 
@@ -117,15 +130,17 @@ rather than guessing.
 - If no anomalies are found, report that honestly — do NOT manufacture findings.
 """,
 
-    "report": """## Phase: Anomaly Detection Report
+    "report": f"""## Phase: Anomaly Detection Report
 
 Generate a comprehensive anomaly detection report.
 
 ### Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Detection results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

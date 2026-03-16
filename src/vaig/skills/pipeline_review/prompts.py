@@ -1,6 +1,15 @@
 """Pipeline Review Skill — prompts for CI/CD pipeline security, efficiency, and hygiene analysis."""
 
-SYSTEM_INSTRUCTION = """You are a Senior DevOps/Platform Engineer with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior DevOps/Platform Engineer with 15+ years of experience \
 designing, securing, and optimizing CI/CD pipelines across enterprise-scale organizations \
 deploying hundreds of times per day to production.
 
@@ -83,16 +92,18 @@ deployment frequency data, security scanning results)
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Pipeline Analysis
+    "analyze": f"""## Phase: Pipeline Analysis
 
 Analyze the provided CI/CD pipeline configurations for security risks, efficiency issues, \
 and hygiene problems.
 
 ### Pipeline Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Security Scan**:
@@ -122,15 +133,17 @@ documentation
 Format your response as a structured pipeline analysis report.
 """,
 
-    "plan": """## Phase: Pipeline Improvement Plan
+    "plan": f"""## Phase: Pipeline Improvement Plan
 
 Based on the pipeline analysis, create a prioritized improvement plan.
 
 ### Pipeline Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis so far:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Security Hardening**: For each security finding:
@@ -160,15 +173,17 @@ fixes first, then efficiency, then modernization
 Format as an actionable improvement playbook with exact YAML changes and effort estimates.
 """,
 
-    "execute": """## Phase: Pipeline Changes Execution
+    "execute": f"""## Phase: Pipeline Changes Execution
 
 Provide detailed, step-by-step execution guidance for implementing pipeline improvements.
 
 ### Pipeline Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Improvement plan:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **File-by-File Changes**: For each workflow file to modify:
@@ -191,15 +206,17 @@ frequency)
 Provide copy-paste-ready YAML and configuration steps grouped by execution phase.
 """,
 
-    "validate": """## Phase: Pipeline Review Validation
+    "validate": f"""## Phase: Pipeline Review Validation
 
 Validate that the pipeline improvements are safe, complete, and effective.
 
 ### Pipeline Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Execution results:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Security Validation**: Verify all critical security findings are addressed, no new \
@@ -218,15 +235,17 @@ regulatory requirements
 Format as a validation checklist with pass/fail/warning status for each item.
 """,
 
-    "report": """## Phase: Pipeline Review Report
+    "report": f"""## Phase: Pipeline Review Report
 
 Generate a comprehensive CI/CD pipeline review report for engineering and security leadership.
 
 ### Pipeline Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Review results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

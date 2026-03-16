@@ -1,6 +1,15 @@
 """Network Architecture Review Skill — prompts for network security, topology, and performance analysis."""
 
-SYSTEM_INSTRUCTION = """You are a Senior Network Architect and Security Engineer with 15+ years of \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior Network Architect and Security Engineer with 15+ years of \
 experience designing, auditing, and hardening network architectures for large-scale cloud-native \
 production environments.
 
@@ -95,15 +104,17 @@ without service disruption
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Network Security and Topology Analysis
+    "analyze": f"""## Phase: Network Security and Topology Analysis
 
 Analyze the network architecture for security vulnerabilities and topology issues.
 
 ### Network Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Security Group / Firewall Audit**: Review all firewall rules, security groups, and \
@@ -128,15 +139,17 @@ policy correctness, and service-level authorization policies
 Format as a structured network security assessment with a severity-sorted findings table.
 """,
 
-    "plan": """## Phase: Network Hardening and Optimization Plan
+    "plan": f"""## Phase: Network Hardening and Optimization Plan
 
 Based on the analysis, create a prioritized network hardening and optimization plan.
 
 ### Network Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis so far:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Immediate Hardening Actions**: List changes that can be applied NOW without service \
@@ -160,15 +173,17 @@ logging, service mesh telemetry, and network anomaly detection setup
 Format as a phased network hardening roadmap with risk and effort for each change.
 """,
 
-    "execute": """## Phase: Network Change Implementation Guidance
+    "execute": f"""## Phase: Network Change Implementation Guidance
 
 Provide detailed implementation guidance for the network hardening plan.
 
 ### Network Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Hardening plan:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Security Group Changes**: For each security group modification, provide:
@@ -201,15 +216,17 @@ Provide detailed implementation guidance for the network hardening plan.
 Provide copy-paste-ready configurations and commands with clear ordering.
 """,
 
-    "validate": """## Phase: Network Changes Validation
+    "validate": f"""## Phase: Network Changes Validation
 
 Validate that the proposed network changes are correct, complete, and safe.
 
 ### Network Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Implementation results:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Security Completeness**: Verify all Critical and High findings have remediation \
@@ -231,15 +248,17 @@ paths after changes are applied. Flag blind spots
 Format as a validation checklist with pass/fail/warning for each item.
 """,
 
-    "report": """## Phase: Network Architecture Review Report
+    "report": f"""## Phase: Network Architecture Review Report
 
 Generate a comprehensive network architecture review report.
 
 ### Network Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Review results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

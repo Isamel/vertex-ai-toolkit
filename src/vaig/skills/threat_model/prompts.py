@@ -1,6 +1,15 @@
 """Threat Model Skill — prompts for STRIDE-based threat modeling and attack surface analysis."""
 
-SYSTEM_INSTRUCTION = """You are a Principal Application Security Architect with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Principal Application Security Architect with 15+ years of experience \
 conducting threat modeling engagements across enterprise-scale systems, microservice architectures, \
 cloud-native platforms, and safety-critical embedded systems.
 
@@ -110,15 +119,17 @@ was not covered and why it matters
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Attack Surface Analysis
+    "analyze": f"""## Phase: Attack Surface Analysis
 
 Decompose the system architecture and enumerate the complete attack surface.
 
 ### Architecture Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **System Decomposition**: Identify all components (services, databases, queues, caches, \
@@ -141,15 +152,17 @@ services, open-source libraries, cloud services) and their trust level
 Format as a structured attack surface inventory with component diagrams described in text.
 """,
 
-    "plan": """## Phase: STRIDE Threat Enumeration & Risk Scoring
+    "plan": f"""## Phase: STRIDE Threat Enumeration & Risk Scoring
 
 Apply STRIDE analysis to each component and data flow, scoring threats by likelihood and impact.
 
 ### Architecture Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Attack surface analysis:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **STRIDE-per-Component**: For each component identified in the attack surface analysis, \
@@ -174,15 +187,17 @@ Format as a threat enumeration table with STRIDE classification, risk scores, an
 mitigation status for each threat.
 """,
 
-    "execute": """## Phase: Countermeasure Design & Implementation Guidance
+    "execute": f"""## Phase: Countermeasure Design & Implementation Guidance
 
 Design specific countermeasures for each identified threat with implementation guidance.
 
 ### Architecture Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Threat enumeration:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Countermeasure Design**: For each threat in the Must Mitigate and Should Mitigate \
@@ -214,15 +229,17 @@ remains? What assumptions does the residual risk depend on?
 Provide copy-paste-ready configurations and code patterns where applicable.
 """,
 
-    "validate": """## Phase: Threat Model Validation
+    "validate": f"""## Phase: Threat Model Validation
 
 Validate completeness and accuracy of the threat model.
 
 ### Architecture Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Threat model so far:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **STRIDE Coverage Audit**: Verify that all six STRIDE categories were evaluated for \
@@ -246,15 +263,17 @@ Format as a validation checklist with pass/fail/warning status and recommendatio
 each item.
 """,
 
-    "report": """## Phase: Threat Model Report
+    "report": f"""## Phase: Threat Model Report
 
 Generate a comprehensive threat model document suitable for security review boards.
 
 ### Architecture Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Threat model results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

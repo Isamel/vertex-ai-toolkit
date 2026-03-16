@@ -1,6 +1,14 @@
 """SLO Review Skill — prompts for SLO/SLI analysis and error budget review."""
 
-SYSTEM_INSTRUCTION = """\
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
 You are a Senior SRE Reliability Engineer specialized in SLO/SLI/SLA frameworks \
 with 15+ years of experience designing and reviewing service level objectives \
 across large-scale distributed systems.
@@ -39,16 +47,18 @@ SLIs, alerts, and policies.
 """
 
 PHASE_PROMPTS = {
-    "analyze": """\
+    "analyze": f"""\
 ## Phase: SLO/SLI Analysis
 
 Analyze the provided SLO definitions, SLI measurements, and error budget data.
 
 ### Context (SLO definitions, metrics, dashboards):
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **SLI Coverage**: Are all critical user journeys covered by SLIs? Identify gaps \
@@ -68,16 +78,18 @@ operational reviews, escalation triggers).
 
 Format your response as a structured SLO analysis report with a summary table.
 """,
-    "report": """\
+    "report": f"""\
 ## Phase: SLO Review Report
 
 Generate a comprehensive SLO review report with actionable recommendations.
 
 ### Context (SLO definitions, metrics, analysis):
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

@@ -1,6 +1,15 @@
 """Code Review Skill — prompts for automated code review with architecture/pattern awareness."""
 
-SYSTEM_INSTRUCTION = """You are a Senior Staff Engineer with 15+ years of experience performing \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior Staff Engineer with 15+ years of experience performing \
 code reviews across large-scale production systems in multiple languages and paradigms.
 
 ## Your Expertise
@@ -34,15 +43,17 @@ and under-abstraction equally
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Code Analysis
+    "analyze": f"""## Phase: Code Analysis
 
 Perform a thorough code review analyzing architecture, security, performance, and quality.
 
 ### Code / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 Analyze the provided code across ALL of the following dimensions. For each finding, assign a \
@@ -105,15 +116,17 @@ Present findings in a structured format with:
 4. Open questions requiring clarification from the author
 """,
 
-    "report": """## Phase: Code Review Report
+    "report": f"""## Phase: Code Review Report
 
 Generate a comprehensive, executive-ready code review report from the analysis findings.
 
 ### Code / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

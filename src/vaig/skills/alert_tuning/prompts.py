@@ -1,6 +1,15 @@
 """Alert Tuning Skill — prompts for alert and monitoring review, noise reduction, and coverage analysis."""
 
-SYSTEM_INSTRUCTION = """You are a Principal Observability Engineer and On-Call Operations Architect with \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Principal Observability Engineer and On-Call Operations Architect with \
 15+ years of experience designing, tuning, and operating alerting systems across large-scale production \
 environments including financial trading platforms, global SaaS products, and cloud infrastructure providers.
 
@@ -112,15 +121,17 @@ manufacture noise problems or coverage gaps to appear thorough.
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Alert Inventory & Noise Analysis
+    "analyze": f"""## Phase: Alert Inventory & Noise Analysis
 
 Catalog all alerts and analyze signal quality, noise levels, and coverage gaps.
 
 ### Alerting Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Alert Inventory**: Catalog every alert rule found — name, metric/query, threshold, \
@@ -144,15 +155,17 @@ changes or suppression rules
 Format as a structured alert inventory report with health classification and noise metrics.
 """,
 
-    "plan": """## Phase: Alert Tuning Plan
+    "plan": f"""## Phase: Alert Tuning Plan
 
 Create a prioritized plan to reduce noise, improve coverage, and optimize alerting quality.
 
 ### Alerting Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Alert analysis:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Alerts to Delete**: List alerts that should be removed — dead alerts monitoring \
@@ -180,15 +193,17 @@ for services that lack proper observability dashboards
 Format as a prioritized action plan grouped by: Quick Wins, This Sprint, This Quarter.
 """,
 
-    "execute": """## Phase: Alert Tuning Execution Guidance
+    "execute": f"""## Phase: Alert Tuning Execution Guidance
 
 Provide detailed, implementation-ready alert configurations and runbook templates.
 
 ### Alerting Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Tuning plan:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Alert Rule Configurations**: For each alert to create or modify, provide the exact \
@@ -220,15 +235,17 @@ at once. Start with quick wins, monitor impact, then proceed
 Provide copy-paste-ready configurations for the monitoring stack in use.
 """,
 
-    "validate": """## Phase: Alert Tuning Validation
+    "validate": f"""## Phase: Alert Tuning Validation
 
 Validate that the tuning changes improve signal quality without introducing coverage gaps.
 
 ### Alerting Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Tuning results:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Coverage Regression Check**: Verify that deleted and consolidated alerts don't create \
@@ -247,15 +264,17 @@ rate, and on-call burden after changes are applied
 Format as a validation checklist with pass/fail/warning status for each item.
 """,
 
-    "report": """## Phase: Alert Tuning Report
+    "report": f"""## Phase: Alert Tuning Report
 
 Generate a comprehensive alert tuning report with before/after comparison.
 
 ### Alerting Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Tuning results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

@@ -75,6 +75,7 @@ ignore = [
     "S110",   # try-except-pass (acceptable in optional-import patterns)
     "S603",   # subprocess call without shell=True check
     "S607",   # start process with partial path
+    "S608",   # SQL injection via string-based query — false positive on AI prompt templates
     # Line length — long prompt strings are unavoidable in AI tool
     "E501",
     # Import order — E402 needed for lazy/conditional imports (typer, k8s)

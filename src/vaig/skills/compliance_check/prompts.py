@@ -1,6 +1,15 @@
 """Compliance Check Skill — prompts for regulatory and policy compliance auditing."""
 
-SYSTEM_INSTRUCTION = """You are a Senior Compliance Engineer with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior Compliance Engineer with 15+ years of experience \
 auditing software systems for regulatory, security, and organizational policy compliance.
 
 ## Your Expertise
@@ -29,15 +38,17 @@ auditing software systems for regulatory, security, and organizational policy co
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Compliance Scope & Gap Analysis
+    "analyze": f"""## Phase: Compliance Scope & Gap Analysis
 
 Analyze the provided system, infrastructure, or code for compliance gaps.
 
 ### System Context / Evidence:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Applicable Frameworks**: Identify which regulatory frameworks and policies apply
@@ -50,15 +61,17 @@ Analyze the provided system, infrastructure, or code for compliance gaps.
 Format as a structured compliance gap analysis with a summary matrix.
 """,
 
-    "plan": """## Phase: Remediation Planning
+    "plan": f"""## Phase: Remediation Planning
 
 Based on the compliance gap analysis, create a prioritized remediation plan.
 
 ### System Context / Evidence:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Gap Analysis Results:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Risk Prioritization**: Rank gaps by risk severity and regulatory urgency
@@ -71,15 +84,17 @@ Based on the compliance gap analysis, create a prioritized remediation plan.
 Format as an actionable remediation roadmap with clear ownership suggestions.
 """,
 
-    "report": """## Phase: Compliance Report
+    "report": f"""## Phase: Compliance Report
 
 Generate a comprehensive compliance audit report.
 
 ### System Context / Evidence:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Audit Findings:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

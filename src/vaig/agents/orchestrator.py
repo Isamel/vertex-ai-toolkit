@@ -22,7 +22,7 @@ from vaig.core.language import (
     inject_autopilot_into_config,
     inject_language_into_config,
 )
-from vaig.core.prompt_defense import wrap_untrusted_content
+from vaig.core.prompt_defense import ANTI_INJECTION_RULE, wrap_untrusted_content
 from vaig.skills.base import BaseSkill, SkillPhase, SkillResult
 from vaig.tools.base import ToolRegistry
 
@@ -1806,6 +1806,7 @@ class Orchestrator:
     def default_system_instruction(self) -> str:
         """Default system instruction for general chat mode."""
         return (
+            f"{ANTI_INJECTION_RULE}\n\n"
             "You are VAIG (Vertex AI Gemini Toolkit), a helpful AI assistant powered by "
             "Google's Gemini models through Vertex AI. You can analyze files, code, logs, "
             "metrics, and data.\n\n"

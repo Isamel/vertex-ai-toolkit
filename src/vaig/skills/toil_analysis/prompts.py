@@ -1,6 +1,15 @@
 """Toil Analysis Skill — prompts for operational toil detection and automation planning."""
 
-SYSTEM_INSTRUCTION = """You are a Senior SRE Toil Reduction Engineer with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior SRE Toil Reduction Engineer with 15+ years of experience \
 identifying and eliminating operational toil across large-scale production environments.
 
 ## Your Expertise
@@ -106,15 +115,17 @@ Medium (1-2 weeks), Large (2-4 weeks), Project (> 1 month)
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Toil Detection and Measurement
+    "analyze": f"""## Phase: Toil Detection and Measurement
 
 Analyze operational data to identify, classify, and quantify toil.
 
 ### Operational Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Toil Inventory**: Identify every toil-generating task from the provided data (tickets, \
@@ -141,15 +152,17 @@ Format your response as a structured toil inventory with a summary dashboard sho
 total toil hours, top toil contributors, and toil budget status.
 """,
 
-    "plan": """## Phase: Automation Prioritization and Planning
+    "plan": f"""## Phase: Automation Prioritization and Planning
 
 Based on the toil analysis, prioritize automation opportunities and design approaches.
 
 ### Operational Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis so far:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **ROI Ranking**: For each identified toil task, calculate automation ROI:
@@ -177,15 +190,17 @@ no automation is implemented. Include engineer attrition risk from toil burnout
 Format as a prioritized automation roadmap with ROI calculations and implementation plans.
 """,
 
-    "execute": """## Phase: Automation Implementation Guidance
+    "execute": f"""## Phase: Automation Implementation Guidance
 
 Provide detailed implementation guidance for the prioritized automation plan.
 
 ### Operational Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Automation plan:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Quick Win Implementations**: For each quick-win automation:
@@ -217,15 +232,17 @@ itself. Automation that fails silently is worse than manual toil
 Provide implementation-ready specifications with clear acceptance criteria.
 """,
 
-    "validate": """## Phase: Toil Reduction Validation
+    "validate": f"""## Phase: Toil Reduction Validation
 
 Validate that the proposed automation plan effectively addresses identified toil.
 
 ### Operational Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Implementation results:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Coverage Verification**: Confirm that all P0 and P1 toil tasks have an automation \
@@ -249,15 +266,17 @@ Verify it brings the team below the 50% threshold. If not, identify the gap
 Format as a validation checklist with pass/fail/warning for each automation proposal.
 """,
 
-    "report": """## Phase: Toil Analysis Report
+    "report": f"""## Phase: Toil Analysis Report
 
 Generate a comprehensive toil analysis and automation roadmap report.
 
 ### Operational Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

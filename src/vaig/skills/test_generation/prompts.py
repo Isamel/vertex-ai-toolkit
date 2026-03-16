@@ -1,6 +1,15 @@
 """Test Generation Skill — prompts for automated test suite generation."""
 
-SYSTEM_INSTRUCTION = """You are a Senior Test Engineer / SDET with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior Test Engineer / SDET with 15+ years of experience \
 in test automation across enterprise, startup, and open-source ecosystems.
 
 ## Your Expertise
@@ -42,16 +51,18 @@ or mark it as integration
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Source Code Analysis for Testability
+    "analyze": f"""## Phase: Source Code Analysis for Testability
 
 Analyze the provided source code to identify all testable units, their contracts, and testing \
 challenges.
 
 ### Source Code / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Testable Units Inventory**: List every function, method, class, and API endpoint in the \
@@ -95,15 +106,17 @@ Format your response as a structured testability report with a summary table of 
 units and their risk/priority classification (Critical / High / Medium / Low).
 """,
 
-    "plan": """## Phase: Test Plan Design
+    "plan": f"""## Phase: Test Plan Design
 
 Based on the source code analysis, create a comprehensive test plan with specific test cases.
 
 ### Source Code / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis so far:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Test Strategy**: Define the overall approach:
@@ -150,15 +163,17 @@ differ only in input/output data — these should be parameterized, not duplicat
 Format as an actionable test plan document with a prioritized checklist of tests to write.
 """,
 
-    "execute": """## Phase: Test Code Generation
+    "execute": f"""## Phase: Test Code Generation
 
 Generate production-ready test code based on the test plan.
 
 ### Source Code / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Test plan and requirements:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 Generate complete, runnable test code following these requirements:
@@ -210,15 +225,17 @@ Output the complete test files with all code ready to run. Separate multiple fil
 file path headers.
 """,
 
-    "report": """## Phase: Test Coverage & Quality Report
+    "report": f"""## Phase: Test Coverage & Quality Report
 
 Generate a comprehensive report on the test suite quality and coverage.
 
 ### Source Code / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Generated tests and results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

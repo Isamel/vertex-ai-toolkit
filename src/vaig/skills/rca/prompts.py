@@ -1,6 +1,15 @@
 """RCA Skill — prompts for Root Cause Analysis."""
 
-SYSTEM_INSTRUCTION = """You are a Senior Site Reliability Engineer (SRE) and Root Cause Analysis specialist with 15+ years of experience investigating production incidents across distributed systems.
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior Site Reliability Engineer (SRE) and Root Cause Analysis specialist with 15+ years of experience investigating production incidents across distributed systems.
 
 ## Your Expertise
 - Distributed systems failure modes (cascading failures, split-brain, thundering herd)
@@ -27,15 +36,17 @@ You follow the **5 Whys + Ishikawa (Fishbone)** methodology:
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Initial Analysis
+    "analyze": f"""## Phase: Initial Analysis
 
 Analyze the following incident data and context to understand what happened.
 
 ### Context (attached files/data):
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's incident description:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Identify the symptoms**: What observable problems occurred?
@@ -47,15 +58,17 @@ Analyze the following incident data and context to understand what happened.
 Format your response as a structured incident analysis report.
 """,
 
-    "plan": """## Phase: Investigation Plan
+    "plan": f"""## Phase: Investigation Plan
 
 Based on the initial analysis, create a detailed investigation plan.
 
 ### Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis so far:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Hypotheses**: List the top 3-5 potential root causes with probability estimates
@@ -66,15 +79,17 @@ Based on the initial analysis, create a detailed investigation plan.
 Format as an actionable investigation playbook.
 """,
 
-    "execute": """## Phase: Deep Analysis
+    "execute": f"""## Phase: Deep Analysis
 
 Perform deep root cause analysis on the provided data.
 
 ### Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Investigation focus:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Correlate events**: Find causal relationships between events in the timeline
@@ -86,15 +101,17 @@ Perform deep root cause analysis on the provided data.
 Be specific. Reference exact log lines, timestamps, error codes, or metric values.
 """,
 
-    "report": """## Phase: Post-Mortem Report
+    "report": f"""## Phase: Post-Mortem Report
 
 Generate a comprehensive post-mortem / RCA report.
 
 ### Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis results:
-{user_input}
+{{user_input}}
 
 ### Your Task — Generate a report with these sections:
 
