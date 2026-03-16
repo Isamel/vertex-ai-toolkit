@@ -11,7 +11,7 @@
 | [REPL Guide](repl-guide.md) | Interactive chat mode with 17 slash commands |
 | [Skills Guide](skills-guide.md) | All 29 built-in skills for SRE, security, code quality, and more |
 | [Agents Guide](agents-guide.md) | Multi-agent architecture and orchestration strategies |
-| [Tools Reference](tools-reference.md) | File, shell, GKE, GCloud, and MCP tool details |
+| [Tools Reference](tools-reference.md) | 34 infrastructure tools: GKE, GCloud, Helm, ArgoCD, Mesh, Labels, MCP |
 | [Configuration](configuration.md) | All 14 config sections, YAML format, and environment variables |
 | [Sessions Guide](sessions-guide.md) | Session persistence, search, and history management |
 | [Export Guide](export-guide.md) | Export results to JSON, Markdown, or HTML |
@@ -62,6 +62,7 @@ See [Architecture](architecture.md) for detailed Mermaid diagrams.
 - **Plugin system** — Python module plugins and MCP auto-registration
 - **Export** — Save analysis results as JSON, Markdown, or HTML reports
 - **Per-session cost tracking** — Budget enforcement with warn/stop thresholds
+- **ToolCallStore** — Per-tool-call JSONL recording for post-run analysis and auditing
 - **Usage telemetry** — Local SQLite analytics with `vaig stats` commands
 - **Auto-skill detection** — Automatically selects the best skill for your query
 - **9-language detection** — Responds in the user's language (es, pt, fr, de, it, ja, zh, ko)

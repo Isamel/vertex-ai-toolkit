@@ -139,7 +139,7 @@ run_command(command="git diff HEAD~1")
 
 Available in **live** mode (`vaig live` or `--live`). Require the `[live]` extra and a configured GKE cluster.
 
-VAIG provides **15 GKE tools** (8 original + 7 diagnostic) and **2 GCloud tools** — 17 infrastructure tools total.
+VAIG provides **23 base GKE tools** + **4 Helm tools** (enabled by default) + **5 ArgoCD tools** (opt-in) + **2 GCloud tools** — up to **34 infrastructure tools** total. Additionally, 5 file tools and 1 shell tool are available in coding agent mode.
 
 ### Read Operations
 
@@ -463,7 +463,7 @@ kubectl_get_labels(resource_type="deployments", namespace="production", annotati
 
 ## Helm Tools
 
-**Disabled by default** — enable with `helm.enabled: true` in config.
+**Enabled by default** — disable with `helm.enabled: false` in config.
 
 Read-only introspection of Helm releases. Reads Helm release data from Kubernetes Secrets (type `helm.sh/release.v1`). No Helm binary required.
 

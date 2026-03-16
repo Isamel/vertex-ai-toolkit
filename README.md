@@ -12,7 +12,7 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
   - **RCA** — Root Cause Analysis with 5 Whys + Fishbone methodology
   - **Anomaly Detection** — detect unusual patterns in logs, metrics, and data
   - **Code Migration** — migrate between platforms (e.g., Pentaho KTR/KJB → AWS Glue PySpark)
-  - **Service Health** — comprehensive GKE service diagnostics
+  - **Service Health** — comprehensive GKE service diagnostics (4-agent pipeline with two-pass gathering)
   - Plus 25+ built-in skills for SRE, DevOps, and platform engineering
 - **Multi-agent orchestration** — skills spawn specialized agents with different roles and models
 - **Async fanout** — true parallel agent execution via ThreadPoolExecutor for multi-agent workflows
@@ -23,8 +23,11 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
 - **Safety settings** — configurable harm category thresholds for Gemini API content filtering
 - **Dual-auth** — separate GCP project authentication for Vertex AI vs GKE observability via SA impersonation
 - **Runtime config switching** — change GCP project, location, or GKE cluster at runtime without restarting
-- **GKE live diagnostics** — connect to GKE clusters for pod inspection, log analysis, and metric queries
+- **GKE live diagnostics** — connect to GKE clusters for pod inspection, log analysis, and metric queries (23 base tools)
+- **Helm introspection** — read-only Helm release status, history, and values via K8s secrets (4 tools, enabled by default)
+- **ArgoCD integration** — read-only ArgoCD Application status, sync history, diff, and managed resources (5 tools, opt-in)
 - **ASM/Istio mesh introspection** — service mesh overview, traffic config, security policies, and sidecar status
+- **ToolCallStore** — per-tool-call result storage (JSONL) for post-run analysis, debugging, and auditing
 - **Configurable auth** — Application Default Credentials (ADC) for GKE, service account impersonation for local dev
 - **Cross-platform** — UTF-8 enforcement on all file I/O for Windows compatibility
 
@@ -40,7 +43,10 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
 # From source
 pip install -e .
 
-# With dev dependencies
+# With live infrastructure support (GKE, Cloud Logging, Cloud Monitoring)
+pip install -e ".[live]"
+
+# With dev dependencies (includes live deps + pytest, ruff, mypy)
 pip install -e ".[dev]"
 ```
 
@@ -274,6 +280,14 @@ telemetry:
 skills:
   enabled: [rca, anomaly, migration]
   custom_dir: null  # Path to custom skills directory
+
+helm:
+  enabled: true       # Helm release introspection (4 read-only tools)
+
+argocd:
+  enabled: false      # ArgoCD Application introspection (5 read-only tools)
+  namespace: argocd   # Namespace where ArgoCD Applications live
+  context: ""         # kubeconfig context for ArgoCD management cluster
 ```
 
 ### Environment variables
@@ -617,11 +631,12 @@ vertex-ai-toolkit/
 │   ├── __init__.py
 │   ├── __main__.py
 │   ├── core/
-│   │   ├── config.py       # Pydantic Settings (layered config)
+│   │   ├── config.py          # Pydantic Settings (layered config)
 │   │   ├── config_switcher.py # Runtime config switching (project, location, cluster)
-│   │   ├── auth.py         # ADC + SA impersonation + dual-auth
-│   │   ├── client.py       # GeminiClient (streaming, multi-model)
-│   │   └── cost_tracker.py # Per-request cost tracking (SQLite)
+│   │   ├── auth.py            # ADC + SA impersonation + dual-auth
+│   │   ├── client.py          # GeminiClient (streaming, multi-model)
+│   │   ├── cost_tracker.py    # Per-request cost tracking (SQLite)
+│   │   └── tool_call_store.py # ToolCallStore — per-tool-call JSONL recording
 │   ├── context/
 │   │   ├── filters.py      # .gitignore patterns, binary detection
 │   │   ├── loader.py       # File loaders (text, PDF, image, audio, ETL)
@@ -642,34 +657,39 @@ vertex-ai-toolkit/
 │   │   ├── orchestrator.py # Multi-agent coordination + async fanout
 │   │   └── registry.py     # Agent factory
 │   ├── tools/
-│   │   ├── base.py          # ToolResult, tool registration helpers
-│   │   ├── gke_tools.py     # GKE tool wrappers
+│   │   ├── base.py           # ToolResult, ToolCallRecord
+│   │   ├── gke_tools.py      # GKE tool wrappers (legacy)
 │   │   └── gke/
-│   │       ├── _cache.py      # TTL cache for discovery/mesh resources
-│   │       ├── _clients.py    # K8s client factory + auth
-│   │       ├── _formatters.py # Output formatters for GKE resources
-│   │       ├── _registry.py   # Tool registration
-│   │       ├── _resources.py  # Core resource readers
-│   │       ├── diagnostics.py # Pod/workload diagnostics
-│   │       ├── discovery.py   # Cluster discovery tools
-│   │       ├── kubectl.py     # kubectl-style operations
-│   │       ├── mesh.py        # ASM/Istio mesh introspection tools
-│   │       ├── mutations.py   # Write operations (scale, restart, etc.)
-│   │       └── security.py    # K8s security scanning
+│   │       ├── _cache.py       # TTL cache for discovery/mesh resources
+│   │       ├── _clients.py     # K8s client factory + auth
+│   │       ├── _formatters.py  # Output formatters for GKE resources
+│   │       ├── _registry.py    # Tool registration (23 base + 4 Helm + 5 ArgoCD)
+│   │       ├── _resources.py   # Core resource readers
+│   │       ├── argocd.py       # ArgoCD Application introspection (5 tools)
+│   │       ├── diagnostics.py  # Pod/workload diagnostics
+│   │       ├── discovery.py    # Cluster discovery tools
+│   │       ├── helm.py         # Helm release introspection (4 tools)
+│   │       ├── kubectl.py      # kubectl-style operations + get_labels
+│   │       ├── mesh.py         # ASM/Istio mesh introspection tools
+│   │       ├── mutations.py    # Write operations (scale, restart, etc.)
+│   │       └── security.py     # RBAC check + exec_command
 │   └── cli/
 │       ├── app.py          # Typer commands
 │       └── repl.py         # Interactive REPL (prompt-toolkit)
-└── tests/
+├── tests/                  # 60+ test files
+└── .github/workflows/
+    ├── ci.yml              # Test + Lint + Type check on PR/push
+    └── build.yml           # PyInstaller standalone binary builds
 ```
 
 ## Development
 
 ```bash
-# Install with dev deps
+# Install with dev deps (includes runtime + live infrastructure deps)
 pip install -e ".[dev]"
 
 # Lint
-ruff check src/
+ruff check src/ tests/
 
 # Format
 ruff format src/
@@ -679,7 +699,17 @@ mypy src/vaig/
 
 # Test
 pytest
+
+# Test with timeout (CI default)
+python -m pytest tests/ -x -q --tb=short --timeout=120
 ```
+
+## CI/CD
+
+The project uses GitHub Actions for continuous integration:
+
+- **CI** (`.github/workflows/ci.yml`) — Runs on PR and push to `main`: pytest, ruff lint, mypy type check
+- **Build** (`.github/workflows/build.yml`) — PyInstaller standalone binary builds for Linux and Windows
 
 ## License
 

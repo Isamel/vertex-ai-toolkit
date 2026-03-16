@@ -13,14 +13,11 @@ cd vertex-ai-toolkit
 python -m venv .venv
 source .venv/bin/activate
 
-# Install with development dependencies
-pip install -e ".[dev]"
-
 # Install with live infrastructure support (GKE, Cloud Logging, Cloud Monitoring)
 pip install -e ".[live]"
 
-# Install everything
-pip install -e ".[dev,live]"
+# Install with development dependencies (includes live deps + pytest, ruff, mypy)
+pip install -e ".[dev]"
 ```
 
 ### Dependencies
@@ -36,6 +33,12 @@ pip install -e ".[dev,live]"
 - `kubernetes` — GKE cluster access
 - `google-cloud-logging` — Cloud Logging queries
 - `google-cloud-monitoring` — Cloud Monitoring metrics
+- `google-cloud-container` — GKE cluster API
+
+**Dev (`[dev]` extra — includes all `[live]` deps):**
+- `pytest`, `pytest-asyncio`, `pytest-cov`, `pytest-timeout` — Testing
+- `ruff` — Linting and formatting
+- `mypy` — Type checking
 
 ## Authentication
 

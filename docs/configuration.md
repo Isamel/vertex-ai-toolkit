@@ -350,7 +350,7 @@ retry:
 
 ```yaml
 helm:
-  enabled: false                     # Set true to enable Helm release tools
+  enabled: true                      # Helm release introspection (enabled by default)
 ```
 
 When enabled, VAIG registers 4 read-only Helm tools that introspect release data from Kubernetes Secrets. No Helm binary required. See [Tools Reference](tools-reference.md#helm-tools).
