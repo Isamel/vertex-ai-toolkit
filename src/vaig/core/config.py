@@ -76,6 +76,51 @@ class AuthConfig(BaseModel):
     impersonate_sa: str = ""
 
 
+class ThinkingConfig(BaseModel):
+    """Configuration for Gemini thinking mode.
+
+    When ``enabled`` is True and the model supports thinking (e.g.
+    ``gemini-2.5-flash``, ``gemini-2.5-pro``), the ``thinking_config``
+    parameter is included in the ``GenerateContentConfig`` sent to the API.
+
+    Thinking mode is opt-in — disabled by default — so existing behaviour
+    is unchanged unless explicitly enabled via config or CLI.
+    """
+
+    enabled: bool = False
+    budget_tokens: int | None = None
+    """Token budget for thinking. ``None`` means "use model default".
+
+    Set to ``0`` to disable thinking, ``-1`` for automatic budget,
+    or a positive integer for a fixed budget.
+    """
+    include_thoughts: bool = True
+    """Whether to include thought content in the response.
+
+    When True, thought parts are returned alongside the output.
+    """
+
+
+# ── Thinking-capable model detection ─────────────────────────
+
+THINKING_CAPABLE_MODELS: frozenset[str] = frozenset(
+    {
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+    }
+)
+"""Model name prefixes that support thinking mode."""
+
+
+def supports_thinking(model_name: str) -> bool:
+    """Check if a model supports thinking mode.
+
+    Uses prefix matching so versioned variants (e.g.
+    ``gemini-2.5-flash-001``) are also detected.
+    """
+    return any(model_name.startswith(prefix) for prefix in THINKING_CAPABLE_MODELS)
+
+
 class GenerationConfig(BaseModel):
     """Model generation parameters."""
 
@@ -83,6 +128,7 @@ class GenerationConfig(BaseModel):
     max_output_tokens: int = 16384
     top_p: float = 0.95
     top_k: int = 40
+    thinking: ThinkingConfig = Field(default_factory=ThinkingConfig)
 
 
 class ModelInfo(BaseModel):
@@ -109,12 +155,61 @@ class SessionConfig(BaseModel):
     repl_history_path: str = "~/.vaig/repl_history"
     auto_save: bool = True
     max_history_messages: int = 100
+    max_history_tokens: int = 28_000
+    """Conservative token budget for conversation history.
+
+    When the estimated token count of the in-memory history approaches
+    this limit (controlled by ``summarization_threshold``), older messages
+    are summarized into a single compact message to free context window
+    space for new turns.
+    """
+    summarization_threshold: float = 0.8
+    """Fraction of ``max_history_tokens`` at which summarization triggers.
+
+    A value of ``0.8`` means summarization runs when the rough token
+    estimate reaches 80 % of ``max_history_tokens``.
+    """
+    summary_target_tokens: int = 4_000
+    """Target size in tokens for the summary message that replaces
+    the older portion of history."""
 
 
 class SkillsConfig(BaseModel):
     """Skills configuration."""
 
-    enabled: list[str] = Field(default_factory=lambda: ["rca", "anomaly", "migration", "log-analysis", "error-triage", "config-audit", "slo-review", "postmortem", "code-review", "iac-review", "cost-analysis", "capacity-planning", "test-generation", "compliance-check", "api-design", "runbook-generator", "dependency-audit", "db-review", "pipeline-review", "perf-analysis", "threat-model", "change-risk", "alert-tuning", "resilience-review", "incident-comms", "toil-analysis", "network-review", "adr-generator", "service-health"])
+    enabled: list[str] = Field(
+        default_factory=lambda: [
+            "rca",
+            "anomaly",
+            "migration",
+            "log-analysis",
+            "error-triage",
+            "config-audit",
+            "slo-review",
+            "postmortem",
+            "code-review",
+            "iac-review",
+            "cost-analysis",
+            "capacity-planning",
+            "test-generation",
+            "compliance-check",
+            "api-design",
+            "runbook-generator",
+            "dependency-audit",
+            "db-review",
+            "pipeline-review",
+            "perf-analysis",
+            "threat-model",
+            "change-risk",
+            "alert-tuning",
+            "resilience-review",
+            "incident-comms",
+            "toil-analysis",
+            "network-review",
+            "adr-generator",
+            "service-health",
+        ]
+    )
     custom_dir: str | None = None
     auto_routing: bool = True
     auto_routing_threshold: float = 1.5
@@ -127,6 +222,21 @@ class AgentsConfig(BaseModel):
     orchestrator_model: str = "gemini-2.5-pro"
     specialist_model: str = "gemini-2.5-flash"
     max_iterations_retry: int = 10
+    parallel_tool_calls: bool = True
+    """Execute independent tool calls in parallel (async path only).
+
+    When Gemini returns multiple function calls in a single response,
+    they are independent by API contract.  Enabling this executes them
+    concurrently via ``asyncio.gather`` instead of sequentially.
+    The sync path always runs sequentially regardless of this setting.
+    """
+    max_concurrent_tool_calls: int = 5
+    """Maximum number of tool calls to execute concurrently.
+
+    Acts as a semaphore limit to prevent API throttling when the model
+    requests many tool calls at once.  Only applies when
+    ``parallel_tool_calls`` is enabled.
+    """
 
 
 class CodingConfig(BaseModel):
@@ -141,7 +251,7 @@ class CodingConfig(BaseModel):
         default_factory=lambda: [
             # Destructive disk / filesystem operations
             r"\brm\s+(-\w*\s+)*-\w*r\w*\s+/\s*$",  # rm -rf /
-            r"\brm\s+(-\w*\s+)*-\w*r\w*\s+/\w",     # rm -rf /anything
+            r"\brm\s+(-\w*\s+)*-\w*r\w*\s+/\w",  # rm -rf /anything
             r"\bmkfs\b",
             r"\bdd\b\s+",
             r"\bformat\b",

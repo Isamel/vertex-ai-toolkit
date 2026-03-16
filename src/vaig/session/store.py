@@ -118,7 +118,9 @@ class SessionStore:
     def get_messages(self, session_id: str, *, limit: int | None = None) -> list[dict[str, Any]]:
         """Get all messages for a session, ordered by creation time."""
         conn = self._get_conn()
-        query = "SELECT role, content, model, token_count, created_at FROM messages WHERE session_id = ? ORDER BY id ASC"
+        query = (
+            "SELECT role, content, model, token_count, created_at FROM messages WHERE session_id = ? ORDER BY id ASC"
+        )
         params: list[Any] = [session_id]
 
         if limit:

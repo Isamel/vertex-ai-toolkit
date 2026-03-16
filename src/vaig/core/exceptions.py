@@ -46,6 +46,28 @@ class ToolExecutionError(VAIGError):
         self.tool_name = tool_name
 
 
+class HelmError(ToolExecutionError):
+    """Raised when a Helm tool operation fails.
+
+    Covers K8s API errors, Helm secret decoding failures (base64/gzip/JSON),
+    and other Helm-specific runtime issues.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, tool_name="helm")
+
+
+class ArgoCDError(ToolExecutionError):
+    """Raised when an ArgoCD tool operation fails.
+
+    Covers K8s API errors, kubeconfig loading failures, ArgoCD CRD access
+    issues, and other ArgoCD-specific runtime problems.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, tool_name="argocd")
+
+
 class MaxIterationsError(VAIGError):
     """Raised when the tool-use loop exceeds the configured maximum iterations."""
 
@@ -126,9 +148,7 @@ def format_error_for_user(exc: Exception, *, debug: bool = False) -> str:
     if isinstance(exc, GCPPermissionError):
         lines.append(f"[red]Permission Denied:[/red] {exc}")
         if exc.required_permissions:
-            lines.append(
-                f"[yellow]Required permissions:[/yellow] {', '.join(exc.required_permissions)}"
-            )
+            lines.append(f"[yellow]Required permissions:[/yellow] {', '.join(exc.required_permissions)}")
         if exc.fix_suggestion:
             lines.append(f"[yellow]Fix:[/yellow] {exc.fix_suggestion}")
     elif isinstance(exc, GCPAuthError):
@@ -137,9 +157,7 @@ def format_error_for_user(exc: Exception, *, debug: bool = False) -> str:
             lines.append(f"[yellow]Fix:[/yellow] {exc.fix_suggestion}")
     elif isinstance(exc, K8sAuthError):
         lines.append(f"[red]Kubernetes Auth Error:[/red] {exc}")
-        lines.append(
-            "[yellow]Fix:[/yellow] Check your kubeconfig: kubectl config current-context"
-        )
+        lines.append("[yellow]Fix:[/yellow] Check your kubeconfig: kubectl config current-context")
     elif isinstance(exc, VaigAuthError):
         lines.append(f"[red]Authentication Error:[/red] {exc}")
     elif isinstance(exc, VAIGError):
