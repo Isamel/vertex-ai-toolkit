@@ -380,3 +380,68 @@ def _create_k8s_clients(
     )
     _CLIENT_CACHE[key] = clients
     return clients
+
+
+# ── ArgoCD client helper ─────────────────────────────────────
+
+
+def _create_argocd_client(
+    *,
+    server: str = "",
+    token: str = "",
+    context: str = "",
+    verify_ssl: bool = True,
+) -> tuple[str, Any]:
+    """Create an ArgoCD client based on connection mode.
+
+    Three connection modes are supported, resolved in priority order:
+
+    1. **API Server mode** (``server`` + ``token`` provided):
+       Connect to the ArgoCD REST API via HTTP.
+       *Not yet implemented — raises ``NotImplementedError``.*
+
+    2. **Separate context mode** (``context`` provided):
+       Use a different kubeconfig context to access ArgoCD's cluster.
+       *Not yet implemented — raises ``NotImplementedError``.*
+
+    3. **Same-cluster mode** (default fallback):
+       ArgoCD runs in the same cluster — use ``CustomObjectsApi`` directly.
+
+    Args:
+        server: ArgoCD API server URL (e.g. ``https://argocd.example.com``).
+        token: ArgoCD API bearer token.
+        context: Kubeconfig context name pointing to ArgoCD's cluster.
+        verify_ssl: Whether to verify TLS certificates (API mode only).
+
+    Returns:
+        Tuple of ``(client_type, client)`` where ``client_type`` is one of
+        ``"api"``, ``"context"``, or ``"cluster"``.
+
+    Raises:
+        NotImplementedError: For API and context modes (Phase 3).
+        RuntimeError: If same-cluster client creation fails.
+    """
+    if not _K8S_AVAILABLE:
+        raise RuntimeError(_K8S_IMPORT_ERROR or "kubernetes SDK not available")
+
+    # Mode 1: API server (stub)
+    if server and token:
+        raise NotImplementedError(
+            "ArgoCD REST API mode is not yet implemented (Phase 3). "
+            "Use same-cluster mode by omitting server/token."
+        )
+
+    # Mode 2: Separate kubeconfig context (stub)
+    if context:
+        raise NotImplementedError(
+            "ArgoCD separate-context mode is not yet implemented (Phase 3). "
+            "Use same-cluster mode by omitting the context parameter."
+        )
+
+    # Mode 3: Same-cluster — build a CustomObjectsApi
+    try:
+        api_client = k8s_client.ApiClient()
+        custom_api = k8s_client.CustomObjectsApi(api_client)
+        return ("cluster", custom_api)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to create same-cluster ArgoCD client: {exc}") from exc
