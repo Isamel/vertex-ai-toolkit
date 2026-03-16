@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,7 +13,20 @@ from vaig.cli.app import app
 from vaig.core.config import Settings
 from vaig.skills.base import SkillMetadata, SkillPhase, SkillResult
 
-runner = CliRunner()
+runner = CliRunner(env={"NO_COLOR": "1"})
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from *text*.
+
+    Rich/Typer may inject color codes even when ``color=False`` is passed to
+    ``CliRunner.invoke`` — for example when ``FORCE_COLOR=1`` is set in CI or
+    the app uses ``rich_markup_mode="rich"``.  Stripping before assertions
+    makes the tests environment-agnostic.
+    """
+    return _ANSI_RE.sub("", text)
 
 
 @pytest.fixture(autouse=True)
@@ -30,24 +44,26 @@ class TestAppBasics:
     def test_help_shows_help_text(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "Vertex AI" in result.output or "VAIG" in result.output
+        output = _strip_ansi(result.output)
+        assert "Vertex AI" in output or "VAIG" in output
 
     def test_version_flag(self) -> None:
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
-        assert __version__ in result.output
+        assert __version__ in _strip_ansi(result.output)
 
     def test_version_short_flag(self) -> None:
         result = runner.invoke(app, ["-v"])
         assert result.exit_code == 0
-        assert __version__ in result.output
+        assert __version__ in _strip_ansi(result.output)
 
     def test_no_args_shows_help(self) -> None:
         result = runner.invoke(app, [])
         # no_args_is_help=True — Typer shows help and exits with code 0.
         # Some Typer/Click versions exit with 0, others with 2 for "no args" help.
         assert result.exit_code in (0, 2)
-        assert "Usage" in result.output or "VAIG" in result.output
+        output = _strip_ansi(result.output)
+        assert "Usage" in output or "VAIG" in output
 
 
 # ══════════════════════════════════════════════════════════════
@@ -670,13 +686,13 @@ class TestVerboseDebugFlags:
         """--debug flag should appear in help output."""
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "--debug" in result.output
+        assert "--debug" in _strip_ansi(result.output)
 
     def test_verbose_flag_shows_in_help(self) -> None:
         """--verbose flag should appear in help output."""
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "--verbose" in result.output
+        assert "--verbose" in _strip_ansi(result.output)
 
     def test_debug_flag_after_ask_subcommand(self) -> None:
         """``vaig ask "Hello" -d`` sets DEBUG level (flag after subcommand)."""
@@ -722,19 +738,19 @@ class TestVerboseDebugFlags:
         """--debug flag should appear in live subcommand help output."""
         result = runner.invoke(app, ["live", "--help"])
         assert result.exit_code == 0
-        assert "--debug" in result.output
+        assert "--debug" in _strip_ansi(result.output)
 
     def test_verbose_flag_shows_in_live_help(self) -> None:
         """--verbose flag should appear in live subcommand help output."""
         result = runner.invoke(app, ["live", "--help"])
         assert result.exit_code == 0
-        assert "--verbose" in result.output
+        assert "--verbose" in _strip_ansi(result.output)
 
     def test_debug_flag_shows_in_ask_help(self) -> None:
         """--debug flag should appear in ask subcommand help output."""
         result = runner.invoke(app, ["ask", "--help"])
         assert result.exit_code == 0
-        assert "--debug" in result.output
+        assert "--debug" in _strip_ansi(result.output)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -747,13 +763,13 @@ class TestLocationFlag:
         """--location flag should appear in live subcommand help output."""
         result = runner.invoke(app, ["live", "--help"])
         assert result.exit_code == 0
-        assert "--location" in result.output
+        assert "--location" in _strip_ansi(result.output)
 
     def test_location_flag_shows_in_ask_help(self) -> None:
         """--location flag should appear in ask subcommand help output."""
         result = runner.invoke(app, ["ask", "--help"])
         assert result.exit_code == 0
-        assert "--location" in result.output
+        assert "--location" in _strip_ansi(result.output)
 
     def test_build_gke_config_with_location(self) -> None:
         """_build_gke_config passes location override to GKEConfig."""
@@ -783,22 +799,22 @@ class TestProjectFlag:
     def test_project_flag_shows_in_ask_help(self) -> None:
         result = runner.invoke(app, ["ask", "--help"])
         assert result.exit_code == 0
-        assert "--project" in result.output
+        assert "--project" in _strip_ansi(result.output)
 
     def test_project_flag_shows_in_live_help(self) -> None:
         result = runner.invoke(app, ["live", "--help"])
         assert result.exit_code == 0
-        assert "--project" in result.output
+        assert "--project" in _strip_ansi(result.output)
 
     def test_project_flag_shows_in_chat_help(self) -> None:
         result = runner.invoke(app, ["chat", "--help"])
         assert result.exit_code == 0
-        assert "--project" in result.output
+        assert "--project" in _strip_ansi(result.output)
 
     def test_location_flag_shows_in_chat_help(self) -> None:
         result = runner.invoke(app, ["chat", "--help"])
         assert result.exit_code == 0
-        assert "--location" in result.output
+        assert "--location" in _strip_ansi(result.output)
 
     def test_project_flag_updates_settings(self, _mock_settings: Settings) -> None:
         """--project should mutate gcp.project_id and gke.project_id BEFORE component creation."""
@@ -814,7 +830,7 @@ class TestProjectFlag:
         """--project-id should still show in help for backward compat."""
         result = runner.invoke(app, ["ask", "--help"])
         assert result.exit_code == 0
-        assert "--project-id" in result.output
+        assert "--project-id" in _strip_ansi(result.output)
 
     def test_project_flag_overrides_project_id(self, _mock_settings: Settings) -> None:
         """--project takes precedence over --project-id when both provided."""
