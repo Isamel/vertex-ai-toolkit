@@ -522,7 +522,7 @@ class TestCreateGkeTools:
         cfg = _make_gke_config()
         tools = create_gke_tools(cfg)
 
-        assert len(tools) == 22
+        assert len(tools) == 27
         assert all(isinstance(t, ToolDef) for t in tools)
 
     def test_tool_names(self) -> None:
@@ -539,6 +539,9 @@ class TestCreateGkeTools:
             "exec_command", "check_rbac", "get_rollout_history", "discover_workloads",
             "discover_service_mesh", "discover_network_topology",
             "get_mesh_overview", "get_mesh_config", "get_mesh_security", "get_sidecar_status",
+            "kubectl_get_labels",
+            "helm_list_releases", "helm_release_status", "helm_release_history",
+            "helm_release_values",
         }
 
     def test_all_have_descriptions(self) -> None:
@@ -3891,7 +3894,7 @@ class TestCheckRbac:
 
 
 class TestCreateGkeToolsPhase3:
-    """Verify create_gke_tools now returns 18 tools (16 + discover_service_mesh + discover_network_topology)."""
+    """Verify create_gke_tools returns 27 tools (22 base + 1 labels + 4 helm)."""
 
     def test_tool_count(self) -> None:
         from vaig.tools.gke_tools import create_gke_tools
@@ -3899,7 +3902,7 @@ class TestCreateGkeToolsPhase3:
         cfg = _make_gke_config()
         with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
             tools = create_gke_tools(cfg)
-        assert len(tools) == 22
+        assert len(tools) == 27
 
     def test_exec_command_registered(self) -> None:
         from vaig.tools.gke_tools import create_gke_tools
@@ -4618,9 +4621,7 @@ class TestAutopilotToolBehavior:
 
         cfg = _make_gke_config()
         tools = create_gke_tools(cfg)
-        assert len(tools) == 22
-
-
+        assert len(tools) == 27
 # ── Discovery cache helpers ──────────────────────────────────
 
 
@@ -5784,3 +5785,215 @@ class TestGapDetection:
             assert "namespace" not in (call_kwargs.kwargs or {}), (
                 "Cluster-scoped resource should not receive a namespace parameter"
             )
+
+
+# ── kubectl_get_labels ───────────────────────────────────────
+
+
+class TestKubectlGetLabels:
+    """Tests for kubectl_get_labels — labels and annotations read tool."""
+
+    def _mock_resource(
+        self,
+        name: str = "my-pod",
+        namespace: str = "default",
+        labels: dict[str, str] | None = None,
+        annotations: dict[str, str] | None = None,
+    ) -> MagicMock:
+        """Create a mock K8s resource with configurable labels/annotations."""
+        item = MagicMock()
+        item.metadata.name = name
+        item.metadata.namespace = namespace
+        item.metadata.labels = labels if labels is not None else {"app": "test"}
+        item.metadata.annotations = annotations if annotations is not None else {}
+        return item
+
+    def test_single_resource_by_name(self) -> None:
+        """Single resource by name — labels and annotations returned."""
+        from vaig.tools.gke.kubectl import kubectl_get_labels
+
+        cfg = _make_gke_config()
+        pod = self._mock_resource(
+            name="web-pod",
+            labels={"app": "web", "tier": "frontend"},
+            annotations={"deploy.version": "v2", "owner": "team-a"},
+        )
+        mock_list = MagicMock()
+        mock_list.items = [pod]
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            mock_clients.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock())
+            with patch("vaig.tools.gke._resources._list_resource", return_value=mock_list):
+                result = kubectl_get_labels(
+                    resource_type="pods",
+                    gke_config=cfg,
+                    name="web-pod",
+                )
+
+        assert not result.error
+        assert "pods/web-pod" in result.output
+        assert "app: web" in result.output
+        assert "tier: frontend" in result.output
+        assert "deploy.version: v2" in result.output
+        assert "owner: team-a" in result.output
+        # Single resource: no "Total:" line
+        assert "Total:" not in result.output
+
+    def test_list_with_label_filter(self) -> None:
+        """List resources with label_filter — server-side filtering."""
+        from vaig.tools.gke.kubectl import kubectl_get_labels
+
+        cfg = _make_gke_config()
+        pod1 = self._mock_resource(name="pod-1", labels={"app": "web"})
+        pod2 = self._mock_resource(name="pod-2", labels={"app": "web"})
+        mock_list = MagicMock()
+        mock_list.items = [pod1, pod2]
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            mock_clients.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock())
+            with patch("vaig.tools.gke._resources._list_resource", return_value=mock_list) as mock_lr:
+                result = kubectl_get_labels(
+                    resource_type="pods",
+                    gke_config=cfg,
+                    label_filter="app=web",
+                )
+
+        assert not result.error
+        # Verify label_selector was passed to _list_resource
+        call_kwargs = mock_lr.call_args
+        assert call_kwargs.kwargs.get("label_selector") == "app=web"
+        assert "pods/pod-1" in result.output
+        assert "pods/pod-2" in result.output
+        assert "Total: 2 pods" in result.output
+
+    def test_list_with_annotation_filter(self) -> None:
+        """List resources with annotation_filter — client-side filtering."""
+        from vaig.tools.gke.kubectl import kubectl_get_labels
+
+        cfg = _make_gke_config()
+        pod1 = self._mock_resource(
+            name="pod-1",
+            annotations={"managed-by": "helm"},
+        )
+        pod2 = self._mock_resource(
+            name="pod-2",
+            annotations={"managed-by": "kustomize"},
+        )
+        pod3 = self._mock_resource(
+            name="pod-3",
+            annotations={},
+        )
+        mock_list = MagicMock()
+        mock_list.items = [pod1, pod2, pod3]
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            mock_clients.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock())
+            with patch("vaig.tools.gke._resources._list_resource", return_value=mock_list):
+                result = kubectl_get_labels(
+                    resource_type="pods",
+                    gke_config=cfg,
+                    annotation_filter="managed-by=helm",
+                )
+
+        assert not result.error
+        assert "pods/pod-1" in result.output
+        assert "pods/pod-2" not in result.output
+        assert "pods/pod-3" not in result.output
+        assert "Total: 1 pods" in result.output
+
+    def test_combined_label_and_annotation_filter(self) -> None:
+        """Combined label_filter + annotation_filter."""
+        from vaig.tools.gke.kubectl import kubectl_get_labels
+
+        cfg = _make_gke_config()
+        pod1 = self._mock_resource(
+            name="pod-match",
+            labels={"app": "web"},
+            annotations={"team": "alpha"},
+        )
+        pod2 = self._mock_resource(
+            name="pod-no-annotation",
+            labels={"app": "web"},
+            annotations={},
+        )
+        mock_list = MagicMock()
+        # _list_resource already filtered by label server-side, returns both
+        mock_list.items = [pod1, pod2]
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            mock_clients.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock())
+            with patch("vaig.tools.gke._resources._list_resource", return_value=mock_list) as mock_lr:
+                result = kubectl_get_labels(
+                    resource_type="pods",
+                    gke_config=cfg,
+                    label_filter="app=web",
+                    annotation_filter="team=alpha",
+                )
+
+        assert not result.error
+        # label_filter passed server-side
+        assert mock_lr.call_args.kwargs.get("label_selector") == "app=web"
+        # annotation_filter applied client-side: only pod1 matches
+        assert "pods/pod-match" in result.output
+        assert "pods/pod-no-annotation" not in result.output
+        assert "Total: 1 pods" in result.output
+
+    def test_empty_results(self) -> None:
+        """Empty results — no resources match."""
+        from vaig.tools.gke.kubectl import kubectl_get_labels
+
+        cfg = _make_gke_config()
+        mock_list = MagicMock()
+        mock_list.items = []
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            mock_clients.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock())
+            with patch("vaig.tools.gke._resources._list_resource", return_value=mock_list):
+                result = kubectl_get_labels(
+                    resource_type="pods",
+                    gke_config=cfg,
+                )
+
+        assert not result.error
+        assert "No pods" in result.output
+
+    def test_resource_not_found_by_name(self) -> None:
+        """Resource not found — specific name requested but not in list."""
+        from vaig.tools.gke.kubectl import kubectl_get_labels
+
+        cfg = _make_gke_config()
+        mock_list = MagicMock()
+        mock_list.items = []
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            mock_clients.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock())
+            with patch("vaig.tools.gke._resources._list_resource", return_value=mock_list):
+                result = kubectl_get_labels(
+                    resource_type="pods",
+                    gke_config=cfg,
+                    name="nonexistent-pod",
+                )
+
+        assert result.error
+        assert "not found" in result.output
+
+    def test_k8s_unavailable(self) -> None:
+        """K8s API not available — returns unavailable message."""
+        from vaig.tools.gke.kubectl import kubectl_get_labels
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", False):
+            result = kubectl_get_labels(
+                resource_type="pods",
+                gke_config=cfg,
+            )
+
+        assert result.error
+        assert "kubernetes" in result.output.lower() or "pip install" in result.output.lower()

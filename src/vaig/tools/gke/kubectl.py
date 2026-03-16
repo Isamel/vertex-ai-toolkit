@@ -614,6 +614,135 @@ def kubectl_top(
         return ToolResult(output=f"Error fetching metrics: {exc}", error=True)
 
 
+# ── kubectl_get_labels ───────────────────────────────────────
+
+
+def kubectl_get_labels(
+    *,
+    resource_type: str,
+    gke_config: GKEConfig,
+    namespace: str = "default",
+    name: str = "",
+    label_filter: str = "",
+    annotation_filter: str = "",
+) -> ToolResult:
+    """List labels and annotations for Kubernetes resources.
+
+    Supports server-side label filtering and client-side annotation filtering.
+    Returns a formatted view of labels and annotations for matching resources.
+    """
+    if not _clients._K8S_AVAILABLE:
+        return _clients._k8s_unavailable()
+
+    resource = _resources._normalise_resource(resource_type)
+    if resource not in _resources._RESOURCE_API_MAP:
+        if resource in _resources._KNOWN_K8S_RESOURCES:
+            return ToolResult(
+                output=(
+                    f"Resource type '{resource}' is a valid Kubernetes resource but is not yet "
+                    f"supported by this tool. Consider using kubectl directly for this resource."
+                ),
+                error=True,
+            )
+        supported = sorted(_resources._RESOURCE_API_MAP.keys())
+        return ToolResult(
+            output=f"Unsupported resource type: '{resource}'. Supported: {', '.join(supported)}",
+            error=True,
+        )
+
+    ns = namespace or gke_config.default_namespace
+
+    result = _clients._create_k8s_clients(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+    core_v1, apps_v1, custom_api, api_client_inst = result
+
+    try:
+        api_result = _resources._list_resource(
+            core_v1, apps_v1, custom_api, resource,
+            namespace=ns,
+            label_selector=label_filter or None,
+            api_client=api_client_inst,
+        )
+        if isinstance(api_result, ToolResult):
+            return api_result
+
+        items = api_result.items
+
+        # If a specific name was requested, filter to that item
+        if name:
+            items = [i for i in items if i.metadata.name == name]
+            if not items:
+                return ToolResult(
+                    output=f"{resource}/{name} not found in namespace '{ns}'",
+                    error=True,
+                )
+
+        # Client-side annotation filtering
+        if annotation_filter:
+            items = _filter_by_annotation(items, annotation_filter)
+
+        if not items:
+            qualifier = f" matching filters" if label_filter or annotation_filter else ""
+            return ToolResult(output=f"No {resource}{qualifier} found in namespace '{ns}'")
+
+        # Format output
+        lines: list[str] = []
+        for item in items:
+            meta = item.metadata
+            item_ns = getattr(meta, "namespace", None) or ns
+            lines.append(f"{resource}/{meta.name} (namespace: {item_ns})")
+
+            labels = meta.labels or {}
+            lines.append("  Labels:")
+            if labels:
+                for k, v in sorted(labels.items()):
+                    lines.append(f"    {k}: {v}")
+            else:
+                lines.append("    <none>")
+
+            annotations = meta.annotations or {}
+            lines.append("  Annotations:")
+            if annotations:
+                for k, v in sorted(annotations.items()):
+                    lines.append(f"    {k}: {v}")
+            else:
+                lines.append("    <none>")
+
+        if not name:
+            lines.append(f"\nTotal: {len(items)} {resource}")
+
+        return ToolResult(output="\n".join(lines))
+
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            return ToolResult(output=f"Namespace '{ns}' not found or resource type '{resource}' not available", error=True)
+        if exc.status == 403:
+            return ToolResult(output=f"Access denied: insufficient permissions to list {resource} in namespace '{ns}'", error=True)
+        if exc.status == 401:
+            return ToolResult(output="Authentication failed: check your kubeconfig or GKE credentials", error=True)
+        return ToolResult(output=f"Kubernetes API error ({exc.status}): {exc.reason}", error=True)
+    except Exception as exc:
+        logger.exception("kubectl_get_labels failed")
+        return ToolResult(output=f"Error listing labels for {resource}: {exc}", error=True)
+
+
+def _filter_by_annotation(items: list[Any], annotation_filter: str) -> list[Any]:
+    """Filter items by annotation key=value or key presence (client-side)."""
+    filtered = []
+    for item in items:
+        annotations = item.metadata.annotations or {}
+        if "=" in annotation_filter:
+            key, value = annotation_filter.split("=", 1)
+            if annotations.get(key) == value:
+                filtered.append(item)
+        else:
+            # Key-only filter: check if the annotation key exists
+            if annotation_filter in annotations:
+                filtered.append(item)
+    return filtered
+
+
 # ── Task 3.4 — async wrappers ───────────────────────────────
 # Offload blocking kubernetes-client calls to a thread pool via to_async.
 
@@ -623,3 +752,4 @@ async_kubectl_get = to_async(kubectl_get)
 async_kubectl_describe = to_async(kubectl_describe)
 async_kubectl_logs = to_async(kubectl_logs)
 async_kubectl_top = to_async(kubectl_top)
+async_kubectl_get_labels = to_async(kubectl_get_labels)
