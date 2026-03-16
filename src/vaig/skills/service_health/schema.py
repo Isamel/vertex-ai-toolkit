@@ -16,6 +16,7 @@ which is required for Gemini's ``response_schema`` compatibility.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -255,7 +256,7 @@ class HealthReport(BaseModel):
 
     # ── Serialisation helpers ────────────────────────────────
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """JSON-friendly dict serialisation (delegates to Pydantic)."""
         return self.model_dump()
 
