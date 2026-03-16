@@ -201,6 +201,8 @@ class GenerationResult:
     model: str
     usage: dict[str, int] = field(default_factory=dict)
     finish_reason: str = ""
+    thinking_text: str | None = None
+    """Thinking content from the model, if thinking mode was enabled."""
 
 
 @dataclass
@@ -213,6 +215,8 @@ class ToolCallResult:
     # Each dict: {"name": str, "args": dict[str, Any]}
     usage: dict[str, int] = field(default_factory=dict)
     finish_reason: str = ""
+    thinking_text: str | None = None
+    """Thinking content from the model, if thinking mode was enabled."""
 
 
 class GeminiClient:
@@ -487,8 +491,11 @@ class GeminiClient:
 
         Supports all standard Gemini generation parameters including
         ``frequency_penalty`` and ``presence_penalty`` for controlling
-        repetition in model output.
+        repetition in model output, and ``thinking_config`` for enabling
+        thinking mode on supported models.
         """
+        from vaig.core.config import supports_thinking
+
         cfg = self._settings.generation
         kwargs: dict[str, Any] = {
             "temperature": overrides.get("temperature", cfg.temperature),
@@ -517,6 +524,23 @@ class GeminiClient:
                 )
                 for s in safety_cfg.settings
             ]
+
+        # ── Thinking config ──────────────────────────────────
+        thinking_cfg = cfg.thinking
+        if thinking_cfg.enabled:
+            model_id = self._current_model_id
+            if not supports_thinking(model_id):
+                logger.warning(
+                    "Thinking mode enabled but model '%s' may not support it — "
+                    "sending thinking_config anyway (API may ignore it)",
+                    model_id,
+                )
+            thinking_kwargs: dict[str, Any] = {
+                "include_thoughts": thinking_cfg.include_thoughts,
+            }
+            if thinking_cfg.budget_tokens is not None:
+                thinking_kwargs["thinking_budget"] = thinking_cfg.budget_tokens
+            kwargs["thinking_config"] = types.ThinkingConfig(**thinking_kwargs)
 
         return types.GenerateContentConfig(**kwargs)
 
@@ -727,6 +751,47 @@ class GeminiClient:
             }
         return usage
 
+    @staticmethod
+    def _extract_thinking_text(response: Any) -> str | None:
+        """Extract thinking content from a google-genai response.
+
+        Gemini thinking models return ``Part`` objects with ``thought=True``
+        for internal reasoning.  This method collects all such parts and
+        returns their concatenated text, or ``None`` if no thinking content
+        is present.
+        """
+        candidate = response.candidates[0] if getattr(response, "candidates", None) else None
+        content = candidate.content if candidate and getattr(candidate, "content", None) else None
+        if not content or not getattr(content, "parts", None):
+            return None
+
+        thinking_parts: list[str] = []
+        for part in content.parts:
+            if getattr(part, "thought", None) is True and getattr(part, "text", None):
+                thinking_parts.append(part.text)
+
+        return "".join(thinking_parts) if thinking_parts else None
+
+    @staticmethod
+    def _extract_output_text(response: Any) -> str:
+        """Extract non-thought text from a google-genai response.
+
+        When thinking mode is active, ``response.text`` may include thinking
+        content.  This method filters parts, returning only those where
+        ``thought`` is not ``True``.
+        """
+        candidate = response.candidates[0] if getattr(response, "candidates", None) else None
+        content = candidate.content if candidate and getattr(candidate, "content", None) else None
+        if not content or not getattr(content, "parts", None):
+            return response.text or ""
+
+        output_parts: list[str] = []
+        for part in content.parts:
+            if getattr(part, "thought", None) is not True and getattr(part, "text", None):
+                output_parts.append(part.text)
+
+        return "".join(output_parts) if output_parts else (response.text or "")
+
     def generate(
         self,
         prompt: str | list[types.Part],
@@ -762,11 +827,7 @@ class GeminiClient:
 
         # ── Cache lookup (only for stateless, text-only prompts) ─────
         cache_key: str | None = None
-        if (
-            self._cache is not None
-            and isinstance(prompt, str)
-            and not history
-        ):
+        if self._cache is not None and isinstance(prompt, str) and not history:
             cache_key = _make_cache_key(prompt, mid, system_instruction)
             cached = self._cache.get(cache_key)
             if cached is not None:
@@ -776,29 +837,38 @@ class GeminiClient:
         def _call() -> GenerationResult:
             client = self._get_client()
             config = self._build_generation_config(
-                system_instruction=system_instruction, **gen_kwargs,
+                system_instruction=system_instruction,
+                **gen_kwargs,
             )
 
             if history:
                 chat_history = self._build_history(history)
                 chat = client.chats.create(
-                    model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
+                    model=mid,
+                    history=chat_history,
+                    config=config,  # type: ignore[arg-type]
                 )
                 response = chat.send_message(prompt)  # type: ignore[arg-type]
             else:
                 response = client.models.generate_content(
-                    model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
+                    model=mid,
+                    contents=prompt,
+                    config=config,  # type: ignore[arg-type]
                 )
 
             usage = GeminiClient._extract_usage(response)
+            thinking_text = GeminiClient._extract_thinking_text(response)
+
+            # Extract non-thought text from parts when thinking is present,
+            # otherwise fall back to response.text for backward compat.
+            text = GeminiClient._extract_output_text(response) if thinking_text is not None else (response.text or "")
 
             return GenerationResult(
-                text=response.text or "",
+                text=text,
                 model=mid,
                 usage=usage,
-                finish_reason=(
-                    str(response.candidates[0].finish_reason) if response.candidates else ""
-                ),
+                finish_reason=(str(response.candidates[0].finish_reason) if response.candidates else ""),
+                thinking_text=thinking_text,
             )
 
         result = self._retry_with_backoff(_call, timeout=timeout)
@@ -850,18 +920,23 @@ class GeminiClient:
         def _call() -> list[Any]:
             client = self._get_client()
             config = self._build_generation_config(
-                system_instruction=system_instruction, **gen_kwargs,
+                system_instruction=system_instruction,
+                **gen_kwargs,
             )
 
             if history:
                 chat_history = self._build_history(history)
                 chat = client.chats.create(
-                    model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
+                    model=mid,
+                    history=chat_history,
+                    config=config,  # type: ignore[arg-type]
                 )
                 response_stream = chat.send_message_stream(prompt)  # type: ignore[arg-type]
             else:
                 response_stream = client.models.generate_content_stream(
-                    model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
+                    model=mid,
+                    contents=prompt,
+                    config=config,  # type: ignore[arg-type]
                 )
             # Materialise the stream inside the retryable boundary so that
             # transient errors during iteration are also retried.
@@ -934,12 +1009,16 @@ class GeminiClient:
                         actual_prompt = last_entry.parts
 
                     chat = client.chats.create(
-                        model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
+                        model=mid,
+                        history=chat_history,
+                        config=config,  # type: ignore[arg-type]
                     )
                     response = chat.send_message(actual_prompt)
                 else:
                     response = client.models.generate_content(
-                        model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
+                        model=mid,
+                        contents=prompt,
+                        config=config,  # type: ignore[arg-type]
                     )
             except Exception as exc:
                 # In the old SDK we caught ResponseValidationError for
@@ -974,24 +1053,33 @@ class GeminiClient:
                     model=mid,
                     function_calls=[],
                     usage=usage,
-                    finish_reason=(
-                        str(candidate.finish_reason) if candidate else ""
-                    ),
+                    finish_reason=(str(candidate.finish_reason) if candidate else ""),
                 )
 
-            # Parse parts — may contain function calls, text, or both
+            # Parse parts — may contain function calls, text, thinking, or a mix
             function_calls: list[dict[str, Any]] = []
             text_parts: list[str] = []
+            thinking_parts: list[str] = []
 
             for part in content.parts:
+                # Skip thinking parts — extract them separately.
+                # Use ``is True`` to avoid MagicMock / truthy-None surprises.
+                if getattr(part, "thought", None) is True:
+                    if getattr(part, "text", None):
+                        thinking_parts.append(part.text)
+                    continue
                 fc = part.function_call
                 if fc and fc.name:  # It's a function call
-                    function_calls.append({
-                        "name": fc.name,
-                        "args": dict(fc.args) if fc.args else {},
-                    })
+                    function_calls.append(
+                        {
+                            "name": fc.name,
+                            "args": dict(fc.args) if fc.args else {},
+                        }
+                    )
                 elif part.text:
                     text_parts.append(part.text)
+
+            thinking_text = "".join(thinking_parts) if thinking_parts else None
 
             logger.debug(
                 "generate_with_tools() — %d function call(s), %d text part(s)",
@@ -1005,6 +1093,7 @@ class GeminiClient:
                 function_calls=function_calls,
                 usage=usage,
                 finish_reason=str(response.candidates[0].finish_reason),  # type: ignore[index]
+                thinking_text=thinking_text,
             )
 
         return self._retry_with_backoff(_call, timeout=timeout)
@@ -1088,10 +1177,7 @@ class GeminiClient:
 
     def list_available_models(self) -> list[dict[str, str]]:
         """List configured available models."""
-        return [
-            {"id": m.id, "description": m.description}
-            for m in self._settings.models.available
-        ]
+        return [{"id": m.id, "description": m.description} for m in self._settings.models.available]
 
     # ── Async Public API ─────────────────────────────────────
 
@@ -1117,11 +1203,7 @@ class GeminiClient:
 
         # ── Cache lookup ────────────────────────────────────────
         cache_key: str | None = None
-        if (
-            self._cache is not None
-            and isinstance(prompt, str)
-            and not history
-        ):
+        if self._cache is not None and isinstance(prompt, str) and not history:
             cache_key = _make_cache_key(prompt, mid, system_instruction)
             cached = self._cache.get(cache_key)
             if cached is not None:
@@ -1131,29 +1213,35 @@ class GeminiClient:
         async def _call() -> GenerationResult:
             client = self._get_client()
             config = self._build_generation_config(
-                system_instruction=system_instruction, **gen_kwargs,
+                system_instruction=system_instruction,
+                **gen_kwargs,
             )
 
             if history:
                 chat_history = self._build_history(history)
                 chat = client.aio.chats.create(
-                    model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
+                    model=mid,
+                    history=chat_history,
+                    config=config,  # type: ignore[arg-type]
                 )
                 response = await chat.send_message(prompt)  # type: ignore[arg-type]
             else:
                 response = await client.aio.models.generate_content(
-                    model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
+                    model=mid,
+                    contents=prompt,
+                    config=config,  # type: ignore[arg-type]
                 )
 
             usage = GeminiClient._extract_usage(response)
+            thinking_text = GeminiClient._extract_thinking_text(response)
+            text = GeminiClient._extract_output_text(response) if thinking_text is not None else (response.text or "")
 
             return GenerationResult(
-                text=response.text or "",
+                text=text,
                 model=mid,
                 usage=usage,
-                finish_reason=(
-                    str(response.candidates[0].finish_reason) if response.candidates else ""
-                ),
+                finish_reason=(str(response.candidates[0].finish_reason) if response.candidates else ""),
+                thinking_text=thinking_text,
             )
 
         result = await self._async_retry_with_backoff(_call, timeout=timeout)
@@ -1187,18 +1275,23 @@ class GeminiClient:
         async def _call() -> list[Any]:
             client = self._get_client()
             config = self._build_generation_config(
-                system_instruction=system_instruction, **gen_kwargs,
+                system_instruction=system_instruction,
+                **gen_kwargs,
             )
 
             if history:
                 chat_history = self._build_history(history)
                 chat = client.aio.chats.create(
-                    model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
+                    model=mid,
+                    history=chat_history,
+                    config=config,  # type: ignore[arg-type]
                 )
                 response_stream = await chat.send_message_stream(prompt)  # type: ignore[arg-type]
             else:
                 response_stream = await client.aio.models.generate_content_stream(
-                    model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
+                    model=mid,
+                    contents=prompt,
+                    config=config,  # type: ignore[arg-type]
                 )
             # Materialise the async stream inside the retryable boundary.
             return [chunk async for chunk in response_stream]
@@ -1251,12 +1344,16 @@ class GeminiClient:
                         actual_prompt = last_entry.parts
 
                     chat = client.aio.chats.create(
-                        model=mid, history=chat_history, config=config,  # type: ignore[arg-type]
+                        model=mid,
+                        history=chat_history,
+                        config=config,  # type: ignore[arg-type]
                     )
                     response = await chat.send_message(actual_prompt)
                 else:
                     response = await client.aio.models.generate_content(
-                        model=mid, contents=prompt, config=config,  # type: ignore[arg-type]
+                        model=mid,
+                        contents=prompt,
+                        config=config,  # type: ignore[arg-type]
                     )
             except Exception as exc:
                 exc_name = type(exc).__name__
@@ -1286,23 +1383,33 @@ class GeminiClient:
                     model=mid,
                     function_calls=[],
                     usage=usage,
-                    finish_reason=(
-                        str(candidate.finish_reason) if candidate else ""
-                    ),
+                    finish_reason=(str(candidate.finish_reason) if candidate else ""),
                 )
 
+            # Parse parts — may contain function calls, text, thinking, or a mix
             function_calls: list[dict[str, Any]] = []
             text_parts: list[str] = []
+            thinking_parts: list[str] = []
 
             for part in content.parts:
+                # Skip thinking parts — extract them separately.
+                # Use ``is True`` to avoid MagicMock / truthy-None surprises.
+                if getattr(part, "thought", None) is True:
+                    if getattr(part, "text", None):
+                        thinking_parts.append(part.text)
+                    continue
                 fc = part.function_call
                 if fc and fc.name:
-                    function_calls.append({
-                        "name": fc.name,
-                        "args": dict(fc.args) if fc.args else {},
-                    })
+                    function_calls.append(
+                        {
+                            "name": fc.name,
+                            "args": dict(fc.args) if fc.args else {},
+                        }
+                    )
                 elif part.text:
                     text_parts.append(part.text)
+
+            thinking_text = "".join(thinking_parts) if thinking_parts else None
 
             logger.debug(
                 "async_generate_with_tools() — %d function call(s), %d text part(s)",
@@ -1316,6 +1423,7 @@ class GeminiClient:
                 function_calls=function_calls,
                 usage=usage,
                 finish_reason=str(response.candidates[0].finish_reason),  # type: ignore[index]
+                thinking_text=thinking_text,
             )
 
         return await self._async_retry_with_backoff(_call, timeout=timeout)
@@ -1336,7 +1444,8 @@ class GeminiClient:
             client = self._get_client()
             mid = model_id or self._current_model_id
             response = await client.aio.models.count_tokens(
-                model=mid, contents=prompt,  # type: ignore[arg-type]
+                model=mid,
+                contents=prompt,  # type: ignore[arg-type]
             )
             total: int = response.total_tokens if response.total_tokens is not None else 0
             return total

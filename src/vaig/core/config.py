@@ -76,6 +76,51 @@ class AuthConfig(BaseModel):
     impersonate_sa: str = ""
 
 
+class ThinkingConfig(BaseModel):
+    """Configuration for Gemini thinking mode.
+
+    When ``enabled`` is True and the model supports thinking (e.g.
+    ``gemini-2.5-flash``, ``gemini-2.5-pro``), the ``thinking_config``
+    parameter is included in the ``GenerateContentConfig`` sent to the API.
+
+    Thinking mode is opt-in — disabled by default — so existing behaviour
+    is unchanged unless explicitly enabled via config or CLI.
+    """
+
+    enabled: bool = False
+    budget_tokens: int | None = None
+    """Token budget for thinking. ``None`` means "use model default".
+
+    Set to ``0`` to disable thinking, ``-1`` for automatic budget,
+    or a positive integer for a fixed budget.
+    """
+    include_thoughts: bool = True
+    """Whether to include thought content in the response.
+
+    When True, thought parts are returned alongside the output.
+    """
+
+
+# ── Thinking-capable model detection ─────────────────────────
+
+THINKING_CAPABLE_MODELS: frozenset[str] = frozenset(
+    {
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+    }
+)
+"""Model name prefixes that support thinking mode."""
+
+
+def supports_thinking(model_name: str) -> bool:
+    """Check if a model supports thinking mode.
+
+    Uses prefix matching so versioned variants (e.g.
+    ``gemini-2.5-flash-001``) are also detected.
+    """
+    return any(model_name.startswith(prefix) for prefix in THINKING_CAPABLE_MODELS)
+
+
 class GenerationConfig(BaseModel):
     """Model generation parameters."""
 
@@ -83,6 +128,7 @@ class GenerationConfig(BaseModel):
     max_output_tokens: int = 16384
     top_p: float = 0.95
     top_k: int = 40
+    thinking: ThinkingConfig = Field(default_factory=ThinkingConfig)
 
 
 class ModelInfo(BaseModel):
