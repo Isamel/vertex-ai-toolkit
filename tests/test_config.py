@@ -23,6 +23,7 @@ from vaig.core.config import (
     SafetySettingConfig,
     Settings,
     SkillsConfig,
+    _deep_merge,
     _strip_empty_strings,
     _strip_empty_strings_in_list,
 )
@@ -476,6 +477,166 @@ class TestStripEmptyStringsInList:
     def test_recurses_into_nested_lists(self) -> None:
         result = _strip_empty_strings_in_list([["a", ""], ["", "b"]])
         assert result == [["a"], ["b"]]
+
+
+class TestDeepMerge:
+    """Tests for _deep_merge helper function."""
+
+    def test_simple_override(self) -> None:
+        base = {"a": 1, "b": 2}
+        override = {"b": 99}
+        assert _deep_merge(base, override) == {"a": 1, "b": 99}
+
+    def test_adds_new_keys(self) -> None:
+        base = {"a": 1}
+        override = {"b": 2}
+        assert _deep_merge(base, override) == {"a": 1, "b": 2}
+
+    def test_nested_dict_is_merged_not_replaced(self) -> None:
+        base = {"logging": {"level": "WARNING", "file_enabled": False}}
+        override = {"logging": {"file_enabled": True}}
+        result = _deep_merge(base, override)
+        # file_enabled is overridden, level is preserved
+        assert result == {"logging": {"level": "WARNING", "file_enabled": True}}
+
+    def test_non_dict_value_replaces_entirely(self) -> None:
+        base = {"items": [1, 2, 3]}
+        override = {"items": [4, 5]}
+        assert _deep_merge(base, override) == {"items": [4, 5]}
+
+    def test_empty_override(self) -> None:
+        base = {"a": 1, "b": 2}
+        assert _deep_merge(base, {}) == {"a": 1, "b": 2}
+
+    def test_empty_base(self) -> None:
+        override = {"a": 1}
+        assert _deep_merge({}, override) == {"a": 1}
+
+    def test_does_not_mutate_base(self) -> None:
+        base = {"logging": {"level": "WARNING"}}
+        override = {"logging": {"level": "DEBUG"}}
+        _deep_merge(base, override)
+        assert base["logging"]["level"] == "WARNING"
+
+    def test_deeply_nested(self) -> None:
+        base = {"a": {"b": {"c": 1, "d": 2}}}
+        override = {"a": {"b": {"c": 99}}}
+        result = _deep_merge(base, override)
+        assert result == {"a": {"b": {"c": 99, "d": 2}}}
+
+
+class TestSettingsLoadMerging:
+    """Tests verifying that Settings.load() deep-merges all config files."""
+
+    def test_user_config_overrides_project_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The core bug fix: user config (~/.vaig/config.yaml) must override the
+        project's default config (config/default.yaml) rather than being ignored."""
+        # Set up a project default config with file_enabled: false
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        config_dir = project_dir / "config"
+        config_dir.mkdir()
+        (config_dir / "default.yaml").write_text(
+            "logging:\n  file_enabled: false\n  level: WARNING\n"
+        )
+
+        # Set up a user home config with file_enabled: true
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        vaig_dir = home_dir / ".vaig"
+        vaig_dir.mkdir()
+        (vaig_dir / "config.yaml").write_text(
+            "logging:\n  file_enabled: true\n"
+        )
+
+        monkeypatch.chdir(project_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        # Ensure Path.home() returns our fake home directory
+        monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: home_dir))
+
+        s = Settings.load()
+        # User config should have enabled file logging
+        assert s.logging.file_enabled is True
+        # Other logging settings from the default should still be present
+        assert s.logging.level == "WARNING"
+
+    def test_project_vaig_yaml_overrides_user_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """vaig.yaml in cwd should have higher priority than ~/.vaig/config.yaml."""
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        vaig_dir = home_dir / ".vaig"
+        vaig_dir.mkdir()
+        (vaig_dir / "config.yaml").write_text(
+            "logging:\n  level: DEBUG\n"
+        )
+        (project_dir / "vaig.yaml").write_text(
+            "logging:\n  level: ERROR\n"
+        )
+
+        monkeypatch.chdir(project_dir)
+        monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: home_dir))
+
+        s = Settings.load()
+        assert s.logging.level == "ERROR"
+
+    def test_explicit_config_path_highest_priority(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicit config_path should take priority over all other configs."""
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        vaig_dir = home_dir / ".vaig"
+        vaig_dir.mkdir()
+        (vaig_dir / "config.yaml").write_text(
+            "logging:\n  level: INFO\n"
+        )
+
+        explicit_config = tmp_path / "explicit.yaml"
+        explicit_config.write_text("logging:\n  level: CRITICAL\n")
+
+        monkeypatch.chdir(project_dir)
+        monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: home_dir))
+
+        s = Settings.load(config_path=explicit_config)
+        assert s.logging.level == "CRITICAL"
+
+    def test_non_overlapping_keys_from_multiple_configs_are_all_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Keys set only in a lower-priority config should survive in the merged result."""
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        config_dir = project_dir / "config"
+        config_dir.mkdir()
+        (config_dir / "default.yaml").write_text(
+            "logging:\n  level: WARNING\n  file_enabled: false\n"
+        )
+
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        vaig_dir = home_dir / ".vaig"
+        vaig_dir.mkdir()
+        # User only overrides file_enabled, leaves level untouched
+        (vaig_dir / "config.yaml").write_text(
+            "logging:\n  file_enabled: true\n"
+        )
+
+        monkeypatch.chdir(project_dir)
+        monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: home_dir))
+
+        s = Settings.load()
+        assert s.logging.file_enabled is True
+        assert s.logging.level == "WARNING"  # preserved from default
 
 
 # ══════════════════════════════════════════════════════════════
