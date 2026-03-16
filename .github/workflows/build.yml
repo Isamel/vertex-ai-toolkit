@@ -1,0 +1,124 @@
+name: Build Standalone Binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write # Required for creating releases
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: vaig-linux-amd64
+            binary_name: vaig
+            separator: ":"
+          - os: windows-latest
+            artifact_name: vaig-windows-amd64
+            binary_name: vaig.exe
+            separator: ";"
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.os }})
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install project dependencies
+        run: pip install ".[live]"
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      # Collect the full list of hidden imports for google/grpc/pydantic
+      # ecosystem. PyInstaller's static analysis misses many of these.
+      - name: Build binary
+        run: >
+          pyinstaller
+          --onefile
+          --name "${{ matrix.binary_name }}"
+          --collect-all vaig
+          --collect-all google.genai
+          --collect-all google.auth
+          --collect-data google.auth
+          --collect-data certifi
+          --collect-data charset_normalizer
+          --hidden-import google.genai
+          --hidden-import google.auth
+          --hidden-import google.auth.transport.requests
+          --hidden-import google.auth.transport.grpc
+          --hidden-import google.auth._default
+          --hidden-import google.auth.compute_engine
+          --hidden-import google.auth.credentials
+          --hidden-import google.api_core
+          --hidden-import google.cloud.logging
+          --hidden-import google.cloud.monitoring
+          --hidden-import google.cloud.container
+          --hidden-import kubernetes
+          --hidden-import kubernetes.client
+          --hidden-import kubernetes.config
+          --hidden-import typer
+          --hidden-import click
+          --hidden-import rich
+          --hidden-import prompt_toolkit
+          --hidden-import pydantic
+          --hidden-import pydantic_settings
+          --hidden-import yaml
+          --hidden-import aiosqlite
+          --hidden-import fitz
+          --hidden-import PIL
+          --hidden-import humanize
+          --hidden-import chardet
+          --hidden-import pathspec
+          --add-data "config/default.yaml${{ matrix.separator }}config"
+          src/vaig/__main__.py
+
+      - name: Verify binary runs
+        shell: bash
+        run: |
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            ./dist/${{ matrix.binary_name }} --version
+          else
+            chmod +x ./dist/${{ matrix.binary_name }}
+            ./dist/${{ matrix.binary_name }} --version
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.binary_name }}
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+          files: |
+            artifacts/vaig-linux-amd64/vaig
+            artifacts/vaig-windows-amd64/vaig.exe

@@ -8,6 +8,7 @@ __pycache__/
 dist/
 build/
 *.whl
+*.spec
 
 # Virtual environments
 .venv/
@@ -47,6 +48,9 @@ service-account*.json
 
 # Sessions DB (user data)
 *.db
+
+# Tool results (generated output)
+tool_results/
 
 # Ruff
 .ruff_cache/
