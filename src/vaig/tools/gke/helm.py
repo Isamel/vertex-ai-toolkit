@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import gzip
 import json
 import logging
@@ -31,7 +32,7 @@ except ImportError:
 
         ApiException = type(None)
 
-    k8s_exceptions = _StubExceptions()  # type: ignore[assignment]
+    k8s_exceptions = _StubExceptions()  # type: ignore[assignment,unused-ignore]
 
 # ── Constants ────────────────────────────────────────────────
 _HELM_CACHE_TTL: int = 60  # seconds (matches _DISCOVERY_TTL)
@@ -225,7 +226,7 @@ def _decode_secret_release_data(secret: Any) -> dict[str, Any] | None:
 
     try:
         return _decode_helm_release(secret.data["release"])
-    except (base64.binascii.Error, gzip.BadGzipFile, json.JSONDecodeError, UnicodeDecodeError) as exc:
+    except (binascii.Error, gzip.BadGzipFile, json.JSONDecodeError, UnicodeDecodeError) as exc:
         logger.warning("Failed to decode Helm release data: %s", exc)
         return None
     except Exception as exc:

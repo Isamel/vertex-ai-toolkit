@@ -845,15 +845,15 @@ class GeminiClient:
                 chat_history = self._build_history(history)
                 chat = client.chats.create(
                     model=mid,
-                    history=chat_history,
-                    config=config,  # type: ignore[arg-type]
+                    history=chat_history,  # type: ignore[arg-type]
+                    config=config,
                 )
-                response = chat.send_message(prompt)  # type: ignore[arg-type]
+                response = chat.send_message(prompt)
             else:
                 response = client.models.generate_content(
                     model=mid,
-                    contents=prompt,
-                    config=config,  # type: ignore[arg-type]
+                    contents=prompt,  # type: ignore[arg-type]
+                    config=config,
                 )
 
             usage = GeminiClient._extract_usage(response)
@@ -928,15 +928,15 @@ class GeminiClient:
                 chat_history = self._build_history(history)
                 chat = client.chats.create(
                     model=mid,
-                    history=chat_history,
-                    config=config,  # type: ignore[arg-type]
+                    history=chat_history,  # type: ignore[arg-type]
+                    config=config,
                 )
-                response_stream = chat.send_message_stream(prompt)  # type: ignore[arg-type]
+                response_stream = chat.send_message_stream(prompt)
             else:
                 response_stream = client.models.generate_content_stream(
                     model=mid,
-                    contents=prompt,
-                    config=config,  # type: ignore[arg-type]
+                    contents=prompt,  # type: ignore[arg-type]
+                    config=config,
                 )
             # Materialise the stream inside the retryable boundary so that
             # transient errors during iteration are also retried.
@@ -1010,15 +1010,15 @@ class GeminiClient:
 
                     chat = client.chats.create(
                         model=mid,
-                        history=chat_history,
-                        config=config,  # type: ignore[arg-type]
+                        history=chat_history,  # type: ignore[arg-type]
+                        config=config,
                     )
                     response = chat.send_message(actual_prompt)
                 else:
                     response = client.models.generate_content(
                         model=mid,
-                        contents=prompt,
-                        config=config,  # type: ignore[arg-type]
+                        contents=prompt,  # type: ignore[arg-type]
+                        config=config,
                     )
             except Exception as exc:
                 # In the old SDK we caught ResponseValidationError for
@@ -1066,7 +1066,7 @@ class GeminiClient:
                 # Use ``is True`` to avoid MagicMock / truthy-None surprises.
                 if getattr(part, "thought", None) is True:
                     if getattr(part, "text", None):
-                        thinking_parts.append(part.text)
+                        thinking_parts.append(part.text)  # type: ignore[arg-type]
                     continue
                 fc = part.function_call
                 if fc and fc.name:  # It's a function call
@@ -1221,15 +1221,15 @@ class GeminiClient:
                 chat_history = self._build_history(history)
                 chat = client.aio.chats.create(
                     model=mid,
-                    history=chat_history,
-                    config=config,  # type: ignore[arg-type]
+                    history=chat_history,  # type: ignore[arg-type]
+                    config=config,
                 )
-                response = await chat.send_message(prompt)  # type: ignore[arg-type]
+                response = await chat.send_message(prompt)
             else:
                 response = await client.aio.models.generate_content(
                     model=mid,
-                    contents=prompt,
-                    config=config,  # type: ignore[arg-type]
+                    contents=prompt,  # type: ignore[arg-type]
+                    config=config,
                 )
 
             usage = GeminiClient._extract_usage(response)
@@ -1283,15 +1283,15 @@ class GeminiClient:
                 chat_history = self._build_history(history)
                 chat = client.aio.chats.create(
                     model=mid,
-                    history=chat_history,
-                    config=config,  # type: ignore[arg-type]
+                    history=chat_history,  # type: ignore[arg-type]
+                    config=config,
                 )
-                response_stream = await chat.send_message_stream(prompt)  # type: ignore[arg-type]
+                response_stream = await chat.send_message_stream(prompt)
             else:
                 response_stream = await client.aio.models.generate_content_stream(
                     model=mid,
-                    contents=prompt,
-                    config=config,  # type: ignore[arg-type]
+                    contents=prompt,  # type: ignore[arg-type]
+                    config=config,
                 )
             # Materialise the async stream inside the retryable boundary.
             return [chunk async for chunk in response_stream]
@@ -1345,15 +1345,15 @@ class GeminiClient:
 
                     chat = client.aio.chats.create(
                         model=mid,
-                        history=chat_history,
-                        config=config,  # type: ignore[arg-type]
+                        history=chat_history,  # type: ignore[arg-type]
+                        config=config,
                     )
                     response = await chat.send_message(actual_prompt)
                 else:
                     response = await client.aio.models.generate_content(
                         model=mid,
-                        contents=prompt,
-                        config=config,  # type: ignore[arg-type]
+                        contents=prompt,  # type: ignore[arg-type]
+                        config=config,
                     )
             except Exception as exc:
                 exc_name = type(exc).__name__
@@ -1396,7 +1396,7 @@ class GeminiClient:
                 # Use ``is True`` to avoid MagicMock / truthy-None surprises.
                 if getattr(part, "thought", None) is True:
                     if getattr(part, "text", None):
-                        thinking_parts.append(part.text)
+                        thinking_parts.append(part.text)  # type: ignore[arg-type]
                     continue
                 fc = part.function_call
                 if fc and fc.name:

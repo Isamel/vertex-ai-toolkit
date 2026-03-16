@@ -23,7 +23,7 @@ except ImportError:
 
         ApiException = type(None)
 
-    k8s_exceptions = _StubExceptions()  # type: ignore[assignment]
+    k8s_exceptions = _StubExceptions()  # type: ignore[assignment,unused-ignore]
 
 # ── Constants ────────────────────────────────────────────────
 _ARGOCD_CACHE_TTL: int = 30  # seconds
