@@ -222,6 +222,21 @@ class AgentsConfig(BaseModel):
     orchestrator_model: str = "gemini-2.5-pro"
     specialist_model: str = "gemini-2.5-flash"
     max_iterations_retry: int = 10
+    parallel_tool_calls: bool = True
+    """Execute independent tool calls in parallel (async path only).
+
+    When Gemini returns multiple function calls in a single response,
+    they are independent by API contract.  Enabling this executes them
+    concurrently via ``asyncio.gather`` instead of sequentially.
+    The sync path always runs sequentially regardless of this setting.
+    """
+    max_concurrent_tool_calls: int = 5
+    """Maximum number of tool calls to execute concurrently.
+
+    Acts as a semaphore limit to prevent API throttling when the model
+    requests many tool calls at once.  Only applies when
+    ``parallel_tool_calls`` is enabled.
+    """
 
 
 class CodingConfig(BaseModel):

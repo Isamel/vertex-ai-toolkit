@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import time
@@ -154,7 +155,8 @@ class ToolLoopMixin:
                 )
             except Exception:
                 logger.exception(
-                    "ToolLoopMixin API call failed on iteration %d", iteration,
+                    "ToolLoopMixin API call failed on iteration %d",
+                    iteration,
                 )
                 raise
 
@@ -179,6 +181,7 @@ class ToolLoopMixin:
                 )
 
             # -- Case 2: function calls -- execute and continue -----------
+            # Sync path: sequential execution. Use async path for parallel tool calls.
             history.append(
                 self._build_function_call_content(result.function_calls),
             )
@@ -191,62 +194,50 @@ class ToolLoopMixin:
 
                 t_tool = time.perf_counter()
                 tool_result = self._execute_single_tool(
-                    tool_registry, tool_name, tool_args,
+                    tool_registry,
+                    tool_name,
+                    tool_args,
                 )
                 tool_duration = time.perf_counter() - t_tool
 
                 # Notify caller about this tool execution
-                if on_tool_call is not None:
-                    try:
-                        err_msg = (tool_result.output or "")[:200] if tool_result.error else ""
-                        on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg)
-                    except TypeError:
-                        # Backward compat: caller may not accept error_message
-                        try:
-                            on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error)
-                        except Exception:  # noqa: BLE001
-                            logger.debug("on_tool_call callback raised; ignoring")
-                    except Exception:  # noqa: BLE001
-                        logger.debug("on_tool_call callback raised; ignoring")
+                self._notify_tool_call(
+                    on_tool_call,
+                    tool_name,
+                    tool_args,
+                    tool_duration,
+                    tool_result,
+                )
 
                 # Record tool call for metrics/feedback storage
-                if tool_call_store is not None:
-                    try:
-                        from datetime import datetime
+                self._record_tool_call(
+                    tool_call_store,
+                    tool_name,
+                    tool_args,
+                    tool_result,
+                    tool_duration,
+                    agent_name,
+                    iteration,
+                )
 
-                        err_msg_store = (tool_result.output or "")[:500] if tool_result.error else ""
-                        record = ToolCallRecord(
-                            tool_name=tool_name,
-                            tool_args=tool_args,
-                            output=tool_result.output or "",
-                            output_size_bytes=len((tool_result.output or "").encode("utf-8")),
-                            error=tool_result.error,
-                            error_type="",
-                            error_message=err_msg_store,
-                            duration_s=tool_duration,
-                            timestamp=datetime.now(UTC).isoformat(),
-                            agent_name=agent_name,
-                            run_id=tool_call_store.run_id,
-                            iteration=iteration,
-                        )
-                        tool_call_store.record(record)
-                    except Exception:  # noqa: BLE001
-                        logger.debug("tool_call_store.record() failed; ignoring")
-
-                tools_executed.append({
-                    "name": tool_name,
-                    "args": tool_args,
-                    "output": (tool_result.output or "")[:200],  # Truncate for metadata
-                    "error": tool_result.error,
-                })
-
-                function_responses.append({
-                    "name": tool_name,
-                    "response": {
-                        "output": tool_result.output,
+                tools_executed.append(
+                    {
+                        "name": tool_name,
+                        "args": tool_args,
+                        "output": (tool_result.output or "")[:200],
                         "error": tool_result.error,
-                    },
-                })
+                    }
+                )
+
+                function_responses.append(
+                    {
+                        "name": tool_name,
+                        "response": {
+                            "output": tool_result.output,
+                            "error": tool_result.error,
+                        },
+                    }
+                )
 
             # Add function responses to history for next turn
             response_parts = GeminiClient.build_function_response_parts(
@@ -256,8 +247,7 @@ class ToolLoopMixin:
 
         # -- Max iterations exceeded --------------------------------------
         msg = (
-            f"Tool-use loop exceeded maximum iterations ({max_iterations}). "
-            f"Executed {len(tools_executed)} tool calls."
+            f"Tool-use loop exceeded maximum iterations ({max_iterations}). Executed {len(tools_executed)} tool calls."
         )
         logger.warning(msg)
         raise MaxIterationsError(msg, iterations=max_iterations)
@@ -320,7 +310,9 @@ class ToolLoopMixin:
                 output=f"Tool execution error ({tool_name}): {exc}",
                 error=True,
             )
-            self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type=type(exc).__name__, error_message=str(exc))
+            self._emit_tool_telemetry(
+                tool_name, tool_args, result, t0, error_type=type(exc).__name__, error_message=str(exc)
+            )
             return result
 
     @staticmethod
@@ -367,6 +359,8 @@ class ToolLoopMixin:
         on_tool_call: OnToolCall | None = None,
         agent_name: str = "",
         tool_call_store: ToolCallStore | None = None,
+        parallel_tool_calls: bool = True,
+        max_concurrent_tool_calls: int = 5,
     ) -> ToolLoopResult:
         """Async version of :meth:`_run_tool_loop`.
 
@@ -374,9 +368,17 @@ class ToolLoopMixin:
         and :meth:`_async_execute_single_tool` for tool execution (which
         automatically wraps sync tools via ``asyncio.to_thread``).
 
-        Same signature and semantics as the sync counterpart.
+        When *parallel_tool_calls* is ``True`` (default) and Gemini returns
+        multiple function calls in a single response, they are executed
+        concurrently via ``asyncio.gather`` with a semaphore limit of
+        *max_concurrent_tool_calls*.  Single function calls always use the
+        sequential path to avoid gather overhead.
+
+        Same signature and semantics as the sync counterpart, with the
+        addition of ``parallel_tool_calls`` and ``max_concurrent_tool_calls``.
         """
         declarations = tool_registry.to_function_declarations()
+        semaphore = asyncio.Semaphore(max_concurrent_tool_calls)
 
         total_usage: dict[str, int] = {
             "prompt_tokens": 0,
@@ -387,8 +389,10 @@ class ToolLoopMixin:
         iteration = 0
 
         logger.debug(
-            "ToolLoopMixin._async_run_tool_loop() -- starting (max=%d)",
+            "ToolLoopMixin._async_run_tool_loop() -- starting (max=%d, parallel=%s, max_concurrent=%d)",
             max_iterations,
+            parallel_tool_calls,
+            max_concurrent_tool_calls,
         )
 
         gen_kwargs: dict[str, Any] = {
@@ -414,7 +418,8 @@ class ToolLoopMixin:
                 )
             except Exception:
                 logger.exception(
-                    "ToolLoopMixin async API call failed on iteration %d", iteration,
+                    "ToolLoopMixin async API call failed on iteration %d",
+                    iteration,
                 )
                 raise
 
@@ -444,69 +449,158 @@ class ToolLoopMixin:
             )
 
             function_responses: list[dict[str, Any]] = []
+            num_calls = len(result.function_calls)
+            use_parallel = parallel_tool_calls and num_calls > 1
 
-            for fc in result.function_calls:
-                tool_name = fc["name"]
-                tool_args = fc["args"]
-
-                t_tool = time.perf_counter()
-                tool_result = await self._async_execute_single_tool(
-                    tool_registry, tool_name, tool_args,
+            if use_parallel:
+                # ── Parallel execution via asyncio.gather ────────────
+                logger.info(
+                    "Executing %d tool calls in parallel (max_concurrent=%d)",
+                    num_calls,
+                    max_concurrent_tool_calls,
                 )
-                tool_duration = time.perf_counter() - t_tool
+                t_parallel_start = time.perf_counter()
 
-                # Notify caller about this tool execution
-                if on_tool_call is not None:
-                    try:
-                        err_msg = (tool_result.output or "")[:200] if tool_result.error else ""
-                        on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg)
-                    except TypeError:
-                        # Backward compat: caller may not accept error_message
-                        try:
-                            on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error)
-                        except Exception:  # noqa: BLE001
-                            logger.debug("on_tool_call callback raised; ignoring")
-                    except Exception:  # noqa: BLE001
-                        logger.debug("on_tool_call callback raised; ignoring")
-
-                # Record tool call for metrics/feedback storage
-                if tool_call_store is not None:
-                    try:
-                        from datetime import datetime
-
-                        err_msg_store = (tool_result.output or "")[:500] if tool_result.error else ""
-                        record = ToolCallRecord(
-                            tool_name=tool_name,
-                            tool_args=tool_args,
-                            output=tool_result.output or "",
-                            output_size_bytes=len((tool_result.output or "").encode("utf-8")),
-                            error=tool_result.error,
-                            error_type="",
-                            error_message=err_msg_store,
-                            duration_s=tool_duration,
-                            timestamp=datetime.now(UTC).isoformat(),
-                            agent_name=agent_name,
-                            run_id=tool_call_store.run_id,
-                            iteration=iteration,
+                async def _run_with_semaphore(
+                    fc: dict[str, Any],
+                ) -> tuple[str, dict[str, Any], float, ToolResult]:
+                    """Execute a single tool call under the semaphore."""
+                    async with semaphore:
+                        t0 = time.perf_counter()
+                        res = await self._async_execute_single_tool(
+                            tool_registry,
+                            fc["name"],
+                            fc["args"],
                         )
-                        tool_call_store.record(record)
-                    except Exception:  # noqa: BLE001
-                        logger.debug("tool_call_store.record() failed; ignoring")
+                        dur = time.perf_counter() - t0
+                        return fc["name"], fc["args"], dur, res
 
-                tools_executed.append({
-                    "name": tool_name,
-                    "args": tool_args,
-                    "output": (tool_result.output or "")[:200],  # Truncate for metadata
-                    "error": tool_result.error,
-                })
+                tasks = [_run_with_semaphore(fc) for fc in result.function_calls]
+                gather_results = await asyncio.gather(
+                    *tasks,
+                    return_exceptions=True,
+                )
 
-                function_responses.append({
-                    "name": tool_name,
-                    "response": {
-                        "output": tool_result.output,
-                        "error": tool_result.error,
-                    },
-                })
+                t_parallel_total = time.perf_counter() - t_parallel_start
+                sequential_estimate = 0.0
+
+                for i, res in enumerate(gather_results):
+                    fc = result.function_calls[i]
+                    if isinstance(res, BaseException):
+                        # Tool raised an unhandled exception — create error response
+                        logger.warning(
+                            "Parallel tool call %s failed: %s",
+                            fc["name"],
+                            res,
+                        )
+                        tool_name = fc["name"]
+                        tool_args = fc["args"]
+                        tool_result = ToolResult(
+                            output=f"Tool execution error ({tool_name}): {res}",
+                            error=True,
+                        )
+                        tool_duration = 0.0
+                    else:
+                        tool_name, tool_args, tool_duration, tool_result = res
+
+                    sequential_estimate += tool_duration
+
+                    # Notify caller about this tool execution
+                    self._notify_tool_call(
+                        on_tool_call,
+                        tool_name,
+                        tool_args,
+                        tool_duration,
+                        tool_result,
+                    )
+
+                    # Record tool call for metrics/feedback storage
+                    self._record_tool_call(
+                        tool_call_store,
+                        tool_name,
+                        tool_args,
+                        tool_result,
+                        tool_duration,
+                        agent_name,
+                        iteration,
+                    )
+
+                    tools_executed.append(
+                        {
+                            "name": tool_name,
+                            "args": tool_args,
+                            "output": (tool_result.output or "")[:200],
+                            "error": tool_result.error,
+                        }
+                    )
+
+                    function_responses.append(
+                        {
+                            "name": tool_name,
+                            "response": {
+                                "output": tool_result.output,
+                                "error": tool_result.error,
+                            },
+                        }
+                    )
+
+                logger.info(
+                    "Parallel execution completed in %.2fs (vs estimated %.2fs sequential)",
+                    t_parallel_total,
+                    sequential_estimate,
+                )
+            else:
+                # ── Sequential execution (single call or parallel disabled) ──
+                for fc in result.function_calls:
+                    tool_name = fc["name"]
+                    tool_args = fc["args"]
+
+                    t_tool = time.perf_counter()
+                    tool_result = await self._async_execute_single_tool(
+                        tool_registry,
+                        tool_name,
+                        tool_args,
+                    )
+                    tool_duration = time.perf_counter() - t_tool
+
+                    # Notify caller about this tool execution
+                    self._notify_tool_call(
+                        on_tool_call,
+                        tool_name,
+                        tool_args,
+                        tool_duration,
+                        tool_result,
+                    )
+
+                    # Record tool call for metrics/feedback storage
+                    self._record_tool_call(
+                        tool_call_store,
+                        tool_name,
+                        tool_args,
+                        tool_result,
+                        tool_duration,
+                        agent_name,
+                        iteration,
+                    )
+
+                    tools_executed.append(
+                        {
+                            "name": tool_name,
+                            "args": tool_args,
+                            "output": (tool_result.output or "")[:200],
+                            "error": tool_result.error,
+                        }
+                    )
+
+                    function_responses.append(
+                        {
+                            "name": tool_name,
+                            "response": {
+                                "output": tool_result.output,
+                                "error": tool_result.error,
+                            },
+                        }
+                    )
 
             # Add function responses to history for next turn
             response_parts = GeminiClient.build_function_response_parts(
@@ -516,8 +610,7 @@ class ToolLoopMixin:
 
         # -- Max iterations exceeded --------------------------------------
         msg = (
-            f"Tool-use loop exceeded maximum iterations ({max_iterations}). "
-            f"Executed {len(tools_executed)} tool calls."
+            f"Tool-use loop exceeded maximum iterations ({max_iterations}). Executed {len(tools_executed)} tool calls."
         )
         logger.warning(msg)
         raise MaxIterationsError(msg, iterations=max_iterations)
@@ -590,8 +683,70 @@ class ToolLoopMixin:
                 output=f"Tool execution error ({tool_name}): {exc}",
                 error=True,
             )
-            self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type=type(exc).__name__, error_message=str(exc))
+            self._emit_tool_telemetry(
+                tool_name, tool_args, result, t0, error_type=type(exc).__name__, error_message=str(exc)
+            )
             return result
+
+    # ── Shared helpers for tool call callbacks/recording ────────
+
+    @staticmethod
+    def _notify_tool_call(
+        on_tool_call: OnToolCall | None,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        tool_duration: float,
+        tool_result: ToolResult,
+    ) -> None:
+        """Invoke the on_tool_call callback with backward compatibility."""
+        if on_tool_call is None:
+            return
+        try:
+            err_msg = (tool_result.output or "")[:200] if tool_result.error else ""
+            on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg)
+        except TypeError:
+            # Backward compat: caller may not accept error_message
+            try:
+                on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error)
+            except Exception:  # noqa: BLE001
+                logger.debug("on_tool_call callback raised; ignoring")
+        except Exception:  # noqa: BLE001
+            logger.debug("on_tool_call callback raised; ignoring")
+
+    @staticmethod
+    def _record_tool_call(
+        tool_call_store: ToolCallStore | None,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        tool_result: ToolResult,
+        tool_duration: float,
+        agent_name: str,
+        iteration: int,
+    ) -> None:
+        """Record a tool call to the ToolCallStore if available."""
+        if tool_call_store is None:
+            return
+        try:
+            from datetime import datetime
+
+            err_msg_store = (tool_result.output or "")[:500] if tool_result.error else ""
+            record = ToolCallRecord(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                output=tool_result.output or "",
+                output_size_bytes=len((tool_result.output or "").encode("utf-8")),
+                error=tool_result.error,
+                error_type="",
+                error_message=err_msg_store,
+                duration_s=tool_duration,
+                timestamp=datetime.now(UTC).isoformat(),
+                agent_name=agent_name,
+                run_id=tool_call_store.run_id,
+                iteration=iteration,
+            )
+            tool_call_store.record(record)
+        except Exception:  # noqa: BLE001
+            logger.debug("tool_call_store.record() failed; ignoring")
 
     # ── Message builders ─────────────────────────────────────
 
