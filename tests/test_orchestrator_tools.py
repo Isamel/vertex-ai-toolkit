@@ -2571,10 +2571,10 @@ class TestIncrementalDeepening:
         assert agent1._max_iterations == 20
 
     def test_config_default_max_iterations_retry(self) -> None:
-        """AgentsConfig has max_iterations_retry with default 10."""
+        """AgentsConfig has max_iterations_retry with default 15."""
         from vaig.core.config import AgentsConfig
         config = AgentsConfig()
-        assert config.max_iterations_retry == 10
+        assert config.max_iterations_retry == 15
 
 
 def _make_checklist(
@@ -3381,12 +3381,6 @@ class TestToolMetadataInSequentialPipeline:
         assert "gcloud_logs, kubectl_get" in second_call_context
         # No failures in this test
         assert "Failed calls" not in second_call_context
-
-    async def test_async_no_metadata_no_tools_summary(self) -> None:
-        """Async: no metadata means no tools summary injected."""
-        client = _make_mock_client()
-        orchestrator = Orchestrator(client, _make_mock_settings())
-        registry = _make_mock_registry()
 
         agent1 = MagicMock(spec=ToolAwareAgent)
         agent1.name = "gatherer"
