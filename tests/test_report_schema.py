@@ -229,7 +229,7 @@ def _full_report() -> HealthReport:
             cluster_name="prod-us-central1",
             project_id="my-gcp-project",
             model_used="gemini-2.5-pro",
-            skill_version="0.3.1",
+            skill_version="0.4.0",
         ),
     )
 
