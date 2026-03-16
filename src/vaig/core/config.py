@@ -109,12 +109,61 @@ class SessionConfig(BaseModel):
     repl_history_path: str = "~/.vaig/repl_history"
     auto_save: bool = True
     max_history_messages: int = 100
+    max_history_tokens: int = 28_000
+    """Conservative token budget for conversation history.
+
+    When the estimated token count of the in-memory history approaches
+    this limit (controlled by ``summarization_threshold``), older messages
+    are summarized into a single compact message to free context window
+    space for new turns.
+    """
+    summarization_threshold: float = 0.8
+    """Fraction of ``max_history_tokens`` at which summarization triggers.
+
+    A value of ``0.8`` means summarization runs when the rough token
+    estimate reaches 80 % of ``max_history_tokens``.
+    """
+    summary_target_tokens: int = 4_000
+    """Target size in tokens for the summary message that replaces
+    the older portion of history."""
 
 
 class SkillsConfig(BaseModel):
     """Skills configuration."""
 
-    enabled: list[str] = Field(default_factory=lambda: ["rca", "anomaly", "migration", "log-analysis", "error-triage", "config-audit", "slo-review", "postmortem", "code-review", "iac-review", "cost-analysis", "capacity-planning", "test-generation", "compliance-check", "api-design", "runbook-generator", "dependency-audit", "db-review", "pipeline-review", "perf-analysis", "threat-model", "change-risk", "alert-tuning", "resilience-review", "incident-comms", "toil-analysis", "network-review", "adr-generator", "service-health"])
+    enabled: list[str] = Field(
+        default_factory=lambda: [
+            "rca",
+            "anomaly",
+            "migration",
+            "log-analysis",
+            "error-triage",
+            "config-audit",
+            "slo-review",
+            "postmortem",
+            "code-review",
+            "iac-review",
+            "cost-analysis",
+            "capacity-planning",
+            "test-generation",
+            "compliance-check",
+            "api-design",
+            "runbook-generator",
+            "dependency-audit",
+            "db-review",
+            "pipeline-review",
+            "perf-analysis",
+            "threat-model",
+            "change-risk",
+            "alert-tuning",
+            "resilience-review",
+            "incident-comms",
+            "toil-analysis",
+            "network-review",
+            "adr-generator",
+            "service-health",
+        ]
+    )
     custom_dir: str | None = None
     auto_routing: bool = True
     auto_routing_threshold: float = 1.5
@@ -141,7 +190,7 @@ class CodingConfig(BaseModel):
         default_factory=lambda: [
             # Destructive disk / filesystem operations
             r"\brm\s+(-\w*\s+)*-\w*r\w*\s+/\s*$",  # rm -rf /
-            r"\brm\s+(-\w*\s+)*-\w*r\w*\s+/\w",     # rm -rf /anything
+            r"\brm\s+(-\w*\s+)*-\w*r\w*\s+/\w",  # rm -rf /anything
             r"\bmkfs\b",
             r"\bdd\b\s+",
             r"\bformat\b",

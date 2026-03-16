@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vaig.core.client import ChatMessage
 from vaig.core.config import Settings
 from vaig.session.store import SessionStore
+from vaig.session.summarizer import HistorySummarizer, estimate_history_tokens
+
+if TYPE_CHECKING:
+    from vaig.core.client import GeminiClient
 
 logger = logging.getLogger(__name__)
+
+# Number of recent messages to keep intact during summarization.
+# These are the most relevant for the current conversation turn.
+_RECENT_MESSAGES_TO_KEEP = 10
 
 
 @dataclass
@@ -113,6 +121,78 @@ class SessionManager:
             return []
         return self._active.history
 
+    def get_token_estimate(self) -> int:
+        """Return a rough token estimate for the active session's history.
+
+        Uses the fast ``len(text) / 4`` heuristic — no API calls.
+        Returns ``0`` when there is no active session.
+        """
+        if not self._active:
+            return 0
+        return estimate_history_tokens(self._active.history)
+
+    def _check_and_summarize(self, client: GeminiClient) -> None:
+        """Summarize older messages if the history token estimate exceeds the threshold.
+
+        This method is **lazy** — it only triggers when the rough token
+        estimate crosses ``summarization_threshold * max_history_tokens``.
+        The most recent ``_RECENT_MESSAGES_TO_KEEP`` messages are always
+        preserved intact.
+
+        Args:
+            client: An initialized ``GeminiClient`` used for the summarization call.
+        """
+        if not self._active:
+            return
+
+        session_cfg = self._settings.session
+        threshold_tokens = int(session_cfg.summarization_threshold * session_cfg.max_history_tokens)
+
+        # Fast path: rough estimate
+        rough_estimate = self.get_token_estimate()
+        if rough_estimate < threshold_tokens:
+            return
+
+        history = self._active.history
+        if len(history) <= _RECENT_MESSAGES_TO_KEEP:
+            # Not enough messages to split — nothing to summarize.
+            logger.debug(
+                "Token estimate (%d) exceeds threshold (%d) but only %d messages — skipping summarization",
+                rough_estimate,
+                threshold_tokens,
+                len(history),
+            )
+            return
+
+        # Split: older messages to summarize, recent to keep
+        older = history[:-_RECENT_MESSAGES_TO_KEEP]
+        recent = history[-_RECENT_MESSAGES_TO_KEEP:]
+
+        logger.info(
+            "History token estimate (%d) exceeds threshold (%d) — summarizing %d older messages",
+            rough_estimate,
+            threshold_tokens,
+            len(older),
+        )
+
+        summarizer = HistorySummarizer(
+            model_name=self._settings.models.fallback,
+            summary_target_tokens=session_cfg.summary_target_tokens,
+        )
+
+        try:
+            summary_message = summarizer.summarize(older, client)
+            self._active.history = [summary_message, *recent]
+            logger.info(
+                "Summarization complete — history reduced from %d to %d messages",
+                len(older) + len(recent),
+                len(self._active.history),
+            )
+        except Exception:
+            # Summarization is non-critical — if it fails, keep the original history.
+            # The message-count trimming in add_message() is still the safety net.
+            logger.warning("History summarization failed — keeping original history", exc_info=True)
+
     def load_session(self, session_id: str) -> ActiveSession | None:
         """Load an existing session and its history."""
         session_data = self._store.get_session(session_id)
@@ -120,10 +200,7 @@ class SessionManager:
             return None
 
         messages = self._store.get_messages(session_id)
-        history = [
-            ChatMessage(role=m["role"], content=m["content"])
-            for m in messages
-        ]
+        history = [ChatMessage(role=m["role"], content=m["content"]) for m in messages]
 
         self._active = ActiveSession(
             id=session_data["id"],
@@ -293,10 +370,7 @@ class SessionManager:
             return None
 
         messages = await self._store.async_get_messages(session_id)
-        history = [
-            ChatMessage(role=m["role"], content=m["content"])
-            for m in messages
-        ]
+        history = [ChatMessage(role=m["role"], content=m["content"]) for m in messages]
 
         self._active = ActiveSession(
             id=session_data["id"],

@@ -756,6 +756,10 @@ class GeminiClient:
         mid = model_id or self._current_model_id
         logger.debug("generate() → model=%s, has_history=%s", mid, bool(history))
 
+        # Warn if history token estimate is high
+        if history:
+            self._warn_if_history_large(history)
+
         # ── Cache lookup (only for stateless, text-only prompts) ─────
         cache_key: str | None = None
         if (
@@ -902,6 +906,10 @@ class GeminiClient:
             len(tool_declarations),
         )
 
+        # Warn if history token estimate is high
+        if history:
+            self._warn_if_history_large(history)
+
         def _call() -> ToolCallResult:
             client = self._get_client()
             tools = [types.Tool(function_declarations=tool_declarations)]
@@ -1026,6 +1034,29 @@ class GeminiClient:
         return parts
 
     # ── Internal helpers ──────────────────────────────────────
+
+    @staticmethod
+    def _warn_if_history_large(
+        history: list[ChatMessage],
+        max_tokens: int = 28_000,
+    ) -> None:
+        """Log a warning if the rough token estimate for *history* exceeds *max_tokens*.
+
+        Uses the fast ``len(text) / 4`` heuristic — no API call.  This is
+        advisory only; the request is still sent (the API may handle it, or
+        will return its own error).
+        """
+        from vaig.session.summarizer import estimate_history_tokens
+
+        estimate = estimate_history_tokens(history)
+        if estimate > max_tokens:
+            logger.warning(
+                "History token estimate (%d) exceeds max_history_tokens (%d) — "
+                "the API call may fail if the real token count is too large. "
+                "Consider enabling history summarization.",
+                estimate,
+                max_tokens,
+            )
 
     @staticmethod
     def _build_history(messages: list[ChatMessage]) -> list[types.Content]:

@@ -1,1 +1,1 @@
-"""Session package — persistence and history management."""
+"""Session package — persistence, history management, and summarization."""
