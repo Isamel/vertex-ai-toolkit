@@ -19,7 +19,6 @@ from vaig.core.language import (
     inject_language_into_config,
 )
 
-
 # ===========================================================================
 # detect_language() — heuristic-based detection
 # ===========================================================================
@@ -436,7 +435,7 @@ class TestOrchestratorLanguageIntegration:
             return [agent]
 
         # Use a stub skill
-        from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
+        from vaig.skills.base import BaseSkill, SkillMetadata
 
         class StubSkill(BaseSkill):
             def get_metadata(self) -> SkillMetadata:
@@ -499,7 +498,7 @@ class TestOrchestratorLanguageIntegration:
             )
             return [agent]
 
-        from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
+        from vaig.skills.base import BaseSkill, SkillMetadata
 
         class StubSkill(BaseSkill):
             def get_metadata(self) -> SkillMetadata:
@@ -604,8 +603,8 @@ class TestServiceHealthLanguageIntegration:
         # Module-level constants must be untouched
         from vaig.skills.service_health import prompts
 
-        assert prompts.HEALTH_GATHERER_PROMPT == original_gatherer
-        assert prompts.HEALTH_REPORTER_PROMPT == original_reporter
+        assert original_gatherer == prompts.HEALTH_GATHERER_PROMPT
+        assert original_reporter == prompts.HEALTH_REPORTER_PROMPT
         assert "LANGUAGE INSTRUCTION" not in prompts.HEALTH_GATHERER_PROMPT
         assert "LANGUAGE INSTRUCTION" not in prompts.HEALTH_REPORTER_PROMPT
 
@@ -692,5 +691,5 @@ class TestInjectAutopilotIntoConfig:
         inject_autopilot_into_config(configs, True)
 
         from vaig.skills.service_health import prompts
-        assert prompts.HEALTH_GATHERER_PROMPT == original
+        assert original == prompts.HEALTH_GATHERER_PROMPT
         assert "GKE AUTOPILOT" not in prompts.HEALTH_GATHERER_PROMPT

@@ -6,7 +6,6 @@ import pytest
 
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase, SkillResult
 
-
 # ── Fixtures ─────────────────────────────────────────────────
 
 

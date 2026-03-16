@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.table import Table
@@ -16,7 +16,7 @@ def register(models_app: typer.Typer) -> None:
 
     @models_app.command("list")
     def models_list(
-        config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c")] = None,
     ) -> None:
         """List available models."""
         settings = _helpers._get_settings(config)

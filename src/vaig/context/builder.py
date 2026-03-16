@@ -7,9 +7,9 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from google.genai import types
 from rich.console import Console
 from rich.table import Table
-from google.genai import types
 
 from vaig.context.filters import build_file_filter, should_include_file
 from vaig.context.loader import FileType, LoadedFile, load_file

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -11,7 +11,6 @@ from vaig.agents.mixins import ToolLoopMixin, ToolLoopResult
 from vaig.core.client import ToolCallResult
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools.base import ToolDef, ToolParam, ToolRegistry, ToolResult
-
 
 # ── Helpers ──────────────────────────────────────────────────
 

@@ -21,7 +21,6 @@ from vaig.core.config import (
     ProjectEntry,
     SafetyConfig,
     SafetySettingConfig,
-    SessionConfig,
     Settings,
     SkillsConfig,
     _strip_empty_strings,

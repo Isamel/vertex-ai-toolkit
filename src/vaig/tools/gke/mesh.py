@@ -882,8 +882,6 @@ def get_mesh_config(
     ]
 
     for kind, group, formatter in crd_types:
-        plural = _kind_to_plural(kind)
-
         # Resolve version
         version = _resolve_crd_version(custom_api, group, kind)
         if version is None:

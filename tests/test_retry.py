@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from google.api_core import exceptions as google_exceptions
 
-from vaig.core.client import GeminiClient, _RETRYABLE_EXCEPTIONS, _is_ssl_or_connection_error
+from vaig.core.client import _RETRYABLE_EXCEPTIONS, GeminiClient, _is_ssl_or_connection_error
 from vaig.core.config import (
     GCPConfig,
     GenerationConfig,
@@ -22,7 +22,6 @@ from vaig.core.exceptions import (
     GeminiRateLimitError,
     VAIGError,
 )
-
 
 # ── Fixtures ─────────────────────────────────────────────────
 # _reset_settings is provided by conftest.py (autouse)

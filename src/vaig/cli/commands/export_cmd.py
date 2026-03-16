@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
@@ -20,8 +20,8 @@ def register(app: typer.Typer) -> None:
     def export_session(
         session_id: Annotated[str, typer.Argument(help="Session ID to export")],
         format_: Annotated[str, typer.Option("--format", "-f", help="Export format: json, md, html")] = "md",
-        output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Save to file (default: stdout)")] = None,
-        config: Annotated[Optional[str], typer.Option("--config", "-c", help="Path to config YAML")] = None,
+        output: Annotated[Path | None, typer.Option("--output", "-o", help="Save to file (default: stdout)")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c", help="Path to config YAML")] = None,
     ) -> None:
         """Export a past session to JSON, Markdown, or HTML."""
         from vaig.cli.export import ExportMetadata, ExportPayload, format_export

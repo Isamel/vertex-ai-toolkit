@@ -12,8 +12,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from google.genai import types
-
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import OnToolCall, ToolLoopMixin
 from vaig.core.client import GeminiClient

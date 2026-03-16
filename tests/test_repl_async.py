@@ -12,7 +12,6 @@ Verifies that:
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,7 +19,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from vaig.core.config import Settings
-
 
 # ══════════════════════════════════════════════════════════════
 # Signature / Inspection Tests

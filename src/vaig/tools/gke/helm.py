@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # ── Lazy import guard (mirrors _clients.py) ──────────────────
 _K8S_AVAILABLE = True
 try:
-    from kubernetes.client import exceptions as k8s_exceptions  # noqa: WPS433
+    from kubernetes.client import exceptions as k8s_exceptions  # noqa: WPS433, F401
 except ImportError:
     _K8S_AVAILABLE = False
 

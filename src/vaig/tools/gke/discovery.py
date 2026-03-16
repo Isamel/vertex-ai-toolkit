@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from vaig.tools.base import ToolResult
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # Needed locally for except clauses.
 _K8S_AVAILABLE = True
 try:
-    from kubernetes.client import exceptions as k8s_exceptions  # noqa: WPS433
+    from kubernetes.client import exceptions as k8s_exceptions  # noqa: WPS433, F401
 except ImportError:
     _K8S_AVAILABLE = False
 
@@ -153,10 +153,10 @@ def discover_workloads(
             )
 
     if truncated:
-        sections.append(f"\n... truncated to 200 items (total: more than 200)")
+        sections.append("\n... truncated to 200 items (total: more than 200)")
 
     if errors:
-        sections.append(f"\n--- Partial errors ---")
+        sections.append("\n--- Partial errors ---")
         for err in errors:
             sections.append(f"  {err}")
 
@@ -325,7 +325,6 @@ def discover_service_mesh(
 
         # Sidecar injection
         sc_count = pods_with_sidecar.get(sidecar_ctr, 0)
-        without = total_pods - sc_count
         sections.append(
             f"  Sidecar injection: {sc_count}/{total_pods} pods have {sidecar_ctr} sidecar"
         )

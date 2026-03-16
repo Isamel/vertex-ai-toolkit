@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any
 
 import typer
 from rich.table import Table
@@ -16,7 +16,7 @@ def register(mcp_app: typer.Typer) -> None:
 
     @mcp_app.command("list-servers")
     def mcp_list_servers(
-        config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c")] = None,
     ) -> None:
         """List configured MCP servers."""
         from vaig.tools.mcp_bridge import is_mcp_available
@@ -63,7 +63,7 @@ def register(mcp_app: typer.Typer) -> None:
     @mcp_app.command("discover")
     def mcp_discover(
         server_name: Annotated[str, typer.Argument(help="Name of configured MCP server to discover tools from")],
-        config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c")] = None,
     ) -> None:
         """Discover available tools from an MCP server.
 
@@ -140,8 +140,8 @@ def register(mcp_app: typer.Typer) -> None:
     def mcp_call(
         server_name: Annotated[str, typer.Argument(help="MCP server name")],
         tool_name: Annotated[str, typer.Argument(help="Tool name to call")],
-        args_json: Annotated[Optional[str], typer.Argument(help="JSON arguments (e.g. '{\"path\": \"/tmp\"}')")] = None,
-        config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+        args_json: Annotated[str | None, typer.Argument(help="JSON arguments (e.g. '{\"path\": \"/tmp\"}')")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c")] = None,
     ) -> None:
         """Call a specific tool on an MCP server.
 

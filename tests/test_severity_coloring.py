@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from io import StringIO
 
-import pytest
 from rich.console import Console
 
 from vaig.cli.display import (
@@ -12,7 +11,6 @@ from vaig.cli.display import (
     colorize_severity,
     print_colored_report,
 )
-
 
 # ── colorize_severity unit tests ─────────────────────────────
 

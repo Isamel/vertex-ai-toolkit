@@ -237,8 +237,8 @@ def switch_cluster(
     # Clear GKE caches so next tool invocation picks up new cluster
     reinitialized: list[str] = []
     try:
-        from vaig.tools.gke._clients import clear_autopilot_cache, clear_k8s_client_cache
         from vaig.tools.gke._cache import clear_discovery_cache
+        from vaig.tools.gke._clients import clear_autopilot_cache, clear_k8s_client_cache
 
         clear_k8s_client_cache()
         reinitialized.append("k8s_client_cache")

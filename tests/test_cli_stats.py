@@ -15,7 +15,6 @@ from vaig.cli.app import app
 from vaig.core.config import Settings
 from vaig.core.telemetry import TelemetryCollector, TelemetryEvent
 
-
 runner = CliRunner()
 
 

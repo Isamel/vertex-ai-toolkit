@@ -40,7 +40,7 @@ _K8S_IMPORT_ERROR: str | None = None
 try:
     from kubernetes import client as k8s_client  # noqa: WPS433
     from kubernetes import config as k8s_config  # noqa: WPS433
-    from kubernetes.client import exceptions as k8s_exceptions  # noqa: WPS433
+    from kubernetes.client import exceptions as k8s_exceptions  # noqa: WPS433, F401
 except ImportError as _exc:
     _K8S_AVAILABLE = False
     _K8S_IMPORT_ERROR = (

@@ -231,6 +231,7 @@ class TestManagerResume:
 class TestCLISessionsRename:
     def test_rename_command(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
+
         from vaig.cli.app import app
 
         runner = CliRunner()
@@ -250,6 +251,7 @@ class TestCLISessionsRename:
 
     def test_rename_nonexistent(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
+
         from vaig.cli.app import app
 
         runner = CliRunner()
@@ -263,6 +265,7 @@ class TestCLISessionsRename:
 class TestCLISessionsSearch:
     def test_search_command(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
+
         from vaig.cli.app import app
 
         runner = CliRunner()
@@ -282,6 +285,7 @@ class TestCLISessionsSearch:
 
     def test_search_no_results(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
+
         from vaig.cli.app import app
 
         runner = CliRunner()
@@ -296,6 +300,7 @@ class TestCLISessionsSearch:
 class TestCLISessionsShow:
     def test_show_command(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
+
         from vaig.cli.app import app
 
         runner = CliRunner()
@@ -317,6 +322,7 @@ class TestCLISessionsShow:
 
     def test_show_nonexistent(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
+
         from vaig.cli.app import app
 
         runner = CliRunner()
@@ -330,6 +336,7 @@ class TestCLISessionsShow:
 class TestCLISessionsList:
     def test_list_shows_message_count(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
+
         from vaig.cli.app import app
 
         runner = CliRunner()

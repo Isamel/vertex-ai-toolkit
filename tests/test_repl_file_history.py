@@ -12,11 +12,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from prompt_toolkit.history import FileHistory
 
 from vaig.core.config import SessionConfig, Settings
-
 
 # ══════════════════════════════════════════════════════════════
 # SessionConfig defaults

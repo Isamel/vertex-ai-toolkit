@@ -20,9 +20,8 @@ from unittest.mock import patch
 
 import pytest
 
-from vaig.core.cache import CacheStats, ResponseCache, _make_cache_key
+from vaig.core.cache import ResponseCache, _make_cache_key
 from vaig.core.client import GenerationResult
-
 
 # ── Cache key tests ──────────────────────────────────────────
 
@@ -483,7 +482,7 @@ class TestGeminiClientCacheIntegration:
 
     def test_generate_caches_string_prompt_no_history(self) -> None:
         """generate() caches results for string prompts without history."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from vaig.core.config import CacheConfig, Settings
 
@@ -518,7 +517,7 @@ class TestGeminiClientCacheIntegration:
 
     def test_generate_does_not_cache_with_history(self) -> None:
         """generate() does NOT cache when history is provided."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from vaig.core.config import CacheConfig, Settings
 
@@ -556,7 +555,7 @@ class TestGeminiClientCacheIntegration:
 
     def test_generate_does_not_cache_multimodal_prompt(self) -> None:
         """generate() does NOT cache when prompt is a list of Parts."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from google.genai import types
 

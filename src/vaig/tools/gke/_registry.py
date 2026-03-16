@@ -11,29 +11,20 @@ from typing import TYPE_CHECKING
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
 
 from . import _clients, diagnostics, discovery, kubectl, mesh, mutations, security
-from .kubectl import kubectl_get_labels, async_kubectl_get_labels
+from .argocd import (
+    argocd_app_diff,
+    argocd_app_history,
+    argocd_app_managed_resources,
+    argocd_app_status,
+    argocd_list_applications,
+)
 from .helm import (
     helm_list_releases,
-    helm_release_status,
     helm_release_history,
+    helm_release_status,
     helm_release_values,
-    async_helm_list_releases,
-    async_helm_release_status,
-    async_helm_release_history,
-    async_helm_release_values,
 )
-from .argocd import (
-    argocd_list_applications,
-    argocd_app_status,
-    argocd_app_history,
-    argocd_app_diff,
-    argocd_app_managed_resources,
-    async_argocd_list_applications,
-    async_argocd_app_status,
-    async_argocd_app_history,
-    async_argocd_app_diff,
-    async_argocd_app_managed_resources,
-)
+from .kubectl import kubectl_get_labels
 
 if TYPE_CHECKING:
     from vaig.core.config import GKEConfig

@@ -237,7 +237,7 @@ async def async_run_command(
                 process.communicate(),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Kill the process on timeout to avoid zombies
             try:
                 process.kill()

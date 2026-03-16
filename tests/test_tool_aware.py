@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from vaig.agents.base import AgentConfig, AgentResult, AgentRole
+from vaig.agents.base import AgentResult, AgentRole
 from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.exceptions import MaxIterationsError
-from vaig.tools.base import ToolDef, ToolParam, ToolRegistry, ToolResult
-
+from vaig.tools.base import ToolDef, ToolRegistry, ToolResult
 
 # ── Helpers ──────────────────────────────────────────────────
 
@@ -127,6 +126,7 @@ class TestInit:
         """ToolAwareAgent must NOT depend on InfraAgent."""
         import ast
         import inspect
+
         import vaig.agents.tool_aware as module
 
         source = inspect.getsource(module)
@@ -141,7 +141,7 @@ class TestInit:
                 module_name = node.module or ""
                 assert "infra_agent" not in module_name, f"Found import from {module_name}"
                 for alias in node.names:
-                    assert alias.name != "InfraAgent", f"Found import of InfraAgent"
+                    assert alias.name != "InfraAgent", "Found import of InfraAgent"
 
 
 # ── TestFromConfigDict ───────────────────────────────────────

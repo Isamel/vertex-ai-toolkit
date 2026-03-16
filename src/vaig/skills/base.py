@@ -196,7 +196,7 @@ class CompositeSkill(BaseSkill):
             return f"No component skills support phase '{phase.value}'."
 
         return (
-            f"Apply ALL of the following analysis perspectives to the input:\n\n"
+            "Apply ALL of the following analysis perspectives to the input:\n\n"
             + "\n\n---\n\n".join(prompts)
         )
 

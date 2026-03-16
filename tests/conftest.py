@@ -9,18 +9,16 @@ Fixtures extracted here were previously duplicated in multiple test modules.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
-from typing import Generator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from vaig.core.config import Settings, reset_settings
 from vaig.core.client import GenerationResult
-from vaig.session.store import SessionStore
+from vaig.core.config import reset_settings
 from vaig.core.telemetry import TelemetryCollector
-
+from vaig.session.store import SessionStore
 
 # ── Settings singleton reset ────────────────────────────────
 # Previously duplicated in 9 test files as ``_reset()``.

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from vaig.tools.base import ToolResult
 
@@ -144,7 +144,7 @@ def kubectl_restart(
         return result
     _core_v1, apps_v1, _custom_api, _api_client = result
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     patch_body = {
         "spec": {
             "template": {

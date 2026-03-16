@@ -6,19 +6,16 @@ Verifies that the orchestrator correctly creates mixed pipelines
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vaig.agents.base import AgentResult, BaseAgent
+from vaig.agents.base import AgentResult
 from vaig.agents.orchestrator import (
-    DEFAULT_MIN_CONTENT_CHARS,
     EMPTY_MARKERS,
     GathererValidationResult,
     Orchestrator,
-    OrchestratorResult,
     _build_tools_summary,
 )
 from vaig.agents.specialist import SpecialistAgent
@@ -26,7 +23,6 @@ from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.client import GenerationResult
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.tools.base import ToolRegistry
-
 
 # ---------------------------------------------------------------------------
 # Helpers

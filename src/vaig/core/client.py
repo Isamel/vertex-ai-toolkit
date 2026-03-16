@@ -14,15 +14,14 @@ import random
 import ssl
 import threading
 import time
-from dataclasses import dataclass, field
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from google import genai
 from google.api_core import exceptions as google_exceptions
 from google.genai import types
 
-from vaig.core.async_utils import run_sync
 from vaig.core.auth import get_credentials
 from vaig.core.cache import CacheStats, ResponseCache, _make_cache_key
 from vaig.core.exceptions import (

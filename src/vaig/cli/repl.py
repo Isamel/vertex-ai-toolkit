@@ -15,8 +15,6 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-import typer
-
 from vaig.agents.orchestrator import Orchestrator
 from vaig.context.builder import ContextBuilder
 from vaig.core.client import GeminiClient, StreamResult

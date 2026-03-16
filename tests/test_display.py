@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from io import StringIO
 
-import pytest
 from rich.console import Console
 
 from vaig.cli.display import show_cost_summary

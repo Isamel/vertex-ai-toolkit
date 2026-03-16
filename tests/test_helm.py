@@ -5,14 +5,12 @@ from __future__ import annotations
 import base64
 import gzip
 import json
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vaig.core.config import GKEConfig
 from vaig.tools.base import ToolResult
-
 
 # ── Helpers ──────────────────────────────────────────────────
 

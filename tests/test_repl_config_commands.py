@@ -22,7 +22,6 @@ from vaig.core.config import (
     Settings,
 )
 
-
 # ── Fixtures ─────────────────────────────────────────────────
 # _reset_settings is provided by conftest.py (autouse)
 # mock_client is provided by conftest.py
@@ -275,9 +274,8 @@ class TestCmdConfig:
 
     def test_config_reflects_mutations(self, repl_state: MagicMock) -> None:
         """Config snapshot should reflect runtime changes."""
-        from vaig.core.config_switcher import switch_project
-
         from vaig.cli.repl import _cmd_config
+        from vaig.core.config_switcher import switch_project
 
         switch_project(repl_state.settings, "switched-project")
 
@@ -450,9 +448,8 @@ class TestPromptPrefix:
         self, settings: Settings, mock_client: MagicMock,
     ) -> None:
         """Prompt should reflect new project after switch."""
-        from vaig.core.config_switcher import switch_project
-
         from vaig.cli.repl import REPLState
+        from vaig.core.config_switcher import switch_project
 
         mock_orchestrator = MagicMock()
         mock_session_manager = MagicMock()

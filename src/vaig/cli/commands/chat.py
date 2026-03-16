@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
 from vaig.cli import _helpers
 from vaig.cli._helpers import (
     _banner,
-    async_run_command,
     console,
     err_console,
     track_command,
@@ -23,21 +22,21 @@ def register(app: typer.Typer) -> None:
     @app.command()
     @track_command
     def chat(
-        config: Annotated[Optional[str], typer.Option("--config", "-c", help="Path to config YAML")] = None,
-        model: Annotated[Optional[str], typer.Option("--model", "-m", help="Model to use")] = None,
-        skill: Annotated[Optional[str], typer.Option("--skill", "-s", help="Activate a skill")] = None,
-        session: Annotated[Optional[str], typer.Option("--session", help="Load an existing session by ID")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c", help="Path to config YAML")] = None,
+        model: Annotated[str | None, typer.Option("--model", "-m", help="Model to use")] = None,
+        skill: Annotated[str | None, typer.Option("--skill", "-s", help="Activate a skill")] = None,
+        session: Annotated[str | None, typer.Option("--session", help="Load an existing session by ID")] = None,
         resume: Annotated[bool, typer.Option("--resume", "-r", help="Resume the last session")] = False,
         name: Annotated[str, typer.Option("--name", "-n", help="Name for new session")] = "chat",
         workspace: Annotated[
-            Optional[Path],
+            Path | None,
             typer.Option("--workspace", "-w", help="Workspace root directory for /code mode"),
         ] = None,
         project: Annotated[
-            Optional[str], typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)")
+            str | None, typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)")
         ] = None,
         location: Annotated[
-            Optional[str], typer.Option("--location", help="GCP location (overrides config)")
+            str | None, typer.Option("--location", help="GCP location (overrides config)")
         ] = None,
     ) -> None:
         """Start an interactive chat session (REPL mode).

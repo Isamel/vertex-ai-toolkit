@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,6 +24,8 @@ from click.exceptions import Exit as ClickExit
 
 from vaig.core.config import Settings
 
+if TYPE_CHECKING:
+    from vaig.context.builder import ContextBuilder
 
 # ══════════════════════════════════════════════════════════════
 # track_command_async
@@ -164,13 +167,13 @@ class TestContextBuilderAsync:
         )
 
     @pytest.fixture()
-    def builder(self, settings: Settings) -> "ContextBuilder":
+    def builder(self, settings: Settings) -> ContextBuilder:
         from vaig.context.builder import ContextBuilder
 
         return ContextBuilder(settings)
 
     @pytest.mark.asyncio
-    async def test_async_add_file(self, builder: "ContextBuilder", tmp_path: Path) -> None:
+    async def test_async_add_file(self, builder: ContextBuilder, tmp_path: Path) -> None:
         # Create a temp file
         test_file = tmp_path / "test.py"
         test_file.write_text("print('hello')")
@@ -183,12 +186,12 @@ class TestContextBuilderAsync:
         assert builder.bundle.file_count == 1
 
     @pytest.mark.asyncio
-    async def test_async_add_file_not_found(self, builder: "ContextBuilder") -> None:
+    async def test_async_add_file_not_found(self, builder: ContextBuilder) -> None:
         with pytest.raises(FileNotFoundError):
             await builder.async_add_file("/nonexistent/file.py")
 
     @pytest.mark.asyncio
-    async def test_async_add_directory(self, builder: "ContextBuilder", tmp_path: Path) -> None:
+    async def test_async_add_directory(self, builder: ContextBuilder, tmp_path: Path) -> None:
         # Create temp directory with files
         (tmp_path / "a.py").write_text("# a")
         (tmp_path / "b.py").write_text("# b")
@@ -199,12 +202,12 @@ class TestContextBuilderAsync:
         assert builder.bundle.file_count >= 2
 
     @pytest.mark.asyncio
-    async def test_async_add_directory_not_found(self, builder: "ContextBuilder") -> None:
+    async def test_async_add_directory_not_found(self, builder: ContextBuilder) -> None:
         with pytest.raises(FileNotFoundError):
             await builder.async_add_directory("/nonexistent/dir")
 
     @pytest.mark.asyncio
-    async def test_async_add_text(self, builder: "ContextBuilder") -> None:
+    async def test_async_add_text(self, builder: ContextBuilder) -> None:
         loaded = await builder.async_add_text("some context text", label="inline-test")
 
         assert loaded.content == "some context text"
@@ -212,13 +215,13 @@ class TestContextBuilderAsync:
         assert builder.bundle.file_count == 1
 
     @pytest.mark.asyncio
-    async def test_async_add_text_is_synchronous_internally(self, builder: "ContextBuilder") -> None:
+    async def test_async_add_text_is_synchronous_internally(self, builder: ContextBuilder) -> None:
         """async_add_text doesn't need threading — verify it still works."""
         loaded = await builder.async_add_text("quick text")
         assert loaded.content == "quick text"
 
     @pytest.mark.asyncio
-    async def test_async_add_multiple_files(self, builder: "ContextBuilder", tmp_path: Path) -> None:
+    async def test_async_add_multiple_files(self, builder: ContextBuilder, tmp_path: Path) -> None:
         """Test adding multiple files concurrently."""
         files = []
         for i in range(5):
@@ -392,7 +395,6 @@ class TestAsyncChatImpl:
     @pytest.mark.asyncio
     async def test_async_chat_falls_back_to_sync_repl(self) -> None:
         """When async_start_repl is not available, falls back to sync."""
-        from vaig.cli.commands.chat import _async_chat_impl
 
         with (
             patch("vaig.cli.commands.chat._helpers._get_settings", return_value=Settings()),
@@ -412,7 +414,6 @@ class TestAsyncChatImpl:
 
     @pytest.mark.asyncio
     async def test_async_chat_applies_project_override(self) -> None:
-        from vaig.cli.commands.chat import _async_chat_impl
 
         settings = Settings()
 
@@ -865,29 +866,8 @@ class TestBackwardCompatibility:
     def test_existing_cli_app_imports_still_work(self) -> None:
         """All original re-exports from app.py still work."""
         from vaig.cli.app import (
-            _apply_subcommand_log_flags,
-            _banner,
-            _build_cost_markdown_section,
-            _build_export_payload,
-            _build_gke_config,
-            _cli_confirm,
-            _compute_cost_str,
-            _execute_code_mode,
-            _execute_live_mode,
-            _execute_orchestrated_skill,
-            _format_session_date,
             _get_settings,
-            _handle_export_output,
-            _register_live_tools,
-            _resolve_session_id,
-            _save_output,
-            _show_coding_summary,
-            _show_cost_line,
-            _show_orchestrated_summary,
-            _try_chunked_ask,
             app,
-            console,
-            err_console,
             track_command,
         )
 

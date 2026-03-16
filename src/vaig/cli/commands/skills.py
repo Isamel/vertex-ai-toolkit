@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.panel import Panel
@@ -18,7 +18,7 @@ def register(skills_app: typer.Typer) -> None:
 
     @skills_app.command("list")
     def skills_list(
-        config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c")] = None,
     ) -> None:
         """List available skills."""
         settings = _helpers._get_settings(config)
@@ -48,7 +48,7 @@ def register(skills_app: typer.Typer) -> None:
     @skills_app.command("info")
     def skills_info(
         skill_name: Annotated[str, typer.Argument(help="Skill name to inspect")],
-        config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c")] = None,
     ) -> None:
         """Show detailed info about a skill."""
         settings = _helpers._get_settings(config)
@@ -94,9 +94,9 @@ def register(skills_app: typer.Typer) -> None:
     def skills_create(
         name: Annotated[str, typer.Argument(help="Skill name (kebab-case, e.g. 'my-analyzer')")],
         description: Annotated[str, typer.Option("--description", "-d")] = "A custom skill",
-        tags: Annotated[Optional[str], typer.Option("--tags", "-t", help="Comma-separated tags")] = None,
-        output_dir: Annotated[Optional[str], typer.Option("--output", "-o", help="Target directory (default: custom_dir from config)")] = None,
-        config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+        tags: Annotated[str | None, typer.Option("--tags", "-t", help="Comma-separated tags")] = None,
+        output_dir: Annotated[str | None, typer.Option("--output", "-o", help="Target directory (default: custom_dir from config)")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c")] = None,
     ) -> None:
         """Scaffold a new custom skill with boilerplate files."""
         from vaig.skills.scaffold import scaffold_skill
@@ -128,4 +128,4 @@ def register(skills_app: typer.Typer) -> None:
         console.print(f"  {skill_dir / '__init__.py'}")
         console.print(f"  {skill_dir / 'skill.py'}")
         console.print(f"  {skill_dir / 'prompts.py'}")
-        console.print(f"\n[dim]Edit skill.py and prompts.py to implement your skill logic.[/dim]")
+        console.print("\n[dim]Edit skill.py and prompts.py to implement your skill logic.[/dim]")

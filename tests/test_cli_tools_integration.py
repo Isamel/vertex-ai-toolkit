@@ -17,7 +17,7 @@ from vaig.cli.app import (
     app,
 )
 from vaig.core.config import Settings
-from vaig.skills.base import SkillMetadata, SkillPhase
+from vaig.skills.base import SkillMetadata
 
 runner = CliRunner()
 

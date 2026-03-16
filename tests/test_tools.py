@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from vaig.tools.base import ToolDef, ToolParam, ToolRegistry, ToolResult
 from vaig.tools.file_tools import (
@@ -19,7 +17,6 @@ from vaig.tools.file_tools import (
     write_file,
 )
 from vaig.tools.shell_tools import _check_denied_command, create_shell_tools, run_command
-
 
 # ── ToolParam ────────────────────────────────────────────────
 

@@ -4,10 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from vaig.tools.base import ToolDef, ToolResult
-
+from vaig.tools.base import ToolDef
 
 # ── gcloud_logging_query ─────────────────────────────────────
 
@@ -158,7 +155,6 @@ class TestGcloudMonitoringQuery:
 
     @patch("vaig.tools.gcloud_tools._get_monitoring_client")
     def test_no_project_detected(self, mock_client: MagicMock) -> None:
-        import vaig.tools.gcloud_tools as _mod
         from vaig.tools.gcloud_tools import gcloud_monitoring_query
 
         client = MagicMock()

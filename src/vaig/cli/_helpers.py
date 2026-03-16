@@ -6,14 +6,15 @@ import asyncio
 import functools
 import logging
 import time
+from collections.abc import Callable, Coroutine
+from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from collections.abc import Callable, Coroutine
 
 from rich.console import Console
+from rich.panel import Panel
 
 from vaig import __version__
-from rich.panel import Panel
 
 if TYPE_CHECKING:
     from vaig.cli.export import ExportPayload
@@ -108,7 +109,7 @@ def async_run_command(coro: Coroutine[Any, Any, Any]) -> Any:
 
 
 # ── Shared State ──────────────────────────────────────────────
-def _get_settings(config: str | None = None) -> "Settings":
+def _get_settings(config: str | None = None) -> Settings:
     """Load settings (lazy import to avoid heavy imports on --help)."""
     from vaig.core.config import get_settings
 
@@ -243,16 +244,16 @@ def _build_export_payload(
     cost: str | None = None,
     context_files: list[str] | None = None,
     agent_results: list[dict] | None = None,
-) -> "ExportPayload":
+) -> ExportPayload:
     """Build an ExportPayload from ask/live command results."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from vaig.cli.export import ExportMetadata, ExportPayload
 
     meta = ExportMetadata(
         model=model_id,
         skill=skill_name,
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
         tokens=tokens or {},
         cost=cost,
         vaig_version=__version__,

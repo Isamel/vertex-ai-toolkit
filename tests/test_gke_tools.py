@@ -3,7 +3,7 @@ kubectl_scale, kubectl_restart, kubectl_label, kubectl_annotate, create_gke_tool
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -52,7 +52,7 @@ def _mock_pod(
     pod = MagicMock()
     pod.metadata.name = name
     pod.metadata.namespace = namespace
-    pod.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    pod.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
     pod.metadata.deletion_timestamp = None
     pod.metadata.labels = {"app": "test"}
     pod.metadata.annotations = {}
@@ -66,7 +66,7 @@ def _mock_pod(
     cs.restart_count = restarts
     cs.state.waiting = None
     cs.state.terminated = None
-    cs.state.running.started_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    cs.state.running.started_at = datetime(2025, 1, 1, tzinfo=UTC)
     cs.name = "main"
     pod.status.container_statuses = [cs]
     return pod
@@ -81,7 +81,7 @@ def _mock_deployment(
     dep = MagicMock()
     dep.metadata.name = name
     dep.metadata.namespace = namespace
-    dep.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    dep.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
     dep.spec.replicas = replicas
     dep.spec.template.spec.containers = []
     dep.status.ready_replicas = ready
@@ -584,7 +584,7 @@ class TestFormattingHelpers:
     def test_age_recent(self) -> None:
         from vaig.tools.gke_tools import _age
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         assert _age(now) == "0s"
 
     def test_age_none(self) -> None:
@@ -602,7 +602,7 @@ class TestFormattingHelpers:
         from vaig.tools.gke_tools import _pod_status
 
         pod = _mock_pod()
-        pod.metadata.deletion_timestamp = datetime.now(timezone.utc)
+        pod.metadata.deletion_timestamp = datetime.now(UTC)
         assert _pod_status(pod) == "Terminating"
 
     def test_pod_status_succeeded(self) -> None:
@@ -1589,11 +1589,11 @@ def _mock_event(
     """Create a mock Kubernetes event object."""
     ev = MagicMock()
     ev.metadata.name = name
-    ev.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    ev.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
     ev.type = event_type
     ev.reason = reason
     ev.message = message
-    ev.last_timestamp = last_timestamp or datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    ev.last_timestamp = last_timestamp or datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
     ev.involved_object.name = involved_name
     ev.involved_object.kind = involved_kind
     return ev
@@ -1699,12 +1699,12 @@ class TestGetEvents:
         ev1 = _mock_event(
             name="ev1", event_type="Warning", reason="BackOff",
             message="Back-off restarting", involved_name="my-pod", involved_kind="Pod",
-            last_timestamp=datetime(2025, 1, 1, 14, 0, 0, tzinfo=timezone.utc),
+            last_timestamp=datetime(2025, 1, 1, 14, 0, 0, tzinfo=UTC),
         )
         ev2 = _mock_event(
             name="ev2", event_type="Normal", reason="Pulled",
             message="Container image pulled", involved_name="my-pod", involved_kind="Pod",
-            last_timestamp=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            last_timestamp=datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC),
         )
         ev_list = MagicMock()
         ev_list.items = [ev2, ev1]  # out of order to test sorting
@@ -1776,7 +1776,7 @@ class TestGetEvents:
 
         # Create 5 events but limit to 2
         events = [
-            _mock_event(name=f"ev{i}", last_timestamp=datetime(2025, 1, 1, i, 0, 0, tzinfo=timezone.utc))
+            _mock_event(name=f"ev{i}", last_timestamp=datetime(2025, 1, 1, i, 0, 0, tzinfo=UTC))
             for i in range(5)
         ]
         ev_list = MagicMock()
@@ -2307,7 +2307,7 @@ def _mock_node(
     """Create a mock Kubernetes node object."""
     node = MagicMock()
     node.metadata.name = name
-    node.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    node.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
     node.metadata.labels = labels or {
         "node-role.kubernetes.io/worker": "",
         "topology.kubernetes.io/zone": "us-central1-a",
@@ -2350,7 +2350,7 @@ def _mock_node(
             cond.status = "True" if is_problem else "False"
         cond.reason = "KubeletReady" if ctype == "Ready" else f"Kubelet Has No {ctype}"
         cond.message = f"{ctype} condition message"
-        cond.last_transition_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        cond.last_transition_time = datetime(2025, 1, 1, tzinfo=UTC)
         conditions.append(cond)
     node.status.conditions = conditions
 
@@ -2454,7 +2454,7 @@ def _mock_container_pod(
     main_cs.image_id = "docker://sha256:abc123"
     main_cs.ready = True
     main_cs.restart_count = 0
-    main_cs.state.running.started_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    main_cs.state.running.started_at = datetime(2025, 1, 1, tzinfo=UTC)
     main_cs.state.waiting = None
     main_cs.state.terminated = None
     main_cs.last_state.terminated = None
@@ -2471,8 +2471,8 @@ def _mock_container_pod(
     init_cs.state.terminated.reason = "Completed"
     init_cs.state.terminated.exit_code = 0
     init_cs.state.terminated.message = None
-    init_cs.state.terminated.started_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
-    init_cs.state.terminated.finished_at = datetime(2025, 1, 1, 0, 1, 0, tzinfo=timezone.utc)
+    init_cs.state.terminated.started_at = datetime(2025, 1, 1, tzinfo=UTC)
+    init_cs.state.terminated.finished_at = datetime(2025, 1, 1, 0, 1, 0, tzinfo=UTC)
     init_cs.last_state.terminated = None
     pod.status.init_container_statuses = [init_cs]
 
@@ -2963,8 +2963,8 @@ class TestGetContainerStatus:
         last_terminated.reason = "OOMKilled"
         last_terminated.exit_code = 137
         last_terminated.message = "Out of memory"
-        last_terminated.started_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        last_terminated.finished_at = datetime(2025, 1, 1, 0, 5, 0, tzinfo=timezone.utc)
+        last_terminated.started_at = datetime(2025, 1, 1, tzinfo=UTC)
+        last_terminated.finished_at = datetime(2025, 1, 1, 0, 5, 0, tzinfo=UTC)
         cs.last_state.terminated = last_terminated
 
         core_v1.read_namespaced_pod.return_value = pod
@@ -3089,7 +3089,7 @@ class TestGetContainerStatus:
         eph_cs.image_id = "docker://sha256:eph123"
         eph_cs.ready = False
         eph_cs.restart_count = 0
-        eph_cs.state.running.started_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        eph_cs.state.running.started_at = datetime(2025, 1, 1, tzinfo=UTC)
         eph_cs.state.waiting = None
         eph_cs.state.terminated = None
         eph_cs.last_state.terminated = None
@@ -3953,7 +3953,7 @@ def _mock_replica_set(
     """Create a mock ReplicaSet for rollout history tests."""
     rs = MagicMock()
     rs.metadata.name = name
-    rs.metadata.creation_timestamp = creation_timestamp or datetime(2025, 1, 1, tzinfo=timezone.utc)
+    rs.metadata.creation_timestamp = creation_timestamp or datetime(2025, 1, 1, tzinfo=UTC)
 
     annotations = {"deployment.kubernetes.io/revision": revision}
     if change_cause:
@@ -4016,8 +4016,7 @@ class TestGetRolloutHistory:
 
     @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_deployment_not_found_404(self, mock_clients: MagicMock) -> None:
-        from vaig.tools.gke_tools import get_rollout_history
-        from vaig.tools.gke_tools import k8s_exceptions
+        from vaig.tools.gke_tools import get_rollout_history, k8s_exceptions
 
         cfg = _make_gke_config()
         apps_v1 = MagicMock()
@@ -4227,8 +4226,7 @@ class TestGetRolloutHistory:
 
     @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_api_error_403(self, mock_clients: MagicMock) -> None:
-        from vaig.tools.gke_tools import get_rollout_history
-        from vaig.tools.gke_tools import k8s_exceptions
+        from vaig.tools.gke_tools import get_rollout_history, k8s_exceptions
 
         cfg = _make_gke_config()
         apps_v1 = MagicMock()
@@ -4245,8 +4243,7 @@ class TestGetRolloutHistory:
 
     @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_api_error_401(self, mock_clients: MagicMock) -> None:
-        from vaig.tools.gke_tools import get_rollout_history
-        from vaig.tools.gke_tools import k8s_exceptions
+        from vaig.tools.gke_tools import get_rollout_history, k8s_exceptions
 
         cfg = _make_gke_config()
         apps_v1 = MagicMock()
@@ -5340,7 +5337,7 @@ class TestListMutatingWebhookConfigurations:
         mock_item = MagicMock()
         mock_item.metadata.name = "my-webhook"
         mock_item.metadata.namespace = None
-        mock_item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
         mock_item.webhooks = [MagicMock(name="wh1")]
 
         mock_list = MagicMock()
@@ -5395,7 +5392,7 @@ class TestListValidatingWebhookConfigurations:
         mock_item = MagicMock()
         mock_item.metadata.name = "validation-hook"
         mock_item.metadata.namespace = None
-        mock_item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
         mock_item.webhooks = []
 
         mock_list = MagicMock()
@@ -5427,7 +5424,7 @@ class TestListCustomResourceDefinitions:
         mock_item = MagicMock()
         mock_item.metadata.name = "certificates.cert-manager.io"
         mock_item.metadata.namespace = None
-        mock_item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
         mock_item.spec.group = "cert-manager.io"
         mock_item.spec.scope = "Namespaced"
 
@@ -5479,7 +5476,7 @@ class TestDescribeWebhookConfigurations:
         mock_obj.metadata.namespace = None
         mock_obj.metadata.labels = {}
         mock_obj.metadata.annotations = {}
-        mock_obj.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_obj.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
         mock_obj.spec = None
         mock_obj.status = None
 
@@ -5512,7 +5509,7 @@ class TestDescribeWebhookConfigurations:
         mock_obj.metadata.namespace = None
         mock_obj.metadata.labels = {}
         mock_obj.metadata.annotations = {}
-        mock_obj.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_obj.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
         mock_obj.spec = None
         mock_obj.status = None
 
@@ -5548,7 +5545,7 @@ class TestDescribeCustomResourceDefinition:
         mock_obj.metadata.namespace = None
         mock_obj.metadata.labels = {"app": "cert-manager"}
         mock_obj.metadata.annotations = {}
-        mock_obj.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_obj.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
         mock_obj.spec = None
         mock_obj.status = None
 
@@ -5632,7 +5629,7 @@ class TestWebhookFormatter:
 
         item = MagicMock()
         item.metadata.name = "my-webhook-config"
-        item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
         item.webhooks = [MagicMock(), MagicMock()]
 
         result = _format_webhooks_table([item])
@@ -5656,7 +5653,7 @@ class TestCrdsFormatter:
 
         item = MagicMock()
         item.metadata.name = "certificates.cert-manager.io"
-        item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
         item.spec.group = "cert-manager.io"
         item.spec.scope = "Namespaced"
 
@@ -5670,7 +5667,7 @@ class TestCrdsFormatter:
 
         item = MagicMock()
         item.metadata.name = "certificates.cert-manager.io"
-        item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        item.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
         item.spec.group = "cert-manager.io"
         item.spec.scope = "Namespaced"
 

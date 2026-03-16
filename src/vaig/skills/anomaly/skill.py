@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.skills.anomaly.prompts import PHASE_PROMPTS, SYSTEM_INSTRUCTION
+from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 
 
 class AnomalySkill(BaseSkill):

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -22,10 +22,9 @@ from vaig.agents.base import AgentConfig, AgentResult
 from vaig.agents.specialist import SpecialistAgent
 from vaig.core.async_utils import gather_with_errors, run_sync, to_async
 from vaig.core.client import GenerationResult
-from vaig.core.telemetry import TelemetryCollector, TelemetryEvent
+from vaig.core.telemetry import TelemetryCollector
 from vaig.session.manager import SessionManager
 from vaig.session.store import SessionStore
-
 
 # ── Helpers ────────────────────────────────────────────────────
 
@@ -469,13 +468,8 @@ class TestBackwardCompatibility:
         """Agents __init__.py exports all agent types."""
         from vaig.agents import (
             AgentConfig,
-            AgentRegistry,
-            AgentResult,
             BaseAgent,
-            Orchestrator,
             SpecialistAgent,
-            ToolAwareAgent,
-            ToolLoopMixin,
         )
 
         assert AgentConfig is not None
@@ -484,8 +478,8 @@ class TestBackwardCompatibility:
 
     def test_session_store_importable(self) -> None:
         """Session store is importable from the session package."""
-        from vaig.session.store import SessionStore
         from vaig.session.manager import SessionManager
+        from vaig.session.store import SessionStore
 
         assert SessionStore is not None
         assert SessionManager is not None

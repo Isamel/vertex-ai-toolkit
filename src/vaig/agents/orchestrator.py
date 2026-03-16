@@ -256,7 +256,7 @@ class Orchestrator:
                 logger.info("Fan-out: submitting agent=%s", agent.name)
                 futures.append(executor.submit(agent.execute, prompt, context=context))
 
-            for agent, future in zip(agents, futures):
+            for agent, future in zip(agents, futures, strict=True):
                 try:
                     agent_result = future.result()
                 except Exception:
@@ -477,7 +477,7 @@ class Orchestrator:
                             kw["tool_call_store"] = tool_call_store
                     futures.append(executor.submit(agent.execute, query, **kw))
 
-                for agent, future in zip(agents, futures):
+                for agent, future in zip(agents, futures, strict=True):
                     try:
                         agent_result = future.result()
                     except Exception:
@@ -775,7 +775,7 @@ class Orchestrator:
         system_instruction: str = "",
         model_id: str | None = None,
         stream: bool = False,
-    ) -> "AgentResult | StreamResult":
+    ) -> AgentResult | StreamResult:
         """Async version of :meth:`execute_single`.
 
         Uses ``SpecialistAgent.async_execute()`` or
@@ -785,7 +785,6 @@ class Orchestrator:
         supports ``async for`` iteration and exposes ``.usage`` after
         iteration completes.
         """
-        from vaig.core.client import StreamResult
 
         config = AgentConfig(
             name="assistant",

@@ -10,7 +10,6 @@ from vaig.agents.chunked import ChunkedProcessor, ChunkResult, TokenBudget
 from vaig.core.config import ChunkingConfig
 from vaig.core.exceptions import ChunkedProcessingError, TokenBudgetError
 
-
 # ── Helpers ───────────────────────────────────────────────────
 
 

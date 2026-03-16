@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import sys
 from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,7 +11,7 @@ import pytest
 from typer.testing import CliRunner
 
 from vaig.core.config import MCPConfig, MCPServerConfig, Settings
-from vaig.tools.base import ToolDef, ToolParam, ToolResult
+from vaig.tools.base import ToolResult
 from vaig.tools.mcp_bridge import (
     _mcp_tool_to_tool_def,
     _mcp_type_to_tool_param_type,
@@ -21,7 +19,6 @@ from vaig.tools.mcp_bridge import (
     create_mcp_tools,
     is_mcp_available,
 )
-
 
 # ═══════════════════════════════════════════════════════════════
 # Fixtures & Stubs

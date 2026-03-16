@@ -62,7 +62,7 @@ _MAX_EXEC_OUTPUT = 10_000
 
 def _check_denied(command: str) -> str | None:
     """Return a reason string if *command* matches any deny pattern, else ``None``."""
-    for pattern, compiled in zip(DENIED_PATTERNS, _COMPILED_DENY):
+    for pattern, compiled in zip(DENIED_PATTERNS, _COMPILED_DENY, strict=True):
         if compiled.search(command):
             return f"Command denied — matches blocked pattern: {pattern}"
     return None

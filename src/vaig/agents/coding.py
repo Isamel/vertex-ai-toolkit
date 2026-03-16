@@ -10,7 +10,7 @@ from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import ToolLoopMixin
 from vaig.agents.utils import deduplicate_response
 from vaig.core.client import GeminiClient
-from vaig.core.config import CodingConfig, DEFAULT_MAX_OUTPUT_TOKENS, Settings
+from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS, CodingConfig, Settings
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools import ToolRegistry, ToolResult, create_file_tools, create_shell_tools
 

@@ -20,8 +20,6 @@ from vaig.core.config_switcher import (
     switch_location,
     switch_project,
 )
-from vaig.core.exceptions import GeminiClientError
-
 
 # ── Fixtures ─────────────────────────────────────────────────
 # _reset_settings is provided by conftest.py (autouse)

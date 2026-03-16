@@ -4,13 +4,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from vaig.agents.base import AgentConfig, AgentResult, AgentRole
+from vaig.agents.base import AgentResult, AgentRole
 from vaig.core.config import GKEConfig
-from vaig.core.exceptions import MaxIterationsError
 from vaig.tools.base import ToolDef, ToolParam, ToolRegistry, ToolResult
-
 
 # ── Helpers ──────────────────────────────────────────────────
 

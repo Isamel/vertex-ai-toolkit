@@ -23,7 +23,7 @@ Shared helpers (console, track_command, _get_settings, etc.) live in
 
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
@@ -54,6 +54,14 @@ from vaig.cli._helpers import (  # noqa: F401
     track_command_async,
 )
 
+# Re-export code mode helpers
+from vaig.cli.commands._code import (  # noqa: F401
+    _async_execute_code_mode,
+    _async_try_chunked_ask,
+    _execute_code_mode,
+    _try_chunked_ask,
+)
+
 # Re-export live mode helpers (tests import _build_gke_config, _register_live_tools)
 from vaig.cli.commands.live import (  # noqa: F401
     _async_execute_live_mode,
@@ -64,15 +72,6 @@ from vaig.cli.commands.live import (  # noqa: F401
     _register_live_tools,
     _show_orchestrated_summary,
 )
-
-# Re-export code mode helpers
-from vaig.cli.commands._code import (  # noqa: F401
-    _async_execute_code_mode,
-    _async_try_chunked_ask,
-    _execute_code_mode,
-    _try_chunked_ask,
-)
-
 
 # ── Main App ──────────────────────────────────────────────────
 app = typer.Typer(
@@ -106,7 +105,7 @@ def _version_callback(value: bool) -> None:
 @app.callback()
 def main(
     version: Annotated[
-        Optional[bool],
+        bool | None,
         typer.Option("--version", "-v", help="Show version", callback=_version_callback, is_eager=True),
     ] = None,
     verbose: Annotated[
@@ -118,7 +117,7 @@ def main(
         typer.Option("--debug", "-d", help="Enable debug logging (DEBUG level, shows paths and full tracebacks)"),
     ] = False,
     log_level: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--log-level", help="Set log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"),
     ] = None,
 ) -> None:
@@ -145,13 +144,29 @@ def main(
 # ── Register commands from modules ────────────────────────────
 from vaig.cli.commands import (  # noqa: E402
     ask as _ask_mod,
+)
+from vaig.cli.commands import (
     chat as _chat_mod,
+)
+from vaig.cli.commands import (
     export_cmd as _export_mod,
+)
+from vaig.cli.commands import (
     live as _live_mod,
+)
+from vaig.cli.commands import (
     mcp as _mcp_mod,
+)
+from vaig.cli.commands import (
     models as _models_mod,
+)
+from vaig.cli.commands import (
     sessions as _sessions_mod,
+)
+from vaig.cli.commands import (
     skills as _skills_mod,
+)
+from vaig.cli.commands import (
     stats as _stats_mod,
 )
 

@@ -12,7 +12,6 @@ from vaig.cli.app import app
 from vaig.core.config import Settings
 from vaig.skills.base import SkillMetadata, SkillPhase, SkillResult
 
-
 runner = CliRunner()
 
 
@@ -803,7 +802,6 @@ class TestProjectFlag:
 
     def test_project_flag_updates_settings(self, _mock_settings: Settings) -> None:
         """--project should mutate gcp.project_id and gke.project_id BEFORE component creation."""
-        from vaig.cli.app import _build_gke_config
 
         # Simulate what the command body does
         _mock_settings.gcp.project_id = "flag-project"

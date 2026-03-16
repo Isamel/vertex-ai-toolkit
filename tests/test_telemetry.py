@@ -6,7 +6,7 @@ import json
 import os
 import sqlite3
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,7 +18,6 @@ from vaig.core.telemetry import (
     get_telemetry_collector,
     reset_telemetry_collector,
 )
-
 
 # ══════════════════════════════════════════════════════════════
 # Fixtures
@@ -101,9 +100,9 @@ class TestTelemetryEvent:
         assert event.timestamp != ""
 
     def test_timestamp_auto_generated(self) -> None:
-        before = datetime.now(timezone.utc).isoformat()
+        before = datetime.now(UTC).isoformat()
         event = TelemetryEvent(event_type="test", event_name="check")
-        after = datetime.now(timezone.utc).isoformat()
+        after = datetime.now(UTC).isoformat()
         assert before <= event.timestamp <= after
 
 
@@ -633,7 +632,7 @@ class TestToolCallHook:
 
     def test_emit_on_success(self, monkeypatch: pytest.MonkeyPatch, db_path: Path) -> None:
         """Successful tool execution emits a tool_call event with timing."""
-        from vaig.core.telemetry import TelemetryCollector, get_telemetry_collector
+        from vaig.core.telemetry import TelemetryCollector
 
         # Set up singleton with a real collector
         collector = TelemetryCollector(db_path=db_path, enabled=True, buffer_size=1)

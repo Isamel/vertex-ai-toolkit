@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.panel import Panel
@@ -18,9 +18,9 @@ def register(stats_app: typer.Typer) -> None:
 
     @stats_app.command("show")
     def stats_show(
-        config: Annotated[Optional[str], typer.Option("--config", "-c", help="Path to config YAML")] = None,
-        since: Annotated[Optional[str], typer.Option("--since", help="ISO timestamp lower bound (e.g. 2025-01-01)")] = None,
-        until: Annotated[Optional[str], typer.Option("--until", help="ISO timestamp upper bound")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c", help="Path to config YAML")] = None,
+        since: Annotated[str | None, typer.Option("--since", help="ISO timestamp lower bound (e.g. 2025-01-01)")] = None,
+        until: Annotated[str | None, typer.Option("--until", help="ISO timestamp upper bound")] = None,
     ) -> None:
         """Show usage telemetry summary."""
         from vaig.core.telemetry import get_telemetry_collector
@@ -77,12 +77,12 @@ def register(stats_app: typer.Typer) -> None:
 
     @stats_app.command("export")
     def stats_export(
-        config: Annotated[Optional[str], typer.Option("--config", "-c", help="Path to config YAML")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c", help="Path to config YAML")] = None,
         format_: Annotated[str, typer.Option("--format", "-f", help="Export format: jsonl or csv")] = "jsonl",
-        output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Output file path (default: stdout)")] = None,
-        since: Annotated[Optional[str], typer.Option("--since", help="ISO timestamp lower bound")] = None,
-        until: Annotated[Optional[str], typer.Option("--until", help="ISO timestamp upper bound")] = None,
-        event_type: Annotated[Optional[str], typer.Option("--type", "-t", help="Filter by event type")] = None,
+        output: Annotated[Path | None, typer.Option("--output", "-o", help="Output file path (default: stdout)")] = None,
+        since: Annotated[str | None, typer.Option("--since", help="ISO timestamp lower bound")] = None,
+        until: Annotated[str | None, typer.Option("--until", help="ISO timestamp upper bound")] = None,
+        event_type: Annotated[str | None, typer.Option("--type", "-t", help="Filter by event type")] = None,
     ) -> None:
         """Export telemetry events as JSONL or CSV."""
         import csv
@@ -124,7 +124,7 @@ def register(stats_app: typer.Typer) -> None:
 
     @stats_app.command("clear")
     def stats_clear(
-        config: Annotated[Optional[str], typer.Option("--config", "-c", help="Path to config YAML")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c", help="Path to config YAML")] = None,
         days: Annotated[int, typer.Option("--days", "-d", help="Delete events older than N days")] = 30,
         confirm: Annotated[bool, typer.Option("--confirm", help="Confirm deletion (required)")] = False,
     ) -> None:

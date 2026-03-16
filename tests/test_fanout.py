@@ -7,15 +7,12 @@ import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
-from vaig.agents.orchestrator import Orchestrator, OrchestratorResult
+from vaig.agents.base import AgentResult
+from vaig.agents.orchestrator import Orchestrator
 from vaig.agents.specialist import SpecialistAgent
 from vaig.core.client import GeminiClient, GenerationResult
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.tools.base import ToolRegistry
-
 
 # ---------------------------------------------------------------------------
 # Helpers

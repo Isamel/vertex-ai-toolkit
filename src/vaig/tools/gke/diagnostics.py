@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from vaig.tools.base import ToolResult
@@ -86,8 +86,8 @@ def get_events(
         def _sort_key(ev: Any) -> datetime:
             ts = ev.last_timestamp or ev.metadata.creation_timestamp
             if ts is None:
-                return datetime.min.replace(tzinfo=timezone.utc)
-            return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+                return datetime.min.replace(tzinfo=UTC)
+            return ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts
 
         events.sort(key=_sort_key, reverse=True)
 

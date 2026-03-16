@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import google.auth
@@ -152,7 +152,7 @@ def _gcloud_refresh_handler(
     # google-auth internally uses naive UTC datetimes (via _helpers.utcnow()),
     # so the refresh_handler must return a naive UTC expiry to avoid
     # comparison errors in Credentials.refresh().
-    expiry = datetime.now(tz=timezone.utc).replace(tzinfo=None) + _GCLOUD_TOKEN_LIFETIME
+    expiry = datetime.now(tz=UTC).replace(tzinfo=None) + _GCLOUD_TOKEN_LIFETIME
     logger.debug("gcloud token refreshed, new expiry: %s", expiry)
     return token, expiry
 
@@ -174,7 +174,7 @@ def _get_gcloud_token_credentials() -> Credentials:
     """
     token = _fetch_gcloud_access_token()
     # Use naive UTC to match google-auth's internal convention
-    expiry = datetime.now(tz=timezone.utc).replace(tzinfo=None) + _GCLOUD_TOKEN_LIFETIME
+    expiry = datetime.now(tz=UTC).replace(tzinfo=None) + _GCLOUD_TOKEN_LIFETIME
 
     credentials = OAuth2Credentials(
         token=token,

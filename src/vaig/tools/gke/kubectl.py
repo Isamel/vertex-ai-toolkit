@@ -683,7 +683,7 @@ def kubectl_get_labels(
             items = _filter_by_annotation(items, annotation_filter)
 
         if not items:
-            qualifier = f" matching filters" if label_filter or annotation_filter else ""
+            qualifier = " matching filters" if label_filter or annotation_filter else ""
             return ToolResult(output=f"No {resource}{qualifier} found in namespace '{ns}'")
 
         # Format output

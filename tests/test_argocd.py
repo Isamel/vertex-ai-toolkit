@@ -6,9 +6,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vaig.tools.base import ToolResult
-
-
 # ── Fixtures ─────────────────────────────────────────────────
 
 

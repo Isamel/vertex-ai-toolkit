@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.markdown import Markdown
@@ -15,13 +15,12 @@ from vaig.cli._helpers import (
     _compute_cost_str,
     _handle_export_output,
     _show_cost_line,
-    async_run_command,
     console,
     err_console,
     track_command,
 )
-from vaig.cli.commands.live import _build_gke_config, _execute_live_mode
 from vaig.cli.commands._code import _execute_code_mode, _try_chunked_ask
+from vaig.cli.commands.live import _build_gke_config, _execute_live_mode
 
 
 def register(app: typer.Typer) -> None:
@@ -31,32 +30,32 @@ def register(app: typer.Typer) -> None:
     @track_command
     def ask(
         question: Annotated[str, typer.Argument(help="Question or prompt to send")],
-        config: Annotated[Optional[str], typer.Option("--config", "-c", help="Path to config YAML")] = None,
-        model: Annotated[Optional[str], typer.Option("--model", "-m", help="Model to use")] = None,
-        files: Annotated[Optional[list[Path]], typer.Option("--file", "-f", help="Files to include as context")] = None,
-        output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Save response to a file")] = None,
-        format_: Annotated[Optional[str], typer.Option("--format", help="Export format: json, md, html")] = None,
-        skill: Annotated[Optional[str], typer.Option("--skill", "-s", help="Use a specific skill")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c", help="Path to config YAML")] = None,
+        model: Annotated[str | None, typer.Option("--model", "-m", help="Model to use")] = None,
+        files: Annotated[list[Path] | None, typer.Option("--file", "-f", help="Files to include as context")] = None,
+        output: Annotated[Path | None, typer.Option("--output", "-o", help="Save response to a file")] = None,
+        format_: Annotated[str | None, typer.Option("--format", help="Export format: json, md, html")] = None,
+        skill: Annotated[str | None, typer.Option("--skill", "-s", help="Use a specific skill")] = None,
         auto_skill: Annotated[bool, typer.Option("--auto-skill", help="Auto-detect the best skill based on query")] = False,
         no_stream: Annotated[bool, typer.Option("--no-stream", help="Disable streaming output")] = False,
         code: Annotated[bool, typer.Option("--code", help="Enable coding agent mode (read/write/edit files)")] = False,
         live: Annotated[bool, typer.Option("--live", help="Enable live infrastructure tools (GKE/GCP)")] = False,
         workspace: Annotated[
-            Optional[Path],
+            Path | None,
             typer.Option("--workspace", "-w", help="Workspace root directory for code mode"),
         ] = None,
-        cluster: Annotated[Optional[str], typer.Option("--cluster", help="GKE cluster name (overrides config)")] = None,
+        cluster: Annotated[str | None, typer.Option("--cluster", help="GKE cluster name (overrides config)")] = None,
         namespace: Annotated[
-            Optional[str], typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)", autocompletion=complete_namespace)
+            str | None, typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)", autocompletion=complete_namespace)
         ] = None,
         project: Annotated[
-            Optional[str], typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)")
+            str | None, typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)")
         ] = None,
         project_id: Annotated[
-            Optional[str], typer.Option("--project-id", help="GCP project ID for GKE (overrides config, alias for --project)")
+            str | None, typer.Option("--project-id", help="GCP project ID for GKE (overrides config, alias for --project)")
         ] = None,
         location: Annotated[
-            Optional[str], typer.Option("--location", help="GCP location (overrides config)")
+            str | None, typer.Option("--location", help="GCP location (overrides config)")
         ] = None,
         verbose: Annotated[
             bool,

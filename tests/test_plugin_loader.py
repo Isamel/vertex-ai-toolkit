@@ -5,12 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from vaig.core.config import MCPConfig, PluginConfig, Settings
+from vaig.core.config import PluginConfig, Settings
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
 from vaig.tools.plugin_loader import _load_python_plugins, load_all_plugin_tools
-
 
 # ═══════════════════════════════════════════════════════════════
 # Helpers

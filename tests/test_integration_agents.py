@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, PropertyMock
-
-import pytest
+from unittest.mock import MagicMock
 
 from vaig.agents.base import AgentConfig, AgentResult
-from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.orchestrator import Orchestrator, OrchestratorResult
+from vaig.agents.specialist import SpecialistAgent
 from vaig.core.client import ChatMessage, GenerationResult
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase, SkillResult
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

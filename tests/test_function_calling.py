@@ -15,7 +15,6 @@ from vaig.core.config import (
     Settings,
 )
 
-
 # ── Fixtures ─────────────────────────────────────────────────
 # _reset_settings is provided by conftest.py (autouse)
 

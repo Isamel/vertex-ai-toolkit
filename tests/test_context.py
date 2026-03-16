@@ -13,7 +13,6 @@ from vaig.context.filters import build_file_filter, is_binary_file, should_inclu
 from vaig.context.loader import FileType, LoadedFile, classify_file, load_file
 from vaig.core.config import ContextConfig, Settings
 
-
 # ── Fixtures ──────────────────────────────────────────────
 
 

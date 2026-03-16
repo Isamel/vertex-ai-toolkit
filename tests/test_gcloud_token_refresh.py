@@ -10,13 +10,12 @@ Covers:
 from __future__ import annotations
 
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 from google.auth import exceptions as auth_exceptions
 from google.oauth2.credentials import Credentials as OAuth2Credentials
-
 
 # ══════════════════════════════════════════════════════════════
 # _fetch_gcloud_access_token
@@ -124,9 +123,9 @@ class TestGcloudRefreshHandler:
 
         mock_fetch.return_value = "ya29.refreshed-token"
 
-        before = datetime.now(tz=timezone.utc).replace(tzinfo=None)
+        before = datetime.now(tz=UTC).replace(tzinfo=None)
         token, expiry = _gcloud_refresh_handler(request=None)
-        after = datetime.now(tz=timezone.utc).replace(tzinfo=None)
+        after = datetime.now(tz=UTC).replace(tzinfo=None)
 
         assert token == "ya29.refreshed-token"
         assert isinstance(expiry, datetime)
@@ -197,9 +196,9 @@ class TestGetGcloudTokenCredentials:
 
         mock_fetch.return_value = "ya29.initial-token"
 
-        before = datetime.now(tz=timezone.utc)
+        before = datetime.now(tz=UTC)
         creds = _get_gcloud_token_credentials()
-        after = datetime.now(tz=timezone.utc)
+        after = datetime.now(tz=UTC)
 
         assert creds.expiry is not None
         # google-auth stores expiry as naive UTC — compare accordingly
@@ -248,7 +247,7 @@ class TestTokenRefreshIntegration:
         assert creds.token == "ya29.initial"
 
         # Force expiry so refresh() is triggered (naive UTC as google-auth expects)
-        creds.expiry = datetime.now(tz=timezone.utc).replace(tzinfo=None) - timedelta(minutes=10)
+        creds.expiry = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(minutes=10)
 
         # Refresh should fetch a new token
         mock_request = MagicMock()
@@ -268,7 +267,7 @@ class TestTokenRefreshIntegration:
         assert creds.token == "ya29.initial"
 
         # Expire the token (naive UTC)
-        creds.expiry = datetime.now(tz=timezone.utc).replace(tzinfo=None) - timedelta(minutes=5)
+        creds.expiry = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(minutes=5)
 
         # before_request should detect expiry and refresh
         mock_request = MagicMock()
@@ -310,7 +309,7 @@ class TestTokenRefreshIntegration:
         creds = _get_gcloud_token_credentials()
 
         # Expire the token (naive UTC)
-        creds.expiry = datetime.now(tz=timezone.utc).replace(tzinfo=None) - timedelta(minutes=10)
+        creds.expiry = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(minutes=10)
 
         # Refresh should raise RefreshError (not RuntimeError)
         mock_request = MagicMock()

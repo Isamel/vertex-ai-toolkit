@@ -7,7 +7,7 @@ import json
 import logging
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import aiosqlite
@@ -82,7 +82,7 @@ class SessionStore:
         """Create a new session. Returns the session ID."""
         conn = self._get_conn()
         session_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         conn.execute(
             "INSERT INTO sessions (id, name, model, skill, created_at, updated_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -102,7 +102,7 @@ class SessionStore:
     ) -> None:
         """Add a message to a session."""
         conn = self._get_conn()
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         conn.execute(
             "INSERT INTO messages (session_id, role, content, model, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -167,7 +167,7 @@ class SessionStore:
     ) -> None:
         """Record a context file added to a session."""
         conn = self._get_conn()
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         conn.execute(
             "INSERT INTO context_files (session_id, file_path, file_type, size_bytes, added_at) VALUES (?, ?, ?, ?, ?)",
             (session_id, file_path, file_type, size_bytes, now),
@@ -204,7 +204,7 @@ class SessionStore:
         existing: dict = json.loads(row["metadata"] or "{}")
         existing.update(metadata)
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         conn.execute(
             "UPDATE sessions SET metadata = ?, updated_at = ? WHERE id = ?",
             (json.dumps(existing), now, session_id),
@@ -234,7 +234,7 @@ class SessionStore:
             True if the session existed and was renamed, False otherwise.
         """
         conn = self._get_conn()
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         cursor = conn.execute(
             "UPDATE sessions SET name = ?, updated_at = ? WHERE id = ?",
             (new_name, now, session_id),
@@ -299,7 +299,7 @@ class SessionStore:
         async with self._async_lock:
             conn = await self._get_aconn()
             session_id = str(uuid.uuid4())
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
 
             await conn.execute(
                 "INSERT INTO sessions (id, name, model, skill, created_at, updated_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -320,7 +320,7 @@ class SessionStore:
         """Async version of :meth:`add_message`."""
         async with self._async_lock:
             conn = await self._get_aconn()
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
 
             await conn.execute(
                 "INSERT INTO messages (session_id, role, content, model, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -389,7 +389,7 @@ class SessionStore:
         """Async version of :meth:`add_context_file`."""
         async with self._async_lock:
             conn = await self._get_aconn()
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             await conn.execute(
                 "INSERT INTO context_files (session_id, file_path, file_type, size_bytes, added_at) VALUES (?, ?, ?, ?, ?)",
                 (session_id, file_path, file_type, size_bytes, now),
@@ -426,7 +426,7 @@ class SessionStore:
             existing: dict = json.loads(row["metadata"] or "{}")
             existing.update(metadata)
 
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             await conn.execute(
                 "UPDATE sessions SET metadata = ?, updated_at = ? WHERE id = ?",
                 (json.dumps(existing), now, session_id),
@@ -451,7 +451,7 @@ class SessionStore:
         """Async version of :meth:`rename_session`."""
         async with self._async_lock:
             conn = await self._get_aconn()
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             cursor = await conn.execute(
                 "UPDATE sessions SET name = ?, updated_at = ? WHERE id = ?",
                 (new_name, now, session_id),

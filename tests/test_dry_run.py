@@ -19,7 +19,7 @@ from typer.testing import CliRunner
 from vaig.cli.app import app
 from vaig.core.config import Settings
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
-from vaig.tools.base import ToolDef, ToolParam, ToolRegistry
+from vaig.tools.base import ToolDef, ToolRegistry
 
 runner = CliRunner()
 

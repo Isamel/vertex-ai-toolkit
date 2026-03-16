@@ -10,18 +10,14 @@ Covers:
 
 from __future__ import annotations
 
-import time
-from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 import typer
 
 from vaig.cli.commands.live import (
     MINIMUM_WATCH_INTERVAL,
     _run_watch_loop,
 )
-
 
 # ══════════════════════════════════════════════════════════════
 # MINIMUM_WATCH_INTERVAL constant
@@ -428,7 +424,6 @@ class TestWatchValidation:
         # This is verified by the absence of _run_watch_loop call.
         # We test it structurally: MINIMUM_WATCH_INTERVAL exists and
         # the function signature accepts Optional[int] defaulting to None.
-        import inspect
 
         from vaig.cli.commands.live import register
 

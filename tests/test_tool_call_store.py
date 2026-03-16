@@ -10,11 +10,8 @@ import json
 import threading
 from pathlib import Path
 
-import pytest
-
 from vaig.core.tool_call_store import ToolCallStore
 from vaig.tools.base import ToolCallRecord
-
 
 # ---------------------------------------------------------------------------
 # Helpers

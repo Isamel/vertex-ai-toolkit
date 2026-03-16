@@ -9,7 +9,6 @@ import pytest
 
 from vaig.tools.base import ToolResult
 from vaig.tools.gke.mesh import (
-    _CRD_VERSION_CACHE,
     _ISTIO_CRD_VERSIONS,
     _ISTIO_NETWORKING_GROUP,
     _ISTIO_SECURITY_GROUP,

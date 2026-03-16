@@ -9,7 +9,6 @@ import pytest
 from vaig.skills.base import SkillMetadata, SkillPhase
 from vaig.skills.registry import SkillRegistry, _score_skill, _tokenize_query
 
-
 # ── _tokenize_query ──────────────────────────────────────────
 
 

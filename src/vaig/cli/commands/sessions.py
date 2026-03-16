@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.panel import Panel
@@ -22,7 +22,7 @@ def register(sessions_app: typer.Typer) -> None:
 
     @sessions_app.command("list")
     def sessions_list(
-        config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c")] = None,
         limit: Annotated[int, typer.Option("--limit", "-n", help="Max sessions to show")] = 20,
     ) -> None:
         """List recent chat sessions."""
@@ -63,7 +63,7 @@ def register(sessions_app: typer.Typer) -> None:
     @sessions_app.command("delete")
     def sessions_delete(
         session_id: Annotated[str, typer.Argument(help="Session ID to delete")],
-        config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c")] = None,
         force: Annotated[bool, typer.Option("--force", "-f", help="Skip confirmation")] = False,
     ) -> None:
         """Delete a chat session."""
@@ -87,7 +87,7 @@ def register(sessions_app: typer.Typer) -> None:
     def sessions_rename(
         session_id: Annotated[str, typer.Argument(help="Session ID (or prefix) to rename")],
         new_name: Annotated[str, typer.Argument(help="New name for the session")],
-        config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c")] = None,
     ) -> None:
         """Rename a chat session."""
         settings = _helpers._get_settings(config)
@@ -105,7 +105,7 @@ def register(sessions_app: typer.Typer) -> None:
     @sessions_app.command("search")
     def sessions_search(
         query: Annotated[str, typer.Argument(help="Search term (matches session name and message content)")],
-        config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c")] = None,
     ) -> None:
         """Search sessions by name or message content."""
         settings = _helpers._get_settings(config)
@@ -144,7 +144,7 @@ def register(sessions_app: typer.Typer) -> None:
     @sessions_app.command("show")
     def sessions_show(
         session_id: Annotated[str, typer.Argument(help="Session ID (or prefix) to show")],
-        config: Annotated[Optional[str], typer.Option("--config", "-c")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c")] = None,
         messages: Annotated[int, typer.Option("--messages", "-m", help="Number of recent messages to show")] = 10,
     ) -> None:
         """Show detailed information about a session."""

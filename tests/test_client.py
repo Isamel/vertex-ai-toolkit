@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from google.api_core import exceptions as google_exceptions
@@ -18,7 +18,6 @@ from vaig.core.config import (
     SafetySettingConfig,
     Settings,
 )
-
 
 # ── Fixtures ─────────────────────────────────────────────────
 # _reset_settings is provided by conftest.py (autouse)

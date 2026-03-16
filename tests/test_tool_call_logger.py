@@ -10,17 +10,15 @@ Covers:
 
 from __future__ import annotations
 
-import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from vaig.agents.mixins import OnToolCall, ToolLoopMixin, ToolLoopResult
+from vaig.agents.mixins import OnToolCall, ToolLoopMixin
 from vaig.cli.commands.live import ToolCallLogger, _truncate_args
 from vaig.core.client import ToolCallResult
 from vaig.tools.base import ToolDef, ToolParam, ToolRegistry, ToolResult
-
 
 # ── Helpers ──────────────────────────────────────────────────
 
@@ -682,7 +680,6 @@ class TestSuppressStderr:
 
     def test_stderr_suppressed(self) -> None:
         """stderr output inside _suppress_stderr should not reach terminal."""
-        import io
         import os
 
         from vaig.tools.gke._clients import _suppress_stderr

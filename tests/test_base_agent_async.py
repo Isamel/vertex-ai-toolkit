@@ -6,15 +6,14 @@ work correctly for all agent types that extend BaseAgent.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
+from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
 from vaig.agents.specialist import SpecialistAgent
-from vaig.core.client import ChatMessage, GenerationResult, ToolCallResult
+from vaig.core.client import GenerationResult, ToolCallResult
 from vaig.core.config import CodingConfig
 from vaig.core.exceptions import (
     GeminiConnectionError,
@@ -22,7 +21,6 @@ from vaig.core.exceptions import (
     MaxIterationsError,
 )
 from vaig.tools import ToolDef, ToolParam, ToolRegistry, ToolResult
-
 
 # ── Helpers ──────────────────────────────────────────────────
 

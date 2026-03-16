@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
@@ -358,13 +358,13 @@ def gcloud_monitoring_query(
             error=True,
         )
 
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     seconds_ago = interval_minutes * 60
 
     interval = monitoring_types.TimeInterval()
     interval.end_time.FromDatetime(now)
     interval.start_time.FromDatetime(
-        datetime.fromtimestamp(now.timestamp() - seconds_ago, tz=timezone.utc)
+        datetime.fromtimestamp(now.timestamp() - seconds_ago, tz=UTC)
     )
 
     # Build filter — must include metric.type

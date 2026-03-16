@@ -10,7 +10,7 @@ import os
 import sqlite3
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +58,7 @@ class TelemetryEvent:
     event_type: str  # tool_call | api_call | cli_command | skill_use | error | session | orchestrator
     event_name: str  # e.g. "get_pods", "generate", "ask", "gke_diagnostics", "ValueError"
     session_id: str = ""
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     duration_ms: float = 0.0
     metadata_json: str = ""  # JSON string for extensible data
     tokens_in: int = 0
@@ -504,7 +504,7 @@ class TelemetryCollector:
         Returns:
             Number of rows deleted.
         """
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=older_than_days)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
         try:
             conn = self._get_conn()
             cursor = conn.execute(
@@ -678,7 +678,7 @@ class TelemetryCollector:
 
     async def async_clear_events(self, older_than_days: int = 30) -> int:
         """Async version of :meth:`clear_events`."""
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=older_than_days)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
         try:
             conn = await self._get_aconn()
             cursor = await conn.execute(

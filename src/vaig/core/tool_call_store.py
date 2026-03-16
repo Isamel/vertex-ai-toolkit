@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -38,7 +38,7 @@ class ToolCallStore:
     def start_run(self, run_id: str = "") -> str:
         """Start a new execution run. Returns the run_id."""
         self._run_id = run_id or uuid4().hex[:12]
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
         run_dir = self._base_dir / "tool_results" / today
         run_dir.mkdir(parents=True, exist_ok=True)
         self._current_file = run_dir / f"{self._run_id}.jsonl"

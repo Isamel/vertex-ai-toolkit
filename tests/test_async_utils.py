@@ -8,7 +8,6 @@ import pytest
 
 from vaig.core.async_utils import gather_with_errors, run_sync, to_async
 
-
 # ══════════════════════════════════════════════════════════════
 # run_sync
 # ══════════════════════════════════════════════════════════════

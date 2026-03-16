@@ -1336,7 +1336,7 @@ class TestServiceHealthRequiredOutputSections:
 
     def test_base_skill_returns_none(self) -> None:
         """BaseSkill.get_required_output_sections() returns None by default."""
-        from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
+        from vaig.skills.base import BaseSkill, SkillMetadata
 
         class DummySkill(BaseSkill):
             def get_metadata(self) -> SkillMetadata:
@@ -1634,10 +1634,10 @@ class TestPromptSchemaParameterConsistency:
 
     def test_gatherer_no_pod_name_for_kubectl_logs(self) -> None:
         """kubectl_logs uses 'pod' not 'pod_name' — gatherer must not use pod_name."""
-        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
-
         # Find all kubectl_logs references in gatherer
         import re
+
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
         calls = re.findall(r"kubectl_logs\([^)]+\)", HEALTH_GATHERER_PROMPT)
         for call in calls:
@@ -1648,9 +1648,9 @@ class TestPromptSchemaParameterConsistency:
 
     def test_gatherer_no_pod_name_for_get_container_status(self) -> None:
         """get_container_status uses 'name' not 'pod_name'."""
-        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
-
         import re
+
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
         calls = re.findall(r"get_container_status\([^)]+\)", HEALTH_GATHERER_PROMPT)
         for call in calls:
@@ -1661,9 +1661,9 @@ class TestPromptSchemaParameterConsistency:
 
     def test_gatherer_no_previous_for_kubectl_logs(self) -> None:
         """kubectl_logs does NOT have a 'previous' parameter — it's handled automatically."""
-        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
-
         import re
+
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
 
         calls = re.findall(r"kubectl_logs\([^)]+\)", HEALTH_GATHERER_PROMPT)
         for call in calls:
@@ -1674,9 +1674,9 @@ class TestPromptSchemaParameterConsistency:
 
     def test_analyzer_no_pod_name_for_kubectl_logs(self) -> None:
         """kubectl_logs uses 'pod' not 'pod_name' — analyzer must not use pod_name."""
-        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
-
         import re
+
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
         calls = re.findall(r"kubectl_logs\([^)]+\)", HEALTH_ANALYZER_PROMPT)
         for call in calls:

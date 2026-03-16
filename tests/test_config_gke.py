@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from vaig.core.config import GKEConfig, Settings
 
 # _reset_settings is provided by conftest.py (autouse)

@@ -8,18 +8,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vaig.agents.base import AgentConfig, AgentResult, AgentRole
+from vaig.agents.base import AgentResult, AgentRole
 from vaig.agents.coding import (
+    _DESTRUCTIVE_TOOLS,
     CODING_SYSTEM_PROMPT,
     CodingAgent,
-    _DESTRUCTIVE_TOOLS,
     _default_confirm,
 )
 from vaig.core.client import ToolCallResult
 from vaig.core.config import CodingConfig
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools import ToolDef, ToolParam, ToolRegistry, ToolResult
-
 
 # ── Fixtures ─────────────────────────────────────────────────
 # _reset_settings is provided by conftest.py (autouse)

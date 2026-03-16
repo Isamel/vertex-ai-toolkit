@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 import time
+from datetime import UTC
 from typing import TYPE_CHECKING, Any, Protocol
 
 from google.genai import types
@@ -211,7 +212,7 @@ class ToolLoopMixin:
                 # Record tool call for metrics/feedback storage
                 if tool_call_store is not None:
                     try:
-                        from datetime import datetime, timezone
+                        from datetime import datetime
 
                         err_msg_store = (tool_result.output or "")[:500] if tool_result.error else ""
                         record = ToolCallRecord(
@@ -223,7 +224,7 @@ class ToolLoopMixin:
                             error_type="",
                             error_message=err_msg_store,
                             duration_s=tool_duration,
-                            timestamp=datetime.now(timezone.utc).isoformat(),
+                            timestamp=datetime.now(UTC).isoformat(),
                             agent_name=agent_name,
                             run_id=tool_call_store.run_id,
                             iteration=iteration,
@@ -471,7 +472,7 @@ class ToolLoopMixin:
                 # Record tool call for metrics/feedback storage
                 if tool_call_store is not None:
                     try:
-                        from datetime import datetime, timezone
+                        from datetime import datetime
 
                         err_msg_store = (tool_result.output or "")[:500] if tool_result.error else ""
                         record = ToolCallRecord(
@@ -483,7 +484,7 @@ class ToolLoopMixin:
                             error_type="",
                             error_message=err_msg_store,
                             duration_s=tool_duration,
-                            timestamp=datetime.now(timezone.utc).isoformat(),
+                            timestamp=datetime.now(UTC).isoformat(),
                             agent_name=agent_name,
                             run_id=tool_call_store.run_id,
                             iteration=iteration,

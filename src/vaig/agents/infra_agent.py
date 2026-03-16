@@ -5,12 +5,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from google.genai import types
-
-from vaig.agents.utils import deduplicate_response
-
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import OnToolCall, ToolLoopMixin
+from vaig.agents.utils import deduplicate_response
 from vaig.core.client import GeminiClient
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS, GKEConfig, Settings
 from vaig.core.exceptions import MaxIterationsError

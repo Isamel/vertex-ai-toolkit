@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 from vaig.skills.base import BaseSkill, CompositeSkill, SkillMetadata, SkillPhase
-
 
 # ── Helpers ──────────────────────────────────────────────────
 

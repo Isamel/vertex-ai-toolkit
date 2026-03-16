@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -10,8 +10,8 @@ def _age(creation_timestamp: datetime | None) -> str:
     """Return a human-readable age string from a creation timestamp."""
     if creation_timestamp is None:
         return "<unknown>"
-    now = datetime.now(timezone.utc)
-    delta = now - creation_timestamp.replace(tzinfo=timezone.utc) if creation_timestamp.tzinfo is None else now - creation_timestamp
+    now = datetime.now(UTC)
+    delta = now - creation_timestamp.replace(tzinfo=UTC) if creation_timestamp.tzinfo is None else now - creation_timestamp
     total_seconds = int(delta.total_seconds())
     if total_seconds < 0:
         return "0s"

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from vaig.session.store import SessionStore
 
 # store fixture is provided by conftest.py

@@ -8,22 +8,37 @@ works for any X that was previously available via:
 
 from __future__ import annotations
 
+# ── Layer 0: client infrastructure ──────────────────────────
+from ._clients import (
+    _AUTOPILOT_CACHE,
+    _CLIENT_CACHE,
+    _K8S_AVAILABLE,
+    _K8S_IMPORT_ERROR,
+    _cache_key,
+    _create_k8s_clients,
+    _extract_proxy_url_from_kubeconfig,
+    _k8s_unavailable,
+    _query_autopilot_status,
+    clear_autopilot_cache,
+    clear_k8s_client_cache,
+    detect_autopilot,
+)
+
 # ── Layer 2: factory function ────────────────────────────────
 from ._registry import create_gke_tools
 
-# ── Layer 1: read operations (kubectl) ───────────────────────
-from .kubectl import (
-    _describe_resource,
-    _format_describe,
-    _parse_since,
-    async_kubectl_describe,
-    async_kubectl_get,
-    async_kubectl_logs,
-    async_kubectl_top,
-    kubectl_describe,
-    kubectl_get,
-    kubectl_logs,
-    kubectl_top,
+# ── Layer 1: ArgoCD introspection ───────────────────────────
+from .argocd import (
+    argocd_app_diff,
+    argocd_app_history,
+    argocd_app_managed_resources,
+    argocd_app_status,
+    argocd_list_applications,
+    async_argocd_app_diff,
+    async_argocd_app_history,
+    async_argocd_app_managed_resources,
+    async_argocd_app_status,
+    async_argocd_list_applications,
 )
 
 # ── Layer 1: diagnostics ────────────────────────────────────
@@ -45,18 +60,6 @@ from .diagnostics import (
     get_rollout_status,
 )
 
-# ── Layer 1: mutations ──────────────────────────────────────
-from .mutations import (
-    async_kubectl_annotate,
-    async_kubectl_label,
-    async_kubectl_restart,
-    async_kubectl_scale,
-    kubectl_annotate,
-    kubectl_label,
-    kubectl_restart,
-    kubectl_scale,
-)
-
 # ── Layer 1: discovery ──────────────────────────────────────
 from .discovery import (
     async_discover_network_topology,
@@ -65,36 +68,6 @@ from .discovery import (
     discover_network_topology,
     discover_service_mesh,
     discover_workloads,
-)
-
-# ── Layer 1: security ───────────────────────────────────────
-from .security import (
-    ALLOWED_EXEC_COMMANDS,
-    DENIED_PATTERNS,
-    _check_allowed,
-    _check_denied,
-    async_check_rbac,
-    async_exec_command,
-    check_rbac,
-    exec_command,
-)
-
-# ── Layer 1: mesh introspection ─────────────────────────────
-from .mesh import (
-    async_get_mesh_config,
-    async_get_mesh_overview,
-    async_get_mesh_security,
-    async_get_sidecar_status,
-    get_mesh_config,
-    get_mesh_overview,
-    get_mesh_security,
-    get_sidecar_status,
-)
-
-# ── Layer 1: labels ─────────────────────────────────────────
-from .kubectl import (
-    async_kubectl_get_labels,
-    kubectl_get_labels,
 )
 
 # ── Layer 1: Helm introspection ─────────────────────────────
@@ -109,34 +82,58 @@ from .helm import (
     helm_release_values,
 )
 
-# ── Layer 1: ArgoCD introspection ───────────────────────────
-from .argocd import (
-    argocd_app_diff,
-    argocd_app_history,
-    argocd_app_managed_resources,
-    argocd_app_status,
-    argocd_list_applications,
-    async_argocd_app_diff,
-    async_argocd_app_history,
-    async_argocd_app_managed_resources,
-    async_argocd_app_status,
-    async_argocd_list_applications,
+# ── Layer 1: read operations (kubectl) ───────────────────────
+# ── Layer 1: labels ─────────────────────────────────────────
+from .kubectl import (
+    _describe_resource,
+    _format_describe,
+    _parse_since,
+    async_kubectl_describe,
+    async_kubectl_get,
+    async_kubectl_get_labels,
+    async_kubectl_logs,
+    async_kubectl_top,
+    kubectl_describe,
+    kubectl_get,
+    kubectl_get_labels,
+    kubectl_logs,
+    kubectl_top,
 )
 
-# ── Layer 0: client infrastructure ──────────────────────────
-from ._clients import (
-    _AUTOPILOT_CACHE,
-    _CLIENT_CACHE,
-    _K8S_AVAILABLE,
-    _K8S_IMPORT_ERROR,
-    _cache_key,
-    _create_k8s_clients,
-    _extract_proxy_url_from_kubeconfig,
-    _k8s_unavailable,
-    _query_autopilot_status,
-    clear_autopilot_cache,
-    clear_k8s_client_cache,
-    detect_autopilot,
+# ── Layer 1: mesh introspection ─────────────────────────────
+from .mesh import (
+    async_get_mesh_config,
+    async_get_mesh_overview,
+    async_get_mesh_security,
+    async_get_sidecar_status,
+    get_mesh_config,
+    get_mesh_overview,
+    get_mesh_security,
+    get_sidecar_status,
+)
+
+# ── Layer 1: mutations ──────────────────────────────────────
+from .mutations import (
+    async_kubectl_annotate,
+    async_kubectl_label,
+    async_kubectl_restart,
+    async_kubectl_scale,
+    kubectl_annotate,
+    kubectl_label,
+    kubectl_restart,
+    kubectl_scale,
+)
+
+# ── Layer 1: security ───────────────────────────────────────
+from .security import (
+    ALLOWED_EXEC_COMMANDS,
+    DENIED_PATTERNS,
+    _check_allowed,
+    _check_denied,
+    async_check_rbac,
+    async_exec_command,
+    check_rbac,
+    exec_command,
 )
 
 # k8s module aliases — conditionally available (only when kubernetes is installed)
@@ -155,16 +152,6 @@ from ._cache import (
     clear_discovery_cache,
 )
 
-# ── Layer 0: resources ──────────────────────────────────────
-from ._resources import (
-    _CLUSTER_SCOPED_RESOURCES,
-    _KNOWN_K8S_RESOURCES,
-    _RESOURCE_ALIASES,
-    _RESOURCE_API_MAP,
-    _list_resource,
-    _normalise_resource,
-)
-
 # ── Layer 0: formatters ─────────────────────────────────────
 from ._formatters import (
     _age,
@@ -181,6 +168,16 @@ from ._formatters import (
     _pod_ready_count,
     _pod_restarts,
     _pod_status,
+)
+
+# ── Layer 0: resources ──────────────────────────────────────
+from ._resources import (
+    _CLUSTER_SCOPED_RESOURCES,
+    _KNOWN_K8S_RESOURCES,
+    _RESOURCE_ALIASES,
+    _RESOURCE_API_MAP,
+    _list_resource,
+    _normalise_resource,
 )
 
 __all__ = [

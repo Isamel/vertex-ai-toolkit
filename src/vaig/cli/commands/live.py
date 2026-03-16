@@ -5,13 +5,12 @@ from __future__ import annotations
 import logging
 import time
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated, Any, Optional
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
@@ -30,7 +29,6 @@ from vaig.cli._helpers import (
 from vaig.cli.display import print_colored_report
 
 if TYPE_CHECKING:
-    from vaig.agents.base import AgentResult
     from vaig.agents.orchestrator import OrchestratorResult
     from vaig.core.client import GeminiClient
     from vaig.core.config import GKEConfig, Settings
@@ -160,27 +158,27 @@ def register(app: typer.Typer) -> None:
     @track_command
     def live(
         question: Annotated[str, typer.Argument(help="Infrastructure question or investigation task")],
-        config: Annotated[Optional[str], typer.Option("--config", "-c", help="Path to config YAML")] = None,
-        model: Annotated[Optional[str], typer.Option("--model", "-m", help="Model to use")] = None,
-        output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Save response to a file")] = None,
-        format_: Annotated[Optional[str], typer.Option("--format", help="Export format: json, md, html")] = None,
-        skill: Annotated[Optional[str], typer.Option("--skill", "-s", help="SRE skill to apply")] = None,
+        config: Annotated[str | None, typer.Option("--config", "-c", help="Path to config YAML")] = None,
+        model: Annotated[str | None, typer.Option("--model", "-m", help="Model to use")] = None,
+        output: Annotated[Path | None, typer.Option("--output", "-o", help="Save response to a file")] = None,
+        format_: Annotated[str | None, typer.Option("--format", help="Export format: json, md, html")] = None,
+        skill: Annotated[str | None, typer.Option("--skill", "-s", help="SRE skill to apply")] = None,
         auto_skill: Annotated[bool, typer.Option("--auto-skill", help="Auto-detect the best skill based on query")] = False,
-        cluster: Annotated[Optional[str], typer.Option("--cluster", help="GKE cluster name (overrides config)")] = None,
+        cluster: Annotated[str | None, typer.Option("--cluster", help="GKE cluster name (overrides config)")] = None,
         namespace: Annotated[
-            Optional[str], typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)", autocompletion=complete_namespace)
+            str | None, typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)", autocompletion=complete_namespace)
         ] = None,
         project: Annotated[
-            Optional[str], typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)")
+            str | None, typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)")
         ] = None,
         project_id: Annotated[
-            Optional[str], typer.Option("--project-id", help="GCP project ID (overrides config, alias for --project)")
+            str | None, typer.Option("--project-id", help="GCP project ID (overrides config, alias for --project)")
         ] = None,
         location: Annotated[
-            Optional[str], typer.Option("--location", help="GCP location (overrides config)")
+            str | None, typer.Option("--location", help="GCP location (overrides config)")
         ] = None,
         watch: Annotated[
-            Optional[int], typer.Option("--watch", "-w", help="Re-execute every N seconds (polling mode, min 10s)")
+            int | None, typer.Option("--watch", "-w", help="Re-execute every N seconds (polling mode, min 10s)")
         ] = None,
         dry_run: Annotated[
             bool,
@@ -430,13 +428,13 @@ def _run_watch_loop(
 
 
 def _build_gke_config(
-    settings: "Settings",
+    settings: Settings,
     *,
     cluster: str | None = None,
     namespace: str | None = None,
     project_id: str | None = None,
     location: str | None = None,
-) -> "GKEConfig":
+) -> GKEConfig:
     """Build a GKEConfig, applying CLI overrides on top of config file defaults.
 
     Args:
@@ -478,10 +476,10 @@ def _build_gke_config(
 
 def _display_dry_run_plan(
     *,
-    gke_config: "GKEConfig",
+    gke_config: GKEConfig,
     question: str,
-    settings: "Settings",
-    skill: "BaseSkill | None" = None,
+    settings: Settings,
+    skill: BaseSkill | None = None,
     skill_name: str | None = None,
     model_id: str = "",
 ) -> None:
@@ -580,7 +578,7 @@ def _display_dry_run_plan(
     console.print("[dim]Run without --dry-run to execute.[/dim]")
 
 
-def _register_live_tools(gke_config: "GKEConfig", settings: "Settings | None" = None) -> "ToolRegistry":
+def _register_live_tools(gke_config: GKEConfig, settings: Settings | None = None) -> ToolRegistry:
     """Create a ToolRegistry and register GKE + GCloud + plugin tools.
 
     Follows the same try/except ImportError pattern as InfraAgent._register_tools()
@@ -644,10 +642,10 @@ def _register_live_tools(gke_config: "GKEConfig", settings: "Settings | None" = 
 
 
 def _execute_orchestrated_skill(
-    client: "GeminiClient",
-    settings: "Settings",
-    gke_config: "GKEConfig",
-    skill: "BaseSkill",
+    client: GeminiClient,
+    settings: Settings,
+    gke_config: GKEConfig,
+    skill: BaseSkill,
     question: str,
     *,
     output: Path | None = None,
@@ -750,7 +748,7 @@ def _execute_orchestrated_skill(
         raise typer.Exit(1)  # noqa: B904
 
 
-def _show_orchestrated_summary(orch_result: "OrchestratorResult", *, model_id: str = "") -> None:
+def _show_orchestrated_summary(orch_result: OrchestratorResult, *, model_id: str = "") -> None:
     """Display a summary table for an orchestrated skill execution."""
     table = Table(title="Pipeline Summary", show_lines=True)
     table.add_column("Agent", style="cyan")
@@ -772,12 +770,12 @@ def _show_orchestrated_summary(orch_result: "OrchestratorResult", *, model_id: s
 
 
 def _execute_live_mode(
-    client: "GeminiClient",
-    gke_config: "GKEConfig",
+    client: GeminiClient,
+    gke_config: GKEConfig,
     question: str,
     context: str,
     *,
-    settings: "Settings | None" = None,
+    settings: Settings | None = None,
     output: Path | None = None,
     format_: str | None = None,
     skill_name: str | None = None,
@@ -861,12 +859,12 @@ def _execute_live_mode(
 
 
 async def _async_execute_live_mode(
-    client: "GeminiClient",
-    gke_config: "GKEConfig",
+    client: GeminiClient,
+    gke_config: GKEConfig,
     question: str,
     context: str,
     *,
-    settings: "Settings | None" = None,
+    settings: Settings | None = None,
     output: Path | None = None,
     format_: str | None = None,
     skill_name: str | None = None,
@@ -943,10 +941,10 @@ async def _async_execute_live_mode(
 
 
 async def _async_execute_orchestrated_skill(
-    client: "GeminiClient",
-    settings: "Settings",
-    gke_config: "GKEConfig",
-    skill: "BaseSkill",
+    client: GeminiClient,
+    settings: Settings,
+    gke_config: GKEConfig,
+    skill: BaseSkill,
     question: str,
     *,
     output: Path | None = None,

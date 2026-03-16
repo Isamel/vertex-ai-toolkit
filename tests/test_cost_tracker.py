@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timezone
-from unittest.mock import patch
-
-import pytest
+from datetime import UTC, datetime
 
 from vaig.core.config import BudgetConfig
 from vaig.core.cost_tracker import BudgetStatus, CostRecord, CostTracker
-
 
 # ══════════════════════════════════════════════════════════════
 # CostRecord
@@ -35,7 +31,7 @@ class TestCostRecord:
         assert rec.cost == 0.001
 
     def test_timestamp_defaults_to_utc_now(self) -> None:
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         rec = CostRecord(
             model_id="gemini-2.5-pro",
             prompt_tokens=0,
@@ -43,11 +39,11 @@ class TestCostRecord:
             thinking_tokens=0,
             cost=0.0,
         )
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
         assert before <= rec.timestamp <= after
 
     def test_custom_timestamp(self) -> None:
-        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        ts = datetime(2025, 1, 1, tzinfo=UTC)
         rec = CostRecord(
             model_id="gemini-2.5-pro",
             prompt_tokens=0,

@@ -57,7 +57,7 @@ def colorize_severity(text: str) -> str:
         The text with Rich-markup-wrapped severity keywords.
     """
     for pat, style in _SEVERITY_RULES:
-        text = pat.sub(lambda m: f"[{style}]{m.group(0)}[/{style}]", text)
+        text = pat.sub(lambda m, s=style: f"[{s}]{m.group(0)}[/{s}]", text)
     return text
 
 
