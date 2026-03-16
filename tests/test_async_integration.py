@@ -154,11 +154,11 @@ class TestAsyncSessionLifecycle:
     """Test async session: create -> save messages -> load -> verify."""
 
     @pytest.fixture()
-    def session_store(self, tmp_path: Path) -> SessionStore:
+    async def session_store(self, tmp_path: Path) -> SessionStore:
         db = tmp_path / "test_integration_sessions.db"
         s = SessionStore(db)
         yield s  # type: ignore[misc]
-        s.close()
+        await s.async_close()
 
     async def test_async_session_create_and_load(self, session_store: SessionStore) -> None:
         """Create session async, then load it back async."""
@@ -254,10 +254,10 @@ class TestAsyncTelemetry:
     """Test async telemetry flush and query operations."""
 
     @pytest.fixture()
-    def telem(self, tmp_path: Path) -> TelemetryCollector:
+    async def telem(self, tmp_path: Path) -> TelemetryCollector:
         c = TelemetryCollector(db_path=tmp_path / "test_telem.db", enabled=True, buffer_size=5)
         yield c  # type: ignore[misc]
-        c.close()
+        await c.async_close()
 
     async def test_async_flush_persists_events(self, telem: TelemetryCollector) -> None:
         """Events emitted sync are flushed async to SQLite."""
@@ -608,7 +608,7 @@ class TestCrossLayerAsyncWiring:
             messages = await store.async_get_messages(session.id)
             assert len(messages) == 2
         finally:
-            store.close()
+            await store.async_close()
 
     async def test_telemetry_and_session_async_coexistence(self, tmp_path: Path) -> None:
         """Telemetry and session can both use aiosqlite concurrently."""
@@ -645,8 +645,8 @@ class TestCrossLayerAsyncWiring:
             events = await telem.async_query_events(limit=5)
             assert len(events) >= 1
         finally:
-            store.close()
-            telem.close()
+            await store.async_close()
+            await telem.async_close()
 
     async def test_parallel_agent_execution_with_gather(self) -> None:
         """Multiple agents can execute in parallel via gather_with_errors."""

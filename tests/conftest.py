@@ -17,7 +17,7 @@ import pytest
 
 from vaig.core.client import GenerationResult
 from vaig.core.config import reset_settings
-from vaig.core.telemetry import TelemetryCollector
+from vaig.core.telemetry import TelemetryCollector, reset_telemetry_collector
 from vaig.session.store import SessionStore
 
 # ── Settings singleton reset ────────────────────────────────
@@ -27,13 +27,16 @@ from vaig.session.store import SessionStore
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings() -> None:
-    """Reset the Settings singleton between tests.
+def _reset_settings() -> Generator[None, None, None]:
+    """Reset the Settings and Telemetry singletons between tests.
 
     This prevents cross-test contamination when any test constructs
-    or mutates a ``Settings`` instance.
+    or mutates a ``Settings`` instance, and ensures orphaned aiosqlite
+    connections from the telemetry collector are cleaned up.
     """
     reset_settings()
+    yield
+    reset_telemetry_collector()
 
 
 # ── Session store ────────────────────────────────────────────

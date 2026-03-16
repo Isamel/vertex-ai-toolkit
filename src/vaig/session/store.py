@@ -267,11 +267,23 @@ class SessionStore:
         return dict(row) if row else None
 
     def close(self) -> None:
-        """Close the database connection."""
+        """Close the database connection.
+
+        Also cleans up any orphaned aiosqlite connection to prevent
+        worker-thread leaks (e.g. when sync close is called after async usage).
+        """
         if self._conn:
             self._conn.close()
             self._conn = None
-        # Async connection is closed separately via async_close()
+        if self._aconn:
+            # Can't await in sync code, so use aiosqlite's stop() which
+            # puts a sentinel on the worker thread's queue, causing it to
+            # close the connection and exit cleanly.
+            try:
+                self._aconn.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._aconn = None
 
     # ── Async connection management ──────────────────────────
 

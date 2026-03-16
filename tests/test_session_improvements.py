@@ -449,7 +449,7 @@ class TestAsyncSessionManager:
         assert session.model == "gemini-2.5-pro"
         assert mgr.active is not None
         assert mgr.active.id == session.id
-        mgr.close()
+        await mgr.async_close()
 
     async def test_async_add_message(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -463,7 +463,7 @@ class TestAsyncSessionManager:
         assert mgr.active is not None
         assert len(mgr.active.history) == 2
         assert mgr.active.history[0].content == "Hello async!"
-        mgr.close()
+        await mgr.async_close()
 
     async def test_async_add_message_no_session_raises(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -472,7 +472,7 @@ class TestAsyncSessionManager:
         mgr = SessionManager(settings)
         with pytest.raises(RuntimeError, match="No active session"):
             await mgr.async_add_message("user", "Should fail")
-        mgr.close()
+        await mgr.async_close()
 
     async def test_async_add_message_persists(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -485,7 +485,7 @@ class TestAsyncSessionManager:
         messages = await mgr.async_get_session_messages(session.id)
         assert len(messages) == 1
         assert messages[0]["content"] == "Persisted msg"
-        mgr.close()
+        await mgr.async_close()
 
     async def test_async_load_session(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -503,8 +503,8 @@ class TestAsyncSessionManager:
         assert loaded is not None
         assert loaded.name == "to-load"
         assert len(loaded.history) == 2
-        mgr.close()
-        mgr2.close()
+        await mgr.async_close()
+        await mgr2.async_close()
 
     async def test_async_load_session_not_found(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -513,7 +513,7 @@ class TestAsyncSessionManager:
         mgr = SessionManager(settings)
         result = await mgr.async_load_session("nonexistent-id")
         assert result is None
-        mgr.close()
+        await mgr.async_close()
 
     async def test_async_list_sessions(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -525,7 +525,7 @@ class TestAsyncSessionManager:
 
         sessions = await mgr.async_list_sessions()
         assert len(sessions) == 2
-        mgr.close()
+        await mgr.async_close()
 
     async def test_async_list_sessions_limit(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -537,7 +537,7 @@ class TestAsyncSessionManager:
 
         sessions = await mgr.async_list_sessions(limit=2)
         assert len(sessions) == 2
-        mgr.close()
+        await mgr.async_close()
 
     async def test_async_delete_session(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -548,7 +548,7 @@ class TestAsyncSessionManager:
         result = await mgr.async_delete_session(s.id)
         assert result is True
         assert mgr.active is None  # active session cleared
-        mgr.close()
+        await mgr.async_close()
 
     async def test_async_rename_session(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -560,7 +560,7 @@ class TestAsyncSessionManager:
         assert result is True
         assert mgr.active is not None
         assert mgr.active.name == "new-name"
-        mgr.close()
+        await mgr.async_close()
 
     async def test_async_search_sessions(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -573,7 +573,7 @@ class TestAsyncSessionManager:
         results = await mgr.async_search_sessions("rca")
         assert len(results) == 1
         assert results[0]["name"] == "rca-incident"
-        mgr.close()
+        await mgr.async_close()
 
     async def test_async_get_last_session(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -586,7 +586,7 @@ class TestAsyncSessionManager:
         last = await mgr.async_get_last_session()
         assert last is not None
         assert last["name"] == "second"
-        mgr.close()
+        await mgr.async_close()
 
     async def test_async_resume_last_session(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -602,8 +602,8 @@ class TestAsyncSessionManager:
         assert loaded is not None
         assert loaded.name == "second"
         assert loaded.id == s2.id
-        mgr.close()
-        mgr2.close()
+        await mgr.async_close()
+        await mgr2.async_close()
 
     async def test_async_resume_last_session_empty(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -612,7 +612,7 @@ class TestAsyncSessionManager:
         mgr = SessionManager(settings)
         result = await mgr.async_resume_last_session()
         assert result is None
-        mgr.close()
+        await mgr.async_close()
 
     async def test_async_save_and_load_cost_data(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -627,7 +627,7 @@ class TestAsyncSessionManager:
         loaded = await mgr.async_load_cost_data(s.id)
         assert loaded is not None
         assert loaded["total_cost"] == 0.05
-        mgr.close()
+        await mgr.async_close()
 
     async def test_async_save_cost_data_no_session(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -636,7 +636,7 @@ class TestAsyncSessionManager:
         mgr = SessionManager(settings)
         result = await mgr.async_save_cost_data({"total": 0})
         assert result is False
-        mgr.close()
+        await mgr.async_close()
 
     async def test_async_close(self, tmp_path: Path) -> None:
         from vaig.session.manager import SessionManager
@@ -646,4 +646,3 @@ class TestAsyncSessionManager:
         await mgr.async_new_session("close-test")
         await mgr.async_close()
         assert mgr._store._aconn is None
-        mgr.close()

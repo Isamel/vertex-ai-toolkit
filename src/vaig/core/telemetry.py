@@ -703,7 +703,14 @@ class TelemetryCollector:
             if self._conn:
                 self._conn.close()
                 self._conn = None
-            # Async connection is closed separately via async_close()
+        if self._aconn:
+            # Can't await in sync code, so use aiosqlite's stop() which
+            # signals the worker thread to close and exit cleanly.
+            try:
+                self._aconn.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._aconn = None
 
     async def async_close(self) -> None:
         """Flush remaining events asynchronously and close both connections."""
