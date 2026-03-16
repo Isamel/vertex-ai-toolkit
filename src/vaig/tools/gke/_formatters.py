@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _age(creation_timestamp: datetime | None) -> str:
@@ -254,16 +257,66 @@ def _format_crds_table(items: list[Any], wide: bool = False) -> str:
     return "\n".join(lines)
 
 
+_SECRET_REDACTED = "[REDACTED]"
+
+
+def _redact_secret_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Redact ``data`` and ``stringData`` fields from a single K8s Secret dict.
+
+    Replaces every value inside ``data`` / ``stringData`` with ``[REDACTED]``
+    and appends a ``_redacted_note`` field with the count of redacted keys.
+
+    The original dict is **not** mutated — a shallow copy is returned with the
+    affected fields replaced.
+    """
+    redacted = dict(item)  # shallow copy
+
+    for field in ("data", "stringData"):
+        section = redacted.get(field)
+        if not isinstance(section, dict) or not section:
+            continue
+        key_count = len(section)
+        redacted[field] = dict.fromkeys(section, _SECRET_REDACTED)
+        # Add a note so the LLM knows keys were stripped
+        note_key = f"_{field}_redacted_note"
+        redacted[note_key] = f"{key_count} key(s) redacted for security"
+
+    return redacted
+
+
+def _redact_k8s_secret_data(
+    serialised: list[Any],
+) -> list[Any]:
+    """Redact secret data from a list of serialised K8s resource dicts.
+
+    Each item that looks like a Secret (has ``kind == 'Secret'`` or contains
+    a ``data`` / ``stringData`` dict) gets its values replaced with
+    ``[REDACTED]``.  Items that are *not* Secrets pass through unchanged.
+
+    This is intentionally safe — if anything unexpected happens we return
+    the input unmodified rather than crashing.
+    """
+    try:
+        return [_redact_secret_item(item) for item in serialised]
+    except Exception:
+        logger.warning("Failed to redact secret data — returning unredacted output")
+        return serialised
+
+
 def _format_items(resource: str, items: list[Any], output_format: str) -> str:
     """Format a list of K8s items into the requested output_format."""
     import json as _json
 
     from kubernetes import client as k8s_client  # noqa: WPS433
 
+    is_secret = resource == "secrets"
+
     if output_format == "json":
         # Use a single ApiClient for serialisation (not one per item)
         api = k8s_client.ApiClient()
         serialised = [api.sanitize_for_serialization(i) for i in items]
+        if is_secret:
+            serialised = _redact_k8s_secret_data(serialised)
         return _json.dumps(serialised, indent=2, default=str)
 
     if output_format == "yaml":
@@ -273,6 +326,8 @@ def _format_items(resource: str, items: list[Any], output_format: str) -> str:
             return "PyYAML is not installed. Use output_format='json' instead."
         api = k8s_client.ApiClient()
         serialised = [api.sanitize_for_serialization(i) for i in items]
+        if is_secret:
+            serialised = _redact_k8s_secret_data(serialised)
         return str(_yaml.dump_all(serialised, default_flow_style=False))
 
     # Table or wide

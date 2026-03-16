@@ -136,10 +136,13 @@ def exec_command(
 
     ns = namespace or gke_config.default_namespace
 
-    result = _clients._create_k8s_clients(gke_config)
-    if isinstance(result, ToolResult):
-        return result
-    core_v1, _, _, _ = result
+    # Use a dedicated, disposable K8s client for exec.
+    # kubernetes.stream.stream() mutates the ApiClient's request method to
+    # set up WebSocket connections; using the shared cached client would
+    # corrupt it for subsequent non-exec API calls.
+    exec_client = _clients.get_exec_client(gke_config)
+    if isinstance(exec_client, ToolResult):
+        return exec_client
 
     try:
         # Lazy-import stream to keep it optional
@@ -159,7 +162,7 @@ def exec_command(
             exec_kwargs["container"] = container
 
         resp = k8s_stream(
-            core_v1.connect_get_namespaced_pod_exec,
+            exec_client.connect_get_namespaced_pod_exec,
             **exec_kwargs,
         )
 
@@ -202,6 +205,9 @@ def exec_command(
         return ToolResult(output=f"K8s API error ({exc.status}): {exc.reason}", error=True)
     except Exception as exc:  # noqa: BLE001
         return ToolResult(output=f"Error executing command: {exc}", error=True)
+    finally:
+        # Close the disposable client to release connection resources.
+        exec_client.api_client.close()
 
 
 # ── check_rbac ───────────────────────────────────────────────

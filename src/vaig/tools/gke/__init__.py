@@ -10,18 +10,10 @@ from __future__ import annotations
 
 # ── Layer 0: client infrastructure ──────────────────────────
 from ._clients import (
-    _AUTOPILOT_CACHE,
-    _CLIENT_CACHE,
-    _K8S_AVAILABLE,
-    _K8S_IMPORT_ERROR,
-    _cache_key,
-    _create_k8s_clients,
-    _extract_proxy_url_from_kubeconfig,
-    _k8s_unavailable,
-    _query_autopilot_status,
     clear_autopilot_cache,
     clear_k8s_client_cache,
     detect_autopilot,
+    get_exec_client,
 )
 
 # ── Layer 2: factory function ────────────────────────────────
@@ -43,11 +35,6 @@ from .argocd import (
 
 # ── Layer 1: diagnostics ────────────────────────────────────
 from .diagnostics import (
-    _find_current_revision,
-    _format_container_section,
-    _format_node_detail,
-    _format_nodes_summary,
-    _format_revision_detail,
     async_get_container_status,
     async_get_events,
     async_get_node_conditions,
@@ -85,9 +72,6 @@ from .helm import (
 # ── Layer 1: read operations (kubectl) ───────────────────────
 # ── Layer 1: labels ─────────────────────────────────────────
 from .kubectl import (
-    _describe_resource,
-    _format_describe,
-    _parse_since,
     async_kubectl_describe,
     async_kubectl_get,
     async_kubectl_get_labels,
@@ -128,8 +112,6 @@ from .mutations import (
 from .security import (
     ALLOWED_EXEC_COMMANDS,
     DENIED_PATTERNS,
-    _check_allowed,
-    _check_denied,
     async_check_rbac,
     async_exec_command,
     check_rbac,
@@ -144,41 +126,16 @@ except ImportError:
 
 # ── Layer 0: discovery cache ────────────────────────────────
 from ._cache import (
-    _DISCOVERY_CACHE,
-    _DISCOVERY_TTL,
-    _cache_key_discovery,
-    _get_cached,
-    _set_cache,
     clear_discovery_cache,
 )
 
 # ── Layer 0: formatters ─────────────────────────────────────
-from ._formatters import (
-    _age,
-    _format_crds_table,
-    _format_deployments_table,
-    _format_generic_table,
-    _format_items,
-    _format_memory,
-    _format_nodes_table,
-    _format_pods_table,
-    _format_services_table,
-    _format_webhook_config,
-    _format_webhooks_table,
-    _pod_ready_count,
-    _pod_restarts,
-    _pod_status,
-)
+# Private formatter symbols are available via direct submodule import
+# (e.g., from vaig.tools.gke._formatters import _redact_secret_item)
 
 # ── Layer 0: resources ──────────────────────────────────────
-from ._resources import (
-    _CLUSTER_SCOPED_RESOURCES,
-    _KNOWN_K8S_RESOURCES,
-    _RESOURCE_ALIASES,
-    _RESOURCE_API_MAP,
-    _list_resource,
-    _normalise_resource,
-)
+# Private resource symbols are available via direct submodule import
+# (e.g., from vaig.tools.gke._resources import _RESOURCE_API_MAP)
 
 __all__ = [
     # Factory
@@ -188,9 +145,6 @@ __all__ = [
     "kubectl_describe",
     "kubectl_logs",
     "kubectl_top",
-    "_describe_resource",
-    "_format_describe",
-    "_parse_since",
     # kubectl read ops (async)
     "async_kubectl_get",
     "async_kubectl_describe",
@@ -202,11 +156,6 @@ __all__ = [
     "get_node_conditions",
     "get_container_status",
     "get_rollout_history",
-    "_format_container_section",
-    "_format_nodes_summary",
-    "_format_node_detail",
-    "_find_current_revision",
-    "_format_revision_detail",
     # Diagnostics (async)
     "async_get_events",
     "async_get_rollout_status",
@@ -234,8 +183,6 @@ __all__ = [
     # Security (sync)
     "exec_command",
     "check_rbac",
-    "_check_denied",
-    "_check_allowed",
     "DENIED_PATTERNS",
     "ALLOWED_EXEC_COMMANDS",
     # Security (async)
@@ -277,49 +224,14 @@ __all__ = [
     "async_argocd_app_history",
     "async_argocd_app_diff",
     "async_argocd_app_managed_resources",
-    # Client infrastructure
-    "_K8S_AVAILABLE",
-    "_K8S_IMPORT_ERROR",
-    "_CLIENT_CACHE",
-    "_AUTOPILOT_CACHE",
-    "_k8s_unavailable",
-    "_create_k8s_clients",
+    # Client infrastructure (public)
     "detect_autopilot",
     "clear_autopilot_cache",
     "clear_k8s_client_cache",
-    "_cache_key",
-    "_extract_proxy_url_from_kubeconfig",
-    "_query_autopilot_status",
+    "get_exec_client",
     "k8s_client",
     "k8s_config",
     "k8s_exceptions",
-    # Discovery cache
-    "_DISCOVERY_CACHE",
-    "_DISCOVERY_TTL",
-    "_cache_key_discovery",
-    "_get_cached",
-    "_set_cache",
+    # Discovery cache (public)
     "clear_discovery_cache",
-    # Resources
-    "_RESOURCE_API_MAP",
-    "_RESOURCE_ALIASES",
-    "_CLUSTER_SCOPED_RESOURCES",
-    "_KNOWN_K8S_RESOURCES",
-    "_normalise_resource",
-    "_list_resource",
-    # Formatters
-    "_age",
-    "_pod_status",
-    "_pod_restarts",
-    "_pod_ready_count",
-    "_format_pods_table",
-    "_format_deployments_table",
-    "_format_services_table",
-    "_format_nodes_table",
-    "_format_generic_table",
-    "_format_items",
-    "_format_memory",
-    "_format_webhook_config",
-    "_format_webhooks_table",
-    "_format_crds_table",
 ]
