@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from vaig.core.client import ChatMessage
 from vaig.core.config import DEFAULT_CHARS_PER_TOKEN
+from vaig.core.prompt_defense import ANTI_INJECTION_RULE, wrap_untrusted_content
 
 if TYPE_CHECKING:
     from vaig.core.client import GeminiClient
@@ -21,7 +22,8 @@ logger = logging.getLogger(__name__)
 # ── Summarization system prompt ──────────────────────────────
 # Anti-hallucination rules are embedded directly in the prompt.
 
-SUMMARIZATION_PROMPT = """\
+_SUMMARIZATION_BODY = """\
+
 You are a conversation summarizer for a DevOps/SRE AI assistant.
 
 Your task is to produce a concise summary of the conversation messages below.
@@ -53,6 +55,8 @@ Produce a single block of text (no markdown headers) that reads as a chronologic
 narrative summary. Start with "[CONVERSATION SUMMARY]" on the first line.
 Keep the summary under {target_tokens} tokens (roughly {target_chars} characters).
 """
+
+SUMMARIZATION_PROMPT = ANTI_INJECTION_RULE + _SUMMARIZATION_BODY
 
 
 def estimate_tokens(text: str, *, chars_per_token: float = DEFAULT_CHARS_PER_TOKEN) -> int:
@@ -149,11 +153,14 @@ class HistorySummarizer:
                 content="[CONVERSATION SUMMARY]\nNo prior conversation.",
             )
 
-        # Build a textual representation of the messages for the model
+        # Build a textual representation of the messages for the model.
+        # Wrap each message with untrusted-content delimiters because the
+        # history may contain tool outputs from external systems (pod logs,
+        # kubectl output, etc.) that could carry adversarial content.
         parts: list[str] = []
         for msg in messages:
             role_label = msg.role.upper()
-            parts.append(f"[{role_label}]: {msg.content}")
+            parts.append(f"[{role_label}]: {wrap_untrusted_content(msg.content)}")
         conversation_text = "\n\n".join(parts)
 
         logger.info(

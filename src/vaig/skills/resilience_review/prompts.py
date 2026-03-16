@@ -1,6 +1,15 @@
 """Resilience Review Skill — prompts for failure mode analysis and chaos engineering planning."""
 
-SYSTEM_INSTRUCTION = """You are a Principal Reliability Architect and Chaos Engineering Lead with 15+ years \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Principal Reliability Architect and Chaos Engineering Lead with 15+ years \
 of experience designing, validating, and improving resilience in distributed systems across financial \
 services, cloud infrastructure, e-commerce platforms, and safety-critical systems.
 
@@ -128,15 +137,17 @@ misconfigured circuit breakers are worse than no circuit breakers
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Failure Mode Enumeration & Mitigation Assessment
+    "analyze": f"""## Phase: Failure Mode Enumeration & Mitigation Assessment
 
 Enumerate failure modes per component and assess existing resilience mitigations.
 
 ### System Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Component Inventory**: List every component with its criticality rating (Critical / \
@@ -161,15 +172,17 @@ idempotency, timeout cascade risks
 Format as a structured failure mode analysis report with mitigation status per component.
 """,
 
-    "plan": """## Phase: Chaos Experiment Design & Resilience Improvement Plan
+    "plan": f"""## Phase: Chaos Experiment Design & Resilience Improvement Plan
 
 Design chaos experiments for unvalidated resilience claims and plan improvements for gaps.
 
 ### System Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Failure mode analysis:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Chaos Experiment Catalog**: For each unvalidated resilience claim, design an experiment:
@@ -206,15 +219,17 @@ Long-term (automated chaos in CI/CD)
 Format as a prioritized resilience improvement plan with experiment specifications.
 """,
 
-    "execute": """## Phase: Resilience Implementation Guidance
+    "execute": f"""## Phase: Resilience Implementation Guidance
 
 Provide detailed implementation guidance for resilience improvements and chaos experiments.
 
 ### System Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Resilience plan:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Circuit Breaker Configurations**: For each service needing a circuit breaker:
@@ -251,15 +266,17 @@ Provide detailed implementation guidance for resilience improvements and chaos e
 Provide copy-paste-ready configurations and code patterns for the technology stack in use.
 """,
 
-    "validate": """## Phase: Resilience Review Validation
+    "validate": f"""## Phase: Resilience Review Validation
 
 Validate completeness of the resilience analysis and experiment designs.
 
 ### System Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Resilience review results:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Failure Mode Coverage**: Verify all critical failure modes were enumerated. Check for \
@@ -283,15 +300,17 @@ centralized auth services, DNS, certificate authorities)
 Format as a validation checklist with pass/fail/warning status for each item.
 """,
 
-    "report": """## Phase: Resilience Review Report
+    "report": f"""## Phase: Resilience Review Report
 
 Generate a comprehensive resilience review report with scorecard and improvement roadmap.
 
 ### System Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Resilience review results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

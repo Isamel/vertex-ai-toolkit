@@ -1,6 +1,15 @@
 """Change Risk Skill — prompts for change risk assessment and deployment safety analysis."""
 
-SYSTEM_INSTRUCTION = """You are a Principal Release Engineering and Change Management Specialist with \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Principal Release Engineering and Change Management Specialist with \
 15+ years of experience evaluating deployment risk across high-availability production systems, \
 financial platforms, healthcare infrastructure, and large-scale SaaS products.
 
@@ -103,15 +112,17 @@ can understand while preserving technical accuracy
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Change Scope Analysis
+    "analyze": f"""## Phase: Change Scope Analysis
 
 Analyze the change scope to understand what is being modified and what systems are affected.
 
 ### Change Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Change Inventory**: Catalog all changes — files modified, lines added/removed/changed, \
@@ -131,15 +142,17 @@ whether kill switches are properly configured
 Format as a structured change inventory with impact classification for each component.
 """,
 
-    "plan": """## Phase: Risk Scoring & Blast Radius Assessment
+    "plan": f"""## Phase: Risk Scoring & Blast Radius Assessment
 
 Score the change risk and estimate blast radius based on the change scope analysis.
 
 ### Change Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Change analysis:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Risk Factor Scoring**: Score each dimension (1–5 scale):
@@ -165,15 +178,17 @@ success criteria for each stage
 Format as a risk assessment matrix with scores, blast radius diagram (text), and rollback plan.
 """,
 
-    "execute": """## Phase: Pre-Deployment Checklist & CAB Summary
+    "execute": f"""## Phase: Pre-Deployment Checklist & CAB Summary
 
 Produce the deployment readiness checklist and CAB-ready summary.
 
 ### Change Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Risk assessment:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Pre-Deployment Checklist**: Generate a checklist customized to this specific change \
@@ -205,15 +220,17 @@ including specific metrics and thresholds that indicate problems
 Provide actionable, copy-paste-ready checklists and runbooks.
 """,
 
-    "validate": """## Phase: Risk Assessment Validation
+    "validate": f"""## Phase: Risk Assessment Validation
 
 Validate the completeness and accuracy of the risk assessment.
 
 ### Change Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Risk assessment results:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Change Completeness**: Verify all changed files and services were accounted for in \
@@ -237,15 +254,17 @@ classification. Provide final go/no-go recommendation with conditions
 Format as a validation checklist with pass/fail/warning status for each item.
 """,
 
-    "report": """## Phase: Change Risk Assessment Report
+    "report": f"""## Phase: Change Risk Assessment Report
 
 Generate a comprehensive change risk assessment suitable for CAB review and deployment approval.
 
 ### Change Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Assessment results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

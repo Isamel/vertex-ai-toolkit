@@ -1,6 +1,15 @@
 """Capacity Planning Skill — prompts for resource capacity forecasting and scaling."""
 
-SYSTEM_INSTRUCTION = """You are a Senior Infrastructure Capacity Planner with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior Infrastructure Capacity Planner with 15+ years of experience \
 in capacity modeling for high-scale distributed systems serving millions of users.
 
 ## Your Expertise
@@ -42,16 +51,18 @@ MEDIUM (< 90 days), LOW (informational)
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Resource Utilization Analysis
+    "analyze": f"""## Phase: Resource Utilization Analysis
 
 Analyze current resource utilization, historical growth trends, and traffic patterns to establish \
 a capacity baseline and identify services approaching their limits.
 
 ### Infrastructure Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Current Utilization Snapshot**: For each service/component, assess utilization across all \
@@ -88,16 +99,18 @@ Format your response as a structured capacity analysis with summary tables showi
 percentages, headroom, and risk ratings (CRITICAL / HIGH / MEDIUM / LOW) for each resource.
 """,
 
-    "plan": """## Phase: Capacity Scaling Plan
+    "plan": f"""## Phase: Capacity Scaling Plan
 
 Based on the utilization analysis, create a comprehensive capacity scaling plan with concrete \
 projections and actionable scaling strategies.
 
 ### Infrastructure Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis results so far:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Growth Projections**: For each constrained resource, provide demand forecasts at:
@@ -144,16 +157,18 @@ CDN offload. Higher effort but potentially better long-term economics.
 Format as an actionable scaling playbook with clear ownership, timelines, and decision points.
 """,
 
-    "report": """## Phase: Capacity Planning Report
+    "report": f"""## Phase: Capacity Planning Report
 
 Generate a comprehensive capacity planning report suitable for engineering leadership and \
 infrastructure stakeholders.
 
 ### Infrastructure Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Planning results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

@@ -1,6 +1,15 @@
 """Cost Analysis Skill — prompts for cloud cost analysis and FinOps optimization."""
 
-SYSTEM_INSTRUCTION = """You are a Senior FinOps Practitioner and Cloud Economist with 12+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior FinOps Practitioner and Cloud Economist with 12+ years of experience \
 managing cloud spend across AWS, GCP, and Azure for organizations ranging from startups to Fortune 100 enterprises.
 
 ## Your Expertise
@@ -43,15 +52,17 @@ balancers, unused elastic IPs, stale snapshots, and zombie instances
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Cloud Cost Analysis
+    "analyze": f"""## Phase: Cloud Cost Analysis
 
 Analyze the provided cloud cost data to identify waste, optimization opportunities, and savings potential.
 
 ### Billing Data / Resource Configuration / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Spend Overview**: Summarize total spend, top cost drivers by service and resource type, \
@@ -89,15 +100,17 @@ Format your response as a structured cost analysis with a summary table of all f
 sorted by estimated savings (highest first).
 """,
 
-    "report": """## Phase: FinOps Optimization Report
+    "report": f"""## Phase: FinOps Optimization Report
 
 Generate a comprehensive FinOps report from the analysis findings.
 
 ### Billing Data / Resource Configuration / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis Results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

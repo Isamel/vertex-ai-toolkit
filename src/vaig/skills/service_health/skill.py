@@ -14,11 +14,11 @@ from typing import Any
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.skills.service_health.prompts import (
     HEALTH_ANALYZER_PROMPT,
-    HEALTH_GATHERER_PROMPT,
     HEALTH_REPORTER_PROMPT,
     HEALTH_VERIFIER_PROMPT,
     PHASE_PROMPTS,
     SYSTEM_INSTRUCTION,
+    build_gatherer_prompt,
 )
 
 
@@ -110,13 +110,24 @@ class ServiceHealthSkill(BaseSkill):
         ``SpecialistAgent.from_config_dict`` read the ``system_instruction``
         key.  The ``system_prompt`` alias is accepted as a backward-compat
         fallback by ``ToolAwareAgent`` but is no longer needed here.
+
+        The gatherer prompt's tool reference table is built dynamically
+        based on ``gke.helm_enabled`` and ``gke.argocd_enabled`` settings,
+        so disabled tools are omitted from the prompt (R4).
         """
+        from vaig.core.config import get_settings
+
+        settings = get_settings()
+        gatherer_prompt = build_gatherer_prompt(
+            helm_enabled=settings.gke.helm_enabled,
+            argocd_enabled=settings.gke.argocd_enabled,
+        )
         return [
             {
                 "name": "health_gatherer",
                 "role": "Health Data Gatherer",
                 "requires_tools": True,
-                "system_instruction": HEALTH_GATHERER_PROMPT,
+                "system_instruction": gatherer_prompt,
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,  # Deterministic — gatherer follows a procedure, no creativity needed
                 "frequency_penalty": 0.3,  # Discourage repetitive tool call patterns

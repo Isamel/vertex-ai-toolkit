@@ -1,6 +1,15 @@
 """Config Audit Skill — prompts for infrastructure and application configuration auditing."""
 
-SYSTEM_INSTRUCTION = """You are a Senior SRE / Security Engineer with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior SRE / Security Engineer with 15+ years of experience \
 auditing infrastructure and application configurations across cloud-native environments.
 
 ## Your Expertise
@@ -33,15 +42,17 @@ clear justification
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Configuration Analysis
+    "analyze": f"""## Phase: Configuration Analysis
 
 Scan the provided configuration files for security vulnerabilities and reliability risks.
 
 ### Configuration Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Security Findings**: Identify security misconfigurations — exposed secrets, overly \
@@ -61,15 +72,17 @@ Format your response as a structured audit findings table with severity, categor
 description, and confidence level for each finding.
 """,
 
-    "report": """## Phase: Audit Report
+    "report": f"""## Phase: Audit Report
 
 Generate a comprehensive configuration audit report with findings and fix recommendations.
 
 ### Configuration Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Audit results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

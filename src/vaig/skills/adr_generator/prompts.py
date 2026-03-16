@@ -1,6 +1,15 @@
 """ADR Generator Skill — prompts for architecture decision record generation."""
 
-SYSTEM_INSTRUCTION = """You are a Senior Technical Writer and Software Architect with 15+ years of \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior Technical Writer and Software Architect with 15+ years of \
 experience authoring Architecture Decision Records (ADRs) for large-scale enterprise systems and \
 open-source projects.
 
@@ -148,15 +157,17 @@ necessary despite the cost and risk of change.
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Context Research and Decision Driver Extraction
+    "analyze": f"""## Phase: Context Research and Decision Driver Extraction
 
 Analyze the provided context to extract the decision space, drivers, and constraints.
 
 ### Decision Context / Source Material:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Decision Identification**: From the provided context (code, conversations, requirements, \
@@ -184,15 +195,17 @@ that this decision relates to, supersedes, or is constrained by
 Format as a structured decision context analysis with prioritized drivers and constraints.
 """,
 
-    "plan": """## Phase: Option Identification and Evaluation Framework
+    "plan": f"""## Phase: Option Identification and Evaluation Framework
 
 Based on the context analysis, identify options and design the evaluation framework.
 
 ### Decision Context / Source Material:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis so far:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Option Enumeration**: List ALL reasonable options, including:
@@ -222,15 +235,17 @@ the weighted criteria. Explain the reasoning.
 Format as a structured option analysis with evaluation matrix and preliminary recommendation.
 """,
 
-    "execute": """## Phase: ADR Document Generation
+    "execute": f"""## Phase: ADR Document Generation
 
 Generate the publication-ready ADR document following MADR format.
 
 ### Decision Context / Source Material:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Option analysis:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 Generate a complete ADR document with the following sections:
@@ -263,15 +278,17 @@ The ADR must be:
 Output the complete ADR in valid Markdown format.
 """,
 
-    "validate": """## Phase: ADR Quality Validation
+    "validate": f"""## Phase: ADR Quality Validation
 
 Validate the generated ADR for completeness, clarity, consistency, and quality.
 
 ### Decision Context / Source Material:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Generated ADR:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Structural Completeness**: Verify all MADR sections are present and non-empty: \
@@ -299,15 +316,17 @@ qualification), jargon without explanation, and sentences that could be misinter
 Format as a validation checklist with pass/fail/warning for each quality criterion.
 """,
 
-    "report": """## Phase: ADR Generation Report
+    "report": f"""## Phase: ADR Generation Report
 
 Generate a summary report of the ADR generation process and the final ADR.
 
 ### Decision Context / Source Material:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### ADR generation results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

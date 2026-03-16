@@ -1,6 +1,15 @@
 """Runbook Generator Skill — prompts for operational runbook creation and maintenance."""
 
-SYSTEM_INSTRUCTION = """You are a Senior SRE Principal Engineer with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior SRE Principal Engineer with 15+ years of experience \
 creating operational runbooks for large-scale production systems.
 
 ## Your Expertise
@@ -32,15 +41,17 @@ creating operational runbooks for large-scale production systems.
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: System & Procedure Analysis
+    "analyze": f"""## Phase: System & Procedure Analysis
 
 Analyze the provided system context to understand the operational procedures needed.
 
 ### System Context / Documentation:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **System Understanding**: Identify the system components, dependencies, and failure modes
@@ -53,15 +64,17 @@ Analyze the provided system context to understand the operational procedures nee
 Format as a structured analysis that will inform the runbook creation.
 """,
 
-    "plan": """## Phase: Runbook Structure Planning
+    "plan": f"""## Phase: Runbook Structure Planning
 
 Plan the structure and content of the operational runbook.
 
 ### System Context / Documentation:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis Results:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Runbook Type**: Classify (incident response, deployment, maintenance, DR, or on-call playbook)
@@ -75,15 +88,17 @@ Plan the structure and content of the operational runbook.
 Format as a detailed runbook blueprint with estimated durations per section.
 """,
 
-    "execute": """## Phase: Runbook Generation
+    "execute": f"""## Phase: Runbook Generation
 
 Generate the complete operational runbook with step-by-step instructions.
 
 ### System Context / Documentation:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Runbook Plan:
-{user_input}
+{{user_input}}
 
 ### Generate the complete runbook following this structure:
 
@@ -168,15 +183,17 @@ Generate the complete operational runbook with step-by-step instructions.
 - Monitoring dashboards: [Links]
 """,
 
-    "report": """## Phase: Runbook Quality Report
+    "report": f"""## Phase: Runbook Quality Report
 
 Generate a quality assessment report for the runbook.
 
 ### System Context / Documentation:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Generated Runbook:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

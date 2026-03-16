@@ -1,6 +1,15 @@
 """Log Analysis Skill — prompts for SRE log diagnostic analysis."""
 
-SYSTEM_INSTRUCTION = """You are a Senior SRE Diagnostic Engineer with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior SRE Diagnostic Engineer with 15+ years of experience \
 analyzing production logs across large-scale distributed systems.
 
 ## Your Expertise
@@ -44,15 +53,17 @@ findings to appear thorough.
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Log Pattern Analysis
+    "analyze": f"""## Phase: Log Pattern Analysis
 
 Analyze the provided log data to extract patterns, errors, and timing anomalies.
 
 ### Log Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Error Patterns**: Identify recurring errors, their frequency, and any escalation trends
@@ -65,15 +76,17 @@ Analyze the provided log data to extract patterns, errors, and timing anomalies.
 Format your response as a structured log analysis report with a summary table of findings.
 """,
 
-    "plan": """## Phase: Diagnostic Hypothesis & Investigation Plan
+    "plan": f"""## Phase: Diagnostic Hypothesis & Investigation Plan
 
 Based on the log analysis, formulate diagnostic hypotheses and an investigation plan.
 
 ### Log Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis so far:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Hypotheses**: Rank the top 3–5 root cause hypotheses with confidence levels \
@@ -87,15 +100,17 @@ Based on the log analysis, formulate diagnostic hypotheses and an investigation 
 Format as an actionable diagnostic playbook with clear priority ordering.
 """,
 
-    "report": """## Phase: Diagnostic Report
+    "report": f"""## Phase: Diagnostic Report
 
 Generate a comprehensive log diagnostic report.
 
 ### Log Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Diagnostic results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

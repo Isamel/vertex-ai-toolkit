@@ -1,6 +1,15 @@
 """Incident Communications Skill — prompts for status pages, stakeholder updates, and crisis comms."""
 
-SYSTEM_INSTRUCTION = """You are a Senior Incident Communications Manager with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior Incident Communications Manager with 15+ years of experience \
 coordinating crisis communications during production incidents at large-scale technology companies.
 
 ## Your Expertise
@@ -108,15 +117,17 @@ Monitoring / Resolved)
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Incident Impact Analysis
+    "analyze": f"""## Phase: Incident Impact Analysis
 
 Analyze the incident details to assess communication requirements and stakeholder impact.
 
 ### Incident Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Incident Classification**: Determine severity level (SEV-1 through SEV-4) based on \
@@ -137,15 +148,17 @@ Format your response as a structured incident communication assessment with a st
 matrix and communication plan outline.
 """,
 
-    "plan": """## Phase: Communication Strategy Planning
+    "plan": f"""## Phase: Communication Strategy Planning
 
 Based on the incident analysis, design the communication strategy and cadence.
 
 ### Incident Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis so far:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Communication Plan**: Define who gets what message, when, and through which channel. \
@@ -166,15 +179,17 @@ Format as a communication strategy document with timeline, responsibilities, and
 message frameworks per audience.
 """,
 
-    "execute": """## Phase: Communication Package Generation
+    "execute": f"""## Phase: Communication Package Generation
 
 Generate the complete communication package for the incident.
 
 ### Incident Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Communication plan:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 Generate the following communication artifacts:
@@ -200,15 +215,17 @@ measures, contact information
 Each artifact should be ready to copy-paste with minimal editing.
 """,
 
-    "validate": """## Phase: Communication Validation
+    "validate": f"""## Phase: Communication Validation
 
 Validate the communication package for consistency, accuracy, tone, and regulatory compliance.
 
 ### Incident Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Communication package:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Cross-Channel Consistency**: Verify that severity level, affected services, impact \
@@ -229,15 +246,17 @@ services, current status, next update time, and appropriate escalation path
 Format as a validation checklist with pass/fail/warning for each item per artifact.
 """,
 
-    "report": """## Phase: Incident Communications Report
+    "report": f"""## Phase: Incident Communications Report
 
 Generate a comprehensive incident communications summary and retrospective.
 
 ### Incident Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Communication results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

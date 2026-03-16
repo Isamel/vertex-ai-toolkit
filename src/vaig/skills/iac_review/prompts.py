@@ -1,6 +1,15 @@
 """IaC Review Skill — prompts for Infrastructure-as-Code review and analysis."""
 
-SYSTEM_INSTRUCTION = """You are a Senior Cloud Infrastructure Engineer with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior Cloud Infrastructure Engineer with 15+ years of experience \
 designing, reviewing, and hardening Infrastructure-as-Code across enterprise environments.
 
 ## Your Expertise
@@ -34,16 +43,18 @@ provider pinning, and testing coverage
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: IaC Security & Configuration Analysis
+    "analyze": f"""## Phase: IaC Security & Configuration Analysis
 
 Analyze the provided Infrastructure-as-Code for security misconfigurations, cost issues, \
 reliability gaps, and IaC anti-patterns.
 
 ### IaC Code / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 
@@ -95,15 +106,17 @@ Format your response as a structured analysis with a summary table of findings b
 severity. Include the exact resource identifier and file location for each finding.
 """,
 
-    "report": """## Phase: IaC Review Report
+    "report": f"""## Phase: IaC Review Report
 
 Generate a comprehensive Infrastructure-as-Code review report.
 
 ### IaC Code / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

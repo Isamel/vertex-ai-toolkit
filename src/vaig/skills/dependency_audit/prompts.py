@@ -1,6 +1,15 @@
 """Dependency Audit Skill — prompts for supply-chain security and dependency health analysis."""
 
-SYSTEM_INSTRUCTION = """You are a Senior Supply-Chain Security Engineer with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior Supply-Chain Security Engineer with 15+ years of experience \
 auditing software dependencies across enterprise-scale codebases and mission-critical production systems.
 
 ## Your Expertise
@@ -73,15 +82,17 @@ SaaS vs distributed, actual import usage analysis)
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Dependency Manifest Analysis
+    "analyze": f"""## Phase: Dependency Manifest Analysis
 
 Analyze all dependency manifests and lock files to build a comprehensive dependency inventory.
 
 ### Dependency Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Manifest Inventory**: List every dependency manifest found (package.json, requirements.txt, \
@@ -101,15 +112,17 @@ Format your response as a structured dependency audit report with a summary tabl
 sorted by severity (Critical → Info).
 """,
 
-    "plan": """## Phase: Remediation Planning
+    "plan": f"""## Phase: Remediation Planning
 
 Based on the dependency analysis, create a prioritized remediation plan with safe upgrade paths.
 
 ### Dependency Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis so far:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Prioritized Remediation List**: Rank all findings by risk-adjusted priority (CVSS score × \
@@ -134,15 +147,17 @@ in CI, Dependabot/Renovate configuration, license pre-approval policies, SBOM ge
 Format as an actionable remediation playbook with clear priority ordering and effort estimates.
 """,
 
-    "execute": """## Phase: Remediation Execution Guidance
+    "execute": f"""## Phase: Remediation Execution Guidance
 
 Provide detailed, step-by-step execution guidance for the remediation plan.
 
 ### Dependency Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Remediation plan:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Execution Sequence**: Order remediations to minimize risk — patch-level fixes first, then \
@@ -165,15 +180,17 @@ Trivy) to the CI pipeline with recommended configuration
 Provide copy-paste-ready commands and code changes grouped by execution phase.
 """,
 
-    "validate": """## Phase: Audit Validation
+    "validate": f"""## Phase: Audit Validation
 
 Validate that the remediation steps address all identified risks and introduce no new issues.
 
 ### Dependency Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Execution results:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Vulnerability Re-scan**: Verify that all Critical and High CVEs are addressed in the \
@@ -192,15 +209,17 @@ any upgrades that touch core libraries (HTTP, crypto, auth, database drivers) fo
 Format as a validation checklist with pass/fail/warning status for each item.
 """,
 
-    "report": """## Phase: Dependency Audit Report
+    "report": f"""## Phase: Dependency Audit Report
 
 Generate a comprehensive dependency audit report suitable for security review and executive stakeholders.
 
 ### Dependency Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Audit results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

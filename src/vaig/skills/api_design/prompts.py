@@ -1,6 +1,15 @@
 """API Design Skill — prompts for API design review and best practices analysis."""
 
-SYSTEM_INSTRUCTION = """You are a Senior API Architect with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior API Architect with 15+ years of experience \
 designing, reviewing, and evolving APIs for large-scale distributed systems.
 
 ## Your Expertise
@@ -36,15 +45,17 @@ designing, reviewing, and evolving APIs for large-scale distributed systems.
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: API Design Analysis
+    "analyze": f"""## Phase: API Design Analysis
 
 Analyze the provided API definition, code, or documentation for design quality.
 
 ### API Context / Definition:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Resource Modeling**: Evaluate resource names, URIs, relationships, and hierarchy
@@ -58,15 +69,17 @@ Analyze the provided API definition, code, or documentation for design quality.
 Format as a structured API design review with a findings summary table.
 """,
 
-    "plan": """## Phase: API Improvement Plan
+    "plan": f"""## Phase: API Improvement Plan
 
 Based on the API design analysis, create a prioritized improvement plan.
 
 ### API Context / Definition:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Design Analysis Results:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Breaking vs Non-Breaking**: Classify each improvement as breaking or non-breaking change
@@ -79,15 +92,17 @@ Based on the API design analysis, create a prioritized improvement plan.
 Format as a phased improvement roadmap with clear breaking-change warnings.
 """,
 
-    "report": """## Phase: API Design Report
+    "report": f"""## Phase: API Design Report
 
 Generate a comprehensive API design review report.
 
 ### API Context / Definition:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Review Findings:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

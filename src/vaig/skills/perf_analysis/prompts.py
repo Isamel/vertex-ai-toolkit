@@ -1,6 +1,15 @@
 """Performance Analysis Skill — prompts for distributed tracing, profiling, and optimization."""
 
-SYSTEM_INSTRUCTION = """You are a Senior Performance Engineer with 15+ years of experience \
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior Performance Engineer with 15+ years of experience \
 diagnosing and optimizing performance in large-scale distributed systems handling millions \
 of requests per second across global deployments.
 
@@ -106,16 +115,18 @@ bottlenecks to appear thorough.
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Performance Data Analysis
+    "analyze": f"""## Phase: Performance Data Analysis
 
 Analyze the provided performance data (traces, profiles, metrics) to identify bottlenecks \
 and optimization opportunities.
 
 ### Performance Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Trace Analysis** (if traces provided):
@@ -145,15 +156,17 @@ and optimization opportunities.
 Format your response as a structured performance analysis report.
 """,
 
-    "plan": """## Phase: Optimization Plan
+    "plan": f"""## Phase: Optimization Plan
 
 Based on the performance analysis, create a prioritized optimization plan with estimated impact.
 
 ### Performance Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis so far:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Prioritized Optimizations**: For each optimization opportunity:
@@ -178,15 +191,17 @@ A/B test design, canary analysis criteria
 Format as an actionable optimization playbook with clear priority ordering and impact estimates.
 """,
 
-    "execute": """## Phase: Optimization Execution
+    "execute": f"""## Phase: Optimization Execution
 
 Provide detailed, step-by-step execution guidance for performance optimizations.
 
 ### Performance Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Optimization plan:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Pre-Optimization Baseline**: Exact commands/queries to capture current performance baseline:
@@ -214,15 +229,17 @@ Provide detailed, step-by-step execution guidance for performance optimizations.
 Provide implementation-ready code, configuration, and validation commands.
 """,
 
-    "validate": """## Phase: Performance Validation
+    "validate": f"""## Phase: Performance Validation
 
 Validate that optimizations achieved expected results and introduced no regressions.
 
 ### Performance Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Execution results:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Latency Verification**: Compare pre/post latency at all percentiles (P50, P90, P95, P99, \
@@ -241,15 +258,17 @@ traffic levels. Check for new saturation points introduced.
 Format as a validation checklist with pass/fail/warning status and measured numbers.
 """,
 
-    "report": """## Phase: Performance Analysis Report
+    "report": f"""## Phase: Performance Analysis Report
 
 Generate a comprehensive performance analysis report for engineering leadership.
 
 ### Performance Data / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Analysis results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 

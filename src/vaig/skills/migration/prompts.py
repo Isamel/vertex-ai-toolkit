@@ -1,6 +1,15 @@
 """Code Migration Skill — prompts for migrating code between platforms."""
 
-SYSTEM_INSTRUCTION = """You are a Senior Data Engineer and Code Migration Architect with 15+ years of experience migrating ETL pipelines, data processing systems, and enterprise applications between platforms.
+
+from vaig.core.prompt_defense import (
+    ANTI_INJECTION_RULE,
+    DELIMITER_DATA_END,
+    DELIMITER_DATA_START,
+)
+
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+
+You are a Senior Data Engineer and Code Migration Architect with 15+ years of experience migrating ETL pipelines, data processing systems, and enterprise applications between platforms.
 
 ## Your Expertise
 - **ETL Platforms**: Pentaho Data Integration (PDI/Kettle), Informatica, Talend, SSIS, DataStage
@@ -22,7 +31,7 @@ SYSTEM_INSTRUCTION = """You are a Senior Data Engineer and Code Migration Archit
 - **KJB files**: Kettle Job files (XML) — job orchestration
 - Steps: Table Input, Table Output, Insert/Update, Select Values, Filter Rows, JavaScript, etc.
 - Hops: Data flow connections between steps
-- Variables: ${variable_name} substitution
+- Variables: ${{variable_name}} substitution
 - Database connections: JDBC configuration within XML
 
 ## AWS Glue Equivalents
@@ -44,15 +53,17 @@ SYSTEM_INSTRUCTION = """You are a Senior Data Engineer and Code Migration Archit
 """
 
 PHASE_PROMPTS = {
-    "analyze": """## Phase: Source Code Discovery & Analysis
+    "analyze": f"""## Phase: Source Code Discovery & Analysis
 
 Analyze the source code/ETL assets to understand what needs to be migrated.
 
 ### Source Code / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### User's migration request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Asset Inventory**: List all files, transformations, jobs discovered
@@ -70,15 +81,17 @@ Analyze the source code/ETL assets to understand what needs to be migrated.
 Output a structured migration discovery report.
 """,
 
-    "plan": """## Phase: Migration Planning
+    "plan": f"""## Phase: Migration Planning
 
 Create a detailed migration plan based on the source analysis.
 
 ### Source Analysis / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Planning focus:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 
@@ -112,15 +125,17 @@ Create a detailed migration plan based on the source analysis.
 - How to roll back if migration fails
 """,
 
-    "execute": """## Phase: Code Migration Execution
+    "execute": f"""## Phase: Code Migration Execution
 
 Generate the migrated code for the target platform.
 
 ### Source Code / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Migration instructions:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 For each source component, generate:
@@ -154,15 +169,17 @@ Mark each migrated file with:
 ```
 """,
 
-    "validate": """## Phase: Migration Validation
+    "validate": f"""## Phase: Migration Validation
 
 Validate the migrated code against the source for functional equivalence.
 
 ### Source and Target Code / Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Validation request:
-{user_input}
+{{user_input}}
 
 ### Your Task:
 1. **Logic Comparison**: Compare source and target logic step-by-step
@@ -179,15 +196,17 @@ Validate the migrated code against the source for functional equivalence.
 Provide a validation checklist with pass/fail/untested status.
 """,
 
-    "report": """## Phase: Migration Report
+    "report": f"""## Phase: Migration Report
 
 Generate a comprehensive migration report.
 
 ### Context:
-{context}
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
 
 ### Migration results:
-{user_input}
+{{user_input}}
 
 ### Generate Report:
 
