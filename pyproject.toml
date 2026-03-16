@@ -24,19 +24,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.3.0",
-    "pytest-asyncio>=0.24.0",
-    "pytest-cov>=6.0.0",
-    "ruff>=0.8.0",
-    "mypy>=1.13.0",
-]
 live = [
     "kubernetes>=31.0.0",
     "google-cloud-logging>=3.11.0",
     "google-cloud-monitoring>=2.23.0",
     "google-cloud-container>=2.51.0",
     "google-auth>=2.35.0",
+]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "pytest-timeout>=2.3.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+    "vertex-ai-toolkit[live]",
 ]
 
 [project.scripts]
