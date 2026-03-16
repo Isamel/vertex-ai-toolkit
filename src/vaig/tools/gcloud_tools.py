@@ -64,6 +64,51 @@ def _get_monitoring_client(
 # ── Helpers ──────────────────────────────────────────────────
 
 
+def _handle_gcp_api_error(exc: Exception, *, service: str = "GCP API") -> str:
+    """Handle GCP API errors with lazy imports.
+
+    Classifies the exception into a user-friendly message with actionable
+    guidance.  Uses lazy imports so the module works even when
+    ``google.api_core`` is not installed.
+
+    Args:
+        exc: The caught exception.
+        service: Human-readable service name for error messages
+            (e.g. ``"Cloud Logging"``).
+
+    Returns:
+        A user-friendly error string.
+    """
+    try:
+        from google.api_core.exceptions import (
+            Forbidden,
+            InvalidArgument,
+            NotFound,
+            PermissionDenied,
+            ResourceExhausted,
+        )
+
+        if isinstance(exc, (PermissionDenied, Forbidden)):
+            msg = getattr(exc, "message", str(exc))
+            return (
+                f"Permission denied querying {service}. "
+                f"Check IAM permissions. Error: {msg}"
+            )
+        if isinstance(exc, ResourceExhausted):
+            msg = getattr(exc, "message", str(exc))
+            return (
+                f"{service} API quota exceeded. "
+                f"Try reducing the limit or narrowing the filter. Error: {msg}"
+            )
+        if isinstance(exc, (InvalidArgument, NotFound)):
+            msg = getattr(exc, "message", str(exc))
+            return f"Invalid request to {service}: {msg}"
+    except ImportError:
+        pass  # google.api_core not available — fall through
+
+    return f"Error querying {service}: {str(exc)[:300]}"
+
+
 def _format_log_entry(entry: Any) -> str:  # noqa: ANN001
     """Format a single Cloud Logging entry into a readable line."""
     ts = getattr(entry, "timestamp", None)
@@ -242,37 +287,8 @@ def gcloud_logging_query(
             )
         )
     except Exception as exc:
-        # Attempt typed classification via google.api_core.exceptions
-        try:
-            from google.api_core.exceptions import (
-                Forbidden,
-                InvalidArgument,
-                NotFound,
-                PermissionDenied,
-                ResourceExhausted,
-            )
-        except ImportError:
-            # Fallback — SDK not installed; just report the raw error.
-            return ToolResult(output=f"Error querying Cloud Logging: {exc}", error=True)
-
-        if isinstance(exc, (PermissionDenied, Forbidden)):
-            return ToolResult(
-                output=f"Permission denied querying Cloud Logging. Ensure the service account has 'roles/logging.viewer'. Error: {exc}",
-                error=True,
-            )
-        if isinstance(exc, ResourceExhausted):
-            return ToolResult(
-                output=f"Cloud Logging API quota exceeded. Try reducing the limit or narrowing the filter. Error: {exc}",
-                error=True,
-            )
-        if isinstance(exc, (InvalidArgument, NotFound)):
-            return ToolResult(
-                output=f"Invalid filter expression: '{filter_expr}'. Check the Cloud Logging filter syntax. Error: {exc}",
-                error=True,
-            )
-
         return ToolResult(
-            output=f"Error querying Cloud Logging: {exc}",
+            output=_handle_gcp_api_error(exc, service="Cloud Logging"),
             error=True,
         )
 
@@ -407,40 +423,8 @@ def gcloud_monitoring_query(
         results = client.list_time_series(request=request)
         time_series_list = list(results)
     except Exception as exc:
-        # Attempt typed classification via google.api_core.exceptions
-        try:
-            from google.api_core.exceptions import (
-                Forbidden,
-                InvalidArgument,
-                NotFound,
-                PermissionDenied,
-                ResourceExhausted,
-            )
-        except ImportError:
-            return ToolResult(output=f"Error querying Cloud Monitoring: {exc}", error=True)
-
-        if isinstance(exc, (PermissionDenied, Forbidden)):
-            return ToolResult(
-                output=f"Permission denied querying Cloud Monitoring. Ensure the service account has 'roles/monitoring.viewer'. Error: {exc}",
-                error=True,
-            )
-        if isinstance(exc, ResourceExhausted):
-            return ToolResult(
-                output=f"Cloud Monitoring API quota exceeded. Try reducing the interval or narrowing the filter. Error: {exc}",
-                error=True,
-            )
-        if isinstance(exc, (InvalidArgument, NotFound)):
-            return ToolResult(
-                output=(
-                    f"Metric not found or invalid: '{metric_type}'. "
-                    "Check the metric name at https://cloud.google.com/monitoring/api/metrics_gcp. "
-                    f"Error: {exc}"
-                ),
-                error=True,
-            )
-
         return ToolResult(
-            output=f"Error querying Cloud Monitoring: {exc}",
+            output=_handle_gcp_api_error(exc, service="Cloud Monitoring"),
             error=True,
         )
 

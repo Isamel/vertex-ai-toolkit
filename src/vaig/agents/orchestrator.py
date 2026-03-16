@@ -16,6 +16,7 @@ from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.async_utils import gather_with_errors
 from vaig.core.client import GeminiClient, StreamResult
+from vaig.core.exceptions import VAIGError, VaigAuthError
 from vaig.core.language import (
     detect_language,
     inject_autopilot_into_config,
@@ -344,32 +345,38 @@ class Orchestrator:
             strategy,
         )
 
-        t0 = time.perf_counter()
-        if strategy == "fanout":
-            orch_result = self.execute_fanout(skill, phase, context, user_input)
-        else:
-            orch_result = self.execute_sequential(skill, phase, context, user_input)
-
-        # Telemetry: emit orchestrator event
         try:
-            from vaig.core.telemetry import get_telemetry_collector
+            t0 = time.perf_counter()
+            if strategy == "fanout":
+                orch_result = self.execute_fanout(skill, phase, context, user_input)
+            else:
+                orch_result = self.execute_sequential(skill, phase, context, user_input)
 
-            duration_ms = (time.perf_counter() - t0) * 1000
-            collector = get_telemetry_collector()
-            collector.emit(
-                event_type="orchestrator",
-                event_name="execute_skill_phase",
-                duration_ms=duration_ms,
-                metadata={
-                    "skill": skill_name,
-                    "phase": phase.value if hasattr(phase, "value") else str(phase),
-                    "strategy": strategy,
-                },
-            )
-        except Exception:  # noqa: BLE001
-            pass
+            # Telemetry: emit orchestrator event
+            try:
+                from vaig.core.telemetry import get_telemetry_collector
 
-        return orch_result.to_skill_result()
+                duration_ms = (time.perf_counter() - t0) * 1000
+                collector = get_telemetry_collector()
+                collector.emit(
+                    event_type="orchestrator",
+                    event_name="execute_skill_phase",
+                    duration_ms=duration_ms,
+                    metadata={
+                        "skill": skill_name,
+                        "phase": phase.value if hasattr(phase, "value") else str(phase),
+                        "strategy": strategy,
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+            return orch_result.to_skill_result()
+        except (VaigAuthError, VAIGError):
+            raise  # Let known errors propagate with their actionable messages
+        except Exception as exc:
+            logger.error("Orchestrator error in execute_skill_phase: %s", exc, exc_info=True)
+            raise VAIGError(f"Pipeline execution failed: {exc}") from exc
 
     def execute_with_tools(
         self,
@@ -409,6 +416,32 @@ class Orchestrator:
         Returns:
             :class:`OrchestratorResult` with the aggregated outcome.
         """
+        try:
+            return self._execute_with_tools_impl(
+                query, skill, tool_registry,
+                strategy=strategy,
+                is_autopilot=is_autopilot,
+                on_tool_call=on_tool_call,
+                tool_call_store=tool_call_store,
+            )
+        except (VaigAuthError, VAIGError):
+            raise  # Let known errors propagate with their actionable messages
+        except Exception as exc:
+            logger.error("Orchestrator error in execute_with_tools: %s", exc, exc_info=True)
+            raise VAIGError(f"Pipeline execution failed: {exc}") from exc
+
+    def _execute_with_tools_impl(
+        self,
+        query: str,
+        skill: BaseSkill,
+        tool_registry: ToolRegistry,
+        *,
+        strategy: str = "sequential",
+        is_autopilot: bool | None = None,
+        on_tool_call: OnToolCall | None = None,
+        tool_call_store: ToolCallStore | None = None,
+    ) -> OrchestratorResult:
+        """Inner implementation of execute_with_tools (no error boundary)."""
         logger.info(
             "execute_with_tools: skill=%s strategy=%s",
             skill.get_metadata().name,
@@ -950,32 +983,38 @@ class Orchestrator:
             skill_name, phase, strategy,
         )
 
-        t0 = time.perf_counter()
-        if strategy == "fanout":
-            orch_result = await self.async_execute_fanout(skill, phase, context, user_input)
-        else:
-            orch_result = await self.async_execute_sequential(skill, phase, context, user_input)
-
-        # Telemetry
         try:
-            from vaig.core.telemetry import get_telemetry_collector
+            t0 = time.perf_counter()
+            if strategy == "fanout":
+                orch_result = await self.async_execute_fanout(skill, phase, context, user_input)
+            else:
+                orch_result = await self.async_execute_sequential(skill, phase, context, user_input)
 
-            duration_ms = (time.perf_counter() - t0) * 1000
-            collector = get_telemetry_collector()
-            collector.emit(
-                event_type="orchestrator",
-                event_name="async_execute_skill_phase",
-                duration_ms=duration_ms,
-                metadata={
-                    "skill": skill_name,
-                    "phase": phase.value if hasattr(phase, "value") else str(phase),
-                    "strategy": strategy,
-                },
-            )
-        except Exception:  # noqa: BLE001
-            pass
+            # Telemetry
+            try:
+                from vaig.core.telemetry import get_telemetry_collector
 
-        return orch_result.to_skill_result()
+                duration_ms = (time.perf_counter() - t0) * 1000
+                collector = get_telemetry_collector()
+                collector.emit(
+                    event_type="orchestrator",
+                    event_name="async_execute_skill_phase",
+                    duration_ms=duration_ms,
+                    metadata={
+                        "skill": skill_name,
+                        "phase": phase.value if hasattr(phase, "value") else str(phase),
+                        "strategy": strategy,
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+            return orch_result.to_skill_result()
+        except (VaigAuthError, VAIGError):
+            raise  # Let known errors propagate with their actionable messages
+        except Exception as exc:
+            logger.error("Orchestrator error in async_execute_skill_phase: %s", exc, exc_info=True)
+            raise VAIGError(f"Pipeline execution failed: {exc}") from exc
 
     async def async_execute_with_tools(
         self,
@@ -1010,6 +1049,32 @@ class Orchestrator:
         Returns:
             :class:`OrchestratorResult` with the aggregated outcome.
         """
+        try:
+            return await self._async_execute_with_tools_impl(
+                query, skill, tool_registry,
+                strategy=strategy,
+                is_autopilot=is_autopilot,
+                on_tool_call=on_tool_call,
+                tool_call_store=tool_call_store,
+            )
+        except (VaigAuthError, VAIGError):
+            raise  # Let known errors propagate with their actionable messages
+        except Exception as exc:
+            logger.error("Orchestrator error in async_execute_with_tools: %s", exc, exc_info=True)
+            raise VAIGError(f"Pipeline execution failed: {exc}") from exc
+
+    async def _async_execute_with_tools_impl(
+        self,
+        query: str,
+        skill: BaseSkill,
+        tool_registry: ToolRegistry,
+        *,
+        strategy: str = "sequential",
+        is_autopilot: bool | None = None,
+        on_tool_call: OnToolCall | None = None,
+        tool_call_store: ToolCallStore | None = None,
+    ) -> OrchestratorResult:
+        """Inner implementation of async_execute_with_tools (no error boundary)."""
         logger.info(
             "async_execute_with_tools: skill=%s strategy=%s",
             skill.get_metadata().name,

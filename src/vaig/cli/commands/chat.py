@@ -12,6 +12,7 @@ from vaig.cli._helpers import (
     _banner,
     console,
     err_console,
+    handle_cli_error,
     track_command,
 )
 
@@ -53,57 +54,63 @@ def register(app: typer.Typer) -> None:
         from vaig.cli.repl import start_repl
 
         _banner()
-        settings = _helpers._get_settings(config)
 
-        # Eagerly initialize the telemetry collector so downstream code
-        # (agents, cost_tracker, session) uses the pre-warmed singleton
-        # instead of falling back to get_settings().
-        try:
-            from vaig.core.telemetry import get_telemetry_collector
+        try:  # ── CLI error boundary ──
+            settings = _helpers._get_settings(config)
 
-            get_telemetry_collector(settings)
-        except Exception:  # noqa: BLE001
-            pass
+            # Eagerly initialize the telemetry collector so downstream code
+            # (agents, cost_tracker, session) uses the pre-warmed singleton
+            # instead of falling back to get_settings().
+            try:
+                from vaig.core.telemetry import get_telemetry_collector
 
-        # Apply --project: mutate gcp.project_id AND gke.project_id
-        if project:
-            settings.gcp.project_id = project
-            settings.gke.project_id = project
+                get_telemetry_collector(settings)
+            except Exception:  # noqa: BLE001
+                pass
 
-        # Apply --location: mutate gcp.location before component creation
-        if location:
-            settings.gcp.location = location
+            # Apply --project: mutate gcp.project_id AND gke.project_id
+            if project:
+                settings.gcp.project_id = project
+                settings.gke.project_id = project
 
-        if model:
-            settings.models.default = model
+            # Apply --location: mutate gcp.location before component creation
+            if location:
+                settings.gcp.location = location
 
-        if workspace:
-            resolved_ws = workspace.resolve()
-            if not resolved_ws.is_dir():
-                err_console.print(f"[red]Workspace directory not found: {resolved_ws}[/red]")
-                raise typer.Exit(1)
-            settings.coding.workspace_root = str(resolved_ws)
+            if model:
+                settings.models.default = model
 
-        # Resolve --resume to a session ID
-        resume_session_id = session
-        if resume and not session:
-            from vaig.session.manager import SessionManager
+            if workspace:
+                resolved_ws = workspace.resolve()
+                if not resolved_ws.is_dir():
+                    err_console.print(f"[red]Workspace directory not found: {resolved_ws}[/red]")
+                    raise typer.Exit(1)
+                settings.coding.workspace_root = str(resolved_ws)
 
-            mgr = SessionManager(settings)
-            last = mgr.get_last_session()
-            mgr.close()
-            if last:
-                resume_session_id = last["id"]
-                console.print(f"[dim]Resuming last session: {last['name']} ({last['id'][:12]})[/dim]")
-            else:
-                console.print("[yellow]No previous sessions found. Starting new session.[/yellow]")
+            # Resolve --resume to a session ID
+            resume_session_id = session
+            if resume and not session:
+                from vaig.session.manager import SessionManager
 
-        start_repl(
-            settings=settings,
-            skill_name=skill,
-            session_id=resume_session_id,
-            session_name=name,
-        )
+                mgr = SessionManager(settings)
+                last = mgr.get_last_session()
+                mgr.close()
+                if last:
+                    resume_session_id = last["id"]
+                    console.print(f"[dim]Resuming last session: {last['name']} ({last['id'][:12]})[/dim]")
+                else:
+                    console.print("[yellow]No previous sessions found. Starting new session.[/yellow]")
+
+            start_repl(
+                settings=settings,
+                skill_name=skill,
+                session_id=resume_session_id,
+                session_name=name,
+            )
+        except typer.Exit:
+            raise  # Let typer exits pass through
+        except Exception as exc:
+            handle_cli_error(exc, debug=False)
 
 
 # ── Async Chat Implementation ────────────────────────────────

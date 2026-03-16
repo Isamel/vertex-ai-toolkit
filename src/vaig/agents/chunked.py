@@ -422,15 +422,15 @@ class ChunkedProcessor:
         """Count tokens, falling back to chars_per_token estimate on failure."""
         if not text:
             return 0
-        try:
-            return self._client.count_tokens(text, model_id=model_id)
-        except Exception:
-            cpt = self._settings.chunking.chars_per_token
-            logger.warning(
-                "count_tokens() failed — using %.1f chars/token fallback for %d chars",
-                cpt, len(text), exc_info=True,
-            )
-            return int(len(text) / cpt)
+        result = self._client.count_tokens(text, model_id=model_id)
+        if result is not None:
+            return result
+        cpt = self._settings.chunking.chars_per_token
+        logger.warning(
+            "count_tokens() returned None — using %.1f chars/token fallback for %d chars",
+            cpt, len(text),
+        )
+        return int(len(text) / cpt)
 
     def _consolidate(
         self,

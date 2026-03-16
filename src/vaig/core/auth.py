@@ -13,6 +13,8 @@ from google.auth import impersonated_credentials
 from google.auth.credentials import Credentials
 from google.oauth2.credentials import Credentials as OAuth2Credentials
 
+from vaig.core.exceptions import GCPAuthError, GCPPermissionError
+
 if TYPE_CHECKING:
     from vaig.core.config import Settings
 
@@ -75,6 +77,9 @@ def _get_adc_credentials() -> Credentials:
     The fallback is useful in development environments (Codespaces,
     devcontainers) where ADC is not configured but ``gcloud auth login``
     has been run.
+
+    Raises:
+        GCPAuthError: If neither ADC nor gcloud CLI credentials can be obtained.
     """
     try:
         credentials, project = google.auth.default(scopes=_VERTEX_SCOPES)
@@ -82,7 +87,18 @@ def _get_adc_credentials() -> Credentials:
         return credentials
     except google.auth.exceptions.DefaultCredentialsError:
         logger.info("ADC not found, falling back to gcloud CLI access token")
-        return _get_gcloud_token_credentials()
+        try:
+            return _get_gcloud_token_credentials()
+        except RuntimeError as exc:
+            raise GCPAuthError(
+                f"No GCP credentials available: {exc}",
+                fix_suggestion=(
+                    "Run one of:\n"
+                    "  1. gcloud auth application-default login\n"
+                    "  2. gcloud auth login\n"
+                    "  3. Set GOOGLE_APPLICATION_CREDENTIALS env var"
+                ),
+            ) from exc
 
 
 def _fetch_gcloud_access_token() -> str:
@@ -203,6 +219,10 @@ def _get_impersonated_credentials(
         target_sa: Service account email to impersonate.
         scopes: OAuth2 scopes for the impersonated credential.
             Defaults to ``_VERTEX_SCOPES`` (``cloud-platform``).
+
+    Raises:
+        GCPAuthError: If source credentials cannot be obtained.
+        GCPPermissionError: If impersonation fails due to missing permissions.
     """
     if not target_sa:
         msg = (
@@ -212,14 +232,33 @@ def _get_impersonated_credentials(
         raise ValueError(msg)
 
     # Get source credentials (developer's own)
-    source_credentials, _ = google.auth.default()
+    try:
+        source_credentials, _ = google.auth.default()
+    except google.auth.exceptions.DefaultCredentialsError as exc:
+        raise GCPAuthError(
+            "Cannot obtain source credentials for SA impersonation.",
+            fix_suggestion="Run: gcloud auth application-default login",
+        ) from exc
 
-    # Create impersonated credentials
-    target_credentials = impersonated_credentials.Credentials(  # type: ignore[no-untyped-call]
-        source_credentials=source_credentials,
-        target_principal=target_sa,
-        target_scopes=scopes or _VERTEX_SCOPES,
-    )
+    try:
+        # Create impersonated credentials
+        target_credentials = impersonated_credentials.Credentials(  # type: ignore[no-untyped-call]
+            source_credentials=source_credentials,
+            target_principal=target_sa,
+            target_scopes=scopes or _VERTEX_SCOPES,
+        )
+    except Exception as exc:
+        exc_str = str(exc).lower()
+        if "permission" in exc_str or "403" in exc_str or "iam" in exc_str:
+            raise GCPPermissionError(
+                f"Cannot impersonate SA '{target_sa}': {exc}",
+                required_permissions=["roles/iam.serviceAccountTokenCreator"],
+                fix_suggestion=(
+                    f"Grant roles/iam.serviceAccountTokenCreator on {target_sa} "
+                    "to your user account"
+                ),
+            ) from exc
+        raise
 
     logger.info("Impersonating SA: %s", target_sa)
     return target_credentials

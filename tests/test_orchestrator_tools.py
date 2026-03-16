@@ -21,6 +21,7 @@ from vaig.agents.orchestrator import (
 from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.client import GenerationResult
+from vaig.core.exceptions import VAIGError
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.tools.base import ToolRegistry
 
@@ -2563,7 +2564,7 @@ class TestIncrementalDeepening:
         )
 
         with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2]):
-            with pytest.raises(RuntimeError, match="API explosion"):
+            with pytest.raises(VAIGError, match="Pipeline execution failed"):
                 orchestrator.execute_with_tools("check health", skill, registry)
 
         # max_iterations should STILL be restored (try/finally)

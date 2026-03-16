@@ -240,7 +240,7 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
             logger.exception("CodingAgent API call failed")
             return AgentResult(
                 agent_name=self.name,
-                content=f"Error during API call: {exc}",
+                content=f"Error during API call: {self.sanitize_error_for_agent(exc)}",
                 success=False,
                 usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
                 metadata={"error": str(exc), "iterations": 0},
@@ -326,7 +326,7 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
             logger.exception("CodingAgent async API call failed")
             return AgentResult(
                 agent_name=self.name,
-                content=f"Error during API call: {exc}",
+                content=f"Error during API call: {self.sanitize_error_for_agent(exc)}",
                 success=False,
                 usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
                 metadata={"error": str(exc), "iterations": 0},

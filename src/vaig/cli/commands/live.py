@@ -24,6 +24,7 @@ from vaig.cli._helpers import (
     _show_cost_line,
     console,
     err_console,
+    handle_cli_error,
     track_command,
 )
 from vaig.cli.display import print_colored_report
@@ -221,135 +222,140 @@ def register(app: typer.Typer) -> None:
             )
             raise typer.Exit(1)
 
-        settings = _helpers._get_settings(config)
+        try:  # ── CLI error boundary ──
+            settings = _helpers._get_settings(config)
 
-        # Eagerly initialize the telemetry collector so downstream code
-        # (agents, cost_tracker, session) uses the pre-warmed singleton
-        # instead of falling back to get_settings().
-        try:
-            from vaig.core.telemetry import get_telemetry_collector
+            # Eagerly initialize the telemetry collector so downstream code
+            # (agents, cost_tracker, session) uses the pre-warmed singleton
+            # instead of falling back to get_settings().
+            try:
+                from vaig.core.telemetry import get_telemetry_collector
 
-            get_telemetry_collector(settings)
-        except Exception:  # noqa: BLE001
-            pass
+                get_telemetry_collector(settings)
+            except Exception:  # noqa: BLE001
+                pass
 
-        # Apply --project / --project-id: mutate gcp.project_id AND gke.project_id
-        effective_project = project or project_id
-        if effective_project:
-            settings.gcp.project_id = effective_project
-            settings.gke.project_id = effective_project
+            # Apply --project / --project-id: mutate gcp.project_id AND gke.project_id
+            effective_project = project or project_id
+            if effective_project:
+                settings.gcp.project_id = effective_project
+                settings.gke.project_id = effective_project
 
-        # Apply --location: mutate gcp.location before component creation
-        if location:
-            settings.gcp.location = location
+            # Apply --location: mutate gcp.location before component creation
+            if location:
+                settings.gcp.location = location
 
-        if model:
-            settings.models.default = model
+            if model:
+                settings.models.default = model
 
-        from vaig.core.client import GeminiClient
+            from vaig.core.client import GeminiClient
 
-        client = GeminiClient(settings)
-        gke_config = _build_gke_config(
-            settings, cluster=cluster, namespace=namespace, project_id=effective_project, location=location,
-        )
+            client = GeminiClient(settings)
+            gke_config = _build_gke_config(
+                settings, cluster=cluster, namespace=namespace, project_id=effective_project, location=location,
+            )
 
-        # Auto-detect skill if requested (or enabled in config) and no explicit skill specified
-        effective_auto_skill = auto_skill or settings.skills.auto_routing
-        if effective_auto_skill and not skill:
-            from vaig.skills.registry import SkillRegistry
+            # Auto-detect skill if requested (or enabled in config) and no explicit skill specified
+            effective_auto_skill = auto_skill or settings.skills.auto_routing
+            if effective_auto_skill and not skill:
+                from vaig.skills.registry import SkillRegistry
 
-            registry = SkillRegistry(settings)
-            suggestions = registry.suggest_skill(question)
-            if suggestions:
-                best_name, best_score = suggestions[0]
-                threshold = settings.skills.auto_routing_threshold
-                if best_score >= threshold:
-                    skill = best_name
-                    console.print(
-                        f"[dim]🎯 Auto-routing to skill: [cyan]{skill}[/cyan] "
-                        f"(score: {best_score:.1f})[/dim]"
+                registry = SkillRegistry(settings)
+                suggestions = registry.suggest_skill(question)
+                if suggestions:
+                    best_name, best_score = suggestions[0]
+                    threshold = settings.skills.auto_routing_threshold
+                    if best_score >= threshold:
+                        skill = best_name
+                        console.print(
+                            f"[dim]🎯 Auto-routing to skill: [cyan]{skill}[/cyan] "
+                            f"(score: {best_score:.1f})[/dim]"
+                        )
+                    else:
+                        console.print(
+                            f"[dim]Suggested skills: {', '.join(f'{n} ({s:.1f})' for n, s in suggestions)}[/dim]"
+                        )
+
+            # If a skill is specified, check whether it needs the full orchestrated
+            # pipeline (requires_live_tools=True) or the simple context-prepend approach.
+            context_str = ""
+            active_skill = None
+            if skill:
+                from vaig.skills.registry import SkillRegistry
+
+                registry = SkillRegistry(settings)
+                active_skill = registry.get(skill)
+                if not active_skill:
+                    err_console.print(f"[red]Skill not found: {skill}[/red]")
+                    err_console.print(f"[dim]Available: {', '.join(registry.list_names())}[/dim]")
+                    raise typer.Exit(1)
+
+                skill_meta = active_skill.get_metadata()
+
+                if not skill_meta.requires_live_tools:
+                    # ── Legacy context-prepend path (requires_live_tools=False) ──
+                    context_str = (
+                        f"## Active Skill: {skill_meta.display_name}\n\n"
+                        f"{skill_meta.description}\n\n"
+                        f"Apply the {skill_meta.name} analysis methodology to the investigation below."
+                    )
+                    active_skill = None  # Not orchestrated
+
+            # ── Dry-run: show execution plan without running ──────
+            if dry_run:
+                _display_dry_run_plan(
+                    gke_config=gke_config,
+                    question=question,
+                    settings=settings,
+                    skill=active_skill,
+                    skill_name=skill,
+                    model_id=model or settings.models.default,
+                )
+                return
+
+            def _run_once() -> None:
+                """Execute a single iteration of the live command."""
+                if active_skill is not None:
+                    _execute_orchestrated_skill(
+                        client,
+                        settings,
+                        gke_config,
+                        active_skill,
+                        question,
+                        output=output if not watch else None,
+                        format_=format_ if not watch else None,
+                        model_id=model,
                     )
                 else:
-                    console.print(
-                        f"[dim]Suggested skills: {', '.join(f'{n} ({s:.1f})' for n, s in suggestions)}[/dim]"
+                    _execute_live_mode(
+                        client,
+                        gke_config,
+                        question,
+                        context_str,
+                        settings=settings,
+                        output=output if not watch else None,
+                        format_=format_ if not watch else None,
+                        skill_name=skill,
+                        model_id=model,
                     )
 
-        # If a skill is specified, check whether it needs the full orchestrated
-        # pipeline (requires_live_tools=True) or the simple context-prepend approach.
-        context_str = ""
-        active_skill = None
-        if skill:
-            from vaig.skills.registry import SkillRegistry
+            if not watch:
+                # ── Single execution (default) ────────────────────
+                _run_once()
+                return
 
-            registry = SkillRegistry(settings)
-            active_skill = registry.get(skill)
-            if not active_skill:
-                err_console.print(f"[red]Skill not found: {skill}[/red]")
-                err_console.print(f"[dim]Available: {', '.join(registry.list_names())}[/dim]")
-                raise typer.Exit(1)
-
-            skill_meta = active_skill.get_metadata()
-
-            if not skill_meta.requires_live_tools:
-                # ── Legacy context-prepend path (requires_live_tools=False) ──
-                context_str = (
-                    f"## Active Skill: {skill_meta.display_name}\n\n"
-                    f"{skill_meta.description}\n\n"
-                    f"Apply the {skill_meta.name} analysis methodology to the investigation below."
-                )
-                active_skill = None  # Not orchestrated
-
-        # ── Dry-run: show execution plan without running ──────
-        if dry_run:
-            _display_dry_run_plan(
-                gke_config=gke_config,
+            # ── Watch mode: re-execute every N seconds ────────────
+            _run_watch_loop(
+                run_fn=_run_once,
+                interval=watch,
                 question=question,
-                settings=settings,
-                skill=active_skill,
-                skill_name=skill,
-                model_id=model or settings.models.default,
+                output=output,
+                format_=format_,
             )
-            return
-
-        def _run_once() -> None:
-            """Execute a single iteration of the live command."""
-            if active_skill is not None:
-                _execute_orchestrated_skill(
-                    client,
-                    settings,
-                    gke_config,
-                    active_skill,
-                    question,
-                    output=output if not watch else None,
-                    format_=format_ if not watch else None,
-                    model_id=model,
-                )
-            else:
-                _execute_live_mode(
-                    client,
-                    gke_config,
-                    question,
-                    context_str,
-                    settings=settings,
-                    output=output if not watch else None,
-                    format_=format_ if not watch else None,
-                    skill_name=skill,
-                    model_id=model,
-                )
-
-        if not watch:
-            # ── Single execution (default) ────────────────────
-            _run_once()
-            return
-
-        # ── Watch mode: re-execute every N seconds ────────────
-        _run_watch_loop(
-            run_fn=_run_once,
-            interval=watch,
-            question=question,
-            output=output,
-            format_=format_,
-        )
+        except typer.Exit:
+            raise  # Let typer exits pass through
+        except Exception as exc:
+            handle_cli_error(exc, debug=debug)
 
 
 # ── Watch mode loop ──────────────────────────────────────────

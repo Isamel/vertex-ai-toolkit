@@ -50,6 +50,7 @@ from vaig.cli._helpers import (  # noqa: F401
     async_run_command,
     console,
     err_console,
+    handle_cli_error,
     track_command,
     track_command_async,
 )

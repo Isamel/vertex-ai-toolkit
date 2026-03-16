@@ -353,3 +353,25 @@ def _show_coding_summary(result: object) -> None:
     from vaig.cli.display import show_tool_execution_summary
 
     show_tool_execution_summary(result, console=console)  # type: ignore[arg-type]
+
+
+def handle_cli_error(exc: Exception, *, debug: bool = False) -> None:
+    """Format and print a VAIG exception, then raise ``typer.Exit(1)``.
+
+    This is the single error-boundary function for all CLI commands.
+    It converts raw exceptions into user-friendly Rich-formatted output
+    with actionable fix suggestions.
+
+    Args:
+        exc: The exception to format and display.
+        debug: When True, includes the full traceback.
+
+    Raises:
+        typer.Exit: Always — with ``code=1`` to signal failure.
+    """
+    import typer
+
+    from vaig.core.exceptions import format_error_for_user
+
+    err_console.print(format_error_for_user(exc, debug=debug))
+    raise typer.Exit(code=1)

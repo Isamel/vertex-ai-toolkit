@@ -54,8 +54,9 @@ def _make_client(
     if count_tokens_value is not None:
         client.count_tokens.return_value = count_tokens_value
     else:
-        # Default: use len//4 fallback by raising
-        client.count_tokens.side_effect = Exception("API unavailable")
+        # Default: count_tokens returns None (API failure) → triggers
+        # len//chars_per_token fallback in _count_tokens_safe
+        client.count_tokens.return_value = None
 
     return client
 

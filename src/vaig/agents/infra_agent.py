@@ -309,7 +309,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
             logger.exception("InfraAgent API call failed")
             return AgentResult(
                 agent_name=self.name,
-                content=f"Error during API call: {exc}",
+                content=f"Error during API call: {self.sanitize_error_for_agent(exc)}",
                 success=False,
                 usage={
                     "prompt_tokens": 0,
@@ -412,7 +412,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
             logger.exception("InfraAgent async API call failed")
             return AgentResult(
                 agent_name=self.name,
-                content=f"Error during API call: {exc}",
+                content=f"Error during API call: {self.sanitize_error_for_agent(exc)}",
                 success=False,
                 usage={
                     "prompt_tokens": 0,

@@ -20,11 +20,14 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from google import genai
 from google.api_core import exceptions as google_exceptions
+from google.auth import exceptions as auth_exceptions
 from google.genai import types
 
 from vaig.core.auth import get_credentials
 from vaig.core.cache import CacheStats, ResponseCache, _make_cache_key
 from vaig.core.exceptions import (
+    GCPAuthError,
+    GCPPermissionError,
     GeminiClientError,
     GeminiConnectionError,
     GeminiRateLimitError,
@@ -252,14 +255,39 @@ class GeminiClient:
         if self._initialized:
             return
 
-        credentials = get_credentials(self._settings)
+        try:
+            credentials = get_credentials(self._settings)
 
-        self._client = genai.Client(
-            vertexai=True,
-            project=self._settings.gcp.project_id,
-            location=self._active_location,
-            credentials=credentials,
-        )
+            self._client = genai.Client(
+                vertexai=True,
+                project=self._settings.gcp.project_id,
+                location=self._active_location,
+                credentials=credentials,
+            )
+        except (GCPAuthError, GCPPermissionError):
+            raise  # Already our custom type — propagate as-is
+        except auth_exceptions.DefaultCredentialsError as exc:
+            raise GCPAuthError(
+                "GCP credentials not configured. Cannot connect to Vertex AI.",
+                fix_suggestion="Run: gcloud auth application-default login",
+            ) from exc
+        except auth_exceptions.RefreshError as exc:
+            raise GCPAuthError(
+                "GCP credentials expired or invalid. Please re-authenticate.",
+                fix_suggestion="Run: gcloud auth application-default login",
+            ) from exc
+        except Exception as exc:
+            exc_str = str(exc).lower()
+            if "permission" in exc_str or "403" in exc_str:
+                raise GCPPermissionError(
+                    f"Insufficient permissions for Vertex AI: {exc}",
+                    required_permissions=["roles/aiplatform.user"],
+                    fix_suggestion="Grant the Vertex AI User role to your account",
+                ) from exc
+            raise GeminiClientError(
+                f"Failed to initialize Gemini client: {exc}",
+                original_error=exc,
+            ) from exc
 
         self._initialized = True
         logger.info(
@@ -278,14 +306,39 @@ class GeminiClient:
         if self._initialized:
             return
 
-        credentials = await asyncio.to_thread(get_credentials, self._settings)
+        try:
+            credentials = await asyncio.to_thread(get_credentials, self._settings)
 
-        self._client = genai.Client(
-            vertexai=True,
-            project=self._settings.gcp.project_id,
-            location=self._active_location,
-            credentials=credentials,
-        )
+            self._client = genai.Client(
+                vertexai=True,
+                project=self._settings.gcp.project_id,
+                location=self._active_location,
+                credentials=credentials,
+            )
+        except (GCPAuthError, GCPPermissionError):
+            raise  # Already our custom type — propagate as-is
+        except auth_exceptions.DefaultCredentialsError as exc:
+            raise GCPAuthError(
+                "GCP credentials not configured. Cannot connect to Vertex AI.",
+                fix_suggestion="Run: gcloud auth application-default login",
+            ) from exc
+        except auth_exceptions.RefreshError as exc:
+            raise GCPAuthError(
+                "GCP credentials expired or invalid. Please re-authenticate.",
+                fix_suggestion="Run: gcloud auth application-default login",
+            ) from exc
+        except Exception as exc:
+            exc_str = str(exc).lower()
+            if "permission" in exc_str or "403" in exc_str:
+                raise GCPPermissionError(
+                    f"Insufficient permissions for Vertex AI: {exc}",
+                    required_permissions=["roles/aiplatform.user"],
+                    fix_suggestion="Grant the Vertex AI User role to your account",
+                ) from exc
+            raise GeminiClientError(
+                f"Failed to initialize Gemini client: {exc}",
+                original_error=exc,
+            ) from exc
 
         self._initialized = True
         logger.info(
@@ -986,13 +1039,21 @@ class GeminiClient:
             history.append(types.Content(role=msg.role, parts=parts))
         return history
 
-    def count_tokens(self, prompt: str | list[types.Part], *, model_id: str | None = None) -> int:
-        """Count tokens in a prompt (sync)."""
-        client = self._get_client()
-        mid = model_id or self._current_model_id
-        response = client.models.count_tokens(model=mid, contents=prompt)  # type: ignore[arg-type]
-        total: int = response.total_tokens if response.total_tokens is not None else 0
-        return total
+    def count_tokens(self, prompt: str | list[types.Part], *, model_id: str | None = None) -> int | None:
+        """Count tokens in a prompt (sync).
+
+        Token counting is non-critical — returns ``None`` on failure instead
+        of propagating API errors.
+        """
+        try:
+            client = self._get_client()
+            mid = model_id or self._current_model_id
+            response = client.models.count_tokens(model=mid, contents=prompt)  # type: ignore[arg-type]
+            total: int = response.total_tokens if response.total_tokens is not None else 0
+            return total
+        except Exception as exc:
+            logger.warning("Token counting failed: %s", exc)
+            return None
 
     def list_available_models(self) -> list[dict[str, str]]:
         """List configured available models."""
@@ -1233,16 +1294,24 @@ class GeminiClient:
         prompt: str | list[types.Part],
         *,
         model_id: str | None = None,
-    ) -> int:
-        """Count tokens in a prompt (async)."""
-        await self._async_ensure_initialized()
-        client = self._get_client()
-        mid = model_id or self._current_model_id
-        response = await client.aio.models.count_tokens(
-            model=mid, contents=prompt,  # type: ignore[arg-type]
-        )
-        total: int = response.total_tokens if response.total_tokens is not None else 0
-        return total
+    ) -> int | None:
+        """Count tokens in a prompt (async).
+
+        Token counting is non-critical — returns ``None`` on failure instead
+        of propagating API errors.
+        """
+        try:
+            await self._async_ensure_initialized()
+            client = self._get_client()
+            mid = model_id or self._current_model_id
+            response = await client.aio.models.count_tokens(
+                model=mid, contents=prompt,  # type: ignore[arg-type]
+            )
+            total: int = response.total_tokens if response.total_tokens is not None else 0
+            return total
+        except Exception as exc:
+            logger.warning("Token counting failed: %s", exc)
+            return None
 
     # ── Cache management ─────────────────────────────────────
 
