@@ -457,9 +457,10 @@ class TestServiceHealthQualityConstraints:
         """Reporter must structure actions into 3 time horizons."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "Immediate (next 5 minutes)" in HEALTH_REPORTER_PROMPT
-        assert "Short-term (next 1 hour)" in HEALTH_REPORTER_PROMPT
-        assert "Long-term (next sprint)" in HEALTH_REPORTER_PROMPT
+        # JSON schema uses urgency enum for time horizons
+        assert "IMMEDIATE" in HEALTH_REPORTER_PROMPT
+        assert "SHORT_TERM" in HEALTH_REPORTER_PROMPT
+        assert "LONG_TERM" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_requires_commands_for_every_action(self) -> None:
         """Reporter must require a command for every action — no vague suggestions."""
@@ -517,20 +518,21 @@ class TestServiceHealthQualityConstraints:
         assert "**Affected Resources**" in HEALTH_ANALYZER_PROMPT
 
     def test_reporter_has_mandatory_findings_structure(self) -> None:
-        """Reporter must enforce structured findings with What/Evidence/Impact/Affected."""
+        """Reporter must enforce structured findings via JSON schema fields."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
         assert "MANDATORY Report Structure" in HEALTH_REPORTER_PROMPT
-        assert "**What**" in HEALTH_REPORTER_PROMPT
-        assert "**Evidence**" in HEALTH_REPORTER_PROMPT
-        assert "**Impact**" in HEALTH_REPORTER_PROMPT
-        assert "**Affected Resources**" in HEALTH_REPORTER_PROMPT
+        # JSON schema uses field names, not Markdown bold headers
+        assert "``findings``" in HEALTH_REPORTER_PROMPT
+        assert "``evidence``" in HEALTH_REPORTER_PROMPT
+        assert "``impact``" in HEALTH_REPORTER_PROMPT
+        assert "``affected_resources``" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_requires_all_four_fields(self) -> None:
-        """Reporter must explicitly require all 4 fields for every finding."""
+        """Reporter must explicitly require all required fields for every finding."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "ALL four fields" in HEALTH_REPORTER_PROMPT
+        assert "all required fields populated" in HEALTH_REPORTER_PROMPT
 
     def test_analyzer_requires_all_four_fields(self) -> None:
         """Analyzer must explicitly require all fields for every finding."""
@@ -539,10 +541,10 @@ class TestServiceHealthQualityConstraints:
         assert "all fields" in HEALTH_ANALYZER_PROMPT
 
     def test_reporter_forbids_unstructured_paragraphs(self) -> None:
-        """Reporter must forbid unstructured paragraphs in findings."""
+        """Reporter must forbid unstructured blobs in field values."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "No unstructured paragraphs" in HEALTH_REPORTER_PROMPT
+        assert "No unstructured blobs" in HEALTH_REPORTER_PROMPT
 
     # ── Timeline Rules ───────────────────────────────────────
 
@@ -555,10 +557,10 @@ class TestServiceHealthQualityConstraints:
         """
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        # Rule 5: NEVER use "no events" as a default
-        assert "NEVER use this as a default" in HEALTH_REPORTER_PROMPT
+        # Rule 5: NEVER leave it empty when data exists
+        assert "NEVER leave it empty" in HEALTH_REPORTER_PROMPT
         # Timeline section is MANDATORY
-        assert "Timeline Section (MANDATORY)" in HEALTH_REPORTER_PROMPT
+        assert "Timeline (MANDATORY)" in HEALTH_REPORTER_PROMPT
 
 
 class TestServiceHealthSkillRegistration:
@@ -955,13 +957,13 @@ class TestPromptConsistencyFix2ReporterDeterministicTimeline:
         """Timeline section must be explicitly marked as MANDATORY."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "Timeline Section (MANDATORY)" in HEALTH_REPORTER_PROMPT
+        assert "Timeline (MANDATORY)" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_timeline_must_build(self) -> None:
-        """Reporter must be told to BUILD the timeline, not just include it."""
+        """Reporter must be told to POPULATE the timeline field."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "You MUST build a chronological timeline" in HEALTH_REPORTER_PROMPT
+        assert "Populate the ``timeline`` field" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_timeline_extract_every_event(self) -> None:
         """Rule 1: Extract EVERY event with a timestamp."""
@@ -976,15 +978,16 @@ class TestPromptConsistencyFix2ReporterDeterministicTimeline:
         assert "Sort events chronologically" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_timeline_table_format(self) -> None:
-        """Rule 3: Timeline must use table format with Time/Type/Resource/Event."""
+        """Rule 3: Timeline entries must have time, event, severity fields."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        # Table header columns
+        # JSON schema uses structured fields instead of table format
         timeline_section = HEALTH_REPORTER_PROMPT[
-            HEALTH_REPORTER_PROMPT.find("Timeline Section"):
+            HEALTH_REPORTER_PROMPT.find("Timeline (MANDATORY)"):
         ]
-        assert "| Time |" in timeline_section
-        assert "| Type |" in timeline_section or "Type" in timeline_section
+        assert "``time``" in timeline_section
+        assert "``event``" in timeline_section
+        assert "``severity``" in timeline_section
 
     def test_reporter_timeline_events_without_timestamps(self) -> None:
         """Rule 4: Events without extractable timestamps shown in order."""
@@ -993,16 +996,16 @@ class TestPromptConsistencyFix2ReporterDeterministicTimeline:
         assert "WITHOUT timestamps" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_timeline_never_default_to_no_events(self) -> None:
-        """Rule 5: NEVER use 'no events' as a default — only when upstream says so."""
+        """Rule 5: NEVER leave timeline empty when data exists."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "NEVER use this as a default" in HEALTH_REPORTER_PROMPT
+        assert "NEVER leave it empty" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_timeline_must_appear_in_every_report(self) -> None:
-        """Rule 6: Timeline MUST appear in every report."""
+        """Rule 6: Timeline MUST have at least 1-2 entries in every report."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "MUST appear in every report" in HEALTH_REPORTER_PROMPT
+        assert "MUST have at least 1-2 entries" in HEALTH_REPORTER_PROMPT
 
 
 class TestPromptConsistencyFix3VerifierDecisionTree:
@@ -1121,10 +1124,10 @@ class TestPromptConsistencyFix5ReporterEvidencePresentation:
         assert "verbatim" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_evidence_code_blocks(self) -> None:
-        """Evidence must be formatted as code blocks."""
+        """Evidence must be included as plain strings in the evidence list."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "code blocks" in HEALTH_REPORTER_PROMPT
+        assert "plain string" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_evidence_no_paraphrasing(self) -> None:
         """Reporter must NOT paraphrase raw event messages."""
@@ -1194,16 +1197,16 @@ class TestPromptConsistencyFix7ReporterClusterOverviewMandatory:
     """
 
     def test_reporter_cluster_overview_mandatory(self) -> None:
-        """Reporter must have Cluster Overview Section marked as MANDATORY."""
+        """Reporter must have Cluster Overview marked as MANDATORY."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "Cluster Overview Section (MANDATORY)" in HEALTH_REPORTER_PROMPT
+        assert "Cluster Overview (MANDATORY)" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_cluster_overview_uses_upstream_data(self) -> None:
-        """Reporter must use upstream Cluster Overview data when available."""
+        """Reporter must extract metrics from upstream Cluster Overview data."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "use it directly" in HEALTH_REPORTER_PROMPT
+        assert "extract metrics into key/value pairs" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_cluster_overview_fallback_text(self) -> None:
         """Reporter must have fallback text when cluster overview data is missing."""
@@ -1212,10 +1215,10 @@ class TestPromptConsistencyFix7ReporterClusterOverviewMandatory:
         assert "Cluster overview data was not collected" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_never_data_not_available_without_explanation(self) -> None:
-        """Reporter NEVER writes 'Data not available' without explanation."""
+        """Reporter NEVER uses empty values without explanation."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert 'NEVER write "Data not available" without explanation' in HEALTH_REPORTER_PROMPT
+        assert "NEVER use empty values without explanation" in HEALTH_REPORTER_PROMPT
 
 
 class TestPromptConsistencyFix8VerifierNoAmbiguousPhrases:
@@ -1601,27 +1604,27 @@ class TestReporterSeverityClassification:
         assert "| Severity | Criteria | Examples |" in HEALTH_REPORTER_PROMPT
 
     def test_findings_template_has_five_severity_levels(self) -> None:
-        """The Findings section template must include all 5 severity levels."""
+        """The Findings field mapping must reference severity levels."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        findings_start = HEALTH_REPORTER_PROMPT.find("## Findings")
-        downgraded_start = HEALTH_REPORTER_PROMPT.find("## Downgraded Findings")
-        findings_section = HEALTH_REPORTER_PROMPT[findings_start:downgraded_start]
+        # JSON schema uses severity enum values in the field mapping
+        findings_start = HEALTH_REPORTER_PROMPT.find("``findings``")
+        conciseness_start = HEALTH_REPORTER_PROMPT.find("### Conciseness Rule")
+        findings_section = HEALTH_REPORTER_PROMPT[findings_start:conciseness_start]
 
-        assert "Critical" in findings_section
-        assert "High" in findings_section
-        assert "Medium" in findings_section
-        assert "Low" in findings_section
-        assert "Informational" in findings_section
+        assert "CRITICAL" in findings_section
+        assert "HIGH" in findings_section
+        assert "MEDIUM" in findings_section
+        assert "LOW" in findings_section
+        assert "INFO" in findings_section
 
     def test_timeline_uses_operational_severity(self) -> None:
-        """Timeline table must reference operational impact severity, not K8s event type."""
+        """Timeline field must reference operational severity, not K8s event type."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        timeline_start = HEALTH_REPORTER_PROMPT.find("## Timeline")
-        timeline_section = HEALTH_REPORTER_PROMPT[timeline_start:timeline_start + 300]
-        assert "CRITICAL/HIGH/MEDIUM/LOW/INFO" in timeline_section
-        assert "operational impact" in timeline_section.lower()
+        timeline_start = HEALTH_REPORTER_PROMPT.find("### Timeline")
+        timeline_section = HEALTH_REPORTER_PROMPT[timeline_start:timeline_start + 500]
+        assert "operational severity" in timeline_section.lower()
 
 
 class TestPromptSchemaParameterConsistency:
@@ -1847,10 +1850,10 @@ class TestServiceHealthAntiDataFabrication:
         assert "NEVER estimate" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_forbids_invented_table_values(self) -> None:
-        """Reporter must not fill table cells with plausible-looking numbers."""
+        """Reporter must not fill fields with plausible-looking numbers."""
         from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
 
-        assert "NEVER fill table cells" in HEALTH_REPORTER_PROMPT
+        assert "NEVER fill fields" in HEALTH_REPORTER_PROMPT
 
     def test_reporter_prefers_accuracy_over_completeness(self) -> None:
         """Reporter must prefer a shorter accurate report over fabricated details."""

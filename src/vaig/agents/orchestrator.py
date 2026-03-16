@@ -732,6 +732,11 @@ class Orchestrator:
                 # ── Reporter output validation + retry ──────
                 is_reporter = "report" in getattr(agent, "role", "").lower()
                 if i == len(agents) - 1 and agent_result.success and is_reporter:
+                    # Post-process structured output (e.g. JSON → Markdown)
+                    agent_result.content = skill.post_process_report(
+                        agent_result.content,
+                    )
+
                     finish_reason = agent_result.metadata.get("finish_reason", "")
                     md_issues = self._validate_reporter_output(agent_result.content)
 
@@ -1358,6 +1363,11 @@ class Orchestrator:
                 # ── Reporter output validation + retry (async) ──────
                 is_reporter = "report" in getattr(agent, "role", "").lower()
                 if i == len(agents) - 1 and agent_result.success and is_reporter:
+                    # Post-process structured output (e.g. JSON → Markdown)
+                    agent_result.content = skill.post_process_report(
+                        agent_result.content,
+                    )
+
                     finish_reason = agent_result.metadata.get("finish_reason", "")
                     md_issues = self._validate_reporter_output(agent_result.content)
 

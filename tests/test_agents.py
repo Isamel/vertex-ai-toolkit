@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import BaseModel
 
 from vaig.agents.base import AgentConfig, AgentMessage, AgentResult, AgentRole
 from vaig.agents.specialist import SpecialistAgent
@@ -143,3 +144,212 @@ class TestSpecialistAgentFromConfigDict:
         mock_client = MagicMock()
         with pytest.raises(KeyError):
             SpecialistAgent.from_config_dict({"name": "agent"}, mock_client)
+
+    def test_reads_frequency_penalty(self) -> None:
+        """frequency_penalty was previously dropped by from_config_dict — verify fix."""
+        mock_client = MagicMock()
+        config = {
+            "name": "agent",
+            "role": "helper",
+            "system_instruction": "Help.",
+            "frequency_penalty": 0.5,
+        }
+        agent = SpecialistAgent.from_config_dict(config, mock_client)
+        assert agent.config.frequency_penalty == 0.5
+
+    def test_frequency_penalty_defaults_to_none(self) -> None:
+        mock_client = MagicMock()
+        config = {
+            "name": "agent",
+            "role": "helper",
+            "system_instruction": "Help.",
+        }
+        agent = SpecialistAgent.from_config_dict(config, mock_client)
+        assert agent.config.frequency_penalty is None
+
+    def test_reads_response_schema(self) -> None:
+        """from_config_dict passes response_schema through to AgentConfig."""
+
+        class MySchema(BaseModel):
+            title: str
+
+        mock_client = MagicMock()
+        config = {
+            "name": "agent",
+            "role": "reporter",
+            "system_instruction": "Report.",
+            "response_schema": MySchema,
+        }
+        agent = SpecialistAgent.from_config_dict(config, mock_client)
+        assert agent.config.response_schema is MySchema
+
+    def test_reads_response_mime_type(self) -> None:
+        mock_client = MagicMock()
+        config = {
+            "name": "agent",
+            "role": "reporter",
+            "system_instruction": "Report.",
+            "response_mime_type": "application/json",
+        }
+        agent = SpecialistAgent.from_config_dict(config, mock_client)
+        assert agent.config.response_mime_type == "application/json"
+
+    def test_schema_fields_default_to_none(self) -> None:
+        """When not provided, response_schema and response_mime_type are None."""
+        mock_client = MagicMock()
+        config = {
+            "name": "agent",
+            "role": "helper",
+            "system_instruction": "Help.",
+        }
+        agent = SpecialistAgent.from_config_dict(config, mock_client)
+        assert agent.config.response_schema is None
+        assert agent.config.response_mime_type is None
+
+
+class TestAgentConfigSchemaFields:
+    """Tests for response_schema and response_mime_type on AgentConfig."""
+
+    def test_defaults_are_none(self) -> None:
+        cfg = AgentConfig(name="a", role="b", system_instruction="c")
+        assert cfg.response_schema is None
+        assert cfg.response_mime_type is None
+
+    def test_accepts_pydantic_model_class(self) -> None:
+        class Report(BaseModel):
+            summary: str
+
+        cfg = AgentConfig(
+            name="reporter",
+            role="reporter",
+            system_instruction="Report.",
+            response_schema=Report,
+        )
+        assert cfg.response_schema is Report
+
+    def test_accepts_response_mime_type(self) -> None:
+        cfg = AgentConfig(
+            name="reporter",
+            role="reporter",
+            system_instruction="Report.",
+            response_mime_type="application/json",
+        )
+        assert cfg.response_mime_type == "application/json"
+
+    def test_both_fields_set_together(self) -> None:
+        class Report(BaseModel):
+            summary: str
+
+        cfg = AgentConfig(
+            name="reporter",
+            role="reporter",
+            system_instruction="Report.",
+            response_schema=Report,
+            response_mime_type="application/json",
+        )
+        assert cfg.response_schema is Report
+        assert cfg.response_mime_type == "application/json"
+
+
+class TestSpecialistAgentSchemaForwarding:
+    """Tests for execute() and async_execute() forwarding response_schema/mime_type."""
+
+    def _make_agent(
+        self,
+        *,
+        response_schema: type[BaseModel] | None = None,
+        response_mime_type: str | None = None,
+        frequency_penalty: float | None = None,
+    ) -> SpecialistAgent:
+        mock_client = MagicMock()
+        config = AgentConfig(
+            name="test-agent",
+            role="reporter",
+            system_instruction="Report.",
+            response_schema=response_schema,
+            response_mime_type=response_mime_type,
+            frequency_penalty=frequency_penalty,
+        )
+        return SpecialistAgent(config, mock_client)
+
+    def _mock_generate_result(self) -> MagicMock:
+        result = MagicMock()
+        result.text = "ok"
+        result.usage = {"total_tokens": 10}
+        result.model = "gemini-2.5-pro"
+        result.finish_reason = "STOP"
+        return result
+
+    def test_execute_forwards_schema_params(self) -> None:
+        class MySchema(BaseModel):
+            title: str
+
+        agent = self._make_agent(
+            response_schema=MySchema,
+            response_mime_type="application/json",
+        )
+        agent._client.generate.return_value = self._mock_generate_result()
+
+        agent.execute("test prompt")
+
+        call_kwargs = agent._client.generate.call_args
+        assert call_kwargs.kwargs["response_schema"] is MySchema
+        assert call_kwargs.kwargs["response_mime_type"] == "application/json"
+
+    def test_execute_omits_schema_params_when_none(self) -> None:
+        agent = self._make_agent()
+        agent._client.generate.return_value = self._mock_generate_result()
+
+        agent.execute("test prompt")
+
+        call_kwargs = agent._client.generate.call_args
+        assert "response_schema" not in call_kwargs.kwargs
+        assert "response_mime_type" not in call_kwargs.kwargs
+
+    def test_execute_forwards_frequency_penalty(self) -> None:
+        agent = self._make_agent(frequency_penalty=0.8)
+        agent._client.generate.return_value = self._mock_generate_result()
+
+        agent.execute("test prompt")
+
+        call_kwargs = agent._client.generate.call_args
+        assert call_kwargs.kwargs["frequency_penalty"] == 0.8
+
+    def test_execute_omits_frequency_penalty_when_none(self) -> None:
+        agent = self._make_agent()
+        agent._client.generate.return_value = self._mock_generate_result()
+
+        agent.execute("test prompt")
+
+        call_kwargs = agent._client.generate.call_args
+        assert "frequency_penalty" not in call_kwargs.kwargs
+
+    async def test_async_execute_forwards_schema_params(self) -> None:
+        class MySchema(BaseModel):
+            title: str
+
+        agent = self._make_agent(
+            response_schema=MySchema,
+            response_mime_type="application/json",
+        )
+        from unittest.mock import AsyncMock
+
+        agent._client.async_generate = AsyncMock(return_value=self._mock_generate_result())
+
+        await agent.async_execute("test prompt")
+
+        call_kwargs = agent._client.async_generate.call_args
+        assert call_kwargs.kwargs["response_schema"] is MySchema
+        assert call_kwargs.kwargs["response_mime_type"] == "application/json"
+
+    async def test_async_execute_omits_schema_params_when_none(self) -> None:
+        agent = self._make_agent()
+        from unittest.mock import AsyncMock
+
+        agent._client.async_generate = AsyncMock(return_value=self._mock_generate_result())
+
+        await agent.async_execute("test prompt")
+
+        call_kwargs = agent._client.async_generate.call_args
+        assert "response_schema" not in call_kwargs.kwargs
+        assert "response_mime_type" not in call_kwargs.kwargs

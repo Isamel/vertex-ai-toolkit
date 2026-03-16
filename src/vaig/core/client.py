@@ -509,6 +509,12 @@ class GeminiClient:
             kwargs["frequency_penalty"] = overrides["frequency_penalty"]
         if "presence_penalty" in overrides:
             kwargs["presence_penalty"] = overrides["presence_penalty"]
+        # Structured output params — only include when explicitly set so that
+        # callers not using structured output are completely unaffected.
+        if "response_schema" in overrides:
+            kwargs["response_schema"] = overrides["response_schema"]
+        if "response_mime_type" in overrides:
+            kwargs["response_mime_type"] = overrides["response_mime_type"]
         if system_instruction is not None:
             kwargs["system_instruction"] = system_instruction
         if tools is not None:
