@@ -19,7 +19,6 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-
 # ── Enums ────────────────────────────────────────────────────────
 
 
@@ -67,6 +66,15 @@ class ActionUrgency(StrEnum):
     LONG_TERM = "LONG_TERM"
 
 
+class ServiceHealthStatus(StrEnum):
+    """Health status for individual services in the status table."""
+
+    HEALTHY = "HEALTHY"
+    DEGRADED = "DEGRADED"
+    FAILED = "FAILED"
+    UNKNOWN = "UNKNOWN"
+
+
 # ── Severity → emoji mapping (matches reporter prompt) ───────
 
 
@@ -86,11 +94,11 @@ _SEVERITY_LABEL: dict[Severity, str] = {
     Severity.INFO: "Informational",
 }
 
-_STATUS_EMOJI: dict[str, str] = {
-    "healthy": "🟢",
-    "degraded": "🟡",
-    "failed": "🔴",
-    "unknown": "⚪",
+_STATUS_EMOJI: dict[ServiceHealthStatus, str] = {
+    ServiceHealthStatus.HEALTHY: "🟢",
+    ServiceHealthStatus.DEGRADED: "🟡",
+    ServiceHealthStatus.FAILED: "🔴",
+    ServiceHealthStatus.UNKNOWN: "⚪",
 }
 
 
@@ -126,7 +134,7 @@ class ServiceStatus(BaseModel):
 
     service: str
     namespace: str = ""
-    status: str = Field(default="UNKNOWN", description="HEALTHY / DEGRADED / FAILED / UNKNOWN")
+    status: ServiceHealthStatus = ServiceHealthStatus.UNKNOWN
     pods_ready: str = Field(default="N/A", description="e.g. '3/3'")
     restarts_1h: str = Field(default="N/A", description="Restart count in last hour")
     cpu_usage: str = Field(default="N/A")
@@ -155,8 +163,8 @@ class DowngradedFinding(BaseModel):
     """A finding that was downgraded during the verification pass."""
 
     title: str
-    original_confidence: str = ""
-    final_confidence: str = ""
+    original_confidence: Confidence = Confidence.MEDIUM
+    final_confidence: Confidence = Confidence.LOW
     reason: str = ""
 
 
@@ -318,8 +326,7 @@ class HealthReport(BaseModel):
             "|---------------|-----------|--------------|--------|"
         )
         for svc in self.service_statuses:
-            status_lower = svc.status.lower()
-            emoji = _STATUS_EMOJI.get(status_lower, "⚪")
+            emoji = _STATUS_EMOJI.get(svc.status, "⚪")
             parts.append(
                 f"| {svc.service} | {svc.namespace} | {emoji} | {svc.pods_ready} "
                 f"| {svc.restarts_1h} | {svc.cpu_usage} | {svc.memory_usage} | {svc.issues} |"
@@ -470,13 +477,13 @@ class HealthReport(BaseModel):
             grouped[action.urgency].append(action)
 
         for urgency in urgency_order:
-            actions = grouped[urgency]
+            actions = sorted(grouped[urgency], key=lambda a: a.priority)
             if not actions:
                 continue
 
             parts.append(f"### {urgency_labels[urgency]}")
-            for i, action in enumerate(actions, 1):
-                parts.append(f"{i}. {action.title}")
+            for action in actions:
+                parts.append(f"{action.priority}. {action.title}")
                 if action.command:
                     parts.append("   ```")
                     parts.append(f"   {action.command}")

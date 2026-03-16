@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from pydantic import ValidationError
+
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.skills.service_health.prompts import (
     HEALTH_ANALYZER_PROMPT,
@@ -184,10 +186,11 @@ class ServiceHealthSkill(BaseSkill):
         try:
             report = HealthReport.model_validate_json(content)
             return report.to_markdown()
-        except Exception:
+        except (ValueError, ValidationError):
             logger.warning(
                 "Failed to parse reporter JSON as HealthReport, "
                 "returning raw content. Input starts with: %.100s",
                 content,
+                exc_info=True,
             )
             return content

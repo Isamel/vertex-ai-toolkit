@@ -852,7 +852,7 @@ Use empty strings for unavailable fields.
 - If upstream data includes kubectl/tool output, preserve it verbatim — the SRE needs to see exactly what the cluster returned
 - For every finding, include the EXACT data from tool outputs (pod names, event messages, error strings, timestamps) as evidence items
 - If YAML was retrieved and shows the problem, include the PROBLEMATIC section in ``evidence_details`` with the issue annotated
-- If proposing a fix, include the CORRECTED YAML in the ``corrected_yaml`` field of ``evidence_details``
+- If proposing a fix, include the CORRECTED YAML in the ``corrected_text`` field of ``evidence_details``
 
 ### Cluster Overview (MANDATORY)
 Populate the ``cluster_overview`` field from the upstream data.  It MUST include at minimum:
@@ -862,7 +862,7 @@ Populate the ``cluster_overview`` field from the upstream data.  It MUST include
 
 If the upstream data includes a "Cluster Overview" section, extract metrics into key/value pairs.
 If the upstream data does NOT include cluster overview info, add a single entry:
-  key: "Note", value: "Cluster overview data was not collected by the diagnostic pipeline. Run kubectl get nodes and kubectl top nodes for manual assessment."
+  metric: "Note", value: "Cluster overview data was not collected by the diagnostic pipeline. Run kubectl get nodes and kubectl top nodes for manual assessment."
 
 NEVER use empty values without explanation.
 

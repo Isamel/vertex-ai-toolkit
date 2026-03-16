@@ -28,11 +28,11 @@ from vaig.skills.service_health.schema import (
     RecommendedAction,
     ReportMetadata,
     RootCauseHypothesis,
+    ServiceHealthStatus,
     ServiceStatus,
     Severity,
     TimelineEvent,
 )
-
 
 # ── Fixtures / helpers ───────────────────────────────────────
 
@@ -72,7 +72,7 @@ def _full_report() -> HealthReport:
             ServiceStatus(
                 service="payment-svc",
                 namespace="production",
-                status="DEGRADED",
+                status=ServiceHealthStatus.DEGRADED,
                 pods_ready="2/3",
                 restarts_1h="5",
                 cpu_usage="78%",
@@ -82,7 +82,7 @@ def _full_report() -> HealthReport:
             ServiceStatus(
                 service="api-gateway",
                 namespace="production",
-                status="HEALTHY",
+                status=ServiceHealthStatus.HEALTHY,
                 pods_ready="3/3",
                 restarts_1h="0",
             ),
@@ -146,8 +146,8 @@ def _full_report() -> HealthReport:
         downgraded_findings=[
             DowngradedFinding(
                 title="Memory pressure on node-pool-1",
-                original_confidence="HIGH",
-                final_confidence="LOW",
+                original_confidence=Confidence.HIGH,
+                final_confidence=Confidence.LOW,
                 reason="Verification showed memory usage is at 65%, within normal range.",
             ),
         ],
@@ -257,6 +257,9 @@ class TestEnums:
     def test_action_urgency_values(self) -> None:
         assert list(ActionUrgency) == ["IMMEDIATE", "SHORT_TERM", "LONG_TERM"]
 
+    def test_service_health_status_values(self) -> None:
+        assert list(ServiceHealthStatus) == ["HEALTHY", "DEGRADED", "FAILED", "UNKNOWN"]
+
     def test_strenum_is_str(self) -> None:
         """StrEnum members must be usable as plain strings."""
         assert isinstance(Severity.CRITICAL, str)
@@ -331,6 +334,7 @@ class TestModelCreation:
     def test_service_status_defaults(self) -> None:
         s = ServiceStatus(service="my-svc")
         assert s.namespace == ""
+        assert s.status == ServiceHealthStatus.UNKNOWN
         assert s.pods_ready == "N/A"
         assert s.restarts_1h == "N/A"
         assert s.cpu_usage == "N/A"
@@ -382,6 +386,33 @@ class TestValidation:
                 services_checked=-1,
             )
 
+    def test_invalid_service_health_status_rejected(self) -> None:
+        import pytest
+
+        with pytest.raises(Exception):  # noqa: B017
+            ServiceStatus(service="svc", status="BORKED")  # type: ignore[arg-type]
+
+    def test_downgraded_finding_confidence_is_enum(self) -> None:
+        df = DowngradedFinding(
+            title="Test",
+            original_confidence=Confidence.HIGH,
+            final_confidence=Confidence.LOW,
+            reason="test",
+        )
+        assert isinstance(df.original_confidence, Confidence)
+        assert isinstance(df.final_confidence, Confidence)
+        assert df.original_confidence == Confidence.HIGH
+        assert df.final_confidence == Confidence.LOW
+
+    def test_downgraded_finding_invalid_confidence_rejected(self) -> None:
+        import pytest
+
+        with pytest.raises(Exception):  # noqa: B017
+            DowngradedFinding(
+                title="Test",
+                original_confidence="INVALID",  # type: ignore[arg-type]
+            )
+
 
 # ══════════════════════════════════════════════════════════════
 # to_dict() tests
@@ -416,6 +447,9 @@ class TestToDict:
         assert d["findings"][0]["confidence"] == "CONFIRMED"
         assert d["recommendations"][0]["urgency"] == "IMMEDIATE"
         assert d["recommendations"][0]["effort"] == "LOW"
+        assert d["service_statuses"][0]["status"] == "DEGRADED"
+        assert d["downgraded_findings"][0]["original_confidence"] == "HIGH"
+        assert d["downgraded_findings"][0]["final_confidence"] == "LOW"
 
 
 # ══════════════════════════════════════════════════════════════
@@ -468,6 +502,7 @@ class TestJsonSchema:
             "Confidence",
             "Effort",
             "ActionUrgency",
+            "ServiceHealthStatus",
             "ClusterMetric",
             "ServiceStatus",
             "DowngradedFinding",
@@ -1037,3 +1072,38 @@ class TestJsonToMarkdownRoundTrip:
         # Verify commands are present
         assert "kubectl rollout restart" in md
         assert "kubectl scale" in md
+
+    def test_recommendations_sorted_by_priority_within_urgency(self) -> None:
+        """Within the same urgency group, actions render in priority order."""
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Needs attention.",
+            ),
+            recommendations=[
+                RecommendedAction(
+                    priority=3, title="Third action",
+                    urgency=ActionUrgency.IMMEDIATE,
+                ),
+                RecommendedAction(
+                    priority=1, title="First action",
+                    urgency=ActionUrgency.IMMEDIATE,
+                ),
+                RecommendedAction(
+                    priority=2, title="Second action",
+                    urgency=ActionUrgency.IMMEDIATE,
+                ),
+            ],
+        )
+        md = report.to_markdown()
+
+        # Priority values used as numbering, sorted ascending
+        first_pos = md.find("1. First action")
+        second_pos = md.find("2. Second action")
+        third_pos = md.find("3. Third action")
+
+        assert first_pos != -1, "Expected '1. First action' in output"
+        assert second_pos != -1, "Expected '2. Second action' in output"
+        assert third_pos != -1, "Expected '3. Third action' in output"
+        assert first_pos < second_pos < third_pos

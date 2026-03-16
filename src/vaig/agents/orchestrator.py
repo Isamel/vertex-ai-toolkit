@@ -732,6 +732,69 @@ class Orchestrator:
                 # ── Reporter output validation + retry ──────
                 is_reporter = "report" in getattr(agent, "role", "").lower()
                 if i == len(agents) - 1 and agent_result.success and is_reporter:
+                    # ── Structured output pre-validation ──────
+                    # When the reporter uses response_schema, validate raw
+                    # JSON BEFORE post-processing.  If invalid, retry with
+                    # a JSON-focused prompt so post_process_report receives
+                    # well-formed input.
+                    schema_cls = getattr(
+                        getattr(agent, "config", None),
+                        "response_schema",
+                        None,
+                    )
+                    if (
+                        schema_cls is not None
+                        and isinstance(schema_cls, type)
+                        and hasattr(schema_cls, "model_validate_json")
+                    ):
+                        import json as _json
+
+                        try:
+                            _json.loads(agent_result.content)
+                            schema_cls.model_validate_json(agent_result.content)
+                        except Exception as schema_exc:
+                            logger.warning(
+                                "Reporter %s structured output failed "
+                                "schema validation (%s) — retrying with "
+                                "JSON-focused prompt",
+                                agent.name,
+                                schema_exc,
+                            )
+                            json_retry_prompt = (
+                                "Your previous response was not valid JSON "
+                                "conforming to the required schema. "
+                                f"Error: {schema_exc}\n\n"
+                                "Regenerate the report as valid JSON that "
+                                "strictly conforms to the schema. "
+                                "Do NOT include markdown fences or commentary "
+                                "— output ONLY the raw JSON object.\n\n"
+                                f"## Previous Analysis\n\n{current_context}"
+                            )
+                            agent.reset()
+                            kw_js: dict[str, Any] = {"context": ""}
+                            if isinstance(agent, ToolAwareAgent):
+                                if on_tool_call is not None:
+                                    kw_js["on_tool_call"] = on_tool_call
+                                if tool_call_store is not None:
+                                    kw_js["tool_call_store"] = tool_call_store
+                            json_retry_result = agent.execute(
+                                json_retry_prompt, **kw_js,
+                            )
+                            _accumulate_usage(result, json_retry_result)
+                            if json_retry_result.success:
+                                agent_result = json_retry_result
+                                result.agent_results[-1] = agent_result
+                                logger.info(
+                                    "Reporter %s JSON retry succeeded",
+                                    agent.name,
+                                )
+                            else:
+                                logger.warning(
+                                    "Reporter %s JSON retry also failed — "
+                                    "proceeding with original output",
+                                    agent.name,
+                                )
+
                     # Post-process structured output (e.g. JSON → Markdown)
                     agent_result.content = skill.post_process_report(
                         agent_result.content,
@@ -1363,6 +1426,65 @@ class Orchestrator:
                 # ── Reporter output validation + retry (async) ──────
                 is_reporter = "report" in getattr(agent, "role", "").lower()
                 if i == len(agents) - 1 and agent_result.success and is_reporter:
+                    # ── Structured output pre-validation (async) ──────
+                    schema_cls = getattr(
+                        getattr(agent, "config", None),
+                        "response_schema",
+                        None,
+                    )
+                    if (
+                        schema_cls is not None
+                        and isinstance(schema_cls, type)
+                        and hasattr(schema_cls, "model_validate_json")
+                    ):
+                        import json as _json
+
+                        try:
+                            _json.loads(agent_result.content)
+                            schema_cls.model_validate_json(agent_result.content)
+                        except Exception as schema_exc:
+                            logger.warning(
+                                "Reporter %s structured output failed "
+                                "schema validation (%s) — retrying with "
+                                "JSON-focused prompt",
+                                agent.name,
+                                schema_exc,
+                            )
+                            json_retry_prompt = (
+                                "Your previous response was not valid JSON "
+                                "conforming to the required schema. "
+                                f"Error: {schema_exc}\n\n"
+                                "Regenerate the report as valid JSON that "
+                                "strictly conforms to the schema. "
+                                "Do NOT include markdown fences or commentary "
+                                "— output ONLY the raw JSON object.\n\n"
+                                f"## Previous Analysis\n\n{current_context}"
+                            )
+                            agent.reset()
+                            kw_js: dict[str, Any] = {"context": ""}
+                            if isinstance(agent, ToolAwareAgent):
+                                if on_tool_call is not None:
+                                    kw_js["on_tool_call"] = on_tool_call
+                                if tool_call_store is not None:
+                                    kw_js["tool_call_store"] = tool_call_store
+                            json_retry_result = await asyncio.to_thread(
+                                agent.execute, json_retry_prompt, **kw_js,
+                            )
+                            _accumulate_usage(result, json_retry_result)
+                            if json_retry_result.success:
+                                agent_result = json_retry_result
+                                result.agent_results[-1] = agent_result
+                                logger.info(
+                                    "Reporter %s JSON retry succeeded",
+                                    agent.name,
+                                )
+                            else:
+                                logger.warning(
+                                    "Reporter %s JSON retry also failed — "
+                                    "proceeding with original output",
+                                    agent.name,
+                                )
+
                     # Post-process structured output (e.g. JSON → Markdown)
                     agent_result.content = skill.post_process_report(
                         agent_result.content,
