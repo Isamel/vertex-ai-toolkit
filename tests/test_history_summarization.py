@@ -112,8 +112,8 @@ class TestTokenEstimation:
                 ],
             ),
         ]
-        # 100 + (80 + 1 (space joiner) + 120) = 301 chars → 301 / 4 = 75
-        assert estimate_history_tokens(content_objs) == 75  # type: ignore[arg-type]
+        # 100 + (80 + 1 (space joiner) + 120) = 301 chars → int(301 / 4) = 75
+        assert estimate_history_tokens(content_objs) == 75
 
     def test_estimate_history_tokens_content_with_non_text_parts(self) -> None:
         """Content objects with function_call parts (no .text) should not crash."""
@@ -126,7 +126,7 @@ class TestTokenEstimation:
             ),
         ]
         # No .text attribute → 0 tokens
-        assert estimate_history_tokens(content_objs) == 0  # type: ignore[arg-type]
+        assert estimate_history_tokens(content_objs) == 0
 
     def test_estimate_history_tokens_content_with_empty_parts(self) -> None:
         """Content with empty or None parts should return 0."""
@@ -136,7 +136,7 @@ class TestTokenEstimation:
             SimpleNamespace(role="model", parts=None),
             SimpleNamespace(role="user", parts=[]),
         ]
-        assert estimate_history_tokens(content_objs) == 0  # type: ignore[arg-type]
+        assert estimate_history_tokens(content_objs) == 0
 
 
 # ══════════════════════════════════════════════════════════════

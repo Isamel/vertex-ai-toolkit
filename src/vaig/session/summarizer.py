@@ -8,6 +8,7 @@ that preserves key decisions, tool results, error states, and user intent.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from vaig.core.client import ChatMessage
@@ -15,6 +16,8 @@ from vaig.core.config import DEFAULT_CHARS_PER_TOKEN
 from vaig.core.prompt_defense import ANTI_INJECTION_RULE, wrap_untrusted_content
 
 if TYPE_CHECKING:
+    from google.genai.types import Content
+
     from vaig.core.client import GeminiClient
 
 logger = logging.getLogger(__name__)
@@ -88,24 +91,25 @@ def _extract_text(message: object) -> str:
     This helper handles both transparently so that callers like
     ``estimate_history_tokens`` work regardless of which type is passed in.
     """
+    # google.genai.types.Content — check .parts first (the bug scenario)
+    parts = getattr(message, "parts", None)
+    if parts:
+        texts: list[str] = []
+        for part in parts:
+            text = getattr(part, "text", None)
+            if text:
+                texts.append(text)
+        return " ".join(texts)
+
     # ChatMessage (or any object with a str `.content`)
     if hasattr(message, "content") and isinstance(message.content, str):
         return message.content
 
-    # google.genai.types.Content — iterate over .parts
-    parts = getattr(message, "parts", None)
-    if not parts:
-        return ""
-    texts: list[str] = []
-    for part in parts:
-        text = getattr(part, "text", None)
-        if text:
-            texts.append(text)
-    return " ".join(texts)
+    return ""
 
 
 def estimate_history_tokens(
-    messages: list[ChatMessage],
+    messages: Sequence[ChatMessage | Content],
     *,
     chars_per_token: float = DEFAULT_CHARS_PER_TOKEN,
 ) -> int:
