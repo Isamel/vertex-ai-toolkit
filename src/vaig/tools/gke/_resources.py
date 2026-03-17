@@ -87,6 +87,20 @@ _RESOURCE_ALIASES: dict[str, str] = {
     "crd": "customresourcedefinitions",
 }
 
+# Resource types expanded when ``resource="all"`` is requested.
+# Mirrors ``kubectl get all`` which covers the most common workload types.
+_ALL_RESOURCE_TYPES: tuple[str, ...] = (
+    "pods",
+    "services",
+    "deployments",
+    "replicasets",
+    "statefulsets",
+    "daemonsets",
+    "jobs",
+    "cronjobs",
+    "hpa",
+)
+
 # Allowed resource types for write operations (intentionally restrictive).
 _SCALABLE_RESOURCES = frozenset({"deployments", "statefulsets", "replicasets"})
 _RESTARTABLE_RESOURCES = frozenset({"deployments", "statefulsets", "daemonsets"})
