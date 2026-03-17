@@ -28,6 +28,7 @@ from vaig.cli._helpers import (
     track_command,
 )
 from vaig.cli.display import print_colored_report
+from vaig.core.cache import ToolResultCache
 from vaig.core.tool_call_store import ToolCallStore
 
 if TYPE_CHECKING:
@@ -143,25 +144,21 @@ class ToolCallLogger:
                 status = "[red]✗ FAIL[/red]"
                 self._error_reasons.append("unknown")
 
-        console.print(
-            f"  🔧 [cyan]{tool_name}[/cyan]"
-            f"({args_str}) "
-            f"{status} [dim]({duration:.1f}s)[/dim]"
-        )
+        console.print(f"  🔧 [cyan]{tool_name}[/cyan]({args_str}) {status} [dim]({duration:.1f}s)[/dim]")
 
     def print_summary(self) -> None:
         """Print the final pipeline summary line."""
         total_wall = time.perf_counter() - self._pipeline_start
-        status = "[green]Pipeline complete[/green]" if self.errors == 0 else "[yellow]Pipeline complete with errors[/yellow]"
+        status = (
+            "[green]Pipeline complete[/green]" if self.errors == 0 else "[yellow]Pipeline complete with errors[/yellow]"
+        )
 
         # Build failure detail with grouped reasons
         fail_detail = ""
         if self.errors:
             reason_counts = Counter(self._error_reasons)
             if reason_counts:
-                grouped = ", ".join(
-                    f"{count}\u00d7 {reason}" for reason, count in reason_counts.most_common()
-                )
+                grouped = ", ".join(f"{count}\u00d7 {reason}" for reason, count in reason_counts.most_common())
                 fail_detail = f", {self.errors} failed ({grouped})"
             else:
                 fail_detail = f", {self.errors} failed"
@@ -186,20 +183,24 @@ def register(app: typer.Typer) -> None:
         output: Annotated[Path | None, typer.Option("--output", "-o", help="Save response to a file")] = None,
         format_: Annotated[str | None, typer.Option("--format", help="Export format: json, md, html")] = None,
         skill: Annotated[str | None, typer.Option("--skill", "-s", help="SRE skill to apply")] = None,
-        auto_skill: Annotated[bool, typer.Option("--auto-skill", help="Auto-detect the best skill based on query")] = False,
+        auto_skill: Annotated[
+            bool, typer.Option("--auto-skill", help="Auto-detect the best skill based on query")
+        ] = False,
         cluster: Annotated[str | None, typer.Option("--cluster", help="GKE cluster name (overrides config)")] = None,
         namespace: Annotated[
-            str | None, typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)", autocompletion=complete_namespace)
+            str | None,
+            typer.Option(
+                "--namespace", help="Default Kubernetes namespace (overrides config)", autocompletion=complete_namespace
+            ),
         ] = None,
         project: Annotated[
-            str | None, typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)")
+            str | None,
+            typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)"),
         ] = None,
         project_id: Annotated[
             str | None, typer.Option("--project-id", help="GCP project ID (overrides config, alias for --project)")
         ] = None,
-        location: Annotated[
-            str | None, typer.Option("--location", help="GCP location (overrides config)")
-        ] = None,
+        location: Annotated[str | None, typer.Option("--location", help="GCP location (overrides config)")] = None,
         watch: Annotated[
             int | None, typer.Option("--watch", "-w", help="Re-execute every N seconds (polling mode, min 10s)")
         ] = None,
@@ -238,10 +239,7 @@ def register(app: typer.Typer) -> None:
 
         # Validate --watch interval
         if watch is not None and watch < MINIMUM_WATCH_INTERVAL:
-            err_console.print(
-                f"[red]--watch interval must be >= {MINIMUM_WATCH_INTERVAL}s "
-                f"(got {watch}s)[/red]"
-            )
+            err_console.print(f"[red]--watch interval must be >= {MINIMUM_WATCH_INTERVAL}s (got {watch}s)[/red]")
             raise typer.Exit(1)
 
         try:  # ── CLI error boundary ──
@@ -269,7 +267,11 @@ def register(app: typer.Typer) -> None:
             container = build_container(settings)
             client = container.gemini_client
             gke_config = _build_gke_config(
-                settings, cluster=cluster, namespace=namespace, project_id=effective_project, location=location,
+                settings,
+                cluster=cluster,
+                namespace=namespace,
+                project_id=effective_project,
+                location=location,
             )
 
             # Auto-detect skill if requested (or enabled in config) and no explicit skill specified
@@ -285,8 +287,7 @@ def register(app: typer.Typer) -> None:
                     if best_score >= threshold:
                         skill = best_name
                         console.print(
-                            f"[dim]🎯 Auto-routing to skill: [cyan]{skill}[/cyan] "
-                            f"(score: {best_score:.1f})[/dim]"
+                            f"[dim]🎯 Auto-routing to skill: [cyan]{skill}[/cyan] (score: {best_score:.1f})[/dim]"
                         )
                     else:
                         console.print(
@@ -424,8 +425,7 @@ def _run_watch_loop(
             iteration += 1
             console.print(f"\n{'=' * 60}")
             console.print(
-                f"[bold cyan]Watch iteration #{iteration} — "
-                f"{datetime.now().strftime('%H:%M:%S')}[/bold cyan]"
+                f"[bold cyan]Watch iteration #{iteration} — {datetime.now().strftime('%H:%M:%S')}[/bold cyan]"
             )
             console.print(f"{'=' * 60}\n")
 
@@ -434,14 +434,9 @@ def _run_watch_loop(
             except (SystemExit, typer.Exit):
                 # Agent errors (MaxIterationsError etc.) raise typer.Exit —
                 # in watch mode we log and continue to the next iteration.
-                console.print(
-                    f"[yellow]Iteration #{iteration} exited with error — "
-                    f"continuing watch...[/yellow]"
-                )
+                console.print(f"[yellow]Iteration #{iteration} exited with error — continuing watch...[/yellow]")
 
-            console.print(
-                f"\n[dim]Next refresh in {interval}s (Ctrl+C to stop)...[/dim]"
-            )
+            console.print(f"\n[dim]Next refresh in {interval}s (Ctrl+C to stop)...[/dim]")
             time.sleep(interval)
     except KeyboardInterrupt:
         elapsed = time.monotonic() - start_time
@@ -528,7 +523,7 @@ def _display_dry_run_plan(
     # ── Header ────────────────────────────────────────────────
     console.print(
         Panel.fit(
-            f"[bold yellow]Dry Run — vaig live[/bold yellow] [dim]\"{question}\"[/dim]",
+            f'[bold yellow]Dry Run — vaig live[/bold yellow] [dim]"{question}"[/dim]',
             border_style="yellow",
         )
     )
@@ -598,10 +593,7 @@ def _display_dry_run_plan(
     console.print()
 
     # ── Cost estimate ─────────────────────────────────────────
-    console.print(
-        "[bold]Estimated cost:[/bold] [dim]depends on tool usage "
-        "(typically $0.02-0.10 per run)[/dim]"
-    )
+    console.print("[bold]Estimated cost:[/bold] [dim]depends on tool usage (typically $0.02-0.10 per run)[/dim]")
     console.print()
     console.print("[dim]Run without --dry-run to execute.[/dim]")
 
@@ -854,7 +846,14 @@ def _execute_live_mode(
     try:
         console.print("[bold cyan]🤖 Infrastructure agent investigating...[/bold cyan]")
         tool_logger = ToolCallLogger()
-        result = agent.execute(question, context=context, on_tool_call=tool_logger, tool_call_store=tool_call_store)
+        tool_result_cache = ToolResultCache()
+        result = agent.execute(
+            question,
+            context=context,
+            on_tool_call=tool_logger,
+            tool_call_store=tool_call_store,
+            tool_result_cache=tool_result_cache,
+        )
         tool_logger.print_summary()
 
         # Display final response with severity coloring
@@ -942,7 +941,14 @@ async def _async_execute_live_mode(
     try:
         console.print("[bold cyan]🤖 Infrastructure agent investigating (async)...[/bold cyan]")
         tool_logger = ToolCallLogger()
-        result = await agent.async_execute(question, context=context, on_tool_call=tool_logger, tool_call_store=tool_call_store)
+        tool_result_cache = ToolResultCache()
+        result = await agent.async_execute(
+            question,
+            context=context,
+            on_tool_call=tool_logger,
+            tool_call_store=tool_call_store,
+            tool_result_cache=tool_result_cache,
+        )
         tool_logger.print_summary()
 
         console.print()

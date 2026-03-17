@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from vaig.agents.base import AgentResult, AgentRole
+from vaig.core.cache import ToolResultCache
 from vaig.core.config import GKEConfig
 from vaig.tools.base import ToolDef, ToolParam, ToolRegistry, ToolResult
 
@@ -390,3 +391,67 @@ class TestInfraSystemPrompt:
 
         assert "gcloud_logging_query" in INFRA_SYSTEM_PROMPT
         assert "gcloud_monitoring_query" in INFRA_SYSTEM_PROMPT
+
+
+# ── tool_result_cache passthrough ────────────────────────────
+
+
+class TestToolResultCachePassthrough:
+    """Tests that tool_result_cache is forwarded to _run_tool_loop / _async_run_tool_loop."""
+
+    @patch("vaig.agents.infra_agent.InfraAgent._register_tools")
+    @patch("vaig.agents.infra_agent.InfraAgent._run_tool_loop")
+    def test_execute_forwards_cache(
+        self,
+        mock_loop: MagicMock,
+        mock_register: MagicMock,
+    ) -> None:
+        from vaig.agents.infra_agent import InfraAgent
+
+        client = _make_mock_client()
+        cfg = _make_gke_config()
+        agent = InfraAgent(client, cfg)
+
+        # Mock the loop result
+        mock_loop.return_value = MagicMock(
+            text="result",
+            model="gemini-2.5-pro",
+            finish_reason="STOP",
+            iterations=1,
+            tools_executed=[],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+
+        cache = ToolResultCache()
+        agent.execute("Check pods", tool_result_cache=cache)
+
+        # Verify tool_result_cache was passed through
+        _, kwargs = mock_loop.call_args
+        assert kwargs["tool_result_cache"] is cache
+
+    @patch("vaig.agents.infra_agent.InfraAgent._register_tools")
+    @patch("vaig.agents.infra_agent.InfraAgent._run_tool_loop")
+    def test_execute_cache_defaults_to_none(
+        self,
+        mock_loop: MagicMock,
+        mock_register: MagicMock,
+    ) -> None:
+        from vaig.agents.infra_agent import InfraAgent
+
+        client = _make_mock_client()
+        cfg = _make_gke_config()
+        agent = InfraAgent(client, cfg)
+
+        mock_loop.return_value = MagicMock(
+            text="result",
+            model="gemini-2.5-pro",
+            finish_reason="STOP",
+            iterations=1,
+            tools_executed=[],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+
+        agent.execute("Check pods")
+
+        _, kwargs = mock_loop.call_args
+        assert kwargs["tool_result_cache"] is None

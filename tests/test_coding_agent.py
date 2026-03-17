@@ -15,6 +15,7 @@ from vaig.agents.coding import (
     CodingAgent,
     _default_confirm,
 )
+from vaig.core.cache import ToolResultCache
 from vaig.core.client import ToolCallResult
 from vaig.core.config import CodingConfig
 from vaig.core.exceptions import MaxIterationsError
@@ -868,9 +869,7 @@ class TestCodingAgentStream:
     ) -> None:
         """execute_stream yields the result of execute() since streaming not supported."""
         client = _make_mock_client()
-        client.generate_with_tools.return_value = _make_text_result(
-            text="Streamed result"
-        )
+        client.generate_with_tools.return_value = _make_text_result(text="Streamed result")
 
         agent = CodingAgent(client, _make_coding_config())
         chunks = list(agent.execute_stream("Hello"))
@@ -1223,3 +1222,96 @@ class TestDeduplicateResponse:
 
         call_kwargs = client.generate_with_tools.call_args[1]
         assert call_kwargs.get("frequency_penalty") == 0.15
+
+
+# ── tool_result_cache passthrough ────────────────────────────
+
+
+class TestCodingAgentCachePassthrough:
+    """Tests that tool_result_cache is forwarded to _run_tool_loop / _async_run_tool_loop."""
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    @patch.object(CodingAgent, "_run_tool_loop")
+    def test_execute_forwards_cache(
+        self,
+        mock_loop: MagicMock,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config())
+
+        mock_loop.return_value = MagicMock(
+            text="result",
+            model="gemini-2.5-pro",
+            finish_reason="STOP",
+            iterations=1,
+            tools_executed=[],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+
+        cache = ToolResultCache()
+        agent.execute("Write code", tool_result_cache=cache)
+
+        _, kwargs = mock_loop.call_args
+        assert kwargs["tool_result_cache"] is cache
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    @patch.object(CodingAgent, "_run_tool_loop")
+    def test_execute_cache_defaults_to_none(
+        self,
+        mock_loop: MagicMock,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config())
+
+        mock_loop.return_value = MagicMock(
+            text="result",
+            model="gemini-2.5-pro",
+            finish_reason="STOP",
+            iterations=1,
+            tools_executed=[],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+
+        agent.execute("Write code")
+
+        _, kwargs = mock_loop.call_args
+        assert kwargs["tool_result_cache"] is None
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    @patch.object(CodingAgent, "_run_tool_loop")
+    def test_execute_forwards_on_tool_call_and_store(
+        self,
+        mock_loop: MagicMock,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config())
+
+        mock_loop.return_value = MagicMock(
+            text="result",
+            model="gemini-2.5-pro",
+            finish_reason="STOP",
+            iterations=1,
+            tools_executed=[],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+
+        on_tool_call = MagicMock()
+        tool_call_store = MagicMock()
+        agent.execute(
+            "Write code",
+            on_tool_call=on_tool_call,
+            tool_call_store=tool_call_store,
+        )
+
+        _, kwargs = mock_loop.call_args
+        assert kwargs["on_tool_call"] is on_tool_call
+        assert kwargs["tool_call_store"] is tool_call_store
