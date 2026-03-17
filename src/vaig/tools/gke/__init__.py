@@ -10,6 +10,7 @@ from __future__ import annotations
 
 # ── Layer 0: client infrastructure ──────────────────────────
 from ._clients import (
+    DefaultK8sClientProvider,
     clear_autopilot_cache,
     clear_k8s_client_cache,
     detect_autopilot,
@@ -225,6 +226,7 @@ __all__ = [
     "async_argocd_app_diff",
     "async_argocd_app_managed_resources",
     # Client infrastructure (public)
+    "DefaultK8sClientProvider",
     "detect_autopilot",
     "clear_autopilot_cache",
     "clear_k8s_client_cache",

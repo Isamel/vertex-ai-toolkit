@@ -58,10 +58,8 @@ def build_container(settings: Settings) -> ServiceContainer:
 
     - ``GeminiClient`` from ``settings``
     - ``EventBus`` singleton via ``EventBus.get()``
-    - ``K8sClientProvider`` and ``GCPClientProvider`` are set to ``None``
-      for now — concrete provider implementations (``DefaultK8sClientProvider``,
-      ``DefaultGCPClientProvider``) will be created in Batch 2 when those
-      wrapper classes are implemented.
+    - ``DefaultK8sClientProvider`` for K8s client creation/caching
+    - ``DefaultGCPClientProvider`` for GCP observability client caching
 
     Args:
         settings: Fully-loaded application configuration.
@@ -70,16 +68,20 @@ def build_container(settings: Settings) -> ServiceContainer:
         A frozen ``ServiceContainer`` with all dependencies wired.
     """
     from vaig.core.client import GeminiClient
+    from vaig.tools.gcloud_tools import DefaultGCPClientProvider
+    from vaig.tools.gke._clients import DefaultK8sClientProvider
 
     gemini_client = GeminiClient(settings)
     event_bus = EventBus.get()
+    k8s_provider = DefaultK8sClientProvider()
+    gcp_provider = DefaultGCPClientProvider()
 
     logger.info("ServiceContainer built — gemini_client=%s", type(gemini_client).__name__)
 
     return ServiceContainer(
         settings=settings,
         gemini_client=gemini_client,
-        k8s_provider=None,
-        gcp_provider=None,
+        k8s_provider=k8s_provider,
+        gcp_provider=gcp_provider,
         event_bus=event_bus,
     )

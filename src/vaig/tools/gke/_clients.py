@@ -457,6 +457,34 @@ def get_exec_client(
     return k8s_client.CoreV1Api(api_client)
 
 
+# ══════════════════════════════════════════════════════════════
+# DefaultK8sClientProvider — protocol-satisfying wrapper
+# ══════════════════════════════════════════════════════════════
+
+
+class DefaultK8sClientProvider:
+    """Default implementation of ``K8sClientProvider`` protocol.
+
+    Delegates to the existing module-level functions and ``_CLIENT_CACHE``.
+    This class exists solely to satisfy the ``K8sClientProvider`` protocol
+    and provide an injectable, mockable interface for DI.
+    """
+
+    __slots__ = ()
+
+    def get_clients(self, gke_config: GKEConfig) -> tuple[Any, Any, Any, Any] | Any:
+        """Return cached K8s API clients, delegating to ``_create_k8s_clients``."""
+        return _create_k8s_clients(gke_config)
+
+    def get_exec_client(self, gke_config: GKEConfig) -> Any:
+        """Return a fresh, disposable ``CoreV1Api`` for exec operations."""
+        return get_exec_client(gke_config)
+
+    def clear_cache(self) -> None:
+        """Clear cached Kubernetes clients."""
+        clear_k8s_client_cache()
+
+
 # ── ArgoCD client helper ─────────────────────────────────────
 
 
