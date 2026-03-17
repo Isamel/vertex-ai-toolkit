@@ -71,14 +71,20 @@ class ToolCallRecord:
 
 @dataclass
 class ToolDef:
-    """Definition of a tool that an agent can invoke."""
+    """Definition of a tool that an agent can invoke.
+
+    Attributes:
+        cache_ttl_seconds: Per-entry TTL in seconds.  ``0`` means no
+            expiration — the entry lives for the lifetime of the cache
+            instance (which is one pipeline run).
+    """
 
     name: str
     description: str
     parameters: list[ToolParam] = field(default_factory=list)
     execute: Callable[..., ToolResult] = field(default=lambda **_: ToolResult(output=""))
     cacheable: bool = True
-    cache_ttl_seconds: int = 60
+    cache_ttl_seconds: int = 0
 
 
 class ToolRegistry:

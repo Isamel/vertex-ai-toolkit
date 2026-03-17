@@ -98,10 +98,10 @@ class TestToolDef:
         t = ToolDef(name="test", description="d")
         assert t.cacheable is True
 
-    def test_cache_ttl_seconds_defaults_to_60(self) -> None:
-        """Default cache TTL is 60 seconds."""
+    def test_cache_ttl_seconds_defaults_to_zero(self) -> None:
+        """Default cache TTL is 0 (no expiration; cache lives for the pipeline run)."""
         t = ToolDef(name="test", description="d")
-        assert t.cache_ttl_seconds == 60
+        assert t.cache_ttl_seconds == 0
 
     def test_cacheable_false(self) -> None:
         """Tools can opt out of caching."""

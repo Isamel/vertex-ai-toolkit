@@ -12,10 +12,14 @@ Covers:
 - Thread safety (concurrent access)
 - Key determinism (same args different order → same key)
 - Edge cases (max_size=1, default_ttl=0)
+- TTL=0 (no expiration): entries survive arbitrarily long
+- Negative TTL on put() logs warning and skips (constructor raises ValueError)
+- Explicit TTL>0 still works for individual entries
 """
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from unittest.mock import patch
@@ -225,6 +229,66 @@ class TestToolResultCache:
         with pytest.raises(ValueError, match="default_ttl must be >= 0"):
             ToolResultCache(default_ttl=-1)
 
+    def test_default_ttl_is_zero(self) -> None:
+        """Default TTL is 0 (no expiration) when not specified."""
+        cache = ToolResultCache()
+        assert cache.default_ttl == 0
+
+    def test_ttl_zero_entry_survives_arbitrarily_long(self) -> None:
+        """TTL=0 entries survive even after enormous simulated time."""
+        cache = ToolResultCache(default_ttl=0, max_size=10)
+        key = _make_tool_cache_key("tool", {"a": 1})
+        cache.put(key, self._ok("persistent"))
+
+        # Simulate 24 hours later
+        with patch("vaig.core.cache.time.monotonic", return_value=time.monotonic() + 86400):
+            cached = cache.get(key)
+            assert cached is not None
+            assert cached.output == "persistent"
+
+    def test_ttl_zero_per_entry_never_expires(self) -> None:
+        """Entry stored with explicit ttl_seconds=0 never expires."""
+        cache = ToolResultCache(default_ttl=60, max_size=10)
+        key = _make_tool_cache_key("tool", {"a": 1})
+        cache.put(key, self._ok("forever"), ttl_seconds=0)
+
+        # Even with default_ttl=60, this entry has per-entry TTL=0
+        with patch("vaig.core.cache.time.monotonic", return_value=time.monotonic() + 999999):
+            assert cache.get(key) is not None
+
+    def test_explicit_positive_ttl_still_expires(self) -> None:
+        """Entries with explicit TTL>0 still expire normally."""
+        cache = ToolResultCache(default_ttl=0, max_size=10)
+        key = _make_tool_cache_key("tool", {"a": 1})
+        cache.put(key, self._ok("ephemeral"), ttl_seconds=5)
+
+        # Still valid at 3s
+        with patch("vaig.core.cache.time.monotonic", return_value=time.monotonic() + 3):
+            assert cache.get(key) is not None
+
+        # Expired at 6s
+        with patch("vaig.core.cache.time.monotonic", return_value=time.monotonic() + 6):
+            assert cache.get(key) is None
+
+    def test_negative_ttl_on_put_skips_caching(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Negative ttl_seconds on put() logs warning and skips."""
+        cache = ToolResultCache(default_ttl=0, max_size=10)
+        key = _make_tool_cache_key("tool", {"a": 1})
+
+        # Force propagation so caplog (which hooks into the root logger)
+        # can capture records even when vaig's setup_logging() has set
+        # propagate=False on the "vaig" logger.
+        vaig_logger = logging.getLogger("vaig")
+        orig_propagate = vaig_logger.propagate
+        vaig_logger.propagate = True
+        try:
+            with caplog.at_level("WARNING", logger="vaig.core.cache"):
+                cache.put(key, self._ok(), ttl_seconds=-1)
+            assert cache.size == 0
+            assert "Skipping cache put" in caplog.text
+        finally:
+            vaig_logger.propagate = orig_propagate
+
 
 # ── get_or_none tests ────────────────────────────────────────
 
@@ -279,6 +343,28 @@ class TestToolResultCacheGetOrNone:
 
         with patch("vaig.core.cache.time.monotonic", return_value=time.monotonic() + 2):
             assert cache.get_or_none("tool", {"a": 1}) is None
+
+    def test_ttl_override_zero_means_no_expiration(self) -> None:
+        """ttl_override=0 means no expiration for the lookup."""
+        cache = ToolResultCache(default_ttl=60, max_size=10)
+        key = _make_tool_cache_key("tool", {"a": 1})
+        cache.put(key, self._ok("data"), ttl_seconds=1)
+
+        # Stored TTL=1 would expire at 2s, but override=0 → no expiration
+        with patch("vaig.core.cache.time.monotonic", return_value=time.monotonic() + 999999):
+            result = cache.get_or_none("tool", {"a": 1}, ttl_override=0)
+            assert result is not None
+            assert result.output == "data"
+
+    def test_get_or_none_default_ttl_zero(self) -> None:
+        """get_or_none with default_ttl=0 cache never expires."""
+        cache = ToolResultCache(default_ttl=0, max_size=10)
+        key = _make_tool_cache_key("tool", {"a": 1})
+        cache.put(key, self._ok("persistent"))
+
+        with patch("vaig.core.cache.time.monotonic", return_value=time.monotonic() + 86400):
+            result = cache.get_or_none("tool", {"a": 1})
+            assert result is not None
 
 
 # ── Stats tests ──────────────────────────────────────────────
@@ -430,11 +516,11 @@ class TestToolResultCacheClear:
 
     def test_repr(self) -> None:
         """repr shows useful info."""
-        cache = ToolResultCache(default_ttl=60, max_size=10)
+        cache = ToolResultCache(default_ttl=0, max_size=10)
         cache.put(_make_tool_cache_key("tool", {}), self._ok())
         r = repr(cache)
         assert "1/10" in r
-        assert "default_ttl=60s" in r
+        assert "default_ttl=0s" in r
 
 
 # ── Thread safety tests ──────────────────────────────────────
