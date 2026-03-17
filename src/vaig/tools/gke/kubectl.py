@@ -164,7 +164,7 @@ def _kubectl_get_all(
             continue
         # Only include resource types that actually have items
         body = sub.output.strip() if sub.output else ""
-        if body:
+        if body and body != "No resources found." and body != "[]":
             sections.append(f"=== {rtype.upper()} ===\n{body}")
 
     if not sections and errors:

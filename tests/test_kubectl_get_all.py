@@ -112,7 +112,7 @@ class TestKubectlGetAll:
         def side_effect(resource: str, **kwargs: object) -> ToolResult:
             if resource == "pods":
                 return ToolResult(output="NAME   READY\npod-1  1/1")
-            return ToolResult(output="")
+            return ToolResult(output="No resources found.")
 
         mock_get.side_effect = side_effect
         cfg = _make_gke_config()
@@ -198,7 +198,7 @@ class TestKubectlGetAll:
         from vaig.tools.base import ToolResult
         from vaig.tools.gke.kubectl import _kubectl_get_all
 
-        mock_get.return_value = ToolResult(output="")
+        mock_get.return_value = ToolResult(output="No resources found.")
         cfg = _make_gke_config()
 
         result = _kubectl_get_all(gke_config=cfg, namespace="empty-ns")
