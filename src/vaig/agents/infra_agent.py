@@ -15,6 +15,7 @@ from vaig.tools import ToolRegistry, ToolResult
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
+    from vaig.core.cache import ToolResultCache
     from vaig.core.protocols import GeminiClientProtocol
     from vaig.core.tool_call_store import ToolCallStore
 
@@ -256,6 +257,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
         context: str = "",
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
+        tool_result_cache: ToolResultCache | None = None,
     ) -> AgentResult:
         """Execute an infrastructure investigation using the tool-use loop.
 
@@ -270,6 +272,10 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
             on_tool_call: Optional callback invoked after each tool
                 execution with ``(tool_name, tool_args, duration_secs,
                 success)``.
+            tool_call_store: Optional persistent store for tool call
+                records (used for telemetry / debugging).
+            tool_result_cache: Optional TTL cache for deduplicating
+                identical tool calls within the same session.
 
         Returns:
             AgentResult with the final text response and metadata.
@@ -302,6 +308,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
                 on_tool_call=on_tool_call,
                 agent_name=self.name,
                 tool_call_store=tool_call_store,
+                tool_result_cache=tool_result_cache,
             )
         except MaxIterationsError:
             raise
@@ -360,6 +367,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
         context: str = "",
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
+        tool_result_cache: ToolResultCache | None = None,
     ) -> AgentResult:
         """Execute an infrastructure investigation using the async tool-use loop.
 
@@ -373,6 +381,10 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
             on_tool_call: Optional callback invoked after each tool
                 execution with ``(tool_name, tool_args, duration_secs,
                 success)``.
+            tool_call_store: Optional persistent store for tool call
+                records (used for telemetry / debugging).
+            tool_result_cache: Optional TTL cache for deduplicating
+                identical tool calls within the same session.
 
         Returns:
             AgentResult with the final text response and metadata.
@@ -405,6 +417,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
                 on_tool_call=on_tool_call,
                 agent_name=self.name,
                 tool_call_store=tool_call_store,
+                tool_result_cache=tool_result_cache,
             )
         except MaxIterationsError:
             raise
@@ -444,7 +457,10 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
         )
 
     async def async_execute_stream(
-        self, prompt: str, *, context: str = "",
+        self,
+        prompt: str,
+        *,
+        context: str = "",
     ) -> AsyncIterator[str]:
         """Async streaming — falls back to async_execute.
 

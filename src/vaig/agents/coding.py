@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
-from vaig.agents.mixins import ToolLoopMixin
+from vaig.agents.mixins import OnToolCall, ToolLoopMixin
 from vaig.agents.utils import deduplicate_response
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS, CodingConfig, Settings
 from vaig.core.exceptions import MaxIterationsError
@@ -16,7 +16,9 @@ from vaig.tools import ToolRegistry, ToolResult, create_file_tools, create_shell
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
 
+    from vaig.core.cache import ToolResultCache
     from vaig.core.protocols import GeminiClientProtocol
+    from vaig.core.tool_call_store import ToolCallStore
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +79,13 @@ Do NOT repeat the same failing call. Common fixes:
 
 # ── Task 4.4 — Destructive tool names (need confirmation) ───
 
-_DESTRUCTIVE_TOOLS: frozenset[str] = frozenset({
-    "write_file",
-    "edit_file",
-    "run_command",
-})
+_DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
+    {
+        "write_file",
+        "edit_file",
+        "run_command",
+    }
+)
 
 
 def _default_confirm(tool_name: str, args: dict[str, Any]) -> bool:
@@ -175,8 +179,7 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
                 )
 
         logger.info(
-            "CodingAgent initialized — workspace=%s, max_iterations=%d, "
-            "confirm=%s, tools=%d",
+            "CodingAgent initialized — workspace=%s, max_iterations=%d, confirm=%s, tools=%d",
             self._workspace,
             self._max_iterations,
             coding_config.confirm_actions,
@@ -195,7 +198,15 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
 
     # ── Task 4.2 — Tool-use loop (via ToolLoopMixin) ───────────
 
-    def execute(self, prompt: str, *, context: str = "") -> AgentResult:
+    def execute(
+        self,
+        prompt: str,
+        *,
+        context: str = "",
+        on_tool_call: OnToolCall | None = None,
+        tool_call_store: ToolCallStore | None = None,
+        tool_result_cache: ToolResultCache | None = None,
+    ) -> AgentResult:
         """Execute a coding task using the tool-use loop.
 
         Delegates to :meth:`ToolLoopMixin._run_tool_loop` for the loop
@@ -205,6 +216,13 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
         Args:
             prompt: The coding task or question.
             context: Optional additional context (file contents, etc.).
+            on_tool_call: Optional callback invoked after each tool
+                execution with ``(tool_name, tool_args, duration_secs,
+                success)``.
+            tool_call_store: Optional persistent store for tool call
+                records (used for telemetry / debugging).
+            tool_result_cache: Optional TTL cache for deduplicating
+                identical tool calls within the same session.
 
         Returns:
             AgentResult with the final text response and metadata.
@@ -234,6 +252,10 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
                 frequency_penalty=0.15,
+                on_tool_call=on_tool_call,
+                agent_name=self.name,
+                tool_call_store=tool_call_store,
+                tool_result_cache=tool_result_cache,
             )
         except MaxIterationsError:
             raise  # Let the caller handle iteration exhaustion
@@ -281,7 +303,15 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
 
     # ── Async methods ────────────────────────────────────────
 
-    async def async_execute(self, prompt: str, *, context: str = "") -> AgentResult:
+    async def async_execute(
+        self,
+        prompt: str,
+        *,
+        context: str = "",
+        on_tool_call: OnToolCall | None = None,
+        tool_call_store: ToolCallStore | None = None,
+        tool_result_cache: ToolResultCache | None = None,
+    ) -> AgentResult:
         """Execute a coding task using the async tool-use loop.
 
         Async version of :meth:`execute`.  Delegates to
@@ -291,6 +321,13 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
         Args:
             prompt: The coding task or question.
             context: Optional additional context (file contents, etc.).
+            on_tool_call: Optional callback invoked after each tool
+                execution with ``(tool_name, tool_args, duration_secs,
+                success)``.
+            tool_call_store: Optional persistent store for tool call
+                records (used for telemetry / debugging).
+            tool_result_cache: Optional TTL cache for deduplicating
+                identical tool calls within the same session.
 
         Returns:
             AgentResult with the final text response and metadata.
@@ -320,6 +357,10 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
                 frequency_penalty=0.15,
+                on_tool_call=on_tool_call,
+                agent_name=self.name,
+                tool_call_store=tool_call_store,
+                tool_result_cache=tool_result_cache,
             )
         except MaxIterationsError:
             raise  # Let the caller handle iteration exhaustion
@@ -355,7 +396,10 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
         )
 
     async def async_execute_stream(
-        self, prompt: str, *, context: str = "",
+        self,
+        prompt: str,
+        *,
+        context: str = "",
     ) -> AsyncIterator[str]:
         """Async streaming — falls back to async_execute.
 
@@ -420,7 +464,9 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
 
         # Delegate to the async base implementation for actual execution
         return await super()._async_execute_single_tool(
-            tool_registry, tool_name, tool_args,
+            tool_registry,
+            tool_name,
+            tool_args,
         )
 
     # ── Internal helpers ─────────────────────────────────────
