@@ -21,9 +21,10 @@ def register(models_app: typer.Typer) -> None:
         """List available models."""
         settings = _helpers._get_settings(config)
 
-        from vaig.core.client import GeminiClient
+        from vaig.core.container import build_container
 
-        client = GeminiClient(settings)
+        container = build_container(settings)
+        client = container.gemini_client
         models = client.list_available_models()
 
         if not models:

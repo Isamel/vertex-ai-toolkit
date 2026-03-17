@@ -1,6 +1,6 @@
 """Telemetry subscriber — adapts domain events to TelemetryCollector calls.
 
-This is a pure adapter: it subscribes to all 8 event types on the
+This is a pure adapter: it subscribes to all 10 event types on the
 :class:`~vaig.core.event_bus.EventBus` and translates each into the
 equivalent :class:`~vaig.core.telemetry.TelemetryCollector` method call.
 
@@ -23,6 +23,8 @@ from vaig.core.events import (
     BudgetChecked,
     CliCommandTracked,
     ErrorOccurred,
+    OrchestratorPhaseCompleted,
+    OrchestratorToolsCompleted,
     SessionEnded,
     SessionStarted,
     SkillUsed,
@@ -64,7 +66,7 @@ class TelemetrySubscriber:
     # ── Subscription wiring ──────────────────────────────────
 
     def _subscribe_all(self) -> None:
-        """Register handlers for all 8 event types on the singleton EventBus."""
+        """Register handlers for all 10 event types on the singleton EventBus."""
         bus = EventBus.get()
         self._unsubscribers = [
             bus.subscribe(ToolExecuted, self._on_tool_executed),
@@ -75,6 +77,8 @@ class TelemetrySubscriber:
             bus.subscribe(SkillUsed, self._on_skill_used),
             bus.subscribe(CliCommandTracked, self._on_cli_command_tracked),
             bus.subscribe(BudgetChecked, self._on_budget_checked),
+            bus.subscribe(OrchestratorPhaseCompleted, self._on_orchestrator_phase_completed),
+            bus.subscribe(OrchestratorToolsCompleted, self._on_orchestrator_tools_completed),
         ]
 
     def unsubscribe_all(self) -> None:
@@ -205,3 +209,38 @@ class TelemetrySubscriber:
             )
         except Exception:  # noqa: BLE001
             logger.debug("TelemetrySubscriber: failed to handle BudgetChecked", exc_info=True)
+
+    def _on_orchestrator_phase_completed(self, event: OrchestratorPhaseCompleted) -> None:
+        """OrchestratorPhaseCompleted → emit(orchestrator, execute_skill_phase / async_...)."""
+        try:
+            event_name = "async_execute_skill_phase" if event.is_async else "execute_skill_phase"
+            self._collector.emit(
+                event_type="orchestrator",
+                event_name=event_name,
+                duration_ms=event.duration_ms,
+                metadata={
+                    "skill": event.skill,
+                    "phase": event.phase,
+                    "strategy": event.strategy,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("TelemetrySubscriber: failed to handle OrchestratorPhaseCompleted", exc_info=True)
+
+    def _on_orchestrator_tools_completed(self, event: OrchestratorToolsCompleted) -> None:
+        """OrchestratorToolsCompleted → emit(orchestrator, execute_with_tools / async_...)."""
+        try:
+            event_name = "async_execute_with_tools" if event.is_async else "execute_with_tools"
+            self._collector.emit(
+                event_type="orchestrator",
+                event_name=event_name,
+                duration_ms=event.duration_ms,
+                metadata={
+                    "skill": event.skill,
+                    "strategy": event.strategy,
+                    "agents_count": event.agents_count,
+                    "success": event.success,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("TelemetrySubscriber: failed to handle OrchestratorToolsCompleted", exc_info=True)

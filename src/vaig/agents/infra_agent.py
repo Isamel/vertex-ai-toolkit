@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import OnToolCall, ToolLoopMixin
 from vaig.agents.utils import deduplicate_response
-from vaig.core.client import GeminiClient
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS, GKEConfig, Settings
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools import ToolRegistry, ToolResult
@@ -16,6 +15,7 @@ from vaig.tools import ToolRegistry, ToolResult
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
+    from vaig.core.protocols import GeminiClientProtocol
     from vaig.core.tool_call_store import ToolCallStore
 
 logger = logging.getLogger(__name__)
@@ -141,7 +141,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
 
     def __init__(
         self,
-        client: GeminiClient,
+        client: GeminiClientProtocol,
         gke_config: GKEConfig,
         *,
         settings: Settings | None = None,
@@ -151,7 +151,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
         """Initialize the infrastructure agent.
 
         Args:
-            client: The GeminiClient for API calls.
+            client: The Gemini client (protocol) for API calls.
             gke_config: GKE configuration (cluster connection, defaults, etc.).
             settings: Full application settings (used for plugin tool loading).
             max_tool_iterations: Maximum tool-use loop iterations per turn.

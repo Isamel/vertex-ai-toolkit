@@ -19,6 +19,8 @@ __all__ = [
     "CliCommandTracked",
     "ErrorOccurred",
     "Event",
+    "OrchestratorPhaseCompleted",
+    "OrchestratorToolsCompleted",
     "SessionEnded",
     "SessionStarted",
     "SkillUsed",
@@ -192,3 +194,51 @@ class BudgetChecked(Event):
     cost_usd: float = 0.0
     limit_usd: float = 0.0
     message: str = ""
+
+
+@dataclass(frozen=True)
+class OrchestratorPhaseCompleted(Event):
+    """Emitted when the orchestrator completes a skill phase execution.
+
+    Covers both sync ``execute_skill_phase`` and async
+    ``async_execute_skill_phase``.
+
+    Attributes:
+        skill: Name of the skill being executed.
+        phase: The skill phase (e.g. ``"gather"``, ``"analyze"``).
+        strategy: Execution strategy (``"sequential"`` or ``"fanout"``).
+        duration_ms: Execution wall-clock time in milliseconds.
+        is_async: Whether the async code path was used.
+    """
+
+    event_type: str = field(default="orchestrator.phase_completed", init=False)
+    skill: str = ""
+    phase: str = ""
+    strategy: str = ""
+    duration_ms: float = 0.0
+    is_async: bool = False
+
+
+@dataclass(frozen=True)
+class OrchestratorToolsCompleted(Event):
+    """Emitted when the orchestrator completes a tool-loop execution.
+
+    Covers both sync ``execute_with_tools`` and async
+    ``async_execute_with_tools``.
+
+    Attributes:
+        skill: Name of the skill being executed.
+        strategy: Execution strategy.
+        agents_count: Number of agents involved.
+        success: Whether the orchestrator run succeeded.
+        duration_ms: Execution wall-clock time in milliseconds.
+        is_async: Whether the async code path was used.
+    """
+
+    event_type: str = field(default="orchestrator.tools_completed", init=False)
+    skill: str = ""
+    strategy: str = ""
+    agents_count: int = 0
+    success: bool = True
+    duration_ms: float = 0.0
+    is_async: bool = False

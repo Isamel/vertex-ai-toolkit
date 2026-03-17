@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import OnToolCall, ToolLoopMixin
-from vaig.core.client import GeminiClient
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools.base import ToolRegistry
@@ -22,6 +21,7 @@ from vaig.tools.base import ToolRegistry
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
+    from vaig.core.protocols import GeminiClientProtocol
     from vaig.core.tool_call_store import ToolCallStore
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         tool_registry: ToolRegistry,
         model: str,
         name: str,
-        client: GeminiClient,
+        client: GeminiClientProtocol,
         max_iterations: int = 15,
         temperature: float = 0.7,
         max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
@@ -68,7 +68,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             tool_registry: Pre-configured registry of tools available to the agent.
             model: Gemini model ID.
             name: Unique agent name.
-            client: The ``GeminiClient`` for API calls.
+            client: The ``GeminiClientProtocol`` for API calls.
             max_iterations: Safety cap on tool-use loop iterations.
             temperature: Sampling temperature.
             max_output_tokens: Max output token count.
@@ -105,7 +105,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         config: dict[str, Any],
         model: str,
         tool_registry: ToolRegistry,
-        client: GeminiClient,
+        client: GeminiClientProtocol,
     ) -> ToolAwareAgent:
         """Create a ``ToolAwareAgent`` from a configuration dictionary.
 
@@ -125,7 +125,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             config: Agent configuration dictionary.
             model: Gemini model ID.
             tool_registry: Pre-configured tool registry.
-            client: ``GeminiClient`` instance.
+            client: ``GeminiClientProtocol`` instance.
 
         Returns:
             A fully configured ``ToolAwareAgent``.
