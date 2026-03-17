@@ -24,6 +24,32 @@ console = Console()
 err_console = Console(stderr=True)
 logger = logging.getLogger(__name__)
 
+# Keep a module-level reference so the subscriber isn't garbage-collected.
+_telemetry_subscriber: object | None = None
+
+
+def _init_telemetry(settings: Settings) -> None:
+    """Initialize the telemetry collector **and** wire the TelemetrySubscriber.
+
+    Safe to call multiple times — the collector is a singleton and the
+    subscriber is created only once (guarded by ``_telemetry_subscriber``).
+    This ensures that events emitted via the EventBus (e.g. from
+    ``CostTracker.record`` or ``track_command``) are forwarded to the
+    collector's SQLite store.
+    """
+    global _telemetry_subscriber  # noqa: PLW0603
+    try:
+        from vaig.core.telemetry import get_telemetry_collector
+
+        collector = get_telemetry_collector(settings)
+
+        if _telemetry_subscriber is None:
+            from vaig.core.subscribers import TelemetrySubscriber
+
+            _telemetry_subscriber = TelemetrySubscriber(collector)
+    except Exception:  # noqa: BLE001
+        pass
+
 
 # ── Telemetry decorator ───────────────────────────────────────
 def track_command(fn: Callable[..., Any]) -> Callable[..., Any]:

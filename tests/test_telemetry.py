@@ -844,7 +844,7 @@ class TestSessionLifecycleHook:
         conn.close()
 
         assert len(rows) == 1
-        assert rows[0] == ("session", "session-started")
+        assert rows[0] == ("session", "session_start")
 
     def test_close_emits_end(self, monkeypatch: pytest.MonkeyPatch, db_path: Path) -> None:
         """SessionManager.close() emits session_end and flushes."""
@@ -883,7 +883,7 @@ class TestSessionLifecycleHook:
         conn.close()
 
         assert len(rows) == 1
-        assert rows[0] == ("session", "session-ended")
+        assert rows[0] == ("session", "session_end")
 
 
 class TestSkillUseHook:

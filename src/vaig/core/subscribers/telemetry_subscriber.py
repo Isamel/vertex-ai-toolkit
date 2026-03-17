@@ -95,14 +95,22 @@ class TelemetrySubscriber:
     def _on_tool_executed(self, event: ToolExecuted) -> None:
         """ToolExecuted → emit_tool_call()."""
         try:
+            metadata: dict[str, object] | None = None
+            if event.args_keys or event.error:
+                metadata = {}
+                if event.args_keys:
+                    metadata["args_keys"] = list(event.args_keys)
+                if event.error:
+                    metadata["error"] = event.error
             self._collector.emit_tool_call(
                 event.tool_name,
                 duration_ms=event.duration_ms,
+                metadata=metadata,
                 error_type=event.error_type,
                 error_message=event.error_message,
             )
         except Exception:  # noqa: BLE001
-            logger.warning("TelemetrySubscriber: failed to handle ToolExecuted", exc_info=True)
+            logger.debug("TelemetrySubscriber: failed to handle ToolExecuted", exc_info=True)
 
     def _on_api_called(self, event: ApiCalled) -> None:
         """ApiCalled → emit_api_call()."""
@@ -117,7 +125,7 @@ class TelemetrySubscriber:
                 metadata=metadata,
             )
         except Exception:  # noqa: BLE001
-            logger.warning("TelemetrySubscriber: failed to handle ApiCalled", exc_info=True)
+            logger.debug("TelemetrySubscriber: failed to handle ApiCalled", exc_info=True)
 
     def _on_error_occurred(self, event: ErrorOccurred) -> None:
         """ErrorOccurred → emit_error()."""
@@ -133,15 +141,15 @@ class TelemetrySubscriber:
                 metadata=metadata,
             )
         except Exception:  # noqa: BLE001
-            logger.warning("TelemetrySubscriber: failed to handle ErrorOccurred", exc_info=True)
+            logger.debug("TelemetrySubscriber: failed to handle ErrorOccurred", exc_info=True)
 
     def _on_session_started(self, event: SessionStarted) -> None:
-        """SessionStarted → set_session_id() + emit(session, session-started)."""
+        """SessionStarted → set_session_id() + emit(session, session_start)."""
         try:
             self._collector.set_session_id(event.session_id)
             self._collector.emit(
                 event_type="session",
-                event_name="session-started",
+                event_name="session_start",
                 metadata={
                     "name": event.name,
                     "model": event.model,
@@ -149,18 +157,18 @@ class TelemetrySubscriber:
                 },
             )
         except Exception:  # noqa: BLE001
-            logger.warning("TelemetrySubscriber: failed to handle SessionStarted", exc_info=True)
+            logger.debug("TelemetrySubscriber: failed to handle SessionStarted", exc_info=True)
 
     def _on_session_ended(self, event: SessionEnded) -> None:
-        """SessionEnded → emit(session, session-ended)."""
+        """SessionEnded → emit(session, session_end)."""
         try:
             self._collector.emit(
                 event_type="session",
-                event_name="session-ended",
+                event_name="session_end",
                 duration_ms=event.duration_ms,
             )
         except Exception:  # noqa: BLE001
-            logger.warning("TelemetrySubscriber: failed to handle SessionEnded", exc_info=True)
+            logger.debug("TelemetrySubscriber: failed to handle SessionEnded", exc_info=True)
 
     def _on_skill_used(self, event: SkillUsed) -> None:
         """SkillUsed → emit_skill_use()."""
@@ -170,7 +178,7 @@ class TelemetrySubscriber:
                 duration_ms=event.duration_ms,
             )
         except Exception:  # noqa: BLE001
-            logger.warning("TelemetrySubscriber: failed to handle SkillUsed", exc_info=True)
+            logger.debug("TelemetrySubscriber: failed to handle SkillUsed", exc_info=True)
 
     def _on_cli_command_tracked(self, event: CliCommandTracked) -> None:
         """CliCommandTracked → emit_cli_command()."""
@@ -180,7 +188,7 @@ class TelemetrySubscriber:
                 duration_ms=event.duration_ms,
             )
         except Exception:  # noqa: BLE001
-            logger.warning("TelemetrySubscriber: failed to handle CliCommandTracked", exc_info=True)
+            logger.debug("TelemetrySubscriber: failed to handle CliCommandTracked", exc_info=True)
 
     def _on_budget_checked(self, event: BudgetChecked) -> None:
         """BudgetChecked → emit(budget, budget-checked)."""
@@ -196,4 +204,4 @@ class TelemetrySubscriber:
                 },
             )
         except Exception:  # noqa: BLE001
-            logger.warning("TelemetrySubscriber: failed to handle BudgetChecked", exc_info=True)
+            logger.debug("TelemetrySubscriber: failed to handle BudgetChecked", exc_info=True)

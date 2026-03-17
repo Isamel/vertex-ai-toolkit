@@ -286,7 +286,8 @@ class SessionManager:
             from vaig.core.event_bus import EventBus
             from vaig.core.events import SessionEnded
 
-            EventBus.get().emit(SessionEnded())
+            session_id = self._active.id if self._active else ""
+            EventBus.get().emit(SessionEnded(session_id=session_id))
         except Exception:  # noqa: BLE001
             pass
 
@@ -447,7 +448,8 @@ class SessionManager:
             from vaig.core.event_bus import EventBus
             from vaig.core.events import SessionEnded
 
-            EventBus.get().emit(SessionEnded())
+            session_id = self._active.id if self._active else ""
+            EventBus.get().emit(SessionEnded(session_id=session_id))
         except Exception:  # noqa: BLE001
             pass
 

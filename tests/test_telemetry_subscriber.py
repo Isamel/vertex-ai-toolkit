@@ -70,6 +70,7 @@ class TestToolExecutedHandler:
         mock_collector.emit_tool_call.assert_called_once_with(
             "kubectl",
             duration_ms=42.5,
+            metadata=None,
             error_type="",
             error_message="",
         )
@@ -91,8 +92,52 @@ class TestToolExecutedHandler:
         mock_collector.emit_tool_call.assert_called_once_with(
             "helm",
             duration_ms=100.0,
+            metadata={"error": True},
             error_type="TimeoutError",
             error_message="connection timed out",
+        )
+
+    def test_tool_executed_with_args_keys(
+        self, subscriber: TelemetrySubscriber, mock_collector: MagicMock
+    ) -> None:
+        bus = EventBus.get()
+        bus.emit(
+            ToolExecuted(
+                tool_name="kubectl",
+                duration_ms=50.0,
+                args_keys=("namespace", "pod"),
+            )
+        )
+
+        mock_collector.emit_tool_call.assert_called_once_with(
+            "kubectl",
+            duration_ms=50.0,
+            metadata={"args_keys": ["namespace", "pod"]},
+            error_type="",
+            error_message="",
+        )
+
+    def test_tool_executed_with_args_keys_and_error(
+        self, subscriber: TelemetrySubscriber, mock_collector: MagicMock
+    ) -> None:
+        bus = EventBus.get()
+        bus.emit(
+            ToolExecuted(
+                tool_name="helm",
+                duration_ms=200.0,
+                args_keys=("release",),
+                error=True,
+                error_type="RuntimeError",
+                error_message="failed",
+            )
+        )
+
+        mock_collector.emit_tool_call.assert_called_once_with(
+            "helm",
+            duration_ms=200.0,
+            metadata={"args_keys": ["release"], "error": True},
+            error_type="RuntimeError",
+            error_message="failed",
         )
 
 
@@ -206,7 +251,7 @@ class TestErrorOccurredHandler:
 
 
 class TestSessionStartedHandler:
-    """SessionStarted → set_session_id() + emit(session, session-started)."""
+    """SessionStarted → set_session_id() + emit(session, session_start)."""
 
     def test_session_started(
         self, subscriber: TelemetrySubscriber, mock_collector: MagicMock
@@ -224,7 +269,7 @@ class TestSessionStartedHandler:
         mock_collector.set_session_id.assert_called_once_with("abc-123")
         mock_collector.emit.assert_called_once_with(
             event_type="session",
-            event_name="session-started",
+            event_name="session_start",
             metadata={
                 "name": "test-session",
                 "model": "gemini-2.5-pro",
@@ -247,7 +292,7 @@ class TestSessionStartedHandler:
 
 
 class TestSessionEndedHandler:
-    """SessionEnded → emit(session, session-ended)."""
+    """SessionEnded → emit(session, session_end)."""
 
     def test_session_ended(
         self, subscriber: TelemetrySubscriber, mock_collector: MagicMock
@@ -257,7 +302,7 @@ class TestSessionEndedHandler:
 
         mock_collector.emit.assert_called_once_with(
             event_type="session",
-            event_name="session-ended",
+            event_name="session_end",
             duration_ms=60000.0,
         )
 
