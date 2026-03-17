@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-17
+
+### Added
+- Tool call deduplication cache with SHA-256 keying, LRU eviction, and TTL — shared across orchestrator passes; 7 write/volatile tools marked non-cacheable (#20)
+- Defense-in-depth prompt security hardening and structured output documentation (#16)
+
+### Fixed
+- `gcloud_monitoring_query` NoneType crash — defensive None guards in `_format_time_series()` and improved tool description (#19)
+- Cache wiring in `InfraAgent`, `CodingAgent`, and `live.py` — `tool_result_cache` parameter was not being forwarded to agent execute methods (#21)
+- Cache TTL changed from 60s to 0 (no expiration) during pipeline runs — cache is already scoped to pipeline lifetime, TTL expiry caused mid-run misses (#22)
+- Data loss in multi-agent pipeline when report sections returned empty results (#18)
+- `Content` objects in `estimate_history_tokens` causing `AttributeError` (#17)
+- `cast()` protocol gap in `repl.py` removed in favor of proper Protocol typing (#15)
+
+### Changed
+- Tech debt cleanup — event bus subscription model, Protocol type annotations, container migration for remaining direct instantiation, mypy strict fixes (#14)
+
 ## [0.1.0] - 2026-03-16
 
 Initial public release of the Vertex AI Toolkit (`vaig`) — a multi-agent AI
@@ -128,4 +145,5 @@ SRE workflows.
 - Extracted shared test fixtures into `conftest.py`
 - Applied 12 code quality improvements from audit
 
+[0.6.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.6.0
 [0.1.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.1.0
