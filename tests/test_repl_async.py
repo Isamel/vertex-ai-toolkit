@@ -525,8 +525,13 @@ class TestAsyncStartREPL:
             session=SessionConfig(repl_history_path=str(history_file)),
         )
 
+        mock_client = MagicMock()
+        mock_client.current_model = "gemini-2.5-pro"
+        mock_container = MagicMock()
+        mock_container.gemini_client = mock_client
+
         with (
-            patch("vaig.cli.repl.GeminiClient") as mock_gc,
+            patch("vaig.cli.repl.build_container", return_value=mock_container),
             patch("vaig.cli.repl.Orchestrator"),
             patch("vaig.cli.repl.SessionManager") as mock_sm_cls,
             patch("vaig.cli.repl.ContextBuilder"),
@@ -536,7 +541,6 @@ class TestAsyncStartREPL:
             patch("vaig.cli.repl._async_save_cost_data", new_callable=AsyncMock),
             patch("vaig.cli.repl.console"),
         ):
-            mock_gc.return_value.current_model = "gemini-2.5-pro"
             mock_sm = mock_sm_cls.return_value
             mock_sm.async_new_session = AsyncMock()
             mock_sm.async_close = AsyncMock()
@@ -558,8 +562,13 @@ class TestAsyncStartREPL:
             session=SessionConfig(repl_history_path=str(history_file)),
         )
 
+        mock_client = MagicMock()
+        mock_client.current_model = "gemini-2.5-pro"
+        mock_container = MagicMock()
+        mock_container.gemini_client = mock_client
+
         with (
-            patch("vaig.cli.repl.GeminiClient") as mock_gc,
+            patch("vaig.cli.repl.build_container", return_value=mock_container),
             patch("vaig.cli.repl.Orchestrator"),
             patch("vaig.cli.repl.SessionManager") as mock_sm_cls,
             patch("vaig.cli.repl.ContextBuilder"),
@@ -569,7 +578,6 @@ class TestAsyncStartREPL:
             patch("vaig.cli.repl._async_save_cost_data", new_callable=AsyncMock),
             patch("vaig.cli.repl.console"),
         ):
-            mock_gc.return_value.current_model = "gemini-2.5-pro"
             mock_sm = mock_sm_cls.return_value
 
             loaded_session = MagicMock()

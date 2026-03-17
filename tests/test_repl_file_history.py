@@ -58,8 +58,13 @@ class TestReplFileHistory:
             mock = MagicMock()
             return mock
 
+        mock_client = MagicMock()
+        mock_client.current_model = "gemini-2.5-pro"
+        mock_container = MagicMock()
+        mock_container.gemini_client = mock_client
+
         with (
-            patch("vaig.cli.repl.GeminiClient") as mock_gc,
+            patch("vaig.cli.repl.build_container", return_value=mock_container),
             patch("vaig.cli.repl.Orchestrator"),
             patch("vaig.cli.repl.SessionManager") as mock_sm,
             patch("vaig.cli.repl.ContextBuilder"),
@@ -70,7 +75,6 @@ class TestReplFileHistory:
             patch("vaig.cli.repl._save_cost_data"),
             patch("vaig.cli.repl.console"),
         ):
-            mock_gc.return_value.current_model = "gemini-2.5-pro"
             mock_sm.return_value.load_session.return_value = None
 
             from vaig.cli.repl import start_repl
@@ -91,8 +95,13 @@ class TestReplFileHistory:
             session=SessionConfig(repl_history_path=str(history_file)),
         )
 
+        mock_client = MagicMock()
+        mock_client.current_model = "gemini-2.5-pro"
+        mock_container = MagicMock()
+        mock_container.gemini_client = mock_client
+
         with (
-            patch("vaig.cli.repl.GeminiClient") as mock_gc,
+            patch("vaig.cli.repl.build_container", return_value=mock_container),
             patch("vaig.cli.repl.Orchestrator"),
             patch("vaig.cli.repl.SessionManager") as mock_sm,
             patch("vaig.cli.repl.ContextBuilder"),
@@ -103,7 +112,6 @@ class TestReplFileHistory:
             patch("vaig.cli.repl._save_cost_data"),
             patch("vaig.cli.repl.console"),
         ):
-            mock_gc.return_value.current_model = "gemini-2.5-pro"
             mock_sm.return_value.load_session.return_value = None
 
             from vaig.cli.repl import start_repl
@@ -127,8 +135,13 @@ class TestReplFileHistory:
             captured.update(kwargs)
             return MagicMock()
 
+        mock_client = MagicMock()
+        mock_client.current_model = "gemini-2.5-pro"
+        mock_container = MagicMock()
+        mock_container.gemini_client = mock_client
+
         with (
-            patch("vaig.cli.repl.GeminiClient") as mock_gc,
+            patch("vaig.cli.repl.build_container", return_value=mock_container),
             patch("vaig.cli.repl.Orchestrator"),
             patch("vaig.cli.repl.SessionManager") as mock_sm,
             patch("vaig.cli.repl.ContextBuilder"),
@@ -139,7 +152,6 @@ class TestReplFileHistory:
             patch("vaig.cli.repl._save_cost_data"),
             patch("vaig.cli.repl.console"),
         ):
-            mock_gc.return_value.current_model = "gemini-2.5-pro"
             mock_sm.return_value.load_session.return_value = None
 
             from vaig.cli.repl import start_repl

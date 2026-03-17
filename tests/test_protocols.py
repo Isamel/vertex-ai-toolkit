@@ -55,6 +55,9 @@ class TestGeminiClientProtocol:
             "switch_model",
             "list_available_models",
             "build_function_response_parts",
+            "clear_cache",
+            "cache_stats",
+            "reinitialize",
         ]
 
         for method_name in expected_methods:
@@ -108,6 +111,23 @@ class TestGeminiClientProtocol:
             @staticmethod
             def build_function_response_parts(results: list[dict[str, Any]]) -> list[Any]:
                 return []
+
+            @property
+            def cache_enabled(self) -> bool:
+                return False
+
+            def clear_cache(self) -> int:
+                return 0
+
+            def cache_stats(self) -> Any:
+                return None
+
+            def reinitialize(
+                self,
+                project: str | None = None,
+                location: str | None = None,
+            ) -> None:
+                pass
 
         fake = FakeClient()
         assert isinstance(fake, GeminiClientProtocol)

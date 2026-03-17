@@ -19,8 +19,8 @@ from dataclasses import field as dataclass_field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from vaig.core.client import GeminiClient
     from vaig.core.config import Settings
+    from vaig.core.protocols import GeminiClientProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +46,14 @@ class SwitchResult:
 def switch_project(
     settings: Settings,
     new_project: str,
-    client: GeminiClient | None = None,
+    client: GeminiClientProtocol | None = None,
 ) -> SwitchResult:
     """Switch GCP project — mutates settings, reinits client, clears caches.
 
     Args:
         settings: The application settings to mutate.
         new_project: New GCP project ID.
-        client: Optional GeminiClient to reinitialize.
+        client: Optional client to reinitialize.
 
     Returns:
         SwitchResult with details of the switch.
@@ -125,14 +125,14 @@ def switch_project(
 def switch_location(
     settings: Settings,
     new_location: str,
-    client: GeminiClient | None = None,
+    client: GeminiClientProtocol | None = None,
 ) -> SwitchResult:
     """Switch GCP location — mutates settings, reinits client.
 
     Args:
         settings: The application settings to mutate.
         new_location: New GCP location (e.g. ``us-central1``).
-        client: Optional GeminiClient to reinitialize.
+        client: Optional client to reinitialize.
 
     Returns:
         SwitchResult with details of the switch.

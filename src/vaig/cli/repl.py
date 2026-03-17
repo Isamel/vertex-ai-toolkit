@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
@@ -17,11 +17,12 @@ from rich.table import Table
 
 from vaig.agents.orchestrator import Orchestrator
 from vaig.context.builder import ContextBuilder
-from vaig.core.client import GeminiClient, StreamResult
+from vaig.core.client import StreamResult
 from vaig.core.config import Settings
 from vaig.core.container import build_container
 from vaig.core.cost_tracker import BudgetStatus, CostTracker
 from vaig.core.exceptions import format_error_for_user
+from vaig.core.protocols import GeminiClientProtocol
 from vaig.session.manager import SessionManager
 from vaig.skills.base import BaseSkill, SkillPhase
 from vaig.skills.registry import SkillRegistry
@@ -76,7 +77,7 @@ class REPLState:
     def __init__(
         self,
         settings: Settings,
-        client: GeminiClient,
+        client: GeminiClientProtocol,
         orchestrator: Orchestrator,
         session_manager: SessionManager,
         context_builder: ContextBuilder,
@@ -183,10 +184,7 @@ def start_repl(
     """Start the interactive REPL loop."""
     # Initialize components
     container = build_container(settings)
-    # TODO(protocol-gap): Cast is necessary — REPL uses GeminiClient-specific
-    # methods (cache_stats, clear_cache, cache_enabled) not exposed by
-    # GeminiClientProtocol. Consider adding a CacheableClient protocol.
-    client = cast(GeminiClient, container.gemini_client)
+    client = container.gemini_client
     orchestrator = Orchestrator(client, settings)
     session_manager = SessionManager(settings)
     context_builder = ContextBuilder(settings)
@@ -294,10 +292,7 @@ async def async_start_repl(
     """
     # Initialize components (same as sync start_repl)
     container = build_container(settings)
-    # TODO(protocol-gap): Cast is necessary — REPL uses GeminiClient-specific
-    # methods (cache_stats, clear_cache, cache_enabled) not exposed by
-    # GeminiClientProtocol. Consider adding a CacheableClient protocol.
-    client = cast(GeminiClient, container.gemini_client)
+    client = container.gemini_client
     orchestrator = Orchestrator(client, settings)
     session_manager = SessionManager(settings)
     context_builder = ContextBuilder(settings)
