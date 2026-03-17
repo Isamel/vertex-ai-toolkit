@@ -27,6 +27,19 @@ from vaig.core.config import Settings
 if TYPE_CHECKING:
     from vaig.context.builder import ContextBuilder
 
+
+def _make_mock_container(settings: Settings | None = None) -> MagicMock:
+    """Build a mock ServiceContainer with a mock GeminiClient."""
+    from vaig.core.event_bus import EventBus
+
+    mock_container = MagicMock()
+    mock_container.gemini_client = MagicMock()
+    mock_container.settings = settings or Settings()
+    mock_container.event_bus = EventBus.get()
+    mock_container.k8s_provider = None
+    mock_container.gcp_provider = None
+    return mock_container
+
 # ══════════════════════════════════════════════════════════════
 # track_command_async
 # ══════════════════════════════════════════════════════════════
@@ -271,7 +284,7 @@ class TestAsyncAskImpl:
         mock_orchestrator.async_execute_single = AsyncMock(return_value=mock_result)
 
         with (
-            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             await _async_ask_impl("What is Python?", no_stream=True)
@@ -301,7 +314,7 @@ class TestAsyncAskImpl:
         mock_orchestrator.async_execute_single = AsyncMock(return_value=mock_stream)
 
         with (
-            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             await _async_ask_impl("What is Python?", no_stream=False)
@@ -326,7 +339,7 @@ class TestAsyncAskImpl:
         mock_registry.get.return_value = mock_skill
 
         with (
-            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
             patch("vaig.skills.registry.SkillRegistry", return_value=mock_registry),
         ):
@@ -339,7 +352,7 @@ class TestAsyncAskImpl:
         from vaig.cli.commands.ask import _async_ask_impl
 
         with (
-            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
             patch("vaig.cli.commands._code._async_execute_code_mode", new_callable=AsyncMock) as mock_code,
         ):
             await _async_ask_impl("Fix the bug", code=True)
@@ -351,7 +364,7 @@ class TestAsyncAskImpl:
         from vaig.cli.commands.ask import _async_ask_impl
 
         with (
-            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
             patch("vaig.cli.commands.live._async_execute_live_mode", new_callable=AsyncMock) as mock_live,
         ):
             await _async_ask_impl("Check pods", live=True)
@@ -373,7 +386,7 @@ class TestAsyncAskImpl:
         mock_loaded.path = Path("test.py")
 
         with (
-            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
             patch("vaig.context.builder.ContextBuilder") as MockBuilder,
         ):

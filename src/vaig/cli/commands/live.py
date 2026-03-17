@@ -8,7 +8,7 @@ from collections import Counter
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import typer
 from rich.panel import Panel
@@ -265,8 +265,10 @@ def register(app: typer.Typer) -> None:
                 settings.models.default = model
 
             from vaig.core.client import GeminiClient
+            from vaig.core.container import build_container
 
-            client = GeminiClient(settings)
+            container = build_container(settings)
+            client = cast(GeminiClient, container.gemini_client)
             gke_config = _build_gke_config(
                 settings, cluster=cluster, namespace=namespace, project_id=effective_project, location=location,
             )
