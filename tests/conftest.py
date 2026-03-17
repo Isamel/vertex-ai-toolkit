@@ -149,3 +149,10 @@ def mock_async_client() -> MagicMock:
     client.current_model = "gemini-2.5-pro"
     client.reinitialize = MagicMock()
     return client
+
+
+# ── Test container helper ────────────────────────────────────
+# Re-exported from ``_helpers.py`` for backward compatibility.
+# New code should ``from _helpers import create_test_container``.
+
+from _helpers import create_test_container  # noqa: F401

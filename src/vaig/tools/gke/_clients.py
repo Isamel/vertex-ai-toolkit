@@ -286,7 +286,7 @@ def _load_k8s_config(
     """Load kubeconfig and return a proxy-aware ``Configuration``, or an in-cluster ``ApiClient``.
 
     This is the shared config-loading logic used by both ``_create_k8s_clients``
-    and ``get_exec_client``.  It resolves kubeconfig path, context, proxy URL,
+    and ``_get_exec_client``.  It resolves kubeconfig path, context, proxy URL,
     and handles the ``AttributeError`` workaround for broken auth plugins.
 
     Returns:
@@ -418,7 +418,7 @@ def _create_k8s_clients(
 # ── Dedicated exec client (NOT cached) ───────────────────────
 
 
-def get_exec_client(
+def _get_exec_client(
     gke_config: GKEConfig,
 ) -> Any | ToolResult:
     """Create a **fresh, disposable** ``CoreV1Api`` for ``kubernetes.stream.stream()``.
@@ -455,6 +455,34 @@ def get_exec_client(
     # result is a Configuration — build a fresh ApiClient
     api_client = k8s_client.ApiClient(result)
     return k8s_client.CoreV1Api(api_client)
+
+
+# ══════════════════════════════════════════════════════════════
+# DefaultK8sClientProvider — protocol-satisfying wrapper
+# ══════════════════════════════════════════════════════════════
+
+
+class DefaultK8sClientProvider:
+    """Default implementation of ``K8sClientProvider`` protocol.
+
+    Delegates to the existing module-level functions and ``_CLIENT_CACHE``.
+    This class exists solely to satisfy the ``K8sClientProvider`` protocol
+    and provide an injectable, mockable interface for DI.
+    """
+
+    __slots__ = ()
+
+    def get_clients(self, gke_config: GKEConfig) -> tuple[Any, Any, Any, Any] | Any:
+        """Return cached K8s API clients, delegating to ``_create_k8s_clients``."""
+        return _create_k8s_clients(gke_config)
+
+    def get_exec_client(self, gke_config: GKEConfig) -> Any:
+        """Return a fresh, disposable ``CoreV1Api`` for exec operations."""
+        return _get_exec_client(gke_config)
+
+    def clear_cache(self) -> None:
+        """Clear cached Kubernetes clients."""
+        clear_k8s_client_cache()
 
 
 # ── ArgoCD client helper ─────────────────────────────────────

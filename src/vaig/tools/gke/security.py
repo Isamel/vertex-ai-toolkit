@@ -140,7 +140,7 @@ def exec_command(
     # kubernetes.stream.stream() mutates the ApiClient's request method to
     # set up WebSocket connections; using the shared cached client would
     # corrupt it for subsequent non-exec API calls.
-    exec_client = _clients.get_exec_client(gke_config)
+    exec_client = _clients._get_exec_client(gke_config)
     if isinstance(exec_client, ToolResult):
         return exec_client
 

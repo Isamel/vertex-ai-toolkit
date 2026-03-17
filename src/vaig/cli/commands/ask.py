@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 from rich.markdown import Markdown
@@ -106,10 +106,13 @@ def register(app: typer.Typer) -> None:
             from vaig.agents.orchestrator import Orchestrator
             from vaig.context.builder import ContextBuilder
             from vaig.core.client import GeminiClient
+            from vaig.core.container import build_container
             from vaig.skills.base import SkillPhase
             from vaig.skills.registry import SkillRegistry
 
-            client = GeminiClient(settings)
+            container = build_container(settings)
+            # TODO: Remove cast once agents accept GeminiClientProtocol
+            client = cast(GeminiClient, container.gemini_client)
             orchestrator = Orchestrator(client, settings)
 
             # Build context from files
@@ -318,10 +321,13 @@ async def _async_ask_impl(
     from vaig.agents.orchestrator import Orchestrator
     from vaig.context.builder import ContextBuilder
     from vaig.core.client import GeminiClient
+    from vaig.core.container import build_container
     from vaig.skills.base import SkillPhase
     from vaig.skills.registry import SkillRegistry
 
-    client = GeminiClient(settings)
+    container = build_container(settings)
+    # TODO: Remove cast once agents accept GeminiClientProtocol
+    client = cast(GeminiClient, container.gemini_client)
     orchestrator = Orchestrator(client, settings)
 
     # Build context from files (async file loading)

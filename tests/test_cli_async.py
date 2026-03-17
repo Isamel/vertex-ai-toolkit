@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from _helpers import create_test_container
 from click.exceptions import Exit as ClickExit
 
 from vaig.core.config import Settings
@@ -271,7 +272,7 @@ class TestAsyncAskImpl:
         mock_orchestrator.async_execute_single = AsyncMock(return_value=mock_result)
 
         with (
-            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             await _async_ask_impl("What is Python?", no_stream=True)
@@ -301,7 +302,7 @@ class TestAsyncAskImpl:
         mock_orchestrator.async_execute_single = AsyncMock(return_value=mock_stream)
 
         with (
-            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             await _async_ask_impl("What is Python?", no_stream=False)
@@ -326,7 +327,7 @@ class TestAsyncAskImpl:
         mock_registry.get.return_value = mock_skill
 
         with (
-            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
             patch("vaig.skills.registry.SkillRegistry", return_value=mock_registry),
         ):
@@ -339,7 +340,7 @@ class TestAsyncAskImpl:
         from vaig.cli.commands.ask import _async_ask_impl
 
         with (
-            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.cli.commands._code._async_execute_code_mode", new_callable=AsyncMock) as mock_code,
         ):
             await _async_ask_impl("Fix the bug", code=True)
@@ -351,7 +352,7 @@ class TestAsyncAskImpl:
         from vaig.cli.commands.ask import _async_ask_impl
 
         with (
-            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.cli.commands.live._async_execute_live_mode", new_callable=AsyncMock) as mock_live,
         ):
             await _async_ask_impl("Check pods", live=True)
@@ -373,7 +374,7 @@ class TestAsyncAskImpl:
         mock_loaded.path = Path("test.py")
 
         with (
-            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
             patch("vaig.context.builder.ContextBuilder") as MockBuilder,
         ):

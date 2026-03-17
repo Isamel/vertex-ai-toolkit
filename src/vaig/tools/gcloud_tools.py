@@ -61,6 +61,65 @@ def _get_monitoring_client(
         return None, f"Failed to create Cloud Monitoring client: {exc}"
 
 
+# ══════════════════════════════════════════════════════════════
+# DefaultGCPClientProvider — protocol-satisfying wrapper
+# ══════════════════════════════════════════════════════════════
+
+
+class DefaultGCPClientProvider:
+    """Default implementation of ``GCPClientProvider`` protocol.
+
+    Wraps ``_get_logging_client()`` and ``_get_monitoring_client()`` with
+    **instance-level caching** keyed on ``(project, credentials_id)`` so that
+    repeated calls within the same session reuse the same GCP client objects
+    instead of creating new ones each time.
+    """
+
+    def __init__(self) -> None:
+        self._logging_cache: dict[tuple[str | None, int | None], tuple[Any, str | None]] = {}
+        self._monitoring_cache: dict[tuple[str | None, int | None], tuple[Any, str | None]] = {}
+
+    @staticmethod
+    def _cred_key(credentials: Any | None) -> int | None:
+        """Return a hashable key for credentials (``id()`` or ``None``)."""
+        return id(credentials) if credentials is not None else None
+
+    def get_logging_client(
+        self,
+        project: str | None = None,
+        credentials: Any | None = None,
+    ) -> tuple[Any, str | None]:
+        """Return a cached Cloud Logging client and optional error string."""
+        key = (project, self._cred_key(credentials))
+        if key in self._logging_cache:
+            return self._logging_cache[key]
+        result = _get_logging_client(project, credentials)
+        client, err = result
+        if err is None and client is not None:
+            self._logging_cache[key] = result
+        return result
+
+    def get_monitoring_client(
+        self,
+        project: str | None = None,
+        credentials: Any | None = None,
+    ) -> tuple[Any, str | None]:
+        """Return a cached Cloud Monitoring client and optional error string."""
+        key = (project, self._cred_key(credentials))
+        if key in self._monitoring_cache:
+            return self._monitoring_cache[key]
+        result = _get_monitoring_client(project, credentials)
+        client, err = result
+        if err is None and client is not None:
+            self._monitoring_cache[key] = result
+        return result
+
+    def clear_cache(self) -> None:
+        """Clear all cached GCP clients."""
+        self._logging_cache.clear()
+        self._monitoring_cache.clear()
+
+
 # ── Helpers ──────────────────────────────────────────────────
 
 

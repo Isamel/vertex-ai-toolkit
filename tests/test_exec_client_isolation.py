@@ -62,7 +62,7 @@ class TestGetExecClientReturnType:
         mock_k8s_client.ApiClient.return_value = MagicMock()
 
         cfg = _make_gke_config()
-        result = _clients.get_exec_client(cfg)
+        result = _clients._get_exec_client(cfg)
 
         assert result is sentinel_api
         mock_k8s_client.CoreV1Api.assert_called_once()
@@ -85,7 +85,7 @@ class TestGetExecClientReturnType:
         mock_k8s_client.Configuration.return_value = MagicMock()
 
         cfg = _make_gke_config()
-        _clients.get_exec_client(cfg)
+        _clients._get_exec_client(cfg)
 
         mock_k8s_client.CoreV1Api.assert_called_once_with(fresh_api_client)
 
@@ -115,8 +115,8 @@ class TestGetExecClientNotCached:
         mock_k8s_client.CoreV1Api.side_effect = [MagicMock(name="c1"), MagicMock(name="c2")]
 
         cfg = _make_gke_config()
-        r1 = _clients.get_exec_client(cfg)
-        r2 = _clients.get_exec_client(cfg)
+        r1 = _clients._get_exec_client(cfg)
+        r2 = _clients._get_exec_client(cfg)
 
         assert r1 is not r2, "get_exec_client must return a new instance each time"
 
@@ -140,8 +140,8 @@ class TestGetExecClientNotCached:
         mock_k8s_client.CoreV1Api.return_value = MagicMock()
 
         cfg = _make_gke_config()
-        _clients.get_exec_client(cfg)
-        _clients.get_exec_client(cfg)
+        _clients._get_exec_client(cfg)
+        _clients._get_exec_client(cfg)
 
         assert mock_k8s_client.ApiClient.call_count == 2
 
@@ -164,7 +164,7 @@ class TestGetExecClientNotCached:
 
         _clients.clear_k8s_client_cache()
         cfg = _make_gke_config()
-        _clients.get_exec_client(cfg)
+        _clients._get_exec_client(cfg)
 
         assert len(_clients._CLIENT_CACHE) == 0, "Exec client must NOT be cached"
 
@@ -209,7 +209,7 @@ class TestExecClientIsolation:
         cached_core_v1, _, _, _ = cached_result
 
         # Create exec client
-        exec_result = _clients.get_exec_client(cfg)
+        exec_result = _clients._get_exec_client(cfg)
         assert not isinstance(exec_result, ToolResult)
 
         assert exec_result is not cached_core_v1, (
@@ -244,7 +244,7 @@ class TestExecClientIsolation:
         cache_snapshot = dict(_clients._CLIENT_CACHE)
 
         # Create exec client — cache must not change
-        _clients.get_exec_client(cfg)
+        _clients._get_exec_client(cfg)
 
         assert cache_snapshot == _clients._CLIENT_CACHE, (
             "Creating an exec client must not modify the shared client cache"
@@ -260,7 +260,7 @@ class TestGetExecClientErrors:
     @patch.object(_clients, "_K8S_AVAILABLE", False)
     def test_returns_tool_result_when_k8s_unavailable(self) -> None:
         cfg = _make_gke_config()
-        result = _clients.get_exec_client(cfg)
+        result = _clients._get_exec_client(cfg)
         assert isinstance(result, ToolResult)
         assert result.error is True
 
@@ -281,7 +281,7 @@ class TestGetExecClientErrors:
         mock_k8s_config.load_kube_config.side_effect = RuntimeError("bad kubeconfig")
 
         cfg = _make_gke_config(kubeconfig_path="/nonexistent/kubeconfig")
-        result = _clients.get_exec_client(cfg)
+        result = _clients._get_exec_client(cfg)
 
         assert isinstance(result, ToolResult)
         assert result.error is True
@@ -313,7 +313,7 @@ class TestGetExecClientProxy:
         mock_k8s_client.CoreV1Api.return_value = MagicMock()
 
         cfg = _make_gke_config(proxy_url="http://proxy:8080")
-        _clients.get_exec_client(cfg)
+        _clients._get_exec_client(cfg)
 
         assert config_instance.proxy == "http://proxy:8080"
 
@@ -324,7 +324,7 @@ class TestGetExecClientProxy:
 class TestExecCommandUsesDedicatedClient:
     """exec_command must call get_exec_client, not _create_k8s_clients."""
 
-    @patch("vaig.tools.gke.security._clients.get_exec_client")
+    @patch("vaig.tools.gke.security._clients._get_exec_client")
     def test_calls_get_exec_client(self, mock_get_exec: MagicMock) -> None:
         from vaig.tools.gke.security import exec_command
 
@@ -345,7 +345,7 @@ class TestExecCommandUsesDedicatedClient:
         mock_get_exec.assert_called_once_with(cfg)
 
     @patch("vaig.tools.gke.security._clients._create_k8s_clients")
-    @patch("vaig.tools.gke.security._clients.get_exec_client")
+    @patch("vaig.tools.gke.security._clients._get_exec_client")
     def test_does_not_call_create_k8s_clients(
         self,
         mock_get_exec: MagicMock,
@@ -375,7 +375,7 @@ class TestExecCommandUsesDedicatedClient:
 class TestExecCommandCleanup:
     """exec_command must close the disposable client after use."""
 
-    @patch("vaig.tools.gke.security._clients.get_exec_client")
+    @patch("vaig.tools.gke.security._clients._get_exec_client")
     def test_closes_client_on_success(self, mock_get_exec: MagicMock) -> None:
         from vaig.tools.gke.security import exec_command
 
@@ -391,7 +391,7 @@ class TestExecCommandCleanup:
 
         mock_api_client.close.assert_called_once()
 
-    @patch("vaig.tools.gke.security._clients.get_exec_client")
+    @patch("vaig.tools.gke.security._clients._get_exec_client")
     def test_closes_client_on_exception(self, mock_get_exec: MagicMock) -> None:
         from vaig.tools.gke.security import exec_command
 
@@ -408,7 +408,7 @@ class TestExecCommandCleanup:
         assert result.error is True
         mock_api_client.close.assert_called_once()
 
-    @patch("vaig.tools.gke.security._clients.get_exec_client")
+    @patch("vaig.tools.gke.security._clients._get_exec_client")
     def test_does_not_close_on_client_creation_failure(
         self,
         mock_get_exec: MagicMock,
@@ -431,7 +431,7 @@ class TestExecCommandCleanup:
 class TestExecCommandPassesCorrectMethod:
     """exec_command must pass the exec client's method to stream()."""
 
-    @patch("vaig.tools.gke.security._clients.get_exec_client")
+    @patch("vaig.tools.gke.security._clients._get_exec_client")
     @patch("kubernetes.stream.stream")
     def test_passes_exec_client_method_to_stream(
         self,
