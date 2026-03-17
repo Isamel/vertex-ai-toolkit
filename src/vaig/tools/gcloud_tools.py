@@ -218,7 +218,12 @@ def _format_log_entry(entry: Any) -> str:  # noqa: ANN001
 
 
 def _format_time_series(time_series_list: Any, metric_type: str) -> str:
-    """Format Cloud Monitoring time series data into a readable table."""
+    """Format Cloud Monitoring time series data into a readable table.
+
+    Handles sparse/incomplete data from the Cloud Monitoring API gracefully:
+    ``point.interval``, ``point.value``, ``ts.metric``, and ``ts.resource``
+    may all be ``None`` for partially-populated time series.
+    """
     if not time_series_list:
         return f"No time series data found for metric: {metric_type}"
 
@@ -228,9 +233,11 @@ def _format_time_series(time_series_list: Any, metric_type: str) -> str:
     lines.append("")
 
     for idx, ts in enumerate(time_series_list):
-        # Extract labels
-        metric_labels = dict(ts.metric.labels) if ts.metric and ts.metric.labels else {}
-        resource_labels = dict(ts.resource.labels) if ts.resource and ts.resource.labels else {}
+        # Extract labels — guard against None metric/resource objects
+        metric_obj = getattr(ts, "metric", None)
+        resource_obj = getattr(ts, "resource", None)
+        metric_labels = dict(getattr(metric_obj, "labels", None) or {})
+        resource_labels = dict(getattr(resource_obj, "labels", None) or {})
 
         # Combine labels for display
         all_labels = {**resource_labels, **metric_labels}
@@ -240,11 +247,12 @@ def _format_time_series(time_series_list: Any, metric_type: str) -> str:
         lines.append(f"{'Timestamp':<24} | {'Value':>15}")
         lines.append(f"{'-' * 24}-+-{'-' * 15}")
 
-        points = list(ts.points) if ts.points else []
+        points = list(ts.points) if getattr(ts, "points", None) else []
         # Points come in reverse chronological order from the API
         for point in points[:50]:  # Limit to 50 points per series
-            # Timestamp
-            ts_val = point.interval.end_time
+            # Timestamp — guard against None interval
+            interval = getattr(point, "interval", None)
+            ts_val = getattr(interval, "end_time", None) if interval is not None else None
             if ts_val:
                 if hasattr(ts_val, "strftime"):
                     ts_str = ts_val.strftime("%Y-%m-%d %H:%M:%S")
@@ -253,33 +261,35 @@ def _format_time_series(time_series_list: Any, metric_type: str) -> str:
             else:
                 ts_str = "N/A"
 
-            # Value — typed value uses oneof: int64_value, double_value,
+            # Value — guard against None value.
+            # Typed value uses oneof: int64_value, double_value,
             # bool_value, string_value, distribution_value.
             # Use _pb.WhichOneof when available for accurate detection.
-            value = point.value
+            value = getattr(point, "value", None)
             val_str = "N/A"
-            value_pb = getattr(value, "_pb", value)
-            kind = None
-            if hasattr(value_pb, "WhichOneof"):
-                kind = value_pb.WhichOneof("value")
+            if value is not None:
+                value_pb = getattr(value, "_pb", value)
+                kind = None
+                if hasattr(value_pb, "WhichOneof"):
+                    kind = value_pb.WhichOneof("value")
 
-            if kind == "int64_value":
-                val_str = str(value.int64_value)
-            elif kind == "double_value":
-                val_str = f"{value.double_value:.6f}"
-            elif kind == "bool_value":
-                val_str = str(value.bool_value)
-            elif kind == "string_value":
-                val_str = value.string_value
-            elif kind == "distribution_value":
-                dist = value.distribution_value
-                val_str = f"mean={dist.mean:.4f}" if hasattr(dist, "mean") else "dist"
-            elif kind is None:
-                # Fallback for non-protobuf objects (e.g. in tests)
-                if getattr(value, "double_value", None) is not None:
-                    val_str = f"{value.double_value:.6f}"
-                elif getattr(value, "int64_value", None) is not None:
+                if kind == "int64_value":
                     val_str = str(value.int64_value)
+                elif kind == "double_value":
+                    val_str = f"{value.double_value:.6f}"
+                elif kind == "bool_value":
+                    val_str = str(value.bool_value)
+                elif kind == "string_value":
+                    val_str = value.string_value
+                elif kind == "distribution_value":
+                    dist = value.distribution_value
+                    val_str = f"mean={dist.mean:.4f}" if hasattr(dist, "mean") else "dist"
+                elif kind is None:
+                    # Fallback for non-protobuf objects (e.g. in tests)
+                    if getattr(value, "double_value", None) is not None:
+                        val_str = f"{value.double_value:.6f}"
+                    elif getattr(value, "int64_value", None) is not None:
+                        val_str = str(value.int64_value)
 
             lines.append(f"{ts_str:<24} | {val_str:>15}")
 
@@ -597,7 +607,10 @@ def create_gcloud_tools(
                 "kubernetes.io/container/cpu/core_usage_time, "
                 "kubernetes.io/container/restart_count, "
                 "istio.io/service/server/request_count. "
-                "Use resource_labels to filter by resource dimensions (e.g. namespace, cluster)."
+                "IMPORTANT: To filter by resource labels (namespace, cluster, pod, etc.), "
+                "use the 'resource_labels' dict parameter — do NOT put resource.labels.* "
+                "expressions into 'filter_str'. "
+                "Example: resource_labels={\"namespace_name\": \"production\"}."
             ),
             parameters=[
                 ToolParam(
@@ -633,8 +646,9 @@ def create_gcloud_tools(
                     name="filter_str",
                     type="string",
                     description=(
-                        "Additional monitoring filter to combine with metric type. "
-                        "Example: 'resource.labels.namespace_name=\"production\"'"
+                        "Additional metric-level monitoring filter to AND with the metric type. "
+                        "Do NOT use this for resource labels — use the 'resource_labels' parameter instead. "
+                        "Example: 'metric.labels.response_code = \"500\"'"
                     ),
                     required=False,
                 ),
@@ -642,7 +656,8 @@ def create_gcloud_tools(
                     name="resource_labels",
                     type="object",
                     description=(
-                        "Dict of resource label key-value pairs to filter by. "
+                        "Dict of resource label key-value pairs to filter on. "
+                        "This is the PREFERRED way to filter by resource dimensions. "
                         "Each entry becomes a 'resource.labels.<key> = \"<value>\"' filter clause. "
                         "Common keys: namespace_name, cluster_name, container_name, pod_name, "
                         "destination_workload_namespace, location. "

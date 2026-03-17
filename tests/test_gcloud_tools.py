@@ -489,3 +489,170 @@ class TestCreateGcloudTools:
         )
         assert result.error is True
         assert "empty" in result.output.lower() or "Metric type" in result.output
+
+
+# ── _format_time_series None handling ────────────────────────
+
+
+class TestFormatTimeSeriesNoneHandling:
+    """Tests for _format_time_series defensive None checks.
+
+    The Cloud Monitoring API can return time series with sparse/incomplete
+    data — None intervals, None values, None metric/resource objects.
+    These tests verify graceful degradation instead of NoneType crashes.
+    """
+
+    def test_empty_time_series_list(self) -> None:
+        from vaig.tools.gcloud_tools import _format_time_series
+
+        result = _format_time_series([], "test.metric")
+        assert "No time series data" in result
+
+    def test_none_time_series_list(self) -> None:
+        from vaig.tools.gcloud_tools import _format_time_series
+
+        result = _format_time_series(None, "test.metric")
+        assert "No time series data" in result
+
+    def test_point_with_none_interval(self) -> None:
+        """point.interval is None — should show 'N/A' timestamp, not crash."""
+        from vaig.tools.gcloud_tools import _format_time_series
+
+        point = MagicMock()
+        point.interval = None
+        point.value = MagicMock()
+        point.value._pb = MagicMock()
+        point.value._pb.WhichOneof.return_value = "int64_value"
+        point.value.int64_value = 42
+
+        ts = MagicMock()
+        ts.metric = MagicMock()
+        ts.metric.labels = {"response_code": "200"}
+        ts.resource = MagicMock()
+        ts.resource.labels = {"namespace_name": "prod"}
+        ts.points = [point]
+
+        result = _format_time_series([ts], "test.metric")
+        assert "N/A" in result
+        assert "42" in result
+
+    def test_point_with_none_value(self) -> None:
+        """point.value is None — should show 'N/A' value, not crash."""
+        from vaig.tools.gcloud_tools import _format_time_series
+
+        point = MagicMock()
+        point.interval = MagicMock()
+        point.interval.end_time = MagicMock()
+        point.interval.end_time.strftime.return_value = "2025-06-01 12:00:00"
+        point.value = None
+
+        ts = MagicMock()
+        ts.metric = MagicMock()
+        ts.metric.labels = {}
+        ts.resource = MagicMock()
+        ts.resource.labels = {}
+        ts.points = [point]
+
+        result = _format_time_series([ts], "test.metric")
+        assert "2025-06-01 12:00:00" in result
+        assert "N/A" in result
+
+    def test_series_with_none_metric_and_resource(self) -> None:
+        """ts.metric and ts.resource are None — labels should be empty, not crash."""
+        from vaig.tools.gcloud_tools import _format_time_series
+
+        ts = MagicMock()
+        ts.metric = None
+        ts.resource = None
+        ts.points = []
+
+        result = _format_time_series([ts], "test.metric")
+        assert "Series 1" in result
+
+    def test_series_with_none_points(self) -> None:
+        """ts.points is None — should produce empty series, not crash."""
+        from vaig.tools.gcloud_tools import _format_time_series
+
+        ts = MagicMock()
+        ts.metric = MagicMock()
+        ts.metric.labels = {}
+        ts.resource = MagicMock()
+        ts.resource.labels = {}
+        ts.points = None
+
+        result = _format_time_series([ts], "test.metric")
+        assert "Series 1" in result
+
+    def test_point_with_none_interval_and_none_value(self) -> None:
+        """Both interval and value are None — full graceful degradation."""
+        from vaig.tools.gcloud_tools import _format_time_series
+
+        point = MagicMock()
+        point.interval = None
+        point.value = None
+
+        ts = MagicMock()
+        ts.metric = None
+        ts.resource = None
+        ts.points = [point]
+
+        result = _format_time_series([ts], "test.metric")
+        # Both timestamp and value should degrade to N/A
+        lines_with_na = [line for line in result.split("\n") if "N/A" in line]
+        assert len(lines_with_na) >= 1
+
+    def test_metric_labels_none_but_metric_object_exists(self) -> None:
+        """ts.metric exists but ts.metric.labels is None."""
+        from vaig.tools.gcloud_tools import _format_time_series
+
+        ts = MagicMock()
+        ts.metric = MagicMock()
+        ts.metric.labels = None
+        ts.resource = MagicMock()
+        ts.resource.labels = None
+        ts.points = []
+
+        result = _format_time_series([ts], "test.metric")
+        assert "Series 1" in result
+
+
+# ── Tool description quality ─────────────────────────────────
+
+
+class TestMonitoringToolDescription:
+    """Verify that tool descriptions guide the LLM to use resource_labels correctly."""
+
+    def test_filter_str_description_discourages_resource_labels(self) -> None:
+        """filter_str description should NOT show resource.labels examples."""
+        from vaig.tools.gcloud_tools import create_gcloud_tools
+
+        tools = create_gcloud_tools()
+        monitoring_tool = next(t for t in tools if t.name == "gcloud_monitoring_query")
+        filter_param = next(p for p in monitoring_tool.parameters if p.name == "filter_str")
+
+        # The description should NOT contain a resource.labels example
+        assert "resource.labels" not in filter_param.description, (
+            f"filter_str description should not show resource.labels examples, "
+            f"got: {filter_param.description}"
+        )
+
+    def test_tool_description_mentions_resource_labels_preference(self) -> None:
+        """Main tool description should direct users to resource_labels param."""
+        from vaig.tools.gcloud_tools import create_gcloud_tools
+
+        tools = create_gcloud_tools()
+        monitoring_tool = next(t for t in tools if t.name == "gcloud_monitoring_query")
+
+        assert "resource_labels" in monitoring_tool.description
+        # Should explicitly say not to put resource.labels in filter_str
+        assert "filter_str" in monitoring_tool.description
+
+    def test_resource_labels_description_says_preferred(self) -> None:
+        """resource_labels param description should indicate it's the preferred way."""
+        from vaig.tools.gcloud_tools import create_gcloud_tools
+
+        tools = create_gcloud_tools()
+        monitoring_tool = next(t for t in tools if t.name == "gcloud_monitoring_query")
+        rl_param = next(p for p in monitoring_tool.parameters if p.name == "resource_labels")
+
+        assert "PREFERRED" in rl_param.description.upper()
