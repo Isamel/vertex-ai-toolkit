@@ -186,6 +186,7 @@ class Orchestrator:
         # Build the initial phase prompt from the skill
         current_context = context
         prompt = skill.get_phase_prompt(phase, context, user_input)
+        context_chain: list[str] = []
 
         for i, agent in enumerate(agents):
             logger.info("Sequential step %d/%d: agent=%s", i + 1, len(agents), agent.name)
@@ -198,16 +199,19 @@ class Orchestrator:
             if i == 0:
                 agent_result = agent.execute(prompt, context=current_context)
             else:
-                # Feed previous agent's output as additional context
+                # Feed ALL previous agents' outputs as accumulated context
                 prev = result.agent_results[-1]
                 tools_summary = _build_tools_summary(
                     agents[i - 1].role, prev.metadata,
                 )
-                accumulated = (
-                    f"{current_context}\n\n"
+                context_chain.append(
                     f"## Previous Analysis ({agents[i - 1].role})\n\n"
                     f"{wrap_untrusted_content(prev.content)}"
                     f"{tools_summary}"
+                )
+                accumulated = (
+                    f"{current_context}\n\n"
+                    + "\n\n---\n\n".join(context_chain)
                 )
                 agent_result = agent.execute(prompt, context=accumulated)
 
@@ -556,6 +560,7 @@ class Orchestrator:
 
         else:  # sequential (default)
             current_context = ""
+            context_chain: list[str] = []
             required_sections = skill.get_required_output_sections()
 
             for i, agent in enumerate(agents):
@@ -572,11 +577,12 @@ class Orchestrator:
                     tools_summary = _build_tools_summary(
                         agents[i - 1].role, prev.metadata,
                     )
-                    current_context = (
+                    context_chain.append(
                         f"## Previous Analysis ({agents[i - 1].role})\n\n"
                         f"{wrap_untrusted_content(prev.content)}"
                         f"{tools_summary}"
                     )
+                    current_context = "\n\n---\n\n".join(context_chain)
 
                 kw_seq: dict[str, Any] = {"context": current_context}
                 if isinstance(agent, ToolAwareAgent):
@@ -1014,6 +1020,7 @@ class Orchestrator:
 
         current_context = context
         prompt = skill.get_phase_prompt(phase, context, user_input)
+        context_chain: list[str] = []
 
         for i, agent in enumerate(agents):
             logger.info(
@@ -1030,11 +1037,14 @@ class Orchestrator:
                 tools_summary = _build_tools_summary(
                     agents[i - 1].role, prev.metadata,
                 )
-                accumulated = (
-                    f"{current_context}\n\n"
+                context_chain.append(
                     f"## Previous Analysis ({agents[i - 1].role})\n\n"
                     f"{wrap_untrusted_content(prev.content)}"
                     f"{tools_summary}"
+                )
+                accumulated = (
+                    f"{current_context}\n\n"
+                    + "\n\n---\n\n".join(context_chain)
                 )
                 agent_result = await asyncio.to_thread(
                     agent.execute, prompt, context=accumulated,
@@ -1269,6 +1279,7 @@ class Orchestrator:
 
         else:  # sequential (default)
             current_context = ""
+            context_chain: list[str] = []
             required_sections = skill.get_required_output_sections()
 
             for i, agent in enumerate(agents):
@@ -1281,11 +1292,12 @@ class Orchestrator:
                     tools_summary = _build_tools_summary(
                         agents[i - 1].role, prev.metadata,
                     )
-                    current_context = (
+                    context_chain.append(
                         f"## Previous Analysis ({agents[i - 1].role})\n\n"
                         f"{wrap_untrusted_content(prev.content)}"
                         f"{tools_summary}"
                     )
+                    current_context = "\n\n---\n\n".join(context_chain)
 
                 kw_seq: dict[str, Any] = {"context": current_context}
                 if isinstance(agent, ToolAwareAgent):
