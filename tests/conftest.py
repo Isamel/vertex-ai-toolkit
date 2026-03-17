@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from _helpers import create_test_container  # noqa: F401
 
 from vaig.core.client import GenerationResult
 from vaig.core.config import reset_settings
@@ -151,8 +152,17 @@ def mock_async_client() -> MagicMock:
     return client
 
 
-# ── Test container helper ────────────────────────────────────
-# Re-exported from ``_helpers.py`` for backward compatibility.
-# New code should ``from _helpers import create_test_container``.
+# ── Mock REPL container ─────────────────────────────────────
+# Previously duplicated in test_repl_async.py and
+# test_repl_file_history.py.  Provides a lightweight
+# ``MagicMock`` container with a mock ``gemini_client``
+# that exposes ``current_model`` — just enough for REPL
+# initialisation paths.
 
-from _helpers import create_test_container  # noqa: F401
+
+@pytest.fixture()
+def mock_repl_container(mock_client: MagicMock) -> MagicMock:
+    """Mock ``ServiceContainer`` with a ``gemini_client`` for REPL tests."""
+    container = MagicMock()
+    container.gemini_client = mock_client
+    return container

@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
+from vaig.core.cache import CacheStats
 from vaig.core.protocols import GCPClientProvider, GeminiClientProtocol, K8sClientProvider
 
 # ══════════════════════════════════════════════════════════════
@@ -55,6 +56,10 @@ class TestGeminiClientProtocol:
             "switch_model",
             "list_available_models",
             "build_function_response_parts",
+            "cache_enabled",
+            "clear_cache",
+            "cache_stats",
+            "reinitialize",
         ]
 
         for method_name in expected_methods:
@@ -108,6 +113,23 @@ class TestGeminiClientProtocol:
             @staticmethod
             def build_function_response_parts(results: list[dict[str, Any]]) -> list[Any]:
                 return []
+
+            @property
+            def cache_enabled(self) -> bool:
+                return False
+
+            def clear_cache(self) -> int:
+                return 0
+
+            def cache_stats(self) -> CacheStats | None:
+                return None
+
+            def reinitialize(
+                self,
+                project: str | None = None,
+                location: str | None = None,
+            ) -> None:
+                pass
 
         fake = FakeClient()
         assert isinstance(fake, GeminiClientProtocol)

@@ -516,7 +516,7 @@ class TestAsyncStartREPL:
     """Test async_start_repl initialization and lifecycle."""
 
     @pytest.mark.asyncio
-    async def test_creates_new_session_async(self, tmp_path: Path) -> None:
+    async def test_creates_new_session_async(self, tmp_path: Path, mock_repl_container: MagicMock) -> None:
         """async_start_repl should call async_new_session, not sync new_session."""
         from vaig.core.config import SessionConfig
 
@@ -526,7 +526,7 @@ class TestAsyncStartREPL:
         )
 
         with (
-            patch("vaig.cli.repl.GeminiClient") as mock_gc,
+            patch("vaig.cli.repl.build_container", return_value=mock_repl_container),
             patch("vaig.cli.repl.Orchestrator"),
             patch("vaig.cli.repl.SessionManager") as mock_sm_cls,
             patch("vaig.cli.repl.ContextBuilder"),
@@ -536,7 +536,6 @@ class TestAsyncStartREPL:
             patch("vaig.cli.repl._async_save_cost_data", new_callable=AsyncMock),
             patch("vaig.cli.repl.console"),
         ):
-            mock_gc.return_value.current_model = "gemini-2.5-pro"
             mock_sm = mock_sm_cls.return_value
             mock_sm.async_new_session = AsyncMock()
             mock_sm.async_close = AsyncMock()
@@ -549,7 +548,7 @@ class TestAsyncStartREPL:
         mock_sm.async_close.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_loads_existing_session_async(self, tmp_path: Path) -> None:
+    async def test_loads_existing_session_async(self, tmp_path: Path, mock_repl_container: MagicMock) -> None:
         """async_start_repl with session_id should call async_load_session."""
         from vaig.core.config import SessionConfig
 
@@ -559,7 +558,7 @@ class TestAsyncStartREPL:
         )
 
         with (
-            patch("vaig.cli.repl.GeminiClient") as mock_gc,
+            patch("vaig.cli.repl.build_container", return_value=mock_repl_container),
             patch("vaig.cli.repl.Orchestrator"),
             patch("vaig.cli.repl.SessionManager") as mock_sm_cls,
             patch("vaig.cli.repl.ContextBuilder"),
@@ -569,7 +568,6 @@ class TestAsyncStartREPL:
             patch("vaig.cli.repl._async_save_cost_data", new_callable=AsyncMock),
             patch("vaig.cli.repl.console"),
         ):
-            mock_gc.return_value.current_model = "gemini-2.5-pro"
             mock_sm = mock_sm_cls.return_value
 
             loaded_session = MagicMock()

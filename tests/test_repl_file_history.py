@@ -39,7 +39,7 @@ class TestSessionConfigHistory:
 
 
 class TestReplFileHistory:
-    def test_start_repl_creates_file_history(self, tmp_path: Path) -> None:
+    def test_start_repl_creates_file_history(self, tmp_path: Path, mock_repl_container: MagicMock) -> None:
         """start_repl should create a PromptSession with FileHistory."""
         history_file = tmp_path / "vaig" / "repl_history"
 
@@ -59,7 +59,7 @@ class TestReplFileHistory:
             return mock
 
         with (
-            patch("vaig.cli.repl.GeminiClient") as mock_gc,
+            patch("vaig.cli.repl.build_container", return_value=mock_repl_container),
             patch("vaig.cli.repl.Orchestrator"),
             patch("vaig.cli.repl.SessionManager") as mock_sm,
             patch("vaig.cli.repl.ContextBuilder"),
@@ -70,7 +70,6 @@ class TestReplFileHistory:
             patch("vaig.cli.repl._save_cost_data"),
             patch("vaig.cli.repl.console"),
         ):
-            mock_gc.return_value.current_model = "gemini-2.5-pro"
             mock_sm.return_value.load_session.return_value = None
 
             from vaig.cli.repl import start_repl
@@ -81,7 +80,7 @@ class TestReplFileHistory:
         assert "history" in captured
         assert isinstance(captured["history"], FileHistory)
 
-    def test_start_repl_creates_parent_directory(self, tmp_path: Path) -> None:
+    def test_start_repl_creates_parent_directory(self, tmp_path: Path, mock_repl_container: MagicMock) -> None:
         """start_repl should create the parent directory for the history file."""
         # Use a nested path that doesn't exist yet
         history_file = tmp_path / "deep" / "nested" / "repl_history"
@@ -92,7 +91,7 @@ class TestReplFileHistory:
         )
 
         with (
-            patch("vaig.cli.repl.GeminiClient") as mock_gc,
+            patch("vaig.cli.repl.build_container", return_value=mock_repl_container),
             patch("vaig.cli.repl.Orchestrator"),
             patch("vaig.cli.repl.SessionManager") as mock_sm,
             patch("vaig.cli.repl.ContextBuilder"),
@@ -103,7 +102,6 @@ class TestReplFileHistory:
             patch("vaig.cli.repl._save_cost_data"),
             patch("vaig.cli.repl.console"),
         ):
-            mock_gc.return_value.current_model = "gemini-2.5-pro"
             mock_sm.return_value.load_session.return_value = None
 
             from vaig.cli.repl import start_repl
@@ -113,7 +111,7 @@ class TestReplFileHistory:
         # The parent directory should now exist
         assert history_file.parent.exists()
 
-    def test_file_history_path_matches_settings(self, tmp_path: Path) -> None:
+    def test_file_history_path_matches_settings(self, tmp_path: Path, mock_repl_container: MagicMock) -> None:
         """The FileHistory path should match the resolved settings value."""
         history_file = tmp_path / "repl_history"
 
@@ -128,7 +126,7 @@ class TestReplFileHistory:
             return MagicMock()
 
         with (
-            patch("vaig.cli.repl.GeminiClient") as mock_gc,
+            patch("vaig.cli.repl.build_container", return_value=mock_repl_container),
             patch("vaig.cli.repl.Orchestrator"),
             patch("vaig.cli.repl.SessionManager") as mock_sm,
             patch("vaig.cli.repl.ContextBuilder"),
@@ -139,7 +137,6 @@ class TestReplFileHistory:
             patch("vaig.cli.repl._save_cost_data"),
             patch("vaig.cli.repl.console"),
         ):
-            mock_gc.return_value.current_model = "gemini-2.5-pro"
             mock_sm.return_value.load_session.return_value = None
 
             from vaig.cli.repl import start_repl

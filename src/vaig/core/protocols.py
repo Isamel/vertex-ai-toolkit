@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from vaig.core.cache import CacheStats
     from vaig.core.client import ChatMessage, GenerationResult, StreamResult, ToolCallResult
 
 __all__ = [
@@ -154,6 +155,29 @@ class GeminiClientProtocol(Protocol):
     @staticmethod
     def build_function_response_parts(results: list[dict[str, Any]]) -> list[Any]:
         """Build Part objects containing function responses."""
+        ...
+
+    # ── Cache management ─────────────────────────────────────
+
+    @property
+    def cache_enabled(self) -> bool:
+        """Whether the response cache is active."""
+        ...
+
+    def clear_cache(self) -> int:
+        """Clear the response cache. Returns the number of entries removed."""
+        ...
+
+    def cache_stats(self) -> CacheStats | None:
+        """Return cache statistics, or ``None`` if caching is disabled."""
+        ...
+
+    def reinitialize(
+        self,
+        project: str | None = None,
+        location: str | None = None,
+    ) -> None:
+        """Reinitialize the client with updated project/location."""
         ...
 
 

@@ -4,7 +4,7 @@ A 4-agent sequential pipeline with two-pass verification that demonstrates
 the ToolAwareAgent + Orchestrator integration.  The first agent uses live
 tools to collect cluster health data; the second analyzes patterns; the
 third verifies findings with targeted tool calls; the fourth produces a
-structured markdown report.
+structured JSON report (rendered to Markdown).
 """
 
 from __future__ import annotations
@@ -49,8 +49,9 @@ class ServiceHealthSkill(BaseSkill):
 
     4. **health_reporter** (``requires_tools=False``):
        Text-only agent that synthesizes verified findings into a
-       structured markdown report with severity classification,
-       root-cause hypotheses, and actionable remediation commands.
+        structured JSON report (rendered to Markdown) with severity
+        classification, root-cause hypotheses, and actionable
+        remediation commands.
 
     The pipeline strategy is **sequential**: each agent's output feeds
     as context into the next agent.
