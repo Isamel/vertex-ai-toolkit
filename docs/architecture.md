@@ -177,7 +177,7 @@ sequenceDiagram
         Note over R: Report Generation (JSON Schema mode)
         Orch->>R: verified findings
         R->>Gemini: generate (response_schema=HealthReport, mime=application/json)
-        Note over R: Gemini returns validated JSON<br/>post_process_report() converts<br/>to Markdown via to_markdown()
+        Note over R: Gemini returns schema-constrained JSON<br/>post_process_report() validates<br/>+ converts to Markdown via to_markdown()
         R-->>Orch: final report
     end
 

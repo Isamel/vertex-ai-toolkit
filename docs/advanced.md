@@ -224,7 +224,7 @@ class MySkill(BaseSkill):
             return content  # Graceful fallback
 ```
 
-> **Note:** Enum fields in the schema **must** use `StrEnum` (not `Enum`). Standard `Enum` values serialize as integers, which Gemini's `response_schema` rejects. Validate the raw JSON with `model_validate_json()`, not `model_validate()` — the model returns a JSON string, not a dict.
+> **Note:** Enum fields in the schema **must** use `StrEnum` (not `Enum`). Gemini's `response_schema` requires string-valued enum variants; plain `Enum` subclasses with non-string values will be rejected. Validate the raw JSON with `model_validate_json()`, not `model_validate()` — the model returns a JSON string, not a dict.
 
 ### Skill Discovery
 

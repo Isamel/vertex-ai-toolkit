@@ -110,7 +110,7 @@ Some skills use Gemini's `response_schema` parameter to constrain the model's ou
 
 1. **Skill defines a Pydantic schema** — A `BaseModel` subclass describes every field, type, and constraint the report must contain.
 2. **Agent config includes the schema** — The reporter agent's config sets `response_schema` (the model class) and `response_mime_type` (`"application/json"`).
-3. **Gemini returns JSON** — The model is forced to produce output that conforms to the schema.
+3. **Gemini returns schema-constrained JSON** — The model produces output guided by the schema. The skill then validates it client-side.
 4. **Post-processing converts to Markdown** — `post_process_report()` calls `Model.model_validate_json()` and renders the validated object via a `to_markdown()` method.
 
 ### Which Skills Use It
