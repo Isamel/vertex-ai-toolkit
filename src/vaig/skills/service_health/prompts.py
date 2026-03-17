@@ -1075,7 +1075,7 @@ Generate a comprehensive service health report.
 {DELIMITER_DATA_END}
 
 ### Your Task:
-Generate a structured markdown report including:
+Generate a structured JSON report conforming to the HealthReport schema, including:
 - Executive Summary
 - Service Status Table
 - Findings by severity (CRITICAL, WARNING, INFO)

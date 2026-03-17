@@ -156,3 +156,19 @@ def mock_async_client() -> MagicMock:
 # New code should ``from _helpers import create_test_container``.
 
 from _helpers import create_test_container  # noqa: F401
+
+
+# ── Mock REPL container ─────────────────────────────────────
+# Previously duplicated in test_repl_async.py and
+# test_repl_file_history.py.  Provides a lightweight
+# ``MagicMock`` container with a mock ``gemini_client``
+# that exposes ``current_model`` — just enough for REPL
+# initialisation paths.
+
+
+@pytest.fixture()
+def mock_repl_container(mock_client: MagicMock) -> MagicMock:
+    """Mock ``ServiceContainer`` with a ``gemini_client`` for REPL tests."""
+    container = MagicMock()
+    container.gemini_client = mock_client
+    return container

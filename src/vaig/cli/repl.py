@@ -22,13 +22,13 @@ from vaig.core.config import Settings
 from vaig.core.container import build_container
 from vaig.core.cost_tracker import BudgetStatus, CostTracker
 from vaig.core.exceptions import format_error_for_user
-from vaig.core.protocols import GeminiClientProtocol
 from vaig.session.manager import SessionManager
 from vaig.skills.base import BaseSkill, SkillPhase
 from vaig.skills.registry import SkillRegistry
 
 if TYPE_CHECKING:
     from vaig.agents.base import AgentResult
+    from vaig.core.protocols import GeminiClientProtocol
 
 logger = logging.getLogger(__name__)
 console = Console()
