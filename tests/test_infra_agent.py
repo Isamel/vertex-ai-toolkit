@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from vaig.agents.base import AgentResult, AgentRole
 from vaig.core.cache import ToolResultCache
@@ -452,6 +454,63 @@ class TestToolResultCachePassthrough:
         )
 
         agent.execute("Check pods")
+
+        _, kwargs = mock_loop.call_args
+        assert kwargs["tool_result_cache"] is None
+
+    @pytest.mark.asyncio
+    @patch("vaig.agents.infra_agent.InfraAgent._register_tools")
+    @patch("vaig.agents.infra_agent.InfraAgent._async_run_tool_loop")
+    async def test_async_execute_forwards_cache(
+        self,
+        mock_loop: AsyncMock,
+        mock_register: MagicMock,
+    ) -> None:
+        from vaig.agents.infra_agent import InfraAgent
+
+        client = _make_mock_client()
+        cfg = _make_gke_config()
+        agent = InfraAgent(client, cfg)
+
+        mock_loop.return_value = MagicMock(
+            text="result",
+            model="gemini-2.5-pro",
+            finish_reason="STOP",
+            iterations=1,
+            tools_executed=[],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+
+        cache = ToolResultCache()
+        await agent.async_execute("Check pods", tool_result_cache=cache)
+
+        _, kwargs = mock_loop.call_args
+        assert kwargs["tool_result_cache"] is cache
+
+    @pytest.mark.asyncio
+    @patch("vaig.agents.infra_agent.InfraAgent._register_tools")
+    @patch("vaig.agents.infra_agent.InfraAgent._async_run_tool_loop")
+    async def test_async_execute_cache_defaults_to_none(
+        self,
+        mock_loop: AsyncMock,
+        mock_register: MagicMock,
+    ) -> None:
+        from vaig.agents.infra_agent import InfraAgent
+
+        client = _make_mock_client()
+        cfg = _make_gke_config()
+        agent = InfraAgent(client, cfg)
+
+        mock_loop.return_value = MagicMock(
+            text="result",
+            model="gemini-2.5-pro",
+            finish_reason="STOP",
+            iterations=1,
+            tools_executed=[],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+
+        await agent.async_execute("Check pods")
 
         _, kwargs = mock_loop.call_args
         assert kwargs["tool_result_cache"] is None

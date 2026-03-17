@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1315,3 +1315,58 @@ class TestCodingAgentCachePassthrough:
         _, kwargs = mock_loop.call_args
         assert kwargs["on_tool_call"] is on_tool_call
         assert kwargs["tool_call_store"] is tool_call_store
+
+    @pytest.mark.asyncio
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    @patch.object(CodingAgent, "_async_run_tool_loop")
+    async def test_async_execute_forwards_cache(
+        self,
+        mock_loop: AsyncMock,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config())
+
+        mock_loop.return_value = MagicMock(
+            text="result",
+            model="gemini-2.5-pro",
+            finish_reason="STOP",
+            iterations=1,
+            tools_executed=[],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+
+        cache = ToolResultCache()
+        await agent.async_execute("Write code", tool_result_cache=cache)
+
+        _, kwargs = mock_loop.call_args
+        assert kwargs["tool_result_cache"] is cache
+
+    @pytest.mark.asyncio
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    @patch.object(CodingAgent, "_async_run_tool_loop")
+    async def test_async_execute_cache_defaults_to_none(
+        self,
+        mock_loop: AsyncMock,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config())
+
+        mock_loop.return_value = MagicMock(
+            text="result",
+            model="gemini-2.5-pro",
+            finish_reason="STOP",
+            iterations=1,
+            tools_executed=[],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+
+        await agent.async_execute("Write code")
+
+        _, kwargs = mock_loop.call_args
+        assert kwargs["tool_result_cache"] is None

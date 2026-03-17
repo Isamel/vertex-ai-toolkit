@@ -333,6 +333,10 @@ def register(app: typer.Typer) -> None:
 
             # ── Tool result persistence ────────────────────────
             tool_call_store = _create_tool_call_store(settings)
+            # Session-scoped cache: created once, reused across watch
+            # iterations and single-shot calls.  The 60 s TTL inside
+            # ToolResultCache ensures stale entries expire naturally.
+            tool_result_cache = ToolResultCache()
 
             def _run_once() -> None:
                 """Execute a single iteration of the live command."""
@@ -360,6 +364,7 @@ def register(app: typer.Typer) -> None:
                         skill_name=skill,
                         model_id=model,
                         tool_call_store=tool_call_store,
+                        tool_result_cache=tool_result_cache,
                     )
 
             if not watch:
@@ -803,6 +808,7 @@ def _execute_live_mode(
     skill_name: str | None = None,
     model_id: str | None = None,
     tool_call_store: ToolCallStore | None = None,
+    tool_result_cache: ToolResultCache | None = None,
 ) -> None:
     """Execute an infrastructure investigation using the InfraAgent.
 
@@ -846,13 +852,13 @@ def _execute_live_mode(
     try:
         console.print("[bold cyan]🤖 Infrastructure agent investigating...[/bold cyan]")
         tool_logger = ToolCallLogger()
-        tool_result_cache = ToolResultCache()
+        effective_cache = tool_result_cache or ToolResultCache()
         result = agent.execute(
             question,
             context=context,
             on_tool_call=tool_logger,
             tool_call_store=tool_call_store,
-            tool_result_cache=tool_result_cache,
+            tool_result_cache=effective_cache,
         )
         tool_logger.print_summary()
 
@@ -900,6 +906,7 @@ async def _async_execute_live_mode(
     skill_name: str | None = None,
     model_id: str | None = None,
     tool_call_store: ToolCallStore | None = None,
+    tool_result_cache: ToolResultCache | None = None,
 ) -> None:
     """Async version of :func:`_execute_live_mode`.
 
@@ -941,13 +948,13 @@ async def _async_execute_live_mode(
     try:
         console.print("[bold cyan]🤖 Infrastructure agent investigating (async)...[/bold cyan]")
         tool_logger = ToolCallLogger()
-        tool_result_cache = ToolResultCache()
+        effective_cache = tool_result_cache or ToolResultCache()
         result = await agent.async_execute(
             question,
             context=context,
             on_tool_call=tool_logger,
             tool_call_store=tool_call_store,
-            tool_result_cache=tool_result_cache,
+            tool_result_cache=effective_cache,
         )
         tool_logger.print_summary()
 

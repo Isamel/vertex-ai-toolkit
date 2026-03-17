@@ -272,6 +272,10 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
             on_tool_call: Optional callback invoked after each tool
                 execution with ``(tool_name, tool_args, duration_secs,
                 success)``.
+            tool_call_store: Optional persistent store for tool call
+                records (used for telemetry / debugging).
+            tool_result_cache: Optional TTL cache for deduplicating
+                identical tool calls within the same session.
 
         Returns:
             AgentResult with the final text response and metadata.
@@ -377,6 +381,10 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
             on_tool_call: Optional callback invoked after each tool
                 execution with ``(tool_name, tool_args, duration_secs,
                 success)``.
+            tool_call_store: Optional persistent store for tool call
+                records (used for telemetry / debugging).
+            tool_result_cache: Optional TTL cache for deduplicating
+                identical tool calls within the same session.
 
         Returns:
             AgentResult with the final text response and metadata.
