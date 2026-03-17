@@ -466,6 +466,11 @@ class Orchestrator:
 
         t0_ewt = time.perf_counter()
 
+        # ── Create a shared tool result cache for dedup ──────
+        from vaig.core.cache import ToolResultCache
+
+        tool_result_cache = ToolResultCache()
+
         # ── Start a tool call store run if provided ──────────
         if tool_call_store is not None:
             tool_call_store.start_run()
@@ -524,6 +529,7 @@ class Orchestrator:
                             kw["on_tool_call"] = on_tool_call
                         if tool_call_store is not None:
                             kw["tool_call_store"] = tool_call_store
+                        kw["tool_result_cache"] = tool_result_cache
                     futures.append(executor.submit(agent.execute, query, **kw))
 
                 for agent, future in zip(agents, futures, strict=True):
@@ -561,6 +567,7 @@ class Orchestrator:
                         kw_single["on_tool_call"] = on_tool_call
                     if tool_call_store is not None:
                         kw_single["tool_call_store"] = tool_call_store
+                    kw_single["tool_result_cache"] = tool_result_cache
                 agent_result = agents[0].execute(query, **kw_single)
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
@@ -597,6 +604,7 @@ class Orchestrator:
                         kw_seq["on_tool_call"] = on_tool_call
                     if tool_call_store is not None:
                         kw_seq["tool_call_store"] = tool_call_store
+                    kw_seq["tool_result_cache"] = tool_result_cache
 
                 agent_result = agent.execute(query, **kw_seq)
                 result.agent_results.append(agent_result)
@@ -663,6 +671,7 @@ class Orchestrator:
                             kw_retry["on_tool_call"] = on_tool_call
                         if tool_call_store is not None:
                             kw_retry["tool_call_store"] = tool_call_store
+                        kw_retry["tool_result_cache"] = tool_result_cache
 
                     original_max_iters: int | None = None
                     if (
@@ -789,6 +798,7 @@ class Orchestrator:
                                     kw_js["on_tool_call"] = on_tool_call
                                 if tool_call_store is not None:
                                     kw_js["tool_call_store"] = tool_call_store
+                                kw_js["tool_result_cache"] = tool_result_cache
                             json_retry_result = agent.execute(
                                 json_retry_prompt, **kw_js,
                             )
@@ -843,6 +853,7 @@ class Orchestrator:
                                 kw_rr["on_tool_call"] = on_tool_call
                             if tool_call_store is not None:
                                 kw_rr["tool_call_store"] = tool_call_store
+                            kw_rr["tool_result_cache"] = tool_result_cache
                         reporter_retry = agent.execute(
                             reporter_retry_prompt, **kw_rr,
                         )
@@ -1181,6 +1192,11 @@ class Orchestrator:
 
         t0_ewt = time.perf_counter()
 
+        # ── Create a shared tool result cache for dedup ──────
+        from vaig.core.cache import ToolResultCache
+
+        tool_result_cache = ToolResultCache()
+
         # ── Start a tool call store run if provided ──────────
         if tool_call_store is not None:
             tool_call_store.start_run()
@@ -1231,6 +1247,7 @@ class Orchestrator:
                             kw["on_tool_call"] = on_tool_call
                         if tool_call_store is not None:
                             kw["tool_call_store"] = tool_call_store
+                        kw["tool_result_cache"] = tool_result_cache
                     return await asyncio.to_thread(agent.execute, query, **kw)
                 except Exception:
                     logger.exception(
@@ -1270,6 +1287,7 @@ class Orchestrator:
                         kw_single["on_tool_call"] = on_tool_call
                     if tool_call_store is not None:
                         kw_single["tool_call_store"] = tool_call_store
+                    kw_single["tool_result_cache"] = tool_result_cache
                 agent_result = await asyncio.to_thread(agents[0].execute, query, **kw_single)
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
@@ -1302,6 +1320,7 @@ class Orchestrator:
                         kw_seq["on_tool_call"] = on_tool_call
                     if tool_call_store is not None:
                         kw_seq["tool_call_store"] = tool_call_store
+                    kw_seq["tool_result_cache"] = tool_result_cache
 
                 agent_result = await asyncio.to_thread(
                     agent.execute, query, **kw_seq,
@@ -1352,6 +1371,7 @@ class Orchestrator:
                             kw_retry["on_tool_call"] = on_tool_call
                         if tool_call_store is not None:
                             kw_retry["tool_call_store"] = tool_call_store
+                        kw_retry["tool_result_cache"] = tool_result_cache
 
                     original_max_iters: int | None = None
                     if (
@@ -1467,6 +1487,7 @@ class Orchestrator:
                                     kw_js["on_tool_call"] = on_tool_call
                                 if tool_call_store is not None:
                                     kw_js["tool_call_store"] = tool_call_store
+                                kw_js["tool_result_cache"] = tool_result_cache
                             json_retry_result = await asyncio.to_thread(
                                 agent.execute, json_retry_prompt, **kw_js,
                             )
@@ -1521,6 +1542,7 @@ class Orchestrator:
                                 kw_rr["on_tool_call"] = on_tool_call
                             if tool_call_store is not None:
                                 kw_rr["tool_call_store"] = tool_call_store
+                            kw_rr["tool_result_cache"] = tool_result_cache
                         reporter_retry = await asyncio.to_thread(
                             agent.execute, reporter_retry_prompt, **kw_rr,
                         )

@@ -48,6 +48,7 @@ class ToolCallRecord:
     agent_name: str                # Which agent made the call (gatherer, analyzer, etc.)
     run_id: str                    # UUID for the execution run
     iteration: int                 # Which iteration of the tool loop
+    cached: bool = False           # True when result came from ToolResultCache
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for JSON storage."""
@@ -64,6 +65,7 @@ class ToolCallRecord:
             "agent_name": self.agent_name,
             "run_id": self.run_id,
             "iteration": self.iteration,
+            "cached": self.cached,
         }
 
 
@@ -75,6 +77,8 @@ class ToolDef:
     description: str
     parameters: list[ToolParam] = field(default_factory=list)
     execute: Callable[..., ToolResult] = field(default=lambda **_: ToolResult(output=""))
+    cacheable: bool = True
+    cache_ttl_seconds: int = 60
 
 
 class ToolRegistry:

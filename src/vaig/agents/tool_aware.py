@@ -21,6 +21,7 @@ from vaig.tools.base import ToolRegistry
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
+    from vaig.core.cache import ToolResultCache
     from vaig.core.protocols import GeminiClientProtocol
     from vaig.core.tool_call_store import ToolCallStore
 
@@ -167,6 +168,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         context: str = "",
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
+        tool_result_cache: ToolResultCache | None = None,
     ) -> AgentResult:
         """Execute a task using the tool-use loop.
 
@@ -181,6 +183,8 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 success)``.
             tool_call_store: Optional store for recording full tool call
                 results for metrics and feedback.
+            tool_result_cache: Optional cache for deduplicating identical
+                tool calls within and across orchestrator passes.
 
         Returns:
             ``AgentResult`` with the final text response and metadata.
@@ -216,6 +220,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 on_tool_call=on_tool_call,
                 agent_name=self.name,
                 tool_call_store=tool_call_store,
+                tool_result_cache=tool_result_cache,
                 **loop_kwargs,
             )
         except MaxIterationsError:
@@ -280,6 +285,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         context: str = "",
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
+        tool_result_cache: ToolResultCache | None = None,
     ) -> AgentResult:
         """Execute a task using the async tool-use loop.
 
@@ -295,6 +301,8 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 success)``.
             tool_call_store: Optional store for recording full tool call
                 results for metrics and feedback.
+            tool_result_cache: Optional cache for deduplicating identical
+                tool calls within and across orchestrator passes.
 
         Returns:
             ``AgentResult`` with the final text response and metadata.
@@ -330,6 +338,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 on_tool_call=on_tool_call,
                 agent_name=self.name,
                 tool_call_store=tool_call_store,
+                tool_result_cache=tool_result_cache,
                 **loop_kwargs,
             )
         except MaxIterationsError:

@@ -67,6 +67,7 @@ class ToolExecuted(Event):
         error: Whether the tool execution resulted in an error.
         error_type: Exception class name when ``error`` is ``True``.
         error_message: Human-readable error description.
+        cached: Whether the result was served from ``ToolResultCache``.
     """
 
     event_type: str = field(default="tool.executed", init=False)
@@ -76,6 +77,7 @@ class ToolExecuted(Event):
     error: bool = False
     error_type: str = ""
     error_message: str = ""
+    cached: bool = False
 
 
 @dataclass(frozen=True)
