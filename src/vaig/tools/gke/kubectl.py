@@ -147,14 +147,16 @@ def _kubectl_get_all(
     field_selector: str | None = None,
 ) -> ToolResult:
     """Expand ``resource='all'`` into per-type queries and combine results."""
+    ns = namespace or gke_config.default_namespace
     sections: list[str] = []
     errors: list[str] = []
+    any_success = False
 
     for rtype in _resources._ALL_RESOURCE_TYPES:
         sub = kubectl_get(
             rtype,
             gke_config=gke_config,
-            namespace=namespace,
+            namespace=ns,
             output_format=output_format,
             label_selector=label_selector,
             field_selector=field_selector,
@@ -162,12 +164,13 @@ def _kubectl_get_all(
         if sub.error:
             errors.append(f"{rtype}: {sub.output}")
             continue
+        any_success = True
         # Only include resource types that actually have items
         body = sub.output.strip() if sub.output else ""
         if body and body != "No resources found." and body != "[]":
             sections.append(f"=== {rtype.upper()} ===\n{body}")
 
-    if not sections and errors:
+    if not any_success and errors:
         return ToolResult(
             output="Failed to list resources:\n" + "\n".join(errors),
             error=True,
@@ -177,7 +180,7 @@ def _kubectl_get_all(
     if errors:
         combined += "\n\n--- Errors ---\n" + "\n".join(errors)
     if not combined:
-        combined = f"No resources found in namespace '{namespace}'."
+        combined = f"No resources found in namespace '{ns}'."
     return ToolResult(output=combined)
 
 
