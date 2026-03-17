@@ -59,32 +59,41 @@ class TestTrackCommandAsync:
     @pytest.mark.asyncio
     async def test_emits_telemetry_event(self) -> None:
         from vaig.cli._helpers import track_command_async
+        from vaig.core.event_bus import EventBus
+        from vaig.core.events import CliCommandTracked
 
-        mock_collector = MagicMock()
+        captured: list[CliCommandTracked] = []
+        bus = EventBus.get()
+        bus.subscribe(CliCommandTracked, lambda e: captured.append(e))
 
         @track_command_async
         async def tracked_cmd() -> str:
             return "ok"
 
-        with patch("vaig.core.telemetry.get_telemetry_collector", return_value=mock_collector):
-            await tracked_cmd()
+        await tracked_cmd()
 
-        mock_collector.emit_cli_command.assert_called_once()
-        call_args = mock_collector.emit_cli_command.call_args
-        assert call_args[0][0] == "tracked_cmd"
-        assert "duration_ms" in call_args[1]
-        assert call_args[1]["duration_ms"] > 0
+        assert len(captured) == 1
+        assert captured[0].command_name == "tracked_cmd"
+        assert captured[0].duration_ms > 0
 
     @pytest.mark.asyncio
     async def test_telemetry_failure_does_not_affect_command(self) -> None:
         from vaig.cli._helpers import track_command_async
+        from vaig.core.event_bus import EventBus
+        from vaig.core.events import CliCommandTracked
+
+        def bad_handler(_e: CliCommandTracked) -> None:
+            msg = "telemetry down"
+            raise RuntimeError(msg)
+
+        bus = EventBus.get()
+        bus.subscribe(CliCommandTracked, bad_handler)
 
         @track_command_async
         async def resilient_cmd() -> str:
             return "fine"
 
-        with patch("vaig.core.telemetry.get_telemetry_collector", side_effect=RuntimeError("telemetry down")):
-            result = await resilient_cmd()
+        result = await resilient_cmd()
 
         assert result == "fine"
 

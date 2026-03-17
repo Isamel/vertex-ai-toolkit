@@ -86,17 +86,19 @@ class CostTracker:
             self._total_thinking_tokens += thinking_tokens
             self._total_cost += cost_value
 
-        # Telemetry: emit api_call event
+        # Telemetry: emit api_call event via EventBus
         try:
-            from vaig.core.telemetry import get_telemetry_collector
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import ApiCalled
 
-            collector = get_telemetry_collector()
-            collector.emit_api_call(
-                model_id,
-                tokens_in=prompt_tokens,
-                tokens_out=completion_tokens,
-                cost_usd=cost_value,
-                metadata={"thinking_tokens": thinking_tokens},
+            EventBus.get().emit(
+                ApiCalled(
+                    model=model_id,
+                    tokens_in=prompt_tokens,
+                    tokens_out=completion_tokens,
+                    cost_usd=cost_value,
+                    metadata=(("thinking_tokens", thinking_tokens),),
+                )
             )
         except Exception:  # noqa: BLE001
             pass

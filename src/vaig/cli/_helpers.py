@@ -24,6 +24,32 @@ console = Console()
 err_console = Console(stderr=True)
 logger = logging.getLogger(__name__)
 
+# Keep a module-level reference so the subscriber isn't garbage-collected.
+_telemetry_subscriber: object | None = None
+
+
+def _init_telemetry(settings: Settings) -> None:
+    """Initialize the telemetry collector **and** wire the TelemetrySubscriber.
+
+    Safe to call multiple times — the collector is a singleton and the
+    subscriber is created only once (guarded by ``_telemetry_subscriber``).
+    This ensures that events emitted via the EventBus (e.g. from
+    ``CostTracker.record`` or ``track_command``) are forwarded to the
+    collector's SQLite store.
+    """
+    global _telemetry_subscriber  # noqa: PLW0603
+    try:
+        from vaig.core.telemetry import get_telemetry_collector
+
+        collector = get_telemetry_collector(settings)
+
+        if _telemetry_subscriber is None:
+            from vaig.core.subscribers import TelemetrySubscriber
+
+            _telemetry_subscriber = TelemetrySubscriber(collector)
+    except Exception:  # noqa: BLE001
+        pass
+
 
 # ── Telemetry decorator ───────────────────────────────────────
 def track_command(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -40,11 +66,13 @@ def track_command(fn: Callable[..., Any]) -> Callable[..., Any]:
             return fn(*args, **kwargs)
         finally:
             try:
-                from vaig.core.telemetry import get_telemetry_collector
+                from vaig.core.event_bus import EventBus
+                from vaig.core.events import CliCommandTracked
 
                 duration_ms = (time.perf_counter() - t0) * 1000
-                collector = get_telemetry_collector()
-                collector.emit_cli_command(fn.__name__, duration_ms=duration_ms)
+                EventBus.get().emit(
+                    CliCommandTracked(command_name=fn.__name__, duration_ms=duration_ms)
+                )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -65,11 +93,13 @@ def track_command_async(fn: Callable[..., Coroutine[Any, Any, Any]]) -> Callable
             return await fn(*args, **kwargs)
         finally:
             try:
-                from vaig.core.telemetry import get_telemetry_collector
+                from vaig.core.event_bus import EventBus
+                from vaig.core.events import CliCommandTracked
 
                 duration_ms = (time.perf_counter() - t0) * 1000
-                collector = get_telemetry_collector()
-                collector.emit_cli_command(fn.__name__, duration_ms=duration_ms)
+                EventBus.get().emit(
+                    CliCommandTracked(command_name=fn.__name__, duration_ms=duration_ms)
+                )
             except Exception:  # noqa: BLE001
                 pass
 

@@ -247,15 +247,9 @@ def register(app: typer.Typer) -> None:
         try:  # ── CLI error boundary ──
             settings = _helpers._get_settings(config)
 
-            # Eagerly initialize the telemetry collector so downstream code
-            # (agents, cost_tracker, session) uses the pre-warmed singleton
-            # instead of falling back to get_settings().
-            try:
-                from vaig.core.telemetry import get_telemetry_collector
-
-                get_telemetry_collector(settings)
-            except Exception:  # noqa: BLE001
-                pass
+            # Eagerly initialize the telemetry collector and wire the
+            # TelemetrySubscriber so events are forwarded to the SQLite store.
+            _helpers._init_telemetry(settings)
 
             # Apply --project / --project-id: mutate gcp.project_id AND gke.project_id
             effective_project = project or project_id

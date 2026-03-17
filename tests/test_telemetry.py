@@ -641,6 +641,11 @@ class TestToolCallHook:
             "vaig.core.telemetry.get_telemetry_collector", lambda *a, **kw: collector,
         )
 
+        # Wire TelemetrySubscriber so events flow to collector
+        from vaig.core.subscribers.telemetry_subscriber import TelemetrySubscriber
+
+        subscriber = TelemetrySubscriber(collector)
+
         # Minimal tool and registry mocks
         from unittest.mock import MagicMock
 
@@ -660,6 +665,7 @@ class TestToolCallHook:
         assert result.error is False
 
         # Flush and verify
+        subscriber.unsubscribe_all()
         collector.flush()
         conn = sqlite3.connect(str(db_path))
         rows = conn.execute("SELECT event_type, event_name FROM telemetry_events").fetchall()
@@ -678,6 +684,11 @@ class TestToolCallHook:
             "vaig.core.telemetry.get_telemetry_collector", lambda *a, **kw: collector,
         )
 
+        # Wire TelemetrySubscriber so events flow to collector
+        from vaig.core.subscribers.telemetry_subscriber import TelemetrySubscriber
+
+        subscriber = TelemetrySubscriber(collector)
+
         from unittest.mock import MagicMock
 
         from vaig.agents.mixins import ToolLoopMixin
@@ -691,6 +702,7 @@ class TestToolCallHook:
 
         assert result.error is True
 
+        subscriber.unsubscribe_all()
         collector.flush()
         conn = sqlite3.connect(str(db_path))
         rows = conn.execute(
@@ -711,6 +723,11 @@ class TestToolCallHook:
             "vaig.core.telemetry.get_telemetry_collector", lambda *a, **kw: collector,
         )
 
+        # Wire TelemetrySubscriber so events flow to collector
+        from vaig.core.subscribers.telemetry_subscriber import TelemetrySubscriber
+
+        subscriber = TelemetrySubscriber(collector)
+
         from unittest.mock import MagicMock
 
         from vaig.agents.mixins import ToolLoopMixin
@@ -727,6 +744,7 @@ class TestToolCallHook:
         assert result.error is True
         assert "connection timeout" in result.output
 
+        subscriber.unsubscribe_all()
         collector.flush()
         conn = sqlite3.connect(str(db_path))
         rows = conn.execute(
@@ -753,6 +771,11 @@ class TestApiCallHook:
             "vaig.core.telemetry.get_telemetry_collector", lambda *a, **kw: collector,
         )
 
+        # Wire TelemetrySubscriber so events flow to collector
+        from vaig.core.subscribers.telemetry_subscriber import TelemetrySubscriber
+
+        subscriber = TelemetrySubscriber(collector)
+
         from vaig.core.cost_tracker import CostTracker
 
         tracker = CostTracker()
@@ -761,6 +784,7 @@ class TestApiCallHook:
         assert rec.model_id == "gemini-2.5-pro"
         assert rec.prompt_tokens == 100
 
+        subscriber.unsubscribe_all()
         collector.flush()
         conn = sqlite3.connect(str(db_path))
         rows = conn.execute(
@@ -788,6 +812,11 @@ class TestSessionLifecycleHook:
             "vaig.core.telemetry.get_telemetry_collector", lambda *a, **kw: collector,
         )
 
+        # Wire TelemetrySubscriber so events flow to collector
+        from vaig.core.subscribers.telemetry_subscriber import TelemetrySubscriber
+
+        subscriber = TelemetrySubscriber(collector)
+
         from unittest.mock import MagicMock
 
         from vaig.session.manager import SessionManager
@@ -806,6 +835,7 @@ class TestSessionLifecycleHook:
         assert session.id == "test-session-123"
         assert collector._session_id == "test-session-123"
 
+        subscriber.unsubscribe_all()
         collector.flush()
         conn = sqlite3.connect(str(db_path))
         rows = conn.execute(
@@ -826,6 +856,11 @@ class TestSessionLifecycleHook:
             "vaig.core.telemetry.get_telemetry_collector", lambda *a, **kw: collector,
         )
 
+        # Wire TelemetrySubscriber so events flow to collector
+        from vaig.core.subscribers.telemetry_subscriber import TelemetrySubscriber
+
+        subscriber = TelemetrySubscriber(collector)
+
         from unittest.mock import MagicMock
 
         from vaig.session.manager import SessionManager
@@ -837,6 +872,8 @@ class TestSessionLifecycleHook:
         manager._store = MagicMock()
 
         manager.close()
+
+        subscriber.unsubscribe_all()
 
         # After close, the session_end event should have been flushed to DB
         conn = sqlite3.connect(str(db_path))
@@ -862,6 +899,11 @@ class TestSkillUseHook:
             "vaig.core.telemetry.get_telemetry_collector", lambda *a, **kw: collector,
         )
 
+        # Wire TelemetrySubscriber so events flow to collector
+        from vaig.core.subscribers.telemetry_subscriber import TelemetrySubscriber
+
+        subscriber = TelemetrySubscriber(collector)
+
         from unittest.mock import MagicMock
 
         from vaig.skills.registry import SkillRegistry
@@ -879,6 +921,7 @@ class TestSkillUseHook:
 
         assert "gke_diagnostics" in registry._skills
 
+        subscriber.unsubscribe_all()
         collector.flush()
         conn = sqlite3.connect(str(db_path))
         rows = conn.execute(
@@ -894,7 +937,7 @@ class TestCliCommandHook:
     """Test the track_command decorator."""
 
     def test_track_command_emits_event(self, monkeypatch: pytest.MonkeyPatch, db_path: Path) -> None:
-        """track_command decorator emits cli_command event with duration."""
+        """track_command decorator emits cli_command event via EventBus."""
         from vaig.core.telemetry import TelemetryCollector
 
         collector = TelemetryCollector(db_path=db_path, enabled=True, buffer_size=1)
@@ -902,6 +945,11 @@ class TestCliCommandHook:
         monkeypatch.setattr(
             "vaig.core.telemetry.get_telemetry_collector", lambda *a, **kw: collector,
         )
+
+        # Wire TelemetrySubscriber so events flow to collector
+        from vaig.core.subscribers.telemetry_subscriber import TelemetrySubscriber
+
+        subscriber = TelemetrySubscriber(collector)
 
         from vaig.cli.app import track_command
 
@@ -912,6 +960,7 @@ class TestCliCommandHook:
         result = my_command()
         assert result == "done"
 
+        subscriber.unsubscribe_all()
         collector.flush()
         conn = sqlite3.connect(str(db_path))
         rows = conn.execute(
@@ -936,6 +985,11 @@ class TestCliCommandHook:
             "vaig.core.telemetry.get_telemetry_collector", lambda *a, **kw: collector,
         )
 
+        # Wire TelemetrySubscriber so events flow to collector
+        from vaig.core.subscribers.telemetry_subscriber import TelemetrySubscriber
+
+        subscriber = TelemetrySubscriber(collector)
+
         from vaig.cli.app import track_command
 
         @track_command
@@ -946,6 +1000,7 @@ class TestCliCommandHook:
         with pytest.raises(ValueError, match="boom"):
             failing_command()
 
+        subscriber.unsubscribe_all()
         collector.flush()
         conn = sqlite3.connect(str(db_path))
         rows = conn.execute(

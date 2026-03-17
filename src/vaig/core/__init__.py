@@ -6,6 +6,18 @@ from vaig.core.client import ChatMessage, GeminiClient, GenerationResult, Stream
 from vaig.core.config import BudgetConfig, CacheConfig, CodingConfig, Settings, get_settings
 from vaig.core.config_switcher import SwitchResult, get_config_snapshot, switch_cluster, switch_location, switch_project
 from vaig.core.cost_tracker import BudgetStatus, CostRecord, CostTracker
+from vaig.core.event_bus import EventBus
+from vaig.core.events import (
+    ApiCalled,
+    BudgetChecked,
+    CliCommandTracked,
+    ErrorOccurred,
+    Event,
+    SessionEnded,
+    SessionStarted,
+    SkillUsed,
+    ToolExecuted,
+)
 from vaig.core.exceptions import (
     GCPAuthError,
     GCPPermissionError,
@@ -19,16 +31,23 @@ from vaig.core.exceptions import (
     VAIGError,
     format_error_for_user,
 )
+from vaig.core.subscribers import TelemetrySubscriber
 
 __all__ = [
+    "ApiCalled",
+    "BudgetChecked",
     "BudgetConfig",
     "BudgetStatus",
     "CacheConfig",
     "CacheStats",
     "ChatMessage",
+    "CliCommandTracked",
     "CodingConfig",
     "CostRecord",
     "CostTracker",
+    "ErrorOccurred",
+    "Event",
+    "EventBus",
     "GCPAuthError",
     "GCPPermissionError",
     "GeminiClient",
@@ -39,10 +58,15 @@ __all__ = [
     "K8sAuthError",
     "MaxIterationsError",
     "ResponseCache",
+    "SessionEnded",
+    "SessionStarted",
     "Settings",
+    "SkillUsed",
     "StreamResult",
     "SwitchResult",
+    "TelemetrySubscriber",
     "ToolCallResult",
+    "ToolExecuted",
     "ToolExecutionError",
     "VAIGError",
     "VaigAuthError",
