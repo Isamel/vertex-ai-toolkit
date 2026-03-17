@@ -89,8 +89,8 @@ def _extract_text(message: object) -> str:
     ``estimate_history_tokens`` work regardless of which type is passed in.
     """
     # ChatMessage (or any object with a str `.content`)
-    if hasattr(message, "content") and isinstance(message.content, str):  # type: ignore[union-attr]
-        return message.content  # type: ignore[union-attr]
+    if hasattr(message, "content") and isinstance(message.content, str):
+        return message.content
 
     # google.genai.types.Content — iterate over .parts
     parts = getattr(message, "parts", None)
