@@ -89,6 +89,55 @@ class TestTokenEstimation:
     def test_estimate_history_tokens_empty_list(self) -> None:
         assert estimate_history_tokens([]) == 0
 
+    def test_estimate_history_tokens_with_content_objects(self) -> None:
+        """estimate_history_tokens must handle google-genai Content objects.
+
+        Content objects have ``.parts`` (list of Part-like objects with
+        ``.text``) instead of a ``.content`` string.  This is the exact
+        scenario that caused the original AttributeError bug.
+        """
+        from types import SimpleNamespace
+
+        # Simulate google.genai.types.Content with .parts containing .text
+        content_objs = [
+            SimpleNamespace(
+                role="user",
+                parts=[SimpleNamespace(text="a" * 100)],
+            ),
+            SimpleNamespace(
+                role="model",
+                parts=[
+                    SimpleNamespace(text="b" * 80),
+                    SimpleNamespace(text="c" * 120),
+                ],
+            ),
+        ]
+        # 100 + (80 + 1 (space joiner) + 120) = 301 chars → 301 / 4 = 75
+        assert estimate_history_tokens(content_objs) == 75  # type: ignore[arg-type]
+
+    def test_estimate_history_tokens_content_with_non_text_parts(self) -> None:
+        """Content objects with function_call parts (no .text) should not crash."""
+        from types import SimpleNamespace
+
+        content_objs = [
+            SimpleNamespace(
+                role="model",
+                parts=[SimpleNamespace(function_call={"name": "get_pods"})],
+            ),
+        ]
+        # No .text attribute → 0 tokens
+        assert estimate_history_tokens(content_objs) == 0  # type: ignore[arg-type]
+
+    def test_estimate_history_tokens_content_with_empty_parts(self) -> None:
+        """Content with empty or None parts should return 0."""
+        from types import SimpleNamespace
+
+        content_objs = [
+            SimpleNamespace(role="model", parts=None),
+            SimpleNamespace(role="user", parts=[]),
+        ]
+        assert estimate_history_tokens(content_objs) == 0  # type: ignore[arg-type]
+
 
 # ══════════════════════════════════════════════════════════════
 # Summarization prompt

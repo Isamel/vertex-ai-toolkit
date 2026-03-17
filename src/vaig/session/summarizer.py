@@ -78,6 +78,32 @@ def estimate_tokens(text: str, *, chars_per_token: float = DEFAULT_CHARS_PER_TOK
     return max(0, int(len(text) / chars_per_token))
 
 
+def _extract_text(message: object) -> str:
+    """Extract text content from a ChatMessage or a google-genai Content object.
+
+    ``ChatMessage`` objects have a ``.content`` string attribute.
+    ``google.genai.types.Content`` objects have a ``.parts`` list where each
+    part may carry ``.text``, ``.function_call``, ``.function_response``, etc.
+
+    This helper handles both transparently so that callers like
+    ``estimate_history_tokens`` work regardless of which type is passed in.
+    """
+    # ChatMessage (or any object with a str `.content`)
+    if hasattr(message, "content") and isinstance(getattr(message, "content"), str):
+        return message.content  # type: ignore[union-attr]
+
+    # google.genai.types.Content — iterate over .parts
+    parts = getattr(message, "parts", None)
+    if not parts:
+        return ""
+    texts: list[str] = []
+    for part in parts:
+        text = getattr(part, "text", None)
+        if text:
+            texts.append(text)
+    return " ".join(texts)
+
+
 def estimate_history_tokens(
     messages: list[ChatMessage],
     *,
@@ -85,16 +111,19 @@ def estimate_history_tokens(
 ) -> int:
     """Estimate the total token count for a list of chat messages.
 
-    Sums the rough estimate for each message's content.
+    Sums the rough estimate for each message's content.  Accepts both
+    ``ChatMessage`` objects and ``google.genai.types.Content`` objects —
+    the latter are produced by ``GeminiClient._build_history()`` and may
+    be passed here when the history has already been converted.
 
     Args:
-        messages: List of ``ChatMessage`` objects.
+        messages: List of ``ChatMessage`` or ``Content`` objects.
         chars_per_token: Characters per token ratio.
 
     Returns:
         Total estimated token count.
     """
-    return sum(estimate_tokens(m.content, chars_per_token=chars_per_token) for m in messages)
+    return sum(estimate_tokens(_extract_text(m), chars_per_token=chars_per_token) for m in messages)
 
 
 class HistorySummarizer:
