@@ -129,10 +129,10 @@ class TestSyncCacheIntegration:
             parameters=[ToolParam("ns", "string", "namespace")],
             execute=counting_tool,
             cacheable=True,
-            cache_ttl_seconds=60,
+            cache_ttl_seconds=0,
         )
         registry = _make_registry(tool)
-        cache = ToolResultCache(default_ttl=60, max_size=100)
+        cache = ToolResultCache(default_ttl=0, max_size=100)
 
         # Two iterations: first calls tool, second calls same tool, third returns text
         fc = [{"name": "get_pods", "args": {"ns": "default"}}]
@@ -167,10 +167,10 @@ class TestSyncCacheIntegration:
             parameters=[ToolParam("ns", "string", "namespace")],
             execute=counting_tool,
             cacheable=True,
-            cache_ttl_seconds=60,
+            cache_ttl_seconds=0,
         )
         registry = _make_registry(tool)
-        cache = ToolResultCache(default_ttl=60, max_size=100)
+        cache = ToolResultCache(default_ttl=0, max_size=100)
 
         client = MagicMock()
         client.generate_with_tools.side_effect = [
@@ -202,10 +202,10 @@ class TestSyncCacheIntegration:
             parameters=[ToolParam("name", "string", "pod name")],
             execute=counting_tool,
             cacheable=False,
-            cache_ttl_seconds=60,
+            cache_ttl_seconds=0,
         )
         registry = _make_registry(tool)
-        cache = ToolResultCache(default_ttl=60, max_size=100)
+        cache = ToolResultCache(default_ttl=0, max_size=100)
 
         fc = [{"name": "delete_pod", "args": {"name": "my-pod"}}]
         client = MagicMock()
@@ -239,10 +239,10 @@ class TestSyncCacheIntegration:
             parameters=[],
             execute=flaky_tool,
             cacheable=True,
-            cache_ttl_seconds=60,
+            cache_ttl_seconds=0,
         )
         registry = _make_registry(tool)
-        cache = ToolResultCache(default_ttl=60, max_size=100)
+        cache = ToolResultCache(default_ttl=0, max_size=100)
 
         fc = [{"name": "flaky", "args": {}}]
         client = MagicMock()
@@ -340,10 +340,10 @@ class TestAsyncCacheIntegration:
             parameters=[ToolParam("ns", "string", "namespace")],
             execute=counting_tool,
             cacheable=True,
-            cache_ttl_seconds=60,
+            cache_ttl_seconds=0,
         )
         registry = _make_registry(tool)
-        cache = ToolResultCache(default_ttl=60, max_size=100)
+        cache = ToolResultCache(default_ttl=0, max_size=100)
 
         fc = [{"name": "get_pods", "args": {"ns": "default"}}]
         client = MagicMock()
@@ -378,10 +378,10 @@ class TestAsyncCacheIntegration:
             parameters=[ToolParam("ns", "string", "namespace")],
             execute=counting_tool,
             cacheable=True,
-            cache_ttl_seconds=60,
+            cache_ttl_seconds=0,
         )
         registry = _make_registry(tool)
-        cache = ToolResultCache(default_ttl=60, max_size=100)
+        cache = ToolResultCache(default_ttl=0, max_size=100)
 
         client = MagicMock()
         client.async_generate_with_tools = AsyncMock(
@@ -416,7 +416,7 @@ class TestAsyncCacheIntegration:
             cacheable=False,
         )
         registry = _make_registry(tool)
-        cache = ToolResultCache(default_ttl=60, max_size=100)
+        cache = ToolResultCache(default_ttl=0, max_size=100)
 
         fc = [{"name": "delete_pod", "args": {}}]
         client = MagicMock()
@@ -452,10 +452,10 @@ class TestAsyncCacheIntegration:
             parameters=[],
             execute=flaky_tool,
             cacheable=True,
-            cache_ttl_seconds=60,
+            cache_ttl_seconds=0,
         )
         registry = _make_registry(tool)
-        cache = ToolResultCache(default_ttl=60, max_size=100)
+        cache = ToolResultCache(default_ttl=0, max_size=100)
 
         fc = [{"name": "flaky", "args": {}}]
         client = MagicMock()
@@ -651,10 +651,10 @@ class TestCachedFlagTelemetry:
             parameters=[],
             execute=counting_tool,
             cacheable=True,
-            cache_ttl_seconds=60,
+            cache_ttl_seconds=0,
         )
         registry = _make_registry(tool)
-        cache = ToolResultCache(default_ttl=60, max_size=100)
+        cache = ToolResultCache(default_ttl=0, max_size=100)
 
         store = ToolCallStore(base_dir=tempfile.mkdtemp())
         store.start_run("test-run-3")

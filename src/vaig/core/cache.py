@@ -8,7 +8,9 @@ questions.
 ``ToolResultCache`` caches ``ToolResult`` objects keyed by
 ``(tool_name, tool_args)`` to deduplicate identical tool calls within and
 across orchestrator passes.  Per-entry TTL allows tools with different
-freshness requirements to coexist in a single cache.
+freshness requirements to coexist in a single cache.  A TTL of ``0``
+means "no expiration" — entries live for the lifetime of the cache
+instance (typically one pipeline run).
 
 Disabled by default — must be explicitly opted-in via ``CacheConfig.enabled``
 (for ResponseCache) or by passing a ``ToolResultCache`` instance to the
@@ -232,12 +234,18 @@ class ToolResultCache:
     Each entry stores its own TTL (supplied at ``put`` time), so tools with
     different freshness requirements can coexist in a single cache instance.
 
+    A ``default_ttl`` of ``0`` means **no expiration** — entries live for the
+    lifetime of the cache instance.  Since the cache is created fresh per
+    ``execute_with_tools()`` call and discarded after, this is the recommended
+    default for multi-agent pipelines where sequential agents need to share
+    results across minutes of execution.
+
     Error results (``ToolResult.error is True``) are never cached — only
     successful results are stored.
 
     Usage::
 
-        cache = ToolResultCache(default_ttl=60, max_size=256)
+        cache = ToolResultCache(default_ttl=0, max_size=256)
 
         key = _make_tool_cache_key(tool_name, tool_args)
         cached = cache.get(key)
@@ -249,7 +257,7 @@ class ToolResultCache:
         return result
     """
 
-    def __init__(self, default_ttl: int = 60, max_size: int = 256) -> None:
+    def __init__(self, default_ttl: int = 0, max_size: int = 256) -> None:
         if max_size < 1:
             raise ValueError(f"max_size must be >= 1, got {max_size}")
         if default_ttl < 0:
@@ -271,7 +279,11 @@ class ToolResultCache:
 
     @property
     def default_ttl(self) -> int:
-        """Default time-to-live in seconds for cache entries."""
+        """Default time-to-live in seconds for cache entries.
+
+        ``0`` means no expiration — entries live for the lifetime of the
+        cache instance (typically one pipeline run).
+        """
         return self._default_ttl
 
     def get(self, key: str) -> ToolResult | None:
@@ -350,6 +362,8 @@ class ToolResultCache:
         Error results (``result.error is True``) are **never** cached.
         If the cache is full the least-recently-used entry is evicted.
         ``ttl_seconds`` defaults to ``self._default_ttl`` if not provided.
+        A TTL of ``0`` means no expiration — the entry lives for the
+        lifetime of the cache instance.
         """
         # Never cache error results
         if result.error:
