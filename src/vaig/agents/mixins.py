@@ -195,20 +195,21 @@ class ToolLoopMixin:
                 tool_name = fc["name"]
                 tool_args = fc["args"]
 
+                # Look up tool definition once for cache checks
+                tool_def = tool_registry.get(tool_name) if tool_result_cache is not None else None
+
                 # ── Cache lookup ───────────────────────────────────
                 cached_result: ToolResult | None = None
-                if tool_result_cache is not None:
-                    tool_def = tool_registry.get(tool_name)
-                    if tool_def is not None and tool_def.cacheable:
-                        cached_result = tool_result_cache.get_or_none(
-                            tool_name,
-                            tool_args,
-                            ttl_override=tool_def.cache_ttl_seconds,
-                        )
+                if tool_def is not None and tool_def.cacheable:
+                    cached_result = tool_result_cache.get_or_none(  # type: ignore[union-attr]
+                        tool_name,
+                        tool_args,
+                        ttl_override=tool_def.cache_ttl_seconds,
+                    )
 
                 if cached_result is not None:
                     # Cache hit — skip execution
-                    logger.info("[CACHE HIT] %s", tool_name)
+                    logger.debug("[CACHE HIT] %s", tool_name)
                     tool_result = cached_result
                     tool_duration = 0.0
                     is_cached = True
@@ -226,17 +227,18 @@ class ToolLoopMixin:
                     tool_duration = time.perf_counter() - t_tool
                     is_cached = False
 
-                    # Store in cache (only if cacheable and no error)
+                    # Store in cache (reuse tool_def from lookup above)
                     if tool_result_cache is not None and not tool_result.error:
-                        td = tool_registry.get(tool_name)
-                        if td is not None and td.cacheable:
+                        if tool_def is None:
+                            tool_def = tool_registry.get(tool_name)
+                        if tool_def is not None and tool_def.cacheable:
                             from vaig.core.cache import _make_tool_cache_key
 
                             cache_key = _make_tool_cache_key(tool_name, tool_args)
                             tool_result_cache.put(
                                 cache_key,
                                 tool_result,
-                                ttl_seconds=td.cache_ttl_seconds,
+                                ttl_seconds=tool_def.cache_ttl_seconds,
                             )
 
                 # Notify caller about this tool execution
@@ -516,20 +518,19 @@ class ToolLoopMixin:
                         _tool_args = fc["args"]
 
                         # ── Cache lookup ─────────────────────────
-                        if tool_result_cache is not None:
-                            _td = tool_registry.get(_tool_name)
-                            if _td is not None and _td.cacheable:
-                                _cached = tool_result_cache.get_or_none(
-                                    _tool_name,
-                                    _tool_args,
-                                    ttl_override=_td.cache_ttl_seconds,
+                        _td = tool_registry.get(_tool_name) if tool_result_cache is not None else None
+                        if _td is not None and _td.cacheable:
+                            _cached = tool_result_cache.get_or_none(  # type: ignore[union-attr]
+                                _tool_name,
+                                _tool_args,
+                                ttl_override=_td.cache_ttl_seconds,
+                            )
+                            if _cached is not None:
+                                logger.debug("[CACHE HIT] %s", _tool_name)
+                                self._emit_tool_telemetry(
+                                    _tool_name, _tool_args, _cached, time.perf_counter(), cached=True,
                                 )
-                                if _cached is not None:
-                                    logger.info("[CACHE HIT] %s", _tool_name)
-                                    self._emit_tool_telemetry(
-                                        _tool_name, _tool_args, _cached, time.perf_counter(), cached=True,
-                                    )
-                                    return _tool_name, _tool_args, 0.0, _cached, True
+                                return _tool_name, _tool_args, 0.0, _cached, True
 
                         t0 = time.perf_counter()
                         res = await self._async_execute_single_tool(
@@ -539,15 +540,16 @@ class ToolLoopMixin:
                         )
                         dur = time.perf_counter() - t0
 
-                        # Store in cache
+                        # Store in cache (reuse _td from lookup above)
                         if tool_result_cache is not None and not res.error:
-                            _td2 = tool_registry.get(_tool_name)
-                            if _td2 is not None and _td2.cacheable:
+                            if _td is None:
+                                _td = tool_registry.get(_tool_name)
+                            if _td is not None and _td.cacheable:
                                 from vaig.core.cache import _make_tool_cache_key
 
                                 _ck = _make_tool_cache_key(_tool_name, _tool_args)
                                 tool_result_cache.put(
-                                    _ck, res, ttl_seconds=_td2.cache_ttl_seconds,
+                                    _ck, res, ttl_seconds=_td.cache_ttl_seconds,
                                 )
 
                         return _tool_name, _tool_args, dur, res, False
@@ -634,19 +636,20 @@ class ToolLoopMixin:
                     tool_name = fc["name"]
                     tool_args = fc["args"]
 
+                    # Look up tool definition once for cache checks
+                    tool_def = tool_registry.get(tool_name) if tool_result_cache is not None else None
+
                     # ── Cache lookup ───────────────────────────────
                     cached_result_async: ToolResult | None = None
-                    if tool_result_cache is not None:
-                        tool_def = tool_registry.get(tool_name)
-                        if tool_def is not None and tool_def.cacheable:
-                            cached_result_async = tool_result_cache.get_or_none(
-                                tool_name,
-                                tool_args,
-                                ttl_override=tool_def.cache_ttl_seconds,
-                            )
+                    if tool_def is not None and tool_def.cacheable:
+                        cached_result_async = tool_result_cache.get_or_none(  # type: ignore[union-attr]
+                            tool_name,
+                            tool_args,
+                            ttl_override=tool_def.cache_ttl_seconds,
+                        )
 
                     if cached_result_async is not None:
-                        logger.info("[CACHE HIT] %s", tool_name)
+                        logger.debug("[CACHE HIT] %s", tool_name)
                         tool_result = cached_result_async
                         tool_duration = 0.0
                         is_cached = True
@@ -663,17 +666,18 @@ class ToolLoopMixin:
                         tool_duration = time.perf_counter() - t_tool
                         is_cached = False
 
-                        # Store in cache
+                        # Store in cache (reuse tool_def from lookup above)
                         if tool_result_cache is not None and not tool_result.error:
-                            td = tool_registry.get(tool_name)
-                            if td is not None and td.cacheable:
+                            if tool_def is None:
+                                tool_def = tool_registry.get(tool_name)
+                            if tool_def is not None and tool_def.cacheable:
                                 from vaig.core.cache import _make_tool_cache_key
 
                                 cache_key = _make_tool_cache_key(tool_name, tool_args)
                                 tool_result_cache.put(
                                     cache_key,
                                     tool_result,
-                                    ttl_seconds=td.cache_ttl_seconds,
+                                    ttl_seconds=tool_def.cache_ttl_seconds,
                                 )
 
                     # Notify caller about this tool execution

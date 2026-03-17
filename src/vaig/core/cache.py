@@ -357,6 +357,15 @@ class ToolResultCache:
 
         effective_ttl = ttl_seconds if ttl_seconds is not None else self._default_ttl
 
+        # Reject negative TTL — would make entries effectively never expire
+        if effective_ttl < 0:
+            logger.warning(
+                "Skipping cache put: negative ttl_seconds (%d) for key %s…",
+                effective_ttl,
+                key[:12],
+            )
+            return
+
         with self._lock:
             if key in self._store:
                 self._store[key] = (result, time.monotonic(), effective_ttl)
