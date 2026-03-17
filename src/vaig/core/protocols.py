@@ -7,8 +7,10 @@ in the VAIG codebase.  All protocols use ``typing.Protocol`` with
 These protocols decouple consumers from concrete implementations, enabling
 easier testing (mock injection) and future swappability.
 
-This module has **zero** imports from concrete implementations — only stdlib
-and typing are used.
+This module has **zero runtime imports** from concrete implementations — only
+stdlib and typing are used.  Type-checking-only imports (under
+``TYPE_CHECKING``) are used for IDE support and do not create runtime
+dependencies.
 """
 
 from __future__ import annotations
@@ -164,7 +166,7 @@ class GeminiClientProtocol(Protocol):
 class K8sClientProvider(Protocol):
     """Protocol for obtaining cached Kubernetes API clients.
 
-    Abstracts the ``_create_k8s_clients()`` / ``get_exec_client()`` /
+    Abstracts the ``_create_k8s_clients()`` / ``_get_exec_client()`` /
     ``clear_k8s_client_cache()`` functions from ``tools/gke/_clients.py``
     into an injectable interface.
 

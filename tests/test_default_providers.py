@@ -47,9 +47,9 @@ class TestDefaultK8sClientProvider:
         mock_create.assert_called_once_with(gke_config)
         assert result is sentinel
 
-    @patch("vaig.tools.gke._clients.get_exec_client")
+    @patch("vaig.tools.gke._clients._get_exec_client")
     def test_get_exec_client_delegates(self, mock_exec: MagicMock) -> None:
-        """get_exec_client() delegates to the module-level get_exec_client()."""
+        """get_exec_client() delegates to the module-level _get_exec_client()."""
         from vaig.tools.gke._clients import DefaultK8sClientProvider
 
         sentinel = MagicMock()
@@ -207,6 +207,46 @@ class TestDefaultGCPClientProvider:
         provider.get_logging_client(credentials=cred_a)
         provider.get_logging_client(credentials=cred_b)
 
+        assert mock_get.call_count == 2
+
+    @patch("vaig.tools.gcloud_tools._get_logging_client")
+    def test_logging_error_not_cached(self, mock_get: MagicMock) -> None:
+        """Failed logging client calls are NOT cached — subsequent calls retry."""
+        from vaig.tools.gcloud_tools import DefaultGCPClientProvider
+
+        sentinel_client = MagicMock()
+        mock_get.side_effect = [
+            (None, "auth error"),       # first call fails
+            (sentinel_client, None),    # second call succeeds
+        ]
+
+        provider = DefaultGCPClientProvider()
+        _, err1 = provider.get_logging_client(project="proj")
+        client2, err2 = provider.get_logging_client(project="proj")
+
+        assert err1 == "auth error"
+        assert err2 is None
+        assert client2 is sentinel_client
+        assert mock_get.call_count == 2
+
+    @patch("vaig.tools.gcloud_tools._get_monitoring_client")
+    def test_monitoring_error_not_cached(self, mock_get: MagicMock) -> None:
+        """Failed monitoring client calls are NOT cached — subsequent calls retry."""
+        from vaig.tools.gcloud_tools import DefaultGCPClientProvider
+
+        sentinel_client = MagicMock()
+        mock_get.side_effect = [
+            (None, "quota exceeded"),   # first call fails
+            (sentinel_client, None),    # second call succeeds
+        ]
+
+        provider = DefaultGCPClientProvider()
+        _, err1 = provider.get_monitoring_client(project="proj")
+        client2, err2 = provider.get_monitoring_client(project="proj")
+
+        assert err1 == "quota exceeded"
+        assert err2 is None
+        assert client2 is sentinel_client
         assert mock_get.call_count == 2
 
 

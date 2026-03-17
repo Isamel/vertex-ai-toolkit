@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from vaig.core.client import GenerationResult
-from vaig.core.config import Settings, reset_settings
+from vaig.core.config import reset_settings
 from vaig.core.event_bus import EventBus
 from vaig.core.telemetry import TelemetryCollector, reset_telemetry_collector
 from vaig.session.store import SessionStore
@@ -152,36 +152,7 @@ def mock_async_client() -> MagicMock:
 
 
 # ── Test container helper ────────────────────────────────────
-# Previously duplicated as ``_make_mock_container()`` in
-# test_cli.py and test_cli_async.py.
+# Re-exported from ``_helpers.py`` for backward compatibility.
+# New code should ``from _helpers import create_test_container``.
 
-
-def create_test_container(
-    *,
-    settings: Settings | None = None,
-    gemini_client: MagicMock | None = None,
-    k8s_provider: object | None = None,
-    gcp_provider: object | None = None,
-    event_bus: EventBus | None = None,
-) -> MagicMock:
-    """Build a mock ``ServiceContainer`` with sensible test defaults.
-
-    Returns a ``MagicMock`` that mimics ``ServiceContainer`` with all
-    fields populated.  Pass keyword overrides to customise individual
-    fields — unprovided fields get safe defaults (``MagicMock`` gemini
-    client, default ``Settings``, ``EventBus`` singleton, ``None``
-    providers).
-
-    Example::
-
-        container = create_test_container()
-        container = create_test_container(settings=my_settings)
-        container = create_test_container(k8s_provider=mock_provider)
-    """
-    mock_container = MagicMock()
-    mock_container.gemini_client = gemini_client or MagicMock()
-    mock_container.settings = settings or Settings()
-    mock_container.event_bus = event_bus or EventBus.get()
-    mock_container.k8s_provider = k8s_provider
-    mock_container.gcp_provider = gcp_provider
-    return mock_container
+from _helpers import create_test_container  # noqa: F401

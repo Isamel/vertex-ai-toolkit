@@ -286,7 +286,7 @@ def _load_k8s_config(
     """Load kubeconfig and return a proxy-aware ``Configuration``, or an in-cluster ``ApiClient``.
 
     This is the shared config-loading logic used by both ``_create_k8s_clients``
-    and ``get_exec_client``.  It resolves kubeconfig path, context, proxy URL,
+    and ``_get_exec_client``.  It resolves kubeconfig path, context, proxy URL,
     and handles the ``AttributeError`` workaround for broken auth plugins.
 
     Returns:
@@ -418,7 +418,7 @@ def _create_k8s_clients(
 # ── Dedicated exec client (NOT cached) ───────────────────────
 
 
-def get_exec_client(
+def _get_exec_client(
     gke_config: GKEConfig,
 ) -> Any | ToolResult:
     """Create a **fresh, disposable** ``CoreV1Api`` for ``kubernetes.stream.stream()``.
@@ -478,7 +478,7 @@ class DefaultK8sClientProvider:
 
     def get_exec_client(self, gke_config: GKEConfig) -> Any:
         """Return a fresh, disposable ``CoreV1Api`` for exec operations."""
-        return get_exec_client(gke_config)
+        return _get_exec_client(gke_config)
 
     def clear_cache(self) -> None:
         """Clear cached Kubernetes clients."""

@@ -91,9 +91,13 @@ class DefaultGCPClientProvider:
     ) -> tuple[Any, str | None]:
         """Return a cached Cloud Logging client and optional error string."""
         key = (project, self._cred_key(credentials))
-        if key not in self._logging_cache:
-            self._logging_cache[key] = _get_logging_client(project, credentials)
-        return self._logging_cache[key]
+        if key in self._logging_cache:
+            return self._logging_cache[key]
+        result = _get_logging_client(project, credentials)
+        client, err = result
+        if err is None and client is not None:
+            self._logging_cache[key] = result
+        return result
 
     def get_monitoring_client(
         self,
@@ -102,9 +106,13 @@ class DefaultGCPClientProvider:
     ) -> tuple[Any, str | None]:
         """Return a cached Cloud Monitoring client and optional error string."""
         key = (project, self._cred_key(credentials))
-        if key not in self._monitoring_cache:
-            self._monitoring_cache[key] = _get_monitoring_client(project, credentials)
-        return self._monitoring_cache[key]
+        if key in self._monitoring_cache:
+            return self._monitoring_cache[key]
+        result = _get_monitoring_client(project, credentials)
+        client, err = result
+        if err is None and client is not None:
+            self._monitoring_cache[key] = result
+        return result
 
     def clear_cache(self) -> None:
         """Clear all cached GCP clients."""

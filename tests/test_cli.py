@@ -6,7 +6,7 @@ import re
 from unittest.mock import MagicMock, patch
 
 import pytest
-from conftest import create_test_container
+from _helpers import create_test_container
 from typer.testing import CliRunner
 
 from vaig import __version__

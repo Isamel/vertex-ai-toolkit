@@ -39,8 +39,8 @@ class ServiceContainer:
     Attributes:
         settings: Application configuration.
         gemini_client: AI generation client (protocol-typed).
-        k8s_provider: Kubernetes client provider (``None`` when K8s is unavailable).
-        gcp_provider: GCP observability client provider (``None`` when GCP SDKs unavailable).
+        k8s_provider: Kubernetes client provider. Can be ``None`` if not required (e.g., in tests).
+        gcp_provider: GCP observability client provider. Can be ``None`` if not required (e.g., in tests).
         event_bus: Process-wide event bus for domain events.
     """
 

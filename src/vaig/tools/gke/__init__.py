@@ -14,7 +14,9 @@ from ._clients import (
     clear_autopilot_cache,
     clear_k8s_client_cache,
     detect_autopilot,
-    get_exec_client,
+)
+from ._clients import (
+    _get_exec_client as get_exec_client,
 )
 
 # ── Layer 2: factory function ────────────────────────────────

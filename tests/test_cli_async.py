@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from _helpers import create_test_container
 from click.exceptions import Exit as ClickExit
-from conftest import create_test_container
 
 from vaig.core.config import Settings
 

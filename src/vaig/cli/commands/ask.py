@@ -111,6 +111,7 @@ def register(app: typer.Typer) -> None:
             from vaig.skills.registry import SkillRegistry
 
             container = build_container(settings)
+            # TODO: Remove cast once agents accept GeminiClientProtocol
             client = cast(GeminiClient, container.gemini_client)
             orchestrator = Orchestrator(client, settings)
 
@@ -325,6 +326,7 @@ async def _async_ask_impl(
     from vaig.skills.registry import SkillRegistry
 
     container = build_container(settings)
+    # TODO: Remove cast once agents accept GeminiClientProtocol
     client = cast(GeminiClient, container.gemini_client)
     orchestrator = Orchestrator(client, settings)
 

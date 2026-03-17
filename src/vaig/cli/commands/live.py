@@ -268,6 +268,7 @@ def register(app: typer.Typer) -> None:
             from vaig.core.container import build_container
 
             container = build_container(settings)
+            # TODO: Remove cast once agents accept GeminiClientProtocol
             client = cast(GeminiClient, container.gemini_client)
             gke_config = _build_gke_config(
                 settings, cluster=cluster, namespace=namespace, project_id=effective_project, location=location,
