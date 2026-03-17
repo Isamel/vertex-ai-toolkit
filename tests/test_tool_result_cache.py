@@ -13,12 +13,13 @@ Covers:
 - Key determinism (same args different order → same key)
 - Edge cases (max_size=1, default_ttl=0)
 - TTL=0 (no expiration): entries survive arbitrarily long
-- Negative TTL raises ValueError
+- Negative TTL on put() logs warning and skips (constructor raises ValueError)
 - Explicit TTL>0 still works for individual entries
 """
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from unittest.mock import patch
@@ -269,12 +270,24 @@ class TestToolResultCache:
         with patch("vaig.core.cache.time.monotonic", return_value=time.monotonic() + 6):
             assert cache.get(key) is None
 
-    def test_negative_ttl_on_put_skips_caching(self) -> None:
+    def test_negative_ttl_on_put_skips_caching(self, caplog: pytest.LogCaptureFixture) -> None:
         """Negative ttl_seconds on put() logs warning and skips."""
         cache = ToolResultCache(default_ttl=0, max_size=10)
         key = _make_tool_cache_key("tool", {"a": 1})
-        cache.put(key, self._ok(), ttl_seconds=-1)
-        assert cache.size == 0
+
+        # Force propagation so caplog (which hooks into the root logger)
+        # can capture records even when vaig's setup_logging() has set
+        # propagate=False on the "vaig" logger.
+        vaig_logger = logging.getLogger("vaig")
+        orig_propagate = vaig_logger.propagate
+        vaig_logger.propagate = True
+        try:
+            with caplog.at_level("WARNING", logger="vaig.core.cache"):
+                cache.put(key, self._ok(), ttl_seconds=-1)
+            assert cache.size == 0
+            assert "Skipping cache put" in caplog.text
+        finally:
+            vaig_logger.propagate = orig_propagate
 
 
 # ── get_or_none tests ────────────────────────────────────────

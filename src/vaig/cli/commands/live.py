@@ -334,8 +334,9 @@ def register(app: typer.Typer) -> None:
             # ── Tool result persistence ────────────────────────
             tool_call_store = _create_tool_call_store(settings)
             # Session-scoped cache: created once, reused across watch
-            # iterations and single-shot calls.  The 60 s TTL inside
-            # ToolResultCache ensures stale entries expire naturally.
+            # iterations and single-shot calls.  TTL=0 (no expiration)
+            # is safe because the cache is discarded when the CLI exits,
+            # and watch iterations overwrite entries via put() on each run.
             tool_result_cache = ToolResultCache()
 
             def _run_once() -> None:
