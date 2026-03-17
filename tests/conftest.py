@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from _helpers import create_test_container  # noqa: F401
 
 from vaig.core.client import GenerationResult
 from vaig.core.config import reset_settings
@@ -149,13 +150,6 @@ def mock_async_client() -> MagicMock:
     client.current_model = "gemini-2.5-pro"
     client.reinitialize = MagicMock()
     return client
-
-
-# ── Test container helper ────────────────────────────────────
-# Re-exported from ``_helpers.py`` for backward compatibility.
-# New code should ``from _helpers import create_test_container``.
-
-from _helpers import create_test_container  # noqa: F401
 
 
 # ── Mock REPL container ─────────────────────────────────────
