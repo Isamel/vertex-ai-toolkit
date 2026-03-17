@@ -43,6 +43,8 @@ creating operational runbooks for large-scale production systems.
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: System & Procedure Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the provided system context to understand the operational procedures needed.
 
 ### System Context / Documentation:
@@ -65,6 +67,8 @@ Format as a structured analysis that will inform the runbook creation.
 """,
 
     "plan": f"""## Phase: Runbook Structure Planning
+
+{ANTI_INJECTION_RULE}
 
 Plan the structure and content of the operational runbook.
 
@@ -89,6 +93,8 @@ Format as a detailed runbook blueprint with estimated durations per section.
 """,
 
     "execute": f"""## Phase: Runbook Generation
+
+{ANTI_INJECTION_RULE}
 
 Generate the complete operational runbook with step-by-step instructions.
 
@@ -184,6 +190,8 @@ Generate the complete operational runbook with step-by-step instructions.
 """,
 
     "report": f"""## Phase: Runbook Quality Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a quality assessment report for the runbook.
 

@@ -94,6 +94,8 @@ deployment frequency data, security scanning results)
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Pipeline Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the provided CI/CD pipeline configurations for security risks, efficiency issues, \
 and hygiene problems.
 
@@ -135,6 +137,8 @@ Format your response as a structured pipeline analysis report.
 
     "plan": f"""## Phase: Pipeline Improvement Plan
 
+{ANTI_INJECTION_RULE}
+
 Based on the pipeline analysis, create a prioritized improvement plan.
 
 ### Pipeline Data / Context:
@@ -175,6 +179,8 @@ Format as an actionable improvement playbook with exact YAML changes and effort 
 
     "execute": f"""## Phase: Pipeline Changes Execution
 
+{ANTI_INJECTION_RULE}
+
 Provide detailed, step-by-step execution guidance for implementing pipeline improvements.
 
 ### Pipeline Data / Context:
@@ -208,6 +214,8 @@ Provide copy-paste-ready YAML and configuration steps grouped by execution phase
 
     "validate": f"""## Phase: Pipeline Review Validation
 
+{ANTI_INJECTION_RULE}
+
 Validate that the pipeline improvements are safe, complete, and effective.
 
 ### Pipeline Data / Context:
@@ -236,6 +244,8 @@ Format as a validation checklist with pass/fail/warning status for each item.
 """,
 
     "report": f"""## Phase: Pipeline Review Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive CI/CD pipeline review report for engineering and security leadership.
 

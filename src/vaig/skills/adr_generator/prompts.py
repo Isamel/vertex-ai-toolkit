@@ -159,6 +159,8 @@ necessary despite the cost and risk of change.
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Context Research and Decision Driver Extraction
 
+{ANTI_INJECTION_RULE}
+
 Analyze the provided context to extract the decision space, drivers, and constraints.
 
 ### Decision Context / Source Material:
@@ -196,6 +198,8 @@ Format as a structured decision context analysis with prioritized drivers and co
 """,
 
     "plan": f"""## Phase: Option Identification and Evaluation Framework
+
+{ANTI_INJECTION_RULE}
 
 Based on the context analysis, identify options and design the evaluation framework.
 
@@ -236,6 +240,8 @@ Format as a structured option analysis with evaluation matrix and preliminary re
 """,
 
     "execute": f"""## Phase: ADR Document Generation
+
+{ANTI_INJECTION_RULE}
 
 Generate the publication-ready ADR document following MADR format.
 
@@ -280,6 +286,8 @@ Output the complete ADR in valid Markdown format.
 
     "validate": f"""## Phase: ADR Quality Validation
 
+{ANTI_INJECTION_RULE}
+
 Validate the generated ADR for completeness, clarity, consistency, and quality.
 
 ### Decision Context / Source Material:
@@ -317,6 +325,8 @@ Format as a validation checklist with pass/fail/warning for each quality criteri
 """,
 
     "report": f"""## Phase: ADR Generation Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a summary report of the ADR generation process and the final ADR.
 

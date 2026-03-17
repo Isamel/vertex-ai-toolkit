@@ -159,6 +159,73 @@ class MySkill(BaseSkill):
         ]
 ```
 
+### Adding Structured Output to a Custom Skill
+
+You can use Gemini's `response_schema` to force a reporter agent to return validated JSON instead of free-form text. This is useful when reports need a consistent, machine-parseable structure.
+
+**Step 1: Define a Pydantic v2 model**
+
+```python
+# my_skill/schema.py
+from enum import StrEnum
+from pydantic import BaseModel, Field
+
+
+class Severity(StrEnum):          # Use StrEnum, not Enum
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+
+
+class Finding(BaseModel):
+    title: str
+    severity: Severity
+    description: str = ""
+
+
+class MyReport(BaseModel):
+    summary: str
+    findings: list[Finding] = Field(default_factory=list)
+
+    def to_markdown(self) -> str:
+        lines = [f"# Report\n\n{self.summary}\n"]
+        for f in self.findings:
+            lines.append(f"- **[{f.severity}]** {f.title}: {f.description}")
+        return "\n".join(lines)
+```
+
+**Step 2: Set `response_schema` on the reporter agent**
+
+```python
+# In get_agents_config()
+{
+    "name": "reporter",
+    "role": "Report Generator",
+    "requires_tools": False,
+    "system_instruction": "Generate a structured report...",
+    "response_schema": MyReport,
+    "response_mime_type": "application/json",
+}
+```
+
+**Step 3: Override `post_process_report()`**
+
+```python
+from pydantic import ValidationError
+from my_skill.schema import MyReport
+
+
+class MySkill(BaseSkill):
+    def post_process_report(self, content: str) -> str:
+        try:
+            report = MyReport.model_validate_json(content)
+            return report.to_markdown()
+        except (ValueError, ValidationError):
+            return content  # Graceful fallback
+```
+
+> **Note:** Enum fields in the schema **must** use `StrEnum` (not `Enum`). Standard `Enum` values serialize as integers, which Gemini's `response_schema` rejects. Validate the raw JSON with `model_validate_json()`, not `model_validate()` — the model returns a JSON string, not a dict.
+
 ### Skill Discovery
 
 Custom skills are auto-discovered at startup from:

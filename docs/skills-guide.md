@@ -102,6 +102,45 @@ vaig ask "Analyze these logs" -f error.log -s log-analysis --auto-skill
 |-------|------|-------------|--------|
 | `adr-generator` | ADR Generator | Generate architecture decision records (ADRs) from context, conversations, and requirements using MADR format | ANALYZE, PLAN, EXECUTE, VALIDATE, REPORT |
 
+## Structured Output (JSON Schema)
+
+Some skills use Gemini's `response_schema` parameter to constrain the model's output to a strict JSON structure defined by a Pydantic v2 model. Instead of producing free-form Markdown, the model returns validated JSON that is then converted to a display format by the skill's `post_process_report()` method.
+
+### How It Works
+
+1. **Skill defines a Pydantic schema** — A `BaseModel` subclass describes every field, type, and constraint the report must contain.
+2. **Agent config includes the schema** — The reporter agent's config sets `response_schema` (the model class) and `response_mime_type` (`"application/json"`).
+3. **Gemini returns JSON** — The model is forced to produce output that conforms to the schema.
+4. **Post-processing converts to Markdown** — `post_process_report()` calls `Model.model_validate_json()` and renders the validated object via a `to_markdown()` method.
+
+### Which Skills Use It
+
+| Skill | Schema | Purpose |
+|-------|--------|---------|
+| `service-health` | `HealthReport` | Structured health reports with findings, recommendations, and timeline |
+
+### HealthReport Schema Overview
+
+The `HealthReport` root model (`src/vaig/skills/service_health/schema.py`) contains these top-level sections:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `executive_summary` | `ExecutiveSummary` | Overall status, scope, issue counts |
+| `cluster_overview` | `list[ClusterMetric]` | Key cluster metrics table |
+| `service_statuses` | `list[ServiceStatus]` | Per-service health with pod/CPU/memory data |
+| `findings` | `list[Finding]` | Issues grouped by severity (CRITICAL to INFO) |
+| `root_cause_hypotheses` | `list[RootCauseHypothesis]` | Causal mechanism and evidence per finding |
+| `recommendations` | `list[RecommendedAction]` | Prioritized remediation with urgency and effort |
+| `timeline` | `list[TimelineEvent]` | Chronological event sequence |
+| `metadata` | `ReportMetadata` | Generation timestamp, cluster, model used |
+
+### Benefits
+
+- **Deterministic structure** — Every report has the same sections in the same order, regardless of model temperature or prompt variation.
+- **Type safety** — Pydantic validation catches malformed output before it reaches the user.
+- **Machine-parseable** — Downstream tools can consume the raw JSON (via `report.to_dict()`) for dashboards, alerting, or further automation.
+- **Graceful degradation** — If JSON parsing fails, `post_process_report()` falls back to raw content with a warning log.
+
 ## Auto-Skill Detection
 
 VAIG can automatically select the best skill for your query:

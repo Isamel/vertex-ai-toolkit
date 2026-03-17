@@ -65,6 +65,7 @@ See [Architecture](architecture.md) for detailed Mermaid diagrams.
 - **ToolCallStore** — Per-tool-call JSONL recording for post-run analysis and auditing
 - **Usage telemetry** — Local SQLite analytics with `vaig stats` commands
 - **Auto-skill detection** — Automatically selects the best skill for your query
+- **Structured output (JSON Schema)** — Skills can constrain Gemini output to a Pydantic schema for deterministic, type-safe reports
 - **9-language detection** — Responds in the user's language (es, pt, fr, de, it, ja, zh, ko)
 
 ## Requirements

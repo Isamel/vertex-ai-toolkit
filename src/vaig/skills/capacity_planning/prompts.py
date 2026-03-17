@@ -53,6 +53,8 @@ MEDIUM (< 90 days), LOW (informational)
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Resource Utilization Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze current resource utilization, historical growth trends, and traffic patterns to establish \
 a capacity baseline and identify services approaching their limits.
 
@@ -100,6 +102,8 @@ percentages, headroom, and risk ratings (CRITICAL / HIGH / MEDIUM / LOW) for eac
 """,
 
     "plan": f"""## Phase: Capacity Scaling Plan
+
+{ANTI_INJECTION_RULE}
 
 Based on the utilization analysis, create a comprehensive capacity scaling plan with concrete \
 projections and actionable scaling strategies.
@@ -158,6 +162,8 @@ Format as an actionable scaling playbook with clear ownership, timelines, and de
 """,
 
     "report": f"""## Phase: Capacity Planning Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive capacity planning report suitable for engineering leadership and \
 infrastructure stakeholders.

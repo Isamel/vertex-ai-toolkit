@@ -38,6 +38,8 @@ You follow the **5 Whys + Ishikawa (Fishbone)** methodology:
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Initial Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the following incident data and context to understand what happened.
 
 ### Context (attached files/data):
@@ -60,6 +62,8 @@ Format your response as a structured incident analysis report.
 
     "plan": f"""## Phase: Investigation Plan
 
+{ANTI_INJECTION_RULE}
+
 Based on the initial analysis, create a detailed investigation plan.
 
 ### Context:
@@ -80,6 +84,8 @@ Format as an actionable investigation playbook.
 """,
 
     "execute": f"""## Phase: Deep Analysis
+
+{ANTI_INJECTION_RULE}
 
 Perform deep root cause analysis on the provided data.
 
@@ -102,6 +108,8 @@ Be specific. Reference exact log lines, timestamps, error codes, or metric value
 """,
 
     "report": f"""## Phase: Post-Mortem Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive post-mortem / RCA report.
 

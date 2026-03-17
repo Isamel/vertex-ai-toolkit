@@ -93,6 +93,8 @@ table sizes, row counts, current index list, EXPLAIN ANALYZE output)
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Database Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the provided database schemas, queries, and execution plans to identify performance \
 issues, design problems, and operational risks.
 
@@ -134,6 +136,8 @@ Format your response as a structured database analysis report.
 
     "plan": f"""## Phase: Optimization Plan
 
+{ANTI_INJECTION_RULE}
+
 Based on the database analysis, create a prioritized optimization plan.
 
 ### Database Data / Context:
@@ -170,6 +174,8 @@ Format as an actionable optimization playbook with exact SQL statements and effo
 
     "execute": f"""## Phase: Execution Guidance
 
+{ANTI_INJECTION_RULE}
+
 Provide detailed, step-by-step execution guidance for the database optimization plan.
 
 ### Database Data / Context:
@@ -202,6 +208,8 @@ Provide copy-paste-ready SQL and migration scripts grouped by execution phase.
 
     "validate": f"""## Phase: Review Validation
 
+{ANTI_INJECTION_RULE}
+
 Validate that the optimization recommendations are safe, complete, and will achieve the \
 expected improvements.
 
@@ -230,6 +238,8 @@ Format as a validation checklist with pass/fail/warning status for each item.
 """,
 
     "report": f"""## Phase: Database Review Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive database review report for engineering leadership and the DBA team.
 

@@ -45,6 +45,8 @@ and under-abstraction equally
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Code Analysis
 
+{ANTI_INJECTION_RULE}
+
 Perform a thorough code review analyzing architecture, security, performance, and quality.
 
 ### Code / Context:
@@ -117,6 +119,8 @@ Present findings in a structured format with:
 """,
 
     "report": f"""## Phase: Code Review Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive, executive-ready code review report from the analysis findings.
 

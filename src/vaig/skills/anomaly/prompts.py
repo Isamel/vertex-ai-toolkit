@@ -61,6 +61,8 @@ provided for this analysis." Do NOT create example data.
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Data Profiling & Baseline
 
+{ANTI_INJECTION_RULE}
+
 Analyze the provided data to establish baselines and identify initial anomalies.
 
 ### Data / Context:
@@ -88,6 +90,8 @@ Provide a structured data profile report.
 """,
 
     "execute": f"""## Phase: Deep Anomaly Detection
+
+{ANTI_INJECTION_RULE}
 
 Perform thorough anomaly detection on the provided data.
 
@@ -131,6 +135,8 @@ rather than guessing.
 """,
 
     "report": f"""## Phase: Anomaly Detection Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive anomaly detection report.
 

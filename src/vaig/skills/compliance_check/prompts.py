@@ -40,6 +40,8 @@ auditing software systems for regulatory, security, and organizational policy co
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Compliance Scope & Gap Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the provided system, infrastructure, or code for compliance gaps.
 
 ### System Context / Evidence:
@@ -63,6 +65,8 @@ Format as a structured compliance gap analysis with a summary matrix.
 
     "plan": f"""## Phase: Remediation Planning
 
+{ANTI_INJECTION_RULE}
+
 Based on the compliance gap analysis, create a prioritized remediation plan.
 
 ### System Context / Evidence:
@@ -85,6 +89,8 @@ Format as an actionable remediation roadmap with clear ownership suggestions.
 """,
 
     "report": f"""## Phase: Compliance Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive compliance audit report.
 

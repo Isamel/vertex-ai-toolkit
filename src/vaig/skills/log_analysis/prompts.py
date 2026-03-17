@@ -55,6 +55,8 @@ findings to appear thorough.
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Log Pattern Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the provided log data to extract patterns, errors, and timing anomalies.
 
 ### Log Data / Context:
@@ -77,6 +79,8 @@ Format your response as a structured log analysis report with a summary table of
 """,
 
     "plan": f"""## Phase: Diagnostic Hypothesis & Investigation Plan
+
+{ANTI_INJECTION_RULE}
 
 Based on the log analysis, formulate diagnostic hypotheses and an investigation plan.
 
@@ -101,6 +105,8 @@ Format as an actionable diagnostic playbook with clear priority ordering.
 """,
 
     "report": f"""## Phase: Diagnostic Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive log diagnostic report.
 

@@ -117,6 +117,8 @@ Medium (1-2 weeks), Large (2-4 weeks), Project (> 1 month)
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Toil Detection and Measurement
 
+{ANTI_INJECTION_RULE}
+
 Analyze operational data to identify, classify, and quantify toil.
 
 ### Operational Data / Context:
@@ -153,6 +155,8 @@ total toil hours, top toil contributors, and toil budget status.
 """,
 
     "plan": f"""## Phase: Automation Prioritization and Planning
+
+{ANTI_INJECTION_RULE}
 
 Based on the toil analysis, prioritize automation opportunities and design approaches.
 
@@ -191,6 +195,8 @@ Format as a prioritized automation roadmap with ROI calculations and implementat
 """,
 
     "execute": f"""## Phase: Automation Implementation Guidance
+
+{ANTI_INJECTION_RULE}
 
 Provide detailed implementation guidance for the prioritized automation plan.
 
@@ -234,6 +240,8 @@ Provide implementation-ready specifications with clear acceptance criteria.
 
     "validate": f"""## Phase: Toil Reduction Validation
 
+{ANTI_INJECTION_RULE}
+
 Validate that the proposed automation plan effectively addresses identified toil.
 
 ### Operational Data / Context:
@@ -267,6 +275,8 @@ Format as a validation checklist with pass/fail/warning for each automation prop
 """,
 
     "report": f"""## Phase: Toil Analysis Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive toil analysis and automation roadmap report.
 

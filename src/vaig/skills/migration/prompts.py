@@ -55,6 +55,8 @@ You are a Senior Data Engineer and Code Migration Architect with 15+ years of ex
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Source Code Discovery & Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the source code/ETL assets to understand what needs to be migrated.
 
 ### Source Code / Context:
@@ -82,6 +84,8 @@ Output a structured migration discovery report.
 """,
 
     "plan": f"""## Phase: Migration Planning
+
+{ANTI_INJECTION_RULE}
 
 Create a detailed migration plan based on the source analysis.
 
@@ -127,6 +131,8 @@ Create a detailed migration plan based on the source analysis.
 
     "execute": f"""## Phase: Code Migration Execution
 
+{ANTI_INJECTION_RULE}
+
 Generate the migrated code for the target platform.
 
 ### Source Code / Context:
@@ -171,6 +177,8 @@ Mark each migrated file with:
 
     "validate": f"""## Phase: Migration Validation
 
+{ANTI_INJECTION_RULE}
+
 Validate the migrated code against the source for functional equivalence.
 
 ### Source and Target Code / Context:
@@ -197,6 +205,8 @@ Provide a validation checklist with pass/fail/untested status.
 """,
 
     "report": f"""## Phase: Migration Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive migration report.
 

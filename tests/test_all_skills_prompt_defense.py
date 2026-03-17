@@ -85,14 +85,9 @@ def test_system_instruction_starts_with_anti_injection_rule(skill_name: str) -> 
 # Collect all (skill, phase) pairs for parametrize
 _SKILL_PHASE_PAIRS: list[tuple[str, str]] = []
 for _skill in ALL_SKILLS:
-    # service_health has special structure — its PHASE_PROMPTS are different
-    if _skill == "service_health":
-        for _phase in ["analyze", "execute", "report"]:
-            _SKILL_PHASE_PAIRS.append((_skill, _phase))
-    else:
-        _mod = _load_skill_prompts(_skill)
-        for _phase in _mod.PHASE_PROMPTS:
-            _SKILL_PHASE_PAIRS.append((_skill, _phase))
+    _mod = _load_skill_prompts(_skill)
+    for _phase in _mod.PHASE_PROMPTS:
+        _SKILL_PHASE_PAIRS.append((_skill, _phase))
 
 
 @pytest.mark.parametrize("skill_name,phase", _SKILL_PHASE_PAIRS)
@@ -158,6 +153,20 @@ def test_format_interpolation_works(skill_name: str, phase: str) -> None:
     result = prompt.format(context="ctx_data", user_input="usr_query")
     assert "ctx_data" in result
     assert "usr_query" in result
+
+
+# ── Phase prompts: contain ANTI_INJECTION_RULE ───────────────
+
+
+@pytest.mark.parametrize("skill_name,phase", _SKILL_PHASE_PAIRS)
+def test_phase_prompts_contain_anti_injection_rule(
+    skill_name: str, phase: str
+) -> None:
+    """Each phase prompt should include ANTI_INJECTION_RULE for defense-in-depth."""
+    mod = _load_skill_prompts(skill_name)
+    assert ANTI_INJECTION_RULE in mod.PHASE_PROMPTS[phase], (
+        f"{skill_name}/{phase} PHASE_PROMPT is missing ANTI_INJECTION_RULE"
+    )
 
 
 # ── Orchestrator default_system_instruction ───────────────────
