@@ -236,8 +236,8 @@ def _format_time_series(time_series_list: Any, metric_type: str) -> str:
         # Extract labels — guard against None metric/resource objects
         metric_obj = getattr(ts, "metric", None)
         resource_obj = getattr(ts, "resource", None)
-        metric_labels = dict(metric_obj.labels) if metric_obj and getattr(metric_obj, "labels", None) else {}
-        resource_labels = dict(resource_obj.labels) if resource_obj and getattr(resource_obj, "labels", None) else {}
+        metric_labels = dict(getattr(metric_obj, "labels", None) or {})
+        resource_labels = dict(getattr(resource_obj, "labels", None) or {})
 
         # Combine labels for display
         all_labels = {**resource_labels, **metric_labels}
