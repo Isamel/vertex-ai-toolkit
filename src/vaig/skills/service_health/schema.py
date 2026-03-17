@@ -15,6 +15,7 @@ which is required for Gemini's ``response_schema`` compatibility.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from enum import StrEnum
 from typing import Any
 
@@ -103,6 +104,27 @@ _STATUS_EMOJI: dict[ServiceHealthStatus, str] = {
 }
 
 
+class ContentType(StrEnum):
+    """Content type hint for evidence code fences in Markdown rendering."""
+
+    YAML = "yaml"
+    JSON = "json"
+    LOG = "log"
+    TEXT = "text"
+    COMMAND = "command"
+    UNKNOWN = "unknown"
+
+
+CONTENT_TYPE_FENCE_MAP: dict[ContentType, str] = {
+    ContentType.YAML: "yaml",
+    ContentType.JSON: "json",
+    ContentType.LOG: "log",
+    ContentType.TEXT: "text",
+    ContentType.COMMAND: "bash",
+    ContentType.UNKNOWN: "text",
+}
+
+
 # ── Sub-models ───────────────────────────────────────────────
 
 
@@ -186,6 +208,10 @@ class EvidenceDetail(BaseModel):
     description: str = ""
     evidence_text: str = Field(default="", description="Raw evidence (code/YAML block content)")
     corrected_text: str = Field(default="", description="Corrected version if applicable")
+    content_type: ContentType = Field(
+        default=ContentType.TEXT,
+        description="Content type for syntax-highlighted code fences",
+    )
 
 
 class RecommendedAction(BaseModel):
@@ -219,6 +245,10 @@ class TimelineEvent(BaseModel):
     time: str = Field(description="Timestamp — relative ('7m ago') or absolute ISO 8601")
     event: str
     severity: Severity = Severity.INFO
+    service: str = Field(
+        default="",
+        description="Service or component name, e.g. 'payment-svc', 'node/gke-pool-1'",
+    )
 
 
 class ReportMetadata(BaseModel):
@@ -372,9 +402,9 @@ class HealthReport(BaseModel):
                     line = f"- **{f.title}**"
                     if f.description:
                         line += f": {f.description}"
-                    if f.evidence:
-                        line += f" — Evidence: {'; '.join(f.evidence)}"
                     parts.append(line)
+                    if f.evidence:
+                        self._render_evidence_subbullets(parts, f.evidence)
                 parts.append("")
             else:
                 # Critical, High, Medium use full structured format
@@ -385,13 +415,27 @@ class HealthReport(BaseModel):
                     if f.root_cause:
                         parts.append(f"- **Root Cause**: {f.root_cause}")
                     if f.evidence:
-                        parts.append(f"- **Evidence**: {'; '.join(f.evidence)}")
+                        parts.append("- **Evidence**:")
+                        self._render_evidence_subbullets(parts, f.evidence)
                     parts.append(f"- **Confidence**: {f.confidence.value}")
                     if f.impact:
                         parts.append(f"- **Impact**: {f.impact}")
                     if f.affected_resources:
                         parts.append(f"- **Affected Resources**: {', '.join(f.affected_resources)}")
                     parts.append("")
+
+    @staticmethod
+    def _render_evidence_subbullets(parts: list[str], evidence: list[str]) -> None:
+        """Render evidence items as sub-bullets, wrapping multi-line items in code blocks."""
+        for item in evidence:
+            if "\n" in item:
+                parts.append("  - Multi-line evidence:")
+                parts.append("    ```text")
+                for line in item.split("\n"):
+                    parts.append(f"    {line}")
+                parts.append("    ```")
+            else:
+                parts.append(f"  - {item}")
 
     def _render_downgraded_findings(self, parts: list[str]) -> None:
         parts.append("## Downgraded Findings")
@@ -441,14 +485,15 @@ class HealthReport(BaseModel):
             parts.append(f"### {ev.title}")
             if ev.description:
                 parts.append(ev.description)
+            lang = CONTENT_TYPE_FENCE_MAP.get(ev.content_type, "text")
             if ev.evidence_text:
-                parts.append("```")
+                parts.append(f"```{lang}")
                 parts.append(ev.evidence_text)
                 parts.append("```")
             if ev.corrected_text:
                 parts.append("")
                 parts.append("**Corrected**:")
-                parts.append("```")
+                parts.append(f"```{lang}")
                 parts.append(ev.corrected_text)
                 parts.append("```")
             parts.append("")
@@ -516,8 +561,49 @@ class HealthReport(BaseModel):
             parts.append("")
             return
 
-        parts.append("| Time | Event | Severity |")
-        parts.append("|------|-------|----------|")
+        # Decide: grouped-by-service vs flat table
+        events_with_service = sum(1 for ev in self.timeline if ev.service)
+        use_grouping = len(self.timeline) > 0 and (
+            events_with_service / len(self.timeline) >= 0.5
+        )
+
+        if use_grouping:
+            self._render_timeline_grouped(parts)
+        else:
+            self._render_timeline_flat(parts, show_service=events_with_service > 0)
+
+    def _render_timeline_grouped(self, parts: list[str]) -> None:
+        """Render timeline events grouped by service with sub-headings."""
+        groups: dict[str, list[TimelineEvent]] = defaultdict(list)
         for ev in self.timeline:
-            parts.append(f"| {ev.time} | {ev.event} | {ev.severity.value} |")
+            key = ev.service if ev.service else "General"
+            groups[key].append(ev)
+
+        # Sort group names alphabetically, but "General" goes last
+        sorted_keys = sorted(
+            groups.keys(), key=lambda k: (k == "General", k)
+        )
+
+        for key in sorted_keys:
+            parts.append(f"### {key}")
+            parts.append("| Time | Event | Severity |")
+            parts.append("|------|-------|----------|")
+            for ev in groups[key]:
+                parts.append(f"| {ev.time} | {ev.event} | {ev.severity.value} |")
+            parts.append("")
+
+    def _render_timeline_flat(self, parts: list[str], *, show_service: bool) -> None:
+        """Render timeline as a flat table, optionally with a Service column."""
+        if show_service:
+            parts.append("| Time | Service | Event | Severity |")
+            parts.append("|------|---------|-------|----------|")
+            for ev in self.timeline:
+                parts.append(
+                    f"| {ev.time} | {ev.service} | {ev.event} | {ev.severity.value} |"
+                )
+        else:
+            parts.append("| Time | Event | Severity |")
+            parts.append("|------|-------|----------|")
+            for ev in self.timeline:
+                parts.append(f"| {ev.time} | {ev.event} | {ev.severity.value} |")
         parts.append("")

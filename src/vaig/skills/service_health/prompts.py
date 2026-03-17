@@ -786,6 +786,14 @@ A hypothesis that restates the symptom is WRONG — explain WHY it exists.
 #### ``evidence_details``
 When YAML spec analysis or tool output reveals the root cause, include the raw
 evidence text (e.g. the problematic YAML section) and optionally the corrected version.
+Each entry also has a ``content_type`` field — set it to:
+- ``yaml`` for YAML specs or manifests
+- ``json`` for JSON output (kubectl -o json, API responses)
+- ``log`` for log entries or log excerpts
+- ``command`` for kubectl/gcloud commands or shell output
+- ``text`` for everything else (default)
+The ``evidence_text`` should contain ONLY the relevant excerpt (10-30 lines max), not the
+entire resource spec. Annotate problematic lines with inline comments where possible.
 
 #### ``recommendations``
 Each action includes:
@@ -806,6 +814,7 @@ Chronological list of events from the gathered data.  Each event has:
 - ``time``: Timestamp (relative like "7m ago" or absolute ISO 8601).
 - ``event``: Description of what happened.
 - ``severity``: Operational severity (CRITICAL/HIGH/MEDIUM/LOW/INFO) — NOT the K8s event type.
+- ``service``: The deployment, service, or resource this event relates to (e.g. 'chatbot-odin', 'payment-svc', 'node/gke-pool-1'). Populate ``service`` for EVERY event where the source resource is identifiable. Leave empty only for truly cluster-wide or unattributable events.
 
 #### ``metadata``
 Populate with whatever context is available (cluster name, project ID, model used).

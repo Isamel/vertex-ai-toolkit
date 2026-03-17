@@ -14,9 +14,11 @@ from __future__ import annotations
 import json
 
 from vaig.skills.service_health.schema import (
+    CONTENT_TYPE_FENCE_MAP,
     ActionUrgency,
     ClusterMetric,
     Confidence,
+    ContentType,
     DowngradedFinding,
     Effort,
     EvidenceDetail,
@@ -178,6 +180,7 @@ def _full_report() -> HealthReport:
                     "  Started: 2024-01-15T10:30:00Z\n"
                     "  Finished: 2024-01-15T10:45:12Z"
                 ),
+                content_type=ContentType.YAML,
             ),
         ],
         recommendations=[
@@ -219,10 +222,22 @@ def _full_report() -> HealthReport:
             ),
         ],
         timeline=[
-            TimelineEvent(time="57m ago", event="payment-svc-abc123 OOMKilled", severity=Severity.CRITICAL),
-            TimelineEvent(time="45m ago", event="HPA scaled payment-svc to 5/5", severity=Severity.HIGH),
-            TimelineEvent(time="30m ago", event="cart-svc-xyz789 restarted (4th time)", severity=Severity.MEDIUM),
-            TimelineEvent(time="15m ago", event="api-gateway v2.3.1 rollout complete", severity=Severity.INFO),
+            TimelineEvent(
+                time="57m ago", event="payment-svc-abc123 OOMKilled",
+                severity=Severity.CRITICAL, service="payment-svc",
+            ),
+            TimelineEvent(
+                time="45m ago", event="HPA scaled payment-svc to 5/5",
+                severity=Severity.HIGH, service="payment-svc",
+            ),
+            TimelineEvent(
+                time="30m ago", event="cart-svc-xyz789 restarted (4th time)",
+                severity=Severity.MEDIUM, service="cart-svc",
+            ),
+            TimelineEvent(
+                time="15m ago", event="api-gateway v2.3.1 rollout complete",
+                severity=Severity.INFO, service="api-gateway",
+            ),
         ],
         metadata=ReportMetadata(
             generated_at="2024-01-15T11:00:00Z",
@@ -500,6 +515,7 @@ class TestJsonSchema:
             "Severity",
             "OverallStatus",
             "Confidence",
+            "ContentType",
             "Effort",
             "ActionUrgency",
             "ServiceHealthStatus",
@@ -1107,3 +1123,314 @@ class TestJsonToMarkdownRoundTrip:
         assert second_pos != -1, "Expected '2. Second action' in output"
         assert third_pos != -1, "Expected '3. Third action' in output"
         assert first_pos < second_pos < third_pos
+
+
+# ══════════════════════════════════════════════════════════════
+# Timeline grouping tests (Task 4.3)
+# ══════════════════════════════════════════════════════════════
+
+
+class TestTimelineGrouping:
+    """Verify _render_timeline switches between grouped and flat layout."""
+
+    def test_grouped_timeline_when_majority_have_service(self) -> None:
+        """When >=50% of events have service, output is grouped by service."""
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issues.",
+            ),
+            timeline=[
+                TimelineEvent(time="10m ago", event="pod restarted", severity=Severity.HIGH, service="svc-a"),
+                TimelineEvent(time="8m ago", event="OOM killed", severity=Severity.CRITICAL, service="svc-b"),
+                TimelineEvent(time="5m ago", event="scaled up", severity=Severity.INFO, service="svc-a"),
+            ],
+        )
+        md = report.to_markdown()
+        # Grouped layout uses ### sub-headings per service
+        assert "### svc-a" in md
+        assert "### svc-b" in md
+        # Flat table headers should NOT appear (no Service column)
+        assert "| Time | Service |" not in md
+
+    def test_flat_timeline_when_minority_have_service(self) -> None:
+        """When <50% of events have service, output is a flat table."""
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issues.",
+            ),
+            timeline=[
+                TimelineEvent(time="10m ago", event="cluster upgrade started", severity=Severity.INFO),
+                TimelineEvent(time="8m ago", event="node drained", severity=Severity.MEDIUM),
+                TimelineEvent(time="5m ago", event="pod restarted", severity=Severity.HIGH, service="svc-a"),
+                TimelineEvent(time="3m ago", event="DNS timeout", severity=Severity.LOW),
+                TimelineEvent(time="1m ago", event="node ready", severity=Severity.INFO),
+            ],
+        )
+        md = report.to_markdown()
+        # Flat table — no ### sub-headings for services
+        assert "### svc-a" not in md
+        # Should have a Service column since at least one event has service
+        assert "| Time | Service | Event | Severity |" in md
+
+    def test_timeline_boundary_50_percent(self) -> None:
+        """Exactly 50% with service → grouped (>=50% threshold)."""
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issues.",
+            ),
+            timeline=[
+                TimelineEvent(time="10m ago", event="event A", severity=Severity.INFO, service="svc-a"),
+                TimelineEvent(time="5m ago", event="event B", severity=Severity.INFO),
+            ],
+        )
+        md = report.to_markdown()
+        # 50% = grouped
+        assert "### svc-a" in md
+        assert "### General" in md
+
+    def test_timeline_empty_service_goes_to_general(self) -> None:
+        """Events without service appear under 'General' in grouped mode."""
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issues.",
+            ),
+            timeline=[
+                TimelineEvent(time="10m ago", event="svc event", severity=Severity.HIGH, service="svc-a"),
+                TimelineEvent(time="8m ago", event="another svc", severity=Severity.HIGH, service="svc-a"),
+                TimelineEvent(time="5m ago", event="general event", severity=Severity.INFO),
+            ],
+        )
+        md = report.to_markdown()
+        assert "### General" in md
+        assert "general event" in md
+
+    def test_timeline_groups_sorted_alphabetically(self) -> None:
+        """Service groups are sorted A-Z, with General last."""
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issues.",
+            ),
+            timeline=[
+                TimelineEvent(time="10m ago", event="z event", severity=Severity.INFO, service="zulu-svc"),
+                TimelineEvent(time="8m ago", event="a event", severity=Severity.INFO, service="alpha-svc"),
+                TimelineEvent(time="5m ago", event="g event", severity=Severity.INFO),
+            ],
+        )
+        md = report.to_markdown()
+        alpha_pos = md.find("### alpha-svc")
+        zulu_pos = md.find("### zulu-svc")
+        general_pos = md.find("### General")
+
+        assert alpha_pos != -1
+        assert zulu_pos != -1
+        assert general_pos != -1
+        assert alpha_pos < zulu_pos < general_pos, "Groups should be A-Z with General last"
+
+
+# ══════════════════════════════════════════════════════════════
+# Content type fence tests (Task 4.4)
+# ══════════════════════════════════════════════════════════════
+
+
+class TestContentTypeFences:
+    """Verify EvidenceDetail renders language-specific code fences."""
+
+    def _render_evidence(self, content_type: ContentType, text: str = "sample content") -> str:
+        """Helper: render a report with a single EvidenceDetail and return markdown."""
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issue.",
+            ),
+            evidence_details=[
+                EvidenceDetail(
+                    title="Test Evidence",
+                    evidence_text=text,
+                    content_type=content_type,
+                ),
+            ],
+        )
+        return report.to_markdown()
+
+    def test_yaml_content_type_fence(self) -> None:
+        md = self._render_evidence(ContentType.YAML)
+        assert "```yaml" in md
+
+    def test_json_content_type_fence(self) -> None:
+        md = self._render_evidence(ContentType.JSON)
+        assert "```json" in md
+
+    def test_log_content_type_fence(self) -> None:
+        md = self._render_evidence(ContentType.LOG)
+        assert "```log" in md
+
+    def test_text_content_type_fence(self) -> None:
+        md = self._render_evidence(ContentType.TEXT)
+        assert "```text" in md
+
+    def test_command_content_type_fence(self) -> None:
+        md = self._render_evidence(ContentType.COMMAND)
+        assert "```bash" in md
+
+    def test_default_content_type_is_text(self) -> None:
+        """EvidenceDetail without explicit content_type defaults to TEXT → ```text."""
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issue.",
+            ),
+            evidence_details=[
+                EvidenceDetail(title="Default", evidence_text="some output"),
+            ],
+        )
+        md = report.to_markdown()
+        assert "```text" in md
+
+
+# ══════════════════════════════════════════════════════════════
+# Evidence sub-bullets tests (Task 4.5)
+# ══════════════════════════════════════════════════════════════
+
+
+class TestEvidenceBullets:
+    """Verify _render_evidence_subbullets and evidence rendering in findings."""
+
+    def test_single_line_evidence_as_bullet(self) -> None:
+        """A single-line evidence item renders as an indented bullet."""
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issue.",
+            ),
+            findings=[
+                Finding(
+                    id="test", title="Test Finding", severity=Severity.HIGH,
+                    evidence=["kubectl get pods shows CrashLoopBackOff"],
+                ),
+            ],
+        )
+        md = report.to_markdown()
+        assert "  - kubectl get pods shows CrashLoopBackOff" in md
+
+    def test_multi_line_evidence_in_code_block(self) -> None:
+        """An evidence item containing newlines is wrapped in a code block."""
+        multi = "line 1\nline 2\nline 3"
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issue.",
+            ),
+            findings=[
+                Finding(
+                    id="test", title="Test Finding", severity=Severity.HIGH,
+                    evidence=[multi],
+                ),
+            ],
+        )
+        md = report.to_markdown()
+        assert "  - Multi-line evidence:" in md
+        assert "    ```text" in md
+        assert "    line 1" in md
+        assert "    line 2" in md
+        assert "    line 3" in md
+        assert "    ```" in md
+
+    def test_multiple_evidence_items_as_subbullets(self) -> None:
+        """Multiple evidence items each get their own sub-bullet."""
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issue.",
+            ),
+            findings=[
+                Finding(
+                    id="test", title="Test Finding", severity=Severity.HIGH,
+                    evidence=["item one", "item two", "item three"],
+                ),
+            ],
+        )
+        md = report.to_markdown()
+        assert "  - item one" in md
+        assert "  - item two" in md
+        assert "  - item three" in md
+
+    def test_empty_evidence_list(self) -> None:
+        """Finding with no evidence renders without crash and no Evidence section."""
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issue.",
+            ),
+            findings=[
+                Finding(id="test", title="No Evidence Finding", severity=Severity.HIGH),
+            ],
+        )
+        md = report.to_markdown()
+        assert "#### No Evidence Finding" in md
+        # Should NOT have an Evidence sub-section
+        assert "- **Evidence**:" not in md
+
+
+# ══════════════════════════════════════════════════════════════
+# Schema validation tests (Task 4.6)
+# ══════════════════════════════════════════════════════════════
+
+
+class TestContentTypeSchema:
+    """Schema validation for ContentType enum and backward compatibility."""
+
+    def test_content_type_enum_values(self) -> None:
+        """ContentType enum has all 6 expected values."""
+        expected = {"yaml", "json", "log", "text", "command", "unknown"}
+        actual = set(ContentType)
+        assert actual == expected
+
+    def test_content_type_in_json_schema(self) -> None:
+        """ContentType appears in HealthReport's model_json_schema $defs."""
+        schema = HealthReport.model_json_schema()
+        defs = schema.get("$defs", {})
+        assert "ContentType" in defs, f"ContentType missing from $defs: {sorted(defs.keys())}"
+        ct_schema = defs["ContentType"]
+        assert "enum" in ct_schema
+        assert set(ct_schema["enum"]) == {"yaml", "json", "log", "text", "command", "unknown"}
+
+    def test_backward_compat_old_json(self) -> None:
+        """JSON without new fields (service, content_type) validates correctly."""
+        old_json = {
+            "executive_summary": {
+                "overall_status": "HEALTHY",
+                "scope": "Cluster-wide",
+                "summary_text": "All good.",
+            },
+            "timeline": [
+                {"time": "5m ago", "event": "rollout complete", "severity": "INFO"},
+            ],
+            "evidence_details": [
+                {"title": "Test Evidence", "evidence_text": "some text"},
+            ],
+        }
+        report = HealthReport.model_validate(old_json)
+        # New fields should have defaults
+        assert report.timeline[0].service == ""
+        assert report.evidence_details[0].content_type == ContentType.TEXT
+
+    def test_fence_map_covers_all_content_types(self) -> None:
+        """CONTENT_TYPE_FENCE_MAP has an entry for every ContentType value."""
+        for ct in ContentType:
+            assert ct in CONTENT_TYPE_FENCE_MAP, f"Missing fence mapping for {ct}"
