@@ -6,6 +6,7 @@ import re
 from unittest.mock import MagicMock, patch
 
 import pytest
+from conftest import create_test_container
 from typer.testing import CliRunner
 
 from vaig import __version__
@@ -27,19 +28,6 @@ def _strip_ansi(text: str) -> str:
     makes the tests environment-agnostic.
     """
     return _ANSI_RE.sub("", text)
-
-
-def _make_mock_container(settings: Settings | None = None) -> MagicMock:
-    """Build a mock ServiceContainer with a mock GeminiClient."""
-    from vaig.core.event_bus import EventBus
-
-    mock_container = MagicMock()
-    mock_container.gemini_client = MagicMock()
-    mock_container.settings = settings or Settings()
-    mock_container.event_bus = EventBus.get()
-    mock_container.k8s_provider = None
-    mock_container.gcp_provider = None
-    return mock_container
 
 
 @pytest.fixture(autouse=True)
@@ -304,7 +292,7 @@ class TestAskCommand:
         mock_orchestrator.execute_single.return_value = mock_agent_result
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["ask", "What is the meaning of life?", "--no-stream"])
@@ -330,7 +318,7 @@ class TestAskCommand:
         mock_registry.get.return_value = mock_skill
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
             patch("vaig.skills.registry.SkillRegistry", return_value=mock_registry),
         ):
@@ -346,7 +334,7 @@ class TestAskCommand:
         mock_registry.list_names.return_value = ["rca", "anomaly"]
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator"),
             patch("vaig.skills.registry.SkillRegistry", return_value=mock_registry),
         ):
@@ -369,7 +357,7 @@ class TestAskCommand:
         mock_builder.bundle.to_context_string.return_value = "file content here"
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
             patch("vaig.context.builder.ContextBuilder", return_value=mock_builder),
         ):
@@ -395,7 +383,7 @@ class TestAskCommand:
         mock_result.usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.coding.CodingAgent") as MockCodingAgent,
         ):
             mock_agent = MagicMock()
@@ -429,7 +417,7 @@ class TestAskCommand:
         mock_orchestrator.execute_single.return_value = mock_agent_result
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(
@@ -486,7 +474,7 @@ class TestOutputFlag:
         mock_orchestrator.execute_single.return_value = mock_agent_result
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["ask", "What?", "--no-stream", "-o", str(out_file)])
@@ -507,7 +495,7 @@ class TestOutputFlag:
         mock_orchestrator.execute_single.return_value = mock_agent_result
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["ask", "Hello", "--no-stream", "-o", str(out_file)])
@@ -524,7 +512,7 @@ class TestOutputFlag:
         mock_orchestrator.execute_single.return_value = iter(["Hello ", "World"])
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["ask", "Hi", "-o", str(out_file)])
@@ -551,7 +539,7 @@ class TestOutputFlag:
         mock_registry.get.return_value = mock_skill
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
             patch("vaig.skills.registry.SkillRegistry", return_value=mock_registry),
         ):
@@ -570,7 +558,7 @@ class TestOutputFlag:
         mock_orchestrator.execute_single.return_value = mock_agent_result
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["ask", "Hello", "--no-stream"])
@@ -606,7 +594,7 @@ class TestVerboseDebugFlags:
         mock_orchestrator.execute_single.return_value = mock_agent_result
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["-V", "ask", "Hello", "--no-stream"])
@@ -631,7 +619,7 @@ class TestVerboseDebugFlags:
         mock_orchestrator.execute_single.return_value = mock_agent_result
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["-d", "ask", "Hello", "--no-stream"])
@@ -656,7 +644,7 @@ class TestVerboseDebugFlags:
         mock_orchestrator.execute_single.return_value = mock_agent_result
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["-V", "--log-level", "ERROR", "ask", "Hello", "--no-stream"])
@@ -680,7 +668,7 @@ class TestVerboseDebugFlags:
         mock_orchestrator.execute_single.return_value = mock_agent_result
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["-d", "--log-level", "WARNING", "ask", "Hello", "--no-stream"])
@@ -704,7 +692,7 @@ class TestVerboseDebugFlags:
         mock_orchestrator.execute_single.return_value = mock_agent_result
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["ask", "Hello", "--no-stream"])
@@ -740,7 +728,7 @@ class TestVerboseDebugFlags:
         mock_orchestrator.execute_single.return_value = mock_agent_result
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["ask", "Hello", "--no-stream", "-d"])
@@ -760,7 +748,7 @@ class TestVerboseDebugFlags:
         mock_orchestrator.execute_single.return_value = mock_agent_result
 
         with (
-            patch("vaig.core.container.build_container", return_value=_make_mock_container()),
+            patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
             result = runner.invoke(app, ["ask", "Hello", "--no-stream", "-V"])
