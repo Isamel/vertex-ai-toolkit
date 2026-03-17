@@ -15,7 +15,9 @@ from vaig.agents.mixins import OnToolCall
 from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.async_utils import gather_with_errors
-from vaig.core.client import GeminiClient, StreamResult
+from vaig.core.client import StreamResult
+from vaig.core.event_bus import EventBus
+from vaig.core.events import OrchestratorPhaseCompleted, OrchestratorToolsCompleted
 from vaig.core.exceptions import MaxIterationsError, VaigAuthError, VAIGError
 from vaig.core.language import (
     detect_language,
@@ -28,6 +30,7 @@ from vaig.tools.base import ToolRegistry
 
 if TYPE_CHECKING:
     from vaig.core.config import Settings
+    from vaig.core.protocols import GeminiClientProtocol
     from vaig.core.tool_call_store import ToolCallStore
 
 logger = logging.getLogger(__name__)
@@ -106,7 +109,7 @@ class Orchestrator:
     - Lead-delegate: A lead agent delegates subtasks to specialists
     """
 
-    def __init__(self, client: GeminiClient, settings: Settings) -> None:
+    def __init__(self, client: GeminiClientProtocol, settings: Settings) -> None:
         self._client = client
         self._settings = settings
         self._agents: dict[str, BaseAgent] = {}
@@ -355,19 +358,15 @@ class Orchestrator:
 
             # Telemetry: emit orchestrator event
             try:
-                from vaig.core.telemetry import get_telemetry_collector
-
                 duration_ms = (time.perf_counter() - t0) * 1000
-                collector = get_telemetry_collector()
-                collector.emit(
-                    event_type="orchestrator",
-                    event_name="execute_skill_phase",
-                    duration_ms=duration_ms,
-                    metadata={
-                        "skill": skill_name,
-                        "phase": phase.value if hasattr(phase, "value") else str(phase),
-                        "strategy": strategy,
-                    },
+                EventBus.get().emit(
+                    OrchestratorPhaseCompleted(
+                        skill=skill_name,
+                        phase=phase.value if hasattr(phase, "value") else str(phase),
+                        strategy=strategy,
+                        duration_ms=duration_ms,
+                        is_async=False,
+                    )
                 )
             except Exception:  # noqa: BLE001
                 pass
@@ -855,20 +854,16 @@ class Orchestrator:
 
         # Telemetry: emit orchestrator event for execute_with_tools
         try:
-            from vaig.core.telemetry import get_telemetry_collector
-
             duration_ms = (time.perf_counter() - t0_ewt) * 1000
-            collector = get_telemetry_collector()
-            collector.emit(
-                event_type="orchestrator",
-                event_name="execute_with_tools",
-                duration_ms=duration_ms,
-                metadata={
-                    "skill": skill.get_metadata().name,
-                    "strategy": strategy,
-                    "agents_count": len(agents),
-                    "success": result.success,
-                },
+            EventBus.get().emit(
+                OrchestratorToolsCompleted(
+                    skill=skill.get_metadata().name,
+                    strategy=strategy,
+                    agents_count=len(agents),
+                    success=result.success,
+                    duration_ms=duration_ms,
+                    is_async=False,
+                )
             )
         except Exception:  # noqa: BLE001
             pass
@@ -1087,19 +1082,15 @@ class Orchestrator:
 
             # Telemetry
             try:
-                from vaig.core.telemetry import get_telemetry_collector
-
                 duration_ms = (time.perf_counter() - t0) * 1000
-                collector = get_telemetry_collector()
-                collector.emit(
-                    event_type="orchestrator",
-                    event_name="async_execute_skill_phase",
-                    duration_ms=duration_ms,
-                    metadata={
-                        "skill": skill_name,
-                        "phase": phase.value if hasattr(phase, "value") else str(phase),
-                        "strategy": strategy,
-                    },
+                EventBus.get().emit(
+                    OrchestratorPhaseCompleted(
+                        skill=skill_name,
+                        phase=phase.value if hasattr(phase, "value") else str(phase),
+                        strategy=strategy,
+                        duration_ms=duration_ms,
+                        is_async=True,
+                    )
                 )
             except Exception:  # noqa: BLE001
                 pass
@@ -1545,20 +1536,16 @@ class Orchestrator:
 
         # Telemetry
         try:
-            from vaig.core.telemetry import get_telemetry_collector
-
             duration_ms = (time.perf_counter() - t0_ewt) * 1000
-            collector = get_telemetry_collector()
-            collector.emit(
-                event_type="orchestrator",
-                event_name="async_execute_with_tools",
-                duration_ms=duration_ms,
-                metadata={
-                    "skill": skill.get_metadata().name,
-                    "strategy": strategy,
-                    "agents_count": len(agents),
-                    "success": result.success,
-                },
+            EventBus.get().emit(
+                OrchestratorToolsCompleted(
+                    skill=skill.get_metadata().name,
+                    strategy=strategy,
+                    agents_count=len(agents),
+                    success=result.success,
+                    duration_ms=duration_ms,
+                    is_async=True,
+                )
             )
         except Exception:  # noqa: BLE001
             pass

@@ -9,13 +9,14 @@ from typing import TYPE_CHECKING, Any
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import ToolLoopMixin
 from vaig.agents.utils import deduplicate_response
-from vaig.core.client import GeminiClient
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS, CodingConfig, Settings
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools import ToolRegistry, ToolResult, create_file_tools, create_shell_tools
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
+
+    from vaig.core.protocols import GeminiClientProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,7 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
 
     def __init__(
         self,
-        client: GeminiClient,
+        client: GeminiClientProtocol,
         coding_config: CodingConfig,
         *,
         settings: Settings | None = None,
@@ -121,7 +122,7 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
         """Initialize the coding agent.
 
         Args:
-            client: The GeminiClient for API calls.
+            client: The Gemini client (protocol) for API calls.
             coding_config: Coding-specific configuration (workspace, limits, etc.).
             settings: Full application settings (used for plugin tool loading).
             confirm_fn: Optional callback for confirming destructive operations.

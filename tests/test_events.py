@@ -13,6 +13,8 @@ from vaig.core.events import (
     CliCommandTracked,
     ErrorOccurred,
     Event,
+    OrchestratorPhaseCompleted,
+    OrchestratorToolsCompleted,
     SessionEnded,
     SessionStarted,
     SkillUsed,
@@ -354,3 +356,102 @@ class TestBudgetChecked:
         )
         assert evt.status == "exceeded"
         assert evt.message == "Budget exceeded: $6.00 >= $5.00"
+
+
+# ══════════════════════════════════════════════════════════════
+# OrchestratorPhaseCompleted
+# ══════════════════════════════════════════════════════════════
+
+
+class TestOrchestratorPhaseCompleted:
+    """Tests for the OrchestratorPhaseCompleted event."""
+
+    def test_construction_with_fields(self) -> None:
+        evt = OrchestratorPhaseCompleted(
+            skill="gke_diagnostics",
+            phase="gather",
+            strategy="sequential",
+            duration_ms=1500.0,
+        )
+        assert evt.skill == "gke_diagnostics"
+        assert evt.phase == "gather"
+        assert evt.strategy == "sequential"
+        assert evt.duration_ms == 1500.0
+        assert evt.event_type == "orchestrator.phase.completed"
+
+    def test_defaults(self) -> None:
+        evt = OrchestratorPhaseCompleted()
+        assert evt.skill == ""
+        assert evt.phase == ""
+        assert evt.strategy == ""
+        assert evt.duration_ms == 0.0
+        assert evt.is_async is False
+
+    def test_async_flag(self) -> None:
+        evt = OrchestratorPhaseCompleted(is_async=True)
+        assert evt.is_async is True
+
+    def test_auto_timestamp(self) -> None:
+        before = datetime.now(UTC)
+        evt = OrchestratorPhaseCompleted(skill="infra")
+        after = datetime.now(UTC)
+        ts = datetime.fromisoformat(evt.timestamp)
+        assert before <= ts <= after
+
+    def test_frozen_prevents_mutation(self) -> None:
+        evt = OrchestratorPhaseCompleted(skill="infra")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            evt.skill = "hacked"  # type: ignore[misc]
+
+
+# ══════════════════════════════════════════════════════════════
+# OrchestratorToolsCompleted
+# ══════════════════════════════════════════════════════════════
+
+
+class TestOrchestratorToolsCompleted:
+    """Tests for the OrchestratorToolsCompleted event."""
+
+    def test_construction_with_fields(self) -> None:
+        evt = OrchestratorToolsCompleted(
+            skill="gke_diagnostics",
+            strategy="fanout",
+            agents_count=3,
+            success=True,
+            duration_ms=5000.0,
+        )
+        assert evt.skill == "gke_diagnostics"
+        assert evt.strategy == "fanout"
+        assert evt.agents_count == 3
+        assert evt.success is True
+        assert evt.duration_ms == 5000.0
+        assert evt.event_type == "orchestrator.tools.completed"
+
+    def test_defaults(self) -> None:
+        evt = OrchestratorToolsCompleted()
+        assert evt.skill == ""
+        assert evt.strategy == ""
+        assert evt.agents_count == 0
+        assert evt.success is True
+        assert evt.duration_ms == 0.0
+        assert evt.is_async is False
+
+    def test_async_flag(self) -> None:
+        evt = OrchestratorToolsCompleted(is_async=True)
+        assert evt.is_async is True
+
+    def test_auto_timestamp(self) -> None:
+        before = datetime.now(UTC)
+        evt = OrchestratorToolsCompleted(skill="infra")
+        after = datetime.now(UTC)
+        ts = datetime.fromisoformat(evt.timestamp)
+        assert before <= ts <= after
+
+    def test_frozen_prevents_mutation(self) -> None:
+        evt = OrchestratorToolsCompleted(skill="infra")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            evt.skill = "hacked"  # type: ignore[misc]
+
+    def test_failure_flag(self) -> None:
+        evt = OrchestratorToolsCompleted(success=False)
+        assert evt.success is False

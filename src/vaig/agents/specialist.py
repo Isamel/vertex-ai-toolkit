@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
-from vaig.core.client import ChatMessage, GeminiClient
+from vaig.core.client import ChatMessage
 from vaig.core.exceptions import GeminiConnectionError, GeminiRateLimitError
+
+if TYPE_CHECKING:
+    from vaig.core.protocols import GeminiClientProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +27,7 @@ class SpecialistAgent(BaseAgent):
     Used by skills to define specialized agents (e.g., log_analyzer, code_generator).
     """
 
-    def __init__(self, config: AgentConfig, client: GeminiClient) -> None:
+    def __init__(self, config: AgentConfig, client: GeminiClientProtocol) -> None:
         super().__init__(config, client)
 
     def execute(self, prompt: str, *, context: str = "") -> AgentResult:
@@ -293,7 +296,7 @@ class SpecialistAgent(BaseAgent):
         return messages
 
     @classmethod
-    def from_config_dict(cls, config_dict: dict[str, Any], client: GeminiClient) -> SpecialistAgent:
+    def from_config_dict(cls, config_dict: dict[str, Any], client: GeminiClientProtocol) -> SpecialistAgent:
         """Factory method to create a SpecialistAgent from a skill's agent config dict.
 
         This maps the dict format used by BaseSkill.get_agents_config() to AgentConfig.

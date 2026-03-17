@@ -13,6 +13,8 @@ from vaig.core.events import (
     BudgetChecked,
     CliCommandTracked,
     ErrorOccurred,
+    OrchestratorPhaseCompleted,
+    OrchestratorToolsCompleted,
     SessionEnded,
     SessionStarted,
     SkillUsed,
@@ -437,7 +439,7 @@ class TestErrorIsolation:
         sub = TelemetrySubscriber(mock_collector)
         bus = EventBus.get()
 
-        # All 8 events — none should raise
+        # All 10 events — none should raise
         bus.emit(ToolExecuted(tool_name="t"))
         bus.emit(ApiCalled(model="m"))
         bus.emit(ErrorOccurred(error_type="E", error_message="e"))
@@ -446,6 +448,8 @@ class TestErrorIsolation:
         bus.emit(SkillUsed(skill_name="sk"))
         bus.emit(CliCommandTracked(command_name="c"))
         bus.emit(BudgetChecked(status="ok", cost_usd=0.0, limit_usd=1.0))
+        bus.emit(OrchestratorPhaseCompleted(skill="test"))
+        bus.emit(OrchestratorToolsCompleted(skill="test"))
 
         sub.unsubscribe_all()
 
@@ -472,6 +476,8 @@ class TestUnsubscribe:
         bus.emit(SkillUsed(skill_name="sk"))
         bus.emit(CliCommandTracked(command_name="c"))
         bus.emit(BudgetChecked(status="ok", cost_usd=0.0, limit_usd=1.0))
+        bus.emit(OrchestratorPhaseCompleted(skill="test"))
+        bus.emit(OrchestratorToolsCompleted(skill="test"))
 
         mock_collector.emit_tool_call.assert_not_called()
         mock_collector.emit_api_call.assert_not_called()
@@ -519,3 +525,140 @@ class TestMultipleEvents:
         mock_collector.emit_tool_call.assert_called_once()
         mock_collector.emit_api_call.assert_called_once()
         mock_collector.emit_error.assert_called_once()
+
+
+# ══════════════════════════════════════════════════════════════
+# Orchestrator Event Handlers
+# ══════════════════════════════════════════════════════════════
+
+
+class TestOrchestratorPhaseCompletedHandler:
+    """OrchestratorPhaseCompleted → emit(orchestrator, execute_skill_phase)."""
+
+    def test_sync_phase_completed(
+        self, subscriber: TelemetrySubscriber, mock_collector: MagicMock
+    ) -> None:
+        bus = EventBus.get()
+        bus.emit(
+            OrchestratorPhaseCompleted(
+                skill="gke_diagnostics",
+                phase="gather",
+                strategy="sequential",
+                duration_ms=1500.0,
+                is_async=False,
+            )
+        )
+
+        mock_collector.emit.assert_called_once_with(
+            event_type="orchestrator",
+            event_name="execute_skill_phase",
+            duration_ms=1500.0,
+            metadata={
+                "skill": "gke_diagnostics",
+                "phase": "gather",
+                "strategy": "sequential",
+            },
+        )
+
+    def test_async_phase_completed(
+        self, subscriber: TelemetrySubscriber, mock_collector: MagicMock
+    ) -> None:
+        bus = EventBus.get()
+        bus.emit(
+            OrchestratorPhaseCompleted(
+                skill="service_health",
+                phase="analyze",
+                strategy="fanout",
+                duration_ms=3000.0,
+                is_async=True,
+            )
+        )
+
+        mock_collector.emit.assert_called_once_with(
+            event_type="orchestrator",
+            event_name="async_execute_skill_phase",
+            duration_ms=3000.0,
+            metadata={
+                "skill": "service_health",
+                "phase": "analyze",
+                "strategy": "fanout",
+            },
+        )
+
+    def test_handler_failure_does_not_propagate(
+        self, mock_collector: MagicMock
+    ) -> None:
+        mock_collector.emit.side_effect = RuntimeError("boom")
+        sub = TelemetrySubscriber(mock_collector)
+        bus = EventBus.get()
+        bus.emit(OrchestratorPhaseCompleted(skill="test"))
+        mock_collector.emit.assert_called_once()
+        sub.unsubscribe_all()
+
+
+class TestOrchestratorToolsCompletedHandler:
+    """OrchestratorToolsCompleted → emit(orchestrator, execute_with_tools)."""
+
+    def test_sync_tools_completed(
+        self, subscriber: TelemetrySubscriber, mock_collector: MagicMock
+    ) -> None:
+        bus = EventBus.get()
+        bus.emit(
+            OrchestratorToolsCompleted(
+                skill="gke_diagnostics",
+                strategy="sequential",
+                agents_count=3,
+                success=True,
+                duration_ms=5000.0,
+                is_async=False,
+            )
+        )
+
+        mock_collector.emit.assert_called_once_with(
+            event_type="orchestrator",
+            event_name="execute_with_tools",
+            duration_ms=5000.0,
+            metadata={
+                "skill": "gke_diagnostics",
+                "strategy": "sequential",
+                "agents_count": 3,
+                "success": True,
+            },
+        )
+
+    def test_async_tools_completed(
+        self, subscriber: TelemetrySubscriber, mock_collector: MagicMock
+    ) -> None:
+        bus = EventBus.get()
+        bus.emit(
+            OrchestratorToolsCompleted(
+                skill="service_health",
+                strategy="fanout",
+                agents_count=2,
+                success=False,
+                duration_ms=8000.0,
+                is_async=True,
+            )
+        )
+
+        mock_collector.emit.assert_called_once_with(
+            event_type="orchestrator",
+            event_name="async_execute_with_tools",
+            duration_ms=8000.0,
+            metadata={
+                "skill": "service_health",
+                "strategy": "fanout",
+                "agents_count": 2,
+                "success": False,
+            },
+        )
+
+    def test_handler_failure_does_not_propagate(
+        self, mock_collector: MagicMock
+    ) -> None:
+        mock_collector.emit.side_effect = RuntimeError("boom")
+        sub = TelemetrySubscriber(mock_collector)
+        bus = EventBus.get()
+        bus.emit(OrchestratorToolsCompleted(skill="test"))
+        mock_collector.emit.assert_called_once()
+        sub.unsubscribe_all()

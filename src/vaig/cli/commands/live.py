@@ -8,7 +8,7 @@ from collections import Counter
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 from rich.panel import Panel
@@ -32,8 +32,8 @@ from vaig.core.tool_call_store import ToolCallStore
 
 if TYPE_CHECKING:
     from vaig.agents.orchestrator import OrchestratorResult
-    from vaig.core.client import GeminiClient
     from vaig.core.config import GKEConfig, Settings
+    from vaig.core.protocols import GeminiClientProtocol
     from vaig.skills.base import BaseSkill
     from vaig.tools.base import ToolRegistry
 
@@ -264,12 +264,10 @@ def register(app: typer.Typer) -> None:
             if model:
                 settings.models.default = model
 
-            from vaig.core.client import GeminiClient
             from vaig.core.container import build_container
 
             container = build_container(settings)
-            # TODO: Remove cast once agents accept GeminiClientProtocol
-            client = cast(GeminiClient, container.gemini_client)
+            client = container.gemini_client
             gke_config = _build_gke_config(
                 settings, cluster=cluster, namespace=namespace, project_id=effective_project, location=location,
             )
@@ -672,7 +670,7 @@ def _register_live_tools(gke_config: GKEConfig, settings: Settings | None = None
 
 
 def _execute_orchestrated_skill(
-    client: GeminiClient,
+    client: GeminiClientProtocol,
     settings: Settings,
     gke_config: GKEConfig,
     skill: BaseSkill,
@@ -802,7 +800,7 @@ def _show_orchestrated_summary(orch_result: OrchestratorResult, *, model_id: str
 
 
 def _execute_live_mode(
-    client: GeminiClient,
+    client: GeminiClientProtocol,
     gke_config: GKEConfig,
     question: str,
     context: str,
@@ -892,7 +890,7 @@ def _execute_live_mode(
 
 
 async def _async_execute_live_mode(
-    client: GeminiClient,
+    client: GeminiClientProtocol,
     gke_config: GKEConfig,
     question: str,
     context: str,
@@ -975,7 +973,7 @@ async def _async_execute_live_mode(
 
 
 async def _async_execute_orchestrated_skill(
-    client: GeminiClient,
+    client: GeminiClientProtocol,
     settings: Settings,
     gke_config: GKEConfig,
     skill: BaseSkill,

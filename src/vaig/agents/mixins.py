@@ -12,12 +12,13 @@ from typing import TYPE_CHECKING, Any, Protocol
 from google.genai import types
 
 from vaig.core.async_utils import to_async
-from vaig.core.client import GeminiClient, ToolCallResult
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.core.exceptions import MaxIterationsError
 from vaig.tools.base import ToolCallRecord, ToolRegistry, ToolResult
 
 if TYPE_CHECKING:
+    from vaig.core.client import ToolCallResult
+    from vaig.core.protocols import GeminiClientProtocol
     from vaig.core.tool_call_store import ToolCallStore
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ class ToolLoopMixin:
     def _run_tool_loop(
         self,
         *,
-        client: GeminiClient,
+        client: GeminiClientProtocol,
         prompt: str | list[types.Part],
         tool_registry: ToolRegistry,
         system_instruction: str,
@@ -240,7 +241,7 @@ class ToolLoopMixin:
                 )
 
             # Add function responses to history for next turn
-            response_parts = GeminiClient.build_function_response_parts(
+            response_parts = client.build_function_response_parts(
                 function_responses,
             )
             history.append(types.Content(role="user", parts=response_parts))
@@ -349,7 +350,7 @@ class ToolLoopMixin:
     async def _async_run_tool_loop(
         self,
         *,
-        client: GeminiClient,
+        client: GeminiClientProtocol,
         prompt: str | list[types.Part],
         tool_registry: ToolRegistry,
         system_instruction: str,
@@ -606,7 +607,7 @@ class ToolLoopMixin:
                     )
 
             # Add function responses to history for next turn
-            response_parts = GeminiClient.build_function_response_parts(
+            response_parts = client.build_function_response_parts(
                 function_responses,
             )
             history.append(types.Content(role="user", parts=response_parts))

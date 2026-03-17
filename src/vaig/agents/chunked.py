@@ -18,8 +18,8 @@ from vaig.core.exceptions import ChunkedProcessingError, TokenBudgetError
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from vaig.core.client import GeminiClient
     from vaig.core.config import Settings
+    from vaig.core.protocols import GeminiClientProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ class ChunkedProcessor:
             result = processor.process_ask(content, user_prompt, system_instruction, budget)
     """
 
-    def __init__(self, client: GeminiClient, settings: Settings) -> None:
+    def __init__(self, client: GeminiClientProtocol, settings: Settings) -> None:
         self._client = client
         self._settings = settings
 

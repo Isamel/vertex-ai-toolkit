@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
     from pydantic import BaseModel
 
-    from vaig.core.client import GeminiClient
+    from vaig.core.protocols import GeminiClientProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class BaseAgent(ABC):
     multi-agent system.
     """
 
-    def __init__(self, config: AgentConfig, client: GeminiClient) -> None:
+    def __init__(self, config: AgentConfig, client: GeminiClientProtocol) -> None:
         self._config = config
         self._client = client
         self._conversation: list[AgentMessage] = []

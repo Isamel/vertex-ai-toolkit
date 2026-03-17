@@ -21,14 +21,14 @@ from vaig.cli._helpers import (
 )
 
 if TYPE_CHECKING:
-    from vaig.core.client import GeminiClient
     from vaig.core.config import Settings
+    from vaig.core.protocols import GeminiClientProtocol
 
 logger = logging.getLogger(__name__)
 
 
 def _execute_code_mode(
-    client: GeminiClient,
+    client: GeminiClientProtocol,
     settings: Settings,
     question: str,
     context: str,
@@ -102,7 +102,7 @@ def _execute_code_mode(
 
 
 async def _async_execute_code_mode(
-    client: GeminiClient,
+    client: GeminiClientProtocol,
     settings: Settings,
     question: str,
     context: str,
@@ -172,7 +172,7 @@ async def _async_execute_code_mode(
 
 
 def _try_chunked_ask(
-    client: GeminiClient,
+    client: GeminiClientProtocol,
     settings: Settings,
     question: str,
     context_str: str,
@@ -239,7 +239,7 @@ def _try_chunked_ask(
 
 
 async def _async_try_chunked_ask(
-    client: GeminiClient,
+    client: GeminiClientProtocol,
     settings: Settings,
     question: str,
     context_str: str,
