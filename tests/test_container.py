@@ -11,16 +11,14 @@ Verifies that:
 from __future__ import annotations
 
 import dataclasses
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from vaig.core.container import ServiceContainer, build_container
 from vaig.core.config import Settings
+from vaig.core.container import ServiceContainer, build_container
 from vaig.core.event_bus import EventBus
 from vaig.core.protocols import GCPClientProvider, GeminiClientProtocol, K8sClientProvider
-
 
 # ══════════════════════════════════════════════════════════════
 # build_container
@@ -48,9 +46,11 @@ class TestBuildContainer:
         container = build_container(settings)
 
         assert container.settings is settings
-        # K8s and GCP providers are None in Batch 1 (no DefaultProviders yet)
-        assert container.k8s_provider is None
-        assert container.gcp_provider is None
+        # Providers are real default implementations (not None)
+        assert container.k8s_provider is not None
+        assert isinstance(container.k8s_provider, K8sClientProvider)
+        assert container.gcp_provider is not None
+        assert isinstance(container.gcp_provider, GCPClientProvider)
 
     def test_build_uses_event_bus_singleton(self) -> None:
         """build_container uses the EventBus singleton."""
