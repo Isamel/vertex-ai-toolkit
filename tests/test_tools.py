@@ -93,6 +93,32 @@ class TestToolDef:
         result = t.execute(x="hello")
         assert result.output == "got hello"
 
+    def test_cacheable_defaults_to_true(self) -> None:
+        """Tools are cacheable by default."""
+        t = ToolDef(name="test", description="d")
+        assert t.cacheable is True
+
+    def test_cache_ttl_seconds_defaults_to_60(self) -> None:
+        """Default cache TTL is 60 seconds."""
+        t = ToolDef(name="test", description="d")
+        assert t.cache_ttl_seconds == 60
+
+    def test_cacheable_false(self) -> None:
+        """Tools can opt out of caching."""
+        t = ToolDef(name="test", description="d", cacheable=False)
+        assert t.cacheable is False
+
+    def test_custom_cache_ttl(self) -> None:
+        """Tools can specify a custom cache TTL."""
+        t = ToolDef(name="test", description="d", cache_ttl_seconds=120)
+        assert t.cache_ttl_seconds == 120
+
+    def test_cacheable_false_with_custom_ttl(self) -> None:
+        """Both cacheable and cache_ttl_seconds can be set together."""
+        t = ToolDef(name="test", description="d", cacheable=False, cache_ttl_seconds=30)
+        assert t.cacheable is False
+        assert t.cache_ttl_seconds == 30
+
     def test_parameters_default_factory_isolation(self) -> None:
         """Each ToolDef gets its own parameters list."""
         t1 = ToolDef(name="a", description="d")

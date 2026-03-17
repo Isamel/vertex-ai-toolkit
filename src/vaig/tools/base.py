@@ -75,6 +75,8 @@ class ToolDef:
     description: str
     parameters: list[ToolParam] = field(default_factory=list)
     execute: Callable[..., ToolResult] = field(default=lambda **_: ToolResult(output=""))
+    cacheable: bool = True
+    cache_ttl_seconds: int = 60
 
 
 class ToolRegistry:
