@@ -16,6 +16,8 @@ from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.async_utils import gather_with_errors
 from vaig.core.client import StreamResult
+from vaig.core.event_bus import EventBus
+from vaig.core.events import OrchestratorPhaseCompleted, OrchestratorToolsCompleted
 from vaig.core.exceptions import MaxIterationsError, VaigAuthError, VAIGError
 from vaig.core.language import (
     detect_language,
@@ -356,9 +358,6 @@ class Orchestrator:
 
             # Telemetry: emit orchestrator event
             try:
-                from vaig.core.event_bus import EventBus
-                from vaig.core.events import OrchestratorPhaseCompleted
-
                 duration_ms = (time.perf_counter() - t0) * 1000
                 EventBus.get().emit(
                     OrchestratorPhaseCompleted(
@@ -855,9 +854,6 @@ class Orchestrator:
 
         # Telemetry: emit orchestrator event for execute_with_tools
         try:
-            from vaig.core.event_bus import EventBus
-            from vaig.core.events import OrchestratorToolsCompleted
-
             duration_ms = (time.perf_counter() - t0_ewt) * 1000
             EventBus.get().emit(
                 OrchestratorToolsCompleted(
@@ -1086,9 +1082,6 @@ class Orchestrator:
 
             # Telemetry
             try:
-                from vaig.core.event_bus import EventBus
-                from vaig.core.events import OrchestratorPhaseCompleted
-
                 duration_ms = (time.perf_counter() - t0) * 1000
                 EventBus.get().emit(
                     OrchestratorPhaseCompleted(
@@ -1543,9 +1536,6 @@ class Orchestrator:
 
         # Telemetry
         try:
-            from vaig.core.event_bus import EventBus
-            from vaig.core.events import OrchestratorToolsCompleted
-
             duration_ms = (time.perf_counter() - t0_ewt) * 1000
             EventBus.get().emit(
                 OrchestratorToolsCompleted(

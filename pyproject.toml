@@ -115,6 +115,8 @@ module = [
     "mcp",
     "mcp.*",
     "fitz",
+    "google.cloud",
+    "google.cloud.*",
     "google.protobuf",
     "google.protobuf.*",
 ]

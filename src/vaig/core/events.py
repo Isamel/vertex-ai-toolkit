@@ -211,7 +211,7 @@ class OrchestratorPhaseCompleted(Event):
         is_async: Whether the async code path was used.
     """
 
-    event_type: str = field(default="orchestrator.phase_completed", init=False)
+    event_type: str = field(default="orchestrator.phase.completed", init=False)
     skill: str = ""
     phase: str = ""
     strategy: str = ""
@@ -235,7 +235,7 @@ class OrchestratorToolsCompleted(Event):
         is_async: Whether the async code path was used.
     """
 
-    event_type: str = field(default="orchestrator.tools_completed", init=False)
+    event_type: str = field(default="orchestrator.tools.completed", init=False)
     skill: str = ""
     strategy: str = ""
     agents_count: int = 0

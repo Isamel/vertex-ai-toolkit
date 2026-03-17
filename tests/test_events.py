@@ -377,7 +377,7 @@ class TestOrchestratorPhaseCompleted:
         assert evt.phase == "gather"
         assert evt.strategy == "sequential"
         assert evt.duration_ms == 1500.0
-        assert evt.event_type == "orchestrator.phase_completed"
+        assert evt.event_type == "orchestrator.phase.completed"
 
     def test_defaults(self) -> None:
         evt = OrchestratorPhaseCompleted()
@@ -425,7 +425,7 @@ class TestOrchestratorToolsCompleted:
         assert evt.agents_count == 3
         assert evt.success is True
         assert evt.duration_ms == 5000.0
-        assert evt.event_type == "orchestrator.tools_completed"
+        assert evt.event_type == "orchestrator.tools.completed"
 
     def test_defaults(self) -> None:
         evt = OrchestratorToolsCompleted()

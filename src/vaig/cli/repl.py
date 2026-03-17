@@ -183,8 +183,9 @@ def start_repl(
     """Start the interactive REPL loop."""
     # Initialize components
     container = build_container(settings)
-    # Cast is necessary: REPL uses GeminiClient-specific methods (cache_stats,
-    # clear_cache, cache_enabled) not exposed by GeminiClientProtocol.
+    # TODO(protocol-gap): Cast is necessary — REPL uses GeminiClient-specific
+    # methods (cache_stats, clear_cache, cache_enabled) not exposed by
+    # GeminiClientProtocol. Consider adding a CacheableClient protocol.
     client = cast(GeminiClient, container.gemini_client)
     orchestrator = Orchestrator(client, settings)
     session_manager = SessionManager(settings)
@@ -293,8 +294,9 @@ async def async_start_repl(
     """
     # Initialize components (same as sync start_repl)
     container = build_container(settings)
-    # Cast is necessary: REPL uses GeminiClient-specific methods (cache_stats,
-    # clear_cache, cache_enabled) not exposed by GeminiClientProtocol.
+    # TODO(protocol-gap): Cast is necessary — REPL uses GeminiClient-specific
+    # methods (cache_stats, clear_cache, cache_enabled) not exposed by
+    # GeminiClientProtocol. Consider adding a CacheableClient protocol.
     client = cast(GeminiClient, container.gemini_client)
     orchestrator = Orchestrator(client, settings)
     session_manager = SessionManager(settings)
