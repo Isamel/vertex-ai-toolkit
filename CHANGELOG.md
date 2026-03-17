@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-03-17
+
+### Added
+- Improved report formatting — timeline events grouped by service/resource for better readability, evidence blocks use language-specific code fences (`yaml`, `json`, etc.), finding evidence rendered as individual sub-bullets instead of semicolon-joined single lines (#24)
+
 ## [0.6.0] - 2026-03-17
 
 ### Added
@@ -145,5 +150,6 @@ SRE workflows.
 - Extracted shared test fixtures into `conftest.py`
 - Applied 12 code quality improvements from audit
 
+[0.7.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.6.0
 [0.1.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.1.0
