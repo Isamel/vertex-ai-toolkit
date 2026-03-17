@@ -69,6 +69,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "Supports pods, deployments, services, configmaps, secrets, hpa, "
                 "ingress, nodes, namespaces, statefulsets, daemonsets, jobs, cronjobs, "
                 "pv, pvc, serviceaccounts, endpoints, networkpolicies, replicasets. "
+                "Use resource='all' to list pods, services, deployments, replicasets, "
+                "statefulsets, daemonsets, jobs, cronjobs, and hpa at once. "
                 "Read-only — does not modify any resources."
             ),
             parameters=[

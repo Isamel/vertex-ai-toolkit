@@ -43,11 +43,34 @@ def kubectl_get(
     Supports pods, deployments, services, configmaps, hpa, ingress, nodes,
     namespaces, statefulsets, daemonsets, jobs, cronjobs, pv, pvc, secrets,
     serviceaccounts, endpoints, networkpolicies, and replicasets.
+
+    Use ``resource='all'`` to query pods, services, deployments, replicasets,
+    statefulsets, daemonsets, jobs, cronjobs, and hpa at once (mirrors
+    ``kubectl get all``).
     """
     if not _clients._K8S_AVAILABLE:
         return _clients._k8s_unavailable()
 
     resource = _resources._normalise_resource(resource)
+
+    # ── Handle resource="all" ────────────────────────────────
+    # Mirrors ``kubectl get all``: expand into multiple resource queries and
+    # combine the results.  The ``name`` filter is incompatible with ``all``
+    # because different resource types have unrelated names.
+    if resource == "all":
+        if name:
+            return ToolResult(
+                output="Cannot use 'name' filter with resource='all'. Specify a concrete resource type instead.",
+                error=True,
+            )
+        return _kubectl_get_all(
+            gke_config=gke_config,
+            namespace=namespace,
+            output_format=output_format,
+            label_selector=label_selector,
+            field_selector=field_selector,
+        )
+
     if resource not in _resources._RESOURCE_API_MAP:
         if resource in _resources._KNOWN_K8S_RESOURCES:
             return ToolResult(
@@ -113,6 +136,49 @@ def kubectl_get(
     except Exception as exc:
         logger.exception("kubectl_get failed")
         return ToolResult(output=f"Error listing {resource}: {exc}", error=True)
+
+
+def _kubectl_get_all(
+    *,
+    gke_config: GKEConfig,
+    namespace: str = "default",
+    output_format: str = "table",
+    label_selector: str | None = None,
+    field_selector: str | None = None,
+) -> ToolResult:
+    """Expand ``resource='all'`` into per-type queries and combine results."""
+    sections: list[str] = []
+    errors: list[str] = []
+
+    for rtype in _resources._ALL_RESOURCE_TYPES:
+        sub = kubectl_get(
+            rtype,
+            gke_config=gke_config,
+            namespace=namespace,
+            output_format=output_format,
+            label_selector=label_selector,
+            field_selector=field_selector,
+        )
+        if sub.error:
+            errors.append(f"{rtype}: {sub.output}")
+            continue
+        # Only include resource types that actually have items
+        body = sub.output.strip() if sub.output else ""
+        if body:
+            sections.append(f"=== {rtype.upper()} ===\n{body}")
+
+    if not sections and errors:
+        return ToolResult(
+            output="Failed to list resources:\n" + "\n".join(errors),
+            error=True,
+        )
+
+    combined = "\n\n".join(sections)
+    if errors:
+        combined += "\n\n--- Errors ---\n" + "\n".join(errors)
+    if not combined:
+        combined = f"No resources found in namespace '{namespace}'."
+    return ToolResult(output=combined)
 
 
 # ── _describe_resource ───────────────────────────────────────
