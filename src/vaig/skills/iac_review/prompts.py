@@ -45,6 +45,8 @@ provider pinning, and testing coverage
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: IaC Security & Configuration Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the provided Infrastructure-as-Code for security misconfigurations, cost issues, \
 reliability gaps, and IaC anti-patterns.
 
@@ -107,6 +109,8 @@ severity. Include the exact resource identifier and file location for each findi
 """,
 
     "report": f"""## Phase: IaC Review Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive Infrastructure-as-Code review report.
 

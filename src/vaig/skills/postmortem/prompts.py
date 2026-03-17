@@ -51,6 +51,8 @@ PHASE_PROMPTS = {
     "analyze": f"""\
 ## Phase: Incident Data Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the provided incident data to reconstruct the timeline, identify root cause \
 vs contributing factors, and quantify impact.
 
@@ -94,6 +96,8 @@ Format as a structured incident analysis with clear section headers.
     "plan": f"""\
 ## Phase: Action Item Formulation
 
+{ANTI_INJECTION_RULE}
+
 Based on the incident analysis, formulate prioritized action items to prevent recurrence.
 
 ### Incident Data / Context:
@@ -134,6 +138,8 @@ Format as a prioritized action plan with clear categorization.
 
     "report": f"""\
 ## Phase: Blameless Postmortem Document
+
+{ANTI_INJECTION_RULE}
 
 Generate a complete, publication-ready blameless postmortem document.
 

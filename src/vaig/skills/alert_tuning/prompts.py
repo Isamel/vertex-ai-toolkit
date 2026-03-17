@@ -123,6 +123,8 @@ manufacture noise problems or coverage gaps to appear thorough.
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Alert Inventory & Noise Analysis
 
+{ANTI_INJECTION_RULE}
+
 Catalog all alerts and analyze signal quality, noise levels, and coverage gaps.
 
 ### Alerting Data / Context:
@@ -156,6 +158,8 @@ Format as a structured alert inventory report with health classification and noi
 """,
 
     "plan": f"""## Phase: Alert Tuning Plan
+
+{ANTI_INJECTION_RULE}
 
 Create a prioritized plan to reduce noise, improve coverage, and optimize alerting quality.
 
@@ -194,6 +198,8 @@ Format as a prioritized action plan grouped by: Quick Wins, This Sprint, This Qu
 """,
 
     "execute": f"""## Phase: Alert Tuning Execution Guidance
+
+{ANTI_INJECTION_RULE}
 
 Provide detailed, implementation-ready alert configurations and runbook templates.
 
@@ -237,6 +243,8 @@ Provide copy-paste-ready configurations for the monitoring stack in use.
 
     "validate": f"""## Phase: Alert Tuning Validation
 
+{ANTI_INJECTION_RULE}
+
 Validate that the tuning changes improve signal quality without introducing coverage gaps.
 
 ### Alerting Data / Context:
@@ -265,6 +273,8 @@ Format as a validation checklist with pass/fail/warning status for each item.
 """,
 
     "report": f"""## Phase: Alert Tuning Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive alert tuning report with before/after comparison.
 

@@ -53,6 +53,8 @@ or mark it as integration
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Source Code Analysis for Testability
 
+{ANTI_INJECTION_RULE}
+
 Analyze the provided source code to identify all testable units, their contracts, and testing \
 challenges.
 
@@ -107,6 +109,8 @@ units and their risk/priority classification (Critical / High / Medium / Low).
 """,
 
     "plan": f"""## Phase: Test Plan Design
+
+{ANTI_INJECTION_RULE}
 
 Based on the source code analysis, create a comprehensive test plan with specific test cases.
 
@@ -164,6 +168,8 @@ Format as an actionable test plan document with a prioritized checklist of tests
 """,
 
     "execute": f"""## Phase: Test Code Generation
+
+{ANTI_INJECTION_RULE}
 
 Generate production-ready test code based on the test plan.
 
@@ -226,6 +232,8 @@ file path headers.
 """,
 
     "report": f"""## Phase: Test Coverage & Quality Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive report on the test suite quality and coverage.
 

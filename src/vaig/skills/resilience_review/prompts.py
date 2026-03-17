@@ -139,6 +139,8 @@ misconfigured circuit breakers are worse than no circuit breakers
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Failure Mode Enumeration & Mitigation Assessment
 
+{ANTI_INJECTION_RULE}
+
 Enumerate failure modes per component and assess existing resilience mitigations.
 
 ### System Data / Context:
@@ -173,6 +175,8 @@ Format as a structured failure mode analysis report with mitigation status per c
 """,
 
     "plan": f"""## Phase: Chaos Experiment Design & Resilience Improvement Plan
+
+{ANTI_INJECTION_RULE}
 
 Design chaos experiments for unvalidated resilience claims and plan improvements for gaps.
 
@@ -221,6 +225,8 @@ Format as a prioritized resilience improvement plan with experiment specificatio
 
     "execute": f"""## Phase: Resilience Implementation Guidance
 
+{ANTI_INJECTION_RULE}
+
 Provide detailed implementation guidance for resilience improvements and chaos experiments.
 
 ### System Data / Context:
@@ -268,6 +274,8 @@ Provide copy-paste-ready configurations and code patterns for the technology sta
 
     "validate": f"""## Phase: Resilience Review Validation
 
+{ANTI_INJECTION_RULE}
+
 Validate completeness of the resilience analysis and experiment designs.
 
 ### System Data / Context:
@@ -301,6 +309,8 @@ Format as a validation checklist with pass/fail/warning status for each item.
 """,
 
     "report": f"""## Phase: Resilience Review Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive resilience review report with scorecard and improvement roadmap.
 

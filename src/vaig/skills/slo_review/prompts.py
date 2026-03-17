@@ -50,6 +50,8 @@ PHASE_PROMPTS = {
     "analyze": f"""\
 ## Phase: SLO/SLI Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the provided SLO definitions, SLI measurements, and error budget data.
 
 ### Context (SLO definitions, metrics, dashboards):
@@ -80,6 +82,8 @@ Format your response as a structured SLO analysis report with a summary table.
 """,
     "report": f"""\
 ## Phase: SLO Review Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive SLO review report with actionable recommendations.
 

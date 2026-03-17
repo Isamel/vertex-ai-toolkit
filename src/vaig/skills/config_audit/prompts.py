@@ -44,6 +44,8 @@ clear justification
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Configuration Analysis
 
+{ANTI_INJECTION_RULE}
+
 Scan the provided configuration files for security vulnerabilities and reliability risks.
 
 ### Configuration Data / Context:
@@ -73,6 +75,8 @@ description, and confidence level for each finding.
 """,
 
     "report": f"""## Phase: Audit Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive configuration audit report with findings and fix recommendations.
 

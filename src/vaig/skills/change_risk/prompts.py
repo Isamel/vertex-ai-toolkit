@@ -114,6 +114,8 @@ can understand while preserving technical accuracy
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Change Scope Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the change scope to understand what is being modified and what systems are affected.
 
 ### Change Data / Context:
@@ -143,6 +145,8 @@ Format as a structured change inventory with impact classification for each comp
 """,
 
     "plan": f"""## Phase: Risk Scoring & Blast Radius Assessment
+
+{ANTI_INJECTION_RULE}
 
 Score the change risk and estimate blast radius based on the change scope analysis.
 
@@ -179,6 +183,8 @@ Format as a risk assessment matrix with scores, blast radius diagram (text), and
 """,
 
     "execute": f"""## Phase: Pre-Deployment Checklist & CAB Summary
+
+{ANTI_INJECTION_RULE}
 
 Produce the deployment readiness checklist and CAB-ready summary.
 
@@ -222,6 +228,8 @@ Provide actionable, copy-paste-ready checklists and runbooks.
 
     "validate": f"""## Phase: Risk Assessment Validation
 
+{ANTI_INJECTION_RULE}
+
 Validate the completeness and accuracy of the risk assessment.
 
 ### Change Data / Context:
@@ -255,6 +263,8 @@ Format as a validation checklist with pass/fail/warning status for each item.
 """,
 
     "report": f"""## Phase: Change Risk Assessment Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive change risk assessment suitable for CAB review and deployment approval.
 

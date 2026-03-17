@@ -119,6 +119,8 @@ Monitoring / Resolved)
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Incident Impact Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the incident details to assess communication requirements and stakeholder impact.
 
 ### Incident Data / Context:
@@ -150,6 +152,8 @@ matrix and communication plan outline.
 
     "plan": f"""## Phase: Communication Strategy Planning
 
+{ANTI_INJECTION_RULE}
+
 Based on the incident analysis, design the communication strategy and cadence.
 
 ### Incident Data / Context:
@@ -180,6 +184,8 @@ message frameworks per audience.
 """,
 
     "execute": f"""## Phase: Communication Package Generation
+
+{ANTI_INJECTION_RULE}
 
 Generate the complete communication package for the incident.
 
@@ -217,6 +223,8 @@ Each artifact should be ready to copy-paste with minimal editing.
 
     "validate": f"""## Phase: Communication Validation
 
+{ANTI_INJECTION_RULE}
+
 Validate the communication package for consistency, accuracy, tone, and regulatory compliance.
 
 ### Incident Data / Context:
@@ -247,6 +255,8 @@ Format as a validation checklist with pass/fail/warning for each item per artifa
 """,
 
     "report": f"""## Phase: Incident Communications Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive incident communications summary and retrospective.
 

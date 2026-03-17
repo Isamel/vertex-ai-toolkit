@@ -59,6 +59,8 @@ than presenting a single fabricated diagnosis as fact.
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Error Classification & Blast Radius
 
+{ANTI_INJECTION_RULE}
+
 Classify the error and estimate its blast radius.
 
 ### Error Data / Context:
@@ -90,6 +92,8 @@ Format as a structured triage classification report.
 """,
 
     "report": f"""## Phase: Triage Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a structured triage report with priority, mitigations, and escalation path.
 

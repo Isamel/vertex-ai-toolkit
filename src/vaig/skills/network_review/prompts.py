@@ -106,6 +106,8 @@ without service disruption
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Network Security and Topology Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the network architecture for security vulnerabilities and topology issues.
 
 ### Network Data / Context:
@@ -141,6 +143,8 @@ Format as a structured network security assessment with a severity-sorted findin
 
     "plan": f"""## Phase: Network Hardening and Optimization Plan
 
+{ANTI_INJECTION_RULE}
+
 Based on the analysis, create a prioritized network hardening and optimization plan.
 
 ### Network Data / Context:
@@ -174,6 +178,8 @@ Format as a phased network hardening roadmap with risk and effort for each chang
 """,
 
     "execute": f"""## Phase: Network Change Implementation Guidance
+
+{ANTI_INJECTION_RULE}
 
 Provide detailed implementation guidance for the network hardening plan.
 
@@ -218,6 +224,8 @@ Provide copy-paste-ready configurations and commands with clear ordering.
 
     "validate": f"""## Phase: Network Changes Validation
 
+{ANTI_INJECTION_RULE}
+
 Validate that the proposed network changes are correct, complete, and safe.
 
 ### Network Data / Context:
@@ -249,6 +257,8 @@ Format as a validation checklist with pass/fail/warning for each item.
 """,
 
     "report": f"""## Phase: Network Architecture Review Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive network architecture review report.
 

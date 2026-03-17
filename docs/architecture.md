@@ -174,14 +174,14 @@ sequenceDiagram
     end
 
     rect rgb(255, 255, 230)
-        Note over R: Report Generation
+        Note over R: Report Generation (JSON Schema mode)
         Orch->>R: verified findings
-        R->>Gemini: generate structured Markdown report
-        Note over R: Severity classification<br/>Root cause hypotheses<br/>Remediation reasoning<br/>(GitOps/Helm/Manual)
+        R->>Gemini: generate (response_schema=HealthReport, mime=application/json)
+        Note over R: Gemini returns schema-constrained JSON<br/>post_process_report() validates<br/>+ converts to Markdown via to_markdown()
         R-->>Orch: final report
     end
 
-    Note over Orch: Validate reporter output (Markdown checks)
+    Note over Orch: Validate reporter output
     Orch-->>CLI: OrchestratorResult
     CLI-->>User: Formatted report + cost summary
 ```

@@ -171,6 +171,24 @@ agents:
   specialist_model: gemini-2.5-flash
 ```
 
+## AgentConfig Reference
+
+Every agent is instantiated from an `AgentConfig` dataclass (`src/vaig/agents/base.py`). Skills populate these fields via `get_agents_config()` dicts.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | `str` | *required* | Unique agent identifier |
+| `role` | `str` | *required* | Human-readable role description |
+| `system_instruction` | `str` | *required* | System prompt defining agent expertise |
+| `model` | `str` | `"gemini-2.5-pro"` | Gemini model ID |
+| `temperature` | `float` | `0.7` | Sampling temperature |
+| `max_output_tokens` | `int` | `16384` | Maximum response length |
+| `frequency_penalty` | `float \| None` | `None` | Penalty for repeated tokens |
+| `response_schema` | `type[BaseModel] \| None` | `None` | Pydantic model for JSON schema output |
+| `response_mime_type` | `str \| None` | `None` | Set to `"application/json"` with `response_schema` |
+
+When `response_schema` is set, `SpecialistAgent` passes it to `GeminiClient.generate()` via `types.GenerateContentConfig`. Gemini constrains its output to match the schema and returns a JSON string. The skill's `post_process_report()` method is responsible for converting the JSON to a display format.
+
 ## Viewing Agent Config
 
 In the REPL, use `/agents` to see the current skill's agent pipeline:

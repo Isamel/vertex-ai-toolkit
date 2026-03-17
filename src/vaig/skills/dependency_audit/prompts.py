@@ -84,6 +84,8 @@ SaaS vs distributed, actual import usage analysis)
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Dependency Manifest Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze all dependency manifests and lock files to build a comprehensive dependency inventory.
 
 ### Dependency Data / Context:
@@ -113,6 +115,8 @@ sorted by severity (Critical → Info).
 """,
 
     "plan": f"""## Phase: Remediation Planning
+
+{ANTI_INJECTION_RULE}
 
 Based on the dependency analysis, create a prioritized remediation plan with safe upgrade paths.
 
@@ -149,6 +153,8 @@ Format as an actionable remediation playbook with clear priority ordering and ef
 
     "execute": f"""## Phase: Remediation Execution Guidance
 
+{ANTI_INJECTION_RULE}
+
 Provide detailed, step-by-step execution guidance for the remediation plan.
 
 ### Dependency Data / Context:
@@ -182,6 +188,8 @@ Provide copy-paste-ready commands and code changes grouped by execution phase.
 
     "validate": f"""## Phase: Audit Validation
 
+{ANTI_INJECTION_RULE}
+
 Validate that the remediation steps address all identified risks and introduce no new issues.
 
 ### Dependency Data / Context:
@@ -210,6 +218,8 @@ Format as a validation checklist with pass/fail/warning status for each item.
 """,
 
     "report": f"""## Phase: Dependency Audit Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive dependency audit report suitable for security review and executive stakeholders.
 

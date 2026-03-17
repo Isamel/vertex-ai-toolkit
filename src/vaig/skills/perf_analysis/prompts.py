@@ -117,6 +117,8 @@ bottlenecks to appear thorough.
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Performance Data Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the provided performance data (traces, profiles, metrics) to identify bottlenecks \
 and optimization opportunities.
 
@@ -158,6 +160,8 @@ Format your response as a structured performance analysis report.
 
     "plan": f"""## Phase: Optimization Plan
 
+{ANTI_INJECTION_RULE}
+
 Based on the performance analysis, create a prioritized optimization plan with estimated impact.
 
 ### Performance Data / Context:
@@ -192,6 +196,8 @@ Format as an actionable optimization playbook with clear priority ordering and i
 """,
 
     "execute": f"""## Phase: Optimization Execution
+
+{ANTI_INJECTION_RULE}
 
 Provide detailed, step-by-step execution guidance for performance optimizations.
 
@@ -231,6 +237,8 @@ Provide implementation-ready code, configuration, and validation commands.
 
     "validate": f"""## Phase: Performance Validation
 
+{ANTI_INJECTION_RULE}
+
 Validate that optimizations achieved expected results and introduced no regressions.
 
 ### Performance Data / Context:
@@ -259,6 +267,8 @@ Format as a validation checklist with pass/fail/warning status and measured numb
 """,
 
     "report": f"""## Phase: Performance Analysis Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive performance analysis report for engineering leadership.
 

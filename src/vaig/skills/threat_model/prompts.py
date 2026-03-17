@@ -121,6 +121,8 @@ was not covered and why it matters
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Attack Surface Analysis
 
+{ANTI_INJECTION_RULE}
+
 Decompose the system architecture and enumerate the complete attack surface.
 
 ### Architecture Data / Context:
@@ -153,6 +155,8 @@ Format as a structured attack surface inventory with component diagrams describe
 """,
 
     "plan": f"""## Phase: STRIDE Threat Enumeration & Risk Scoring
+
+{ANTI_INJECTION_RULE}
 
 Apply STRIDE analysis to each component and data flow, scoring threats by likelihood and impact.
 
@@ -188,6 +192,8 @@ mitigation status for each threat.
 """,
 
     "execute": f"""## Phase: Countermeasure Design & Implementation Guidance
+
+{ANTI_INJECTION_RULE}
 
 Design specific countermeasures for each identified threat with implementation guidance.
 
@@ -231,6 +237,8 @@ Provide copy-paste-ready configurations and code patterns where applicable.
 
     "validate": f"""## Phase: Threat Model Validation
 
+{ANTI_INJECTION_RULE}
+
 Validate completeness and accuracy of the threat model.
 
 ### Architecture Data / Context:
@@ -264,6 +272,8 @@ each item.
 """,
 
     "report": f"""## Phase: Threat Model Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive threat model document suitable for security review boards.
 

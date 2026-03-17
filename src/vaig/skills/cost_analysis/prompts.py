@@ -54,6 +54,8 @@ balancers, unused elastic IPs, stale snapshots, and zombie instances
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Cloud Cost Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the provided cloud cost data to identify waste, optimization opportunities, and savings potential.
 
 ### Billing Data / Resource Configuration / Context:
@@ -101,6 +103,8 @@ sorted by estimated savings (highest first).
 """,
 
     "report": f"""## Phase: FinOps Optimization Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive FinOps report from the analysis findings.
 

@@ -47,6 +47,8 @@ designing, reviewing, and evolving APIs for large-scale distributed systems.
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: API Design Analysis
 
+{ANTI_INJECTION_RULE}
+
 Analyze the provided API definition, code, or documentation for design quality.
 
 ### API Context / Definition:
@@ -71,6 +73,8 @@ Format as a structured API design review with a findings summary table.
 
     "plan": f"""## Phase: API Improvement Plan
 
+{ANTI_INJECTION_RULE}
+
 Based on the API design analysis, create a prioritized improvement plan.
 
 ### API Context / Definition:
@@ -93,6 +97,8 @@ Format as a phased improvement roadmap with clear breaking-change warnings.
 """,
 
     "report": f"""## Phase: API Design Report
+
+{ANTI_INJECTION_RULE}
 
 Generate a comprehensive API design review report.
 
