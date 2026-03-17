@@ -17,6 +17,7 @@ import pytest
 
 from vaig.core.client import GenerationResult
 from vaig.core.config import reset_settings
+from vaig.core.event_bus import EventBus
 from vaig.core.telemetry import TelemetryCollector, reset_telemetry_collector
 from vaig.session.store import SessionStore
 
@@ -28,14 +29,19 @@ from vaig.session.store import SessionStore
 
 @pytest.fixture(autouse=True)
 def _reset_settings() -> Generator[None, None, None]:
-    """Reset the Settings and Telemetry singletons between tests.
+    """Reset the Settings, Telemetry, and EventBus singletons between tests.
 
     This prevents cross-test contamination when any test constructs
     or mutates a ``Settings`` instance, and ensures orphaned aiosqlite
     connections from the telemetry collector are cleaned up.
+
+    The EventBus singleton is also reset so that subscribers registered
+    in one test do not leak into another.
     """
     reset_settings()
+    EventBus._reset_singleton()
     yield
+    EventBus._reset_singleton()
     reset_telemetry_collector()
 
 

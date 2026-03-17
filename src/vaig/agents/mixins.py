@@ -325,18 +325,21 @@ class ToolLoopMixin:
         error_type: str = "",
         error_message: str = "",
     ) -> None:
-        """Emit a tool_call telemetry event. Never raises."""
+        """Emit a tool_call telemetry event via EventBus. Never raises."""
         try:
-            from vaig.core.telemetry import get_telemetry_collector
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import ToolExecuted
 
             duration_ms = (time.perf_counter() - t0) * 1000
-            collector = get_telemetry_collector()
-            collector.emit_tool_call(
-                tool_name,
-                duration_ms=duration_ms,
-                metadata={"args_keys": sorted(tool_args.keys()), "error": result.error},
-                error_type=error_type,
-                error_message=error_message,
+            EventBus.get().emit(
+                ToolExecuted(
+                    tool_name=tool_name,
+                    duration_ms=duration_ms,
+                    args_keys=tuple(sorted(tool_args.keys())),
+                    error=result.error,
+                    error_type=error_type,
+                    error_message=error_message,
+                )
             )
         except Exception:  # noqa: BLE001
             pass

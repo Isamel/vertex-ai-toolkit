@@ -154,12 +154,12 @@ class SkillRegistry:
         self._skills[meta.name] = skill
         self._metadata_cache[meta.name] = meta
 
-        # Telemetry: emit skill_use event
+        # Telemetry: emit skill_use event via EventBus
         try:
-            from vaig.core.telemetry import get_telemetry_collector
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import SkillUsed
 
-            collector = get_telemetry_collector()
-            collector.emit_skill_use(meta.name)
+            EventBus.get().emit(SkillUsed(skill_name=meta.name))
         except Exception:  # noqa: BLE001
             pass
 

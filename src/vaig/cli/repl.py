@@ -191,10 +191,15 @@ def start_repl(
     # downstream modules (agents, session, cost_tracker) that call
     # get_telemetry_collector() without args get the pre-warmed singleton
     # instead of falling back to get_settings().
+    telemetry_subscriber = None
     try:
         from vaig.core.telemetry import get_telemetry_collector
 
-        get_telemetry_collector(settings)
+        collector = get_telemetry_collector(settings)
+
+        from vaig.core.subscribers import TelemetrySubscriber
+
+        telemetry_subscriber = TelemetrySubscriber(collector)
     except Exception:  # noqa: BLE001
         pass
 
@@ -252,6 +257,8 @@ def start_repl(
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted.[/yellow]")
     finally:
+        if telemetry_subscriber is not None:
+            telemetry_subscriber.unsubscribe_all()
         _show_session_cost_summary(state)
         _save_cost_data(state)
         session_manager.close()
@@ -288,10 +295,15 @@ async def async_start_repl(
     skill_registry = SkillRegistry(settings)
 
     # Eagerly initialize the telemetry collector
+    telemetry_subscriber = None
     try:
         from vaig.core.telemetry import get_telemetry_collector
 
-        get_telemetry_collector(settings)
+        collector = get_telemetry_collector(settings)
+
+        from vaig.core.subscribers import TelemetrySubscriber
+
+        telemetry_subscriber = TelemetrySubscriber(collector)
     except Exception:  # noqa: BLE001
         pass
 
@@ -348,6 +360,8 @@ async def async_start_repl(
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted.[/yellow]")
     finally:
+        if telemetry_subscriber is not None:
+            telemetry_subscriber.unsubscribe_all()
         _show_session_cost_summary(state)
         await _async_save_cost_data(state)
         await session_manager.async_close()
@@ -467,10 +481,16 @@ async def _async_handle_direct_chat(state: REPLState, user_input: str, context: 
         console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Async chat error")
         try:
-            from vaig.core.telemetry import get_telemetry_collector
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import ErrorOccurred
 
-            collector = get_telemetry_collector(state.settings)
-            collector.emit_error(type(e).__name__, str(e), metadata={"source": "async_direct_chat"})
+            EventBus.get().emit(
+                ErrorOccurred(
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    source="async_direct_chat",
+                )
+            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -518,10 +538,16 @@ async def _async_handle_skill_chat(state: REPLState, user_input: str, context: s
         console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Async skill execution error")
         try:
-            from vaig.core.telemetry import get_telemetry_collector
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import ErrorOccurred
 
-            collector = get_telemetry_collector(state.settings)
-            collector.emit_error(type(e).__name__, str(e), metadata={"source": "async_skill_chat"})
+            EventBus.get().emit(
+                ErrorOccurred(
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    source="async_skill_chat",
+                )
+            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -571,10 +597,16 @@ async def _async_handle_code_chat(state: REPLState, user_input: str, context: st
         console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Async code mode error")
         try:
-            from vaig.core.telemetry import get_telemetry_collector
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import ErrorOccurred
 
-            collector = get_telemetry_collector(state.settings)
-            collector.emit_error(type(e).__name__, str(e), metadata={"source": "async_code_chat"})
+            EventBus.get().emit(
+                ErrorOccurred(
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    source="async_code_chat",
+                )
+            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -792,10 +824,16 @@ def _handle_direct_chat(state: REPLState, user_input: str, context: str) -> None
         console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Chat error")
         try:
-            from vaig.core.telemetry import get_telemetry_collector
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import ErrorOccurred
 
-            collector = get_telemetry_collector(state.settings)
-            collector.emit_error(type(e).__name__, str(e), metadata={"source": "direct_chat"})
+            EventBus.get().emit(
+                ErrorOccurred(
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    source="direct_chat",
+                )
+            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -900,10 +938,16 @@ def _handle_skill_chat(state: REPLState, user_input: str, context: str) -> None:
         console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Skill execution error")
         try:
-            from vaig.core.telemetry import get_telemetry_collector
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import ErrorOccurred
 
-            collector = get_telemetry_collector(state.settings)
-            collector.emit_error(type(e).__name__, str(e), metadata={"source": "skill_chat"})
+            EventBus.get().emit(
+                ErrorOccurred(
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    source="skill_chat",
+                )
+            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -962,10 +1006,16 @@ def _handle_code_chat(state: REPLState, user_input: str, context: str) -> None:
         console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Code mode error")
         try:
-            from vaig.core.telemetry import get_telemetry_collector
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import ErrorOccurred
 
-            collector = get_telemetry_collector(state.settings)
-            collector.emit_error(type(e).__name__, str(e), metadata={"source": "code_chat"})
+            EventBus.get().emit(
+                ErrorOccurred(
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    source="code_chat",
+                )
+            )
         except Exception:  # noqa: BLE001
             pass
 

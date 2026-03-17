@@ -75,16 +75,18 @@ class SessionManager:
 
         logger.info("New session started: %s (model=%s, skill=%s)", name, model, skill)
 
-        # Telemetry: set session ID and emit session_start
+        # Telemetry: emit session_start event via EventBus
         try:
-            from vaig.core.telemetry import get_telemetry_collector
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import SessionStarted
 
-            collector = get_telemetry_collector()
-            collector.set_session_id(session_id)
-            collector.emit(
-                event_type="session",
-                event_name="session_start",
-                metadata={"name": name, "model": model, "skill": skill or ""},
+            EventBus.get().emit(
+                SessionStarted(
+                    session_id=session_id,
+                    name=name,
+                    model=model,
+                    skill=skill or "",
+                )
             )
         except Exception:  # noqa: BLE001
             pass
@@ -279,16 +281,20 @@ class SessionManager:
 
     def close(self) -> None:
         """Close the session store."""
-        # Telemetry: emit session_end and flush
+        # Telemetry: emit session_end event via EventBus
+        try:
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import SessionEnded
+
+            EventBus.get().emit(SessionEnded())
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Flush telemetry collector
         try:
             from vaig.core.telemetry import get_telemetry_collector
 
-            collector = get_telemetry_collector()
-            collector.emit(
-                event_type="session",
-                event_name="session_end",
-            )
-            collector.flush()
+            get_telemetry_collector().flush()
         except Exception:  # noqa: BLE001
             pass
 
@@ -321,16 +327,18 @@ class SessionManager:
 
         logger.info("New session started (async): %s (model=%s, skill=%s)", name, model, skill)
 
-        # Telemetry: set session ID and emit session_start
+        # Telemetry: emit session_start event via EventBus
         try:
-            from vaig.core.telemetry import get_telemetry_collector
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import SessionStarted
 
-            collector = get_telemetry_collector()
-            collector.set_session_id(session_id)
-            collector.emit(
-                event_type="session",
-                event_name="session_start",
-                metadata={"name": name, "model": model, "skill": skill or ""},
+            EventBus.get().emit(
+                SessionStarted(
+                    session_id=session_id,
+                    name=name,
+                    model=model,
+                    skill=skill or "",
+                )
             )
         except Exception:  # noqa: BLE001
             pass
@@ -434,16 +442,20 @@ class SessionManager:
 
     async def async_close(self) -> None:
         """Async version of :meth:`close`."""
-        # Telemetry: emit session_end and async flush
+        # Telemetry: emit session_end event via EventBus
+        try:
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import SessionEnded
+
+            EventBus.get().emit(SessionEnded())
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Flush telemetry collector
         try:
             from vaig.core.telemetry import get_telemetry_collector
 
-            collector = get_telemetry_collector()
-            collector.emit(
-                event_type="session",
-                event_name="session_end",
-            )
-            await collector.async_flush()
+            await get_telemetry_collector().async_flush()
         except Exception:  # noqa: BLE001
             pass
 

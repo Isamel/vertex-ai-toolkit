@@ -40,11 +40,13 @@ def track_command(fn: Callable[..., Any]) -> Callable[..., Any]:
             return fn(*args, **kwargs)
         finally:
             try:
-                from vaig.core.telemetry import get_telemetry_collector
+                from vaig.core.event_bus import EventBus
+                from vaig.core.events import CliCommandTracked
 
                 duration_ms = (time.perf_counter() - t0) * 1000
-                collector = get_telemetry_collector()
-                collector.emit_cli_command(fn.__name__, duration_ms=duration_ms)
+                EventBus.get().emit(
+                    CliCommandTracked(command_name=fn.__name__, duration_ms=duration_ms)
+                )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -65,11 +67,13 @@ def track_command_async(fn: Callable[..., Coroutine[Any, Any, Any]]) -> Callable
             return await fn(*args, **kwargs)
         finally:
             try:
-                from vaig.core.telemetry import get_telemetry_collector
+                from vaig.core.event_bus import EventBus
+                from vaig.core.events import CliCommandTracked
 
                 duration_ms = (time.perf_counter() - t0) * 1000
-                collector = get_telemetry_collector()
-                collector.emit_cli_command(fn.__name__, duration_ms=duration_ms)
+                EventBus.get().emit(
+                    CliCommandTracked(command_name=fn.__name__, duration_ms=duration_ms)
+                )
             except Exception:  # noqa: BLE001
                 pass
 
