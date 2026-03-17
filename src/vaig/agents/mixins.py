@@ -212,6 +212,9 @@ class ToolLoopMixin:
                     tool_result = cached_result
                     tool_duration = 0.0
                     is_cached = True
+                    self._emit_tool_telemetry(
+                        tool_name, tool_args, tool_result, time.perf_counter(), cached=True,
+                    )
                 else:
                     # Cache miss or not cacheable — execute
                     t_tool = time.perf_counter()
@@ -523,6 +526,9 @@ class ToolLoopMixin:
                                 )
                                 if _cached is not None:
                                     logger.info("[CACHE HIT] %s", _tool_name)
+                                    self._emit_tool_telemetry(
+                                        _tool_name, _tool_args, _cached, time.perf_counter(), cached=True,
+                                    )
                                     return _tool_name, _tool_args, 0.0, _cached, True
 
                         t0 = time.perf_counter()
@@ -644,6 +650,9 @@ class ToolLoopMixin:
                         tool_result = cached_result_async
                         tool_duration = 0.0
                         is_cached = True
+                        self._emit_tool_telemetry(
+                            tool_name, tool_args, tool_result, time.perf_counter(), cached=True,
+                        )
                     else:
                         t_tool = time.perf_counter()
                         tool_result = await self._async_execute_single_tool(

@@ -191,6 +191,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            cacheable=False,
             execute=lambda pod, namespace="default", container=None, tail_lines=100,
                     since=None, _cfg=gke_config: kubectl.kubectl_logs(
                 pod,
@@ -228,6 +229,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            cacheable=False,
             execute=lambda resource_type="pods", name=None, namespace="default":
                     _autopilot_kubectl_top(resource_type, name=name, namespace=namespace),
         ),
@@ -262,6 +264,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            cacheable=False,
             execute=lambda resource, name, replicas, namespace="default",
                     _cfg=gke_config: mutations.kubectl_scale(
                 resource, name, replicas, gke_config=_cfg, namespace=namespace,
@@ -292,6 +295,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            cacheable=False,
             execute=lambda resource, name, namespace="default",
                     _cfg=gke_config: mutations.kubectl_restart(
                 resource, name, gke_config=_cfg, namespace=namespace,
@@ -331,6 +335,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            cacheable=False,
             execute=lambda resource, name, labels, namespace="default",
                     _cfg=gke_config: mutations.kubectl_label(
                 resource, name, labels, gke_config=_cfg, namespace=namespace,
@@ -370,6 +375,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            cacheable=False,
             execute=lambda resource, name, annotations, namespace="default",
                     _cfg=gke_config: mutations.kubectl_annotate(
                 resource, name, annotations, gke_config=_cfg, namespace=namespace,
@@ -553,6 +559,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            cacheable=False,
             execute=lambda pod_name, namespace, command, container=None, timeout=30,
                     _cfg=gke_config: security.exec_command(
                 pod_name, command, gke_config=_cfg, namespace=namespace,

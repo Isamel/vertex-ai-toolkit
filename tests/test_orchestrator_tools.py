@@ -345,7 +345,11 @@ class TestExecuteWithToolsSequential:
         assert result.synthesized_output == "Final output."
 
         # First agent gets empty context
-        agent1.execute.assert_called_once_with("do something", context="")
+        agent1.execute.assert_called_once()
+        call_kwargs = agent1.execute.call_args
+        assert call_kwargs.args == ("do something",)
+        assert call_kwargs.kwargs["context"] == ""
+        assert "tool_result_cache" in call_kwargs.kwargs
         # Second agent gets context with previous output
         second_call_context = agent2.execute.call_args.kwargs["context"]
         assert "Previous Analysis" in second_call_context
@@ -407,7 +411,10 @@ class TestExecuteWithToolsFanout:
         assert result.success is True
         assert len(result.agent_results) == 2
         # Both agents get the same query with context threaded through
-        agent1.execute.assert_called_once_with("analyze this", context="analyze this")
+        agent1.execute.assert_called_once()
+        assert agent1.execute.call_args.args == ("analyze this",)
+        assert agent1.execute.call_args.kwargs["context"] == "analyze this"
+        assert "tool_result_cache" in agent1.execute.call_args.kwargs
         agent2.execute.assert_called_once_with("analyze this", context="analyze this")
         # Merged output
         assert "agent-1" in result.synthesized_output
@@ -1730,7 +1737,10 @@ class TestAsyncExecuteWithTools:
         assert result.success is True
         assert len(result.agent_results) == 2
         # Both agents called with same query
-        agent1.execute.assert_called_once_with("analyze this", context="analyze this")
+        agent1.execute.assert_called_once()
+        assert agent1.execute.call_args.args == ("analyze this",)
+        assert agent1.execute.call_args.kwargs["context"] == "analyze this"
+        assert "tool_result_cache" in agent1.execute.call_args.kwargs
         agent2.execute.assert_called_once_with("analyze this", context="analyze this")
         # Merged output
         assert "agent-1" in result.synthesized_output
