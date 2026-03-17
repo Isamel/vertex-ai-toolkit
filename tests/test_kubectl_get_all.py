@@ -8,14 +8,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from vaig.tools.gke._resources import (
     _ALL_RESOURCE_TYPES,
     _RESOURCE_API_MAP,
     _normalise_resource,
 )
-
 
 # ═══════════════════════════════════════════════════════════════
 # _resources constants
