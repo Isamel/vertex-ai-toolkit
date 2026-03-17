@@ -3770,3 +3770,74 @@ class TestBuildToolsSummaryEmptyStringOutput:
         assert "Total tool calls: 2" in second_call_context
         # No failures — empty output is NOT an error
         assert "Failed calls" not in second_call_context
+
+
+class TestThreeAgentSequentialContext:
+    """Regression: with 3+ agents, every downstream agent sees ALL predecessors."""
+
+    def test_third_agent_receives_both_predecessors(self) -> None:
+        """Agent 3 context contains outputs from agent 1 AND agent 2, separated by ---."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        registry = _make_mock_registry()
+
+        agent1 = MagicMock(spec=ToolAwareAgent)
+        agent1.name = "gatherer"
+        agent1.role = "Gatherer"
+        agent1.execute.return_value = AgentResult(
+            agent_name="gatherer",
+            content="Agent-1-output",
+            success=True,
+            usage={"total_tokens": 100},
+            metadata={
+                "tools_executed": [
+                    {"name": "kubectl_get", "args": {"resource": "pods"}, "output": "pod list", "error": False},
+                ],
+            },
+        )
+
+        agent2 = MagicMock(spec=ToolAwareAgent)
+        agent2.name = "analyzer"
+        agent2.role = "Analyzer"
+        agent2.execute.return_value = AgentResult(
+            agent_name="analyzer",
+            content="Agent-2-output",
+            success=True,
+            usage={"total_tokens": 80},
+            metadata={
+                "tools_executed": [
+                    {"name": "kubectl_logs", "args": {"pod": "p1"}, "output": "log data", "error": False},
+                ],
+            },
+        )
+
+        agent3 = MagicMock(spec=SpecialistAgent)
+        agent3.name = "reporter"
+        agent3.role = "Reporter"
+        agent3.execute.return_value = AgentResult(
+            agent_name="reporter",
+            content="Final report.",
+            success=True,
+            usage={"total_tokens": 60},
+        )
+
+        skill = StubToolSkill()
+        skill.get_required_output_sections = MagicMock(return_value=[])
+
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent1, agent2, agent3]):
+            result = orchestrator.execute_with_tools("check everything", skill, registry)
+
+        assert result.success is True
+
+        third_call_context = agent3.execute.call_args.kwargs["context"]
+
+        # Both predecessors' outputs must be present
+        assert "Agent-1-output" in third_call_context
+        assert "Agent-2-output" in third_call_context
+
+        # Both tools summaries must be present
+        assert "## Tools Executed by Gatherer" in third_call_context
+        assert "## Tools Executed by Analyzer" in third_call_context
+
+        # Outputs are separated by --- divider
+        assert "---" in third_call_context

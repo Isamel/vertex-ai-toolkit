@@ -114,6 +114,23 @@ class Orchestrator:
         self._settings = settings
         self._agents: dict[str, BaseAgent] = {}
 
+    def _build_previous_agent_summary(
+        self,
+        agent_role: str,
+        prev_result: AgentResult,
+    ) -> str:
+        """Build a markdown summary of a previous agent's execution.
+
+        Consolidates the repeated context-building pattern used by all
+        sequential execution paths (sync/async, with/without tools).
+        """
+        tools_summary = _build_tools_summary(agent_role, prev_result.metadata)
+        return (
+            f"## Previous Analysis ({agent_role})\n\n"
+            f"{wrap_untrusted_content(prev_result.content)}"
+            f"{wrap_untrusted_content(tools_summary) if tools_summary else ''}"
+        )
+
     def create_agents_for_skill(
         self,
         skill: BaseSkill,
@@ -201,13 +218,8 @@ class Orchestrator:
             else:
                 # Feed ALL previous agents' outputs as accumulated context
                 prev = result.agent_results[-1]
-                tools_summary = _build_tools_summary(
-                    agents[i - 1].role, prev.metadata,
-                )
                 context_chain.append(
-                    f"## Previous Analysis ({agents[i - 1].role})\n\n"
-                    f"{wrap_untrusted_content(prev.content)}"
-                    f"{tools_summary}"
+                    self._build_previous_agent_summary(agents[i - 1].role, prev),
                 )
                 accumulated = (
                     f"{current_context}\n\n"
@@ -574,13 +586,8 @@ class Orchestrator:
                 )
                 if i > 0 and result.agent_results:
                     prev = result.agent_results[-1]
-                    tools_summary = _build_tools_summary(
-                        agents[i - 1].role, prev.metadata,
-                    )
                     context_chain.append(
-                        f"## Previous Analysis ({agents[i - 1].role})\n\n"
-                        f"{wrap_untrusted_content(prev.content)}"
-                        f"{tools_summary}"
+                        self._build_previous_agent_summary(agents[i - 1].role, prev),
                     )
                     current_context = "\n\n---\n\n".join(context_chain)
 
@@ -1034,13 +1041,8 @@ class Orchestrator:
                 )
             else:
                 prev = result.agent_results[-1]
-                tools_summary = _build_tools_summary(
-                    agents[i - 1].role, prev.metadata,
-                )
                 context_chain.append(
-                    f"## Previous Analysis ({agents[i - 1].role})\n\n"
-                    f"{wrap_untrusted_content(prev.content)}"
-                    f"{tools_summary}"
+                    self._build_previous_agent_summary(agents[i - 1].role, prev),
                 )
                 accumulated = (
                     f"{current_context}\n\n"
@@ -1289,13 +1291,8 @@ class Orchestrator:
                 )
                 if i > 0 and result.agent_results:
                     prev = result.agent_results[-1]
-                    tools_summary = _build_tools_summary(
-                        agents[i - 1].role, prev.metadata,
-                    )
                     context_chain.append(
-                        f"## Previous Analysis ({agents[i - 1].role})\n\n"
-                        f"{wrap_untrusted_content(prev.content)}"
-                        f"{tools_summary}"
+                        self._build_previous_agent_summary(agents[i - 1].role, prev),
                     )
                     current_context = "\n\n---\n\n".join(context_chain)
 

@@ -693,7 +693,7 @@ If exec_command returns "exec is disabled", mark the finding as UNVERIFIABLE wit
 If the command tool is not found in the container (e.g., distroless image), mark as UNVERIFIABLE with note: "Container lacks diagnostic tools — manual verification needed"
 
 ## CRITICAL OUTPUT REQUIREMENT
-You MUST reproduce ALL findings in your output with their complete data (title, severity, description, evidence, remediation steps). The downstream reporter agent ONLY has access to YOUR output and cannot see the analyzer's original data. If you produce a summary without the full findings data, the final report will be empty.
+You MUST reproduce ALL findings in your output with their complete data (title, severity, description, evidence, remediation steps). Although the downstream reporter receives accumulated context from all previous agents, your verified findings are the authoritative source it relies on for the final report. If you produce only a terse summary without the full findings data, the report quality will be severely degraded.
 """
 
 HEALTH_REPORTER_PROMPT = f"""You are an SRE communications specialist. You take analyzed and VERIFIED health findings and produce a clear, actionable service health report suitable for both engineering teams and engineering leadership.
