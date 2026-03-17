@@ -186,6 +186,14 @@ class ServiceHealthSkill(BaseSkill):
         """
         try:
             report = HealthReport.model_validate_json(content)
+
+            # Warn if report has no meaningful data
+            if not report.findings and not report.service_statuses:
+                logger.warning(
+                    "Reporter produced a report with no findings and no service statuses. "
+                    "This may indicate data was lost in the agent pipeline."
+                )
+
             return report.to_markdown()
         except (ValueError, ValidationError):
             logger.warning(
