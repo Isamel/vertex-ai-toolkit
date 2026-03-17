@@ -15,6 +15,7 @@ which is required for Gemini's ``response_schema`` compatibility.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from enum import StrEnum
 from typing import Any
 
@@ -114,7 +115,7 @@ class ContentType(StrEnum):
     UNKNOWN = "unknown"
 
 
-_CONTENT_TYPE_FENCE_MAP: dict[ContentType, str] = {
+CONTENT_TYPE_FENCE_MAP: dict[ContentType, str] = {
     ContentType.YAML: "yaml",
     ContentType.JSON: "json",
     ContentType.LOG: "log",
@@ -484,15 +485,14 @@ class HealthReport(BaseModel):
             parts.append(f"### {ev.title}")
             if ev.description:
                 parts.append(ev.description)
+            lang = CONTENT_TYPE_FENCE_MAP.get(ev.content_type, "text")
             if ev.evidence_text:
-                lang = _CONTENT_TYPE_FENCE_MAP.get(ev.content_type, "text")
                 parts.append(f"```{lang}")
                 parts.append(ev.evidence_text)
                 parts.append("```")
             if ev.corrected_text:
                 parts.append("")
                 parts.append("**Corrected**:")
-                lang = _CONTENT_TYPE_FENCE_MAP.get(ev.content_type, "text")
                 parts.append(f"```{lang}")
                 parts.append(ev.corrected_text)
                 parts.append("```")
@@ -574,8 +574,6 @@ class HealthReport(BaseModel):
 
     def _render_timeline_grouped(self, parts: list[str]) -> None:
         """Render timeline events grouped by service with sub-headings."""
-        from collections import defaultdict
-
         groups: dict[str, list[TimelineEvent]] = defaultdict(list)
         for ev in self.timeline:
             key = ev.service if ev.service else "General"

@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 
 from vaig.skills.service_health.schema import (
-    _CONTENT_TYPE_FENCE_MAP,
+    CONTENT_TYPE_FENCE_MAP,
     ActionUrgency,
     ClusterMetric,
     Confidence,
@@ -1134,7 +1134,7 @@ class TestTimelineGrouping:
     """Verify _render_timeline switches between grouped and flat layout."""
 
     def test_grouped_timeline_when_majority_have_service(self) -> None:
-        """When >50% of events have service, output is grouped by service."""
+        """When >=50% of events have service, output is grouped by service."""
         report = HealthReport(
             executive_summary=ExecutiveSummary(
                 overall_status=OverallStatus.DEGRADED,
@@ -1431,6 +1431,6 @@ class TestContentTypeSchema:
         assert report.evidence_details[0].content_type == ContentType.TEXT
 
     def test_fence_map_covers_all_content_types(self) -> None:
-        """_CONTENT_TYPE_FENCE_MAP has an entry for every ContentType value."""
+        """CONTENT_TYPE_FENCE_MAP has an entry for every ContentType value."""
         for ct in ContentType:
-            assert ct in _CONTENT_TYPE_FENCE_MAP, f"Missing fence mapping for {ct}"
+            assert ct in CONTENT_TYPE_FENCE_MAP, f"Missing fence mapping for {ct}"
