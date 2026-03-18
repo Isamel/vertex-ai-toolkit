@@ -28,7 +28,11 @@ from vaig.cli._helpers import (
     handle_cli_error,
     track_command,
 )
-from vaig.cli.display import print_colored_report
+from vaig.cli.display import (
+    print_colored_report,
+    print_executive_summary_panel,
+    print_recommendations_table,
+)
 from vaig.core.cache import ToolResultCache
 from vaig.core.tool_call_store import ToolCallStore
 
@@ -869,8 +873,19 @@ def _execute_orchestrated_skill(
         if summary and orch_result.structured_report is not None:
             # --summary mode: compact output from the structured report
             console.print(orch_result.structured_report.to_summary())
-        elif orch_result.synthesized_output:
-            print_colored_report(orch_result.synthesized_output, console=console)
+        else:
+            # Rich Panel for executive summary (before the full report)
+            if orch_result.structured_report is not None:
+                print_executive_summary_panel(
+                    orch_result.structured_report, console=console,
+                )
+            if orch_result.synthesized_output:
+                print_colored_report(orch_result.synthesized_output, console=console)
+            # Rich Table for recommendations (after the full report)
+            if orch_result.structured_report is not None:
+                print_recommendations_table(
+                    orch_result.structured_report, console=console,
+                )
         console.print()
 
         _handle_export_output(
@@ -1187,8 +1202,18 @@ async def _async_execute_orchestrated_skill(
         tool_logger.print_summary()
 
         console.print()
+        # Rich Panel for executive summary (before the full report)
+        if orch_result.structured_report is not None:
+            print_executive_summary_panel(
+                orch_result.structured_report, console=console,
+            )
         if orch_result.synthesized_output:
             print_colored_report(orch_result.synthesized_output, console=console)
+        # Rich Table for recommendations (after the full report)
+        if orch_result.structured_report is not None:
+            print_recommendations_table(
+                orch_result.structured_report, console=console,
+            )
         console.print()
 
         _handle_export_output(

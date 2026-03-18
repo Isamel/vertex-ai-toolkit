@@ -8,10 +8,13 @@ from typing import TYPE_CHECKING, Any
 import typer
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 if TYPE_CHECKING:
     from vaig.agents.base import AgentResult
+    from vaig.skills.service_health.schema import HealthReport
 
 # Shared console instance — callers may pass their own via keyword arg.
 _default_console = Console()
@@ -273,3 +276,104 @@ def show_cost_summary(
         f"[dim]📊 Tokens: {' / '.join(parts)} "
         f"({total_tokens:,} total) │ Cost: {cost_str}[/dim]"
     )
+
+
+# ── Executive Summary Panel ──────────────────────────────────
+
+# Maps OverallStatus → (Rich border style, emoji)
+_STATUS_PANEL_STYLE: dict[str, tuple[str, str]] = {
+    "HEALTHY": ("green", "🟢"),
+    "DEGRADED": ("yellow", "🟡"),
+    "CRITICAL": ("red", "🔴"),
+    "UNKNOWN": ("dim", "⚪"),
+}
+
+
+def print_executive_summary_panel(
+    report: HealthReport,
+    *,
+    console: Console | None = None,
+) -> None:
+    """Render the executive summary as a Rich Panel with severity-colored border.
+
+    Displayed BEFORE the full Markdown report to give an immediate visual
+    overview of the cluster health status.
+
+    Args:
+        report: A parsed ``HealthReport`` instance.
+        console: Optional Rich Console; defaults to module-level instance.
+    """
+    con = console or _default_console
+    es = report.executive_summary
+    status_key = es.overall_status.value
+    border_style, emoji = _STATUS_PANEL_STYLE.get(status_key, ("dim", "❓"))
+
+    body = Text()
+    body.append(f"{emoji} Status: ", style="bold")
+    body.append(f"{status_key}\n", style=f"bold {border_style}")
+    body.append(f"📋 Scope: {es.scope}\n")
+    body.append(
+        f"🔍 Issues: {es.issues_found} "
+        f"({es.critical_count} critical, {es.warning_count} warning)\n"
+    )
+    body.append(f"\n{es.summary_text}")
+
+    panel = Panel(
+        body,
+        title="Executive Summary",
+        border_style=border_style,
+        padding=(1, 2),
+    )
+    con.print(panel)
+
+
+# ── Recommendations Table ────────────────────────────────────
+
+_URGENCY_STYLE: dict[str, str] = {
+    "IMMEDIATE": "bold red",
+    "SHORT_TERM": "yellow",
+    "LONG_TERM": "dim",
+}
+
+
+def print_recommendations_table(
+    report: HealthReport,
+    *,
+    console: Console | None = None,
+) -> None:
+    """Render recommended actions as a Rich Table.
+
+    Columns: ``#``, ``Action``, ``Command``, ``Risk``.
+    Only displayed when the report contains at least one recommendation.
+
+    Args:
+        report: A parsed ``HealthReport`` instance.
+        console: Optional Rich Console; defaults to module-level instance.
+    """
+    if not report.recommendations:
+        return
+
+    con = console or _default_console
+    table = Table(
+        title="📋 Recommended Actions",
+        show_lines=True,
+        title_style="bold",
+    )
+    table.add_column("#", style="bold", width=3, justify="right")
+    table.add_column("Action", style="cyan", max_width=50)
+    table.add_column("Command", style="green", max_width=50)
+    table.add_column("Risk", style="yellow", max_width=30)
+
+    sorted_recs = sorted(report.recommendations, key=lambda r: r.priority)
+    for rec in sorted_recs:
+        urgency_style = _URGENCY_STYLE.get(rec.urgency.value, "")
+        action_text = Text(rec.title)
+        if urgency_style:
+            action_text.append(f" [{rec.urgency.value}]", style=urgency_style)
+
+        cmd = rec.command if rec.command else "—"
+        risk = rec.risk if rec.risk else "—"
+
+        table.add_row(str(rec.priority), action_text, cmd, risk)
+
+    con.print(table)
