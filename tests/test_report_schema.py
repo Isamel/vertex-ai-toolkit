@@ -372,20 +372,18 @@ class TestValidation:
     """Pydantic validation catches invalid data."""
 
     def test_invalid_severity_rejected(self) -> None:
-        import pytest
-
-        with pytest.raises(Exception):  # noqa: B017
-            Finding(id="x", title="X", severity="INVALID")  # type: ignore[arg-type]
+        # After schema hardening, invalid enum values are coerced to defaults, not rejected.
+        finding = Finding(id="x", title="X", severity="INVALID")  # type: ignore[arg-type]
+        assert finding.severity == Severity.INFO  # coerced to default
 
     def test_invalid_overall_status_rejected(self) -> None:
-        import pytest
-
-        with pytest.raises(Exception):  # noqa: B017
-            ExecutiveSummary(
-                overall_status="BORKED",  # type: ignore[arg-type]
-                scope="Cluster-wide",
-                summary_text="nope",
-            )
+        # After schema hardening, invalid enum values are coerced to defaults, not rejected.
+        es = ExecutiveSummary(
+            overall_status="BORKED",  # type: ignore[arg-type]
+            scope="Cluster-wide",
+            summary_text="nope",
+        )
+        assert es.overall_status == OverallStatus.UNKNOWN  # coerced to default
 
     def test_negative_priority_rejected(self) -> None:
         import pytest
@@ -405,10 +403,9 @@ class TestValidation:
             )
 
     def test_invalid_service_health_status_rejected(self) -> None:
-        import pytest
-
-        with pytest.raises(Exception):  # noqa: B017
-            ServiceStatus(service="svc", status="BORKED")  # type: ignore[arg-type]
+        # After schema hardening, invalid enum values are coerced to defaults, not rejected.
+        svc = ServiceStatus(service="svc", status="BORKED")  # type: ignore[arg-type]
+        assert svc.status == ServiceHealthStatus.UNKNOWN  # coerced to default
 
     def test_downgraded_finding_confidence_is_enum(self) -> None:
         df = DowngradedFinding(
@@ -423,13 +420,12 @@ class TestValidation:
         assert df.final_confidence == Confidence.LOW
 
     def test_downgraded_finding_invalid_confidence_rejected(self) -> None:
-        import pytest
-
-        with pytest.raises(Exception):  # noqa: B017
-            DowngradedFinding(
-                title="Test",
-                original_confidence="INVALID",  # type: ignore[arg-type]
-            )
+        # After schema hardening, invalid enum values are coerced to defaults, not rejected.
+        df = DowngradedFinding(
+            title="Test",
+            original_confidence="INVALID",  # type: ignore[arg-type]
+        )
+        assert df.original_confidence == Confidence.MEDIUM  # coerced to default
 
 
 # ══════════════════════════════════════════════════════════════
@@ -915,13 +911,14 @@ class TestServiceHealthSkillSchemaIntegration:
         assert "HEALTHY" in result
 
     def test_post_process_report_invalid_json_returns_raw(self) -> None:
-        """post_process_report must return raw content on invalid JSON."""
+        """post_process_report must include a warning and raw content on invalid JSON."""
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
         raw = "This is not JSON — it's plain Markdown output"
         result = skill.post_process_report(raw)
-        assert result == raw
+        assert "⚠️ Report parsing failed" in result
+        assert raw in result
 
     def test_post_process_report_malformed_json_returns_raw(self) -> None:
         """post_process_report must handle malformed JSON gracefully."""
@@ -929,7 +926,7 @@ class TestServiceHealthSkillSchemaIntegration:
 
         skill = ServiceHealthSkill()
         result = skill.post_process_report('{"executive_summary": "not an object"}')
-        # Should return raw because executive_summary should be an object, not a string
+        # Should contain raw because executive_summary should be an object, not a string
         assert "not an object" in result
 
     def test_base_skill_post_process_is_noop(self) -> None:

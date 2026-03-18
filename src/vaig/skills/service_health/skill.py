@@ -29,6 +29,7 @@ from vaig.skills.service_health.prompts import (
 )
 from vaig.skills.service_health.schema import HealthReport
 from vaig.tools.gke._clients import ensure_client_initialized
+from vaig.utils.json_cleaner import clean_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -331,12 +332,16 @@ class ServiceHealthSkill(BaseSkill):
         validates the JSON via ``HealthReport.model_validate_json()`` and
         renders it as Markdown via ``report.to_markdown()``.
 
-        If JSON parsing or validation fails, the raw content is returned
-        unchanged with a warning log — this preserves backward compatibility
-        if the schema is ever removed or the model returns invalid JSON.
+        Before parsing, the raw content is passed through
+        :func:`~vaig.utils.json_cleaner.clean_llm_json` to strip common LLM
+        artefacts such as markdown code fences or conversational preamble.
+
+        If JSON parsing or schema validation fails after cleaning, a visible
+        warning is prepended to the raw content so the failure is never silent.
         """
+        cleaned = clean_llm_json(content)
         try:
-            report = HealthReport.model_validate_json(content)
+            report = HealthReport.model_validate_json(cleaned)
 
             # Warn if report has no meaningful data
             if not report.findings and not report.service_statuses:
@@ -349,8 +354,11 @@ class ServiceHealthSkill(BaseSkill):
         except (ValueError, ValidationError):
             logger.warning(
                 "Failed to parse reporter JSON as HealthReport, "
-                "returning raw content. Input starts with: %.100s",
+                "returning raw content with warning. Input starts with: %.100s",
                 content,
                 exc_info=True,
             )
-            return content
+            return (
+                "⚠️ Report parsing failed — showing raw output\n\n"
+                + content
+            )
