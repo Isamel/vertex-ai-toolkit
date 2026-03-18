@@ -270,10 +270,10 @@ def _format_external_secrets_table(items: list[Any], wide: bool = False) -> str:
         meta = item.metadata
         name = meta.name or ""
         spec = item.spec or {}
-        store_ref = spec.get("secretStoreRef", {}) if isinstance(spec, dict) else {}
-        store = store_ref.get("name", "<unknown>") if isinstance(store_ref, dict) else "<unknown>"
+        store_ref = spec.get("secretStoreRef", {})
+        store = store_ref.get("name", "<unknown>")
         status_dict = item.status or {}
-        conditions = status_dict.get("conditions", []) if isinstance(status_dict, dict) else []
+        conditions = status_dict.get("conditions", [])
         sync_status = "<unknown>"
         for cond in conditions:
             if isinstance(cond, dict) and cond.get("type") == "Ready":
@@ -282,7 +282,7 @@ def _format_external_secrets_table(items: list[Any], wide: bool = False) -> str:
         age = _age(meta.creation_timestamp) if meta.creation_timestamp else "<unknown>"
         line = f"{name:<41}{store:<19}{sync_status:<19}{age}"
         if wide:
-            refresh = spec.get("refreshInterval", "") if isinstance(spec, dict) else ""
+            refresh = spec.get("refreshInterval", "")
             line += f"   {refresh}"
         lines.append(line)
     return "\n".join(lines)

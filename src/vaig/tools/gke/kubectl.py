@@ -344,69 +344,69 @@ def _format_describe(resource: str, obj: Any, api_client: Any | None = None) -> 
         lines.append("Events:       <not available for custom resources>")
         return "\n".join(lines)
 
-    lines2: list[str] = []
+    lines: list[str] = []  # type: ignore[no-redef]
     meta = obj.metadata
 
-    lines2.append(f"Name:         {meta.name}")
+    lines.append(f"Name:         {meta.name}")
     if meta.namespace:
-        lines2.append(f"Namespace:    {meta.namespace}")
+        lines.append(f"Namespace:    {meta.namespace}")
 
     # Labels
     labels = meta.labels or {}
-    lines2.append("Labels:       " + (", ".join(f"{k}={v}" for k, v in sorted(labels.items())) if labels else "<none>"))
+    lines.append("Labels:       " + (", ".join(f"{k}={v}" for k, v in sorted(labels.items())) if labels else "<none>"))
 
     # Annotations
     annotations = meta.annotations or {}
-    lines2.append("Annotations:  " + (", ".join(f"{k}={v}" for k, v in sorted(annotations.items())) if annotations else "<none>"))
+    lines.append("Annotations:  " + (", ".join(f"{k}={v}" for k, v in sorted(annotations.items())) if annotations else "<none>"))
 
-    lines2.append(f"CreationTimestamp: {meta.creation_timestamp}")
+    lines.append(f"CreationTimestamp: {meta.creation_timestamp}")
 
     # Resource-specific sections
     if resource == "pods" and obj.spec:
-        lines2.append(f"Node:         {obj.spec.node_name or '<none>'}")
-        lines2.append(f"Status:       {_formatters._pod_status(obj)}")
+        lines.append(f"Node:         {obj.spec.node_name or '<none>'}")
+        lines.append(f"Status:       {_formatters._pod_status(obj)}")
         if obj.status and obj.status.pod_ip:
-            lines2.append(f"IP:           {obj.status.pod_ip}")
+            lines.append(f"IP:           {obj.status.pod_ip}")
         # Containers
-        lines2.append("Containers:")
+        lines.append("Containers:")
         for c in obj.spec.containers or []:
-            lines2.append(f"  {c.name}:")
-            lines2.append(f"    Image:   {c.image}")
+            lines.append(f"  {c.name}:")
+            lines.append(f"    Image:   {c.image}")
             if c.ports:
                 ports = ", ".join(f"{p.container_port}/{p.protocol or 'TCP'}" for p in c.ports)
-                lines2.append(f"    Ports:   {ports}")
+                lines.append(f"    Ports:   {ports}")
             if c.resources:
                 if c.resources.requests:
-                    lines2.append(f"    Requests: {c.resources.requests}")
+                    lines.append(f"    Requests: {c.resources.requests}")
                 if c.resources.limits:
-                    lines2.append(f"    Limits:   {c.resources.limits}")
+                    lines.append(f"    Limits:   {c.resources.limits}")
         # Container statuses
         if obj.status and obj.status.container_statuses:
-            lines2.append("Container Statuses:")
+            lines.append("Container Statuses:")
             for cs in obj.status.container_statuses:
-                lines2.append(f"  {cs.name}:")
-                lines2.append(f"    Ready:    {cs.ready}")
-                lines2.append(f"    Restarts: {cs.restart_count}")
+                lines.append(f"  {cs.name}:")
+                lines.append(f"    Ready:    {cs.ready}")
+                lines.append(f"    Restarts: {cs.restart_count}")
                 if cs.state:
                     if cs.state.running:
-                        lines2.append(f"    State:    Running (since {cs.state.running.started_at})")
+                        lines.append(f"    State:    Running (since {cs.state.running.started_at})")
                     elif cs.state.waiting:
-                        lines2.append(f"    State:    Waiting ({cs.state.waiting.reason})")
+                        lines.append(f"    State:    Waiting ({cs.state.waiting.reason})")
                     elif cs.state.terminated:
-                        lines2.append(f"    State:    Terminated ({cs.state.terminated.reason})")
+                        lines.append(f"    State:    Terminated ({cs.state.terminated.reason})")
 
     elif resource == "deployments" and obj.spec:
-        lines2.append(f"Replicas:     {obj.spec.replicas} desired")
+        lines.append(f"Replicas:     {obj.spec.replicas} desired")
         if obj.status:
-            lines2.append(f"  Ready:      {obj.status.ready_replicas or 0}")
-            lines2.append(f"  Available:  {obj.status.available_replicas or 0}")
-            lines2.append(f"  Updated:    {obj.status.updated_replicas or 0}")
+            lines.append(f"  Ready:      {obj.status.ready_replicas or 0}")
+            lines.append(f"  Available:  {obj.status.available_replicas or 0}")
+            lines.append(f"  Updated:    {obj.status.updated_replicas or 0}")
         if obj.spec.strategy:
-            lines2.append(f"Strategy:     {obj.spec.strategy.type}")
+            lines.append(f"Strategy:     {obj.spec.strategy.type}")
 
     elif resource == "services" and obj.spec:
-        lines2.append(f"Type:         {obj.spec.type}")
-        lines2.append(f"ClusterIP:    {obj.spec.cluster_ip}")
+        lines.append(f"Type:         {obj.spec.type}")
+        lines.append(f"ClusterIP:    {obj.spec.cluster_ip}")
         if obj.spec.ports:
             for p in obj.spec.ports:
                 port_info = f"{p.port}"
@@ -414,20 +414,20 @@ def _format_describe(resource: str, obj: Any, api_client: Any | None = None) -> 
                     port_info += f" → {p.target_port}"
                 if p.node_port:
                     port_info += f" (NodePort: {p.node_port})"
-                lines2.append(f"  Port:       {p.name or ''} {port_info}/{p.protocol or 'TCP'}")
+                lines.append(f"  Port:       {p.name or ''} {port_info}/{p.protocol or 'TCP'}")
         if obj.spec.selector:
-            lines2.append(f"Selector:     {obj.spec.selector}")
+            lines.append(f"Selector:     {obj.spec.selector}")
 
     elif resource == "nodes" and obj.status:
         # Conditions
-        lines2.append("Conditions:")
+        lines.append("Conditions:")
         for cond in obj.status.conditions or []:
-            lines2.append(f"  {cond.type}: {cond.status} ({cond.reason or ''}) — {cond.message or ''}")
+            lines.append(f"  {cond.type}: {cond.status} ({cond.reason or ''}) — {cond.message or ''}")
         # Allocatable
         if obj.status.allocatable:
-            lines2.append("Allocatable:")
+            lines.append("Allocatable:")
             for k, v in sorted(obj.status.allocatable.items()):
-                lines2.append(f"  {k}: {v}")
+                lines.append(f"  {k}: {v}")
 
     # Events — try to fetch events for the resource
     try:
@@ -442,21 +442,21 @@ def _format_describe(resource: str, obj: Any, api_client: Any | None = None) -> 
 
         events = ev_list.items
         if events:
-            lines2.append("Events:")
-            lines2.append(f"  {'TYPE':<10}{'REASON':<25}{'AGE':<8}{'MESSAGE'}")
+            lines.append("Events:")
+            lines.append(f"  {'TYPE':<10}{'REASON':<25}{'AGE':<8}{'MESSAGE'}")
             for ev in events[-20:]:  # Last 20 events
                 ev_type = ev.type or "Normal"
                 reason = ev.reason or ""
                 ev_age = _formatters._age(ev.last_timestamp or ev.metadata.creation_timestamp)
                 message = ev.message or ""
-                lines2.append(f"  {ev_type:<10}{reason:<25}{ev_age:<8}{message}")
+                lines.append(f"  {ev_type:<10}{reason:<25}{ev_age:<8}{message}")
         else:
-            lines2.append("Events:       <none>")
+            lines.append("Events:       <none>")
     except Exception:
         logger.debug("Failed to retrieve events for %s/%s", resource, meta.name, exc_info=True)
-        lines2.append("Events:       <unable to retrieve>")
+        lines.append("Events:       <unable to retrieve>")
 
-    return "\n".join(lines2)
+    return "\n".join(lines)
 
 
 # ── kubectl_describe ─────────────────────────────────────────
