@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from vaig.tools.base import ToolDef
@@ -680,17 +681,24 @@ class TestMonitoringQueryTimestampRegression:
     @patch("vaig.tools.gcloud_tools._get_monitoring_client")
     def test_timestamp_pb2_from_datetime_is_called(self, mock_client: MagicMock) -> None:
         """Bug #2 regression: Timestamp objects are constructed via timestamp_pb2.Timestamp()
-        and .FromDatetime() is called on them — never on None."""
+        and .FromDatetime() is called on them — never on None.
+
+        Strengthened: uses separate mock instances for start_ts and end_ts so that a
+        buggy implementation that only constructs ONE Timestamp (or only calls
+        .FromDatetime() for end_time but not start_time) will fail this test.
+        """
         from vaig.tools.gcloud_tools import gcloud_monitoring_query
 
         client = MagicMock()
         mock_client.return_value = (client, None)
         client.list_time_series.return_value = []
 
-        # Track Timestamp() calls to verify .FromDatetime() is called on instances
-        fake_ts_instance = MagicMock()
+        # Use side_effect to return distinct instances for each Timestamp() call,
+        # so we can assert on start_ts AND end_ts independently.
+        fake_start_ts = MagicMock(name="start_ts")
+        fake_end_ts = MagicMock(name="end_ts")
         fake_timestamp_pb2 = MagicMock()
-        fake_timestamp_pb2.Timestamp.return_value = fake_ts_instance
+        fake_timestamp_pb2.Timestamp.side_effect = [fake_end_ts, fake_start_ts]
 
         fake_monitoring = MagicMock()
         fake_monitoring.TimeInterval = MagicMock()
@@ -717,16 +725,34 @@ class TestMonitoringQueryTimestampRegression:
                 project="my-project",
             )
 
-        # The fix: Timestamp() must be called (at least twice — start and end)
-        assert fake_timestamp_pb2.Timestamp.call_count >= 2, (
-            "Expected timestamp_pb2.Timestamp() to be called at least twice "
-            f"(start + end), got {fake_timestamp_pb2.Timestamp.call_count} calls"
+        # The fix: Timestamp() must be called exactly twice — once for end_ts, once for start_ts.
+        assert fake_timestamp_pb2.Timestamp.call_count == 2, (
+            "Expected timestamp_pb2.Timestamp() to be called exactly twice "
+            f"(end_ts + start_ts), got {fake_timestamp_pb2.Timestamp.call_count} calls"
         )
-        # .FromDatetime() must be called on the Timestamp instance — not on None
-        assert fake_ts_instance.FromDatetime.called, (
-            "Expected .FromDatetime() to be called on a Timestamp instance, not on None. "
-            "This is the Bug #2 regression — if Timestamp() returns None, this fails with "
-            "AttributeError: 'NoneType' object has no attribute 'FromDatetime'"
+        # .FromDatetime() must be called on BOTH the end_ts instance AND the start_ts instance.
+        assert fake_end_ts.FromDatetime.called, (
+            "Expected .FromDatetime() to be called on the end_ts Timestamp instance. "
+            "Bug #2 regression: if only one Timestamp is constructed (or end_time is skipped), "
+            "this assertion fails."
+        )
+        assert fake_start_ts.FromDatetime.called, (
+            "Expected .FromDatetime() to be called on the start_ts Timestamp instance. "
+            "Bug #2 regression: if only end_time uses FromDatetime but start_time does not, "
+            "this assertion would catch it."
+        )
+        # Verify .FromDatetime() was called with a datetime argument on both instances.
+        end_dt_arg = fake_end_ts.FromDatetime.call_args[0][0]
+        start_dt_arg = fake_start_ts.FromDatetime.call_args[0][0]
+        assert isinstance(end_dt_arg, datetime), (
+            f"end_ts.FromDatetime() should be called with a datetime, got {type(end_dt_arg)}"
+        )
+        assert isinstance(start_dt_arg, datetime), (
+            f"start_ts.FromDatetime() should be called with a datetime, got {type(start_dt_arg)}"
+        )
+        # start_time must be strictly before end_time
+        assert start_dt_arg < end_dt_arg, (
+            f"start_time ({start_dt_arg}) must be before end_time ({end_dt_arg})"
         )
 
     @patch("vaig.tools.gcloud_tools._get_monitoring_client")
