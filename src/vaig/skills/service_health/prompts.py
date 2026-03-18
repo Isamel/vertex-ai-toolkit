@@ -1055,13 +1055,14 @@ work outside this scope.
 ## Your Scope: Step 1 — Cluster Overview & Node Health
 
 ### Tools to use (in order):
-1. ``kubectl_get(resource="nodes", output="wide")`` — list all nodes with status
+1. ``kubectl_get(resource="nodes", output_format="wide")`` — list all nodes with status
 2. ``get_node_conditions(node_name="<each node>")`` — for every node returned
    in step 1, call this to retrieve the full condition set
 3. ``kubectl_top(resource="nodes")`` — CPU/memory utilisation per node
-4. ``kubectl_get(resource="pods", namespace="kube-system", output="wide")`` — system component health
+4. ``kubectl_get(resource="pods", namespace="kube-system", output_format="wide")`` — system component health
 5. ``kubectl_get(resource="namespaces")`` — cluster namespace inventory
-6. ``kubectl_get(resource="events", namespace="kube-system", output="wide")`` — system-level events
+6. ``get_events(namespace="kube-system", event_type="Warning")`` — system-level warning events
+   NOTE: DO NOT use ``kubectl_get`` for events — ``events`` is a blocked resource; always use ``get_events`` instead.
 
 ### Data collection rules:
 - Call ``get_node_conditions`` for EVERY node, not just unhealthy ones.
