@@ -257,3 +257,121 @@ class TestKubectlDescribeExternalSecret:
 
         assert result.error is True
         assert "not found" in result.output.lower()
+
+
+# ── kubectl_get ExternalSecrets — json / yaml output formats ─
+
+
+class TestKubectlGetExternalSecretsOutputFormats:
+    """kubectl_get with output_format='json'/'yaml' serialises dict-backed _DictItems correctly."""
+
+    def _make_custom_api_with_two_secrets(self) -> MagicMock:
+        custom_api = MagicMock()
+        custom_api.list_namespaced_custom_object.return_value = {
+            "items": [
+                _make_externalsecret(name="es-db", store="vault-store", ready=True),
+                _make_externalsecret(name="es-api", store="aws-store", ready=False),
+            ],
+            "metadata": {},
+        }
+        return custom_api
+
+    def test_json_output_contains_both_resources(self) -> None:
+        """output_format='json' serialises dict-backed ExternalSecrets to valid JSON."""
+        import json
+
+        from vaig.tools.gke.kubectl import kubectl_get
+
+        custom_api = self._make_custom_api_with_two_secrets()
+
+        with patch("vaig.tools.gke._clients._create_k8s_clients") as mock_create:
+            mock_create.return_value = _make_k8s_clients(custom_api)
+            result = kubectl_get(
+                "externalsecret",
+                gke_config=_make_gke_config(),
+                namespace="default",
+                output_format="json",
+            )
+
+        assert result.error is False, f"Expected no error, got: {result.output}"
+
+        # Must be valid JSON
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list), f"Expected JSON list, got {type(parsed)}"
+        assert len(parsed) == 2
+
+        names = {item["metadata"]["name"] for item in parsed}
+        assert names == {"es-db", "es-api"}, f"Unexpected names: {names}"
+
+        stores = {item["spec"]["secretStoreRef"]["name"] for item in parsed}
+        assert stores == {"vault-store", "aws-store"}, f"Unexpected stores: {stores}"
+
+        # Verify the full structure is preserved (not just top-level keys)
+        for item in parsed:
+            assert "apiVersion" in item
+            assert "kind" in item
+            assert item["kind"] == "ExternalSecret"
+            assert "spec" in item
+            assert "status" in item
+
+    def test_yaml_output_contains_both_resources(self) -> None:
+        """output_format='yaml' serialises dict-backed ExternalSecrets to valid YAML."""
+        import yaml
+
+        from vaig.tools.gke.kubectl import kubectl_get
+
+        custom_api = self._make_custom_api_with_two_secrets()
+
+        with patch("vaig.tools.gke._clients._create_k8s_clients") as mock_create:
+            mock_create.return_value = _make_k8s_clients(custom_api)
+            result = kubectl_get(
+                "externalsecret",
+                gke_config=_make_gke_config(),
+                namespace="default",
+                output_format="yaml",
+            )
+
+        assert result.error is False, f"Expected no error, got: {result.output}"
+
+        # Must be valid YAML (dump_all produces multi-doc stream)
+        docs = list(yaml.safe_load_all(result.output))
+        # dump_all may produce a list-of-dicts or individual docs depending on path
+        # Normalise: if we get a single list, unpack it
+        if len(docs) == 1 and isinstance(docs[0], list):
+            docs = docs[0]
+
+        assert len(docs) == 2, f"Expected 2 YAML documents, got {len(docs)}: {docs}"
+
+        names = {doc["metadata"]["name"] for doc in docs}
+        assert names == {"es-db", "es-api"}, f"Unexpected names: {names}"
+
+    def test_json_output_preserves_status_conditions(self) -> None:
+        """JSON output must include the status.conditions array from the dict-backed item."""
+        import json
+
+        from vaig.tools.gke.kubectl import kubectl_get
+
+        custom_api = MagicMock()
+        custom_api.list_namespaced_custom_object.return_value = {
+            "items": [_make_externalsecret(name="es-one", store="gcp-sm", ready=True)],
+            "metadata": {},
+        }
+
+        with patch("vaig.tools.gke._clients._create_k8s_clients") as mock_create:
+            mock_create.return_value = _make_k8s_clients(custom_api)
+            result = kubectl_get(
+                "externalsecret",
+                gke_config=_make_gke_config(),
+                namespace="default",
+                output_format="json",
+            )
+
+        assert result.error is False, f"Expected no error, got: {result.output}"
+        parsed = json.loads(result.output)
+        assert len(parsed) == 1
+        item = parsed[0]
+        conditions = item["status"]["conditions"]
+        assert isinstance(conditions, list)
+        assert len(conditions) == 1
+        assert conditions[0]["type"] == "Ready"
+        assert conditions[0]["status"] == "True"

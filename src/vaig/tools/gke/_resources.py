@@ -53,6 +53,10 @@ class _DictItem:
     def status(self) -> dict[str, Any] | None:
         return self._d.get("status")
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return the raw backing dict for this custom resource."""
+        return self._d
+
     def get(self, key: str, default: Any = None) -> Any:
         """Dict-style access for compatibility."""
         return self._d.get(key, default)

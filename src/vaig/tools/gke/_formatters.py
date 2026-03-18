@@ -334,6 +334,23 @@ def _redact_k8s_secret_data(
         return serialised
 
 
+def _serialise_item(item: Any, api: Any) -> Any:
+    """Serialise a single K8s item to a plain dict.
+
+    For dict-backed custom resource wrappers (``_DictItem``), the underlying
+    raw dict is returned directly — ``ApiClient.sanitize_for_serialization``
+    does not reliably unwrap these objects.  For all other items the standard
+    ``sanitize_for_serialization`` path is used.
+    """
+    # Import here to avoid a circular dependency; _resources is a sibling module.
+    from vaig.tools.gke._resources import _DictItem  # noqa: WPS433
+
+    if isinstance(item, _DictItem):
+        # Use the public to_dict() method to get the raw dict from the custom resource wrapper.
+        return dict(item.to_dict())
+    return api.sanitize_for_serialization(item)
+
+
 def _format_items(resource: str, items: list[Any], output_format: str) -> str:
     """Format a list of K8s items into the requested output_format."""
     import json as _json
@@ -345,7 +362,7 @@ def _format_items(resource: str, items: list[Any], output_format: str) -> str:
     if output_format == "json":
         # Use a single ApiClient for serialisation (not one per item)
         api = k8s_client.ApiClient()
-        serialised = [api.sanitize_for_serialization(i) for i in items]
+        serialised = [_serialise_item(i, api) for i in items]
         if is_secret:
             serialised = _redact_k8s_secret_data(serialised)
         return _json.dumps(serialised, indent=2, default=str)
@@ -356,7 +373,7 @@ def _format_items(resource: str, items: list[Any], output_format: str) -> str:
         except ImportError:
             return "PyYAML is not installed. Use output_format='json' instead."
         api = k8s_client.ApiClient()
-        serialised = [api.sanitize_for_serialization(i) for i in items]
+        serialised = [_serialise_item(i, api) for i in items]
         if is_secret:
             serialised = _redact_k8s_secret_data(serialised)
         return str(_yaml.dump_all(serialised, default_flow_style=False))

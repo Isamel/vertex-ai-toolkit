@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from vaig.tools.base import ToolDef
@@ -680,17 +681,28 @@ class TestMonitoringQueryTimestampRegression:
     @patch("vaig.tools.gcloud_tools._get_monitoring_client")
     def test_timestamp_pb2_from_datetime_is_called(self, mock_client: MagicMock) -> None:
         """Bug #2 regression: Timestamp objects are constructed via timestamp_pb2.Timestamp()
-        and .FromDatetime() is called on them — never on None."""
+        and .FromDatetime() is called on them — never on None.
+
+        Order-independent: collects all Timestamp instances created and verifies that
+        FromDatetime was called on at least two of them, each with a datetime argument,
+        and that the two datetime arguments are distinct (one before the other).
+        """
         from vaig.tools.gcloud_tools import gcloud_monitoring_query
 
         client = MagicMock()
         mock_client.return_value = (client, None)
         client.list_time_series.return_value = []
 
-        # Track Timestamp() calls to verify .FromDatetime() is called on instances
-        fake_ts_instance = MagicMock()
+        # Collect every Timestamp instance created, regardless of construction order.
+        created_instances: list[MagicMock] = []
+
+        def _make_timestamp() -> MagicMock:
+            ts = MagicMock()
+            created_instances.append(ts)
+            return ts
+
         fake_timestamp_pb2 = MagicMock()
-        fake_timestamp_pb2.Timestamp.return_value = fake_ts_instance
+        fake_timestamp_pb2.Timestamp.side_effect = _make_timestamp
 
         fake_monitoring = MagicMock()
         fake_monitoring.TimeInterval = MagicMock()
@@ -717,16 +729,32 @@ class TestMonitoringQueryTimestampRegression:
                 project="my-project",
             )
 
-        # The fix: Timestamp() must be called (at least twice — start and end)
-        assert fake_timestamp_pb2.Timestamp.call_count >= 2, (
-            "Expected timestamp_pb2.Timestamp() to be called at least twice "
-            f"(start + end), got {fake_timestamp_pb2.Timestamp.call_count} calls"
+        # At least two Timestamp instances must have been constructed.
+        assert len(created_instances) >= 2, (
+            f"Expected at least 2 timestamp_pb2.Timestamp() calls, got {len(created_instances)}"
         )
-        # .FromDatetime() must be called on the Timestamp instance — not on None
-        assert fake_ts_instance.FromDatetime.called, (
-            "Expected .FromDatetime() to be called on a Timestamp instance, not on None. "
-            "This is the Bug #2 regression — if Timestamp() returns None, this fails with "
-            "AttributeError: 'NoneType' object has no attribute 'FromDatetime'"
+
+        # Collect all datetime args passed to .FromDatetime() across all instances.
+        from_datetime_args: list[datetime] = []
+        for ts_instance in created_instances:
+            if ts_instance.FromDatetime.called:
+                arg = ts_instance.FromDatetime.call_args[0][0]
+                assert isinstance(arg, datetime), (
+                    f"FromDatetime() must be called with a datetime, got {type(arg)}"
+                )
+                from_datetime_args.append(arg)
+
+        assert len(from_datetime_args) >= 2, (
+            f"Expected FromDatetime() to be called with datetime args on at least 2 instances, "
+            f"got {len(from_datetime_args)}"
+        )
+
+        # The two datetimes must be distinct — one for start_time, one for end_time.
+        dt_sorted = sorted(from_datetime_args)
+        start_dt_arg = dt_sorted[0]
+        end_dt_arg = dt_sorted[-1]
+        assert start_dt_arg < end_dt_arg, (
+            f"start_time ({start_dt_arg}) must be before end_time ({end_dt_arg})"
         )
 
     @patch("vaig.tools.gcloud_tools._get_monitoring_client")
