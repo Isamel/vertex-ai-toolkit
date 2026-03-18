@@ -169,6 +169,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
         tool_result_cache: ToolResultCache | None = None,
+        required_sections: list[str] | None = None,
     ) -> AgentResult:
         """Execute a task using the tool-use loop.
 
@@ -221,6 +222,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 agent_name=self.name,
                 tool_call_store=tool_call_store,
                 tool_result_cache=tool_result_cache,
+                required_sections=required_sections,
                 **loop_kwargs,
             )
         except MaxIterationsError:
@@ -286,6 +288,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
         tool_result_cache: ToolResultCache | None = None,
+        required_sections: list[str] | None = None,
     ) -> AgentResult:
         """Execute a task using the async tool-use loop.
 
@@ -339,6 +342,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 agent_name=self.name,
                 tool_call_store=tool_call_store,
                 tool_result_cache=tool_result_cache,
+                required_sections=required_sections,
                 **loop_kwargs,
             )
         except MaxIterationsError:
