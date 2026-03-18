@@ -217,6 +217,39 @@ def clear_k8s_client_cache() -> None:
     _CLIENT_CACHE.clear()
 
 
+def ensure_client_initialized(gke_config: GKEConfig) -> None:
+    """Initialize the K8s client cache for *gke_config* if not already cached.
+
+    This is a safe, idempotent pre-warming function designed to be called
+    **once, sequentially**, before any parallel threads are launched.  It
+    eliminates the thread-safety hazard in :func:`_suppress_stderr` — which
+    mutates ``sys.stdout`` and OS fd 2 — by ensuring that the client is fully
+    constructed and stored in ``_CLIENT_CACHE`` before concurrent execution
+    begins.
+
+    If the client is already cached, this is a cheap no-op (a single dict
+    lookup).  If client initialization fails (e.g. missing kubeconfig, no
+    ``kubernetes`` package installed), the error is logged as a warning and
+    silently suppressed — parallel execution will still proceed, and the
+    individual tools will surface the error through their normal
+    :class:`~vaig.tools.base.ToolResult` mechanism.
+
+    Args:
+        gke_config: GKE configuration used to derive the cache key and build
+            the K8s clients.  Passed unchanged to :func:`_create_k8s_clients`.
+    """
+    key = _cache_key(gke_config)
+    if key in _CLIENT_CACHE:
+        return  # already warm — fast path
+
+    result = _create_k8s_clients(gke_config)
+    if isinstance(result, ToolResult):
+        logger.warning(
+            "K8s client pre-warm failed (parallel execution will continue): %s",
+            result.output,
+        )
+
+
 class _NonTTYStream:
     """Wrapper around a stream that forces ``isatty()`` to return ``False``.
 

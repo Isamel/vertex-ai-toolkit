@@ -21,9 +21,14 @@ from vaig.skills.service_health.prompts import (
     HEALTH_VERIFIER_PROMPT,
     PHASE_PROMPTS,
     SYSTEM_INSTRUCTION,
+    build_event_gatherer_prompt,
     build_gatherer_prompt,
+    build_logging_gatherer_prompt,
+    build_node_gatherer_prompt,
+    build_workload_gatherer_prompt,
 )
 from vaig.skills.service_health.schema import HealthReport
+from vaig.tools.gke._clients import ensure_client_initialized
 
 logger = logging.getLogger(__name__)
 
@@ -96,33 +101,77 @@ class ServiceHealthSkill(BaseSkill):
         template = PHASE_PROMPTS.get(phase.value, PHASE_PROMPTS["analyze"])
         return template.format(context=context, user_input=user_input)
 
+    def pre_execute_parallel(self, query: str) -> None:  # noqa: ARG002
+        """Pre-warm the K8s client cache before parallel gatherers launch.
+
+        The K8s client cache (``_CLIENT_CACHE``) is not thread-safe on first
+        write because :func:`~vaig.tools.gke._clients._suppress_stderr` mutates
+        ``sys.stdout`` and OS fd 2.  Calling this hook once, sequentially,
+        ensures the client is fully constructed and stored in the cache before
+        any concurrent threads start.
+
+        Errors are swallowed silently — pre-warming is best-effort.  If the
+        client cannot be initialized (e.g. no kubeconfig, missing package),
+        the individual tools will surface the error through their normal
+        :class:`~vaig.tools.base.ToolResult` mechanism.
+        """
+        try:
+            from vaig.core.config import get_settings  # noqa: PLC0415
+
+            settings = get_settings()
+            ensure_client_initialized(settings.gke)
+        except Exception:
+            logger.debug(
+                "K8s client pre-warm skipped (non-fatal): see ensure_client_initialized logs",
+                exc_info=True,
+            )
+
     def get_agents_config(self) -> list[dict[str, Any]]:
-        """Return the 4-agent sequential pipeline configuration.
+        """Return the default pipeline configuration — the 7-agent parallel config.
 
-        Agent 1 (health_gatherer) has ``requires_tools=True`` which tells
-        the :class:`~vaig.agents.orchestrator.Orchestrator` to instantiate
-        a :class:`~vaig.agents.tool_aware.ToolAwareAgent`.
+        Delegates to :meth:`get_parallel_agents_config` so that the
+        ``parallel_sequential`` execution strategy is used by default.  The
+        Orchestrator auto-detects the ``parallel_group`` key in the returned
+        configs and upgrades from ``"sequential"`` to ``"parallel_sequential"``
+        automatically — no call-site changes required.
 
-        Agent 2 (health_analyzer) has ``requires_tools=False`` (the default)
-        and is instantiated as :class:`~vaig.agents.specialist.SpecialistAgent`.
+        For the legacy 4-agent sequential pipeline (single monolithic
+        ``health_gatherer`` agent), use
+        :meth:`get_sequential_agents_config` directly.
 
-        Agent 3 (health_verifier) has ``requires_tools=True`` — it makes
-        targeted tool calls to verify findings from the analyzer.  Uses a
-        fast model with limited iterations for efficiency.
+        Returns:
+            The 7-agent parallel pipeline: 4 parallel sub-gatherers
+            (``node_gatherer``, ``workload_gatherer``, ``event_gatherer``,
+            ``logging_gatherer``) followed by the unchanged sequential tail
+            (``health_analyzer`` → ``health_verifier`` → ``health_reporter``).
+        """
+        return self.get_parallel_agents_config()
 
-        Agent 4 (health_reporter) has ``requires_tools=False`` and uses
-        Gemini's structured output mode (``response_schema=HealthReport``,
-        ``response_mime_type="application/json"``).  The JSON response is
-        converted to Markdown by :meth:`post_process_report`.
+    def get_sequential_agents_config(self) -> list[dict[str, Any]]:
+        """Return the legacy 4-agent sequential pipeline configuration.
 
-        Note: Both ``ToolAwareAgent.from_config_dict`` and
-        ``SpecialistAgent.from_config_dict`` read the ``system_instruction``
-        key.  The ``system_prompt`` alias is accepted as a backward-compat
-        fallback by ``ToolAwareAgent`` but is no longer needed here.
+        This is the original pre-Phase-3 configuration: a single monolithic
+        ``health_gatherer`` agent (``gemini-2.5-pro``, 25 iterations) that
+        runs all 10 investigation steps sequentially, followed by the
+        analyzer → verifier → reporter tail.
 
-        The gatherer prompt's tool reference table is built dynamically
-        based on ``gke.helm_enabled`` and ``gke.argocd_enabled`` settings,
-        so disabled tools are omitted from the prompt (R4).
+        Use this method when you need the sequential fallback path (e.g. in
+        tests that explicitly verify backward-compat sequential behaviour).
+
+        Agent roles:
+
+        * Agent 1 (``health_gatherer``): ``requires_tools=True`` — instantiated
+          as :class:`~vaig.agents.tool_aware.ToolAwareAgent`.
+        * Agent 2 (``health_analyzer``): ``requires_tools=False`` —
+          :class:`~vaig.agents.specialist.SpecialistAgent`.
+        * Agent 3 (``health_verifier``): ``requires_tools=True`` — targeted
+          verification tool calls with a fast model.
+        * Agent 4 (``health_reporter``): ``requires_tools=False`` —
+          structured JSON output (``response_schema=HealthReport``).
+
+        The gatherer prompt's tool-reference table is built dynamically from
+        ``gke.helm_enabled`` / ``gke.argocd_enabled`` settings so disabled
+        tools are excluded from the prompt (R4).
         """
         from vaig.core.config import get_settings
 
@@ -167,6 +216,102 @@ class ServiceHealthSkill(BaseSkill):
                 "system_instruction": HEALTH_REPORTER_PROMPT,
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,  # Slightly higher for natural writing
+                "response_schema": HealthReport,
+                "response_mime_type": "application/json",
+            },
+        ]
+
+    def get_parallel_agents_config(self) -> list[dict[str, Any]]:
+        """Return the 7-agent parallel-then-sequential pipeline configuration.
+
+        Phase 3 of the parallel-gatherer design replaces the single monolithic
+        ``health_gatherer`` with 4 focused sub-gatherers that run concurrently
+        via ``_execute_parallel_then_sequential`` in the Orchestrator.
+
+        Pipeline structure:
+        - **Parallel group** (``parallel_group="gather"``): 4 sub-gatherers,
+          each covering a focused subset of the 10-step investigation checklist.
+          All use ``gemini-2.5-flash`` for speed and cost efficiency.
+        - **Sequential tail** (unchanged): health_analyzer → health_verifier →
+          health_reporter.  The merged output of the parallel group is passed
+          as context to the analyzer.
+
+        Sub-gatherer scope:
+        - ``node_gatherer``: Step 1 — cluster overview & node health
+        - ``workload_gatherer``: Steps 2, 4, 5, 6 — pods, deployments, services, HPA
+        - ``event_gatherer``: Steps 3, 8, 9, 10 — events, networking, storage, GitOps
+        - ``logging_gatherer``: Steps 7a, 7b — Cloud Logging error & warning queries
+
+        Requires orchestrator strategy ``"parallel_sequential"`` (implemented in
+        Phase 1 via ``_execute_parallel_then_sequential``).
+        """
+        return [
+            # ── Parallel group: 4 focused sub-gatherers ──────────────────
+            {
+                "name": "node_gatherer",
+                "role": "Cluster & Node Health Gatherer",
+                "requires_tools": True,
+                "parallel_group": "gather",
+                "system_instruction": build_node_gatherer_prompt(),
+                "model": "gemini-2.5-flash",
+                "temperature": 0.0,
+                "max_iterations": 8,
+            },
+            {
+                "name": "workload_gatherer",
+                "role": "Workload Health Gatherer",
+                "requires_tools": True,
+                "parallel_group": "gather",
+                "system_instruction": build_workload_gatherer_prompt(),
+                "model": "gemini-2.5-flash",
+                "temperature": 0.0,
+                "max_iterations": 12,
+            },
+            {
+                "name": "event_gatherer",
+                "role": "Events & Infrastructure Gatherer",
+                "requires_tools": True,
+                "parallel_group": "gather",
+                "system_instruction": build_event_gatherer_prompt(),
+                "model": "gemini-2.5-flash",
+                "temperature": 0.0,
+                "max_iterations": 10,
+            },
+            {
+                "name": "logging_gatherer",
+                "role": "Cloud Logging Gatherer",
+                "requires_tools": True,
+                "parallel_group": "gather",
+                "system_instruction": build_logging_gatherer_prompt(),
+                "model": "gemini-2.5-flash",
+                "temperature": 0.0,
+                "max_iterations": 8,
+            },
+            # ── Sequential tail: unchanged from get_agents_config() ──────
+            {
+                "name": "health_analyzer",
+                "role": "Health Pattern Analyzer",
+                "requires_tools": False,
+                "system_instruction": HEALTH_ANALYZER_PROMPT,
+                "model": "gemini-2.5-flash",
+                "temperature": 0.2,
+            },
+            {
+                "name": "health_verifier",
+                "role": "Health Finding Verifier",
+                "requires_tools": True,
+                "system_instruction": HEALTH_VERIFIER_PROMPT,
+                "model": "gemini-2.5-flash",
+                "max_iterations": 15,
+                "temperature": 0.2,
+            },
+            {
+                "name": "health_reporter",
+                "role": "Health Report Generator",
+                "requires_tools": False,
+                "system_instruction": HEALTH_REPORTER_PROMPT,
+                "model": "gemini-2.5-flash",
+                "temperature": 0.3,
                 "response_schema": HealthReport,
                 "response_mime_type": "application/json",
             },

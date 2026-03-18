@@ -553,6 +553,20 @@ class Orchestrator:
                 len(agent_configs),
             )
 
+        # ── Auto-detect parallel_sequential from agent configs ───────────
+        # When any agent config declares a ``parallel_group`` key and the
+        # caller has not explicitly requested a non-sequential strategy,
+        # automatically upgrade to ``parallel_sequential`` so that skills
+        # returning ``get_parallel_agents_config()`` from ``get_agents_config()``
+        # work without requiring every call-site to pass the strategy explicitly.
+        if strategy == "sequential" and any(
+            cfg.get("parallel_group") for cfg in agent_configs
+        ):
+            logger.warning(
+                "Auto-detected parallel_group agents — upgrading strategy to parallel_sequential",
+            )
+            strategy = "parallel_sequential"
+
         agents = self.create_agents_for_skill(
             skill, tool_registry, agent_configs=agent_configs,
         )
@@ -561,7 +575,7 @@ class Orchestrator:
             phase=SkillPhase.EXECUTE,
         )
 
-        known_strategies = {"sequential", "fanout", "single"}
+        known_strategies = {"sequential", "fanout", "single", "parallel_sequential"}
         if strategy not in known_strategies:
             logger.warning(
                 "Unknown strategy '%s' — falling back to sequential. "
@@ -570,7 +584,19 @@ class Orchestrator:
                 ", ".join(sorted(known_strategies)),
             )
 
-        if strategy == "fanout":
+        if strategy == "parallel_sequential":
+            result = self._execute_parallel_then_sequential(
+                agents=agents,
+                skill=skill,
+                query=query,
+                result=result,
+                on_agent_progress=on_agent_progress,
+                on_tool_call=on_tool_call,
+                tool_call_store=tool_call_store,
+                tool_result_cache=tool_result_cache,
+            )
+
+        elif strategy == "fanout":
             # Submit all agents concurrently, collect in submission order
             total = len(agents)
             with concurrent.futures.ThreadPoolExecutor(max_workers=total) as executor:
@@ -1304,6 +1330,20 @@ class Orchestrator:
                 len(agent_configs),
             )
 
+        # ── Auto-detect parallel_sequential from agent configs ───────────
+        # When any agent config declares a ``parallel_group`` key and the
+        # caller has not explicitly requested a non-sequential strategy,
+        # automatically upgrade to ``parallel_sequential`` so that skills
+        # returning ``get_parallel_agents_config()`` from ``get_agents_config()``
+        # work without requiring every call-site to pass the strategy explicitly.
+        if strategy == "sequential" and any(
+            cfg.get("parallel_group") for cfg in agent_configs
+        ):
+            logger.warning(
+                "Auto-detected parallel_group agents — upgrading strategy to parallel_sequential",
+            )
+            strategy = "parallel_sequential"
+
         agents = self.create_agents_for_skill(
             skill, tool_registry, agent_configs=agent_configs,
         )
@@ -1312,7 +1352,7 @@ class Orchestrator:
             phase=SkillPhase.EXECUTE,
         )
 
-        known_strategies = {"sequential", "fanout", "single"}
+        known_strategies = {"sequential", "fanout", "single", "parallel_sequential"}
         if strategy not in known_strategies:
             logger.warning(
                 "Unknown strategy '%s' — falling back to sequential. "
@@ -1321,7 +1361,19 @@ class Orchestrator:
                 ", ".join(sorted(known_strategies)),
             )
 
-        if strategy == "fanout":
+        if strategy == "parallel_sequential":
+            result = await self._async_execute_parallel_then_sequential(
+                agents=agents,
+                skill=skill,
+                query=query,
+                result=result,
+                on_agent_progress=on_agent_progress,
+                on_tool_call=on_tool_call,
+                tool_call_store=tool_call_store,
+                tool_result_cache=tool_result_cache,
+            )
+
+        elif strategy == "fanout":
             # ── Async fan-out: all agents concurrently via gather ──
             total = len(agents)
 
@@ -1695,6 +1747,382 @@ class Orchestrator:
             pass
 
         return result
+
+    # ── parallel_sequential helpers ────────────────────────────────────────
+
+    def _execute_parallel_then_sequential(
+        self,
+        *,
+        agents: list[BaseAgent],
+        skill: BaseSkill,
+        query: str,
+        result: OrchestratorResult,
+        on_agent_progress: Any | None,
+        on_tool_call: Any | None,
+        tool_call_store: Any | None,
+        tool_result_cache: Any,
+    ) -> OrchestratorResult:
+        """Run gatherer agents concurrently, then remaining agents sequentially.
+
+        This is the synchronous implementation of the ``parallel_sequential``
+        execution strategy.  Agents whose names end with ``_gatherer`` are
+        treated as the *parallel group* and are submitted to a
+        :class:`~concurrent.futures.ThreadPoolExecutor` simultaneously.  All
+        other agents (analyzer, verifier, reporter, …) form the *sequential
+        tail* and run one after another once the parallel phase is done.
+
+        **Execution flow**:
+
+        1. Call :meth:`~vaig.skills.base.BaseSkill.pre_execute_parallel` on the
+           skill so that shared resources (e.g. K8s client) can be pre-warmed
+           before threads start.
+        2. Submit every ``_gatherer`` agent to the thread pool and collect
+           :class:`~vaig.agents.base.AgentResult` objects.  Individual agent
+           failures are caught and recorded as non-fatal error results so the
+           rest of the pipeline can continue with partial data.
+        3. Merge all gatherer outputs into a single context string via
+           :meth:`_merge_parallel_outputs`.
+        4. Optionally warn about missing required sections via
+           :meth:`~vaig.skills.base.BaseSkill.get_required_output_sections`.
+        5. Run each sequential agent in order, threading the accumulated context
+           chain between them.
+        6. Compute overall success: at least one gatherer must succeed AND the
+           last sequential agent must succeed.
+
+        Args:
+            agents: Full list of agents created for the skill (gatherers +
+                sequential tail).  Order within each group is preserved.
+            skill: The :class:`~vaig.skills.base.BaseSkill` being executed.
+                Used for the pre-warm hook and required-sections validation.
+            query: The original user query passed to each agent's ``execute``
+                call.
+            result: Pre-initialised :class:`OrchestratorResult` to accumulate
+                agent results and usage into.
+            on_agent_progress: Optional progress callback fired at the start
+                and end of each agent.
+            on_tool_call: Optional callback forwarded to tool-aware agents.
+            tool_call_store: Optional store forwarded to tool-aware agents.
+            tool_result_cache: Shared :class:`~vaig.core.cache.ToolResultCache`
+                instance for deduplicating tool calls across agents.
+
+        Returns:
+            The mutated *result* object populated with all agent results,
+            aggregated token usage, ``success`` flag, and
+            ``synthesized_output`` (the last agent's content).
+        """
+        parallel_agents = [a for a in agents if a.name.endswith("_gatherer")]
+        sequential_agents = [a for a in agents if not a.name.endswith("_gatherer")]
+
+        logger.info(
+            "parallel_sequential: %d parallel gatherer(s), %d sequential agent(s)",
+            len(parallel_agents),
+            len(sequential_agents),
+        )
+
+        # ── Pre-execution hook (sequential, before threads start) ─────────
+        skill.pre_execute_parallel(query)
+
+        # ── Concurrent phase ─────────────────────────────────────────────
+        total_parallel = len(parallel_agents)
+        parallel_results: list[AgentResult] = []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(total_parallel, 1)) as executor:
+            futures_map: list[tuple[BaseAgent, concurrent.futures.Future[AgentResult]]] = []
+            for idx, agent in enumerate(parallel_agents):
+                logger.info("parallel_sequential: submitting gatherer agent=%s", agent.name)
+                _fire_agent_progress(on_agent_progress, agent.name, idx, total_parallel, "start")
+                kw: dict[str, Any] = {"context": query}
+                if isinstance(agent, ToolAwareAgent):
+                    if on_tool_call is not None:
+                        kw["on_tool_call"] = on_tool_call
+                    if tool_call_store is not None:
+                        kw["tool_call_store"] = tool_call_store
+                    kw["tool_result_cache"] = tool_result_cache
+                futures_map.append((agent, executor.submit(agent.execute, query, **kw)))
+
+            for idx, (agent, future) in enumerate(futures_map):
+                try:
+                    agent_result = future.result()
+                except Exception:
+                    logger.exception(
+                        "Gatherer agent %s raised an exception during parallel execution",
+                        agent.name,
+                    )
+                    agent_result = AgentResult(
+                        agent_name=agent.name,
+                        content=f"Agent '{agent.name}' failed with an unexpected error.",
+                        success=False,
+                    )
+                _fire_agent_progress(on_agent_progress, agent.name, idx, total_parallel, "end")
+                parallel_results.append(agent_result)
+                result.agent_results.append(agent_result)
+                _accumulate_usage(result, agent_result)
+                if not agent_result.success:
+                    logger.warning(
+                        "Gatherer agent %s failed (non-fatal): %s",
+                        agent.name, agent_result.content,
+                    )
+
+        # ── Merge gatherer outputs ────────────────────────────────────────
+        merged_context = self._merge_parallel_outputs(parallel_results)
+
+        # ── Validate gatherer outputs (task 1.4) ─────────────────────────
+        required_sections = skill.get_required_output_sections()
+        if required_sections:
+            missing = [s for s in required_sections if s.lower() not in merged_context.lower()]
+            if missing:
+                logger.warning(
+                    "Merged gatherer output is missing %d required section(s): %s",
+                    len(missing),
+                    ", ".join(missing),
+                )
+
+        # ── Sequential phase ──────────────────────────────────────────────
+        total_agents = len(parallel_agents) + len(sequential_agents)
+        current_context = merged_context
+        context_chain: list[str] = [merged_context]
+
+        for i, agent in enumerate(sequential_agents):
+            idx_global = total_parallel + i
+            logger.info(
+                "parallel_sequential: sequential step %d/%d: agent=%s",
+                i + 1, len(sequential_agents), agent.name,
+            )
+            if i > 0 and result.agent_results:
+                prev = result.agent_results[-1]
+                context_chain.append(
+                    self._build_previous_agent_summary(
+                        sequential_agents[i - 1].role, prev,
+                    ),
+                )
+                current_context = "\n\n---\n\n".join(context_chain)
+
+            kw_seq: dict[str, Any] = {"context": current_context}
+            if isinstance(agent, ToolAwareAgent):
+                if on_tool_call is not None:
+                    kw_seq["on_tool_call"] = on_tool_call
+                if tool_call_store is not None:
+                    kw_seq["tool_call_store"] = tool_call_store
+                kw_seq["tool_result_cache"] = tool_result_cache
+
+            _fire_agent_progress(on_agent_progress, agent.name, idx_global, total_agents, "start")
+            try:
+                agent_result = agent.execute(query, **kw_seq)
+            finally:
+                _fire_agent_progress(on_agent_progress, agent.name, idx_global, total_agents, "end")
+
+            result.agent_results.append(agent_result)
+            _accumulate_usage(result, agent_result)
+
+            if not agent_result.success:
+                result.success = False
+                logger.warning(
+                    "Sequential agent %s failed: %s", agent.name, agent_result.content,
+                )
+                break
+
+        if result.agent_results:
+            # Success if any gatherer succeeded AND the last sequential agent succeeded
+            any_gatherer_ok = any(r.success for r in parallel_results)
+            last_seq_ok = result.agent_results[-1].success if sequential_agents else True
+            result.success = any_gatherer_ok and last_seq_ok
+            result.synthesized_output = result.agent_results[-1].content
+        else:
+            result.success = False
+            result.synthesized_output = "No agents ran."
+
+        return result
+
+    async def _async_execute_parallel_then_sequential(
+        self,
+        *,
+        agents: list[BaseAgent],
+        skill: BaseSkill,
+        query: str,
+        result: OrchestratorResult,
+        on_agent_progress: Any | None,
+        on_tool_call: Any | None,
+        tool_call_store: Any | None,
+        tool_result_cache: Any,
+    ) -> OrchestratorResult:
+        """Async version of :meth:`_execute_parallel_then_sequential`.
+
+        Parallel gatherers run concurrently via :func:`asyncio.gather` inside a
+        :class:`~concurrent.futures.ThreadPoolExecutor` (agents are synchronous),
+        while sequential agents run serially afterwards.  The execution flow and
+        success semantics are identical to the synchronous counterpart — see its
+        docstring for full details.
+
+        Args:
+            agents: Full list of agents created for the skill.
+            skill: The :class:`~vaig.skills.base.BaseSkill` being executed.
+            query: The original user query.
+            result: Pre-initialised :class:`OrchestratorResult` to populate.
+            on_agent_progress: Optional progress callback.
+            on_tool_call: Optional tool-call callback.
+            tool_call_store: Optional tool-call store.
+            tool_result_cache: Shared tool result cache.
+
+        Returns:
+            The mutated *result* object.
+        """
+        parallel_agents = [a for a in agents if a.name.endswith("_gatherer")]
+        sequential_agents = [a for a in agents if not a.name.endswith("_gatherer")]
+
+        logger.info(
+            "async parallel_sequential: %d parallel gatherer(s), %d sequential agent(s)",
+            len(parallel_agents),
+            len(sequential_agents),
+        )
+
+        # ── Pre-execution hook (sequential, before tasks launch) ──────────
+        skill.pre_execute_parallel(query)
+
+        # ── Concurrent phase ─────────────────────────────────────────────
+        total_parallel = len(parallel_agents)
+
+        async def _run_gatherer(agent: BaseAgent, idx: int) -> AgentResult:
+            logger.info("async parallel_sequential: launching gatherer=%s", agent.name)
+            _fire_agent_progress(on_agent_progress, agent.name, idx, total_parallel, "start")
+            try:
+                kw: dict[str, Any] = {"context": query}
+                if isinstance(agent, ToolAwareAgent):
+                    if on_tool_call is not None:
+                        kw["on_tool_call"] = on_tool_call
+                    if tool_call_store is not None:
+                        kw["tool_call_store"] = tool_call_store
+                    kw["tool_result_cache"] = tool_result_cache
+                agent_result = await asyncio.to_thread(agent.execute, query, **kw)
+            except Exception:
+                logger.exception(
+                    "Gatherer agent %s raised an exception during async parallel execution",
+                    agent.name,
+                )
+                agent_result = AgentResult(
+                    agent_name=agent.name,
+                    content=f"Agent '{agent.name}' failed with an unexpected error.",
+                    success=False,
+                )
+            _fire_agent_progress(on_agent_progress, agent.name, idx, total_parallel, "end")
+            return agent_result
+
+        coros = [_run_gatherer(agent, idx) for idx, agent in enumerate(parallel_agents)]
+        parallel_results: list[AgentResult] = await gather_with_errors(*coros, return_exceptions=False)
+
+        for agent_result in parallel_results:
+            result.agent_results.append(agent_result)
+            _accumulate_usage(result, agent_result)
+            if not agent_result.success:
+                logger.warning(
+                    "Async gatherer agent %s failed (non-fatal): %s",
+                    agent_result.agent_name, agent_result.content,
+                )
+
+        # ── Merge gatherer outputs ────────────────────────────────────────
+        merged_context = self._merge_parallel_outputs(parallel_results)
+
+        # ── Validate gatherer outputs (task 1.4) ─────────────────────────
+        required_sections = skill.get_required_output_sections()
+        if required_sections:
+            missing = [s for s in required_sections if s.lower() not in merged_context.lower()]
+            if missing:
+                logger.warning(
+                    "Async merged gatherer output is missing %d required section(s): %s",
+                    len(missing),
+                    ", ".join(missing),
+                )
+
+        # ── Sequential phase ──────────────────────────────────────────────
+        total_agents = len(parallel_agents) + len(sequential_agents)
+        current_context = merged_context
+        context_chain: list[str] = [merged_context]
+
+        for i, agent in enumerate(sequential_agents):
+            idx_global = total_parallel + i
+            logger.info(
+                "async parallel_sequential: sequential step %d/%d: agent=%s",
+                i + 1, len(sequential_agents), agent.name,
+            )
+            if i > 0 and result.agent_results:
+                prev = result.agent_results[-1]
+                context_chain.append(
+                    self._build_previous_agent_summary(
+                        sequential_agents[i - 1].role, prev,
+                    ),
+                )
+                current_context = "\n\n---\n\n".join(context_chain)
+
+            kw_seq: dict[str, Any] = {"context": current_context}
+            if isinstance(agent, ToolAwareAgent):
+                if on_tool_call is not None:
+                    kw_seq["on_tool_call"] = on_tool_call
+                if tool_call_store is not None:
+                    kw_seq["tool_call_store"] = tool_call_store
+                kw_seq["tool_result_cache"] = tool_result_cache
+
+            _fire_agent_progress(on_agent_progress, agent.name, idx_global, total_agents, "start")
+            try:
+                agent_result = await asyncio.to_thread(agent.execute, query, **kw_seq)
+            finally:
+                _fire_agent_progress(on_agent_progress, agent.name, idx_global, total_agents, "end")
+
+            result.agent_results.append(agent_result)
+            _accumulate_usage(result, agent_result)
+
+            if not agent_result.success:
+                result.success = False
+                logger.warning(
+                    "Async sequential agent %s failed: %s", agent.name, agent_result.content,
+                )
+                break
+
+        if result.agent_results:
+            any_gatherer_ok = any(r.success for r in parallel_results)
+            last_seq_ok = result.agent_results[-1].success if sequential_agents else True
+            result.success = any_gatherer_ok and last_seq_ok
+            result.synthesized_output = result.agent_results[-1].content
+        else:
+            result.success = False
+            result.synthesized_output = "No agents ran."
+
+        return result
+
+    def _merge_parallel_outputs(self, results: list[AgentResult]) -> str:
+        """Merge outputs from parallel gatherer agents with clear section headers.
+
+        Each agent's output is wrapped in a labelled section block so that
+        downstream sequential agents (analyzer, verifier, reporter) can
+        clearly attribute findings to their origin agent.
+
+        **Format per agent**::
+
+            --- node_gatherer ---
+
+            <agent output text>
+
+        Failed agents produce an error note in place of their content so the
+        section is always present in the merged string — downstream agents can
+        see which gatherers failed without the pipeline crashing.
+
+        Args:
+            results: List of :class:`~vaig.agents.base.AgentResult` objects
+                produced by the parallel gatherer agents, in submission order.
+
+        Returns:
+            A single string with all agent sections concatenated, separated by
+            blank lines (``\\n\\n``).  If *results* is empty the return value
+            is an empty string.
+        """
+        sections: list[str] = []
+        for r in results:
+            if r.success:
+                sections.append(f"--- {r.agent_name} ---\n\n{r.content}")
+            else:
+                sections.append(
+                    f"--- {r.agent_name} ---\n\n"
+                    f"[ERROR: Agent '{r.agent_name}' failed — {r.content}]",
+                )
+        return "\n\n".join(sections)
 
     def _merge_agent_outputs(self, results: list[AgentResult]) -> str:
         """Merge outputs from multiple agents into a coherent summary."""

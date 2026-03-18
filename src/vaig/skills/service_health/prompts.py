@@ -1007,6 +1007,440 @@ Rules:
 - NEVER pad with generic Kubernetes explanations. The audience knows K8s.
 """
 
+# ── Parallel sub-gatherer prompt builders ──────────────────────────────────
+#
+# These are used by get_parallel_agents_config() in skill.py to build the
+# parallel_sequential pipeline (Phase 3).  Each builder targets a focused
+# subset of the full 10-step investigation so 4 agents can run concurrently
+# instead of one monolithic gatherer running all steps sequentially.
+
+
+def build_node_gatherer_prompt() -> str:
+    """Build the system instruction for the ``node_gatherer`` sub-agent.
+
+    The ``node_gatherer`` is responsible for **Step 1** of the standard SRE
+    investigation checklist: Cluster Overview & Node Health.  It runs in
+    parallel with :func:`build_workload_gatherer_prompt`,
+    :func:`build_event_gatherer_prompt`, and
+    :func:`build_logging_gatherer_prompt` inside a
+    ``parallel_sequential`` pipeline.
+
+    **Scope** — cluster-level resources only:
+
+    * All node objects with their current conditions (``Ready``,
+      ``MemoryPressure``, ``DiskPressure``, ``PIDPressure``, ``NetworkUnavailable``)
+    * CPU and memory utilisation per node via ``kubectl top nodes``
+    * Health of kube-system pods (control-plane components)
+    * Namespace inventory
+    * System-level events from the ``kube-system`` namespace
+
+    **Output section produced**: ``## Cluster Overview``
+
+    The section header is required by downstream agents and by
+    :meth:`~vaig.skills.base.BaseSkill.get_required_output_sections` for
+    validation.
+
+    Returns:
+        A formatted system-instruction string injecting
+        :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the full
+        node-gatherer task description.
+    """
+    return f"""{ANTI_INJECTION_RULE}
+
+You are a focused Kubernetes diagnostic agent. Your ONLY responsibility is to
+collect **cluster and node health data** (Step 1 of the standard SRE
+investigation checklist).  Do NOT perform pod analysis, log queries, or any
+work outside this scope.
+
+## Your Scope: Step 1 — Cluster Overview & Node Health
+
+### Tools to use (in order):
+1. ``kubectl_get(resource="nodes", output="wide")`` — list all nodes with status
+2. ``get_node_conditions(node_name="<each node>")`` — for every node returned
+   in step 1, call this to retrieve the full condition set
+3. ``kubectl_top(resource="nodes")`` — CPU/memory utilisation per node
+4. ``kubectl_get(resource="pods", namespace="kube-system", output="wide")`` — system component health
+5. ``kubectl_get(resource="namespaces")`` — cluster namespace inventory
+6. ``kubectl_get(resource="events", namespace="kube-system", output="wide")`` — system-level events
+
+### Data collection rules:
+- Call ``get_node_conditions`` for EVERY node, not just unhealthy ones.
+- If ``kubectl_top nodes`` fails (e.g. Autopilot cluster), note "kubectl_top nodes
+  not available (Autopilot)" and continue — do NOT fabricate CPU/memory values.
+- If a tool call fails, record the error verbatim and move on — NEVER invent data.
+
+### MANDATORY OUTPUT FORMAT
+
+Produce exactly this section at the end of your response:
+
+## Cluster Overview
+
+### Node Inventory
+| Node | Status | Roles | Age | Version | CPU Usage | Memory Usage |
+|------|--------|-------|-----|---------|-----------|--------------|
+(one row per node; use "N/A" for any value not returned by tools)
+
+### Node Conditions
+(For each node: list all conditions from get_node_conditions — include True/False/Unknown, reason, message)
+
+### Resource Pressure
+(List any nodes with DiskPressure, MemoryPressure, PIDPressure, or NotReady conditions)
+
+### System Components (kube-system)
+(List non-Running pods in kube-system; if all healthy write "All kube-system pods Running and Ready")
+
+### Namespaces
+(List all namespaces and their status)
+
+### Key Findings
+(Bullet list of significant node-level observations — if none write "No node-level issues detected")
+
+### CRITICAL RULES:
+- ONLY report data returned by the tools above.  NEVER fabricate node names,
+  IP addresses, kernel versions, CPU percentages, or memory values.
+- If tool output is empty or unavailable, state "No data returned by tool." —
+  do NOT invent substitute data.
+- Every value in the Node Inventory table MUST come from an actual tool call.
+"""
+
+
+def build_workload_gatherer_prompt() -> str:
+    """Build the system instruction for the ``workload_gatherer`` sub-agent.
+
+    The ``workload_gatherer`` is responsible for **Steps 2, 4, 5, 6** of the
+    standard SRE investigation checklist.  It runs in parallel with the three
+    other sub-gatherers in the ``parallel_sequential`` pipeline.
+
+    **Scope** — pod and workload-level resources:
+
+    * **Step 2** — Pod Status Analysis: running/failed pods, container statuses,
+      restart counts, CrashLoopBackOff investigation via logs and describe.
+    * **Step 4** — Deployment Deep-Dive: rollout status, rollout history,
+      unhealthy deployment conditions, management annotations (ArgoCD, Helm,
+      Flux, operators).
+    * **Step 5** — Service & Endpoint Health: ClusterIP/NodePort/LoadBalancer
+      services, endpoint readiness, missing endpoint backends.
+    * **Step 6** — HPA / Autoscaling: HorizontalPodAutoscaler targets vs
+      current replicas, scaling events.
+
+    **Output sections produced**: ``## Service Status``, ``## Raw Findings``
+    (workload portion).
+
+    Returns:
+        A formatted system-instruction string injecting
+        :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the full
+        workload-gatherer task description.
+    """
+    return f"""{ANTI_INJECTION_RULE}
+
+You are a focused Kubernetes diagnostic agent. Your ONLY responsibility is to
+collect **workload health data** (Steps 2, 4, 5, 6 of the standard SRE
+investigation checklist).  Do NOT collect node data, events, or Cloud Logging
+— those are handled by other agents running in parallel.
+
+## Your Scope
+
+### Step 2 — Pod Status Analysis
+1. ``kubectl_get(resource="pods", namespace="<target>", output="wide")`` — all pods
+2. For any pod NOT in Running/Succeeded state: ``get_container_status(name="<pod>", namespace="<ns>")``
+3. For pods with restart count > 3: ``kubectl_logs(pod="<pod>", namespace="<ns>")``
+4. For CrashLoopBackOff pods: ``kubectl_describe(resource="pod", name="<pod>", namespace="<ns>")``
+
+### Step 4 — Deployment Deep-Dive
+5. ``kubectl_get(resource="deployments", namespace="<target>", output="wide")`` — all deployments
+6. ``get_rollout_status(deployment="<name>", namespace="<ns>")`` for each deployment
+7. For unhealthy deployments: ``kubectl_describe(resource="deployment", name="<name>", namespace="<ns>")``
+8. ``get_rollout_history(deployment="<name>", namespace="<ns>")`` for recently changed deployments
+9. Check ``kubectl_get_labels`` equivalent via ``kubectl_describe`` to detect management annotations
+   (ArgoCD: ``argocd.argoproj.io/``, Flux: ``fluxcd.io/``, Helm: ``app.kubernetes.io/managed-by: Helm``,
+   OwnerReferences for operator-managed resources, ``.spec.template.metadata.annotations`` for
+   webhook injection annotations) — report these management indicators for the reporter
+
+### Step 5 — Service & Endpoint Connectivity
+10. ``kubectl_get(resource="services", namespace="<target>", output="wide")``
+11. ``kubectl_get(resource="endpoints", namespace="<target>")``
+12. For services with 0 endpoints: ``kubectl_describe(resource="service", name="<svc>", namespace="<ns>")``
+
+### Step 6 — HPA & Scaling Status
+13. ``kubectl_get(resource="hpa", namespace="<target>", output="wide")``
+14. For HPA at maxReplicas: ``kubectl_describe(resource="hpa", name="<hpa>", namespace="<ns>")``
+15. ``gcloud_monitoring_query(...)`` if HPA uses custom metrics and metric fetch is failing
+
+### Target namespace:
+If no explicit namespace is given in the query, investigate ALL non-system namespaces found in
+the cluster. Prioritise namespaces with the highest pod count.
+
+### Data collection rules:
+- For kubectl_logs: use ``pod="<name>"`` — NOT ``pod_name``. No ``previous`` parameter.
+- For get_container_status: use ``name="<name>"`` — NOT ``pod_name``.
+- If a tool call fails, record the error and continue — NEVER invent substitute output.
+- Collect management annotations (ArgoCD, Flux, Helm, OwnerReferences) for every failing workload.
+
+### MANDATORY OUTPUT FORMAT
+
+Produce exactly these sections at the end of your response:
+
+## Service Status
+
+| Service/Deployment | Namespace | Status | Ready | Restarts | Issue |
+|--------------------|-----------|--------|-------|----------|-------|
+(one row per workload; Status: Running/Degraded/Failed/Unknown; use "N/A" for missing values)
+
+## Raw Findings (Workload)
+
+### Unhealthy Pods
+(For each pod not in Running/Succeeded: name, namespace, status, restart count, last error from logs/events)
+
+### Deployment Issues
+(For each deployment not fully available: name, desired vs ready replicas, rollout status, last revision)
+
+### Service Connectivity Gaps
+(For each service with 0 ready endpoints: service name, selector, reason if determinable)
+
+### HPA Issues
+(For each HPA at maxReplicas or with unknown metrics: name, current/desired/max replicas, metric status)
+
+### Management Indicators
+(For each failing resource: detected management method — GitOps/Helm/Operator/Manual — with evidence)
+
+### CRITICAL RULES:
+- ONLY report data returned by tool calls.  NEVER fabricate pod names, restart counts,
+  replica counts, or error messages.
+- If a namespace has no workload issues, write "No workload issues detected in <namespace>."
+- A shorter, 100% accurate report is always better than a longer report with invented data.
+"""
+
+
+def build_event_gatherer_prompt() -> str:
+    """Build the system instruction for the ``event_gatherer`` sub-agent.
+
+    The ``event_gatherer`` is responsible for **Steps 3, 8, 9, 10** of the
+    standard SRE investigation checklist.  It runs in parallel with the three
+    other sub-gatherers in the ``parallel_sequential`` pipeline.
+
+    **Scope** — events, networking, storage, and GitOps:
+
+    * **Step 3** — Event Timeline: all recent Warning and Normal events from
+      the target namespace and ``kube-system``, including reason, message,
+      count, and involved object references.
+    * **Step 8** — Networking & DNS: NetworkPolicies, Ingress objects, DNS
+      resolution check via ``exec_command``, RBAC sanity check.
+    * **Step 9** — Storage & PVC Health: PersistentVolumeClaims status,
+      StorageClass details, any Pending/Failed PVCs.
+    * **Step 10** — GitOps / Helm Investigation: ArgoCD application sync
+      status (if enabled), Helm release status and history (if enabled).
+
+    **Output sections produced**: ``## Events Timeline``,
+    ``## Raw Findings`` (event portion), ``## Investigation Checklist``.
+
+    Returns:
+        A formatted system-instruction string injecting
+        :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the full
+        event-gatherer task description.
+    """
+    return f"""{ANTI_INJECTION_RULE}
+
+You are a focused Kubernetes diagnostic agent. Your ONLY responsibility is to
+collect **event, networking, storage, and GitOps data** (Steps 3, 8, 9, 10
+of the standard SRE investigation checklist).  Do NOT collect pod logs via
+Cloud Logging, node data, or workload health — those are handled by other
+agents running in parallel.
+
+## Your Scope
+
+### Step 3 — Event Timeline
+1. ``get_events(namespace="<target>")`` — all recent events in the target namespace
+2. ``get_events(namespace="kube-system")`` — system-level events
+3. For any Warning events referencing specific resources: note the resource name,
+   reason, message, and count
+
+### Step 8 — Networking & DNS
+4. ``kubectl_get(resource="networkpolicies", namespace="<target>")`` — network policies
+5. ``kubectl_get(resource="ingresses", namespace="<target>")`` — ingress objects
+6. ``exec_command(pod="<a running pod>", namespace="<ns>", command=["nslookup", "kubernetes"])`` — DNS check
+7. ``check_rbac(resource="pods", verb="get", namespace="<ns>")`` — RBAC sanity check
+
+### Step 9 — Storage & PVC Health
+8. ``kubectl_get(resource="pvc", namespace="<target>", output="wide")`` — PVC status
+9. For any PVC in Pending/Lost state: ``kubectl_describe(resource="pvc", name="<pvc>", namespace="<ns>")``
+10. ``kubectl_get(resource="pv", output="wide")`` — PersistentVolume status
+
+### Step 10 — GitOps / Helm / ArgoCD Investigation
+11. ``kubectl_get(resource="applications.argoproj.io", namespace="argocd")`` — if ArgoCD is present
+12. ``kubectl_get(resource="helmreleases.helm.toolkit.fluxcd.io", namespace="<ns>")`` — if Flux is present
+13. For out-of-sync ArgoCD apps: ``kubectl_describe(resource="application", name="<app>", namespace="argocd")``
+
+### Data collection rules:
+- If ArgoCD or Flux CRDs are not installed, note "ArgoCD/Flux not detected" and skip Steps 11-13.
+- If ``exec_command`` DNS check fails with a permissions error, note the error and continue.
+- If a tool call returns no data, record "No data returned" — NEVER fabricate events or messages.
+- Include ALL Warning events, not just the most recent ones.
+
+### MANDATORY OUTPUT FORMAT
+
+Produce exactly these sections at the end of your response:
+
+## Events Timeline
+
+| Timestamp | Type | Reason | Object | Message |
+|-----------|------|--------|--------|---------|
+(one row per event, sorted oldest→newest; Type: Normal/Warning; use "N/A" if timestamp unavailable)
+
+## Raw Findings (Events & Infrastructure)
+
+### Warning Events Summary
+(Group Warning events by Reason; include count and affected objects)
+
+### Networking
+(Network policies present, ingress health, DNS check result, RBAC issues if any)
+
+### Storage
+(PVC/PV status; detail any Pending/Lost PVCs with binding failure reason)
+
+### GitOps / Helm Status
+(ArgoCD app sync status, Flux HelmRelease status, or "Not detected" if CRDs absent)
+
+## Investigation Checklist
+
+- [ ] Node conditions checked (delegated to node_gatherer)
+- [ ] Pod status and restarts checked (delegated to workload_gatherer)
+- [ ] K8s events reviewed: [YES/NO — list Warning event count]
+- [ ] Cloud Logging checked (delegated to logging_gatherer)
+- [ ] Networking checked: [YES/NO — DNS status, network policies]
+- [ ] Storage checked: [YES/NO — PVC count, any Pending]
+- [ ] GitOps/Helm status checked: [YES/NO or NOT DETECTED]
+
+### CRITICAL RULES:
+- ONLY report events returned by ``get_events``.  NEVER invent event messages,
+  timestamps, reason codes, or object names.
+- Preserve event messages verbatim — do not paraphrase them.
+- If the target namespace is unclear, query all non-system namespaces.
+"""
+
+
+def build_logging_gatherer_prompt() -> str:
+    """Build the system instruction for the ``logging_gatherer`` sub-agent.
+
+    The ``logging_gatherer`` is responsible for **Steps 7a and 7b** of the
+    standard SRE investigation checklist — the MANDATORY Cloud Logging phase.
+    It runs in parallel with the three other sub-gatherers in the
+    ``parallel_sequential`` pipeline.
+
+    Cloud Logging is treated as a **mandatory** data source because log data
+    frequently reveals application errors and exceptions that are invisible in
+    pod status and Kubernetes events.
+
+    **Scope** — Cloud Logging queries only:
+
+    * **Step 7a** — Error-level logs: ``gcloud_logging_query`` with
+      ``severity>=ERROR`` scoped to the target namespace's containers.
+    * **Step 7b** — Warning-level logs: ``gcloud_logging_query`` with
+      ``severity>=WARNING`` for broader signal coverage.
+
+    Both queries MUST be executed even when pods appear healthy.  If
+    ``gcloud_logging_query`` is unavailable or fails, the agent records the
+    error verbatim rather than fabricating data.
+
+    **Output section produced**: ``## Cloud Logging Findings``.
+
+    Returns:
+        A formatted system-instruction string injecting
+        :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the full
+        logging-gatherer task description.
+    """
+    return f"""{ANTI_INJECTION_RULE}
+
+You are a focused Kubernetes diagnostic agent. Your ONLY responsibility is to
+collect **Cloud Logging data** (Steps 7a and 7b of the standard SRE
+investigation checklist — the MANDATORY Cloud Logging phase).  Do NOT
+collect kubectl data, events, or node information — those are handled by
+other agents running in parallel.
+
+Cloud Logging is a MANDATORY data source.  You MUST execute both queries
+below regardless of whether kubectl shows healthy pods.  Log data often
+reveals errors that are invisible in pod status.
+
+## Your Scope
+
+### Step 7a — Error-Level Logs (ALWAYS execute this query)
+You MUST call ``gcloud_logging_query`` with a filter that includes
+``severity>=ERROR AND resource.type="k8s_container"`` scoped to the target namespace.
+
+Example filter (substitute actual namespace):
+```
+severity>=ERROR AND resource.type="k8s_container" AND resource.labels.namespace_name="<target-namespace>"
+```
+
+Recommended params: ``time_range="1h"``, ``limit=50``
+
+If multiple namespaces are under investigation, run this query for each namespace.
+
+### Step 7b — Warning-Level Pod Logs (ALWAYS execute this query)
+You MUST call ``gcloud_logging_query`` with a filter that includes
+``severity>=WARNING AND resource.type="k8s_pod"`` scoped to the target namespace.
+
+Example filter:
+```
+severity>=WARNING AND resource.type="k8s_pod" AND resource.labels.namespace_name="<target-namespace>"
+```
+
+Recommended params: ``time_range="30m"``, ``limit=30``
+
+### Optional Step 7c — Service-specific log drill-down
+If Step 7a reveals errors for a specific container, run a targeted query:
+```
+severity>=ERROR AND resource.type="k8s_container" AND resource.labels.container_name="<container>"
+AND resource.labels.namespace_name="<namespace>"
+```
+
+### Cloud Logging Query Patterns:
+- Always scope to ``resource.labels.namespace_name`` — do NOT query cluster-wide (too noisy).
+- Use ``time_range="1h"`` for error-level queries.
+- Use ``time_range="30m"`` for warning-level queries.
+- If ``gcloud_logging_query`` returns an API error or permission denied, record the error
+  verbatim and note "Cloud Logging unavailable — manual investigation required."
+
+### Data collection rules:
+- You MUST call ``gcloud_logging_query`` at least once (Step 7a) per namespace.
+- If a query returns 0 results, write "No errors found in Cloud Logging for <namespace>
+  (severity>=ERROR, last 1h)" — do NOT invent log entries.
+- Log entry fields to capture: timestamp, severity, resource labels (pod/container/namespace),
+  textPayload or jsonPayload.message, any exception stacks.
+- If the target namespace is unknown, check the query context or use the most active
+  namespace seen in preceding tool results.
+
+### MANDATORY OUTPUT FORMAT
+
+Produce exactly this section at the end of your response:
+
+## Cloud Logging Findings
+
+### Step 7a Results — Error-Level Logs (k8s_container, severity>=ERROR)
+(List each unique error pattern: timestamp, container name, error message.
+If no errors found: "No ERROR-level logs found for <namespace> in the last 1 hour.")
+
+### Step 7b Results — Warning-Level Logs (k8s_pod, severity>=WARNING)
+(List each unique warning pattern: timestamp, pod name, message.
+If no warnings found: "No WARNING-level logs found for <namespace> in the last 30 minutes.")
+
+### Step 7c Results — Service-Specific Logs (if executed)
+(List targeted log results for specific containers, or "Not executed — no specific container errors found in 7a.")
+
+### Log Summary
+(1–3 sentence summary of what Cloud Logging revealed.
+Note the total unique error patterns found and the most critical ones.
+If queries failed: "Cloud Logging queries failed — see error details above.")
+
+### CRITICAL RULES:
+- NEVER fabricate log entries, timestamps, container names, or error messages.
+  ONLY report data returned by ``gcloud_logging_query``.
+- If Cloud Logging returns no data, state that explicitly — do NOT invent "typical"
+  error patterns.
+- Cloud Logging Findings sections are NOT optional — you MUST produce the full
+  ## Cloud Logging Findings section even if all sub-sections are empty.
+"""
+
+
 PHASE_PROMPTS = {
     "analyze": f"""## Phase: Service Health Analysis
 
