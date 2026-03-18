@@ -1749,6 +1749,9 @@ class Orchestrator:
             len(sequential_agents),
         )
 
+        # ── Pre-execution hook (sequential, before threads start) ─────────
+        skill.pre_execute_parallel(query)
+
         # ── Concurrent phase ─────────────────────────────────────────────
         total_parallel = len(parallel_agents)
         parallel_results: list[AgentResult] = []
@@ -1885,6 +1888,9 @@ class Orchestrator:
             len(parallel_agents),
             len(sequential_agents),
         )
+
+        # ── Pre-execution hook (sequential, before tasks launch) ──────────
+        skill.pre_execute_parallel(query)
 
         # ── Concurrent phase ─────────────────────────────────────────────
         total_parallel = len(parallel_agents)

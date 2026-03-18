@@ -124,6 +124,20 @@ class BaseSkill(ABC):
         """
         return content
 
+    def pre_execute_parallel(self, query: str) -> None:  # noqa: ARG002, B027
+        """Hook called once before any parallel agents are launched.
+
+        Override in subclasses that need to perform sequential initialization
+        before threads start — e.g. pre-warming a client cache that is not
+        thread-safe on first write.
+
+        The default implementation is a no-op, preserving backward
+        compatibility for skills that do not require pre-warming.
+
+        Args:
+            query: The user query string passed to the skill execution.
+        """
+
     def format_output(self, result: SkillResult) -> str:
         """Format the skill result for display. Override for custom formatting."""
         return result.output

@@ -18,6 +18,9 @@ from ._clients import (
 from ._clients import (
     _get_exec_client as get_exec_client,
 )
+from ._clients import (
+    ensure_client_initialized as ensure_client_initialized,
+)
 
 # ── Layer 2: factory function ────────────────────────────────
 from ._registry import create_gke_tools

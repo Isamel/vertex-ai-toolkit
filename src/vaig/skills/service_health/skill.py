@@ -24,6 +24,7 @@ from vaig.skills.service_health.prompts import (
     build_gatherer_prompt,
 )
 from vaig.skills.service_health.schema import HealthReport
+from vaig.tools.gke._clients import ensure_client_initialized
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,31 @@ class ServiceHealthSkill(BaseSkill):
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         template = PHASE_PROMPTS.get(phase.value, PHASE_PROMPTS["analyze"])
         return template.format(context=context, user_input=user_input)
+
+    def pre_execute_parallel(self, query: str) -> None:  # noqa: ARG002
+        """Pre-warm the K8s client cache before parallel gatherers launch.
+
+        The K8s client cache (``_CLIENT_CACHE``) is not thread-safe on first
+        write because :func:`~vaig.tools.gke._clients._suppress_stderr` mutates
+        ``sys.stdout`` and OS fd 2.  Calling this hook once, sequentially,
+        ensures the client is fully constructed and stored in the cache before
+        any concurrent threads start.
+
+        Errors are swallowed silently — pre-warming is best-effort.  If the
+        client cannot be initialized (e.g. no kubeconfig, missing package),
+        the individual tools will surface the error through their normal
+        :class:`~vaig.tools.base.ToolResult` mechanism.
+        """
+        try:
+            from vaig.core.config import get_settings  # noqa: PLC0415
+
+            settings = get_settings()
+            ensure_client_initialized(settings.gke)
+        except Exception:
+            logger.debug(
+                "K8s client pre-warm skipped (non-fatal): see ensure_client_initialized logs",
+                exc_info=True,
+            )
 
     def get_agents_config(self) -> list[dict[str, Any]]:
         """Return the 4-agent sequential pipeline configuration.
