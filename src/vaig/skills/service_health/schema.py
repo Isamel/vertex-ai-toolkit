@@ -28,6 +28,11 @@ from pydantic import BaseModel, Field
 _POD_HASH_RE = re.compile(r'-[a-z0-9]{5,10}-[a-z0-9]{4,7}\b')   # strip -59967f9ccc-4zdx6
 _COUNTER_RE = re.compile(r'\s*\(\d+(?:st|nd|rd|th)\s+time\)')    # strip "(3rd time)"
 _TIMESTAMP_RE = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')  # strip ISO timestamps
+_IP_RE = re.compile(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?\b')  # strip IPs / IP:port
+_UUID_RE = re.compile(                                             # strip UUIDs
+    r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b',
+    re.IGNORECASE,
+)
 
 # ── Enums ────────────────────────────────────────────────────────
 
@@ -147,12 +152,14 @@ def _normalize_event_text(text: str) -> str:
     """Return a normalised form of *text* used only for grouping comparisons.
 
     Strips volatile tokens (pod hashes, embedded timestamps, occurrence
-    counters) so that semantically identical events compare equal even
-    when their raw text differs slightly.
+    counters, IPv4 addresses, and UUIDs) so that semantically identical
+    events compare equal even when their raw text differs slightly.
     """
     normalised = _POD_HASH_RE.sub('', text)
     normalised = _COUNTER_RE.sub('', normalised)
     normalised = _TIMESTAMP_RE.sub('', normalised)
+    normalised = _IP_RE.sub('<IP>', normalised)
+    normalised = _UUID_RE.sub('<UUID>', normalised)
     return normalised.strip()
 
 
@@ -168,16 +175,23 @@ class _CollapsedEvent:
     time_first: str
     time_last: str
     event: str          # original (non-normalised) text from the first occurrence
+    normalized_event: str  # normalised text, used for display when count > 1
     severity: Severity
     service: str
     count: int
 
     @property
     def display_event(self) -> str:
-        """Return the event text for rendering, with ×N notation when collapsed."""
+        """Return the event text for rendering, with ×N notation when collapsed.
+
+        When count == 1, shows the raw original text.
+        When count > 1, uses the normalized text (volatile tokens stripped)
+        so the collapsed entry doesn't misleadingly show data from the first
+        occurrence only (e.g. a specific pod hash or timestamp).
+        """
         if self.count == 1:
             return self.event
-        return f"{self.event} (×{self.count}, {self.time_first} → {self.time_last})"
+        return f"{self.normalized_event} (×{self.count}, {self.time_first} → {self.time_last})"
 
     @property
     def display_time(self) -> str:
@@ -186,33 +200,41 @@ class _CollapsedEvent:
 
 
 def _collapse_repeated_events(events: list[TimelineEvent]) -> list[_CollapsedEvent]:
-    """Collapse semantically identical adjacent-or-repeated timeline events.
+    """Collapse semantically identical *consecutive* timeline events.
 
-    Grouping key: (normalised event text, severity, service).
-    Insertion order is preserved (first-seen wins).  Count and
-    ``time_last`` are updated for every subsequent match.
+    Grouping key: (normalised event text, severity, service).  Only
+    back-to-back runs of matching events are merged — non-consecutive
+    repetitions are kept as separate entries to preserve chronological
+    order.  For example::
 
-    Threshold: events are only collapsed when count >= 2.  A single
-    unique event is represented as a ``_CollapsedEvent`` with count=1.
+        [A, B, A]       → [A, B, A]   (3 entries — not consecutive)
+        [A, A, A, B, B] → [A×3, B×2] (2 entries — each is a consecutive run)
+
+    The ``normalized_event`` field of every resulting ``_CollapsedEvent``
+    holds the de-volatilised text; ``event`` holds the raw first-occurrence
+    text.  ``display_event`` picks which one to show (see property docs).
     """
-    # Ordered dict preserving first-seen order
-    groups: dict[tuple[str, Severity, str], _CollapsedEvent] = {}
+    result: list[_CollapsedEvent] = []
     for ev in events:
-        key = (_normalize_event_text(ev.event), ev.severity, ev.service)
-        if key in groups:
-            ce = groups[key]
-            ce.count += 1
-            ce.time_last = ev.time
-        else:
-            groups[key] = _CollapsedEvent(
-                time_first=ev.time,
-                time_last=ev.time,
-                event=ev.event,
-                severity=ev.severity,
-                service=ev.service,
-                count=1,
-            )
-    return list(groups.values())
+        norm = _normalize_event_text(ev.event)
+        key = (norm, ev.severity, ev.service)
+        if result:
+            prev = result[-1]
+            prev_key = (_normalize_event_text(prev.event), prev.severity, prev.service)
+            if key == prev_key:
+                prev.count += 1
+                prev.time_last = ev.time
+                continue
+        result.append(_CollapsedEvent(
+            time_first=ev.time,
+            time_last=ev.time,
+            event=ev.event,
+            normalized_event=norm,
+            severity=ev.severity,
+            service=ev.service,
+            count=1,
+        ))
+    return result
 
 
 # ── Sub-models ───────────────────────────────────────────────

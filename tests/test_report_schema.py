@@ -1529,6 +1529,42 @@ class TestTimelineCollapse:
         plain = "FailedMount volume already exists"
         assert _normalize_event_text(plain) == plain
 
+    def test_normalize_strips_ipv4_address(self) -> None:
+        """IPv4 addresses are replaced with <IP> placeholder."""
+        raw = "Connection refused from 10.0.0.5 to backend"
+        result = _normalize_event_text(raw)
+        assert "10.0.0.5" not in result
+        assert "<IP>" in result
+        assert "Connection refused" in result
+
+    def test_normalize_strips_ipv4_with_port(self) -> None:
+        """IPv4 addresses with port (ip:port) are replaced with <IP> placeholder."""
+        raw = "Failed to connect to 192.168.1.100:8080 endpoint"
+        result = _normalize_event_text(raw)
+        assert "192.168.1.100" not in result
+        assert "<IP>" in result
+        assert "Failed to connect" in result
+
+    def test_normalize_strips_uuid(self) -> None:
+        """UUIDs are replaced with <UUID> placeholder."""
+        raw = "Volume a1b2c3d4-e5f6-7890-abcd-ef1234567890 not found"
+        result = _normalize_event_text(raw)
+        assert "a1b2c3d4-e5f6-7890-abcd-ef1234567890" not in result
+        assert "<UUID>" in result
+        assert "Volume" in result
+
+    def test_normalize_collapses_events_with_different_ips(self) -> None:
+        """Two events differing only in IP address normalise to the same string."""
+        a = "Connection refused from 10.0.0.1 to backend"
+        b = "Connection refused from 172.16.0.5 to backend"
+        assert _normalize_event_text(a) == _normalize_event_text(b)
+
+    def test_normalize_collapses_events_with_different_uuids(self) -> None:
+        """Two events differing only in UUID normalise to the same string."""
+        a = "Volume a1b2c3d4-e5f6-7890-abcd-ef1234567890 not found"
+        b = "Volume ffffffff-0000-1111-2222-333333333333 not found"
+        assert _normalize_event_text(a) == _normalize_event_text(b)
+
     # ── Unit tests for _collapse_repeated_events ─────────────
 
     def test_identical_events_collapse_to_one(self) -> None:
@@ -1598,18 +1634,40 @@ class TestTimelineCollapse:
         collapsed = _collapse_repeated_events(events)
         assert len(collapsed) == 2
 
-    def test_insertion_order_preserved(self) -> None:
-        """First-seen group key order is preserved in the output."""
+    def test_interleaved_events_not_collapsed(self) -> None:
+        """Non-consecutive identical events [A, B, A] → 3 separate entries (chronological order preserved)."""
         events = [
             TimelineEvent(time="10m ago", event="event A", severity=Severity.INFO, service="svc"),
             TimelineEvent(time="9m ago", event="event B", severity=Severity.INFO, service="svc"),
             TimelineEvent(time="8m ago", event="event A", severity=Severity.INFO, service="svc"),
         ]
         collapsed = _collapse_repeated_events(events)
-        assert len(collapsed) == 2
+        # [A, B, A] must stay as 3 entries — not consecutive, so no merging
+        assert len(collapsed) == 3
         assert collapsed[0].event == "event A"
+        assert collapsed[0].count == 1
         assert collapsed[1].event == "event B"
+        assert collapsed[1].count == 1
+        assert collapsed[2].event == "event A"
+        assert collapsed[2].count == 1
+
+    def test_consecutive_runs_collapse(self) -> None:
+        """Consecutive identical events [A, A, B, B, A] collapse to [A×2, B×2, A]."""
+        events = [
+            TimelineEvent(time="10m ago", event="event A", severity=Severity.INFO, service="svc"),
+            TimelineEvent(time="9m ago", event="event A", severity=Severity.INFO, service="svc"),
+            TimelineEvent(time="8m ago", event="event B", severity=Severity.INFO, service="svc"),
+            TimelineEvent(time="7m ago", event="event B", severity=Severity.INFO, service="svc"),
+            TimelineEvent(time="6m ago", event="event A", severity=Severity.INFO, service="svc"),
+        ]
+        collapsed = _collapse_repeated_events(events)
+        assert len(collapsed) == 3
+        assert collapsed[0].event == "event A"
         assert collapsed[0].count == 2
+        assert collapsed[1].event == "event B"
+        assert collapsed[1].count == 2
+        assert collapsed[2].event == "event A"
+        assert collapsed[2].count == 1
 
     def test_time_range_tracked_correctly(self) -> None:
         """time_first and time_last reflect first and last occurrence."""
@@ -1652,6 +1710,7 @@ class TestTimelineCollapse:
             time_first="5m ago",
             time_last="5m ago",
             event="pod started",
+            normalized_event="pod started",
             severity=Severity.INFO,
             service="svc",
             count=1,
@@ -1660,20 +1719,27 @@ class TestTimelineCollapse:
         assert "×" not in ce.display_event
 
     def test_display_event_collapsed_shows_notation(self) -> None:
-        """A count>1 event shows ×N and time range in display_event."""
+        """A count>1 event shows ×N and time range in display_event, using normalized text."""
+        raw_event = "FailedCreate ReplicaSet/app-xyz-59967f9ccc-4zdx6 — volume already exists"
+        norm_event = "FailedCreate ReplicaSet/app-xyz — volume already exists"
         ce = _CollapsedEvent(
             time_first="56m ago",
             time_last="6m ago",
-            event="FailedCreate ReplicaSet/app-xyz — volume already exists",
+            event=raw_event,
+            normalized_event=norm_event,
             severity=Severity.HIGH,
             service="app-rs",
             count=7,
         )
         display = ce.display_event
+        # Collapsed display uses normalized text, not raw
         assert "×7" in display
         assert "56m ago" in display
         assert "6m ago" in display
         assert "→" in display
+        # Normalized text is used (volatile pod hash stripped)
+        assert "59967f9ccc" not in display
+        assert "FailedCreate ReplicaSet/app-xyz — volume already exists" in display
 
     def test_display_time_always_time_first(self) -> None:
         """display_time is always time_first regardless of count."""
@@ -1682,6 +1748,7 @@ class TestTimelineCollapse:
                 time_first="56m ago",
                 time_last="6m ago",
                 event="event",
+                normalized_event="event",
                 severity=Severity.INFO,
                 service="svc",
                 count=count,
