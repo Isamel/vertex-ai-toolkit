@@ -103,6 +103,8 @@ class ToolCallLogger:
         self.errors: int = 0
         self._error_reasons: list[str] = []
         self._pipeline_start: float = time.perf_counter()
+        self.tool_name_counts: Counter[str] = Counter()
+        self.cache_hits: int = 0
 
     @staticmethod
     def _extract_reason(error_message: str) -> str:
@@ -122,15 +124,22 @@ class ToolCallLogger:
         duration: float,
         success: bool,
         error_message: str = "",
+        *,
+        cached: bool = False,
     ) -> None:
         """Print a single tool execution line."""
         self.tool_count += 1
         self.total_duration += duration
+        self.tool_name_counts[tool_name] += 1
+
+        if cached:
+            self.cache_hits += 1
 
         args_str = _truncate_args(tool_args)
 
         if success:
-            status = "[green]✓[/green]"
+            cache_tag = r" [yellow]\[cached][/yellow]" if cached else ""
+            status = f"[green]✓[/green]{cache_tag}"
         else:
             self.errors += 1
             # Build error detail for display (truncated to 80 chars)
@@ -145,6 +154,24 @@ class ToolCallLogger:
                 self._error_reasons.append("unknown")
 
         console.print(f"  🔧 [cyan]{tool_name}[/cyan]({args_str}) {status} [dim]({duration:.1f}s)[/dim]")
+
+    def format_tool_counts(self) -> str:
+        """Format per-tool-name breakdown for display.
+
+        Returns a string like ``kubectl_get ×4 | get_events ×2 (1 cached)``.
+        """
+        if not self.tool_name_counts:
+            return ""
+        parts = [f"{name} ×{count}" for name, count in self.tool_name_counts.most_common()]
+        breakdown = " | ".join(parts)
+        if self.cache_hits:
+            breakdown += f" ({self.cache_hits} cached)"
+        return breakdown
+
+    def reset(self) -> None:
+        """Reset per-agent counters while keeping pipeline-level totals."""
+        self.tool_name_counts.clear()
+        self.cache_hits = 0
 
     def print_summary(self) -> None:
         """Print the final pipeline summary line."""
@@ -163,11 +190,15 @@ class ToolCallLogger:
             else:
                 fail_detail = f", {self.errors} failed"
 
+        # Build tool-name breakdown
+        tool_breakdown = self.format_tool_counts()
+        breakdown_detail = f"\n  [dim]Tools: {tool_breakdown}[/dim]" if tool_breakdown else ""
+
         console.print(
             f"\n{status} "
             f"[dim]({total_wall:.1f}s total, "
             f"{self.tool_count} tool{'s' if self.tool_count != 1 else ''} executed"
-            f"{fail_detail})[/dim]"
+            f"{fail_detail})[/dim]{breakdown_detail}"
         )
 
 

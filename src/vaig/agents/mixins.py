@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import logging
 import time
+from collections.abc import Callable
 from datetime import UTC
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -37,6 +38,8 @@ class OnToolCall(Protocol):
             Empty string when the tool succeeded.  Optional for backward
             compatibility — existing callbacks that accept only 4 positional
             args will continue to work.
+        cached: ``True`` when the result came from the tool-result cache.
+            Keyword-only for backward compatibility.
     """
 
     def __call__(
@@ -46,6 +49,8 @@ class OnToolCall(Protocol):
         duration: float,
         success: bool,
         error_message: str = "",
+        *,
+        cached: bool = False,
     ) -> None: ...
 
 
@@ -248,6 +253,7 @@ class ToolLoopMixin:
                     tool_args,
                     tool_duration,
                     tool_result,
+                    cached=is_cached,
                 )
 
                 # Record tool call for metrics/feedback storage
@@ -592,6 +598,7 @@ class ToolLoopMixin:
                         tool_args,
                         tool_duration,
                         tool_result,
+                        cached=is_cached,
                     )
 
                     # Record tool call for metrics/feedback storage
@@ -687,6 +694,7 @@ class ToolLoopMixin:
                         tool_args,
                         tool_duration,
                         tool_result,
+                        cached=is_cached,
                     )
 
                     # Record tool call for metrics/feedback storage
@@ -815,21 +823,29 @@ class ToolLoopMixin:
         tool_args: dict[str, Any],
         tool_duration: float,
         tool_result: ToolResult,
+        *,
+        cached: bool = False,
     ) -> None:
         """Invoke the on_tool_call callback with backward compatibility."""
         if on_tool_call is None:
             return
-        try:
-            err_msg = (tool_result.output or "")[:200] if tool_result.error else ""
-            on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg)
-        except TypeError:
-            # Backward compat: caller may not accept error_message
+        err_msg = (tool_result.output or "")[:200] if tool_result.error else ""
+        # Try progressively simpler signatures for backward compat.
+        _calls: tuple[Callable[[], None], ...] = (
+            lambda: on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg, cached=cached),
+            lambda: on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg),
+            lambda: on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error),
+        )
+        for _call in _calls:
             try:
-                on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error)
+                _call()
+                return  # success — stop trying
+            except TypeError:
+                continue  # wrong signature — try next
             except Exception:  # noqa: BLE001
                 logger.debug("on_tool_call callback raised; ignoring")
-        except Exception:  # noqa: BLE001
-            logger.debug("on_tool_call callback raised; ignoring")
+                return
+        logger.debug("on_tool_call: no compatible callback signature found")
 
     @staticmethod
     def _record_tool_call(

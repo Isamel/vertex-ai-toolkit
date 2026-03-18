@@ -267,6 +267,104 @@ class TestToolCallLogger:
         assert "second" not in reason
         assert "first line" in reason
 
+    def test_tool_name_counts_tracked(self) -> None:
+        """Per-tool-name counts are accumulated in tool_name_counts."""
+        logger = ToolCallLogger()
+        logger("kubectl_get", {"resource": "pods"}, 1.0, True)
+        logger("kubectl_get", {"resource": "nodes"}, 0.8, True)
+        logger("get_events", {"ns": "default"}, 0.5, True)
+        assert logger.tool_name_counts["kubectl_get"] == 2
+        assert logger.tool_name_counts["get_events"] == 1
+
+    def test_cache_hits_tracked(self) -> None:
+        """Cache hits are counted when cached=True is passed."""
+        logger = ToolCallLogger()
+        logger("kubectl_get", {}, 0.0, True, cached=True)
+        logger("kubectl_get", {}, 1.0, True)
+        logger("get_events", {}, 0.0, True, cached=True)
+        assert logger.cache_hits == 2
+        assert logger.tool_count == 3
+
+    def test_format_tool_counts_empty(self) -> None:
+        """format_tool_counts returns empty string when no tools called."""
+        logger = ToolCallLogger()
+        assert logger.format_tool_counts() == ""
+
+    def test_format_tool_counts_single_tool(self) -> None:
+        """format_tool_counts shows single tool with count."""
+        logger = ToolCallLogger()
+        logger("kubectl_get", {}, 1.0, True)
+        logger("kubectl_get", {}, 0.5, True)
+        assert logger.format_tool_counts() == "kubectl_get ×2"
+
+    def test_format_tool_counts_multiple_tools(self) -> None:
+        """format_tool_counts shows multiple tools separated by pipe."""
+        logger = ToolCallLogger()
+        for _ in range(4):
+            logger("kubectl_get", {}, 1.0, True)
+        for _ in range(2):
+            logger("get_events", {}, 0.5, True)
+        result = logger.format_tool_counts()
+        assert "kubectl_get ×4" in result
+        assert "get_events ×2" in result
+        assert " | " in result
+
+    def test_format_tool_counts_with_cache_hits(self) -> None:
+        """format_tool_counts appends cache hit count when present."""
+        logger = ToolCallLogger()
+        logger("kubectl_get", {}, 0.0, True, cached=True)
+        logger("kubectl_get", {}, 1.0, True)
+        result = logger.format_tool_counts()
+        assert "kubectl_get ×2" in result
+        assert "(1 cached)" in result
+
+    def test_reset_clears_per_agent_counters(self) -> None:
+        """reset() clears tool_name_counts and cache_hits but keeps totals."""
+        logger = ToolCallLogger()
+        logger("kubectl_get", {}, 1.0, True)
+        logger("get_events", {}, 0.0, True, cached=True)
+        assert logger.tool_count == 2
+        assert logger.cache_hits == 1
+
+        logger.reset()
+        assert len(logger.tool_name_counts) == 0
+        assert logger.cache_hits == 0
+        # Pipeline-level totals should still be there
+        assert logger.tool_count == 2
+        assert logger.total_duration == pytest.approx(1.0)
+
+    @patch("vaig.cli.commands.live.console")
+    def test_cached_call_shows_cached_tag(self, mock_console: MagicMock) -> None:
+        """Cached tool calls display [cached] tag in output."""
+        logger = ToolCallLogger()
+        logger("kubectl_get", {"resource": "pods"}, 0.0, True, cached=True)
+        output = mock_console.print.call_args[0][0]
+        assert "cached" in output
+        assert "✓" in output
+
+    @patch("vaig.cli.commands.live.console")
+    def test_non_cached_call_no_cached_tag(self, mock_console: MagicMock) -> None:
+        """Non-cached tool calls do NOT show [cached] tag."""
+        logger = ToolCallLogger()
+        logger("kubectl_get", {"resource": "pods"}, 1.0, True)
+        output = mock_console.print.call_args[0][0]
+        assert "cached" not in output
+
+    @patch("vaig.cli.commands.live.console")
+    def test_print_summary_includes_tool_breakdown(self, mock_console: MagicMock) -> None:
+        """print_summary includes per-tool-name breakdown."""
+        logger = ToolCallLogger()
+        for _ in range(3):
+            logger("kubectl_get", {}, 1.0, True)
+        logger("get_events", {}, 0.5, True)
+        mock_console.print.reset_mock()
+        logger.print_summary()
+        # print_summary may produce multiple console.print calls
+        all_output = " ".join(call[0][0] for call in mock_console.print.call_args_list)
+        assert "kubectl_get ×3" in all_output
+        assert "get_events ×1" in all_output
+        assert "Tools:" in all_output
+
 
 # ══════════════════════════════════════════════════════════════
 # on_tool_call callback in sync _run_tool_loop
@@ -458,6 +556,41 @@ class TestOnToolCallSync:
         )
 
         assert result.text == "ok"
+
+    def test_callback_receives_cached_kwarg(self) -> None:
+        """_notify_tool_call passes cached=False to callback on cache miss."""
+        host = MixinHost()
+        result = ToolResult(output="ok")
+        callback = MagicMock()
+
+        host._notify_tool_call(callback, "test_tool", {"a": "1"}, 1.0, result, cached=False)
+
+        callback.assert_called_once()
+        kwargs = callback.call_args[1]
+        assert "cached" in kwargs
+        assert kwargs["cached"] is False
+
+    def test_callback_receives_cached_true(self) -> None:
+        """_notify_tool_call passes cached=True on cache hit."""
+        host = MixinHost()
+        result = ToolResult(output="cached data")
+        callback = MagicMock()
+
+        host._notify_tool_call(callback, "test_tool", {}, 0.0, result, cached=True)
+
+        kwargs = callback.call_args[1]
+        assert kwargs["cached"] is True
+
+    def test_notify_tool_call_backward_compat_no_cached(self) -> None:
+        """Old callbacks that don't accept cached kwarg still work (TypeError caught)."""
+        host = MixinHost()
+        result = ToolResult(output="ok")
+
+        def old_callback(tool_name: str, tool_args: dict, duration: float, success: bool) -> None:
+            pass  # Old-style callback without error_message or cached
+
+        # Should NOT raise
+        host._notify_tool_call(old_callback, "test_tool", {}, 1.0, result, cached=True)
 
 
 # ══════════════════════════════════════════════════════════════
