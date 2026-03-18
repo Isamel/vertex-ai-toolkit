@@ -243,9 +243,126 @@ class TestBudgetWarning:
         ]
         assert len(warning_parts) == 0, "No warning expected when all sections are present"
 
-    # ── Test 6: Warning lists only missing sections ────────────────────────
+    # ── Test 7: No warning when required_sections is empty list ───────────
 
-    def test_warning_lists_only_missing_sections(self) -> None:
+    def test_no_warning_when_required_sections_is_empty(self) -> None:
+        """No budget warning when required_sections is an empty list (falsy)."""
+        # Even at high iteration count, empty list means no sections to check
+        responses = [
+            self._make_fc_response(f"text {i}") for i in range(4)
+        ] + [self._make_text_response()]
+
+        _, history = self._run_loop(responses, max_iterations=5, required_sections=[])
+
+        history_texts = [
+            getattr(part, "text", "") or ""
+            for item in history
+            for part in (getattr(item, "parts", None) or [])
+        ]
+        assert not any("⚠️ BUDGET WARNING" in t for t in history_texts)
+
+    # ── Test 8: No warning when max_iterations is too low (≤2) ─────────────
+
+    def test_no_warning_when_max_iterations_is_low(self) -> None:
+        """No budget warning when max_iterations is 2 or fewer (threshold guard)."""
+        # max_iterations=2 should never trigger a budget warning
+        responses = [
+            self._make_fc_response("text"),
+            self._make_text_response("done"),
+        ]
+
+        _, history = self._run_loop(
+            responses,
+            max_iterations=2,
+            required_sections=["Missing Section"],
+        )
+
+        history_texts = [
+            getattr(part, "text", "") or ""
+            for item in history
+            for part in (getattr(item, "parts", None) or [])
+        ]
+        assert not any("⚠️ BUDGET WARNING" in t for t in history_texts)
+
+    # ── Test 9: Case-insensitive section matching ─────────────────────────
+
+    def test_case_insensitive_section_matching(self) -> None:
+        """Section matching should be case-insensitive: 'Summary' matches '## summary'."""
+        # Accumulated text contains "## summary" (lower-case), required section is "Summary"
+        responses = [
+            self._make_fc_response("## summary\nThis is the summary section."),
+            self._make_fc_response("continuing"),
+            self._make_fc_response("continuing"),
+            self._make_fc_response("continuing"),
+            self._make_text_response("done"),
+        ]
+
+        _, history = self._run_loop(
+            responses,
+            max_iterations=5,
+            required_sections=["Summary"],
+        )
+
+        # "Summary" is present in accumulated text (case-insensitive), so no warning
+        warning_parts = [
+            getattr(part, "text", "") or ""
+            for item in history
+            for part in (getattr(item, "parts", None) or [])
+            if "⚠️ BUDGET WARNING" in (getattr(part, "text", "") or "")
+        ]
+        assert len(warning_parts) == 0, (
+            "No warning expected when section is present (case-insensitive match)"
+        )
+
+    # ── Test 10: Ceil fix — max_iterations=6, warning fires at iteration 5 ──
+
+    def test_threshold_ceil_fix_max_iterations_6(self) -> None:
+        """With max_iterations=6, ceil(6*0.8)=5, so warning fires at iter 5, NOT 4.
+
+        Before the fix, int(6*0.8)=int(4.8)=4, which is 66%, not ≥80%.
+        After the fix, math.ceil(6*0.8)=ceil(4.8)=5, which is 83%.
+        """
+        # Run exactly 4 FC iterations then text — should NOT trigger warning
+        # because ceil(6*0.8) = 5, and we only reach iteration 4
+        responses_no_warn = [
+            self._make_fc_response(f"iter {i}") for i in range(4)
+        ] + [self._make_text_response("done")]
+
+        _, history_no_warn = self._run_loop(
+            responses_no_warn,
+            max_iterations=6,
+            required_sections=["Missing Section"],
+        )
+
+        no_warn_texts = [
+            getattr(part, "text", "") or ""
+            for item in history_no_warn
+            for part in (getattr(item, "parts", None) or [])
+        ]
+        assert not any("⚠️ BUDGET WARNING" in t for t in no_warn_texts), (
+            "Warning should NOT fire at iteration 4/6 (only 66% — below the 80% ceil threshold)"
+        )
+
+        # Run 5 FC iterations then text — SHOULD trigger warning at iteration 5
+        responses_warn = [
+            self._make_fc_response(f"iter {i}") for i in range(5)
+        ] + [self._make_text_response("done")]
+
+        _, history_warn = self._run_loop(
+            responses_warn,
+            max_iterations=6,
+            required_sections=["Missing Section"],
+        )
+
+        warn_parts = [
+            getattr(part, "text", "") or ""
+            for item in history_warn
+            for part in (getattr(item, "parts", None) or [])
+            if "⚠️ BUDGET WARNING" in (getattr(part, "text", "") or "")
+        ]
+        assert len(warn_parts) == 1, (
+            f"Warning SHOULD fire at iteration 5/6 (ceil(6*0.8)=5), got {len(warn_parts)}"
+        )
         """Warning message should name only the sections that are absent."""
         # One section present in accumulated text, one absent
         responses = [

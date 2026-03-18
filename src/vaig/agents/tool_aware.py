@@ -186,6 +186,11 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 results for metrics and feedback.
             tool_result_cache: Optional cache for deduplicating identical
                 tool calls within and across orchestrator passes.
+            required_sections: Optional list of section names that the
+                model's output must contain.  When provided and the
+                iteration budget reaches 80%, a warning is injected into
+                the conversation for any sections still missing.  Ignored
+                when ``None`` or when ``max_iterations`` is 2 or fewer.
 
         Returns:
             ``AgentResult`` with the final text response and metadata.
@@ -306,6 +311,11 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 results for metrics and feedback.
             tool_result_cache: Optional cache for deduplicating identical
                 tool calls within and across orchestrator passes.
+            required_sections: Optional list of section names that the
+                model's output must contain.  When provided and the
+                iteration budget reaches 80%, a warning is injected into
+                the conversation for any sections still missing.  Ignored
+                when ``None`` or when ``max_iterations`` is 2 or fewer.
 
         Returns:
             ``AgentResult`` with the final text response and metadata.

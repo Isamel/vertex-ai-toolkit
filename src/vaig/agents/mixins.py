@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import math
 import time
 from datetime import UTC
 from typing import TYPE_CHECKING, Any, Protocol
@@ -301,33 +302,15 @@ class ToolLoopMixin:
             history.append(types.Content(role="user", parts=response_parts))
 
             # -- Budget warning injection ---------------------------------
-            if (
-                not budget_warning_issued
-                and required_sections
-                and max_iterations > 2
-                and iteration >= max(1, int(max_iterations * BUDGET_WARNING_THRESHOLD))
-            ):
-                missing = [
-                    s for s in required_sections
-                    if s.lower() not in accumulated_llm_text.lower()
-                ]
-                if missing:
-                    remaining = max_iterations - iteration
-                    missing_list = ", ".join(missing)
-                    warning = (
-                        f"⚠️ BUDGET WARNING: You have used {iteration}/{max_iterations} iterations. "
-                        f"The following required sections are MISSING from your output: {missing_list}. "
-                        f"You have {remaining} iterations left. "
-                        f"Focus on producing these sections NOW."
-                    )
-                    history.append(
-                        types.Content(role="user", parts=[types.Part.from_text(text=warning)])
-                    )
-                    budget_warning_issued = True
-                    logger.warning(
-                        "Budget warning injected for agent '%s': missing=%s, iter=%d/%d",
-                        agent_name, missing_list, iteration, max_iterations,
-                    )
+            budget_warning_issued = self._check_and_inject_budget_warning(
+                history,
+                budget_warning_issued,
+                required_sections,
+                max_iterations,
+                iteration,
+                accumulated_llm_text,
+                agent_name,
+            )
 
         # -- Max iterations exceeded --------------------------------------
         msg = (
@@ -335,6 +318,70 @@ class ToolLoopMixin:
         )
         logger.warning(msg)
         raise MaxIterationsError(msg, iterations=max_iterations)
+
+    # ── Budget warning helper ────────────────────────────────
+
+    def _check_and_inject_budget_warning(
+        self,
+        history: list[Any],
+        budget_warning_issued: bool,
+        required_sections: list[str] | None,
+        max_iterations: int,
+        iteration: int,
+        accumulated_llm_text: str,
+        agent_name: str,
+    ) -> bool:
+        """Check iteration budget and inject a warning message into history if needed.
+
+        Injects a warning only once, only when *required_sections* is set,
+        only when the iteration reaches or exceeds the 80% threshold, and only
+        when at least one required section is missing from *accumulated_llm_text*.
+
+        Args:
+            history: Mutable conversation history list (appended in-place).
+            budget_warning_issued: Whether a warning has already been injected.
+            required_sections: Sections the model must produce; ``None`` disables
+                the feature entirely.
+            max_iterations: Safety cap used to compute the threshold.
+            iteration: Current 1-based iteration index.
+            accumulated_llm_text: All LLM text produced so far (for section matching).
+            agent_name: Name used in the log warning.
+
+        Returns:
+            Updated *budget_warning_issued* flag (``True`` if a warning was
+            injected this call or on a prior call; ``False`` otherwise).
+        """
+        if (
+            budget_warning_issued
+            or not required_sections
+            or max_iterations <= 2
+            or iteration < math.ceil(max_iterations * BUDGET_WARNING_THRESHOLD)
+        ):
+            return budget_warning_issued
+
+        missing = [
+            s for s in required_sections
+            if s.lower() not in accumulated_llm_text.lower()
+        ]
+        if not missing:
+            return budget_warning_issued
+
+        remaining = max_iterations - iteration
+        missing_list = ", ".join(missing)
+        warning = (
+            f"⚠️ BUDGET WARNING: You have used {iteration}/{max_iterations} iterations. "
+            f"The following required sections are MISSING from your output: {missing_list}. "
+            f"You have {remaining} iterations left. "
+            f"Focus on producing these sections NOW."
+        )
+        history.append(
+            types.Content(role="user", parts=[types.Part.from_text(text=warning)])
+        )
+        logger.warning(
+            "Budget warning injected for agent '%s': missing=%s, iter=%d/%d",
+            agent_name, missing_list, iteration, max_iterations,
+        )
+        return True
 
     # ── Tool execution (overridable) ─────────────────────────
 
@@ -777,33 +824,15 @@ class ToolLoopMixin:
             history.append(types.Content(role="user", parts=response_parts))
 
             # -- Budget warning injection ---------------------------------
-            if (
-                not budget_warning_issued
-                and required_sections
-                and max_iterations > 2
-                and iteration >= max(1, int(max_iterations * BUDGET_WARNING_THRESHOLD))
-            ):
-                missing = [
-                    s for s in required_sections
-                    if s.lower() not in accumulated_llm_text.lower()
-                ]
-                if missing:
-                    remaining = max_iterations - iteration
-                    missing_list = ", ".join(missing)
-                    warning = (
-                        f"⚠️ BUDGET WARNING: You have used {iteration}/{max_iterations} iterations. "
-                        f"The following required sections are MISSING from your output: {missing_list}. "
-                        f"You have {remaining} iterations left. "
-                        f"Focus on producing these sections NOW."
-                    )
-                    history.append(
-                        types.Content(role="user", parts=[types.Part.from_text(text=warning)])
-                    )
-                    budget_warning_issued = True
-                    logger.warning(
-                        "Budget warning injected for agent '%s': missing=%s, iter=%d/%d",
-                        agent_name, missing_list, iteration, max_iterations,
-                    )
+            budget_warning_issued = self._check_and_inject_budget_warning(
+                history,
+                budget_warning_issued,
+                required_sections,
+                max_iterations,
+                iteration,
+                accumulated_llm_text,
+                agent_name,
+            )
 
         # -- Max iterations exceeded --------------------------------------
         msg = (
