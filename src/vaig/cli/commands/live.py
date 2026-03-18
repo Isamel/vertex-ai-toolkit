@@ -227,6 +227,7 @@ class AgentProgressDisplay:
     def __init__(self, tool_logger: ToolCallLogger) -> None:
         self._tool_logger = tool_logger
         self._status: Status | None = None
+        self._agent_start_count: int = 0
 
     def __call__(
         self,
@@ -237,6 +238,7 @@ class AgentProgressDisplay:
     ) -> None:
         """Handle agent start/end events."""
         if event == "start":
+            self._agent_start_count = self._tool_logger.tool_count
             step = agent_index + 1
             label = (
                 f"[bold cyan]\\[{step}/{total_agents}][/bold cyan] "
@@ -249,7 +251,7 @@ class AgentProgressDisplay:
                 self._status.stop()
                 self._status = None
             step = agent_index + 1
-            tools = self._tool_logger.tool_count
+            tools = self._tool_logger.tool_count - self._agent_start_count
             breakdown = self._tool_logger.format_tool_counts()
             tools_detail = f" ({tools} tool{'s' if tools != 1 else ''} called)"
             breakdown_detail = f" [dim]{breakdown}[/dim]" if breakdown else ""
@@ -855,17 +857,19 @@ def _execute_orchestrated_skill(
         console.print(f"[bold cyan]🤖 Running {skill_meta.display_name} pipeline...[/bold cyan]")
         tool_logger = ToolCallLogger()
         progress_display = AgentProgressDisplay(tool_logger)
-        orch_result = orchestrator.execute_with_tools(
-            query=question,
-            skill=skill,
-            tool_registry=tool_registry,
-            strategy="sequential",
-            is_autopilot=is_autopilot,
-            on_tool_call=tool_logger,
-            tool_call_store=tool_call_store,
-            on_agent_progress=progress_display,
-        )
-        progress_display.stop()
+        try:
+            orch_result = orchestrator.execute_with_tools(
+                query=question,
+                skill=skill,
+                tool_registry=tool_registry,
+                strategy="sequential",
+                is_autopilot=is_autopilot,
+                on_tool_call=tool_logger,
+                tool_call_store=tool_call_store,
+                on_agent_progress=progress_display,
+            )
+        finally:
+            progress_display.stop()
         tool_logger.print_summary()
 
         # Display final response with severity coloring
@@ -1135,6 +1139,8 @@ async def _async_execute_orchestrated_skill(
     format_: str | None = None,
     model_id: str | None = None,
     tool_call_store: ToolCallStore | None = None,
+    summary: bool = False,
+    no_bell: bool = False,
 ) -> None:
     """Async version of :func:`_execute_orchestrated_skill`.
 
@@ -1188,32 +1194,39 @@ async def _async_execute_orchestrated_skill(
         console.print(f"[bold cyan]🤖 Running {skill_meta.display_name} pipeline (async)...[/bold cyan]")
         tool_logger = ToolCallLogger()
         progress_display = AgentProgressDisplay(tool_logger)
-        orch_result = await orchestrator.async_execute_with_tools(
-            query=question,
-            skill=skill,
-            tool_registry=tool_registry,
-            strategy="sequential",
-            is_autopilot=is_autopilot,
-            on_tool_call=tool_logger,
-            tool_call_store=tool_call_store,
-            on_agent_progress=progress_display,
-        )
-        progress_display.stop()
+        try:
+            orch_result = await orchestrator.async_execute_with_tools(
+                query=question,
+                skill=skill,
+                tool_registry=tool_registry,
+                strategy="sequential",
+                is_autopilot=is_autopilot,
+                on_tool_call=tool_logger,
+                tool_call_store=tool_call_store,
+                on_agent_progress=progress_display,
+            )
+        finally:
+            progress_display.stop()
         tool_logger.print_summary()
 
+        # Display final response with severity coloring
         console.print()
-        # Rich Panel for executive summary (before the full report)
-        if orch_result.structured_report is not None:
-            print_executive_summary_panel(
-                orch_result.structured_report, console=console,
-            )
-        if orch_result.synthesized_output:
-            print_colored_report(orch_result.synthesized_output, console=console)
-        # Rich Table for recommendations (after the full report)
-        if orch_result.structured_report is not None:
-            print_recommendations_table(
-                orch_result.structured_report, console=console,
-            )
+        if summary and orch_result.structured_report is not None:
+            # --summary mode: compact output from the structured report
+            console.print(orch_result.structured_report.to_summary())
+        else:
+            # Rich Panel for executive summary (before the full report)
+            if orch_result.structured_report is not None:
+                print_executive_summary_panel(
+                    orch_result.structured_report, console=console,
+                )
+            if orch_result.synthesized_output:
+                print_colored_report(orch_result.synthesized_output, console=console)
+            # Rich Table for recommendations (after the full report)
+            if orch_result.structured_report is not None:
+                print_recommendations_table(
+                    orch_result.structured_report, console=console,
+                )
         console.print()
 
         _handle_export_output(
@@ -1228,6 +1241,9 @@ async def _async_execute_orchestrated_skill(
         )
 
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
+
+        # Notify via terminal bell
+        _emit_bell(no_bell=no_bell)
 
     except MaxIterationsError as exc:
         err_console.print(

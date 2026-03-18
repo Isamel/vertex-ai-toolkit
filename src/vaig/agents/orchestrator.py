@@ -625,8 +625,10 @@ class Orchestrator:
                         kw_single["tool_call_store"] = tool_call_store
                     kw_single["tool_result_cache"] = tool_result_cache
                 _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "start")
-                agent_result = agents[0].execute(query, **kw_single)
-                _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "end")
+                try:
+                    agent_result = agents[0].execute(query, **kw_single)
+                finally:
+                    _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
                 result.success = agent_result.success
@@ -665,8 +667,10 @@ class Orchestrator:
                     kw_seq["tool_result_cache"] = tool_result_cache
 
                 _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "start")
-                agent_result = agent.execute(query, **kw_seq)
-                _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "end")
+                try:
+                    agent_result = agent.execute(query, **kw_seq)
+                finally:
+                    _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
 
@@ -1375,8 +1379,10 @@ class Orchestrator:
                         kw_single["tool_call_store"] = tool_call_store
                     kw_single["tool_result_cache"] = tool_result_cache
                 _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "start")
-                agent_result = await asyncio.to_thread(agents[0].execute, query, **kw_single)
-                _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "end")
+                try:
+                    agent_result = await asyncio.to_thread(agents[0].execute, query, **kw_single)
+                finally:
+                    _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
                 result.success = agent_result.success
@@ -1411,10 +1417,12 @@ class Orchestrator:
                     kw_seq["tool_result_cache"] = tool_result_cache
 
                 _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "start")
-                agent_result = await asyncio.to_thread(
-                    agent.execute, query, **kw_seq,
-                )
-                _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "end")
+                try:
+                    agent_result = await asyncio.to_thread(
+                        agent.execute, query, **kw_seq,
+                    )
+                finally:
+                    _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
 

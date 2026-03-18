@@ -6,7 +6,6 @@ import asyncio
 import inspect
 import logging
 import time
-from collections.abc import Callable
 from datetime import UTC
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -826,26 +825,55 @@ class ToolLoopMixin:
         *,
         cached: bool = False,
     ) -> None:
-        """Invoke the on_tool_call callback with backward compatibility."""
+        """Invoke the on_tool_call callback with backward compatibility.
+
+        Uses ``inspect.signature`` to determine the number of positional
+        parameters *before* invoking the callback.  This avoids the previous
+        try/except-TypeError approach which could mask a real ``TypeError``
+        raised *inside* the callback body.
+        """
         if on_tool_call is None:
             return
         err_msg = (tool_result.output or "")[:200] if tool_result.error else ""
-        # Try progressively simpler signatures for backward compat.
-        _calls: tuple[Callable[[], None], ...] = (
-            lambda: on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg, cached=cached),
-            lambda: on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg),
-            lambda: on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error),
-        )
-        for _call in _calls:
-            try:
-                _call()
-                return  # success — stop trying
-            except TypeError:
-                continue  # wrong signature — try next
-            except Exception:  # noqa: BLE001
-                logger.debug("on_tool_call callback raised; ignoring")
-                return
-        logger.debug("on_tool_call: no compatible callback signature found")
+
+        # Determine the number of positional parameters the callback accepts
+        # so we can choose the right call form without catching TypeError.
+        try:
+            sig = inspect.signature(on_tool_call)
+            # Count positional-capable params (POSITIONAL_ONLY, POSITIONAL_OR_KEYWORD, VAR_POSITIONAL)
+            _POSITIONAL_KINDS = {
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            }
+            positional_count = sum(
+                1 for p in sig.parameters.values() if p.kind in _POSITIONAL_KINDS
+            )
+            has_var_positional = any(
+                p.kind == inspect.Parameter.VAR_POSITIONAL for p in sig.parameters.values()
+            )
+            has_cached_kw = "cached" in sig.parameters
+            has_var_keyword = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+            accepts_cached = has_cached_kw or has_var_keyword
+        except (ValueError, TypeError):
+            # inspect.signature can fail for builtins / C extensions —
+            # fall back to the 6-arg form and swallow any error.
+            positional_count = 6
+            has_var_positional = False
+            accepts_cached = True
+
+        try:
+            if (positional_count >= 5 or has_var_positional) and accepts_cached:
+                on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg, cached=cached)
+            elif positional_count >= 5 or has_var_positional:
+                on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg)
+            elif accepts_cached:
+                on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, cached=cached)
+            else:
+                on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error)
+        except Exception:  # noqa: BLE001
+            logger.debug("on_tool_call callback raised; ignoring")
 
     @staticmethod
     def _record_tool_call(

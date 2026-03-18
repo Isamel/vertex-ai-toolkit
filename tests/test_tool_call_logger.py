@@ -1021,7 +1021,7 @@ class TestAgentProgressDisplay:
     @patch("vaig.cli.commands.live.console")
     def test_end_event_stops_spinner_and_prints_summary(self, mock_console: MagicMock) -> None:
         """On 'end' event, spinner is stopped and a summary line is printed."""
-        tool_logger = self._make_tool_logger()
+        tool_logger = ToolCallLogger()
         display = AgentProgressDisplay(tool_logger)
 
         # Simulate start first to create a status
@@ -1029,6 +1029,13 @@ class TestAgentProgressDisplay:
         mock_console.status.return_value = mock_status
         display("health_gatherer", 0, 3, "start")
         mock_console.print.reset_mock()
+
+        # Simulate tool calls happening DURING agent execution
+        for _ in range(3):
+            tool_logger.tool_name_counts["kubectl_get"] += 1
+            tool_logger.tool_count += 1
+        tool_logger.tool_name_counts["get_events"] += 1
+        tool_logger.tool_count += 1
 
         # Now end
         display("health_gatherer", 0, 3, "end")

@@ -1442,8 +1442,8 @@ class TestContentTypeSchema:
 class TestToSummary:
     """Tests for HealthReport.to_summary() compact output."""
 
-    def test_summary_critical_with_recommendations(self) -> None:
-        """CRITICAL status with recommendations shows status, counts, and first rec."""
+    def test_summary_degraded_with_recommendations(self) -> None:
+        """DEGRADED status with recommendations shows status, counts, and first rec."""
         report = _full_report()
         summary = report.to_summary()
 
