@@ -2115,3 +2115,281 @@ class TestAnalyzerManagementContextDetection:
         from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
         assert "**Managed by**" in HEALTH_ANALYZER_PROMPT
+
+
+# ── Phase 3: Parallel Sub-Gatherer Config ────────────────────────────────────
+
+
+class TestParallelAgentsConfig:
+    """Validate the 7-agent parallel_sequential pipeline (Phase 3).
+
+    Tests ``get_parallel_agents_config()`` which replaces the monolithic
+    ``health_gatherer`` with 4 focused sub-gatherers that run concurrently,
+    followed by the unchanged sequential tail (analyzer → verifier → reporter).
+
+    These tests are intentionally separate from ``TestServiceHealthSkillAgentsConfig``
+    to avoid breaking the existing sequential-pipeline assertions.
+    """
+
+    def _get_agents(self) -> list:
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        return ServiceHealthSkill().get_parallel_agents_config()
+
+    def test_has_seven_agents(self) -> None:
+        """Parallel config must have 7 agents total (4 gatherers + 3 sequential)."""
+        agents = self._get_agents()
+        assert len(agents) == 7
+
+    def test_four_parallel_gatherers(self) -> None:
+        """Exactly 4 agents must carry parallel_group='gather'."""
+        agents = self._get_agents()
+        parallel = [a for a in agents if a.get("parallel_group") == "gather"]
+        assert len(parallel) == 4
+
+    def test_three_sequential_agents(self) -> None:
+        """Exactly 3 agents must have no parallel_group (sequential tail)."""
+        agents = self._get_agents()
+        sequential = [a for a in agents if "parallel_group" not in a]
+        assert len(sequential) == 3
+
+    def test_parallel_gatherer_names(self) -> None:
+        """All 4 gatherers must have names ending with '_gatherer'."""
+        agents = self._get_agents()
+        parallel = [a for a in agents if a.get("parallel_group") == "gather"]
+        for agent in parallel:
+            assert agent["name"].endswith("_gatherer"), (
+                f"Parallel agent '{agent['name']}' must end with '_gatherer'"
+            )
+
+    def test_exact_gatherer_names(self) -> None:
+        """Gatherer names must be the 4 expected sub-gatherer names."""
+        agents = self._get_agents()
+        parallel_names = {a["name"] for a in agents if a.get("parallel_group") == "gather"}
+        assert parallel_names == {
+            "node_gatherer",
+            "workload_gatherer",
+            "event_gatherer",
+            "logging_gatherer",
+        }
+
+    def test_sequential_tail_names(self) -> None:
+        """Sequential tail must be analyzer → verifier → reporter in order."""
+        agents = self._get_agents()
+        sequential = [a for a in agents if "parallel_group" not in a]
+        names = [a["name"] for a in sequential]
+        assert names == ["health_analyzer", "health_verifier", "health_reporter"]
+
+    def test_all_gatherers_use_flash_model(self) -> None:
+        """All 4 parallel gatherers must use gemini-2.5-flash for speed/cost."""
+        agents = self._get_agents()
+        parallel = [a for a in agents if a.get("parallel_group") == "gather"]
+        for agent in parallel:
+            assert agent["model"] == "gemini-2.5-flash", (
+                f"Gatherer '{agent['name']}' uses '{agent['model']}', expected 'gemini-2.5-flash'"
+            )
+
+    def test_all_gatherers_require_tools(self) -> None:
+        """All 4 parallel gatherers must have requires_tools=True."""
+        agents = self._get_agents()
+        parallel = [a for a in agents if a.get("parallel_group") == "gather"]
+        for agent in parallel:
+            assert agent.get("requires_tools") is True, (
+                f"Gatherer '{agent['name']}' must have requires_tools=True"
+            )
+
+    def test_gatherer_max_iterations_within_range(self) -> None:
+        """All gatherers must have max_iterations between 8 and 12 (inclusive)."""
+        agents = self._get_agents()
+        parallel = [a for a in agents if a.get("parallel_group") == "gather"]
+        for agent in parallel:
+            iters = agent.get("max_iterations", 0)
+            assert 8 <= iters <= 12, (
+                f"Gatherer '{agent['name']}' has max_iterations={iters}, "
+                "expected 8–12"
+            )
+
+    def test_gatherer_temperature_is_zero(self) -> None:
+        """All gatherers must use temperature=0.0 for deterministic tool use."""
+        agents = self._get_agents()
+        parallel = [a for a in agents if a.get("parallel_group") == "gather"]
+        for agent in parallel:
+            assert agent.get("temperature") == 0.0, (
+                f"Gatherer '{agent['name']}' must have temperature=0.0"
+            )
+
+    def test_all_gatherers_have_system_instruction(self) -> None:
+        """All 4 gatherers must have a non-empty system_instruction string."""
+        agents = self._get_agents()
+        parallel = [a for a in agents if a.get("parallel_group") == "gather"]
+        for agent in parallel:
+            assert "system_instruction" in agent
+            assert isinstance(agent["system_instruction"], str)
+            assert len(agent["system_instruction"]) > 100, (
+                f"Gatherer '{agent['name']}' system_instruction too short"
+            )
+
+    def test_all_gatherer_prompts_contain_anti_injection_rule(self) -> None:
+        """Every gatherer prompt must embed ANTI_INJECTION_RULE for security."""
+        from vaig.core.prompt_defense import ANTI_INJECTION_RULE
+
+        agents = self._get_agents()
+        parallel = [a for a in agents if a.get("parallel_group") == "gather"]
+        # Check a distinctive substring of ANTI_INJECTION_RULE
+        fragment = "EXTERNAL, UNTRUSTED sources"
+        for agent in parallel:
+            assert fragment in agent["system_instruction"], (
+                f"Gatherer '{agent['name']}' prompt is missing ANTI_INJECTION_RULE. "
+                f"Expected fragment: '{fragment}'"
+            )
+        assert fragment in ANTI_INJECTION_RULE  # Sanity-check the fragment itself
+
+    def test_node_gatherer_covers_node_scope(self) -> None:
+        """node_gatherer prompt must reference node-related tools."""
+        agents = self._get_agents()
+        node = next(a for a in agents if a["name"] == "node_gatherer")
+        prompt = node["system_instruction"]
+        assert "get_node_conditions" in prompt
+        assert "kubectl_get" in prompt
+        assert "Cluster Overview" in prompt
+
+    def test_workload_gatherer_covers_pods_and_deployments(self) -> None:
+        """workload_gatherer prompt must cover pods, deployments, services, HPA."""
+        agents = self._get_agents()
+        workload = next(a for a in agents if a["name"] == "workload_gatherer")
+        prompt = workload["system_instruction"]
+        assert "pod" in prompt.lower()
+        assert "deployment" in prompt.lower()
+        assert "hpa" in prompt.lower() or "HPA" in prompt
+        assert "Service Status" in prompt
+
+    def test_event_gatherer_covers_events_and_infrastructure(self) -> None:
+        """event_gatherer prompt must cover K8s events, networking, and storage."""
+        agents = self._get_agents()
+        event = next(a for a in agents if a["name"] == "event_gatherer")
+        prompt = event["system_instruction"]
+        assert "get_events" in prompt
+        assert "pvc" in prompt.lower() or "PVC" in prompt
+        assert "Events Timeline" in prompt
+        assert "Investigation Checklist" in prompt
+
+    def test_logging_gatherer_covers_cloud_logging(self) -> None:
+        """logging_gatherer prompt must cover Cloud Logging queries (7a, 7b)."""
+        agents = self._get_agents()
+        logging_agent = next(a for a in agents if a["name"] == "logging_gatherer")
+        prompt = logging_agent["system_instruction"]
+        assert "gcloud_logging_query" in prompt
+        assert 'severity>=ERROR AND resource.type="k8s_container"' in prompt
+        assert 'severity>=WARNING AND resource.type="k8s_pod"' in prompt
+        assert "Cloud Logging Findings" in prompt
+        assert "MANDATORY" in prompt
+
+    def test_logging_gatherer_prompt_states_mandatory(self) -> None:
+        """logging_gatherer prompt must explicitly call Cloud Logging MANDATORY."""
+        agents = self._get_agents()
+        logging_agent = next(a for a in agents if a["name"] == "logging_gatherer")
+        prompt = logging_agent["system_instruction"]
+        assert "Cloud Logging Findings sections are NOT optional" in prompt
+
+    def test_sequential_tail_analyzer_unchanged(self) -> None:
+        """health_analyzer config must match the sequential pipeline config."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        parallel_agents = skill.get_parallel_agents_config()
+        sequential_agents = skill.get_agents_config()
+
+        p_analyzer = next(a for a in parallel_agents if a["name"] == "health_analyzer")
+        s_analyzer = next(a for a in sequential_agents if a["name"] == "health_analyzer")
+
+        assert p_analyzer["model"] == s_analyzer["model"]
+        assert p_analyzer["system_instruction"] == s_analyzer["system_instruction"]
+
+    def test_sequential_tail_reporter_has_response_schema(self) -> None:
+        """health_reporter in parallel config must have response_schema for JSON output."""
+        agents = self._get_agents()
+        reporter = next(a for a in agents if a["name"] == "health_reporter")
+        assert "response_schema" in reporter
+        assert reporter.get("response_mime_type") == "application/json"
+
+    def test_verifier_in_sequential_tail_has_max_iterations(self) -> None:
+        """health_verifier in parallel config must retain max_iterations=15."""
+        agents = self._get_agents()
+        verifier = next(a for a in agents if a["name"] == "health_verifier")
+        assert verifier["max_iterations"] == 15
+        assert verifier.get("requires_tools") is True
+
+
+class TestParallelSubGathererPromptBuilders:
+    """Unit tests for the 4 standalone prompt builder functions."""
+
+    def test_build_node_gatherer_prompt_returns_string(self) -> None:
+        from vaig.skills.service_health.prompts import build_node_gatherer_prompt
+
+        result = build_node_gatherer_prompt()
+        assert isinstance(result, str)
+        assert len(result) > 200
+
+    def test_build_workload_gatherer_prompt_returns_string(self) -> None:
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        result = build_workload_gatherer_prompt()
+        assert isinstance(result, str)
+        assert len(result) > 200
+
+    def test_build_event_gatherer_prompt_returns_string(self) -> None:
+        from vaig.skills.service_health.prompts import build_event_gatherer_prompt
+
+        result = build_event_gatherer_prompt()
+        assert isinstance(result, str)
+        assert len(result) > 200
+
+    def test_build_logging_gatherer_prompt_returns_string(self) -> None:
+        from vaig.skills.service_health.prompts import build_logging_gatherer_prompt
+
+        result = build_logging_gatherer_prompt()
+        assert isinstance(result, str)
+        assert len(result) > 200
+
+    def test_all_builders_include_anti_injection_rule(self) -> None:
+        """All 4 builders must include the security anti-injection rule."""
+        from vaig.skills.service_health.prompts import (
+            build_event_gatherer_prompt,
+            build_logging_gatherer_prompt,
+            build_node_gatherer_prompt,
+            build_workload_gatherer_prompt,
+        )
+
+        fragment = "EXTERNAL, UNTRUSTED sources"
+        for fn in [
+            build_node_gatherer_prompt,
+            build_workload_gatherer_prompt,
+            build_event_gatherer_prompt,
+            build_logging_gatherer_prompt,
+        ]:
+            result = fn()
+            assert fragment in result, (
+                f"{fn.__name__}() is missing ANTI_INJECTION_RULE fragment '{fragment}'"
+            )
+
+    def test_node_gatherer_prompt_no_pod_name_parameter(self) -> None:
+        """node_gatherer prompt must not use 'pod_name' — correct param is 'pod'."""
+        import re
+
+        from vaig.skills.service_health.prompts import build_node_gatherer_prompt
+
+        calls = re.findall(r"kubectl_logs\([^)]+\)", build_node_gatherer_prompt())
+        for call in calls:
+            assert "pod_name" not in call
+
+    def test_workload_gatherer_prompt_no_pod_name_parameter(self) -> None:
+        """workload_gatherer prompt must use 'pod' not 'pod_name' for kubectl_logs."""
+        import re
+
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        calls = re.findall(r"kubectl_logs\([^)]+\)", build_workload_gatherer_prompt())
+        for call in calls:
+            assert "pod_name" not in call, (
+                f"workload_gatherer uses 'pod_name' in kubectl_logs: {call}"
+            )

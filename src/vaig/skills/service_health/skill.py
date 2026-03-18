@@ -21,7 +21,11 @@ from vaig.skills.service_health.prompts import (
     HEALTH_VERIFIER_PROMPT,
     PHASE_PROMPTS,
     SYSTEM_INSTRUCTION,
+    build_event_gatherer_prompt,
     build_gatherer_prompt,
+    build_logging_gatherer_prompt,
+    build_node_gatherer_prompt,
+    build_workload_gatherer_prompt,
 )
 from vaig.skills.service_health.schema import HealthReport
 from vaig.tools.gke._clients import ensure_client_initialized
@@ -193,6 +197,102 @@ class ServiceHealthSkill(BaseSkill):
                 "system_instruction": HEALTH_REPORTER_PROMPT,
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,  # Slightly higher for natural writing
+                "response_schema": HealthReport,
+                "response_mime_type": "application/json",
+            },
+        ]
+
+    def get_parallel_agents_config(self) -> list[dict[str, Any]]:
+        """Return the 7-agent parallel-then-sequential pipeline configuration.
+
+        Phase 3 of the parallel-gatherer design replaces the single monolithic
+        ``health_gatherer`` with 4 focused sub-gatherers that run concurrently
+        via ``_execute_parallel_then_sequential`` in the Orchestrator.
+
+        Pipeline structure:
+        - **Parallel group** (``parallel_group="gather"``): 4 sub-gatherers,
+          each covering a focused subset of the 10-step investigation checklist.
+          All use ``gemini-2.5-flash`` for speed and cost efficiency.
+        - **Sequential tail** (unchanged): health_analyzer → health_verifier →
+          health_reporter.  The merged output of the parallel group is passed
+          as context to the analyzer.
+
+        Sub-gatherer scope:
+        - ``node_gatherer``: Step 1 — cluster overview & node health
+        - ``workload_gatherer``: Steps 2, 4, 5, 6 — pods, deployments, services, HPA
+        - ``event_gatherer``: Steps 3, 8, 9, 10 — events, networking, storage, GitOps
+        - ``logging_gatherer``: Steps 7a, 7b — Cloud Logging error & warning queries
+
+        Requires orchestrator strategy ``"parallel_sequential"`` (implemented in
+        Phase 1 via ``_execute_parallel_then_sequential``).
+        """
+        return [
+            # ── Parallel group: 4 focused sub-gatherers ──────────────────
+            {
+                "name": "node_gatherer",
+                "role": "Cluster & Node Health Gatherer",
+                "requires_tools": True,
+                "parallel_group": "gather",
+                "system_instruction": build_node_gatherer_prompt(),
+                "model": "gemini-2.5-flash",
+                "temperature": 0.0,
+                "max_iterations": 8,
+            },
+            {
+                "name": "workload_gatherer",
+                "role": "Workload Health Gatherer",
+                "requires_tools": True,
+                "parallel_group": "gather",
+                "system_instruction": build_workload_gatherer_prompt(),
+                "model": "gemini-2.5-flash",
+                "temperature": 0.0,
+                "max_iterations": 12,
+            },
+            {
+                "name": "event_gatherer",
+                "role": "Events & Infrastructure Gatherer",
+                "requires_tools": True,
+                "parallel_group": "gather",
+                "system_instruction": build_event_gatherer_prompt(),
+                "model": "gemini-2.5-flash",
+                "temperature": 0.0,
+                "max_iterations": 10,
+            },
+            {
+                "name": "logging_gatherer",
+                "role": "Cloud Logging Gatherer",
+                "requires_tools": True,
+                "parallel_group": "gather",
+                "system_instruction": build_logging_gatherer_prompt(),
+                "model": "gemini-2.5-flash",
+                "temperature": 0.0,
+                "max_iterations": 8,
+            },
+            # ── Sequential tail: unchanged from get_agents_config() ──────
+            {
+                "name": "health_analyzer",
+                "role": "Health Pattern Analyzer",
+                "requires_tools": False,
+                "system_instruction": HEALTH_ANALYZER_PROMPT,
+                "model": "gemini-2.5-flash",
+                "temperature": 0.2,
+            },
+            {
+                "name": "health_verifier",
+                "role": "Health Finding Verifier",
+                "requires_tools": True,
+                "system_instruction": HEALTH_VERIFIER_PROMPT,
+                "model": "gemini-2.5-flash",
+                "max_iterations": 15,
+                "temperature": 0.2,
+            },
+            {
+                "name": "health_reporter",
+                "role": "Health Report Generator",
+                "requires_tools": False,
+                "system_instruction": HEALTH_REPORTER_PROMPT,
+                "model": "gemini-2.5-flash",
+                "temperature": 0.3,
                 "response_schema": HealthReport,
                 "response_mime_type": "application/json",
             },
