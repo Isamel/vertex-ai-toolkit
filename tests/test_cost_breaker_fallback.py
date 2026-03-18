@@ -298,11 +298,10 @@ class TestModelFallback:
         assert agent_a._config.model != "gemini-2.0-flash"
 
     def test_failures_below_threshold_no_fallback(self) -> None:
-        """One rate_limit failure on agent (threshold=2) should NOT trigger fallback.
+        """One rate_limit failure with threshold=2 should NOT trigger fallback.
 
-        The failure_counts dict is local to each execute_with_tools call.
-        A skill with the same agent appearing twice accumulates failures within
-        a single run. With threshold=2, only 1 failure means no fallback.
+        With max_failures_before_fallback=2, a single transient failure retries
+        inline and succeeds. Counter stays at 1 (below threshold), so no fallback.
         """
         settings = _make_mock_settings(max_failures_before_fallback=2)
         orchestrator = Orchestrator(_make_mock_client(), settings)
@@ -312,32 +311,29 @@ class TestModelFallback:
         fail_result = _make_agent_result("agent_a", success=False, error_type="rate_limit")
         success_result = _make_agent_result("agent_a", success=True)
 
-        # One agent that fails once (rate_limit) then succeeds
+        # Single agent: fails once (inline retry), then succeeds — count stays at 1
         agent_a = _make_mock_agent("agent_a")
         agent_a.execute.side_effect = [fail_result, success_result]
 
         agent_b = _make_mock_agent("agent_b")
 
-        # Pipeline: agent_a (fail, count=1 < 2), agent_a (success), agent_b (success)
-        # After 1 failure, no fallback triggered
         with patch.object(
-            orchestrator, "create_agents_for_skill", return_value=[agent_a, agent_a, agent_b],
+            orchestrator, "create_agents_for_skill", return_value=[agent_a, agent_b],
         ):
             result = orchestrator.execute_with_tools("test query", skill, tool_registry)
 
-        # Only 1 failure before success reset the counter — no fallback
+        # Only 1 failure — no fallback triggered
         assert agent_a._config.model != "gemini-2.0-flash"
         assert result.success is True
 
     def test_two_failures_triggers_fallback(self) -> None:
         """Two consecutive rate_limit failures on same agent trigger model switch.
 
-        The failure_counts dict accumulates within a single execute_with_tools call.
-        A skill listing the same agent name twice (or a pipeline that passes the
-        same agent object twice) reaches the threshold=2 within a single run.
-        After the fallback is set, the agent runs with the new model and succeeds.
+        With max_failures_before_fallback=1, the first failure increments the
+        counter to 1 which equals the threshold. The fallback model is set and
+        the inline retry uses the new model and succeeds.
         """
-        settings = _make_mock_settings(max_failures_before_fallback=2)
+        settings = _make_mock_settings(max_failures_before_fallback=1)
         orchestrator = Orchestrator(_make_mock_client(), settings)
         skill = SimpleSkill()
         tool_registry = MagicMock(spec=ToolRegistry)
@@ -345,84 +341,82 @@ class TestModelFallback:
         fail_result = _make_agent_result("agent_a", success=False, error_type="rate_limit")
         success_result = _make_agent_result("agent_a", success=True)
 
+        # Single agent: fail (count=1 → fallback set), retry succeeds
         agent_a = _make_mock_agent("agent_a")
-        # Called 3 times: fail (count=1), fail (count=2 → fallback set), success
-        agent_a.execute.side_effect = [fail_result, fail_result, success_result]
+        agent_a.execute.side_effect = [fail_result, success_result]
 
         agent_b = _make_mock_agent("agent_b")
 
-        # Pass agent_a three times so the loop executes it 3 times in one call
         with patch.object(
             orchestrator, "create_agents_for_skill",
-            return_value=[agent_a, agent_a, agent_a, agent_b],
+            return_value=[agent_a, agent_b],
         ):
             result = orchestrator.execute_with_tools("test query", skill, tool_registry)
 
-        # After 2 failures with the same agent name, fallback model must be set
+        # After 1 failure (threshold=1), fallback model must be set
         assert agent_a._config.model == "gemini-2.0-flash"
         assert result.success is True
 
     def test_no_fallback_model_configured(self) -> None:
-        """When fallback model is None, 2 rate_limit failures set model to None.
+        """When max_failures_before_fallback=0, fallback is disabled entirely.
 
-        The fallback logic sets ``agent._config.model = settings.models.fallback``
-        unconditionally when the threshold is reached. With fallback=None, the
-        model is set to None (caller's responsibility to handle).
+        Setting max_failures_before_fallback=0 disables the fallback mechanism.
+        Even with a transient failure the model should never be switched.
         """
-        settings = _make_mock_settings(max_failures_before_fallback=2, fallback_model=None)
+        settings = _make_mock_settings(max_failures_before_fallback=0)
         orchestrator = Orchestrator(_make_mock_client(), settings)
         skill = SimpleSkill()
         tool_registry = MagicMock(spec=ToolRegistry)
 
         fail_result = _make_agent_result("agent_a", success=False, error_type="rate_limit")
-        success_result = _make_agent_result("agent_a", success=True)
         agent_a = _make_mock_agent("agent_a")
-        # Two failures reach threshold; third call succeeds (so pipeline doesn't hang)
-        agent_a.execute.side_effect = [fail_result, fail_result, success_result]
+        agent_a.execute.return_value = fail_result
 
         agent_b = _make_mock_agent("agent_b")
 
         with patch.object(
             orchestrator, "create_agents_for_skill",
-            return_value=[agent_a, agent_a, agent_a, agent_b],
+            return_value=[agent_a, agent_b],
         ):
             result = orchestrator.execute_with_tools("test query", skill, tool_registry)
 
-        # When fallback=None, _config.model is set to None after threshold
-        assert agent_a._config.model is None
+        # Fallback disabled — _config.model must remain unchanged
+        assert agent_a._config.model == "gemini-2.5-pro"
+        assert result.success is False
 
     def test_fallback_model_also_fails(self) -> None:
         """When fallback model also fails with non-retriable error, pipeline fails."""
-        settings = _make_mock_settings(max_failures_before_fallback=2)
+        settings = _make_mock_settings(max_failures_before_fallback=1)
         orchestrator = Orchestrator(_make_mock_client(), settings)
         skill = SimpleSkill()
         tool_registry = MagicMock(spec=ToolRegistry)
 
         rate_limit_fail = _make_agent_result("agent_a", success=False, error_type="rate_limit")
-        # After fallback is set, agent fails with a generic (non-retriable) error
+        # After fallback is set, the inline retry fails with a generic (non-retriable) error
         hard_fail = _make_agent_result("agent_a", success=False, content="model error")
 
+        # Single agent: fail (count=1 → fallback set), inline retry hard fails
         agent_a = _make_mock_agent("agent_a")
-        # fail (count=1), fail (count=2 → fallback set), hard fail (no rate_limit → break)
-        agent_a.execute.side_effect = [rate_limit_fail, rate_limit_fail, hard_fail]
+        agent_a.execute.side_effect = [rate_limit_fail, hard_fail]
 
         agent_b = _make_mock_agent("agent_b")
 
         with patch.object(
             orchestrator, "create_agents_for_skill",
-            return_value=[agent_a, agent_a, agent_a, agent_b],
+            return_value=[agent_a, agent_b],
         ):
             result = orchestrator.execute_with_tools("test query", skill, tool_registry)
 
-        # Fallback model was set, but then the fallback call also fails (non-retriable)
+        # Fallback model was set, but the retry also failed (non-retriable)
         assert result.success is False
         assert agent_a._config.model == "gemini-2.0-flash"
 
     def test_success_resets_failure_counter(self) -> None:
         """A success after a failure resets the counter, preventing premature fallback.
 
-        Sequence: fail (count=1), succeed (counter reset to 0), fail (count=1 again).
-        With threshold=2, the second failure-run only has count=1, so no fallback.
+        Sequence: fail (inline retry succeeds → count reset to 0), fail again.
+        With threshold=2, after the inline-retry success resets the counter,
+        a second failure only brings count to 1 — below threshold.
         """
         settings = _make_mock_settings(max_failures_before_fallback=2)
         orchestrator = Orchestrator(_make_mock_client(), settings)
@@ -432,16 +426,16 @@ class TestModelFallback:
         fail_result = _make_agent_result("agent_a", success=False, error_type="rate_limit")
         success_result = _make_agent_result("agent_a", success=True)
 
+        # agent_a: fail→retry success (reset), fail→retry success — never reaches threshold=2
         agent_a = _make_mock_agent("agent_a")
-        # fail (count=1), succeed (reset), fail (count=1, below threshold=2)
         agent_a.execute.side_effect = [fail_result, success_result, fail_result, success_result]
 
         agent_b = _make_mock_agent("agent_b")
 
-        # Pipeline: a, a, a, a, b — counter resets on success so never reaches 2
+        # Two pipeline slots for agent_a — each triggers one fail+retry cycle
         with patch.object(
             orchestrator, "create_agents_for_skill",
-            return_value=[agent_a, agent_a, agent_a, agent_a, agent_b],
+            return_value=[agent_a, agent_a, agent_b],
         ):
             result = orchestrator.execute_with_tools("test query", skill, tool_registry)
 
@@ -462,7 +456,7 @@ class TestCombined:
         """Both features active: fallback triggered but pipeline completes within budget."""
         settings = _make_mock_settings(
             max_cost_per_run=1.0,  # generous budget
-            max_failures_before_fallback=2,
+            max_failures_before_fallback=1,
         )
         orchestrator = Orchestrator(_make_mock_client(), settings)
         skill = SimpleSkill()
@@ -471,13 +465,12 @@ class TestCombined:
         fail_result = _make_agent_result("agent_a", success=False, error_type="rate_limit")
         success_result = _make_agent_result("agent_a", success=True)
 
+        # Single agent: fail (count=1 → threshold=1 → fallback set), inline retry succeeds
         agent_a = _make_mock_agent("agent_a")
-        agent_a.execute.side_effect = [fail_result, fail_result, success_result]
+        agent_a.execute.side_effect = [fail_result, success_result]
         agent_b = _make_mock_agent("agent_b")
 
-        # agent_a appears 3 times so failure_counts accumulates across iterations:
-        # iter 1 → fail (count=1), iter 2 → fail (count=2 → fallback set), iter 3 → success
-        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent_a, agent_a, agent_a, agent_b]):
+        with patch.object(orchestrator, "create_agents_for_skill", return_value=[agent_a, agent_b]):
             with patch("vaig.agents.orchestrator._compute_step_cost", return_value=0.01):
                 result = orchestrator.execute_with_tools("test query", skill, tool_registry)
 

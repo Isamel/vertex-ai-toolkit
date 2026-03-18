@@ -279,7 +279,8 @@ class Orchestrator:
 
             # First agent gets the original prompt; subsequent agents get the accumulated context
             if i == 0:
-                agent_result = agent.execute(prompt, context=current_context)
+                _seq_ctx = current_context
+                agent_result = agent.execute(prompt, context=_seq_ctx)
             else:
                 # Feed ALL previous agents' outputs as accumulated context
                 prev = result.agent_results[-1]
@@ -290,7 +291,8 @@ class Orchestrator:
                     f"{current_context}\n\n"
                     + "\n\n---\n\n".join(context_chain)
                 )
-                agent_result = agent.execute(prompt, context=accumulated)
+                _seq_ctx = accumulated
+                agent_result = agent.execute(prompt, context=_seq_ctx)
 
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
@@ -334,6 +336,26 @@ class Orchestrator:
                             error_type, fallback_model,
                         )
                         agent._config.model = fallback_model
+                        # ── Inline retry with fallback model ─────────────
+                        logger.info(
+                            "Retrying agent %s inline with fallback model %s",
+                            agent.name, fallback_model,
+                        )
+                        retry_ar = agent.execute(prompt, context=_seq_ctx)
+                        run_cost_usd += _compute_step_cost(retry_ar, agent.model)
+                        result.run_cost_usd = run_cost_usd
+                        _accumulate_usage(result, retry_ar)
+                        result.agent_results[-1] = retry_ar
+                        agent_result = retry_ar
+                        if not retry_ar.success:
+                            result.success = False
+                            logger.warning(
+                                "Agent %s fallback retry also failed: %s",
+                                agent.name, retry_ar.content,
+                            )
+                            break
+                        # Retry succeeded — reset failure counter
+                        failure_counts.pop(agent.name, None)
                 else:
                     result.success = False
                     logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
@@ -797,6 +819,26 @@ class Orchestrator:
                                 error_type, fallback_model,
                             )
                             agent._config.model = fallback_model
+                            # ── Inline retry with fallback model ─────────
+                            logger.info(
+                                "Retrying agent %s inline with fallback model %s",
+                                agent.name, fallback_model,
+                            )
+                            retry_ar = agent.execute(query, **kw_seq)
+                            run_cost_usd += _compute_step_cost(retry_ar, agent.model)
+                            result.run_cost_usd = run_cost_usd
+                            _accumulate_usage(result, retry_ar)
+                            result.agent_results[-1] = retry_ar
+                            agent_result = retry_ar
+                            if not retry_ar.success:
+                                result.success = False
+                                logger.warning(
+                                    "Agent %s fallback retry also failed: %s",
+                                    agent.name, retry_ar.content,
+                                )
+                                break
+                            # Retry succeeded — reset failure counter
+                            failure_counts.pop(agent.name, None)
                     else:
                         result.success = False
                         logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
@@ -895,6 +937,22 @@ class Orchestrator:
                     else:
                         # No exception — process retry result normally
                         _accumulate_usage(result, retry_result)
+                        run_cost_usd += _compute_step_cost(retry_result, agent.model)
+                        result.run_cost_usd = run_cost_usd
+                        if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                            logger.warning(
+                                "Cost circuit breaker triggered after gatherer retry %s: "
+                                "run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                                agent.name, run_cost_usd, max_cost_per_run,
+                            )
+                            result.success = False
+                            result.budget_exceeded = True
+                            result.synthesized_output = (
+                                f"[WARNING] Pipeline halted: accumulated run cost "
+                                f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
+                                + (result.agent_results[-1].content if result.agent_results else "")
+                            )
+                            return result
 
                         if is_deepening:
                             # Merge: concatenate first-pass + second-pass
@@ -986,6 +1044,22 @@ class Orchestrator:
                                 json_retry_prompt, **kw_js,
                             )
                             _accumulate_usage(result, json_retry_result)
+                            run_cost_usd += _compute_step_cost(json_retry_result, agent.model)
+                            result.run_cost_usd = run_cost_usd
+                            if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                                logger.warning(
+                                    "Cost circuit breaker triggered after JSON retry %s: "
+                                    "run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                                    agent.name, run_cost_usd, max_cost_per_run,
+                                )
+                                result.success = False
+                                result.budget_exceeded = True
+                                result.synthesized_output = (
+                                    f"[WARNING] Pipeline halted: accumulated run cost "
+                                    f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
+                                    + (result.agent_results[-1].content if result.agent_results else "")
+                                )
+                                return result
                             if json_retry_result.success:
                                 agent_result = json_retry_result
                                 result.agent_results[-1] = agent_result
@@ -1056,6 +1130,16 @@ class Orchestrator:
                             reporter_retry_prompt, **kw_rr,
                         )
                         _accumulate_usage(result, reporter_retry)
+                        run_cost_usd += _compute_step_cost(reporter_retry, agent.model)
+                        result.run_cost_usd = run_cost_usd
+                        if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                            result.success = False
+                            result.budget_exceeded = True
+                            result.synthesized_output = (
+                                f"[WARNING] Cost budget ${max_cost_per_run:.4f} exceeded "
+                                f"during reporter retry (actual: ${run_cost_usd:.4f})"
+                            )
+                            return result
                         result.agent_results[-1] = reporter_retry
 
                         if not reporter_retry.success:
@@ -1648,6 +1732,28 @@ class Orchestrator:
                                 error_type, fallback_model,
                             )
                             agent._config.model = fallback_model
+                            # ── Inline retry with fallback model ─────────
+                            logger.info(
+                                "Retrying agent %s inline with fallback model %s",
+                                agent.name, fallback_model,
+                            )
+                            retry_ar = await asyncio.to_thread(
+                                agent.execute, query, **kw_seq,
+                            )
+                            run_cost_usd += _compute_step_cost(retry_ar, agent.model)
+                            result.run_cost_usd = run_cost_usd
+                            _accumulate_usage(result, retry_ar)
+                            result.agent_results[-1] = retry_ar
+                            agent_result = retry_ar
+                            if not retry_ar.success:
+                                result.success = False
+                                logger.warning(
+                                    "Agent %s fallback retry also failed: %s",
+                                    agent.name, retry_ar.content,
+                                )
+                                break
+                            # Retry succeeded — reset failure counter
+                            failure_counts.pop(agent.name, None)
                     else:
                         result.success = False
                         logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
@@ -1730,6 +1836,16 @@ class Orchestrator:
                             raise
                     else:
                         _accumulate_usage(result, retry_result)
+                        run_cost_usd += _compute_step_cost(retry_result, agent.model)
+                        result.run_cost_usd = run_cost_usd
+                        if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                            result.success = False
+                            result.budget_exceeded = True
+                            result.synthesized_output = (
+                                f"[WARNING] Cost budget ${max_cost_per_run:.4f} exceeded "
+                                f"during retry (actual: ${run_cost_usd:.4f})"
+                            )
+                            break
 
                         if is_deepening:
                             merged_content = (
@@ -1815,6 +1931,16 @@ class Orchestrator:
                                 agent.execute, json_retry_prompt, **kw_js,
                             )
                             _accumulate_usage(result, json_retry_result)
+                            run_cost_usd += _compute_step_cost(json_retry_result, agent.model)
+                            result.run_cost_usd = run_cost_usd
+                            if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                                result.success = False
+                                result.budget_exceeded = True
+                                result.synthesized_output = (
+                                    f"[WARNING] Cost budget ${max_cost_per_run:.4f} exceeded "
+                                    f"during JSON schema retry (actual: ${run_cost_usd:.4f})"
+                                )
+                                break
                             if json_retry_result.success:
                                 agent_result = json_retry_result
                                 result.agent_results[-1] = agent_result
@@ -1885,6 +2011,16 @@ class Orchestrator:
                             agent.execute, reporter_retry_prompt, **kw_rr,
                         )
                         _accumulate_usage(result, reporter_retry)
+                        run_cost_usd += _compute_step_cost(reporter_retry, agent.model)
+                        result.run_cost_usd = run_cost_usd
+                        if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                            result.success = False
+                            result.budget_exceeded = True
+                            result.synthesized_output = (
+                                f"[WARNING] Cost budget ${max_cost_per_run:.4f} exceeded "
+                                f"during reporter retry (actual: ${run_cost_usd:.4f})"
+                            )
+                            return result
                         result.agent_results[-1] = reporter_retry
 
                         if not reporter_retry.success:
@@ -2059,7 +2195,7 @@ class Orchestrator:
         context_chain: list[str] = [merged_context]
 
         run_cost_usd: float = sum(
-            _compute_step_cost(r, parallel_agent_models.get(r.agent_name, r.agent_name))
+            _compute_step_cost(r, parallel_agent_models.get(r.agent_name))
             for r in parallel_results
         )
         max_cost_per_run: float = self._settings.budget.max_cost_per_run
@@ -2147,6 +2283,26 @@ class Orchestrator:
                             error_type, fallback_model,
                         )
                         agent._config.model = fallback_model
+                        # ── Inline retry with fallback model ─────────────
+                        logger.info(
+                            "Retrying agent %s inline with fallback model %s",
+                            agent.name, fallback_model,
+                        )
+                        retry_ar = agent.execute(query, **kw_seq)
+                        run_cost_usd += _compute_step_cost(retry_ar, agent.model)
+                        result.run_cost_usd = run_cost_usd
+                        _accumulate_usage(result, retry_ar)
+                        result.agent_results[-1] = retry_ar
+                        agent_result = retry_ar
+                        if not retry_ar.success:
+                            result.success = False
+                            logger.warning(
+                                "Agent %s fallback retry also failed: %s",
+                                agent.name, retry_ar.content,
+                            )
+                            break
+                        # Retry succeeded — reset failure counter
+                        failure_counts.pop(agent.name, None)
                 else:
                     result.success = False
                     logger.warning(
@@ -2277,7 +2433,7 @@ class Orchestrator:
         context_chain: list[str] = [merged_context]
 
         run_cost_usd: float = sum(
-            _compute_step_cost(r, parallel_agent_models.get(r.agent_name, r.agent_name))
+            _compute_step_cost(r, parallel_agent_models.get(r.agent_name))
             for r in parallel_results
         )
         max_cost_per_run: float = self._settings.budget.max_cost_per_run
@@ -2365,6 +2521,28 @@ class Orchestrator:
                             error_type, fallback_model,
                         )
                         agent._config.model = fallback_model
+                        # ── Inline retry with fallback model ─────────────
+                        logger.info(
+                            "Retrying agent %s inline with fallback model %s",
+                            agent.name, fallback_model,
+                        )
+                        retry_ar = await asyncio.to_thread(
+                            agent.execute, query, **kw_seq,
+                        )
+                        run_cost_usd += _compute_step_cost(retry_ar, agent.model)
+                        result.run_cost_usd = run_cost_usd
+                        _accumulate_usage(result, retry_ar)
+                        result.agent_results[-1] = retry_ar
+                        agent_result = retry_ar
+                        if not retry_ar.success:
+                            result.success = False
+                            logger.warning(
+                                "Agent %s fallback retry also failed: %s",
+                                agent.name, retry_ar.content,
+                            )
+                            break
+                        # Retry succeeded — reset failure counter
+                        failure_counts.pop(agent.name, None)
                 else:
                     result.success = False
                     logger.warning(
@@ -2915,14 +3093,16 @@ def _accumulate_usage(result: OrchestratorResult, agent_result: AgentResult) -> 
         result.total_usage[key] = result.total_usage.get(key, 0) + value
 
 
-def _compute_step_cost(agent_result: AgentResult, model_id: str) -> float:
+def _compute_step_cost(agent_result: AgentResult, model_id: str | None) -> float:
     """Return the USD cost for a single agent step, or 0.0 if unknown.
 
     Delegates to :func:`~vaig.core.pricing.calculate_cost` using the token
     counts reported in *agent_result.usage*.  Returns ``0.0`` whenever
-    ``calculate_cost`` returns ``None`` (model not in pricing table) or when
-    token counts are absent.
+    ``calculate_cost`` returns ``None`` (model not in pricing table), when
+    token counts are absent, or when *model_id* is ``None``.
     """
+    if model_id is None:
+        return 0.0
     usage = agent_result.usage
     cost = calculate_cost(
         model_id,
