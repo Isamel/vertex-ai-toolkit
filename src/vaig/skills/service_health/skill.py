@@ -245,6 +245,12 @@ class ServiceHealthSkill(BaseSkill):
         Requires orchestrator strategy ``"parallel_sequential"`` (implemented in
         Phase 1 via ``_execute_parallel_then_sequential``).
         """
+        from vaig.core.config import get_settings  # noqa: PLC0415
+        from vaig.tools.gke._clients import detect_autopilot  # noqa: PLC0415
+
+        settings = get_settings()
+        is_autopilot = bool(detect_autopilot(settings.gke))
+
         return [
             # ── Parallel group: 4 focused sub-gatherers ──────────────────
             {
@@ -252,10 +258,10 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Cluster & Node Health Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
-                "system_instruction": build_node_gatherer_prompt(),
+                "system_instruction": build_node_gatherer_prompt(is_autopilot=is_autopilot),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.0,
-                "max_iterations": 8,
+                "max_iterations": 4 if is_autopilot else 8,
             },
             {
                 "name": "workload_gatherer",

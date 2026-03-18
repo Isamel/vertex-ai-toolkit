@@ -1767,13 +1767,12 @@ class TestServiceHealthAutopilotAwareness:
 
         assert "GKE Autopilot Cluster Overview" not in HEALTH_REPORTER_PROMPT
 
-    def test_dynamic_injection_covers_node_data_readable(self) -> None:
-        """Dynamic Autopilot instruction must confirm node data is readable."""
+    def test_dynamic_injection_covers_node_data_context_only(self) -> None:
+        """Dynamic Autopilot instruction must state node data is CONTEXT ONLY."""
         from vaig.core.language import build_autopilot_instruction
 
         result = build_autopilot_instruction(True)
-        assert "kubectl_get" in result
-        assert "get_node_conditions" in result
+        assert "CONTEXT ONLY" in result
 
     def test_dynamic_injection_covers_node_top_not_available(self) -> None:
         """Dynamic Autopilot instruction must warn kubectl_top nodes is unavailable."""
@@ -1798,14 +1797,13 @@ class TestServiceHealthAutopilotAwareness:
         assert "mandatory" in result.lower()
         assert "resource requests" in result.lower()
 
-    def test_dynamic_injection_preserves_full_analysis_depth(self) -> None:
-        """Dynamic Autopilot instruction must NOT narrow analysis scope."""
+    def test_dynamic_injection_focuses_workload_level(self) -> None:
+        """Dynamic Autopilot instruction must focus analysis on workload-level health."""
         from vaig.core.language import build_autopilot_instruction
 
         result = build_autopilot_instruction(True)
-        assert "UNCHANGED" in result
-        assert "full depth" in result
-        # Must NOT contain the old scope-narrowing language
+        assert "WORKLOAD-LEVEL" in result
+        # Must NOT contain the old scope-narrowing language from the previous version
         assert "Focus on pod-level and workload-level health" not in result
 
 

@@ -544,6 +544,14 @@ Note: exec_command requires gke.exec_enabled=true in config. If exec is disabled
 5. In the Structured Summary and Findings Overview, counts and statistics MUST be derived by counting actual findings — NEVER estimate or invent numbers. If you identified 2 findings, write "Total findings: 2" — not a round number you made up.
 6. In the Service Status Summary, the Status column MUST reflect ONLY what the gathered data shows. If no data was collected for a service, write "Unknown — data not collected" instead of guessing its health.
 7. NEVER create a finding to "fill in" a severity category. If there are no CRITICAL findings, the CRITICAL section should be empty — do NOT manufacture one to make the report look complete.
+
+### Autopilot Cluster Rules (when Autopilot instruction is present)
+- NEVER create a finding with severity CRITICAL, HIGH, or MEDIUM for node-level
+  issues on Autopilot clusters. Node health is Google's responsibility.
+- If node data shows NotReady or resource pressure, classify as INFO at most
+  with note: "Google-managed node — no action required"
+- Focus severity assessment EXCLUSIVELY on workload-level issues:
+  pod health, deployment rollouts, HPA, service connectivity, application logs
 """
 
 HEALTH_VERIFIER_PROMPT = f"""You are a Kubernetes verification agent. Your job is to VERIFY findings from the analyzer by making targeted tool calls specified in each finding's Verification Gap field.
@@ -1015,7 +1023,7 @@ Rules:
 # instead of one monolithic gatherer running all steps sequentially.
 
 
-def build_node_gatherer_prompt() -> str:
+def build_node_gatherer_prompt(is_autopilot: bool = False) -> str:
     """Build the system instruction for the ``node_gatherer`` sub-agent.
 
     The ``node_gatherer`` is responsible for **Step 1** of the standard SRE
@@ -1040,11 +1048,46 @@ def build_node_gatherer_prompt() -> str:
     :meth:`~vaig.skills.base.BaseSkill.get_required_output_sections` for
     validation.
 
+    Args:
+        is_autopilot: When ``True``, returns a lightweight 2-tool-call
+            Autopilot-specific prompt that skips per-node investigation
+            (nodes are managed by Google and not actionable).  When ``False``
+            (default), returns the full 6-step Standard prompt unchanged.
+
     Returns:
         A formatted system-instruction string injecting
-        :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the full
-        node-gatherer task description.
+        :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the
+        appropriate node-gatherer task description.
     """
+    if is_autopilot:
+        return f"""{ANTI_INJECTION_RULE}
+
+## Your Scope: Step 1 — Cluster Overview (Autopilot Mode)
+
+This is a GKE Autopilot cluster. Nodes are managed by Google — do NOT
+do deep per-node investigation. Your job is to establish CONTEXT only.
+
+### Tools to use:
+1. kubectl_get(resource="nodes") — list nodes (count, status summary ONLY)
+2. kubectl_get(resource="namespaces") — namespace inventory
+
+### What NOT to do:
+- Do NOT call get_node_conditions for each node individually — in Autopilot,
+  node conditions are Google's responsibility and not actionable
+- Do NOT call kubectl_top(resource_type="nodes") — not available on Autopilot
+- Do NOT call get_events(namespace="kube-system") — not actionable on Autopilot
+- Do NOT report NotReady nodes as findings — Google recycles Autopilot nodes
+  routinely, transient NotReady is NORMAL
+
+### MANDATORY OUTPUT FORMAT
+## Cluster Overview
+- Cluster type: GKE Autopilot (managed nodes)
+- Node count: [N] (X Ready, Y NotReady — NotReady is normal on Autopilot)
+- Namespaces: [list]
+- Note: Node-level metrics and conditions are not investigated on Autopilot
+  clusters because they are managed by Google and not actionable.
+"""
+
     return f"""{ANTI_INJECTION_RULE}
 
 You are a focused Kubernetes diagnostic agent. Your ONLY responsibility is to

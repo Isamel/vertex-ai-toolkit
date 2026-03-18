@@ -652,9 +652,9 @@ class TestBuildAutopilotInstruction:
         result = build_autopilot_instruction(True)
         assert "mandatory" in result.lower()
 
-    def test_instruction_mentions_google_manages_scaling(self) -> None:
+    def test_instruction_mentions_google_manages_nodes(self) -> None:
         result = build_autopilot_instruction(True)
-        assert "Google manages node scaling" in result
+        assert "Google" in result
 
 
 class TestInjectAutopilotIntoConfig:
