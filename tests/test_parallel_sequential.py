@@ -122,16 +122,19 @@ class TestPartitioning:
             gatherer_0 = MagicMock(spec=SpecialistAgent)
             gatherer_0.name = "node_gatherer"
             gatherer_0.role = "node role"
+            gatherer_0.parallel_group = "gather"
             gatherer_0.execute.return_value = _make_agent_result("node_gatherer")
 
             gatherer_1 = MagicMock(spec=SpecialistAgent)
             gatherer_1.name = "workload_gatherer"
             gatherer_1.role = "workload role"
+            gatherer_1.parallel_group = "gather"
             gatherer_1.execute.return_value = _make_agent_result("workload_gatherer")
 
             analyzer = MagicMock(spec=SpecialistAgent)
             analyzer.name = "analyzer"
             analyzer.role = "analyzer role"
+            analyzer.parallel_group = None
             analyzer.execute.return_value = _make_agent_result("analyzer")
 
             mock_create.return_value = [gatherer_0, gatherer_1, analyzer]
@@ -170,6 +173,7 @@ class TestPartitioning:
             gatherer = MagicMock(spec=SpecialistAgent)
             gatherer.name = "node_gatherer"
             gatherer.role = "node role"
+            gatherer.parallel_group = "gather"
             gatherer.execute.return_value = _make_agent_result(
                 "node_gatherer", content="node data here",
             )
@@ -177,6 +181,7 @@ class TestPartitioning:
             analyzer = MagicMock(spec=SpecialistAgent)
             analyzer.name = "analyzer"
             analyzer.role = "analyzer role"
+            analyzer.parallel_group = None
             analyzer.execute.side_effect = capture_execute
 
             mock_create.return_value = [gatherer, analyzer]
@@ -270,11 +275,13 @@ class TestParallelExecution:
             g0 = MagicMock(spec=SpecialistAgent)
             g0.name = "node_gatherer"
             g0.role = "node role"
+            g0.parallel_group = "gather"
             g0.execute.return_value = _make_agent_result("node_gatherer")
 
             g1 = MagicMock(spec=SpecialistAgent)
             g1.name = "workload_gatherer"
             g1.role = "workload role"
+            g1.parallel_group = "gather"
             g1.execute.return_value = _make_agent_result("workload_gatherer")
 
             mock_create.return_value = [g0, g1]
@@ -304,6 +311,7 @@ class TestParallelExecution:
             g0 = MagicMock(spec=SpecialistAgent)
             g0.name = "node_gatherer"
             g0.role = "node role"
+            g0.parallel_group = "gather"
             g0.execute.return_value = _make_agent_result(
                 "node_gatherer", success=False, content="timeout",
             )
@@ -311,11 +319,13 @@ class TestParallelExecution:
             g1 = MagicMock(spec=SpecialistAgent)
             g1.name = "workload_gatherer"
             g1.role = "workload role"
+            g1.parallel_group = "gather"
             g1.execute.return_value = _make_agent_result("workload_gatherer", success=True)
 
             analyzer = MagicMock(spec=SpecialistAgent)
             analyzer.name = "analyzer"
             analyzer.role = "analyzer role"
+            analyzer.parallel_group = None
             analyzer.execute.return_value = _make_agent_result("analyzer")
 
             mock_create.return_value = [g0, g1, analyzer]
@@ -346,11 +356,13 @@ class TestParallelExecution:
             g0 = MagicMock(spec=SpecialistAgent)
             g0.name = "node_gatherer"
             g0.role = "node role"
+            g0.parallel_group = "gather"
             g0.execute.return_value = _make_agent_result("node_gatherer", success=False)
 
             analyzer = MagicMock(spec=SpecialistAgent)
             analyzer.name = "analyzer"
             analyzer.role = "analyzer role"
+            analyzer.parallel_group = None
             analyzer.execute.return_value = _make_agent_result("analyzer")
 
             mock_create.return_value = [g0, analyzer]
@@ -378,6 +390,7 @@ class TestParallelExecution:
             g0 = MagicMock(spec=SpecialistAgent)
             g0.name = "node_gatherer"
             g0.role = "node role"
+            g0.parallel_group = "gather"
             g0.execute.return_value = AgentResult(
                 agent_name="node_gatherer",
                 content="data",
@@ -388,6 +401,7 @@ class TestParallelExecution:
             analyzer = MagicMock(spec=SpecialistAgent)
             analyzer.name = "analyzer"
             analyzer.role = "analyzer role"
+            analyzer.parallel_group = None
             analyzer.execute.return_value = AgentResult(
                 agent_name="analyzer",
                 content="analysis",
@@ -420,11 +434,13 @@ class TestParallelExecution:
             g0 = MagicMock(spec=SpecialistAgent)
             g0.name = "node_gatherer"
             g0.role = "node role"
+            g0.parallel_group = "gather"
             g0.execute.return_value = _make_agent_result("node_gatherer")
 
             analyzer = MagicMock(spec=SpecialistAgent)
             analyzer.name = "analyzer"
             analyzer.role = "analyzer role"
+            analyzer.parallel_group = None
             analyzer.execute.return_value = _make_agent_result(
                 "analyzer", content="final analysis",
             )
@@ -463,11 +479,13 @@ class TestAsyncParallelExecution:
             g0 = MagicMock(spec=SpecialistAgent)
             g0.name = "node_gatherer"
             g0.role = "node role"
+            g0.parallel_group = "gather"
             g0.execute.return_value = _make_agent_result("node_gatherer")
 
             g1 = MagicMock(spec=SpecialistAgent)
             g1.name = "workload_gatherer"
             g1.role = "workload role"
+            g1.parallel_group = "gather"
             g1.execute.return_value = _make_agent_result("workload_gatherer")
 
             mock_create.return_value = [g0, g1]
@@ -499,6 +517,7 @@ class TestAsyncParallelExecution:
             g0 = MagicMock(spec=SpecialistAgent)
             g0.name = "node_gatherer"
             g0.role = "node role"
+            g0.parallel_group = "gather"
             g0.execute.return_value = _make_agent_result(
                 "node_gatherer", success=False, content="err",
             )
@@ -506,11 +525,13 @@ class TestAsyncParallelExecution:
             g1 = MagicMock(spec=SpecialistAgent)
             g1.name = "workload_gatherer"
             g1.role = "workload role"
+            g1.parallel_group = "gather"
             g1.execute.return_value = _make_agent_result("workload_gatherer")
 
             analyzer = MagicMock(spec=SpecialistAgent)
             analyzer.name = "analyzer"
             analyzer.role = "analyzer role"
+            analyzer.parallel_group = None
             analyzer.execute.return_value = _make_agent_result("analyzer")
 
             mock_create.return_value = [g0, g1, analyzer]
@@ -547,6 +568,7 @@ class TestAsyncParallelExecution:
             g0 = MagicMock(spec=SpecialistAgent)
             g0.name = "node_gatherer"
             g0.role = "node role"
+            g0.parallel_group = "gather"
             g0.execute.return_value = _make_agent_result(
                 "node_gatherer", content="async node data",
             )
@@ -554,6 +576,7 @@ class TestAsyncParallelExecution:
             analyzer = MagicMock(spec=SpecialistAgent)
             analyzer.name = "analyzer"
             analyzer.role = "analyzer role"
+            analyzer.parallel_group = None
             analyzer.execute.side_effect = capture_execute
 
             mock_create.return_value = [g0, analyzer]
@@ -604,6 +627,7 @@ class TestValidation:
                 g0 = MagicMock(spec=SpecialistAgent)
                 g0.name = "node_gatherer"
                 g0.role = "node role"
+                g0.parallel_group = "gather"
                 # content does NOT contain the required section
                 g0.execute.return_value = _make_agent_result("node_gatherer", content="some data")
 
@@ -638,6 +662,7 @@ class TestValidation:
             g0 = MagicMock(spec=SpecialistAgent)
             g0.name = "node_gatherer"
             g0.role = "node role"
+            g0.parallel_group = "gather"
             g0.execute.return_value = _make_agent_result(
                 "node_gatherer", content="## Node Conditions\nAll good.",
             )
