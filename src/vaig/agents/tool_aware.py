@@ -169,6 +169,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
         tool_result_cache: ToolResultCache | None = None,
+        required_sections: list[str] | None = None,
     ) -> AgentResult:
         """Execute a task using the tool-use loop.
 
@@ -185,6 +186,11 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 results for metrics and feedback.
             tool_result_cache: Optional cache for deduplicating identical
                 tool calls within and across orchestrator passes.
+            required_sections: Optional list of section names that the
+                model's output must contain.  When provided and the
+                iteration budget reaches 80%, a warning is injected into
+                the conversation for any sections still missing.  Ignored
+                when ``None`` or when ``max_iterations`` is 2 or fewer.
 
         Returns:
             ``AgentResult`` with the final text response and metadata.
@@ -221,6 +227,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 agent_name=self.name,
                 tool_call_store=tool_call_store,
                 tool_result_cache=tool_result_cache,
+                required_sections=required_sections,
                 **loop_kwargs,
             )
         except MaxIterationsError:
@@ -286,6 +293,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
         tool_result_cache: ToolResultCache | None = None,
+        required_sections: list[str] | None = None,
     ) -> AgentResult:
         """Execute a task using the async tool-use loop.
 
@@ -303,6 +311,11 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 results for metrics and feedback.
             tool_result_cache: Optional cache for deduplicating identical
                 tool calls within and across orchestrator passes.
+            required_sections: Optional list of section names that the
+                model's output must contain.  When provided and the
+                iteration budget reaches 80%, a warning is injected into
+                the conversation for any sections still missing.  Ignored
+                when ``None`` or when ``max_iterations`` is 2 or fewer.
 
         Returns:
             ``AgentResult`` with the final text response and metadata.
@@ -339,6 +352,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 agent_name=self.name,
                 tool_call_store=tool_call_store,
                 tool_result_cache=tool_result_cache,
+                required_sections=required_sections,
                 **loop_kwargs,
             )
         except MaxIterationsError:

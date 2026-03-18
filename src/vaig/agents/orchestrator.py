@@ -771,6 +771,8 @@ class Orchestrator:
                     if tool_call_store is not None:
                         kw_seq["tool_call_store"] = tool_call_store
                     kw_seq["tool_result_cache"] = tool_result_cache
+                    if i == 0 and required_sections:
+                        kw_seq["required_sections"] = required_sections
 
                 _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "start")
                 try:
@@ -897,6 +899,8 @@ class Orchestrator:
                         if tool_call_store is not None:
                             kw_retry["tool_call_store"] = tool_call_store
                         kw_retry["tool_result_cache"] = tool_result_cache
+                        if required_sections:
+                            kw_retry["required_sections"] = required_sections
 
                     original_max_iters: int | None = None
                     if (
@@ -1689,6 +1693,8 @@ class Orchestrator:
                     if tool_call_store is not None:
                         kw_seq["tool_call_store"] = tool_call_store
                     kw_seq["tool_result_cache"] = tool_result_cache
+                    if i == 0 and required_sections:
+                        kw_seq["required_sections"] = required_sections
 
                 _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "start")
                 try:
@@ -1801,6 +1807,8 @@ class Orchestrator:
                         if tool_call_store is not None:
                             kw_retry["tool_call_store"] = tool_call_store
                         kw_retry["tool_result_cache"] = tool_result_cache
+                        if required_sections:
+                            kw_retry["required_sections"] = required_sections
 
                     original_max_iters: int | None = None
                     if (
