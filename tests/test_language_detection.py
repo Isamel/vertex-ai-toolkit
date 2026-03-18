@@ -654,7 +654,12 @@ class TestBuildAutopilotInstruction:
 
     def test_instruction_mentions_google_manages_nodes(self) -> None:
         result = build_autopilot_instruction(True)
-        assert "Google" in result
+        assert (
+            "fully managed by Google" in result
+            or "Node infrastructure is fully managed by Google" in result
+        )
+        assert "CONTEXT ONLY" in result
+        assert "node-level actions" in result
 
 
 class TestInjectAutopilotIntoConfig:

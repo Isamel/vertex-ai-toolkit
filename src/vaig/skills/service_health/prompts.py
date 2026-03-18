@@ -546,8 +546,8 @@ Note: exec_command requires gke.exec_enabled=true in config. If exec is disabled
 7. NEVER create a finding to "fill in" a severity category. If there are no CRITICAL findings, the CRITICAL section should be empty — do NOT manufacture one to make the report look complete.
 
 ### Autopilot Cluster Rules (when Autopilot instruction is present)
-- NEVER create a finding with severity CRITICAL, HIGH, or MEDIUM for node-level
-  issues on Autopilot clusters. Node health is Google's responsibility.
+- NEVER create CRITICAL or WARNING findings for node-level issues on Autopilot
+  clusters. Node health is Google's responsibility.
 - If node data shows NotReady or resource pressure, classify as INFO at most
   with note: "Google-managed node — no action required"
 - Focus severity assessment EXCLUSIVELY on workload-level issues:
@@ -1082,10 +1082,13 @@ do deep per-node investigation. Your job is to establish CONTEXT only.
 ### MANDATORY OUTPUT FORMAT
 ## Cluster Overview
 - Cluster type: GKE Autopilot (managed nodes)
-- Node count: [N] (X Ready, Y NotReady — NotReady is normal on Autopilot)
-- Namespaces: [list]
+- Node count: <print the actual count> (<actual Ready count> Ready, <actual NotReady count> NotReady — NotReady is normal on Autopilot)
+- Namespaces: <print the actual namespace list>
 - Note: Node-level metrics and conditions are not investigated on Autopilot
   clusters because they are managed by Google and not actionable.
+
+IMPORTANT: Replace all angle-bracket instructions above with actual values from
+your tool call results. Do NOT output literal placeholders or brackets.
 """
 
     return f"""{ANTI_INJECTION_RULE}
@@ -1101,7 +1104,7 @@ work outside this scope.
 1. ``kubectl_get(resource="nodes", output_format="wide")`` — list all nodes with status
 2. ``get_node_conditions(node_name="<each node>")`` — for every node returned
    in step 1, call this to retrieve the full condition set
-3. ``kubectl_top(resource="nodes")`` — CPU/memory utilisation per node
+3. ``kubectl_top(resource_type="nodes")`` — CPU/memory utilisation per node
 4. ``kubectl_get(resource="pods", namespace="kube-system", output_format="wide")`` — system component health
 5. ``kubectl_get(resource="namespaces")`` — cluster namespace inventory
 6. ``get_events(namespace="kube-system", event_type="Warning")`` — system-level warning events
