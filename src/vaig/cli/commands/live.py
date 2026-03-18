@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 from rich.panel import Panel
+from rich.status import Status
 from rich.table import Table
 
 from vaig.cli import _helpers
@@ -200,6 +201,67 @@ class ToolCallLogger:
             f"{self.tool_count} tool{'s' if self.tool_count != 1 else ''} executed"
             f"{fail_detail})[/dim]{breakdown_detail}"
         )
+
+
+class AgentProgressDisplay:
+    """Live progress indicator for multi-agent pipeline execution.
+
+    Shows a Rich :class:`~rich.status.Status` spinner with the current
+    agent name, step number, and running tool count::
+
+        [1/4] health_gatherer — running... (12 tools called)
+
+    Implements the :class:`~vaig.agents.orchestrator.OnAgentProgress`
+    protocol so it can be passed directly to
+    ``Orchestrator.execute_with_tools(on_agent_progress=...)``.
+
+    Args:
+        tool_logger: The :class:`ToolCallLogger` for the current pipeline.
+            Used to read the running ``tool_count`` for display.
+    """
+
+    def __init__(self, tool_logger: ToolCallLogger) -> None:
+        self._tool_logger = tool_logger
+        self._status: Status | None = None
+
+    def __call__(
+        self,
+        agent_name: str,
+        agent_index: int,
+        total_agents: int,
+        event: str,
+    ) -> None:
+        """Handle agent start/end events."""
+        if event == "start":
+            step = agent_index + 1
+            label = (
+                f"[bold cyan]\\[{step}/{total_agents}][/bold cyan] "
+                f"[green]{agent_name}[/green] — running..."
+            )
+            self._status = console.status(label, spinner="dots")
+            self._status.start()
+        elif event == "end":
+            if self._status is not None:
+                self._status.stop()
+                self._status = None
+            step = agent_index + 1
+            tools = self._tool_logger.tool_count
+            breakdown = self._tool_logger.format_tool_counts()
+            tools_detail = f" ({tools} tool{'s' if tools != 1 else ''} called)"
+            breakdown_detail = f" [dim]{breakdown}[/dim]" if breakdown else ""
+            console.print(
+                f"  [bold cyan]\\[{step}/{total_agents}][/bold cyan] "
+                f"[green]{agent_name}[/green] — [green]done[/green]"
+                f"{tools_detail}{breakdown_detail}"
+            )
+            # Reset per-agent counters for the next agent
+            self._tool_logger.reset()
+
+    def stop(self) -> None:
+        """Stop the spinner if it's still running (e.g. on error)."""
+        if self._status is not None:
+            self._status.stop()
+            self._status = None
 
 
 def _emit_bell(*, no_bell: bool) -> None:
@@ -788,6 +850,7 @@ def _execute_orchestrated_skill(
     try:
         console.print(f"[bold cyan]🤖 Running {skill_meta.display_name} pipeline...[/bold cyan]")
         tool_logger = ToolCallLogger()
+        progress_display = AgentProgressDisplay(tool_logger)
         orch_result = orchestrator.execute_with_tools(
             query=question,
             skill=skill,
@@ -796,7 +859,9 @@ def _execute_orchestrated_skill(
             is_autopilot=is_autopilot,
             on_tool_call=tool_logger,
             tool_call_store=tool_call_store,
+            on_agent_progress=progress_display,
         )
+        progress_display.stop()
         tool_logger.print_summary()
 
         # Display final response with severity coloring
@@ -1107,6 +1172,7 @@ async def _async_execute_orchestrated_skill(
     try:
         console.print(f"[bold cyan]🤖 Running {skill_meta.display_name} pipeline (async)...[/bold cyan]")
         tool_logger = ToolCallLogger()
+        progress_display = AgentProgressDisplay(tool_logger)
         orch_result = await orchestrator.async_execute_with_tools(
             query=question,
             skill=skill,
@@ -1115,7 +1181,9 @@ async def _async_execute_orchestrated_skill(
             is_autopilot=is_autopilot,
             on_tool_call=tool_logger,
             tool_call_store=tool_call_store,
+            on_agent_progress=progress_display,
         )
+        progress_display.stop()
         tool_logger.print_summary()
 
         console.print()

@@ -1,4 +1,4 @@
-"""Tests for the on_tool_call callback feature and ToolCallLogger.
+"""Tests for the on_tool_call callback feature, ToolCallLogger, and AgentProgressDisplay.
 
 Covers:
 - _truncate_args helper
@@ -6,6 +6,8 @@ Covers:
 - on_tool_call callback invocation in sync _run_tool_loop
 - on_tool_call callback invocation in async _async_run_tool_loop
 - Callback errors are swallowed (never break the loop)
+- AgentProgressDisplay start/end events
+- _fire_agent_progress safe invocation helper
 """
 
 from __future__ import annotations
@@ -16,7 +18,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from vaig.agents.mixins import OnToolCall, ToolLoopMixin
-from vaig.cli.commands.live import ToolCallLogger, _truncate_args
+from vaig.agents.orchestrator import OnAgentProgress, _fire_agent_progress
+from vaig.cli.commands.live import AgentProgressDisplay, ToolCallLogger, _truncate_args
 from vaig.core.client import ToolCallResult
 from vaig.tools.base import ToolDef, ToolParam, ToolRegistry, ToolResult
 
@@ -932,3 +935,251 @@ class TestSuppressStderrTTYOverride:
                 msg = "test_exc"
                 raise RuntimeError(msg)
         assert sys.stdout is original
+
+
+# ══════════════════════════════════════════════════════════════
+# _fire_agent_progress helper
+# ══════════════════════════════════════════════════════════════
+
+
+class TestFireAgentProgress:
+    """Tests for the _fire_agent_progress safe invocation helper."""
+
+    def test_noop_when_callback_is_none(self) -> None:
+        """No error is raised when callback is None."""
+        _fire_agent_progress(None, "gatherer", 0, 3, "start")
+
+    def test_invokes_callback(self) -> None:
+        """Callback receives all arguments correctly."""
+        cb = MagicMock()
+        _fire_agent_progress(cb, "analyzer", 1, 4, "end")
+        cb.assert_called_once_with("analyzer", 1, 4, "end")
+
+    def test_swallows_callback_exceptions(self) -> None:
+        """Exceptions from the callback are swallowed — never propagated."""
+        cb = MagicMock(side_effect=RuntimeError("boom"))
+        # Should NOT raise
+        _fire_agent_progress(cb, "reporter", 2, 3, "start")
+        cb.assert_called_once()
+
+    def test_swallows_all_exception_types(self) -> None:
+        """Even exotic exceptions (TypeError, ValueError) are swallowed."""
+        for exc in (TypeError("bad"), ValueError("wrong"), KeyError("missing")):
+            cb = MagicMock(side_effect=exc)
+            _fire_agent_progress(cb, "agent", 0, 1, "end")
+
+    def test_start_and_end_events(self) -> None:
+        """Both 'start' and 'end' events are forwarded."""
+        cb = MagicMock()
+        _fire_agent_progress(cb, "a1", 0, 2, "start")
+        _fire_agent_progress(cb, "a1", 0, 2, "end")
+        assert cb.call_count == 2
+        assert cb.call_args_list[0][0][3] == "start"
+        assert cb.call_args_list[1][0][3] == "end"
+
+
+# ══════════════════════════════════════════════════════════════
+# AgentProgressDisplay
+# ══════════════════════════════════════════════════════════════
+
+
+class TestAgentProgressDisplay:
+    """Tests for the AgentProgressDisplay class.
+
+    The display uses Rich console.status() spinner for 'start' events
+    and prints a completion line for 'end' events.
+    """
+
+    def _make_tool_logger(self) -> ToolCallLogger:
+        """Create a ToolCallLogger with some tool calls recorded."""
+        logger = ToolCallLogger()
+        # Simulate 3 kubectl_get calls and 1 get_events
+        for _ in range(3):
+            logger.tool_name_counts["kubectl_get"] += 1
+            logger.tool_count += 1
+        logger.tool_name_counts["get_events"] += 1
+        logger.tool_count += 1
+        return logger
+
+    @patch("vaig.cli.commands.live.console")
+    def test_start_event_creates_status_spinner(self, mock_console: MagicMock) -> None:
+        """On 'start' event, console.status() is created and started."""
+        tool_logger = ToolCallLogger()
+        display = AgentProgressDisplay(tool_logger)
+        mock_status = MagicMock()
+        mock_console.status.return_value = mock_status
+
+        display("health_gatherer", 0, 3, "start")
+
+        mock_console.status.assert_called_once()
+        label = mock_console.status.call_args[0][0]
+        assert "1/3" in label
+        assert "health_gatherer" in label
+        assert "running" in label
+        mock_status.start.assert_called_once()
+
+    @patch("vaig.cli.commands.live.console")
+    def test_end_event_stops_spinner_and_prints_summary(self, mock_console: MagicMock) -> None:
+        """On 'end' event, spinner is stopped and a summary line is printed."""
+        tool_logger = self._make_tool_logger()
+        display = AgentProgressDisplay(tool_logger)
+
+        # Simulate start first to create a status
+        mock_status = MagicMock()
+        mock_console.status.return_value = mock_status
+        display("health_gatherer", 0, 3, "start")
+        mock_console.print.reset_mock()
+
+        # Now end
+        display("health_gatherer", 0, 3, "end")
+
+        # Spinner stopped
+        mock_status.stop.assert_called_once()
+        # Summary line printed
+        mock_console.print.assert_called_once()
+        output = mock_console.print.call_args[0][0]
+        assert "1/3" in output
+        assert "health_gatherer" in output
+        assert "done" in output
+        assert "4 tools called" in output  # 3 kubectl_get + 1 get_events
+        assert "kubectl_get" in output
+
+    @patch("vaig.cli.commands.live.console")
+    def test_end_event_resets_tool_logger(self, mock_console: MagicMock) -> None:
+        """After 'end' event, tool_logger.reset() is called for per-agent counters."""
+        tool_logger = self._make_tool_logger()
+        display = AgentProgressDisplay(tool_logger)
+
+        mock_status = MagicMock()
+        mock_console.status.return_value = mock_status
+        display("gatherer", 0, 2, "start")
+        display("gatherer", 0, 2, "end")
+
+        # Per-agent counters should be reset
+        assert len(tool_logger.tool_name_counts) == 0
+        assert tool_logger.cache_hits == 0
+        # Pipeline-level totals should remain
+        assert tool_logger.tool_count == 4
+
+    @patch("vaig.cli.commands.live.console")
+    def test_end_without_start_no_crash(self, mock_console: MagicMock) -> None:
+        """Calling 'end' without a prior 'start' should not crash."""
+        tool_logger = ToolCallLogger()
+        display = AgentProgressDisplay(tool_logger)
+
+        # Should not raise
+        display("analyzer", 1, 3, "end")
+
+        # Still prints the completion line
+        mock_console.print.assert_called_once()
+        output = mock_console.print.call_args[0][0]
+        assert "analyzer" in output
+        assert "done" in output
+
+    @patch("vaig.cli.commands.live.console")
+    def test_stop_cleans_up_running_spinner(self, mock_console: MagicMock) -> None:
+        """stop() stops the spinner if it's still running."""
+        tool_logger = ToolCallLogger()
+        display = AgentProgressDisplay(tool_logger)
+
+        mock_status = MagicMock()
+        mock_console.status.return_value = mock_status
+        display("gatherer", 0, 2, "start")
+
+        display.stop()
+
+        mock_status.stop.assert_called_once()
+        # Internal status reference cleared
+        assert display._status is None
+
+    def test_stop_noop_when_no_spinner(self) -> None:
+        """stop() is safe to call when no spinner is running."""
+        tool_logger = ToolCallLogger()
+        display = AgentProgressDisplay(tool_logger)
+
+        # Should not raise
+        display.stop()
+        assert display._status is None
+
+    @patch("vaig.cli.commands.live.console")
+    def test_stop_idempotent(self, mock_console: MagicMock) -> None:
+        """Calling stop() multiple times is safe."""
+        tool_logger = ToolCallLogger()
+        display = AgentProgressDisplay(tool_logger)
+
+        mock_status = MagicMock()
+        mock_console.status.return_value = mock_status
+        display("gatherer", 0, 1, "start")
+
+        display.stop()
+        display.stop()  # Second call should be no-op
+
+        mock_status.stop.assert_called_once()
+
+    @patch("vaig.cli.commands.live.console")
+    def test_singular_tool_wording(self, mock_console: MagicMock) -> None:
+        """When only 1 tool was called, output says 'tool' not 'tools'."""
+        tool_logger = ToolCallLogger()
+        tool_logger.tool_count = 1
+        tool_logger.tool_name_counts["kubectl_get"] = 1
+        display = AgentProgressDisplay(tool_logger)
+
+        display("single_agent", 0, 1, "end")
+
+        output = mock_console.print.call_args[0][0]
+        assert "1 tool called" in output
+        assert "1 tools called" not in output
+
+    @patch("vaig.cli.commands.live.console")
+    def test_no_breakdown_when_no_tools(self, mock_console: MagicMock) -> None:
+        """When no tools were called, no breakdown section appears."""
+        tool_logger = ToolCallLogger()
+        display = AgentProgressDisplay(tool_logger)
+
+        display("empty_agent", 0, 1, "end")
+
+        output = mock_console.print.call_args[0][0]
+        assert "0 tools called" in output
+        # Should not have a breakdown section
+        assert "×" not in output
+
+    @patch("vaig.cli.commands.live.console")
+    def test_multi_agent_sequential_flow(self, mock_console: MagicMock) -> None:
+        """Simulates a sequential multi-agent pipeline: start→end for each agent."""
+        tool_logger = ToolCallLogger()
+        display = AgentProgressDisplay(tool_logger)
+
+        mock_status = MagicMock()
+        mock_console.status.return_value = mock_status
+
+        # Agent 1: gatherer
+        tool_logger.tool_name_counts["kubectl_get"] = 5
+        tool_logger.tool_count = 5
+        display("gatherer", 0, 3, "start")
+        display("gatherer", 0, 3, "end")
+
+        # After end, per-agent counters are reset
+        assert len(tool_logger.tool_name_counts) == 0
+
+        # Agent 2: analyzer
+        tool_logger.tool_name_counts["analyze"] = 2
+        tool_logger.tool_count = 7  # Pipeline total accumulates
+        display("analyzer", 1, 3, "start")
+        display("analyzer", 1, 3, "end")
+
+        # After end, per-agent counters are reset again
+        assert len(tool_logger.tool_name_counts) == 0
+
+        # Pipeline total is still intact
+        assert tool_logger.tool_count == 7
+
+    def test_conforms_to_on_agent_progress_protocol(self) -> None:
+        """AgentProgressDisplay satisfies the OnAgentProgress protocol."""
+        tool_logger = ToolCallLogger()
+        display = AgentProgressDisplay(tool_logger)
+        # This should be type-safe — AgentProgressDisplay.__call__ matches OnAgentProgress
+        callback: OnAgentProgress = display
+        # No crash when calling through the protocol reference
+        with patch("vaig.cli.commands.live.console"):
+            callback("test_agent", 0, 1, "start")
+            callback("test_agent", 0, 1, "end")
