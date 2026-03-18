@@ -37,6 +37,8 @@ class OnToolCall(Protocol):
             Empty string when the tool succeeded.  Optional for backward
             compatibility — existing callbacks that accept only 4 positional
             args will continue to work.
+        cached: ``True`` when the result came from the tool-result cache.
+            Keyword-only for backward compatibility.
     """
 
     def __call__(
@@ -46,6 +48,8 @@ class OnToolCall(Protocol):
         duration: float,
         success: bool,
         error_message: str = "",
+        *,
+        cached: bool = False,
     ) -> None: ...
 
 
@@ -248,6 +252,7 @@ class ToolLoopMixin:
                     tool_args,
                     tool_duration,
                     tool_result,
+                    cached=is_cached,
                 )
 
                 # Record tool call for metrics/feedback storage
@@ -592,6 +597,7 @@ class ToolLoopMixin:
                         tool_args,
                         tool_duration,
                         tool_result,
+                        cached=is_cached,
                     )
 
                     # Record tool call for metrics/feedback storage
@@ -687,6 +693,7 @@ class ToolLoopMixin:
                         tool_args,
                         tool_duration,
                         tool_result,
+                        cached=is_cached,
                     )
 
                     # Record tool call for metrics/feedback storage
@@ -815,19 +822,56 @@ class ToolLoopMixin:
         tool_args: dict[str, Any],
         tool_duration: float,
         tool_result: ToolResult,
+        *,
+        cached: bool = False,
     ) -> None:
-        """Invoke the on_tool_call callback with backward compatibility."""
+        """Invoke the on_tool_call callback with backward compatibility.
+
+        Uses ``inspect.signature`` to determine the number of positional
+        parameters *before* invoking the callback.  This avoids the previous
+        try/except-TypeError approach which could mask a real ``TypeError``
+        raised *inside* the callback body.
+        """
         if on_tool_call is None:
             return
+        err_msg = (tool_result.output or "")[:200] if tool_result.error else ""
+
+        # Determine the number of positional parameters the callback accepts
+        # so we can choose the right call form without catching TypeError.
         try:
-            err_msg = (tool_result.output or "")[:200] if tool_result.error else ""
-            on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg)
-        except TypeError:
-            # Backward compat: caller may not accept error_message
-            try:
+            sig = inspect.signature(on_tool_call)
+            # Count positional-capable params (POSITIONAL_ONLY, POSITIONAL_OR_KEYWORD, VAR_POSITIONAL)
+            _POSITIONAL_KINDS = {
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            }
+            positional_count = sum(
+                1 for p in sig.parameters.values() if p.kind in _POSITIONAL_KINDS
+            )
+            has_var_positional = any(
+                p.kind == inspect.Parameter.VAR_POSITIONAL for p in sig.parameters.values()
+            )
+            has_cached_kw = "cached" in sig.parameters
+            has_var_keyword = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+            accepts_cached = has_cached_kw or has_var_keyword
+        except (ValueError, TypeError):
+            # inspect.signature can fail for builtins / C extensions —
+            # fall back to the 6-arg form and swallow any error.
+            positional_count = 6
+            has_var_positional = False
+            accepts_cached = True
+
+        try:
+            if (positional_count >= 5 or has_var_positional) and accepts_cached:
+                on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg, cached=cached)
+            elif positional_count >= 5 or has_var_positional:
+                on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, err_msg)
+            elif accepts_cached:
+                on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error, cached=cached)
+            else:
                 on_tool_call(tool_name, tool_args, tool_duration, not tool_result.error)
-            except Exception:  # noqa: BLE001
-                logger.debug("on_tool_call callback raised; ignoring")
         except Exception:  # noqa: BLE001
             logger.debug("on_tool_call callback raised; ignoring")
 

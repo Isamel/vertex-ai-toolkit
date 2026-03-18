@@ -8,7 +8,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
 from vaig.agents.mixins import OnToolCall
@@ -34,6 +34,47 @@ if TYPE_CHECKING:
     from vaig.core.tool_call_store import ToolCallStore
 
 logger = logging.getLogger(__name__)
+
+
+class OnAgentProgress(Protocol):
+    """Callback protocol invoked when an agent phase starts or ends.
+
+    Args:
+        agent_name: Display name of the agent (e.g. ``"health_gatherer"``).
+        agent_index: Zero-based position in the execution pipeline.
+        total_agents: Total number of agents in the pipeline.
+        event: ``"start"`` before execution, ``"end"`` after completion.
+    """
+
+    def __call__(
+        self,
+        agent_name: str,
+        agent_index: int,
+        total_agents: int,
+        event: Literal["start", "end"],
+    ) -> None: ...
+
+
+def _fire_agent_progress(
+    callback: OnAgentProgress | None,
+    agent_name: str,
+    agent_index: int,
+    total_agents: int,
+    event: Literal["start", "end"],
+) -> None:
+    """Safely invoke an *on_agent_progress* callback, swallowing errors."""
+    if callback is None:
+        return
+    try:
+        callback(agent_name, agent_index, total_agents, event)
+    except Exception:
+        logger.debug(
+            "on_agent_progress callback error (swallowed): agent=%s event=%s",
+            agent_name,
+            event,
+            exc_info=True,
+        )
+
 
 # ── Gatherer output validation constants ────────────────────────────────
 DEFAULT_MIN_CONTENT_CHARS = 200
@@ -61,6 +102,12 @@ class OrchestratorResult:
     synthesized_output: str = ""
     success: bool = True
     total_usage: dict[str, int] = field(default_factory=dict)
+    structured_report: Any = field(default=None)
+    """Optional parsed HealthReport (or other structured model) retained
+    from ``post_process_report``.  Set by the pipeline when the reporter
+    agent produces valid JSON; consumed by the CLI for Rich rendering
+    and ``--summary`` mode.  ``None`` when parsing failed or no reporter
+    agent was involved."""
 
     def to_skill_result(self) -> SkillResult:
         """Convert to a SkillResult for the skill system."""
@@ -404,6 +451,7 @@ class Orchestrator:
         is_autopilot: bool | None = None,
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
+        on_agent_progress: OnAgentProgress | None = None,
     ) -> OrchestratorResult:
         """Execute a skill with tool-aware agents.
 
@@ -428,6 +476,9 @@ class Orchestrator:
             tool_call_store: Optional store for recording full tool call
                 results for metrics and feedback.  When provided, the
                 store is passed to each ``ToolAwareAgent.execute()`` call.
+            on_agent_progress: Optional callback invoked when each agent
+                starts and finishes execution.  Used by the CLI to show
+                live progress indicators.
 
         Returns:
             :class:`OrchestratorResult` with the aggregated outcome.
@@ -439,6 +490,7 @@ class Orchestrator:
                 is_autopilot=is_autopilot,
                 on_tool_call=on_tool_call,
                 tool_call_store=tool_call_store,
+                on_agent_progress=on_agent_progress,
             )
         except (VaigAuthError, VAIGError):
             raise  # Let known errors propagate with their actionable messages
@@ -456,6 +508,7 @@ class Orchestrator:
         is_autopilot: bool | None = None,
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
+        on_agent_progress: OnAgentProgress | None = None,
     ) -> OrchestratorResult:
         """Inner implementation of execute_with_tools (no error boundary)."""
         logger.info(
@@ -519,10 +572,12 @@ class Orchestrator:
 
         if strategy == "fanout":
             # Submit all agents concurrently, collect in submission order
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(agents)) as executor:
+            total = len(agents)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=total) as executor:
                 futures = []
-                for agent in agents:
+                for idx, agent in enumerate(agents):
                     logger.info("Fan-out (tools): submitting agent=%s", agent.name)
+                    _fire_agent_progress(on_agent_progress, agent.name, idx, total, "start")
                     kw: dict[str, Any] = {"context": query}
                     if isinstance(agent, ToolAwareAgent):
                         if on_tool_call is not None:
@@ -532,7 +587,7 @@ class Orchestrator:
                         kw["tool_result_cache"] = tool_result_cache
                     futures.append(executor.submit(agent.execute, query, **kw))
 
-                for agent, future in zip(agents, futures, strict=True):
+                for idx, (agent, future) in enumerate(zip(agents, futures, strict=True)):
                     try:
                         agent_result = future.result()
                     except Exception:
@@ -545,6 +600,7 @@ class Orchestrator:
                             content=f"Agent '{agent.name}' failed with an unexpected error.",
                             success=False,
                         )
+                    _fire_agent_progress(on_agent_progress, agent.name, idx, total, "end")
                     result.agent_results.append(agent_result)
                     if not agent_result.success:
                         logger.warning(
@@ -568,7 +624,11 @@ class Orchestrator:
                     if tool_call_store is not None:
                         kw_single["tool_call_store"] = tool_call_store
                     kw_single["tool_result_cache"] = tool_result_cache
-                agent_result = agents[0].execute(query, **kw_single)
+                _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "start")
+                try:
+                    agent_result = agents[0].execute(query, **kw_single)
+                finally:
+                    _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
                 result.success = agent_result.success
@@ -606,7 +666,11 @@ class Orchestrator:
                         kw_seq["tool_call_store"] = tool_call_store
                     kw_seq["tool_result_cache"] = tool_result_cache
 
-                agent_result = agent.execute(query, **kw_seq)
+                _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "start")
+                try:
+                    agent_result = agent.execute(query, **kw_seq)
+                finally:
+                    _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
 
@@ -816,6 +880,21 @@ class Orchestrator:
                                     "proceeding with original output",
                                     agent.name,
                                 )
+
+                    # Retain the parsed structured report (if any)
+                    # before post-processing converts it to Markdown.
+                    # The CLI uses this for --summary and Rich rendering.
+                    if (
+                        schema_cls is not None
+                        and hasattr(schema_cls, "model_validate_json")
+                        and result.structured_report is None
+                    ):
+                        try:
+                            result.structured_report = schema_cls.model_validate_json(
+                                agent_result.content,
+                            )
+                        except Exception:
+                            pass  # best-effort
 
                     # Post-process structured output (e.g. JSON → Markdown)
                     agent_result.content = skill.post_process_report(
@@ -1135,6 +1214,7 @@ class Orchestrator:
         is_autopilot: bool | None = None,
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
+        on_agent_progress: OnAgentProgress | None = None,
     ) -> OrchestratorResult:
         """Async version of :meth:`execute_with_tools`.
 
@@ -1154,6 +1234,9 @@ class Orchestrator:
             tool_call_store: Optional store for recording full tool call
                 results for metrics and feedback.  When provided, the
                 store is passed to each ``ToolAwareAgent.execute()`` call.
+            on_agent_progress: Optional callback invoked when each agent
+                starts and finishes execution.  Used by the CLI to show
+                live progress indicators.
 
         Returns:
             :class:`OrchestratorResult` with the aggregated outcome.
@@ -1165,6 +1248,7 @@ class Orchestrator:
                 is_autopilot=is_autopilot,
                 on_tool_call=on_tool_call,
                 tool_call_store=tool_call_store,
+                on_agent_progress=on_agent_progress,
             )
         except (VaigAuthError, VAIGError):
             raise  # Let known errors propagate with their actionable messages
@@ -1182,6 +1266,7 @@ class Orchestrator:
         is_autopilot: bool | None = None,
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
+        on_agent_progress: OnAgentProgress | None = None,
     ) -> OrchestratorResult:
         """Inner implementation of async_execute_with_tools (no error boundary)."""
         logger.info(
@@ -1238,8 +1323,11 @@ class Orchestrator:
 
         if strategy == "fanout":
             # ── Async fan-out: all agents concurrently via gather ──
-            async def _run_agent(agent: BaseAgent) -> AgentResult:
+            total = len(agents)
+
+            async def _run_agent(agent: BaseAgent, idx: int) -> AgentResult:
                 logger.info("Async fan-out (tools): launching agent=%s", agent.name)
+                _fire_agent_progress(on_agent_progress, agent.name, idx, total, "start")
                 try:
                     kw: dict[str, Any] = {"context": query}
                     if isinstance(agent, ToolAwareAgent):
@@ -1248,19 +1336,21 @@ class Orchestrator:
                         if tool_call_store is not None:
                             kw["tool_call_store"] = tool_call_store
                         kw["tool_result_cache"] = tool_result_cache
-                    return await asyncio.to_thread(agent.execute, query, **kw)
+                    agent_result = await asyncio.to_thread(agent.execute, query, **kw)
                 except Exception:
                     logger.exception(
                         "Agent %s raised an exception during async fan-out (tools) execution",
                         agent.name,
                     )
-                    return AgentResult(
+                    agent_result = AgentResult(
                         agent_name=agent.name,
                         content=f"Agent '{agent.name}' failed with an unexpected error.",
                         success=False,
                     )
+                _fire_agent_progress(on_agent_progress, agent.name, idx, total, "end")
+                return agent_result
 
-            coros = [_run_agent(agent) for agent in agents]
+            coros = [_run_agent(agent, idx) for idx, agent in enumerate(agents)]
             agent_results = await gather_with_errors(*coros, return_exceptions=False)
 
             for agent_result in agent_results:
@@ -1288,7 +1378,11 @@ class Orchestrator:
                     if tool_call_store is not None:
                         kw_single["tool_call_store"] = tool_call_store
                     kw_single["tool_result_cache"] = tool_result_cache
-                agent_result = await asyncio.to_thread(agents[0].execute, query, **kw_single)
+                _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "start")
+                try:
+                    agent_result = await asyncio.to_thread(agents[0].execute, query, **kw_single)
+                finally:
+                    _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
                 result.success = agent_result.success
@@ -1322,9 +1416,13 @@ class Orchestrator:
                         kw_seq["tool_call_store"] = tool_call_store
                     kw_seq["tool_result_cache"] = tool_result_cache
 
-                agent_result = await asyncio.to_thread(
-                    agent.execute, query, **kw_seq,
-                )
+                _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "start")
+                try:
+                    agent_result = await asyncio.to_thread(
+                        agent.execute, query, **kw_seq,
+                    )
+                finally:
+                    _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
 
@@ -1505,6 +1603,21 @@ class Orchestrator:
                                     "proceeding with original output",
                                     agent.name,
                                 )
+
+                    # Retain the parsed structured report (if any)
+                    # before post-processing converts it to Markdown.
+                    # The CLI uses this for --summary and Rich rendering.
+                    if (
+                        schema_cls is not None
+                        and hasattr(schema_cls, "model_validate_json")
+                        and result.structured_report is None
+                    ):
+                        try:
+                            result.structured_report = schema_cls.model_validate_json(
+                                agent_result.content,
+                            )
+                        except Exception:
+                            pass  # best-effort
 
                     # Post-process structured output (e.g. JSON → Markdown)
                     agent_result.content = skill.post_process_report(

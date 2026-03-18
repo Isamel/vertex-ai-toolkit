@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-03-18
+
+### Added
+- `--summary` flag for compact 3-5 line report output via `HealthReport.to_summary()`
+- `--no-bell` flag to suppress terminal bell notification on pipeline completion
+- Per-tool call counter and `[cached]` indicator in `ToolCallLogger` with breakdown summary
+- Live agent progress indicator with Rich Status spinner showing active agent name
+- Rich Panel for executive summary with status-aware colors and emoji
+- Rich Table for recommended actions with urgency-based color coding
+
 ## [0.7.0] - 2026-03-17
 
 ### Added

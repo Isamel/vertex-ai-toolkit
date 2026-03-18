@@ -1434,3 +1434,51 @@ class TestContentTypeSchema:
         """CONTENT_TYPE_FENCE_MAP has an entry for every ContentType value."""
         for ct in ContentType:
             assert ct in CONTENT_TYPE_FENCE_MAP, f"Missing fence mapping for {ct}"
+
+
+# ── to_summary() tests ──────────────────────────────────────────────
+
+
+class TestToSummary:
+    """Tests for HealthReport.to_summary() compact output."""
+
+    def test_summary_degraded_with_recommendations(self) -> None:
+        """DEGRADED status with recommendations shows status, counts, and first rec."""
+        report = _full_report()
+        summary = report.to_summary()
+
+        assert "🟡" in summary  # DEGRADED status emoji (full_report is DEGRADED)
+        assert "DEGRADED" in summary
+        assert "3" in summary  # issues_found
+        assert "2 critical" in summary
+        assert "1 warning" in summary
+        assert "Increase payment-svc memory limit" in summary  # first recommendation title
+
+    def test_summary_healthy_no_recommendations(self) -> None:
+        """HEALTHY status with no recommendations shows 'None'."""
+        report = _minimal_report()
+        summary = report.to_summary()
+
+        assert "🟢" in summary
+        assert "HEALTHY" in summary
+        assert "Top recommendation: None" in summary
+        assert "0 critical" in summary
+
+    def test_summary_max_five_lines(self) -> None:
+        """Summary output must be at most 5 lines."""
+        for report_fn in (_minimal_report, _full_report):
+            summary = report_fn().to_summary()
+            lines = summary.strip().split("\n")
+            assert len(lines) <= 5, f"Summary has {len(lines)} lines, expected ≤ 5"
+
+    def test_summary_critical_status(self) -> None:
+        """CRITICAL status uses red emoji."""
+        report = _minimal_report()
+        report.executive_summary.overall_status = OverallStatus.CRITICAL
+        report.executive_summary.critical_count = 5
+        report.executive_summary.issues_found = 5
+        summary = report.to_summary()
+
+        assert "🔴" in summary
+        assert "CRITICAL" in summary
+        assert "5 critical" in summary

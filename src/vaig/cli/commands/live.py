@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 from rich.panel import Panel
+from rich.status import Status
 from rich.table import Table
 
 from vaig.cli import _helpers
@@ -27,7 +28,11 @@ from vaig.cli._helpers import (
     handle_cli_error,
     track_command,
 )
-from vaig.cli.display import print_colored_report
+from vaig.cli.display import (
+    print_colored_report,
+    print_executive_summary_panel,
+    print_recommendations_table,
+)
 from vaig.core.cache import ToolResultCache
 from vaig.core.tool_call_store import ToolCallStore
 
@@ -103,6 +108,8 @@ class ToolCallLogger:
         self.errors: int = 0
         self._error_reasons: list[str] = []
         self._pipeline_start: float = time.perf_counter()
+        self.tool_name_counts: Counter[str] = Counter()
+        self.cache_hits: int = 0
 
     @staticmethod
     def _extract_reason(error_message: str) -> str:
@@ -122,15 +129,22 @@ class ToolCallLogger:
         duration: float,
         success: bool,
         error_message: str = "",
+        *,
+        cached: bool = False,
     ) -> None:
         """Print a single tool execution line."""
         self.tool_count += 1
         self.total_duration += duration
+        self.tool_name_counts[tool_name] += 1
+
+        if cached:
+            self.cache_hits += 1
 
         args_str = _truncate_args(tool_args)
 
         if success:
-            status = "[green]✓[/green]"
+            cache_tag = r" [yellow]\[cached][/yellow]" if cached else ""
+            status = f"[green]✓[/green]{cache_tag}"
         else:
             self.errors += 1
             # Build error detail for display (truncated to 80 chars)
@@ -145,6 +159,24 @@ class ToolCallLogger:
                 self._error_reasons.append("unknown")
 
         console.print(f"  🔧 [cyan]{tool_name}[/cyan]({args_str}) {status} [dim]({duration:.1f}s)[/dim]")
+
+    def format_tool_counts(self) -> str:
+        """Format per-tool-name breakdown for display.
+
+        Returns a string like ``kubectl_get ×4 | get_events ×2 (1 cached)``.
+        """
+        if not self.tool_name_counts:
+            return ""
+        parts = [f"{name} ×{count}" for name, count in self.tool_name_counts.most_common()]
+        breakdown = " | ".join(parts)
+        if self.cache_hits:
+            breakdown += f" ({self.cache_hits} cached)"
+        return breakdown
+
+    def reset(self) -> None:
+        """Reset per-agent counters while keeping pipeline-level totals."""
+        self.tool_name_counts.clear()
+        self.cache_hits = 0
 
     def print_summary(self) -> None:
         """Print the final pipeline summary line."""
@@ -163,12 +195,88 @@ class ToolCallLogger:
             else:
                 fail_detail = f", {self.errors} failed"
 
+        # Build tool-name breakdown
+        tool_breakdown = self.format_tool_counts()
+        breakdown_detail = f"\n  [dim]Tools: {tool_breakdown}[/dim]" if tool_breakdown else ""
+
         console.print(
             f"\n{status} "
             f"[dim]({total_wall:.1f}s total, "
             f"{self.tool_count} tool{'s' if self.tool_count != 1 else ''} executed"
-            f"{fail_detail})[/dim]"
+            f"{fail_detail})[/dim]{breakdown_detail}"
         )
+
+
+class AgentProgressDisplay:
+    """Live progress indicator for multi-agent pipeline execution.
+
+    Shows a Rich :class:`~rich.status.Status` spinner with the current
+    agent name, step number, and running tool count::
+
+        [1/4] health_gatherer — running... (12 tools called)
+
+    Implements the :class:`~vaig.agents.orchestrator.OnAgentProgress`
+    protocol so it can be passed directly to
+    ``Orchestrator.execute_with_tools(on_agent_progress=...)``.
+
+    Args:
+        tool_logger: The :class:`ToolCallLogger` for the current pipeline.
+            Used to read the running ``tool_count`` for display.
+    """
+
+    def __init__(self, tool_logger: ToolCallLogger) -> None:
+        self._tool_logger = tool_logger
+        self._status: Status | None = None
+        self._agent_start_count: int = 0
+
+    def __call__(
+        self,
+        agent_name: str,
+        agent_index: int,
+        total_agents: int,
+        event: str,
+    ) -> None:
+        """Handle agent start/end events."""
+        if event == "start":
+            self._agent_start_count = self._tool_logger.tool_count
+            step = agent_index + 1
+            label = (
+                f"[bold cyan]\\[{step}/{total_agents}][/bold cyan] "
+                f"[green]{agent_name}[/green] — running..."
+            )
+            self._status = console.status(label, spinner="dots")
+            self._status.start()
+        elif event == "end":
+            if self._status is not None:
+                self._status.stop()
+                self._status = None
+            step = agent_index + 1
+            tools = self._tool_logger.tool_count - self._agent_start_count
+            breakdown = self._tool_logger.format_tool_counts()
+            tools_detail = f" ({tools} tool{'s' if tools != 1 else ''} called)"
+            breakdown_detail = f" [dim]{breakdown}[/dim]" if breakdown else ""
+            console.print(
+                f"  [bold cyan]\\[{step}/{total_agents}][/bold cyan] "
+                f"[green]{agent_name}[/green] — [green]done[/green]"
+                f"{tools_detail}{breakdown_detail}"
+            )
+            # Reset per-agent counters for the next agent
+            self._tool_logger.reset()
+
+    def stop(self) -> None:
+        """Stop the spinner if it's still running (e.g. on error)."""
+        if self._status is not None:
+            self._status.stop()
+            self._status = None
+
+
+def _emit_bell(*, no_bell: bool) -> None:
+    """Print the terminal bell character unless suppressed by ``--no-bell``."""
+    if not no_bell:
+        import sys
+
+        sys.stdout.write("\a")
+        sys.stdout.flush()
 
 
 def register(app: typer.Typer) -> None:
@@ -215,6 +323,14 @@ def register(app: typer.Typer) -> None:
         debug: Annotated[
             bool,
             typer.Option("--debug", "-d", help="Enable debug logging (DEBUG level, shows paths and full tracebacks)"),
+        ] = False,
+        summary: Annotated[
+            bool,
+            typer.Option("--summary", help="Show compact summary instead of full report"),
+        ] = False,
+        no_bell: Annotated[
+            bool,
+            typer.Option("--no-bell", help="Suppress terminal bell after pipeline completes"),
         ] = False,
     ) -> None:
         """Investigate live GKE/GCP infrastructure using AI with read-only tools.
@@ -352,6 +468,8 @@ def register(app: typer.Typer) -> None:
                         format_=format_ if not watch else None,
                         model_id=model,
                         tool_call_store=tool_call_store,
+                        summary=summary,
+                        no_bell=no_bell,
                     )
                 else:
                     _execute_live_mode(
@@ -678,6 +796,8 @@ def _execute_orchestrated_skill(
     format_: str | None = None,
     model_id: str | None = None,
     tool_call_store: ToolCallStore | None = None,
+    summary: bool = False,
+    no_bell: bool = False,
 ) -> None:
     """Execute a skill through the Orchestrator's tool-aware pipeline.
 
@@ -736,21 +856,40 @@ def _execute_orchestrated_skill(
     try:
         console.print(f"[bold cyan]🤖 Running {skill_meta.display_name} pipeline...[/bold cyan]")
         tool_logger = ToolCallLogger()
-        orch_result = orchestrator.execute_with_tools(
-            query=question,
-            skill=skill,
-            tool_registry=tool_registry,
-            strategy="sequential",
-            is_autopilot=is_autopilot,
-            on_tool_call=tool_logger,
-            tool_call_store=tool_call_store,
-        )
+        progress_display = AgentProgressDisplay(tool_logger)
+        try:
+            orch_result = orchestrator.execute_with_tools(
+                query=question,
+                skill=skill,
+                tool_registry=tool_registry,
+                strategy="sequential",
+                is_autopilot=is_autopilot,
+                on_tool_call=tool_logger,
+                tool_call_store=tool_call_store,
+                on_agent_progress=progress_display,
+            )
+        finally:
+            progress_display.stop()
         tool_logger.print_summary()
 
         # Display final response with severity coloring
         console.print()
-        if orch_result.synthesized_output:
-            print_colored_report(orch_result.synthesized_output, console=console)
+        if summary and orch_result.structured_report is not None:
+            # --summary mode: compact output from the structured report
+            console.print(orch_result.structured_report.to_summary())
+        else:
+            # Rich Panel for executive summary (before the full report)
+            if orch_result.structured_report is not None:
+                print_executive_summary_panel(
+                    orch_result.structured_report, console=console,
+                )
+            if orch_result.synthesized_output:
+                print_colored_report(orch_result.synthesized_output, console=console)
+            # Rich Table for recommendations (after the full report)
+            if orch_result.structured_report is not None:
+                print_recommendations_table(
+                    orch_result.structured_report, console=console,
+                )
         console.print()
 
         _handle_export_output(
@@ -766,6 +905,9 @@ def _execute_orchestrated_skill(
 
         # Show agent pipeline summary (includes cost line)
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
+
+        # Notify via terminal bell
+        _emit_bell(no_bell=no_bell)
 
     except MaxIterationsError as exc:
         err_console.print(
@@ -997,6 +1139,8 @@ async def _async_execute_orchestrated_skill(
     format_: str | None = None,
     model_id: str | None = None,
     tool_call_store: ToolCallStore | None = None,
+    summary: bool = False,
+    no_bell: bool = False,
 ) -> None:
     """Async version of :func:`_execute_orchestrated_skill`.
 
@@ -1049,20 +1193,40 @@ async def _async_execute_orchestrated_skill(
     try:
         console.print(f"[bold cyan]🤖 Running {skill_meta.display_name} pipeline (async)...[/bold cyan]")
         tool_logger = ToolCallLogger()
-        orch_result = await orchestrator.async_execute_with_tools(
-            query=question,
-            skill=skill,
-            tool_registry=tool_registry,
-            strategy="sequential",
-            is_autopilot=is_autopilot,
-            on_tool_call=tool_logger,
-            tool_call_store=tool_call_store,
-        )
+        progress_display = AgentProgressDisplay(tool_logger)
+        try:
+            orch_result = await orchestrator.async_execute_with_tools(
+                query=question,
+                skill=skill,
+                tool_registry=tool_registry,
+                strategy="sequential",
+                is_autopilot=is_autopilot,
+                on_tool_call=tool_logger,
+                tool_call_store=tool_call_store,
+                on_agent_progress=progress_display,
+            )
+        finally:
+            progress_display.stop()
         tool_logger.print_summary()
 
+        # Display final response with severity coloring
         console.print()
-        if orch_result.synthesized_output:
-            print_colored_report(orch_result.synthesized_output, console=console)
+        if summary and orch_result.structured_report is not None:
+            # --summary mode: compact output from the structured report
+            console.print(orch_result.structured_report.to_summary())
+        else:
+            # Rich Panel for executive summary (before the full report)
+            if orch_result.structured_report is not None:
+                print_executive_summary_panel(
+                    orch_result.structured_report, console=console,
+                )
+            if orch_result.synthesized_output:
+                print_colored_report(orch_result.synthesized_output, console=console)
+            # Rich Table for recommendations (after the full report)
+            if orch_result.structured_report is not None:
+                print_recommendations_table(
+                    orch_result.structured_report, console=console,
+                )
         console.print()
 
         _handle_export_output(
@@ -1077,6 +1241,9 @@ async def _async_execute_orchestrated_skill(
         )
 
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
+
+        # Notify via terminal bell
+        _emit_bell(no_bell=no_bell)
 
     except MaxIterationsError as exc:
         err_console.print(
