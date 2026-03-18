@@ -448,7 +448,7 @@ def gcloud_monitoring_query(
     # Build time interval
     try:
         from google.cloud.monitoring_v3 import types as monitoring_types
-        from google.protobuf import duration_pb2
+        from google.protobuf import duration_pb2, timestamp_pb2
     except ImportError:
         return ToolResult(
             output="google-cloud-monitoring SDK is not installed. Run: pip install google-cloud-monitoring",
@@ -458,10 +458,14 @@ def gcloud_monitoring_query(
     now = datetime.now(tz=UTC)
     seconds_ago = interval_minutes * 60
 
-    interval = monitoring_types.TimeInterval()
-    interval.end_time.FromDatetime(now)
-    interval.start_time.FromDatetime(
-        datetime.fromtimestamp(now.timestamp() - seconds_ago, tz=UTC)
+    end_ts = timestamp_pb2.Timestamp()
+    end_ts.FromDatetime(now)
+    start_ts = timestamp_pb2.Timestamp()
+    start_ts.FromDatetime(datetime.fromtimestamp(now.timestamp() - seconds_ago, tz=UTC))
+
+    interval = monitoring_types.TimeInterval(
+        end_time=end_ts,
+        start_time=start_ts,
     )
 
     # Build filter — must include metric.type

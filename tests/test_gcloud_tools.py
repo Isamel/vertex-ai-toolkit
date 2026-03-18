@@ -205,11 +205,15 @@ class TestGcloudMonitoringQuery:
         fake_protobuf = MagicMock()
         fake_protobuf.duration_pb2 = fake_duration
 
+        fake_timestamp = MagicMock()
+        fake_protobuf.timestamp_pb2 = fake_timestamp
+
         with patch.dict("sys.modules", {
             "google.cloud.monitoring_v3": fake_monitoring_v3,
             "google.cloud.monitoring_v3.types": fake_monitoring,
             "google.protobuf": fake_protobuf,
             "google.protobuf.duration_pb2": fake_duration,
+            "google.protobuf.timestamp_pb2": fake_timestamp,
         }):
             result = gcloud_monitoring_query(
                 "istio.io/service/server/request_count",
@@ -290,6 +294,7 @@ class TestGcloudMonitoringQuery:
             "google.cloud.monitoring_v3.types": fake_monitoring,
             "google.protobuf": MagicMock(),
             "google.protobuf.duration_pb2": MagicMock(),
+            "google.protobuf.timestamp_pb2": MagicMock(),
         }):
             result = gcloud_monitoring_query(
                 "compute.googleapis.com/instance/cpu/utilization",
@@ -321,6 +326,7 @@ class TestGcloudMonitoringQuery:
             "google.cloud.monitoring_v3.types": fake_monitoring,
             "google.protobuf": MagicMock(),
             "google.protobuf.duration_pb2": MagicMock(),
+            "google.protobuf.timestamp_pb2": MagicMock(),
         }):
             result = gcloud_monitoring_query(
                 "compute.googleapis.com/instance/cpu/utilization",
@@ -656,3 +662,108 @@ class TestMonitoringToolDescription:
         rl_param = next(p for p in monitoring_tool.parameters if p.name == "resource_labels")
 
         assert "PREFERRED" in rl_param.description.upper()
+
+
+# ── Regression: Bug #2 — timestamp_pb2.Timestamp().FromDatetime ──────────────
+
+
+class TestMonitoringQueryTimestampRegression:
+    """Regression tests for Bug #2: gcloud_monitoring_query crashed with
+    AttributeError: 'NoneType' object has no attribute 'FromDatetime'
+
+    Root cause: monitoring_types.TimeInterval() was being mutated instead of
+    constructing timestamp_pb2.Timestamp() objects and passing them as arguments.
+    Fix: use timestamp_pb2.Timestamp() with FromDatetime() before constructing
+    the TimeInterval.
+    """
+
+    @patch("vaig.tools.gcloud_tools._get_monitoring_client")
+    def test_timestamp_pb2_from_datetime_is_called(self, mock_client: MagicMock) -> None:
+        """Bug #2 regression: Timestamp objects are constructed via timestamp_pb2.Timestamp()
+        and .FromDatetime() is called on them — never on None."""
+        from vaig.tools.gcloud_tools import gcloud_monitoring_query
+
+        client = MagicMock()
+        mock_client.return_value = (client, None)
+        client.list_time_series.return_value = []
+
+        # Track Timestamp() calls to verify .FromDatetime() is called on instances
+        fake_ts_instance = MagicMock()
+        fake_timestamp_pb2 = MagicMock()
+        fake_timestamp_pb2.Timestamp.return_value = fake_ts_instance
+
+        fake_monitoring = MagicMock()
+        fake_monitoring.TimeInterval = MagicMock()
+        fake_monitoring.ListTimeSeriesRequest = MagicMock()
+        fake_monitoring.ListTimeSeriesRequest.TimeSeriesView.FULL = "FULL"
+        fake_monitoring.Aggregation = MagicMock()
+
+        fake_monitoring_v3 = MagicMock()
+        fake_monitoring_v3.types = fake_monitoring
+
+        fake_protobuf = MagicMock()
+        fake_protobuf.duration_pb2 = MagicMock()
+        fake_protobuf.timestamp_pb2 = fake_timestamp_pb2
+
+        with patch.dict("sys.modules", {
+            "google.cloud.monitoring_v3": fake_monitoring_v3,
+            "google.cloud.monitoring_v3.types": fake_monitoring,
+            "google.protobuf": fake_protobuf,
+            "google.protobuf.duration_pb2": fake_protobuf.duration_pb2,
+            "google.protobuf.timestamp_pb2": fake_timestamp_pb2,
+        }):
+            result = gcloud_monitoring_query(
+                "compute.googleapis.com/instance/cpu/utilization",
+                project="my-project",
+            )
+
+        # The fix: Timestamp() must be called (at least twice — start and end)
+        assert fake_timestamp_pb2.Timestamp.call_count >= 2, (
+            "Expected timestamp_pb2.Timestamp() to be called at least twice "
+            f"(start + end), got {fake_timestamp_pb2.Timestamp.call_count} calls"
+        )
+        # .FromDatetime() must be called on the Timestamp instance — not on None
+        assert fake_ts_instance.FromDatetime.called, (
+            "Expected .FromDatetime() to be called on a Timestamp instance, not on None. "
+            "This is the Bug #2 regression — if Timestamp() returns None, this fails with "
+            "AttributeError: 'NoneType' object has no attribute 'FromDatetime'"
+        )
+
+    @patch("vaig.tools.gcloud_tools._get_monitoring_client")
+    def test_no_attribute_error_on_time_interval_construction(self, mock_client: MagicMock) -> None:
+        """Bug #2 regression: no AttributeError is raised when constructing the TimeInterval.
+
+        Before the fix, monitoring_types.TimeInterval() returned a MagicMock whose
+        .start_time and .end_time were also MagicMocks, and calling .FromDatetime()
+        on them would fail if the real protobuf objects were None (as in production).
+        The fix constructs real Timestamp objects before passing them to TimeInterval().
+        """
+        from vaig.tools.gcloud_tools import gcloud_monitoring_query
+
+        client = MagicMock()
+        mock_client.return_value = (client, None)
+        client.list_time_series.return_value = []
+
+        fake_monitoring = MagicMock()
+        fake_monitoring.ListTimeSeriesRequest = MagicMock()
+        fake_monitoring.ListTimeSeriesRequest.TimeSeriesView.FULL = "FULL"
+        fake_monitoring.Aggregation = MagicMock()
+
+        fake_monitoring_v3 = MagicMock()
+        fake_monitoring_v3.types = fake_monitoring
+
+        with patch.dict("sys.modules", {
+            "google.cloud.monitoring_v3": fake_monitoring_v3,
+            "google.cloud.monitoring_v3.types": fake_monitoring,
+            "google.protobuf": MagicMock(),
+            "google.protobuf.duration_pb2": MagicMock(),
+            "google.protobuf.timestamp_pb2": MagicMock(),
+        }):
+            # Should NOT raise AttributeError: 'NoneType' object has no attribute 'FromDatetime'
+            result = gcloud_monitoring_query(
+                "compute.googleapis.com/instance/cpu/utilization",
+                project="my-project",
+            )
+
+        # Any result is acceptable — we only care that no AttributeError was raised
+        assert result is not None

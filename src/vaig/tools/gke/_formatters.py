@@ -257,6 +257,37 @@ def _format_crds_table(items: list[Any], wide: bool = False) -> str:
     return "\n".join(lines)
 
 
+def _format_external_secrets_table(items: list[Any], wide: bool = False) -> str:
+    """Format ExternalSecret list as a kubectl-style table."""
+    if not items:
+        return "No resources found."
+    lines: list[str] = []
+    header = "NAME                                     STORE              STATUS             AGE"
+    if wide:
+        header += "   REFRESH-INTERVAL"
+    lines.append(header)
+    for item in items:
+        meta = item.metadata
+        name = meta.name or ""
+        spec = item.spec or {}
+        store_ref = spec.get("secretStoreRef", {}) if isinstance(spec, dict) else {}
+        store = store_ref.get("name", "<unknown>") if isinstance(store_ref, dict) else "<unknown>"
+        status_dict = item.status or {}
+        conditions = status_dict.get("conditions", []) if isinstance(status_dict, dict) else []
+        sync_status = "<unknown>"
+        for cond in conditions:
+            if isinstance(cond, dict) and cond.get("type") == "Ready":
+                sync_status = "Ready" if cond.get("status") == "True" else "NotReady"
+                break
+        age = _age(meta.creation_timestamp) if meta.creation_timestamp else "<unknown>"
+        line = f"{name:<41}{store:<19}{sync_status:<19}{age}"
+        if wide:
+            refresh = spec.get("refreshInterval", "") if isinstance(spec, dict) else ""
+            line += f"   {refresh}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 _SECRET_REDACTED = "[REDACTED]"
 
 
@@ -341,6 +372,8 @@ def _format_items(resource: str, items: list[Any], output_format: str) -> str:
         "validatingwebhookconfigurations": _format_webhooks_table,
         "customresourcedefinitions": _format_crds_table,
         "crds": _format_crds_table,
+        "externalsecrets": _format_external_secrets_table,
+        "externalsecret": _format_external_secrets_table,
     }.get(resource)
 
     if formatter:
