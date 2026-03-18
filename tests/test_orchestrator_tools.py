@@ -118,6 +118,8 @@ def _make_mock_settings() -> MagicMock:
     settings = MagicMock()
     settings.models.default = "gemini-2.5-pro"
     settings.agents.max_iterations_retry = 10
+    settings.budget.max_cost_per_run = 0.0
+    settings.agents.max_failures_before_fallback = 0
     return settings
 
 

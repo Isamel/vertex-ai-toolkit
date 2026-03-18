@@ -237,6 +237,12 @@ class AgentsConfig(BaseModel):
     requests many tool calls at once.  Only applies when
     ``parallel_tool_calls`` is enabled.
     """
+    max_failures_before_fallback: int = 2
+    """Number of consecutive rate-limit or connection failures on a single agent
+    before the orchestrator switches it to ``settings.models.fallback``.
+
+    Set to ``0`` to disable model fallback entirely.
+    """
 
 
 class CodingConfig(BaseModel):
@@ -441,6 +447,17 @@ class BudgetConfig(BaseModel):
     max_cost_usd: float = 5.0
     warn_threshold: float = 0.8  # 80% of max_cost_usd
     action: Literal["warn", "stop"] = "warn"
+    max_cost_per_run: float = 0.0
+    """Maximum USD cost allowed for a single orchestrator pipeline run.
+
+    When the accumulated cost of all agent steps within one
+    :meth:`~vaig.agents.orchestrator.Orchestrator.execute_with_tools` (or its
+    async / parallel-sequential variants) call exceeds this value, the pipeline
+    halts immediately and returns partial results with
+    ``OrchestratorResult.budget_exceeded=True``.
+
+    Set to ``0.0`` (the default) to disable the per-run cost circuit breaker.
+    """
 
 
 class CacheConfig(BaseModel):

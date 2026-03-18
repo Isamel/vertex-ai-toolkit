@@ -416,6 +416,8 @@ class TestOrchestratorLanguageIntegration:
         client = MagicMock()
         settings = MagicMock()
         settings.models.default = "gemini-2.5-pro"
+        settings.budget.max_cost_per_run = 0.0
+        settings.agents.max_failures_before_fallback = 0
         orchestrator = Orchestrator(client, settings)
         registry = ToolRegistry()
 
@@ -489,6 +491,8 @@ class TestOrchestratorLanguageIntegration:
         client = MagicMock()
         settings = MagicMock()
         settings.models.default = "gemini-2.5-pro"
+        settings.budget.max_cost_per_run = 0.0
+        settings.agents.max_failures_before_fallback = 0
         orchestrator = Orchestrator(client, settings)
         registry = ToolRegistry()
 

@@ -24,6 +24,7 @@ from vaig.core.language import (
     inject_autopilot_into_config,
     inject_language_into_config,
 )
+from vaig.core.pricing import calculate_cost
 from vaig.core.prompt_defense import ANTI_INJECTION_RULE, wrap_untrusted_content
 from vaig.skills.base import BaseSkill, SkillPhase, SkillResult
 from vaig.tools.base import ToolRegistry
@@ -108,6 +109,18 @@ class OrchestratorResult:
     agent produces valid JSON; consumed by the CLI for Rich rendering
     and ``--summary`` mode.  ``None`` when parsing failed or no reporter
     agent was involved."""
+    run_cost_usd: float = 0.0
+    """Accumulated USD cost for this pipeline run.
+
+    Computed by summing :func:`~vaig.core.pricing.calculate_cost` for every
+    agent step that completed before the pipeline returned.  Zero when pricing
+    data is unavailable for the model or when no agents ran.
+    """
+    budget_exceeded: bool = False
+    """``True`` when the pipeline was halted because ``run_cost_usd`` exceeded
+    ``settings.budget.max_cost_per_run``.  Always ``False`` when the per-run
+    budget is disabled (``max_cost_per_run == 0.0``).
+    """
 
     def to_skill_result(self) -> SkillResult:
         """Convert to a SkillResult for the skill system."""
@@ -252,6 +265,11 @@ class Orchestrator:
         prompt = skill.get_phase_prompt(phase, context, user_input)
         context_chain: list[str] = []
 
+        run_cost_usd: float = 0.0
+        max_cost_per_run: float = self._settings.budget.max_cost_per_run
+        failure_counts: dict[str, int] = {}
+        max_failures: int = self._settings.agents.max_failures_before_fallback
+
         for i, agent in enumerate(agents):
             logger.info("Sequential step %d/%d: agent=%s", i + 1, len(agents), agent.name)
             logger.debug(
@@ -277,6 +295,24 @@ class Orchestrator:
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
 
+            # ── Cost circuit breaker ──────────────────────────────────────
+            run_cost_usd += _compute_step_cost(agent_result, agent.model)
+            result.run_cost_usd = run_cost_usd
+            if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                logger.warning(
+                    "Cost circuit breaker triggered after agent %s: "
+                    "run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                    agent.name, run_cost_usd, max_cost_per_run,
+                )
+                result.success = False
+                result.budget_exceeded = True
+                result.synthesized_output = (
+                    f"[WARNING] Pipeline halted: accumulated run cost "
+                    f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
+                    + (result.agent_results[-1].content if result.agent_results else "")
+                )
+                return result
+
             logger.debug(
                 "Agent '%s' finished: success=%s, tokens=%s",
                 agent.name,
@@ -285,9 +321,26 @@ class Orchestrator:
             )
 
             if not agent_result.success:
-                result.success = False
-                logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
-                break
+                # ── Model fallback on repeated failures ───────────────────
+                error_type = agent_result.metadata.get("error_type", "")
+                if max_failures > 0 and error_type in {"rate_limit", "connection"}:
+                    failure_counts[agent.name] = failure_counts.get(agent.name, 0) + 1
+                    if failure_counts[agent.name] >= max_failures:
+                        fallback_model = self._settings.models.fallback
+                        logger.warning(
+                            "Agent %s failed %d time(s) with error_type=%s — "
+                            "switching to fallback model %s",
+                            agent.name, failure_counts[agent.name],
+                            error_type, fallback_model,
+                        )
+                        agent._config.model = fallback_model
+                else:
+                    result.success = False
+                    logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
+                    break
+            else:
+                # Reset failure counter on success
+                failure_counts.pop(agent.name, None)
 
         # The final agent's output is the synthesized result
         if result.agent_results:
@@ -668,6 +721,11 @@ class Orchestrator:
             context_chain: list[str] = []
             required_sections = skill.get_required_output_sections()
 
+            run_cost_usd: float = 0.0
+            max_cost_per_run: float = self._settings.budget.max_cost_per_run
+            failure_counts: dict[str, int] = {}
+            max_failures: int = self._settings.agents.max_failures_before_fallback
+
             for i, agent in enumerate(agents):
                 logger.info(
                     "Sequential (tools) step %d/%d: agent=%s",
@@ -700,6 +758,24 @@ class Orchestrator:
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
 
+                # ── Cost circuit breaker ──────────────────────────────────
+                run_cost_usd += _compute_step_cost(agent_result, agent.model)
+                result.run_cost_usd = run_cost_usd
+                if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                    logger.warning(
+                        "Cost circuit breaker triggered after agent %s: "
+                        "run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                        agent.name, run_cost_usd, max_cost_per_run,
+                    )
+                    result.success = False
+                    result.budget_exceeded = True
+                    result.synthesized_output = (
+                        f"[WARNING] Pipeline halted: accumulated run cost "
+                        f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
+                        + (result.agent_results[-1].content if result.agent_results else "")
+                    )
+                    return result
+
                 logger.debug(
                     "Agent '%s' finished: success=%s, tokens=%s",
                     agent.name,
@@ -708,9 +784,26 @@ class Orchestrator:
                 )
 
                 if not agent_result.success:
-                    result.success = False
-                    logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
-                    break
+                    # ── Model fallback on repeated failures ───────────────
+                    error_type = agent_result.metadata.get("error_type", "")
+                    if max_failures > 0 and error_type in {"rate_limit", "connection"}:
+                        failure_counts[agent.name] = failure_counts.get(agent.name, 0) + 1
+                        if failure_counts[agent.name] >= max_failures:
+                            fallback_model = self._settings.models.fallback
+                            logger.warning(
+                                "Agent %s failed %d time(s) with error_type=%s — "
+                                "switching to fallback model %s",
+                                agent.name, failure_counts[agent.name],
+                                error_type, fallback_model,
+                            )
+                            agent._config.model = fallback_model
+                    else:
+                        result.success = False
+                        logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
+                        break
+                else:
+                    # Reset failure counter on success
+                    failure_counts.pop(agent.name, None)
 
                 # ── Gatherer output validation + mandatory retry ──────
                 if i == 0 and required_sections and agent_result.success:
@@ -1145,6 +1238,11 @@ class Orchestrator:
         prompt = skill.get_phase_prompt(phase, context, user_input)
         context_chain: list[str] = []
 
+        run_cost_usd: float = 0.0
+        max_cost_per_run: float = self._settings.budget.max_cost_per_run
+        failure_counts: dict[str, int] = {}
+        max_failures: int = self._settings.agents.max_failures_before_fallback
+
         for i, agent in enumerate(agents):
             logger.info(
                 "Async sequential step %d/%d: agent=%s",
@@ -1171,10 +1269,45 @@ class Orchestrator:
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
 
-            if not agent_result.success:
+            # ── Cost circuit breaker ──────────────────────────────────────
+            run_cost_usd += _compute_step_cost(agent_result, agent.model)
+            result.run_cost_usd = run_cost_usd
+            if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                logger.warning(
+                    "Cost circuit breaker triggered after agent %s: "
+                    "run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                    agent.name, run_cost_usd, max_cost_per_run,
+                )
                 result.success = False
-                logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
-                break
+                result.budget_exceeded = True
+                result.synthesized_output = (
+                    f"[WARNING] Pipeline halted: accumulated run cost "
+                    f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
+                    + (result.agent_results[-1].content if result.agent_results else "")
+                )
+                return result
+
+            if not agent_result.success:
+                # ── Model fallback on repeated failures ───────────────────
+                error_type = agent_result.metadata.get("error_type", "")
+                if max_failures > 0 and error_type in {"rate_limit", "connection"}:
+                    failure_counts[agent.name] = failure_counts.get(agent.name, 0) + 1
+                    if failure_counts[agent.name] >= max_failures:
+                        fallback_model = self._settings.models.fallback
+                        logger.warning(
+                            "Agent %s failed %d time(s) with error_type=%s — "
+                            "switching to fallback model %s",
+                            agent.name, failure_counts[agent.name],
+                            error_type, fallback_model,
+                        )
+                        agent._config.model = fallback_model
+                else:
+                    result.success = False
+                    logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
+                    break
+            else:
+                # Reset failure counter on success
+                failure_counts.pop(agent.name, None)
 
         if result.agent_results:
             result.synthesized_output = result.agent_results[-1].content
@@ -1448,6 +1581,11 @@ class Orchestrator:
             context_chain: list[str] = []
             required_sections = skill.get_required_output_sections()
 
+            run_cost_usd: float = 0.0
+            max_cost_per_run: float = self._settings.budget.max_cost_per_run
+            failure_counts: dict[str, int] = {}
+            max_failures: int = self._settings.agents.max_failures_before_fallback
+
             for i, agent in enumerate(agents):
                 logger.info(
                     "Async sequential (tools) step %d/%d: agent=%s",
@@ -1478,10 +1616,45 @@ class Orchestrator:
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
 
-                if not agent_result.success:
+                # ── Cost circuit breaker ──────────────────────────────────
+                run_cost_usd += _compute_step_cost(agent_result, agent.model)
+                result.run_cost_usd = run_cost_usd
+                if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                    logger.warning(
+                        "Cost circuit breaker triggered after agent %s: "
+                        "run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                        agent.name, run_cost_usd, max_cost_per_run,
+                    )
                     result.success = False
-                    logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
-                    break
+                    result.budget_exceeded = True
+                    result.synthesized_output = (
+                        f"[WARNING] Pipeline halted: accumulated run cost "
+                        f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
+                        + (result.agent_results[-1].content if result.agent_results else "")
+                    )
+                    return result
+
+                if not agent_result.success:
+                    # ── Model fallback on repeated failures ───────────────
+                    error_type = agent_result.metadata.get("error_type", "")
+                    if max_failures > 0 and error_type in {"rate_limit", "connection"}:
+                        failure_counts[agent.name] = failure_counts.get(agent.name, 0) + 1
+                        if failure_counts[agent.name] >= max_failures:
+                            fallback_model = self._settings.models.fallback
+                            logger.warning(
+                                "Agent %s failed %d time(s) with error_type=%s — "
+                                "switching to fallback model %s",
+                                agent.name, failure_counts[agent.name],
+                                error_type, fallback_model,
+                            )
+                            agent._config.model = fallback_model
+                    else:
+                        result.success = False
+                        logger.warning("Agent %s failed: %s", agent.name, agent_result.content)
+                        break
+                else:
+                    # Reset failure counter on success
+                    failure_counts.pop(agent.name, None)
 
                 # ── Gatherer output validation + mandatory retry ──────
                 if i == 0 and required_sections and agent_result.success:
@@ -1825,6 +1998,9 @@ class Orchestrator:
         # ── Concurrent phase ─────────────────────────────────────────────
         total_parallel = len(parallel_agents)
         parallel_results: list[AgentResult] = []
+        # Capture model IDs before the executor starts — needed for cost
+        # accounting after futures complete (agent refs are still valid here).
+        parallel_agent_models: dict[str, str] = {a.name: a.model for a in parallel_agents}
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(total_parallel, 1)) as executor:
             futures_map: list[tuple[BaseAgent, concurrent.futures.Future[AgentResult]]] = []
@@ -1882,6 +2058,31 @@ class Orchestrator:
         current_context = merged_context
         context_chain: list[str] = [merged_context]
 
+        run_cost_usd: float = sum(
+            _compute_step_cost(r, parallel_agent_models.get(r.agent_name, r.agent_name))
+            for r in parallel_results
+        )
+        max_cost_per_run: float = self._settings.budget.max_cost_per_run
+        result.run_cost_usd = run_cost_usd
+        failure_counts: dict[str, int] = {}
+        max_failures: int = self._settings.agents.max_failures_before_fallback
+
+        # ── Post-parallel cost check ──────────────────────────────────────
+        if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+            logger.warning(
+                "Cost circuit breaker triggered after parallel phase: "
+                "run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                run_cost_usd, max_cost_per_run,
+            )
+            result.success = False
+            result.budget_exceeded = True
+            result.synthesized_output = (
+                f"[WARNING] Pipeline halted: accumulated run cost "
+                f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
+                + (result.agent_results[-1].content if result.agent_results else "")
+            )
+            return result
+
         for i, agent in enumerate(sequential_agents):
             idx_global = total_parallel + i
             logger.info(
@@ -1914,12 +2115,47 @@ class Orchestrator:
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
 
-            if not agent_result.success:
-                result.success = False
+            # ── Cost circuit breaker ──────────────────────────────────────
+            run_cost_usd += _compute_step_cost(agent_result, agent.model)
+            result.run_cost_usd = run_cost_usd
+            if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
                 logger.warning(
-                    "Sequential agent %s failed: %s", agent.name, agent_result.content,
+                    "Cost circuit breaker triggered after agent %s: "
+                    "run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                    agent.name, run_cost_usd, max_cost_per_run,
                 )
-                break
+                result.success = False
+                result.budget_exceeded = True
+                result.synthesized_output = (
+                    f"[WARNING] Pipeline halted: accumulated run cost "
+                    f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
+                    + (result.agent_results[-1].content if result.agent_results else "")
+                )
+                return result
+
+            if not agent_result.success:
+                # ── Model fallback on repeated failures ───────────────────
+                error_type = agent_result.metadata.get("error_type", "")
+                if max_failures > 0 and error_type in {"rate_limit", "connection"}:
+                    failure_counts[agent.name] = failure_counts.get(agent.name, 0) + 1
+                    if failure_counts[agent.name] >= max_failures:
+                        fallback_model = self._settings.models.fallback
+                        logger.warning(
+                            "Agent %s failed %d time(s) with error_type=%s — "
+                            "switching to fallback model %s",
+                            agent.name, failure_counts[agent.name],
+                            error_type, fallback_model,
+                        )
+                        agent._config.model = fallback_model
+                else:
+                    result.success = False
+                    logger.warning(
+                        "Sequential agent %s failed: %s", agent.name, agent_result.content,
+                    )
+                    break
+            else:
+                # Reset failure counter on success
+                failure_counts.pop(agent.name, None)
 
         if result.agent_results:
             # Success if any gatherer succeeded AND the last sequential agent succeeded
@@ -1980,6 +2216,9 @@ class Orchestrator:
 
         # ── Concurrent phase ─────────────────────────────────────────────
         total_parallel = len(parallel_agents)
+        # Capture model IDs before coroutines start — needed for cost
+        # accounting after gather returns.
+        parallel_agent_models: dict[str, str] = {a.name: a.model for a in parallel_agents}
 
         async def _run_gatherer(agent: BaseAgent, idx: int) -> AgentResult:
             logger.info("async parallel_sequential: launching gatherer=%s", agent.name)
@@ -2037,6 +2276,31 @@ class Orchestrator:
         current_context = merged_context
         context_chain: list[str] = [merged_context]
 
+        run_cost_usd: float = sum(
+            _compute_step_cost(r, parallel_agent_models.get(r.agent_name, r.agent_name))
+            for r in parallel_results
+        )
+        max_cost_per_run: float = self._settings.budget.max_cost_per_run
+        result.run_cost_usd = run_cost_usd
+        failure_counts: dict[str, int] = {}
+        max_failures: int = self._settings.agents.max_failures_before_fallback
+
+        # ── Post-parallel cost check ──────────────────────────────────────
+        if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+            logger.warning(
+                "Cost circuit breaker triggered after async parallel phase: "
+                "run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                run_cost_usd, max_cost_per_run,
+            )
+            result.success = False
+            result.budget_exceeded = True
+            result.synthesized_output = (
+                f"[WARNING] Pipeline halted: accumulated run cost "
+                f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
+                + (result.agent_results[-1].content if result.agent_results else "")
+            )
+            return result
+
         for i, agent in enumerate(sequential_agents):
             idx_global = total_parallel + i
             logger.info(
@@ -2069,12 +2333,47 @@ class Orchestrator:
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
 
-            if not agent_result.success:
-                result.success = False
+            # ── Cost circuit breaker ──────────────────────────────────────
+            run_cost_usd += _compute_step_cost(agent_result, agent.model)
+            result.run_cost_usd = run_cost_usd
+            if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
                 logger.warning(
-                    "Async sequential agent %s failed: %s", agent.name, agent_result.content,
+                    "Cost circuit breaker triggered after async agent %s: "
+                    "run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                    agent.name, run_cost_usd, max_cost_per_run,
                 )
-                break
+                result.success = False
+                result.budget_exceeded = True
+                result.synthesized_output = (
+                    f"[WARNING] Pipeline halted: accumulated run cost "
+                    f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
+                    + (result.agent_results[-1].content if result.agent_results else "")
+                )
+                return result
+
+            if not agent_result.success:
+                # ── Model fallback on repeated failures ───────────────────
+                error_type = agent_result.metadata.get("error_type", "")
+                if max_failures > 0 and error_type in {"rate_limit", "connection"}:
+                    failure_counts[agent.name] = failure_counts.get(agent.name, 0) + 1
+                    if failure_counts[agent.name] >= max_failures:
+                        fallback_model = self._settings.models.fallback
+                        logger.warning(
+                            "Agent %s failed %d time(s) with error_type=%s — "
+                            "switching to fallback model %s",
+                            agent.name, failure_counts[agent.name],
+                            error_type, fallback_model,
+                        )
+                        agent._config.model = fallback_model
+                else:
+                    result.success = False
+                    logger.warning(
+                        "Async sequential agent %s failed: %s", agent.name, agent_result.content,
+                    )
+                    break
+            else:
+                # Reset failure counter on success
+                failure_counts.pop(agent.name, None)
 
         if result.agent_results:
             any_gatherer_ok = any(r.success for r in parallel_results)
@@ -2614,3 +2913,21 @@ def _accumulate_usage(result: OrchestratorResult, agent_result: AgentResult) -> 
     """Accumulate token usage from agent results."""
     for key, value in agent_result.usage.items():
         result.total_usage[key] = result.total_usage.get(key, 0) + value
+
+
+def _compute_step_cost(agent_result: AgentResult, model_id: str) -> float:
+    """Return the USD cost for a single agent step, or 0.0 if unknown.
+
+    Delegates to :func:`~vaig.core.pricing.calculate_cost` using the token
+    counts reported in *agent_result.usage*.  Returns ``0.0`` whenever
+    ``calculate_cost`` returns ``None`` (model not in pricing table) or when
+    token counts are absent.
+    """
+    usage = agent_result.usage
+    cost = calculate_cost(
+        model_id,
+        usage.get("prompt_tokens", 0),
+        usage.get("completion_tokens", 0),
+        usage.get("thinking_tokens", 0),
+    )
+    return cost if cost is not None else 0.0
