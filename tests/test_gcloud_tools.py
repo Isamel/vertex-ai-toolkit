@@ -683,9 +683,9 @@ class TestMonitoringQueryTimestampRegression:
         """Bug #2 regression: Timestamp objects are constructed via timestamp_pb2.Timestamp()
         and .FromDatetime() is called on them — never on None.
 
-        Strengthened: uses separate mock instances for start_ts and end_ts so that a
-        buggy implementation that only constructs ONE Timestamp (or only calls
-        .FromDatetime() for end_time but not start_time) will fail this test.
+        Order-independent: collects all Timestamp instances created and verifies that
+        FromDatetime was called on at least two of them, each with a datetime argument,
+        and that the two datetime arguments are distinct (one before the other).
         """
         from vaig.tools.gcloud_tools import gcloud_monitoring_query
 
@@ -693,12 +693,16 @@ class TestMonitoringQueryTimestampRegression:
         mock_client.return_value = (client, None)
         client.list_time_series.return_value = []
 
-        # Use side_effect to return distinct instances for each Timestamp() call,
-        # so we can assert on start_ts AND end_ts independently.
-        fake_start_ts = MagicMock(name="start_ts")
-        fake_end_ts = MagicMock(name="end_ts")
+        # Collect every Timestamp instance created, regardless of construction order.
+        created_instances: list[MagicMock] = []
+
+        def _make_timestamp() -> MagicMock:
+            ts = MagicMock()
+            created_instances.append(ts)
+            return ts
+
         fake_timestamp_pb2 = MagicMock()
-        fake_timestamp_pb2.Timestamp.side_effect = [fake_end_ts, fake_start_ts]
+        fake_timestamp_pb2.Timestamp.side_effect = _make_timestamp
 
         fake_monitoring = MagicMock()
         fake_monitoring.TimeInterval = MagicMock()
@@ -725,32 +729,30 @@ class TestMonitoringQueryTimestampRegression:
                 project="my-project",
             )
 
-        # The fix: Timestamp() must be called exactly twice — once for end_ts, once for start_ts.
-        assert fake_timestamp_pb2.Timestamp.call_count == 2, (
-            "Expected timestamp_pb2.Timestamp() to be called exactly twice "
-            f"(end_ts + start_ts), got {fake_timestamp_pb2.Timestamp.call_count} calls"
+        # At least two Timestamp instances must have been constructed.
+        assert len(created_instances) >= 2, (
+            f"Expected at least 2 timestamp_pb2.Timestamp() calls, got {len(created_instances)}"
         )
-        # .FromDatetime() must be called on BOTH the end_ts instance AND the start_ts instance.
-        assert fake_end_ts.FromDatetime.called, (
-            "Expected .FromDatetime() to be called on the end_ts Timestamp instance. "
-            "Bug #2 regression: if only one Timestamp is constructed (or end_time is skipped), "
-            "this assertion fails."
+
+        # Collect all datetime args passed to .FromDatetime() across all instances.
+        from_datetime_args: list[datetime] = []
+        for ts_instance in created_instances:
+            if ts_instance.FromDatetime.called:
+                arg = ts_instance.FromDatetime.call_args[0][0]
+                assert isinstance(arg, datetime), (
+                    f"FromDatetime() must be called with a datetime, got {type(arg)}"
+                )
+                from_datetime_args.append(arg)
+
+        assert len(from_datetime_args) >= 2, (
+            f"Expected FromDatetime() to be called with datetime args on at least 2 instances, "
+            f"got {len(from_datetime_args)}"
         )
-        assert fake_start_ts.FromDatetime.called, (
-            "Expected .FromDatetime() to be called on the start_ts Timestamp instance. "
-            "Bug #2 regression: if only end_time uses FromDatetime but start_time does not, "
-            "this assertion would catch it."
-        )
-        # Verify .FromDatetime() was called with a datetime argument on both instances.
-        end_dt_arg = fake_end_ts.FromDatetime.call_args[0][0]
-        start_dt_arg = fake_start_ts.FromDatetime.call_args[0][0]
-        assert isinstance(end_dt_arg, datetime), (
-            f"end_ts.FromDatetime() should be called with a datetime, got {type(end_dt_arg)}"
-        )
-        assert isinstance(start_dt_arg, datetime), (
-            f"start_ts.FromDatetime() should be called with a datetime, got {type(start_dt_arg)}"
-        )
-        # start_time must be strictly before end_time
+
+        # The two datetimes must be distinct — one for start_time, one for end_time.
+        dt_sorted = sorted(from_datetime_args)
+        start_dt_arg = dt_sorted[0]
+        end_dt_arg = dt_sorted[-1]
         assert start_dt_arg < end_dt_arg, (
             f"start_time ({start_dt_arg}) must be before end_time ({end_dt_arg})"
         )

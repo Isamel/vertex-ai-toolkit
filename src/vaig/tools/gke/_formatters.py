@@ -346,8 +346,8 @@ def _serialise_item(item: Any, api: Any) -> Any:
     from vaig.tools.gke._resources import _DictItem  # noqa: WPS433
 
     if isinstance(item, _DictItem):
-        # _DictItem._d holds the raw dict returned by CustomObjectsApi — use it directly.
-        return dict(item._d)
+        # Use the public to_dict() method to get the raw dict from the custom resource wrapper.
+        return dict(item.to_dict())
     return api.sanitize_for_serialization(item)
 
 
