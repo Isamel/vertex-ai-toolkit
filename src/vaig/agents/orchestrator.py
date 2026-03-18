@@ -553,6 +553,20 @@ class Orchestrator:
                 len(agent_configs),
             )
 
+        # ── Auto-detect parallel_sequential from agent configs ───────────
+        # When any agent config declares a ``parallel_group`` key and the
+        # caller has not explicitly requested a non-sequential strategy,
+        # automatically upgrade to ``parallel_sequential`` so that skills
+        # returning ``get_parallel_agents_config()`` from ``get_agents_config()``
+        # work without requiring every call-site to pass the strategy explicitly.
+        if strategy == "sequential" and any(
+            cfg.get("parallel_group") for cfg in agent_configs
+        ):
+            logger.warning(
+                "Auto-detected parallel_group agents — upgrading strategy to parallel_sequential",
+            )
+            strategy = "parallel_sequential"
+
         agents = self.create_agents_for_skill(
             skill, tool_registry, agent_configs=agent_configs,
         )
@@ -1316,6 +1330,20 @@ class Orchestrator:
                 len(agent_configs),
             )
 
+        # ── Auto-detect parallel_sequential from agent configs ───────────
+        # When any agent config declares a ``parallel_group`` key and the
+        # caller has not explicitly requested a non-sequential strategy,
+        # automatically upgrade to ``parallel_sequential`` so that skills
+        # returning ``get_parallel_agents_config()`` from ``get_agents_config()``
+        # work without requiring every call-site to pass the strategy explicitly.
+        if strategy == "sequential" and any(
+            cfg.get("parallel_group") for cfg in agent_configs
+        ):
+            logger.warning(
+                "Auto-detected parallel_group agents — upgrading strategy to parallel_sequential",
+            )
+            strategy = "parallel_sequential"
+
         agents = self.create_agents_for_skill(
             skill, tool_registry, agent_configs=agent_configs,
         )
@@ -1736,9 +1764,51 @@ class Orchestrator:
     ) -> OrchestratorResult:
         """Run gatherer agents concurrently, then remaining agents sequentially.
 
-        Agents whose names end with ``_gatherer`` are treated as the parallel
-        group.  All others run sequentially afterwards, receiving the merged
-        gatherer output as their initial context.
+        This is the synchronous implementation of the ``parallel_sequential``
+        execution strategy.  Agents whose names end with ``_gatherer`` are
+        treated as the *parallel group* and are submitted to a
+        :class:`~concurrent.futures.ThreadPoolExecutor` simultaneously.  All
+        other agents (analyzer, verifier, reporter, …) form the *sequential
+        tail* and run one after another once the parallel phase is done.
+
+        **Execution flow**:
+
+        1. Call :meth:`~vaig.skills.base.BaseSkill.pre_execute_parallel` on the
+           skill so that shared resources (e.g. K8s client) can be pre-warmed
+           before threads start.
+        2. Submit every ``_gatherer`` agent to the thread pool and collect
+           :class:`~vaig.agents.base.AgentResult` objects.  Individual agent
+           failures are caught and recorded as non-fatal error results so the
+           rest of the pipeline can continue with partial data.
+        3. Merge all gatherer outputs into a single context string via
+           :meth:`_merge_parallel_outputs`.
+        4. Optionally warn about missing required sections via
+           :meth:`~vaig.skills.base.BaseSkill.get_required_output_sections`.
+        5. Run each sequential agent in order, threading the accumulated context
+           chain between them.
+        6. Compute overall success: at least one gatherer must succeed AND the
+           last sequential agent must succeed.
+
+        Args:
+            agents: Full list of agents created for the skill (gatherers +
+                sequential tail).  Order within each group is preserved.
+            skill: The :class:`~vaig.skills.base.BaseSkill` being executed.
+                Used for the pre-warm hook and required-sections validation.
+            query: The original user query passed to each agent's ``execute``
+                call.
+            result: Pre-initialised :class:`OrchestratorResult` to accumulate
+                agent results and usage into.
+            on_agent_progress: Optional progress callback fired at the start
+                and end of each agent.
+            on_tool_call: Optional callback forwarded to tool-aware agents.
+            tool_call_store: Optional store forwarded to tool-aware agents.
+            tool_result_cache: Shared :class:`~vaig.core.cache.ToolResultCache`
+                instance for deduplicating tool calls across agents.
+
+        Returns:
+            The mutated *result* object populated with all agent results,
+            aggregated token usage, ``success`` flag, and
+            ``synthesized_output`` (the last agent's content).
         """
         parallel_agents = [a for a in agents if a.name.endswith("_gatherer")]
         sequential_agents = [a for a in agents if not a.name.endswith("_gatherer")]
@@ -1877,8 +1947,24 @@ class Orchestrator:
     ) -> OrchestratorResult:
         """Async version of :meth:`_execute_parallel_then_sequential`.
 
-        Parallel gatherers run via ``asyncio.gather``, sequential agents run
-        serially afterwards.
+        Parallel gatherers run concurrently via :func:`asyncio.gather` inside a
+        :class:`~concurrent.futures.ThreadPoolExecutor` (agents are synchronous),
+        while sequential agents run serially afterwards.  The execution flow and
+        success semantics are identical to the synchronous counterpart — see its
+        docstring for full details.
+
+        Args:
+            agents: Full list of agents created for the skill.
+            skill: The :class:`~vaig.skills.base.BaseSkill` being executed.
+            query: The original user query.
+            result: Pre-initialised :class:`OrchestratorResult` to populate.
+            on_agent_progress: Optional progress callback.
+            on_tool_call: Optional tool-call callback.
+            tool_call_store: Optional tool-call store.
+            tool_result_cache: Shared tool result cache.
+
+        Returns:
+            The mutated *result* object.
         """
         parallel_agents = [a for a in agents if a.name.endswith("_gatherer")]
         sequential_agents = [a for a in agents if not a.name.endswith("_gatherer")]
@@ -2004,8 +2090,28 @@ class Orchestrator:
     def _merge_parallel_outputs(self, results: list[AgentResult]) -> str:
         """Merge outputs from parallel gatherer agents with clear section headers.
 
-        Each agent's output is prefixed with ``--- [Agent Name] ---``.
-        Failed agents get an error note instead of their content.
+        Each agent's output is wrapped in a labelled section block so that
+        downstream sequential agents (analyzer, verifier, reporter) can
+        clearly attribute findings to their origin agent.
+
+        **Format per agent**::
+
+            --- node_gatherer ---
+
+            <agent output text>
+
+        Failed agents produce an error note in place of their content so the
+        section is always present in the merged string — downstream agents can
+        see which gatherers failed without the pipeline crashing.
+
+        Args:
+            results: List of :class:`~vaig.agents.base.AgentResult` objects
+                produced by the parallel gatherer agents, in submission order.
+
+        Returns:
+            A single string with all agent sections concatenated, separated by
+            blank lines (``\\n\\n``).  If *results* is empty the return value
+            is an empty string.
         """
         sections: list[str] = []
         for r in results:

@@ -893,7 +893,7 @@ class TestServiceHealthSkillSchemaIntegration:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        configs = skill.get_agents_config()
+        configs = skill.get_sequential_agents_config()
         non_reporters = [c for c in configs if c["name"] != "health_reporter"]
         assert len(non_reporters) == 3, "Should have 3 non-reporter agents"
         for cfg in non_reporters:

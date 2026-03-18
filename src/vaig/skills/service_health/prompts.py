@@ -1016,10 +1016,34 @@ Rules:
 
 
 def build_node_gatherer_prompt() -> str:
-    """Prompt for the node_gatherer sub-agent (Step 1: Cluster Overview & Node Health).
+    """Build the system instruction for the ``node_gatherer`` sub-agent.
 
-    Scope: cluster-level resources — nodes, capacity, conditions, resource pressure.
-    Output section produced: ``## Cluster Overview``
+    The ``node_gatherer`` is responsible for **Step 1** of the standard SRE
+    investigation checklist: Cluster Overview & Node Health.  It runs in
+    parallel with :func:`build_workload_gatherer_prompt`,
+    :func:`build_event_gatherer_prompt`, and
+    :func:`build_logging_gatherer_prompt` inside a
+    ``parallel_sequential`` pipeline.
+
+    **Scope** — cluster-level resources only:
+
+    * All node objects with their current conditions (``Ready``,
+      ``MemoryPressure``, ``DiskPressure``, ``PIDPressure``, ``NetworkUnavailable``)
+    * CPU and memory utilisation per node via ``kubectl top nodes``
+    * Health of kube-system pods (control-plane components)
+    * Namespace inventory
+    * System-level events from the ``kube-system`` namespace
+
+    **Output section produced**: ``## Cluster Overview``
+
+    The section header is required by downstream agents and by
+    :meth:`~vaig.skills.base.BaseSkill.get_required_output_sections` for
+    validation.
+
+    Returns:
+        A formatted system-instruction string injecting
+        :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the full
+        node-gatherer task description.
     """
     return f"""{ANTI_INJECTION_RULE}
 
@@ -1081,10 +1105,31 @@ Produce exactly this section at the end of your response:
 
 
 def build_workload_gatherer_prompt() -> str:
-    """Prompt for the workload_gatherer sub-agent (Steps 2, 4, 5, 6).
+    """Build the system instruction for the ``workload_gatherer`` sub-agent.
 
-    Scope: pod-level health, deployments, services/endpoints, HPA/scaling.
-    Output sections produced: ``## Service Status``, ``## Raw Findings`` (workload portion).
+    The ``workload_gatherer`` is responsible for **Steps 2, 4, 5, 6** of the
+    standard SRE investigation checklist.  It runs in parallel with the three
+    other sub-gatherers in the ``parallel_sequential`` pipeline.
+
+    **Scope** — pod and workload-level resources:
+
+    * **Step 2** — Pod Status Analysis: running/failed pods, container statuses,
+      restart counts, CrashLoopBackOff investigation via logs and describe.
+    * **Step 4** — Deployment Deep-Dive: rollout status, rollout history,
+      unhealthy deployment conditions, management annotations (ArgoCD, Helm,
+      Flux, operators).
+    * **Step 5** — Service & Endpoint Health: ClusterIP/NodePort/LoadBalancer
+      services, endpoint readiness, missing endpoint backends.
+    * **Step 6** — HPA / Autoscaling: HorizontalPodAutoscaler targets vs
+      current replicas, scaling events.
+
+    **Output sections produced**: ``## Service Status``, ``## Raw Findings``
+    (workload portion).
+
+    Returns:
+        A formatted system-instruction string injecting
+        :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the full
+        workload-gatherer task description.
     """
     return f"""{ANTI_INJECTION_RULE}
 
@@ -1167,11 +1212,31 @@ Produce exactly these sections at the end of your response:
 
 
 def build_event_gatherer_prompt() -> str:
-    """Prompt for the event_gatherer sub-agent (Steps 3, 8, 9, 10).
+    """Build the system instruction for the ``event_gatherer`` sub-agent.
 
-    Scope: K8s events, networking/PVCs/storage, ArgoCD/Helm investigation checklist.
-    Output sections produced: ``## Events Timeline``, ``## Raw Findings`` (event portion),
-    ``## Investigation Checklist``.
+    The ``event_gatherer`` is responsible for **Steps 3, 8, 9, 10** of the
+    standard SRE investigation checklist.  It runs in parallel with the three
+    other sub-gatherers in the ``parallel_sequential`` pipeline.
+
+    **Scope** — events, networking, storage, and GitOps:
+
+    * **Step 3** — Event Timeline: all recent Warning and Normal events from
+      the target namespace and ``kube-system``, including reason, message,
+      count, and involved object references.
+    * **Step 8** — Networking & DNS: NetworkPolicies, Ingress objects, DNS
+      resolution check via ``exec_command``, RBAC sanity check.
+    * **Step 9** — Storage & PVC Health: PersistentVolumeClaims status,
+      StorageClass details, any Pending/Failed PVCs.
+    * **Step 10** — GitOps / Helm Investigation: ArgoCD application sync
+      status (if enabled), Helm release status and history (if enabled).
+
+    **Output sections produced**: ``## Events Timeline``,
+    ``## Raw Findings`` (event portion), ``## Investigation Checklist``.
+
+    Returns:
+        A formatted system-instruction string injecting
+        :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the full
+        event-gatherer task description.
     """
     return f"""{ANTI_INJECTION_RULE}
 
@@ -1254,10 +1319,34 @@ Produce exactly these sections at the end of your response:
 
 
 def build_logging_gatherer_prompt() -> str:
-    """Prompt for the logging_gatherer sub-agent (Steps 7a, 7b: Cloud Logging).
+    """Build the system instruction for the ``logging_gatherer`` sub-agent.
 
-    Scope: Cloud Logging error and warning queries for the target namespace.
-    Output section produced: ``## Cloud Logging Findings``.
+    The ``logging_gatherer`` is responsible for **Steps 7a and 7b** of the
+    standard SRE investigation checklist — the MANDATORY Cloud Logging phase.
+    It runs in parallel with the three other sub-gatherers in the
+    ``parallel_sequential`` pipeline.
+
+    Cloud Logging is treated as a **mandatory** data source because log data
+    frequently reveals application errors and exceptions that are invisible in
+    pod status and Kubernetes events.
+
+    **Scope** — Cloud Logging queries only:
+
+    * **Step 7a** — Error-level logs: ``gcloud_logging_query`` with
+      ``severity>=ERROR`` scoped to the target namespace's containers.
+    * **Step 7b** — Warning-level logs: ``gcloud_logging_query`` with
+      ``severity>=WARNING`` for broader signal coverage.
+
+    Both queries MUST be executed even when pods appear healthy.  If
+    ``gcloud_logging_query`` is unavailable or fails, the agent records the
+    error verbatim rather than fabricating data.
+
+    **Output section produced**: ``## Cloud Logging Findings``.
+
+    Returns:
+        A formatted system-instruction string injecting
+        :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the full
+        logging-gatherer task description.
     """
     return f"""{ANTI_INJECTION_RULE}
 

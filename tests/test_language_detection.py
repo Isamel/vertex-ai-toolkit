@@ -560,7 +560,7 @@ class TestServiceHealthLanguageIntegration:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        configs = skill.get_agents_config()
+        configs = skill.get_sequential_agents_config()
 
         # Inject Spanish
         inject_language_into_config(configs, "es")
@@ -581,7 +581,7 @@ class TestServiceHealthLanguageIntegration:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        configs = skill.get_agents_config()
+        configs = skill.get_sequential_agents_config()
 
         # Capture the gatherer prompt BEFORE language injection
         # (get_agents_config builds it dynamically based on settings)

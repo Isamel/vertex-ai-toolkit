@@ -160,14 +160,14 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         assert len(agents) == 4
 
     def test_agent_names(self) -> None:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         names = [a["name"] for a in agents]
         assert names == ["health_gatherer", "health_analyzer", "health_verifier", "health_reporter"]
 
@@ -175,7 +175,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         for agent in agents:
             assert "role" in agent
             assert isinstance(agent["role"], str)
@@ -185,7 +185,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         # Gatherer uses pro model for complex tool use
         assert agents[0]["model"] == "gemini-2.5-pro"
         # Analyzer, verifier, and reporter use flash for speed
@@ -202,7 +202,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         gatherer = agents[0]
         assert gatherer["name"] == "health_gatherer"
         assert gatherer["requires_tools"] is True
@@ -212,7 +212,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         analyzer = agents[1]
         assert analyzer["name"] == "health_analyzer"
         assert analyzer.get("requires_tools", False) is False
@@ -222,7 +222,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         reporter = agents[3]
         assert reporter["name"] == "health_reporter"
         assert reporter.get("requires_tools", False) is False
@@ -232,7 +232,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         gatherer = agents[0]
         assert "system_instruction" in gatherer
         assert isinstance(gatherer["system_instruction"], str)
@@ -243,7 +243,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         analyzer = agents[1]
         assert "system_instruction" in analyzer
         assert isinstance(analyzer["system_instruction"], str)
@@ -254,7 +254,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         reporter = agents[3]
         assert "system_instruction" in reporter
         assert isinstance(reporter["system_instruction"], str)
@@ -270,7 +270,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         # Gatherer and verifier require tools; analyzer and reporter do not
         requires_tools_flags = [a.get("requires_tools", False) for a in agents]
         assert requires_tools_flags == [True, False, True, False]
@@ -280,7 +280,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         tool_agents = [a for a in agents if a.get("requires_tools")]
         assert len(tool_agents) == 2
         assert tool_agents[0]["name"] == "health_gatherer"
@@ -297,7 +297,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         verifier = agents[2]
         assert verifier["name"] == "health_verifier"
         assert verifier["requires_tools"] is True
@@ -307,7 +307,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         verifier = agents[2]
         assert "system_instruction" in verifier
         assert isinstance(verifier["system_instruction"], str)
@@ -318,7 +318,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         verifier = agents[2]
         assert "system_instruction" in verifier
         assert isinstance(verifier["system_instruction"], str)
@@ -329,7 +329,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         verifier = agents[2]
         assert verifier["max_iterations"] == 15
 
@@ -339,7 +339,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         gatherer = agents[0]
         assert gatherer["name"] == "health_gatherer"
         assert gatherer["max_iterations"] == 25
@@ -349,7 +349,7 @@ class TestServiceHealthSkillAgentsConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         verifier = agents[2]
         assert verifier["model"] == "gemini-2.5-flash"
 
@@ -361,7 +361,7 @@ class TestServiceHealthSkillPromptContent:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         gatherer_prompt = agents[0]["system_instruction"]
         assert "kubectl" in gatherer_prompt.lower()
 
@@ -369,7 +369,7 @@ class TestServiceHealthSkillPromptContent:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         gatherer_prompt = agents[0]["system_instruction"]
         assert "pod" in gatherer_prompt.lower()
 
@@ -377,7 +377,7 @@ class TestServiceHealthSkillPromptContent:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         analyzer_prompt = agents[1]["system_instruction"]
         assert "CRITICAL" in analyzer_prompt
         assert "WARNING" in analyzer_prompt
@@ -386,7 +386,7 @@ class TestServiceHealthSkillPromptContent:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         analyzer_prompt = agents[1]["system_instruction"]
         assert "CrashLoopBackOff" in analyzer_prompt
 
@@ -394,7 +394,7 @@ class TestServiceHealthSkillPromptContent:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         reporter_prompt = agents[3]["system_instruction"]
         assert "Executive Summary" in reporter_prompt
         assert "Recommended Actions" in reporter_prompt
@@ -403,7 +403,7 @@ class TestServiceHealthSkillPromptContent:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         reporter_prompt = agents[3]["system_instruction"]
         assert "kubectl" in reporter_prompt.lower()
 
@@ -1266,7 +1266,7 @@ class TestServiceHealthTemperatureConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         assert agents[0]["name"] == "health_gatherer"
         assert agents[0]["temperature"] == 0.0
 
@@ -1274,7 +1274,7 @@ class TestServiceHealthTemperatureConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         assert agents[1]["name"] == "health_analyzer"
         assert agents[1]["temperature"] == 0.2
 
@@ -1282,7 +1282,7 @@ class TestServiceHealthTemperatureConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         assert agents[2]["name"] == "health_verifier"
         assert agents[2]["temperature"] == 0.2
 
@@ -1290,7 +1290,7 @@ class TestServiceHealthTemperatureConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        agents = skill.get_agents_config()
+        agents = skill.get_sequential_agents_config()
         assert agents[3]["name"] == "health_reporter"
         assert agents[3]["temperature"] == 0.3
 
@@ -1299,7 +1299,7 @@ class TestServiceHealthTemperatureConfig:
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
-        for agent in skill.get_agents_config():
+        for agent in skill.get_sequential_agents_config():
             assert agent["temperature"] < 0.7, (
                 f"{agent['name']} temperature {agent['temperature']} is not below 0.7"
             )
@@ -2297,7 +2297,7 @@ class TestParallelAgentsConfig:
 
         skill = ServiceHealthSkill()
         parallel_agents = skill.get_parallel_agents_config()
-        sequential_agents = skill.get_agents_config()
+        sequential_agents = skill.get_sequential_agents_config()
 
         p_analyzer = next(a for a in parallel_agents if a["name"] == "health_analyzer")
         s_analyzer = next(a for a in sequential_agents if a["name"] == "health_analyzer")

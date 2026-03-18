@@ -127,32 +127,51 @@ class ServiceHealthSkill(BaseSkill):
             )
 
     def get_agents_config(self) -> list[dict[str, Any]]:
-        """Return the 4-agent sequential pipeline configuration.
+        """Return the default pipeline configuration — the 7-agent parallel config.
 
-        Agent 1 (health_gatherer) has ``requires_tools=True`` which tells
-        the :class:`~vaig.agents.orchestrator.Orchestrator` to instantiate
-        a :class:`~vaig.agents.tool_aware.ToolAwareAgent`.
+        Delegates to :meth:`get_parallel_agents_config` so that the
+        ``parallel_sequential`` execution strategy is used by default.  The
+        Orchestrator auto-detects the ``parallel_group`` key in the returned
+        configs and upgrades from ``"sequential"`` to ``"parallel_sequential"``
+        automatically — no call-site changes required.
 
-        Agent 2 (health_analyzer) has ``requires_tools=False`` (the default)
-        and is instantiated as :class:`~vaig.agents.specialist.SpecialistAgent`.
+        For the legacy 4-agent sequential pipeline (single monolithic
+        ``health_gatherer`` agent), use
+        :meth:`get_sequential_agents_config` directly.
 
-        Agent 3 (health_verifier) has ``requires_tools=True`` — it makes
-        targeted tool calls to verify findings from the analyzer.  Uses a
-        fast model with limited iterations for efficiency.
+        Returns:
+            The 7-agent parallel pipeline: 4 parallel sub-gatherers
+            (``node_gatherer``, ``workload_gatherer``, ``event_gatherer``,
+            ``logging_gatherer``) followed by the unchanged sequential tail
+            (``health_analyzer`` → ``health_verifier`` → ``health_reporter``).
+        """
+        return self.get_parallel_agents_config()
 
-        Agent 4 (health_reporter) has ``requires_tools=False`` and uses
-        Gemini's structured output mode (``response_schema=HealthReport``,
-        ``response_mime_type="application/json"``).  The JSON response is
-        converted to Markdown by :meth:`post_process_report`.
+    def get_sequential_agents_config(self) -> list[dict[str, Any]]:
+        """Return the legacy 4-agent sequential pipeline configuration.
 
-        Note: Both ``ToolAwareAgent.from_config_dict`` and
-        ``SpecialistAgent.from_config_dict`` read the ``system_instruction``
-        key.  The ``system_prompt`` alias is accepted as a backward-compat
-        fallback by ``ToolAwareAgent`` but is no longer needed here.
+        This is the original pre-Phase-3 configuration: a single monolithic
+        ``health_gatherer`` agent (``gemini-2.5-pro``, 25 iterations) that
+        runs all 10 investigation steps sequentially, followed by the
+        analyzer → verifier → reporter tail.
 
-        The gatherer prompt's tool reference table is built dynamically
-        based on ``gke.helm_enabled`` and ``gke.argocd_enabled`` settings,
-        so disabled tools are omitted from the prompt (R4).
+        Use this method when you need the sequential fallback path (e.g. in
+        tests that explicitly verify backward-compat sequential behaviour).
+
+        Agent roles:
+
+        * Agent 1 (``health_gatherer``): ``requires_tools=True`` — instantiated
+          as :class:`~vaig.agents.tool_aware.ToolAwareAgent`.
+        * Agent 2 (``health_analyzer``): ``requires_tools=False`` —
+          :class:`~vaig.agents.specialist.SpecialistAgent`.
+        * Agent 3 (``health_verifier``): ``requires_tools=True`` — targeted
+          verification tool calls with a fast model.
+        * Agent 4 (``health_reporter``): ``requires_tools=False`` —
+          structured JSON output (``response_schema=HealthReport``).
+
+        The gatherer prompt's tool-reference table is built dynamically from
+        ``gke.helm_enabled`` / ``gke.argocd_enabled`` settings so disabled
+        tools are excluded from the prompt (R4).
         """
         from vaig.core.config import get_settings
 
