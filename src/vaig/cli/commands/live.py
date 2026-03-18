@@ -171,6 +171,15 @@ class ToolCallLogger:
         )
 
 
+def _emit_bell(*, no_bell: bool) -> None:
+    """Print the terminal bell character unless suppressed by ``--no-bell``."""
+    if not no_bell:
+        import sys
+
+        sys.stdout.write("\a")
+        sys.stdout.flush()
+
+
 def register(app: typer.Typer) -> None:
     """Register the live command on the given Typer app."""
 
@@ -219,6 +228,10 @@ def register(app: typer.Typer) -> None:
         summary: Annotated[
             bool,
             typer.Option("--summary", help="Show compact summary instead of full report"),
+        ] = False,
+        no_bell: Annotated[
+            bool,
+            typer.Option("--no-bell", help="Suppress terminal bell after pipeline completes"),
         ] = False,
     ) -> None:
         """Investigate live GKE/GCP infrastructure using AI with read-only tools.
@@ -357,6 +370,7 @@ def register(app: typer.Typer) -> None:
                         model_id=model,
                         tool_call_store=tool_call_store,
                         summary=summary,
+                        no_bell=no_bell,
                     )
                 else:
                     _execute_live_mode(
@@ -684,6 +698,7 @@ def _execute_orchestrated_skill(
     model_id: str | None = None,
     tool_call_store: ToolCallStore | None = None,
     summary: bool = False,
+    no_bell: bool = False,
 ) -> None:
     """Execute a skill through the Orchestrator's tool-aware pipeline.
 
@@ -775,6 +790,9 @@ def _execute_orchestrated_skill(
 
         # Show agent pipeline summary (includes cost line)
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
+
+        # Notify via terminal bell
+        _emit_bell(no_bell=no_bell)
 
     except MaxIterationsError as exc:
         err_console.print(
