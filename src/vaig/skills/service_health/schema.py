@@ -103,6 +103,13 @@ _STATUS_EMOJI: dict[ServiceHealthStatus, str] = {
     ServiceHealthStatus.UNKNOWN: "⚪",
 }
 
+_OVERALL_STATUS_EMOJI: dict[OverallStatus, str] = {
+    OverallStatus.HEALTHY: "🟢",
+    OverallStatus.DEGRADED: "🟡",
+    OverallStatus.CRITICAL: "🔴",
+    OverallStatus.UNKNOWN: "⚪",
+}
+
 
 class ContentType(StrEnum):
     """Content type hint for evidence code fences in Markdown rendering."""
@@ -289,6 +296,25 @@ class HealthReport(BaseModel):
     def to_dict(self) -> dict[str, Any]:
         """JSON-friendly dict serialisation (delegates to Pydantic)."""
         return self.model_dump()
+
+    # ── Compact summary ────────────────────────────────────
+
+    def to_summary(self) -> str:
+        """Return a compact 3-5 line summary for ``--summary`` mode.
+
+        Includes overall status with emoji, issue counts, and the
+        first recommended action (if any).
+        """
+        es = self.executive_summary
+        emoji = _OVERALL_STATUS_EMOJI.get(es.overall_status, "❓")
+        first_rec = self.recommendations[0].title if self.recommendations else "None"
+        lines = [
+            f"{emoji} Status: {es.overall_status.value}",
+            f"Issues: {es.issues_found} ({es.critical_count} critical, {es.warning_count} warning)",
+            f"Scope: {es.scope}",
+            f"Top recommendation: {first_rec}",
+        ]
+        return "\n".join(lines)
 
     # ── Markdown rendering ───────────────────────────────────
 

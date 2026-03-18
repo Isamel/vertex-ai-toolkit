@@ -61,6 +61,12 @@ class OrchestratorResult:
     synthesized_output: str = ""
     success: bool = True
     total_usage: dict[str, int] = field(default_factory=dict)
+    structured_report: Any = field(default=None)
+    """Optional parsed HealthReport (or other structured model) retained
+    from ``post_process_report``.  Set by the pipeline when the reporter
+    agent produces valid JSON; consumed by the CLI for Rich rendering
+    and ``--summary`` mode.  ``None`` when parsing failed or no reporter
+    agent was involved."""
 
     def to_skill_result(self) -> SkillResult:
         """Convert to a SkillResult for the skill system."""
@@ -817,6 +823,21 @@ class Orchestrator:
                                     agent.name,
                                 )
 
+                    # Retain the parsed structured report (if any)
+                    # before post-processing converts it to Markdown.
+                    # The CLI uses this for --summary and Rich rendering.
+                    if (
+                        schema_cls is not None
+                        and hasattr(schema_cls, "model_validate_json")
+                        and result.structured_report is None
+                    ):
+                        try:
+                            result.structured_report = schema_cls.model_validate_json(
+                                agent_result.content,
+                            )
+                        except Exception:
+                            pass  # best-effort
+
                     # Post-process structured output (e.g. JSON → Markdown)
                     agent_result.content = skill.post_process_report(
                         agent_result.content,
@@ -1505,6 +1526,21 @@ class Orchestrator:
                                     "proceeding with original output",
                                     agent.name,
                                 )
+
+                    # Retain the parsed structured report (if any)
+                    # before post-processing converts it to Markdown.
+                    # The CLI uses this for --summary and Rich rendering.
+                    if (
+                        schema_cls is not None
+                        and hasattr(schema_cls, "model_validate_json")
+                        and result.structured_report is None
+                    ):
+                        try:
+                            result.structured_report = schema_cls.model_validate_json(
+                                agent_result.content,
+                            )
+                        except Exception:
+                            pass  # best-effort
 
                     # Post-process structured output (e.g. JSON → Markdown)
                     agent_result.content = skill.post_process_report(

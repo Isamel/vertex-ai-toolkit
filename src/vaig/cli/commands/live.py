@@ -216,6 +216,10 @@ def register(app: typer.Typer) -> None:
             bool,
             typer.Option("--debug", "-d", help="Enable debug logging (DEBUG level, shows paths and full tracebacks)"),
         ] = False,
+        summary: Annotated[
+            bool,
+            typer.Option("--summary", help="Show compact summary instead of full report"),
+        ] = False,
     ) -> None:
         """Investigate live GKE/GCP infrastructure using AI with read-only tools.
 
@@ -352,6 +356,7 @@ def register(app: typer.Typer) -> None:
                         format_=format_ if not watch else None,
                         model_id=model,
                         tool_call_store=tool_call_store,
+                        summary=summary,
                     )
                 else:
                     _execute_live_mode(
@@ -678,6 +683,7 @@ def _execute_orchestrated_skill(
     format_: str | None = None,
     model_id: str | None = None,
     tool_call_store: ToolCallStore | None = None,
+    summary: bool = False,
 ) -> None:
     """Execute a skill through the Orchestrator's tool-aware pipeline.
 
@@ -749,7 +755,10 @@ def _execute_orchestrated_skill(
 
         # Display final response with severity coloring
         console.print()
-        if orch_result.synthesized_output:
+        if summary and orch_result.structured_report is not None:
+            # --summary mode: compact output from the structured report
+            console.print(orch_result.structured_report.to_summary())
+        elif orch_result.synthesized_output:
             print_colored_report(orch_result.synthesized_output, console=console)
         console.print()
 
