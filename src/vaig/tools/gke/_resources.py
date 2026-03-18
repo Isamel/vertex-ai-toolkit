@@ -6,6 +6,67 @@ from typing import Any
 
 from vaig.tools.base import ToolResult
 
+
+class _DictMeta:
+    """Thin wrapper that exposes dict-based K8s metadata as object attributes."""
+
+    def __init__(self, d: dict[str, Any]) -> None:
+        self._d = d
+
+    @property
+    def name(self) -> str:
+        return str(self._d.get("name", ""))
+
+    @property
+    def namespace(self) -> str | None:
+        return self._d.get("namespace")
+
+    @property
+    def labels(self) -> dict[str, str] | None:
+        return self._d.get("labels")
+
+    @property
+    def annotations(self) -> dict[str, str] | None:
+        return self._d.get("annotations")
+
+    @property
+    def creation_timestamp(self) -> Any:
+        return self._d.get("creationTimestamp")
+
+    @property
+    def deletion_timestamp(self) -> Any:
+        return self._d.get("deletionTimestamp")
+
+
+class _DictItem:
+    """Thin wrapper that exposes a plain dict custom resource as a K8s-style object."""
+
+    def __init__(self, d: dict[str, Any]) -> None:
+        self._d = d
+        self.metadata = _DictMeta(d.get("metadata", {}))
+
+    @property
+    def spec(self) -> dict[str, Any] | None:
+        return self._d.get("spec")
+
+    @property
+    def status(self) -> dict[str, Any] | None:
+        return self._d.get("status")
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Dict-style access for compatibility."""
+        return self._d.get(key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._d[key]
+
+
+class _DictItemList:
+    """Wrapper that makes a CustomObjectsApi dict response look like a K8s list object."""
+
+    def __init__(self, raw: dict[str, Any]) -> None:
+        self.items = [_DictItem(i) for i in raw.get("items", [])]
+
 _RESOURCE_API_MAP: dict[str, str] = {
     "pods": "core",
     "services": "core",
@@ -38,6 +99,9 @@ _RESOURCE_API_MAP: dict[str, str] = {
     # Custom Resource Definitions
     "customresourcedefinitions": "apiextensions",
     "crds": "apiextensions",
+    # External Secrets Operator CRDs
+    "externalsecrets": "custom_external_secrets",
+    "externalsecret": "custom_external_secrets",
 }
 
 # Canonical aliases so users can type short names
@@ -85,6 +149,8 @@ _RESOURCE_ALIASES: dict[str, str] = {
     "vwc": "validatingwebhookconfigurations",
     "customresourcedefinition": "customresourcedefinitions",
     "crd": "customresourcedefinitions",
+    # External Secrets aliases
+    "es": "externalsecrets",
 }
 
 # Resource types expanded when ``resource="all"`` is requested.
@@ -268,5 +334,24 @@ def _list_resource(
 
         ext_v1 = ApiextensionsV1Api(api_client=api_client)
         return ext_v1.list_custom_resource_definition(**kwargs)
+
+    # ── External Secrets Operator (custom) ───────────────────
+    if api_group == "custom_external_secrets":
+        if namespace in ("", "all"):
+            raw = custom_api.list_cluster_custom_object(
+                group="external-secrets.io",
+                version="v1beta1",
+                plural="externalsecrets",
+                **kwargs,
+            )
+        else:
+            raw = custom_api.list_namespaced_custom_object(
+                group="external-secrets.io",
+                version="v1beta1",
+                namespace=namespace,
+                plural="externalsecrets",
+                **kwargs,
+            )
+        return _DictItemList(raw)
 
     return ToolResult(output=f"Unknown API group for resource: {resource}", error=True)

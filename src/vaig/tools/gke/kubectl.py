@@ -194,6 +194,7 @@ def _describe_resource(
     name: str,
     namespace: str,
     api_client: Any | None = None,
+    custom_api: Any | None = None,
 ) -> Any:
     """Read a single resource by name for describe output."""
     api_group = _resources._RESOURCE_API_MAP.get(resource, "core")
@@ -299,6 +300,19 @@ def _describe_resource(
 
         return ApiextensionsV1Api(api_client=api_client).read_custom_resource_definition(name=name)
 
+    # ── External Secrets Operator (custom) ───────────────────
+    if api_group == "custom_external_secrets":
+        if custom_api is None:
+            return None
+        raw = custom_api.get_namespaced_custom_object(
+            group="external-secrets.io",
+            version="v1beta1",
+            plural="externalsecrets",
+            namespace=namespace,
+            name=name,
+        )
+        return _resources._DictItem(raw)
+
     return None
 
 
@@ -307,7 +321,30 @@ def _describe_resource(
 
 def _format_describe(resource: str, obj: Any, api_client: Any | None = None) -> str:
     """Format a single K8s resource object into a kubectl-describe-style output."""
-    lines: list[str] = []
+    # ── ExternalSecret (dict-based _DictItem wrapper) ─────────
+    if isinstance(obj, _resources._DictItem):
+        import yaml  # noqa: WPS433
+
+        lines: list[str] = []
+        meta = obj.metadata
+        lines.append(f"Name:         {meta.name}")
+        if meta.namespace:
+            lines.append(f"Namespace:    {meta.namespace}")
+        labels = meta.labels or {}
+        lines.append("Labels:       " + (", ".join(f"{k}={v}" for k, v in sorted(labels.items())) if labels else "<none>"))
+        annotations = meta.annotations or {}
+        lines.append("Annotations:  " + (", ".join(f"{k}={v}" for k, v in sorted(annotations.items())) if annotations else "<none>"))
+        lines.append(f"CreationTimestamp: {meta.creation_timestamp}")
+        if obj.spec:
+            lines.append("Spec:")
+            lines.append("  " + yaml.dump(obj.spec, default_flow_style=False).replace("\n", "\n  ").rstrip())
+        if obj.status:
+            lines.append("Status:")
+            lines.append("  " + yaml.dump(obj.status, default_flow_style=False).replace("\n", "\n  ").rstrip())
+        lines.append("Events:       <not available for custom resources>")
+        return "\n".join(lines)
+
+    lines: list[str] = []  # type: ignore[no-redef]
     meta = obj.metadata
 
     lines.append(f"Name:         {meta.name}")
@@ -461,10 +498,10 @@ def kubectl_describe(
     result = _clients._create_k8s_clients(gke_config)
     if isinstance(result, ToolResult):
         return result
-    core_v1, apps_v1, _, api_client_inst = result
+    core_v1, apps_v1, custom_api, api_client_inst = result
 
     try:
-        obj = _describe_resource(core_v1, apps_v1, resource, name, ns, api_client=api_client_inst)
+        obj = _describe_resource(core_v1, apps_v1, resource, name, ns, api_client=api_client_inst, custom_api=custom_api)
         if obj is None:
             return ToolResult(output=f"Describe not supported for resource type: {resource}", error=True)
         return ToolResult(output=_format_describe(resource, obj, api_client=api_client_inst))
