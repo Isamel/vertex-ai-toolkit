@@ -15,11 +15,19 @@ which is required for Gemini's ``response_schema`` compatibility.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+# ── Text-normalisation regexes (for smart timeline collapse) ──
+
+_POD_HASH_RE = re.compile(r'-[a-z0-9]{5,10}-[a-z0-9]{4,7}\b')   # strip -59967f9ccc-4zdx6
+_COUNTER_RE = re.compile(r'\s*\(\d+(?:st|nd|rd|th)\s+time\)')    # strip "(3rd time)"
+_TIMESTAMP_RE = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')  # strip ISO timestamps
 
 # ── Enums ────────────────────────────────────────────────────────
 
@@ -130,6 +138,81 @@ CONTENT_TYPE_FENCE_MAP: dict[ContentType, str] = {
     ContentType.COMMAND: "bash",
     ContentType.UNKNOWN: "text",
 }
+
+
+# ── Smart timeline collapse helpers ──────────────────────────
+
+
+def _normalize_event_text(text: str) -> str:
+    """Return a normalised form of *text* used only for grouping comparisons.
+
+    Strips volatile tokens (pod hashes, embedded timestamps, occurrence
+    counters) so that semantically identical events compare equal even
+    when their raw text differs slightly.
+    """
+    normalised = _POD_HASH_RE.sub('', text)
+    normalised = _COUNTER_RE.sub('', normalised)
+    normalised = _TIMESTAMP_RE.sub('', normalised)
+    return normalised.strip()
+
+
+@dataclass
+class _CollapsedEvent:
+    """Internal view of a (potentially collapsed) group of timeline events.
+
+    This is an INTERNAL dataclass — never passed to Gemini or exposed via
+    ``response_schema``.  The Pydantic ``TimelineEvent`` model is kept
+    unchanged for full API compatibility.
+    """
+
+    time_first: str
+    time_last: str
+    event: str          # original (non-normalised) text from the first occurrence
+    severity: Severity
+    service: str
+    count: int
+
+    @property
+    def display_event(self) -> str:
+        """Return the event text for rendering, with ×N notation when collapsed."""
+        if self.count == 1:
+            return self.event
+        return f"{self.event} (×{self.count}, {self.time_first} → {self.time_last})"
+
+    @property
+    def display_time(self) -> str:
+        """Return the time value for rendering (always the first-seen time)."""
+        return self.time_first
+
+
+def _collapse_repeated_events(events: list[TimelineEvent]) -> list[_CollapsedEvent]:
+    """Collapse semantically identical adjacent-or-repeated timeline events.
+
+    Grouping key: (normalised event text, severity, service).
+    Insertion order is preserved (first-seen wins).  Count and
+    ``time_last`` are updated for every subsequent match.
+
+    Threshold: events are only collapsed when count >= 2.  A single
+    unique event is represented as a ``_CollapsedEvent`` with count=1.
+    """
+    # Ordered dict preserving first-seen order
+    groups: dict[tuple[str, Severity, str], _CollapsedEvent] = {}
+    for ev in events:
+        key = (_normalize_event_text(ev.event), ev.severity, ev.service)
+        if key in groups:
+            ce = groups[key]
+            ce.count += 1
+            ce.time_last = ev.time
+        else:
+            groups[key] = _CollapsedEvent(
+                time_first=ev.time,
+                time_last=ev.time,
+                event=ev.event,
+                severity=ev.severity,
+                service=ev.service,
+                count=1,
+            )
+    return list(groups.values())
 
 
 # ── Sub-models ───────────────────────────────────────────────
@@ -587,23 +670,26 @@ class HealthReport(BaseModel):
             parts.append("")
             return
 
-        # Decide: grouped-by-service vs flat table
+        # Collapse repeated events BEFORE deciding layout
+        collapsed = _collapse_repeated_events(self.timeline)
+
+        # Decide: grouped-by-service vs flat table (based on original events)
         events_with_service = sum(1 for ev in self.timeline if ev.service)
         use_grouping = len(self.timeline) > 0 and (
             events_with_service / len(self.timeline) >= 0.5
         )
 
         if use_grouping:
-            self._render_timeline_grouped(parts)
+            self._render_timeline_grouped(parts, collapsed)
         else:
-            self._render_timeline_flat(parts, show_service=events_with_service > 0)
+            self._render_timeline_flat(parts, collapsed, show_service=events_with_service > 0)
 
-    def _render_timeline_grouped(self, parts: list[str]) -> None:
+    def _render_timeline_grouped(self, parts: list[str], collapsed: list[_CollapsedEvent]) -> None:
         """Render timeline events grouped by service with sub-headings."""
-        groups: dict[str, list[TimelineEvent]] = defaultdict(list)
-        for ev in self.timeline:
-            key = ev.service if ev.service else "General"
-            groups[key].append(ev)
+        groups: dict[str, list[_CollapsedEvent]] = defaultdict(list)
+        for ce in collapsed:
+            key = ce.service if ce.service else "General"
+            groups[key].append(ce)
 
         # Sort group names alphabetically, but "General" goes last
         sorted_keys = sorted(
@@ -614,22 +700,24 @@ class HealthReport(BaseModel):
             parts.append(f"### {key}")
             parts.append("| Time | Event | Severity |")
             parts.append("|------|-------|----------|")
-            for ev in groups[key]:
-                parts.append(f"| {ev.time} | {ev.event} | {ev.severity.value} |")
+            for ce in groups[key]:
+                parts.append(f"| {ce.display_time} | {ce.display_event} | {ce.severity.value} |")
             parts.append("")
 
-    def _render_timeline_flat(self, parts: list[str], *, show_service: bool) -> None:
+    def _render_timeline_flat(
+        self, parts: list[str], collapsed: list[_CollapsedEvent], *, show_service: bool
+    ) -> None:
         """Render timeline as a flat table, optionally with a Service column."""
         if show_service:
             parts.append("| Time | Service | Event | Severity |")
             parts.append("|------|---------|-------|----------|")
-            for ev in self.timeline:
+            for ce in collapsed:
                 parts.append(
-                    f"| {ev.time} | {ev.service} | {ev.event} | {ev.severity.value} |"
+                    f"| {ce.display_time} | {ce.service} | {ce.display_event} | {ce.severity.value} |"
                 )
         else:
             parts.append("| Time | Event | Severity |")
             parts.append("|------|-------|----------|")
-            for ev in self.timeline:
-                parts.append(f"| {ev.time} | {ev.event} | {ev.severity.value} |")
+            for ce in collapsed:
+                parts.append(f"| {ce.display_time} | {ce.display_event} | {ce.severity.value} |")
         parts.append("")

@@ -34,6 +34,9 @@ from vaig.skills.service_health.schema import (
     ServiceStatus,
     Severity,
     TimelineEvent,
+    _collapse_repeated_events,
+    _CollapsedEvent,
+    _normalize_event_text,
 )
 
 # ── Fixtures / helpers ───────────────────────────────────────
@@ -1482,3 +1485,287 @@ class TestToSummary:
         assert "🔴" in summary
         assert "CRITICAL" in summary
         assert "5 critical" in summary
+
+
+# ══════════════════════════════════════════════════════════════
+# Timeline smart collapse tests
+# ══════════════════════════════════════════════════════════════
+
+
+class TestTimelineCollapse:
+    """Verify smart timeline event collapse (_collapse_repeated_events)."""
+
+    # ── Unit tests for _normalize_event_text ─────────────────
+
+    def test_normalize_strips_pod_hash(self) -> None:
+        """Pod hash suffix like -59967f9ccc-4zdx6 is removed."""
+        raw = "FailedCreate ReplicaSet/app-xyz-59967f9ccc-4zdx6 volume already exists"
+        normalised = _normalize_event_text(raw)
+        assert "59967f9ccc" not in normalised
+        assert "4zdx6" not in normalised
+        assert "FailedCreate" in normalised
+
+    def test_normalize_strips_counter(self) -> None:
+        """Occurrence counters like (3rd time) are removed."""
+        assert _normalize_event_text("pod crashed (3rd time)") == "pod crashed"
+        assert _normalize_event_text("OOMKilled (1st time)") == "OOMKilled"
+        assert _normalize_event_text("evicted (22nd time)") == "evicted"
+
+    def test_normalize_strips_iso_timestamp(self) -> None:
+        """Embedded ISO timestamps are removed."""
+        raw = "Backup completed at 2024-01-15T10:30:00Z successfully"
+        result = _normalize_event_text(raw)
+        assert "2024-01-15T10:30:00Z" not in result
+        assert "Backup completed" in result
+
+    def test_normalize_identical_after_stripping(self) -> None:
+        """Two events that differ only in pod hash normalise to the same string."""
+        a = "FailedCreate pod-abc-59967f9ccc-4zdx6"
+        b = "FailedCreate pod-abc-71122f8bbb-9xkq1"
+        assert _normalize_event_text(a) == _normalize_event_text(b)
+
+    def test_normalize_plain_text_unchanged(self) -> None:
+        """Text without any volatile tokens is returned as-is (stripped)."""
+        plain = "FailedMount volume already exists"
+        assert _normalize_event_text(plain) == plain
+
+    # ── Unit tests for _collapse_repeated_events ─────────────
+
+    def test_identical_events_collapse_to_one(self) -> None:
+        """Seven identical events → single _CollapsedEvent with count=7."""
+        events = [
+            TimelineEvent(time=f"{i}m ago", event="FailedCreate volume exists",
+                          severity=Severity.HIGH, service="app-rs")
+            for i in range(7, 0, -1)
+        ]
+        collapsed = _collapse_repeated_events(events)
+        assert len(collapsed) == 1
+        assert collapsed[0].count == 7
+
+    def test_different_events_stay_separate(self) -> None:
+        """Three events with different text remain as three separate entries."""
+        events = [
+            TimelineEvent(time="10m ago", event="OOMKilled", severity=Severity.CRITICAL, service="svc"),
+            TimelineEvent(time="8m ago", event="FailedCreate", severity=Severity.HIGH, service="svc"),
+            TimelineEvent(time="5m ago", event="BackOff", severity=Severity.MEDIUM, service="svc"),
+        ]
+        collapsed = _collapse_repeated_events(events)
+        assert len(collapsed) == 3
+
+    def test_mixed_some_collapse_some_dont(self) -> None:
+        """Mixed events: some groups collapse, unique events stay separate."""
+        events = [
+            TimelineEvent(time="10m ago", event="FailedCreate volume exists",
+                          severity=Severity.HIGH, service="rs"),
+            TimelineEvent(time="9m ago", event="FailedCreate volume exists",
+                          severity=Severity.HIGH, service="rs"),
+            TimelineEvent(time="8m ago", event="FailedCreate volume exists",
+                          severity=Severity.HIGH, service="rs"),
+            TimelineEvent(time="5m ago", event="OOMKilled pod restarted",
+                          severity=Severity.CRITICAL, service="svc"),
+        ]
+        collapsed = _collapse_repeated_events(events)
+        assert len(collapsed) == 2
+        failed_create = next(c for c in collapsed if "FailedCreate" in c.event)
+        oom = next(c for c in collapsed if "OOMKilled" in c.event)
+        assert failed_create.count == 3
+        assert oom.count == 1
+
+    def test_single_event_count_is_one(self) -> None:
+        """A single unique event gets count=1."""
+        events = [
+            TimelineEvent(time="5m ago", event="pod started", severity=Severity.INFO, service="svc"),
+        ]
+        collapsed = _collapse_repeated_events(events)
+        assert len(collapsed) == 1
+        assert collapsed[0].count == 1
+
+    def test_different_severity_prevents_collapse(self) -> None:
+        """Same text but different severity → NOT collapsed."""
+        events = [
+            TimelineEvent(time="10m ago", event="pod restarted", severity=Severity.HIGH, service="svc"),
+            TimelineEvent(time="5m ago", event="pod restarted", severity=Severity.CRITICAL, service="svc"),
+        ]
+        collapsed = _collapse_repeated_events(events)
+        assert len(collapsed) == 2
+
+    def test_different_service_prevents_collapse(self) -> None:
+        """Same text and severity but different service → NOT collapsed."""
+        events = [
+            TimelineEvent(time="10m ago", event="pod restarted", severity=Severity.HIGH, service="svc-a"),
+            TimelineEvent(time="5m ago", event="pod restarted", severity=Severity.HIGH, service="svc-b"),
+        ]
+        collapsed = _collapse_repeated_events(events)
+        assert len(collapsed) == 2
+
+    def test_insertion_order_preserved(self) -> None:
+        """First-seen group key order is preserved in the output."""
+        events = [
+            TimelineEvent(time="10m ago", event="event A", severity=Severity.INFO, service="svc"),
+            TimelineEvent(time="9m ago", event="event B", severity=Severity.INFO, service="svc"),
+            TimelineEvent(time="8m ago", event="event A", severity=Severity.INFO, service="svc"),
+        ]
+        collapsed = _collapse_repeated_events(events)
+        assert len(collapsed) == 2
+        assert collapsed[0].event == "event A"
+        assert collapsed[1].event == "event B"
+        assert collapsed[0].count == 2
+
+    def test_time_range_tracked_correctly(self) -> None:
+        """time_first and time_last reflect first and last occurrence."""
+        events = [
+            TimelineEvent(time="56m ago", event="FailedCreate", severity=Severity.HIGH, service="rs"),
+            TimelineEvent(time="30m ago", event="FailedCreate", severity=Severity.HIGH, service="rs"),
+            TimelineEvent(time="6m ago", event="FailedCreate", severity=Severity.HIGH, service="rs"),
+        ]
+        collapsed = _collapse_repeated_events(events)
+        assert len(collapsed) == 1
+        ce = collapsed[0]
+        assert ce.time_first == "56m ago"
+        assert ce.time_last == "6m ago"
+
+    def test_normalisation_collapses_events_with_pod_hashes(self) -> None:
+        """Events identical except for pod hashes should collapse."""
+        events = [
+            TimelineEvent(
+                time="10m ago",
+                event="FailedCreate app-rs-59967f9ccc-4zdx6 volume already exists",
+                severity=Severity.HIGH,
+                service="app-rs",
+            ),
+            TimelineEvent(
+                time="5m ago",
+                event="FailedCreate app-rs-71122f8bbb-9xkq1 volume already exists",
+                severity=Severity.HIGH,
+                service="app-rs",
+            ),
+        ]
+        collapsed = _collapse_repeated_events(events)
+        assert len(collapsed) == 1
+        assert collapsed[0].count == 2
+
+    # ── _CollapsedEvent.display_event property ───────────────
+
+    def test_display_event_single_no_notation(self) -> None:
+        """A count=1 event does NOT show ×N notation."""
+        ce = _CollapsedEvent(
+            time_first="5m ago",
+            time_last="5m ago",
+            event="pod started",
+            severity=Severity.INFO,
+            service="svc",
+            count=1,
+        )
+        assert ce.display_event == "pod started"
+        assert "×" not in ce.display_event
+
+    def test_display_event_collapsed_shows_notation(self) -> None:
+        """A count>1 event shows ×N and time range in display_event."""
+        ce = _CollapsedEvent(
+            time_first="56m ago",
+            time_last="6m ago",
+            event="FailedCreate ReplicaSet/app-xyz — volume already exists",
+            severity=Severity.HIGH,
+            service="app-rs",
+            count=7,
+        )
+        display = ce.display_event
+        assert "×7" in display
+        assert "56m ago" in display
+        assert "6m ago" in display
+        assert "→" in display
+
+    def test_display_time_always_time_first(self) -> None:
+        """display_time is always time_first regardless of count."""
+        for count in (1, 3, 7):
+            ce = _CollapsedEvent(
+                time_first="56m ago",
+                time_last="6m ago",
+                event="event",
+                severity=Severity.INFO,
+                service="svc",
+                count=count,
+            )
+            assert ce.display_time == "56m ago"
+
+    # ── Integration: render output ────────────────────────────
+
+    def test_markdown_shows_collapsed_notation(self) -> None:
+        """to_markdown() shows ×N notation when identical events exist."""
+        events = [
+            TimelineEvent(
+                time=f"{i}m ago",
+                event="FailedCreate volume exists",
+                severity=Severity.HIGH,
+                service="app-rs",
+            )
+            for i in range(7, 0, -1)
+        ]
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issues.",
+            ),
+            timeline=events,
+        )
+        md = report.to_markdown()
+        assert "×7" in md
+        assert "→" in md
+
+    def test_markdown_no_cross_notation_for_unique_events(self) -> None:
+        """to_markdown() with all-unique events shows NO ×N notation."""
+        events = [
+            TimelineEvent(time="10m ago", event="OOMKilled", severity=Severity.CRITICAL, service="svc"),
+            TimelineEvent(time="8m ago", event="FailedCreate", severity=Severity.HIGH, service="svc"),
+            TimelineEvent(time="5m ago", event="BackOff", severity=Severity.MEDIUM, service="svc"),
+        ]
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issues.",
+            ),
+            timeline=events,
+        )
+        md = report.to_markdown()
+        assert "×" not in md
+
+    def test_existing_full_report_timeline_unaffected(self) -> None:
+        """The existing _full_report() has distinct events — no collapse occurs."""
+        report = _full_report()
+        md = report.to_markdown()
+        # All four distinct events should still appear as-is
+        assert "payment-svc-abc123 OOMKilled" in md
+        assert "HPA scaled payment-svc to 5/5" in md
+        assert "api-gateway v2.3.1 rollout complete" in md
+        # None should have been collapsed (all unique)
+        assert "×" not in md
+
+    def test_flat_timeline_collapsed_with_service_column(self) -> None:
+        """Flat timeline (minority with service) still renders collapsed events."""
+        events = [
+            TimelineEvent(time="10m ago", event="cluster upgrade", severity=Severity.INFO),
+            TimelineEvent(time="9m ago", event="cluster upgrade", severity=Severity.INFO),
+            TimelineEvent(time="5m ago", event="node ready", severity=Severity.INFO),
+        ]
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issues.",
+            ),
+            timeline=events,
+        )
+        md = report.to_markdown()
+        # cluster upgrade collapses to ×2
+        assert "×2" in md
+        # node ready appears once, no notation
+        assert "node ready" in md
+
+    def test_empty_timeline_unaffected(self) -> None:
+        """Empty timeline still shows fallback message (no crash)."""
+        report = _minimal_report()
+        md = report.to_markdown()
+        assert "No timeline events available." in md
+        assert "×" not in md
