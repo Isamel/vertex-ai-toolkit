@@ -201,8 +201,8 @@ class TestToHtml:
         html = sample_payload.to_html()
         assert "Why is the pod crashing?" in html
 
-    def test_html_escapes_content(self) -> None:
-        """Ensure HTML special characters are escaped."""
+    def test_xss_protection_script_tag_blocked(self) -> None:
+        """Inline HTML (e.g. <script>) must be escaped, not executed."""
         meta = ExportMetadata(
             model="test-model",
             skill=None,
@@ -217,18 +217,143 @@ class TestToHtml:
             metadata=meta,
         )
         html = payload.to_html()
+        # Raw <script> tag must not appear in output
         assert "<script>" not in html
+        # The text content must be escaped (angle brackets → entities)
         assert "&lt;script&gt;" in html
+
+    def test_xss_protection_inline_event_handler_blocked(self) -> None:
+        """Event handlers in raw HTML must be escaped (not executed) in output."""
+        meta = ExportMetadata(
+            model="test-model",
+            skill=None,
+            timestamp="2026-01-01T00:00:00Z",
+            tokens={},
+            cost=None,
+            vaig_version="0.1.0",
+        )
+        payload = ExportPayload(
+            question="safe question",
+            response='<img src=x onerror="alert(1)">',
+            metadata=meta,
+        )
+        html = payload.to_html()
+        # The raw HTML tag must NOT be reproduced verbatim — must be escaped
+        assert '<img src=x onerror="alert(1)">' not in html
+        # The onerror attribute value must appear only as escaped text, not executable
+        assert "onerror=&quot;" in html or "&lt;img" in html
 
     def test_no_skill_element_when_none(self, minimal_payload: ExportPayload) -> None:
         html = minimal_payload.to_html()
-        assert "<strong>Skill</strong>" not in html
+        assert "Skill" not in html
 
     def test_self_contained_no_external_deps(self, sample_payload: ExportPayload) -> None:
         """HTML should not link to any external stylesheet or script."""
         html = sample_payload.to_html()
         assert '<link rel="stylesheet"' not in html
         assert "<script src=" not in html
+
+    def test_renders_markdown_table_as_html_table(self) -> None:
+        """Markdown tables must be rendered as HTML <table> elements."""
+        meta = ExportMetadata(
+            model="test-model",
+            skill=None,
+            timestamp="2026-01-01T00:00:00Z",
+            tokens={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+            cost=None,
+            vaig_version="0.1.0",
+        )
+        payload = ExportPayload(
+            question="show table",
+            response="| Col A | Col B |\n|-------|-------|\n| val1 | val2 |",
+            metadata=meta,
+        )
+        html = payload.to_html()
+        assert "<table>" in html
+        assert "<th>" in html
+        assert "<td>" in html
+
+    def test_renders_code_blocks_as_pre_code(self) -> None:
+        """Fenced code blocks must produce <pre><code...> elements."""
+        meta = ExportMetadata(
+            model="test-model",
+            skill=None,
+            timestamp="2026-01-01T00:00:00Z",
+            tokens={},
+            cost=None,
+            vaig_version="0.1.0",
+        )
+        payload = ExportPayload(
+            question="show code",
+            response="```python\nprint('hello')\n```",
+            metadata=meta,
+        )
+        html = payload.to_html()
+        assert "<pre>" in html
+        assert "<code" in html  # may have class="language-..." attribute
+
+    def test_renders_strikethrough_as_del(self) -> None:
+        """~~strikethrough~~ text must produce <s> or <del> elements."""
+        meta = ExportMetadata(
+            model="test-model",
+            skill=None,
+            timestamp="2026-01-01T00:00:00Z",
+            tokens={},
+            cost=None,
+            vaig_version="0.1.0",
+        )
+        payload = ExportPayload(
+            question="strikethrough test",
+            response="~~deprecated~~",
+            metadata=meta,
+        )
+        html = payload.to_html()
+        # markdown-it-py renders strikethrough as <s>; some renderers use <del>
+        assert "<s>" in html or "<del>" in html
+        assert "deprecated" in html
+
+    def test_contains_tokyo_night_css_variables(self, sample_payload: ExportPayload) -> None:
+        """Tokyo Night color variables must be present in the CSS."""
+        html = sample_payload.to_html()
+        assert "--bg-base" in html
+        assert "#1a1b26" in html
+        assert "--bg-surface" in html
+        assert "#24283b" in html
+        assert "--accent" in html
+        assert "#7aa2f7" in html
+
+    def test_does_not_contain_raw_markdown_pre_block(self, sample_payload: ExportPayload) -> None:
+        """The old raw-markdown-in-pre approach must no longer be used."""
+        html = sample_payload.to_html()
+        # Markdown heading markers must be rendered into HTML — not appear as raw text
+        assert "<h1>" in html
+        assert "# VAIG Analysis Report" not in html
+
+    def test_headings_rendered_as_html_headings(self, sample_payload: ExportPayload) -> None:
+        """Markdown headings must be rendered as <h1>, <h2> etc."""
+        html = sample_payload.to_html()
+        assert "<h1>" in html
+        assert "<h2>" in html
+
+    def test_cost_table_rendered_as_html_table(self, sample_payload: ExportPayload) -> None:
+        """The ## Cost & Usage Summary markdown table must become an HTML table."""
+        html = sample_payload.to_html()
+        # The cost section must contain a rendered HTML table
+        assert "<table>" in html
+
+    def test_empty_response_does_not_raise(self) -> None:
+        """to_html() must not raise when response is an empty string."""
+        meta = ExportMetadata(
+            model="test-model",
+            skill=None,
+            timestamp="2026-01-01T00:00:00Z",
+            tokens={},
+            cost=None,
+            vaig_version="0.1.0",
+        )
+        payload = ExportPayload(question="q", response="", metadata=meta)
+        html = payload.to_html()
+        assert "<!DOCTYPE html>" in html
 
 
 # ── format_export router ──────────────────────────────────────
