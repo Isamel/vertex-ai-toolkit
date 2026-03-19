@@ -34,7 +34,7 @@ def kubectl_get(
     gke_config: GKEConfig,
     name: str | None = None,
     namespace: str = "default",
-    output_format: str = "table",
+    output: str = "table",
     label_selector: str | None = None,
     field_selector: str | None = None,
 ) -> ToolResult:
@@ -66,7 +66,7 @@ def kubectl_get(
         return _kubectl_get_all(
             gke_config=gke_config,
             namespace=namespace,
-            output_format=output_format,
+            output=output,
             label_selector=label_selector,
             field_selector=field_selector,
         )
@@ -86,9 +86,9 @@ def kubectl_get(
             error=True,
         )
 
-    if output_format not in ("table", "yaml", "json", "wide", "name"):
+    if output not in ("table", "yaml", "json", "wide", "name"):
         return ToolResult(
-            output=f"Invalid output_format: '{output_format}'. Must be one of: table, yaml, json, wide, name",
+            output=f"Invalid output: '{output}'. Must be one of: table, yaml, json, wide, name",
             error=True,
         )
 
@@ -123,7 +123,7 @@ def kubectl_get(
                     error=True,
                 )
 
-        return ToolResult(output=_formatters._format_items(resource, items, output_format))
+        return ToolResult(output=_formatters._format_items(resource, items, output))
 
     except k8s_exceptions.ApiException as exc:
         if exc.status == 404:
@@ -142,7 +142,7 @@ def _kubectl_get_all(
     *,
     gke_config: GKEConfig,
     namespace: str = "default",
-    output_format: str = "table",
+    output: str = "table",
     label_selector: str | None = None,
     field_selector: str | None = None,
 ) -> ToolResult:
@@ -157,7 +157,7 @@ def _kubectl_get_all(
             rtype,
             gke_config=gke_config,
             namespace=ns,
-            output_format=output_format,
+            output=output,
             label_selector=label_selector,
             field_selector=field_selector,
         )

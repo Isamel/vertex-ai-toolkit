@@ -290,7 +290,7 @@ class TestKubectlGetExternalSecretsOutputFormats:
                 "externalsecret",
                 gke_config=_make_gke_config(),
                 namespace="default",
-                output_format="json",
+                output="json",
             )
 
         assert result.error is False, f"Expected no error, got: {result.output}"
@@ -328,7 +328,7 @@ class TestKubectlGetExternalSecretsOutputFormats:
                 "externalsecret",
                 gke_config=_make_gke_config(),
                 namespace="default",
-                output_format="yaml",
+                output="yaml",
             )
 
         assert result.error is False, f"Expected no error, got: {result.output}"
@@ -363,7 +363,7 @@ class TestKubectlGetExternalSecretsOutputFormats:
                 "externalsecret",
                 gke_config=_make_gke_config(),
                 namespace="default",
-                output_format="json",
+                output="json",
             )
 
         assert result.error is False, f"Expected no error, got: {result.output}"

@@ -53,7 +53,7 @@ This principle applies to ALL agents in the pipeline.
 """
 
 _CORE_TOOLS_TABLE = """\
-| `kubectl_get` | `resource` | `name`, `namespace`, `output_format`, `label_selector`, `field_selector` |
+| `kubectl_get` | `resource` | `name`, `namespace`, `output`, `label_selector`, `field_selector` |
 | `kubectl_describe` | `resource`, `name` | `namespace` |
 | `kubectl_logs` | `pod` | `namespace`, `container`, `tail_lines`, `since` |
 | `kubectl_top` | | `resource_type`, `name`, `namespace` |
@@ -157,7 +157,7 @@ Execute the following steps to build a comprehensive health snapshot. Collect da
   b. `get_rollout_history(name=<deploy>, namespace=<ns>)` — What revisions exist? Which is active?
   c. `kubectl_get("replicasets", namespace=<ns>)` — Find ReplicaSets owned by this deployment
   d. `kubectl_describe("replicaset", name=<rs>, namespace=<ns>)` — See FailedCreate events on the RS
-  e. `kubectl_get("deployment", namespace=<ns>, name=<deploy>, output_format="yaml")` — Get FULL deployment spec for inspection (volumes, mounts, containers, etc.)
+  e. `kubectl_get("deployment", namespace=<ns>, name=<deploy>, output="yaml")` — Get FULL deployment spec for inspection (volumes, mounts, containers, etc.)
   f. When a deployment shows spec errors (duplicate volumes, unexpected sidecars/init-containers):
      - `kubectl_get("mutatingwebhookconfigurations")` — List ALL mutating webhooks
      - Check deployment/pod annotations for webhook indicators: admission.datadoghq.com/, sidecar.istio.io/, linkerd.io/, vault.hashicorp.com/
@@ -260,7 +260,7 @@ If you produce output without making calls 1-5, the output will be REJECTED and 
 4. For YAML output from kubectl_get, include the relevant sections (volumes, containers, env) — this becomes EVIDENCE in the report
 5. Include the exact tool output (pod names, timestamps, metric values) — do NOT paraphrase or summarize numbers. The analyzer and reporter depend on exact values.
 6. Record ONLY data that tools actually returned. If a tool call fails or returns no data, report that explicitly: "Tool returned no data" or "Tool call failed: [error]".
-7. FOLLOW THE EVIDENCE CHAIN: When Step 2 reveals a deployment with unavailable replicas, Step 4 is MANDATORY for that deployment — you MUST call get_rollout_status, kubectl_get replicasets, and kubectl_describe on the ReplicaSet. When Step 3 reveals FailedCreate events, you MUST retrieve the deployment YAML (output_format="yaml") to find the spec error. NEVER stop at "missing resource requests" when FailedCreate events exist — FailedCreate always has a specific cause in the spec.
+7. FOLLOW THE EVIDENCE CHAIN: When Step 2 reveals a deployment with unavailable replicas, Step 4 is MANDATORY for that deployment — you MUST call get_rollout_status, kubectl_get replicasets, and kubectl_describe on the ReplicaSet. When Step 3 reveals FailedCreate events, you MUST retrieve the deployment YAML (output="yaml") to find the spec error. NEVER stop at "missing resource requests" when FailedCreate events exist — FailedCreate always has a specific cause in the spec.
 
 ## MANDATORY OUTPUT FORMAT
 
@@ -1101,11 +1101,11 @@ work outside this scope.
 ## Your Scope: Step 1 — Cluster Overview & Node Health
 
 ### Tools to use (in order):
-1. ``kubectl_get(resource="nodes", output_format="wide")`` — list all nodes with status
+1. ``kubectl_get(resource="nodes", output="wide")`` — list all nodes with status
 2. ``get_node_conditions(node_name="<each node>")`` — for every node returned
    in step 1, call this to retrieve the full condition set
 3. ``kubectl_top(resource_type="nodes")`` — CPU/memory utilisation per node
-4. ``kubectl_get(resource="pods", namespace="kube-system", output_format="wide")`` — system component health
+4. ``kubectl_get(resource="pods", namespace="kube-system", output="wide")`` — system component health
 5. ``kubectl_get(resource="namespaces")`` — cluster namespace inventory
 6. ``get_events(namespace="kube-system", event_type="Warning")`` — system-level warning events
    NOTE: DO NOT use ``kubectl_get`` for events — ``events`` is a blocked resource; always use ``get_events`` instead.

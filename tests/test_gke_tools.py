@@ -189,9 +189,9 @@ class TestKubectlGet:
 
         cfg = _make_gke_config()
         with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
-            result = kubectl_get("pods", gke_config=cfg, output_format="xml")
+            result = kubectl_get("pods", gke_config=cfg, output="xml")
             assert result.error is True
-            assert "Invalid output_format" in result.output
+            assert "Invalid output" in result.output
 
     @patch("vaig.tools.gke._clients._create_k8s_clients")
     def test_successful_pod_list(self, mock_clients: MagicMock) -> None:

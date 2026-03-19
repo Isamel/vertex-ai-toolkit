@@ -117,7 +117,7 @@ class TestKubectlGetOutputFormatValidation:
             api_response.items = []
             core_v1.list_namespaced_pod.return_value = api_response
 
-            result = kubectl_get("pods", gke_config=cfg, output_format="name")
+            result = kubectl_get("pods", gke_config=cfg, output="name")
 
         assert result.error is False, (
             f"'name' should be a valid output format, got error: {result.output}"
@@ -129,10 +129,10 @@ class TestKubectlGetOutputFormatValidation:
 
         cfg = _make_gke_config()
         with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
-            result = kubectl_get("pods", gke_config=cfg, output_format="xml")
+            result = kubectl_get("pods", gke_config=cfg, output="xml")
 
         assert result.error is True
-        assert "Invalid output_format" in result.output
+        assert "Invalid output" in result.output
 
     def test_all_valid_formats_accepted(self) -> None:
         """All documented formats — table, yaml, json, wide, name — must pass validation."""
@@ -151,7 +151,7 @@ class TestKubectlGetOutputFormatValidation:
                 api_response.items = []
                 core_v1.list_namespaced_pod.return_value = api_response
 
-                result = kubectl_get("pods", gke_config=cfg, output_format=fmt)
+                result = kubectl_get("pods", gke_config=cfg, output=fmt)
 
             assert result.error is False, (
                 f"Format '{fmt}' should be valid but got error: {result.output}"

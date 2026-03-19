@@ -119,7 +119,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 gke_config=_cfg,
                 name=name,
                 namespace=namespace,
-                output_format=output,
+                output=output,
                 label_selector=label_selector,
                 field_selector=field_selector,
             ),
