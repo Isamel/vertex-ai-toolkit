@@ -41,7 +41,10 @@ def _make_mock_settings() -> MagicMock:
 
 
 def _make_agent_result(
-    name: str, *, success: bool = True, content: str | None = None,
+    name: str,
+    *,
+    success: bool = True,
+    content: str | None = None,
 ) -> AgentResult:
     return AgentResult(
         agent_name=name,
@@ -81,21 +84,25 @@ class ParallelSkill(BaseSkill):
     def get_agents_config(self) -> list[dict]:
         configs: list[dict] = []
         for name in self._gatherer_names:
-            configs.append({
-                "name": name,
-                "role": f"{name} role",
-                "system_instruction": f"{name} instruction.",
-                "model": "gemini-2.5-pro",
-                "requires_tools": True,
-            })
+            configs.append(
+                {
+                    "name": name,
+                    "role": f"{name} role",
+                    "system_instruction": f"{name} instruction.",
+                    "model": "gemini-2.5-pro",
+                    "requires_tools": True,
+                }
+            )
         for name in self._sequential_names:
-            configs.append({
-                "name": name,
-                "role": f"{name} role",
-                "system_instruction": f"{name} instruction.",
-                "model": "gemini-2.5-pro",
-                "requires_tools": True,
-            })
+            configs.append(
+                {
+                    "name": name,
+                    "role": f"{name} role",
+                    "system_instruction": f"{name} instruction.",
+                    "model": "gemini-2.5-pro",
+                    "requires_tools": True,
+                }
+            )
         return configs
 
     def get_required_output_sections(self) -> list[str] | None:
@@ -177,7 +184,8 @@ class TestPartitioning:
             gatherer.role = "node role"
             gatherer.parallel_group = "gather"
             gatherer.execute.return_value = _make_agent_result(
-                "node_gatherer", content="node data here",
+                "node_gatherer",
+                content="node data here",
             )
 
             analyzer = MagicMock(spec=SpecialistAgent)
@@ -315,7 +323,9 @@ class TestParallelExecution:
             g0.role = "node role"
             g0.parallel_group = "gather"
             g0.execute.return_value = _make_agent_result(
-                "node_gatherer", success=False, content="timeout",
+                "node_gatherer",
+                success=False,
+                content="timeout",
             )
 
             g1 = MagicMock(spec=SpecialistAgent)
@@ -444,7 +454,8 @@ class TestParallelExecution:
             analyzer.role = "analyzer role"
             analyzer.parallel_group = None
             analyzer.execute.return_value = _make_agent_result(
-                "analyzer", content="final analysis",
+                "analyzer",
+                content="final analysis",
             )
 
             mock_create.return_value = [g0, analyzer]
@@ -521,7 +532,9 @@ class TestAsyncParallelExecution:
             g0.role = "node role"
             g0.parallel_group = "gather"
             g0.execute.return_value = _make_agent_result(
-                "node_gatherer", success=False, content="err",
+                "node_gatherer",
+                success=False,
+                content="err",
             )
 
             g1 = MagicMock(spec=SpecialistAgent)
@@ -572,7 +585,8 @@ class TestAsyncParallelExecution:
             g0.role = "node role"
             g0.parallel_group = "gather"
             g0.execute.return_value = _make_agent_result(
-                "node_gatherer", content="async node data",
+                "node_gatherer",
+                content="async node data",
             )
 
             analyzer = MagicMock(spec=SpecialistAgent)
@@ -606,7 +620,8 @@ class TestValidation:
     """Verify required section validation against merged output."""
 
     def test_missing_required_sections_logs_warning(
-        self, caplog: pytest.LogCaptureFixture,
+        self,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Warning should be logged if required sections are absent from merged output."""
         client = _make_mock_client()
@@ -648,7 +663,8 @@ class TestValidation:
         assert any("missing" in record.getMessage().lower() for record in caplog.records)
 
     def test_present_required_sections_no_warning(
-        self, caplog: pytest.LogCaptureFixture,
+        self,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """No warning should be logged when all required sections are present."""
         client = _make_mock_client()
@@ -666,7 +682,8 @@ class TestValidation:
             g0.role = "node role"
             g0.parallel_group = "gather"
             g0.execute.return_value = _make_agent_result(
-                "node_gatherer", content="## Node Conditions\nAll good.",
+                "node_gatherer",
+                content="## Node Conditions\nAll good.",
             )
 
             mock_create.return_value = [g0]
@@ -680,7 +697,254 @@ class TestValidation:
                 )
 
         missing_warnings = [
-            r for r in caplog.records
-            if "missing" in r.message.lower() and "required section" in r.message.lower()
+            r for r in caplog.records if "missing" in r.message.lower() and "required section" in r.message.lower()
         ]
         assert len(missing_warnings) == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: structured_report population (bug fix — parallel_sequential path)
+# ---------------------------------------------------------------------------
+
+
+class _FakeSchema:
+    """Minimal Pydantic-like schema stub for testing model_validate_json."""
+
+    def __init__(self, data: dict) -> None:
+        self.data = data
+
+    @classmethod
+    def model_validate_json(cls, content: str) -> _FakeSchema:
+        import json
+
+        return cls(json.loads(content))
+
+
+class TestStructuredReportPopulation:
+    """Verify structured_report is populated when the last sequential agent is a reporter.
+
+    Regression test for the bug where _execute_parallel_then_sequential() never
+    called skill.post_process_report() or set result.structured_report, causing
+    --format html to always fall back to raw markdown output.
+    """
+
+    def _make_reporter_agent(
+        self,
+        *,
+        name: str = "health_reporter",
+        content: str,
+    ) -> MagicMock:
+        agent = MagicMock(spec=SpecialistAgent)
+        agent.name = name
+        agent.role = "Health Report Generator"  # contains "report"
+        agent.parallel_group = None
+        agent.model = "gemini-2.5-pro"
+        # Simulate config.response_schema = _FakeSchema
+        cfg = MagicMock()
+        cfg.response_schema = _FakeSchema
+        agent.config = cfg
+        agent.execute.return_value = _make_agent_result(name, content=content)
+        return agent
+
+    def _make_gatherer_agent(self, *, name: str) -> MagicMock:
+        agent = MagicMock(spec=SpecialistAgent)
+        agent.name = name
+        agent.role = f"{name} role"
+        agent.parallel_group = "gather"
+        agent.model = "gemini-2.5-pro"
+        agent.config = MagicMock()
+        agent.config.response_schema = None
+        agent.execute.return_value = _make_agent_result(name, content=f"{name} data")
+        return agent
+
+    def test_structured_report_populated_from_reporter_json(self) -> None:
+        """structured_report must be set when reporter agent has response_schema."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        skill = ParallelSkill(
+            gatherer_names=["node_gatherer"],
+            sequential_names=["health_reporter"],
+        )
+        tool_registry = MagicMock(spec=ToolRegistry)
+        reporter_json = '{"status": "healthy", "services": []}'
+
+        with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
+            gatherer = self._make_gatherer_agent(name="node_gatherer")
+            reporter = self._make_reporter_agent(content=reporter_json)
+            mock_create.return_value = [gatherer, reporter]
+
+            result = orchestrator.execute_with_tools(
+                "query",
+                skill,
+                tool_registry,
+                strategy="parallel_sequential",
+            )
+
+        assert result.structured_report is not None, (
+            "structured_report must be populated when reporter agent has response_schema"
+        )
+        assert isinstance(result.structured_report, _FakeSchema)
+        assert result.structured_report.data == {"status": "healthy", "services": []}
+
+    def test_structured_report_none_when_reporter_json_invalid(self) -> None:
+        """structured_report stays None (best-effort) when reporter output is invalid JSON."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        skill = ParallelSkill(
+            gatherer_names=["node_gatherer"],
+            sequential_names=["health_reporter"],
+        )
+        tool_registry = MagicMock(spec=ToolRegistry)
+
+        with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
+            gatherer = self._make_gatherer_agent(name="node_gatherer")
+            reporter = self._make_reporter_agent(content="not valid json at all")
+            mock_create.return_value = [gatherer, reporter]
+
+            result = orchestrator.execute_with_tools(
+                "query",
+                skill,
+                tool_registry,
+                strategy="parallel_sequential",
+            )
+
+        # Must not crash — best-effort means structured_report stays None
+        assert result.structured_report is None
+
+    def test_post_process_report_called_on_reporter_content(self) -> None:
+        """skill.post_process_report must be called on reporter's output."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        skill = ParallelSkill(
+            gatherer_names=["node_gatherer"],
+            sequential_names=["health_reporter"],
+        )
+        tool_registry = MagicMock(spec=ToolRegistry)
+        reporter_json = '{"status": "ok"}'
+
+        post_process_calls: list[str] = []
+
+        def _fake_post_process(content: str) -> str:
+            post_process_calls.append(content)
+            return "## Processed Markdown"
+
+        skill.post_process_report = _fake_post_process  # type: ignore[method-assign]
+
+        with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
+            gatherer = self._make_gatherer_agent(name="node_gatherer")
+            reporter = self._make_reporter_agent(content=reporter_json)
+            mock_create.return_value = [gatherer, reporter]
+
+            result = orchestrator.execute_with_tools(
+                "query",
+                skill,
+                tool_registry,
+                strategy="parallel_sequential",
+            )
+
+        assert post_process_calls == [reporter_json], (
+            "post_process_report must be called with the raw reporter JSON output"
+        )
+        assert result.synthesized_output == "## Processed Markdown", (
+            "synthesized_output must reflect the post-processed content"
+        )
+
+    def test_structured_report_not_populated_for_non_reporter(self) -> None:
+        """structured_report stays None when last agent is NOT a reporter."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        skill = ParallelSkill(
+            gatherer_names=["node_gatherer"],
+            sequential_names=["analyzer"],  # role is "analyzer role" — no "report"
+        )
+        tool_registry = MagicMock(spec=ToolRegistry)
+
+        with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
+            gatherer = self._make_gatherer_agent(name="node_gatherer")
+            analyzer = MagicMock(spec=SpecialistAgent)
+            analyzer.name = "analyzer"
+            analyzer.role = "analyzer role"  # does NOT contain "report"
+            analyzer.parallel_group = None
+            analyzer.model = "gemini-2.5-pro"
+            cfg = MagicMock()
+            cfg.response_schema = _FakeSchema
+            analyzer.config = cfg
+            analyzer.execute.return_value = _make_agent_result("analyzer", content='{"x": 1}')
+            mock_create.return_value = [gatherer, analyzer]
+
+            result = orchestrator.execute_with_tools(
+                "query",
+                skill,
+                tool_registry,
+                strategy="parallel_sequential",
+            )
+
+        assert result.structured_report is None, (
+            "structured_report must NOT be set for agents without 'report' in their role"
+        )
+
+    def test_async_structured_report_populated_from_reporter_json(self) -> None:
+        """Async path: structured_report must be set when reporter has response_schema."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        skill = ParallelSkill(
+            gatherer_names=["node_gatherer"],
+            sequential_names=["health_reporter"],
+        )
+        tool_registry = MagicMock(spec=ToolRegistry)
+        reporter_json = '{"status": "healthy", "services": []}'
+
+        with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
+            gatherer = self._make_gatherer_agent(name="node_gatherer")
+            reporter = self._make_reporter_agent(content=reporter_json)
+            mock_create.return_value = [gatherer, reporter]
+
+            result = asyncio.run(
+                orchestrator.async_execute_with_tools(
+                    "query",
+                    skill,
+                    tool_registry,
+                    strategy="parallel_sequential",
+                )
+            )
+
+        assert result.structured_report is not None, (
+            "Async path: structured_report must be populated when reporter has response_schema"
+        )
+        assert isinstance(result.structured_report, _FakeSchema)
+
+    def test_async_post_process_report_called_on_reporter_content(self) -> None:
+        """Async path: skill.post_process_report must be called on reporter output."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        skill = ParallelSkill(
+            gatherer_names=["node_gatherer"],
+            sequential_names=["health_reporter"],
+        )
+        tool_registry = MagicMock(spec=ToolRegistry)
+        reporter_json = '{"status": "ok"}'
+
+        post_process_calls: list[str] = []
+
+        def _fake_post_process(content: str) -> str:
+            post_process_calls.append(content)
+            return "## Async Processed Markdown"
+
+        skill.post_process_report = _fake_post_process  # type: ignore[method-assign]
+
+        with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
+            gatherer = self._make_gatherer_agent(name="node_gatherer")
+            reporter = self._make_reporter_agent(content=reporter_json)
+            mock_create.return_value = [gatherer, reporter]
+
+            result = asyncio.run(
+                orchestrator.async_execute_with_tools(
+                    "query",
+                    skill,
+                    tool_registry,
+                    strategy="parallel_sequential",
+                )
+            )
+
+        assert post_process_calls == [reporter_json]
+        assert result.synthesized_output == "## Async Processed Markdown"
