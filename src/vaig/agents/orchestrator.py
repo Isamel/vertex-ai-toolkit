@@ -121,6 +121,13 @@ class OrchestratorResult:
     ``settings.budget.max_cost_per_run``.  Always ``False`` when the per-run
     budget is disabled (``max_cost_per_run == 0.0``).
     """
+    models_used: list[str] = field(default_factory=list)
+    """Model IDs of all agents that participated in this pipeline run.
+
+    Populated once at pipeline start from ``agent.model`` for each agent in
+    the execution list.  Empty when the pipeline was not invoked via
+    :meth:`execute_with_tools` / :meth:`async_execute_with_tools`.
+    """
 
     def to_skill_result(self) -> SkillResult:
         """Convert to a SkillResult for the skill system."""
@@ -661,6 +668,21 @@ class Orchestrator:
             skill_name=skill.get_metadata().name,
             phase=SkillPhase.EXECUTE,
         )
+        # Build a name→model map from the planned agents.  models_used will be
+        # populated *after* execution from the actual AgentResult list so that
+        # early exits (budget breaker, agent failure) don't include models for
+        # agents that never ran.
+        _agent_model_map: dict[str, str] = {a.name: a.model for a in agents}
+
+        def _set_models_used_from_results() -> None:
+            """Populate result.models_used from executed agent results only."""
+            result.models_used = list(
+                dict.fromkeys(
+                    _agent_model_map[r.agent_name]
+                    for r in result.agent_results
+                    if r.agent_name in _agent_model_map
+                )
+            )
 
         known_strategies = {"sequential", "fanout", "single", "parallel_sequential"}
         if strategy not in known_strategies:
@@ -815,6 +837,7 @@ class Orchestrator:
                         f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
                         + (result.agent_results[-1].content if result.agent_results else "")
                     )
+                    _set_models_used_from_results()
                     return result
 
                 logger.debug(
@@ -972,6 +995,7 @@ class Orchestrator:
                                 f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
                                 + (result.agent_results[-1].content if result.agent_results else "")
                             )
+                            _set_models_used_from_results()
                             return result
 
                         if is_deepening:
@@ -1076,6 +1100,7 @@ class Orchestrator:
                                     f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
                                     + (result.agent_results[-1].content if result.agent_results else "")
                                 )
+                                _set_models_used_from_results()
                                 return result
                             if json_retry_result.success:
                                 agent_result = json_retry_result
@@ -1172,6 +1197,7 @@ class Orchestrator:
                                 f"[WARNING] Cost budget ${max_cost_per_run:.4f} exceeded "
                                 f"during reporter retry (actual: ${run_cost_usd:.4f})"
                             )
+                            _set_models_used_from_results()
                             return result
                         result.agent_results[-1] = reporter_retry
 
@@ -1226,6 +1252,7 @@ class Orchestrator:
         except Exception:  # noqa: BLE001
             pass
 
+        _set_models_used_from_results()
         return result
 
     def get_agent(self, name: str) -> BaseAgent | None:
@@ -1630,6 +1657,21 @@ class Orchestrator:
             skill_name=skill.get_metadata().name,
             phase=SkillPhase.EXECUTE,
         )
+        # Build a name→model map from the planned agents.  models_used will be
+        # populated *after* execution from the actual AgentResult list so that
+        # early exits (budget breaker, agent failure) don't include models for
+        # agents that never ran.
+        _agent_model_map: dict[str, str] = {a.name: a.model for a in agents}
+
+        def _set_models_used_from_results() -> None:
+            """Populate result.models_used from executed agent results only."""
+            result.models_used = list(
+                dict.fromkeys(
+                    _agent_model_map[r.agent_name]
+                    for r in result.agent_results
+                    if r.agent_name in _agent_model_map
+                )
+            )
 
         known_strategies = {"sequential", "fanout", "single", "parallel_sequential"}
         if strategy not in known_strategies:
@@ -1784,6 +1826,7 @@ class Orchestrator:
                         f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
                         + (result.agent_results[-1].content if result.agent_results else "")
                     )
+                    _set_models_used_from_results()
                     return result
 
                 if not agent_result.success:
@@ -2105,6 +2148,7 @@ class Orchestrator:
                                 f"[WARNING] Cost budget ${max_cost_per_run:.4f} exceeded "
                                 f"during reporter retry (actual: ${run_cost_usd:.4f})"
                             )
+                            _set_models_used_from_results()
                             return result
                         result.agent_results[-1] = reporter_retry
 
@@ -2159,6 +2203,7 @@ class Orchestrator:
         except Exception:  # noqa: BLE001
             pass
 
+        _set_models_used_from_results()
         return result
 
     # ── parallel_sequential helpers ────────────────────────────────────────
