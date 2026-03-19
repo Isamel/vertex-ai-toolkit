@@ -4,6 +4,7 @@ from vaig.core.prompt_defense import (
     ANTI_INJECTION_RULE,
     DELIMITER_DATA_END,
     DELIMITER_DATA_START,
+    _sanitize_namespace,
     wrap_untrusted_content,  # noqa: F401  — re-exported for downstream consumers
 )
 
@@ -720,8 +721,8 @@ def build_reporter_prompt(namespace: str = "") -> str:
         A formatted system-instruction string for the health reporter agent.
     """
     namespace_hint = (
-        f"  - Namespace under investigation: {wrap_untrusted_content(namespace)}"
-        if namespace
+        f"  - Namespace under investigation: {_sanitize_namespace(namespace)}"
+        if namespace and _sanitize_namespace(namespace)
         else "  - Namespace under investigation"
     )
     return f"""You are an SRE communications specialist. You take analyzed and VERIFIED health findings and produce a clear, actionable service health report suitable for both engineering teams and engineering leadership.
@@ -1204,9 +1205,9 @@ def build_workload_gatherer_prompt(namespace: str = "") -> str:
         workload-gatherer task description.
     """
     ns_context = (
-        f"Target namespace: {wrap_untrusted_content(namespace)}.  "
+        f"Target namespace: {_sanitize_namespace(namespace)}.  "
         "Also check any other non-system namespaces if relevant."
-        if namespace
+        if namespace and _sanitize_namespace(namespace)
         else (
             "If no explicit namespace is given in the query, investigate ALL non-system namespaces found in\n"
             "the cluster. Prioritise namespaces with the highest pod count."
@@ -1319,9 +1320,9 @@ def build_event_gatherer_prompt(namespace: str = "") -> str:
         event-gatherer task description.
     """
     ns_context = (
-        f"Target namespace: {wrap_untrusted_content(namespace)}.  "
+        f"Target namespace: {_sanitize_namespace(namespace)}.  "
         "Also check kube-system for system-level events."
-        if namespace
+        if namespace and _sanitize_namespace(namespace)
         else (
             "If no explicit namespace is given in the query, investigate ALL "
             "non-system namespaces found in the cluster."
@@ -1440,7 +1441,7 @@ def build_logging_gatherer_prompt(namespace: str = "") -> str:
         :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the full
         logging-gatherer task description.
     """
-    safe_ns = wrap_untrusted_content(namespace) if namespace else "<target-namespace>"
+    safe_ns = _sanitize_namespace(namespace) if namespace else "<target-namespace>"
     return f"""{ANTI_INJECTION_RULE}
 
 You are a focused Kubernetes diagnostic agent. Your ONLY responsibility is to

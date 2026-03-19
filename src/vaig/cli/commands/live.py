@@ -1016,7 +1016,7 @@ def _inject_report_metadata(
 
     # ── Generated-at timestamp ────────────────────────────────
     if _is_empty(getattr(metadata, "generated_at", None)):
-        metadata.generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+        metadata.generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
     # ── Skill version ─────────────────────────────────────────
     if _is_empty(getattr(metadata, "skill_version", None)):
@@ -1031,7 +1031,8 @@ def _inject_report_metadata(
             from vaig.skills.service_health.schema import ClusterMetric  # noqa: PLC0415
 
             already_has_ns = any(
-                row.metric.lower() == "namespace" for row in report.cluster_overview
+                isinstance(row.metric, str) and row.metric.strip().lower() == "namespace"
+                for row in report.cluster_overview
             )
             if not already_has_ns:
                 report.cluster_overview.insert(
