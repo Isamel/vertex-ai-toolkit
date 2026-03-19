@@ -1014,6 +1014,30 @@ def _inject_report_metadata(
                 tool_calls=tool_calls,
             )
 
+    # ── Generated-at timestamp ────────────────────────────────
+    if _is_empty(getattr(metadata, "generated_at", None)):
+        metadata.generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    # ── Skill version ─────────────────────────────────────────
+    if _is_empty(getattr(metadata, "skill_version", None)):
+        from vaig import __version__  # noqa: PLC0415
+
+        metadata.skill_version = f"vaig {__version__}"
+
+    # ── Cluster overview: inject Namespace row when missing ───
+    if gke_config is not None:
+        ns = getattr(gke_config, "default_namespace", None)
+        if isinstance(ns, str) and ns and hasattr(report, "cluster_overview") and report.cluster_overview is not None:
+            from vaig.skills.service_health.schema import ClusterMetric  # noqa: PLC0415
+
+            already_has_ns = any(
+                "namespace" in row.metric.lower() for row in report.cluster_overview
+            )
+            if not already_has_ns:
+                report.cluster_overview.insert(
+                    0, ClusterMetric(metric="Namespace", value=ns)
+                )
+
 
 def _dispatch_format_output(
     orch_result: Any,
