@@ -225,17 +225,24 @@ class Orchestrator:
             if config_dict.get("requires_tools") and tool_registry is not None:
                 model = config_dict.get("model", "gemini-2.5-pro")
                 agent: BaseAgent = ToolAwareAgent.from_config_dict(
-                    config_dict, model, tool_registry, self._client,
+                    config_dict,
+                    model,
+                    tool_registry,
+                    self._client,
                 )
                 logger.info(
                     "Created ToolAwareAgent: %s (role=%s, model=%s)",
-                    agent.name, agent.role, agent.model,
+                    agent.name,
+                    agent.role,
+                    agent.model,
                 )
             else:
                 agent = SpecialistAgent.from_config_dict(config_dict, self._client)
                 logger.info(
                     "Created SpecialistAgent: %s (role=%s, model=%s)",
-                    agent.name, agent.role, agent.model,
+                    agent.name,
+                    agent.role,
+                    agent.model,
                 )
 
             self._agents[agent.name] = agent
@@ -274,7 +281,9 @@ class Orchestrator:
             logger.info("Sequential step %d/%d: agent=%s", i + 1, len(agents), agent.name)
             logger.debug(
                 "Agent '%s' config: role=%s, model=%s",
-                agent.name, agent.role, agent.model,
+                agent.name,
+                agent.role,
+                agent.model,
             )
 
             # First agent gets the original prompt; subsequent agents get the accumulated context
@@ -287,10 +296,7 @@ class Orchestrator:
                 context_chain.append(
                     self._build_previous_agent_summary(agents[i - 1].role, prev),
                 )
-                accumulated = (
-                    f"{current_context}\n\n"
-                    + "\n\n---\n\n".join(context_chain)
-                )
+                accumulated = f"{current_context}\n\n" + "\n\n---\n\n".join(context_chain)
                 _seq_ctx = accumulated
                 agent_result = agent.execute(prompt, context=_seq_ctx)
 
@@ -302,9 +308,10 @@ class Orchestrator:
             result.run_cost_usd = run_cost_usd
             if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
                 logger.warning(
-                    "Cost circuit breaker triggered after agent %s: "
-                    "run_cost_usd=%.6f > max_cost_per_run=%.6f",
-                    agent.name, run_cost_usd, max_cost_per_run,
+                    "Cost circuit breaker triggered after agent %s: run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                    agent.name,
+                    run_cost_usd,
+                    max_cost_per_run,
                 )
                 result.success = False
                 result.budget_exceeded = True
@@ -330,16 +337,18 @@ class Orchestrator:
                     if failure_counts[agent.name] >= max_failures:
                         fallback_model = self._settings.models.fallback
                         logger.warning(
-                            "Agent %s failed %d time(s) with error_type=%s — "
-                            "switching to fallback model %s",
-                            agent.name, failure_counts[agent.name],
-                            error_type, fallback_model,
+                            "Agent %s failed %d time(s) with error_type=%s — switching to fallback model %s",
+                            agent.name,
+                            failure_counts[agent.name],
+                            error_type,
+                            fallback_model,
                         )
                         agent._config.model = fallback_model
                         # ── Inline retry with fallback model ─────────────
                         logger.info(
                             "Retrying agent %s inline with fallback model %s",
-                            agent.name, fallback_model,
+                            agent.name,
+                            fallback_model,
                         )
                         retry_ar = agent.execute(prompt, context=_seq_ctx)
                         run_cost_usd += _compute_step_cost(retry_ar, agent.model)
@@ -351,7 +360,8 @@ class Orchestrator:
                             result.success = False
                             logger.warning(
                                 "Agent %s fallback retry also failed: %s",
-                                agent.name, retry_ar.content,
+                                agent.name,
+                                retry_ar.content,
                             )
                             break
                         # Retry succeeded — reset failure counter
@@ -560,7 +570,9 @@ class Orchestrator:
         """
         try:
             return self._execute_with_tools_impl(
-                query, skill, tool_registry,
+                query,
+                skill,
+                tool_registry,
                 strategy=strategy,
                 is_autopilot=is_autopilot,
                 on_tool_call=on_tool_call,
@@ -634,16 +646,16 @@ class Orchestrator:
         # automatically upgrade to ``parallel_sequential`` so that skills
         # returning ``get_parallel_agents_config()`` from ``get_agents_config()``
         # work without requiring every call-site to pass the strategy explicitly.
-        if strategy == "sequential" and any(
-            cfg.get("parallel_group") for cfg in agent_configs
-        ):
+        if strategy == "sequential" and any(cfg.get("parallel_group") for cfg in agent_configs):
             logger.warning(
                 "Auto-detected parallel_group agents — upgrading strategy to parallel_sequential",
             )
             strategy = "parallel_sequential"
 
         agents = self.create_agents_for_skill(
-            skill, tool_registry, agent_configs=agent_configs,
+            skill,
+            tool_registry,
+            agent_configs=agent_configs,
         )
         result = OrchestratorResult(
             skill_name=skill.get_metadata().name,
@@ -653,8 +665,7 @@ class Orchestrator:
         known_strategies = {"sequential", "fanout", "single", "parallel_sequential"}
         if strategy not in known_strategies:
             logger.warning(
-                "Unknown strategy '%s' — falling back to sequential. "
-                "Valid strategies: %s",
+                "Unknown strategy '%s' — falling back to sequential. Valid strategies: %s",
                 strategy,
                 ", ".join(sorted(known_strategies)),
             )
@@ -706,7 +717,8 @@ class Orchestrator:
                     if not agent_result.success:
                         logger.warning(
                             "Agent %s failed (non-fatal in fan-out): %s",
-                            agent.name, agent_result.content,
+                            agent.name,
+                            agent_result.content,
                         )
 
             # Accumulate usage serially after all agents complete
@@ -751,11 +763,15 @@ class Orchestrator:
             for i, agent in enumerate(agents):
                 logger.info(
                     "Sequential (tools) step %d/%d: agent=%s",
-                    i + 1, len(agents), agent.name,
+                    i + 1,
+                    len(agents),
+                    agent.name,
                 )
                 logger.debug(
                     "Agent '%s' config: role=%s, model=%s",
-                    agent.name, agent.role, agent.model,
+                    agent.name,
+                    agent.role,
+                    agent.model,
                 )
                 if i > 0 and result.agent_results:
                     prev = result.agent_results[-1]
@@ -787,9 +803,10 @@ class Orchestrator:
                 result.run_cost_usd = run_cost_usd
                 if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
                     logger.warning(
-                        "Cost circuit breaker triggered after agent %s: "
-                        "run_cost_usd=%.6f > max_cost_per_run=%.6f",
-                        agent.name, run_cost_usd, max_cost_per_run,
+                        "Cost circuit breaker triggered after agent %s: run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                        agent.name,
+                        run_cost_usd,
+                        max_cost_per_run,
                     )
                     result.success = False
                     result.budget_exceeded = True
@@ -815,16 +832,18 @@ class Orchestrator:
                         if failure_counts[agent.name] >= max_failures:
                             fallback_model = self._settings.models.fallback
                             logger.warning(
-                                "Agent %s failed %d time(s) with error_type=%s — "
-                                "switching to fallback model %s",
-                                agent.name, failure_counts[agent.name],
-                                error_type, fallback_model,
+                                "Agent %s failed %d time(s) with error_type=%s — switching to fallback model %s",
+                                agent.name,
+                                failure_counts[agent.name],
+                                error_type,
+                                fallback_model,
                             )
                             agent._config.model = fallback_model
                             # ── Inline retry with fallback model ─────────
                             logger.info(
                                 "Retrying agent %s inline with fallback model %s",
-                                agent.name, fallback_model,
+                                agent.name,
+                                fallback_model,
                             )
                             retry_ar = agent.execute(query, **kw_seq)
                             run_cost_usd += _compute_step_cost(retry_ar, agent.model)
@@ -836,7 +855,8 @@ class Orchestrator:
                                 result.success = False
                                 logger.warning(
                                     "Agent %s fallback retry also failed: %s",
-                                    agent.name, retry_ar.content,
+                                    agent.name,
+                                    retry_ar.content,
                                 )
                                 break
                             # Retry succeeded — reset failure counter
@@ -852,20 +872,19 @@ class Orchestrator:
                 # ── Gatherer output validation + mandatory retry ──────
                 if i == 0 and required_sections and agent_result.success:
                     validation = self._validate_gatherer_output(
-                        agent_result.content, required_sections,
+                        agent_result.content,
+                        required_sections,
                     )
                     if validation.needs_retry:
                         all_issues = validation.missing_sections + validation.shallow_sections
                         logger.warning(
-                            "Gatherer output has %d issue(s): "
-                            "missing=%s, shallow=%s — retrying once",
+                            "Gatherer output has %d issue(s): missing=%s, shallow=%s — retrying once",
                             len(all_issues),
                             ", ".join(validation.missing_sections) or "(none)",
                             ", ".join(validation.shallow_sections) or "(none)",
                         )
                         logger.debug(
-                            "Validation failed: required_sections=%s, "
-                            "missing=%s, shallow=%s",
+                            "Validation failed: required_sections=%s, missing=%s, shallow=%s",
                             required_sections,
                             validation.missing_sections,
                             validation.shallow_sections,
@@ -877,11 +896,11 @@ class Orchestrator:
                         )
                     else:
                         logger.info(
-                            "Gatherer validation passed — running mandatory "
-                            "deepening second pass for thoroughness",
+                            "Gatherer validation passed — running mandatory deepening second pass for thoroughness",
                         )
                         retry_prompt = self._build_deepening_prompt(
-                            query, agent_result.content,
+                            query,
+                            agent_result.content,
                         )
 
                     logger.debug("Retry prompt: %s", retry_prompt[:200])
@@ -903,14 +922,9 @@ class Orchestrator:
                             kw_retry["required_sections"] = required_sections
 
                     original_max_iters: int | None = None
-                    if (
-                        isinstance(agent, ToolAwareAgent)
-                        and hasattr(agent, "_max_iterations")
-                    ):
+                    if isinstance(agent, ToolAwareAgent) and hasattr(agent, "_max_iterations"):
                         original_max_iters = agent._max_iterations
-                        agent._max_iterations = (
-                            self._settings.agents.max_iterations_retry
-                        )
+                        agent._max_iterations = self._settings.agents.max_iterations_retry
 
                     try:
                         retry_result = agent.execute(retry_prompt, **kw_retry)
@@ -928,11 +942,11 @@ class Orchestrator:
                             # Keep first-pass result — already in
                             # result.agent_results[-1]
                             logger.info(
-                                "Agent %s continuing with first-pass "
-                                "output — tokens=%s",
+                                "Agent %s continuing with first-pass output — tokens=%s",
                                 agent.name,
                                 agent_result.usage.get(
-                                    "total_tokens", "?",
+                                    "total_tokens",
+                                    "?",
                                 ),
                             )
                         else:
@@ -947,7 +961,9 @@ class Orchestrator:
                             logger.warning(
                                 "Cost circuit breaker triggered after gatherer retry %s: "
                                 "run_cost_usd=%.6f > max_cost_per_run=%.6f",
-                                agent.name, run_cost_usd, max_cost_per_run,
+                                agent.name,
+                                run_cost_usd,
+                                max_cost_per_run,
                             )
                             result.success = False
                             result.budget_exceeded = True
@@ -961,11 +977,7 @@ class Orchestrator:
                         if is_deepening:
                             # Merge: concatenate first-pass + second-pass
                             # content
-                            merged_content = (
-                                agent_result.content
-                                + "\n\n"
-                                + retry_result.content
-                            )
+                            merged_content = agent_result.content + "\n\n" + retry_result.content
                             retry_result = AgentResult(
                                 agent_name=retry_result.agent_name,
                                 content=merged_content,
@@ -980,7 +992,8 @@ class Orchestrator:
                             result.success = False
                             logger.warning(
                                 "Agent %s retry also failed: %s",
-                                agent.name, retry_result.content,
+                                agent.name,
+                                retry_result.content,
                             )
                             break
                         logger.info(
@@ -989,10 +1002,7 @@ class Orchestrator:
                             retry_result.usage.get("total_tokens", "?"),
                         )
                     finally:
-                        if (
-                            isinstance(agent, ToolAwareAgent)
-                            and original_max_iters is not None
-                        ):
+                        if isinstance(agent, ToolAwareAgent) and original_max_iters is not None:
                             agent._max_iterations = original_max_iters
 
                 # ── Reporter output validation + retry ──────
@@ -1045,7 +1055,8 @@ class Orchestrator:
                                     kw_js["tool_call_store"] = tool_call_store
                                 kw_js["tool_result_cache"] = tool_result_cache
                             json_retry_result = agent.execute(
-                                json_retry_prompt, **kw_js,
+                                json_retry_prompt,
+                                **kw_js,
                             )
                             _accumulate_usage(result, json_retry_result)
                             run_cost_usd += _compute_step_cost(json_retry_result, agent.model)
@@ -1054,7 +1065,9 @@ class Orchestrator:
                                 logger.warning(
                                     "Cost circuit breaker triggered after JSON retry %s: "
                                     "run_cost_usd=%.6f > max_cost_per_run=%.6f",
-                                    agent.name, run_cost_usd, max_cost_per_run,
+                                    agent.name,
+                                    run_cost_usd,
+                                    max_cost_per_run,
                                 )
                                 result.success = False
                                 result.budget_exceeded = True
@@ -1073,8 +1086,7 @@ class Orchestrator:
                                 )
                             else:
                                 logger.warning(
-                                    "Reporter %s JSON retry also failed — "
-                                    "proceeding with original output",
+                                    "Reporter %s JSON retry also failed — proceeding with original output",
                                     agent.name,
                                 )
 
@@ -1109,7 +1121,8 @@ class Orchestrator:
                             reasons.extend(md_issues)
                         logger.warning(
                             "Reporter output has %d issue(s): %s — retrying once",
-                            len(reasons), "; ".join(reasons),
+                            len(reasons),
+                            "; ".join(reasons),
                         )
 
                         reporter_retry_prompt = (
@@ -1131,7 +1144,8 @@ class Orchestrator:
                                 kw_rr["tool_call_store"] = tool_call_store
                             kw_rr["tool_result_cache"] = tool_result_cache
                         reporter_retry = agent.execute(
-                            reporter_retry_prompt, **kw_rr,
+                            reporter_retry_prompt,
+                            **kw_rr,
                         )
                         _accumulate_usage(result, reporter_retry)
                         run_cost_usd += _compute_step_cost(reporter_retry, agent.model)
@@ -1150,7 +1164,8 @@ class Orchestrator:
                             result.success = False
                             logger.warning(
                                 "Reporter %s retry also failed: %s",
-                                agent.name, reporter_retry.content,
+                                agent.name,
+                                reporter_retry.content,
                             )
                             break
                         logger.info(
@@ -1334,24 +1349,27 @@ class Orchestrator:
         for i, agent in enumerate(agents):
             logger.info(
                 "Async sequential step %d/%d: agent=%s",
-                i + 1, len(agents), agent.name,
+                i + 1,
+                len(agents),
+                agent.name,
             )
 
             if i == 0:
                 agent_result = await asyncio.to_thread(
-                    agent.execute, prompt, context=current_context,
+                    agent.execute,
+                    prompt,
+                    context=current_context,
                 )
             else:
                 prev = result.agent_results[-1]
                 context_chain.append(
                     self._build_previous_agent_summary(agents[i - 1].role, prev),
                 )
-                accumulated = (
-                    f"{current_context}\n\n"
-                    + "\n\n---\n\n".join(context_chain)
-                )
+                accumulated = f"{current_context}\n\n" + "\n\n---\n\n".join(context_chain)
                 agent_result = await asyncio.to_thread(
-                    agent.execute, prompt, context=accumulated,
+                    agent.execute,
+                    prompt,
+                    context=accumulated,
                 )
 
             result.agent_results.append(agent_result)
@@ -1362,9 +1380,10 @@ class Orchestrator:
             result.run_cost_usd = run_cost_usd
             if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
                 logger.warning(
-                    "Cost circuit breaker triggered after agent %s: "
-                    "run_cost_usd=%.6f > max_cost_per_run=%.6f",
-                    agent.name, run_cost_usd, max_cost_per_run,
+                    "Cost circuit breaker triggered after agent %s: run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                    agent.name,
+                    run_cost_usd,
+                    max_cost_per_run,
                 )
                 result.success = False
                 result.budget_exceeded = True
@@ -1383,10 +1402,11 @@ class Orchestrator:
                     if failure_counts[agent.name] >= max_failures:
                         fallback_model = self._settings.models.fallback
                         logger.warning(
-                            "Agent %s failed %d time(s) with error_type=%s — "
-                            "switching to fallback model %s",
-                            agent.name, failure_counts[agent.name],
-                            error_type, fallback_model,
+                            "Agent %s failed %d time(s) with error_type=%s — switching to fallback model %s",
+                            agent.name,
+                            failure_counts[agent.name],
+                            error_type,
+                            fallback_model,
                         )
                         agent._config.model = fallback_model
                 else:
@@ -1419,7 +1439,9 @@ class Orchestrator:
         skill_name = skill.get_metadata().name
         logger.info(
             "Async executing skill=%s phase=%s strategy=%s",
-            skill_name, phase, strategy,
+            skill_name,
+            phase,
+            strategy,
         )
 
         try:
@@ -1490,7 +1512,9 @@ class Orchestrator:
         """
         try:
             return await self._async_execute_with_tools_impl(
-                query, skill, tool_registry,
+                query,
+                skill,
+                tool_registry,
                 strategy=strategy,
                 is_autopilot=is_autopilot,
                 on_tool_call=on_tool_call,
@@ -1540,7 +1564,8 @@ class Orchestrator:
             inject_language_into_config(agent_configs, lang)
             logger.info(
                 "Language detected: %s — injected language instruction into %d agent(s)",
-                lang, len(agent_configs),
+                lang,
+                len(agent_configs),
             )
 
         # ── Autopilot context injection ──────────────────────
@@ -1557,16 +1582,16 @@ class Orchestrator:
         # automatically upgrade to ``parallel_sequential`` so that skills
         # returning ``get_parallel_agents_config()`` from ``get_agents_config()``
         # work without requiring every call-site to pass the strategy explicitly.
-        if strategy == "sequential" and any(
-            cfg.get("parallel_group") for cfg in agent_configs
-        ):
+        if strategy == "sequential" and any(cfg.get("parallel_group") for cfg in agent_configs):
             logger.warning(
                 "Auto-detected parallel_group agents — upgrading strategy to parallel_sequential",
             )
             strategy = "parallel_sequential"
 
         agents = self.create_agents_for_skill(
-            skill, tool_registry, agent_configs=agent_configs,
+            skill,
+            tool_registry,
+            agent_configs=agent_configs,
         )
         result = OrchestratorResult(
             skill_name=skill.get_metadata().name,
@@ -1576,8 +1601,7 @@ class Orchestrator:
         known_strategies = {"sequential", "fanout", "single", "parallel_sequential"}
         if strategy not in known_strategies:
             logger.warning(
-                "Unknown strategy '%s' — falling back to sequential. "
-                "Valid strategies: %s",
+                "Unknown strategy '%s' — falling back to sequential. Valid strategies: %s",
                 strategy,
                 ", ".join(sorted(known_strategies)),
             )
@@ -1677,7 +1701,9 @@ class Orchestrator:
             for i, agent in enumerate(agents):
                 logger.info(
                     "Async sequential (tools) step %d/%d: agent=%s",
-                    i + 1, len(agents), agent.name,
+                    i + 1,
+                    len(agents),
+                    agent.name,
                 )
                 if i > 0 and result.agent_results:
                     prev = result.agent_results[-1]
@@ -1699,7 +1725,9 @@ class Orchestrator:
                 _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "start")
                 try:
                     agent_result = await asyncio.to_thread(
-                        agent.execute, query, **kw_seq,
+                        agent.execute,
+                        query,
+                        **kw_seq,
                     )
                 finally:
                     _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "end")
@@ -1711,9 +1739,10 @@ class Orchestrator:
                 result.run_cost_usd = run_cost_usd
                 if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
                     logger.warning(
-                        "Cost circuit breaker triggered after agent %s: "
-                        "run_cost_usd=%.6f > max_cost_per_run=%.6f",
-                        agent.name, run_cost_usd, max_cost_per_run,
+                        "Cost circuit breaker triggered after agent %s: run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                        agent.name,
+                        run_cost_usd,
+                        max_cost_per_run,
                     )
                     result.success = False
                     result.budget_exceeded = True
@@ -1732,19 +1761,23 @@ class Orchestrator:
                         if failure_counts[agent.name] >= max_failures:
                             fallback_model = self._settings.models.fallback
                             logger.warning(
-                                "Agent %s failed %d time(s) with error_type=%s — "
-                                "switching to fallback model %s",
-                                agent.name, failure_counts[agent.name],
-                                error_type, fallback_model,
+                                "Agent %s failed %d time(s) with error_type=%s — switching to fallback model %s",
+                                agent.name,
+                                failure_counts[agent.name],
+                                error_type,
+                                fallback_model,
                             )
                             agent._config.model = fallback_model
                             # ── Inline retry with fallback model ─────────
                             logger.info(
                                 "Retrying agent %s inline with fallback model %s",
-                                agent.name, fallback_model,
+                                agent.name,
+                                fallback_model,
                             )
                             retry_ar = await asyncio.to_thread(
-                                agent.execute, query, **kw_seq,
+                                agent.execute,
+                                query,
+                                **kw_seq,
                             )
                             run_cost_usd += _compute_step_cost(retry_ar, agent.model)
                             result.run_cost_usd = run_cost_usd
@@ -1755,7 +1788,8 @@ class Orchestrator:
                                 result.success = False
                                 logger.warning(
                                     "Agent %s fallback retry also failed: %s",
-                                    agent.name, retry_ar.content,
+                                    agent.name,
+                                    retry_ar.content,
                                 )
                                 break
                             # Retry succeeded — reset failure counter
@@ -1771,13 +1805,13 @@ class Orchestrator:
                 # ── Gatherer output validation + mandatory retry ──────
                 if i == 0 and required_sections and agent_result.success:
                     validation = self._validate_gatherer_output(
-                        agent_result.content, required_sections,
+                        agent_result.content,
+                        required_sections,
                     )
                     if validation.needs_retry:
                         all_issues = validation.missing_sections + validation.shallow_sections
                         logger.warning(
-                            "Gatherer output has %d issue(s): "
-                            "missing=%s, shallow=%s — retrying once",
+                            "Gatherer output has %d issue(s): missing=%s, shallow=%s — retrying once",
                             len(all_issues),
                             ", ".join(validation.missing_sections) or "(none)",
                             ", ".join(validation.shallow_sections) or "(none)",
@@ -1789,11 +1823,11 @@ class Orchestrator:
                         )
                     else:
                         logger.info(
-                            "Gatherer validation passed — running mandatory "
-                            "deepening second pass for thoroughness",
+                            "Gatherer validation passed — running mandatory deepening second pass for thoroughness",
                         )
                         retry_prompt = self._build_deepening_prompt(
-                            query, agent_result.content,
+                            query,
+                            agent_result.content,
                         )
 
                     is_deepening = not validation.needs_retry
@@ -1811,18 +1845,15 @@ class Orchestrator:
                             kw_retry["required_sections"] = required_sections
 
                     original_max_iters: int | None = None
-                    if (
-                        isinstance(agent, ToolAwareAgent)
-                        and hasattr(agent, "_max_iterations")
-                    ):
+                    if isinstance(agent, ToolAwareAgent) and hasattr(agent, "_max_iterations"):
                         original_max_iters = agent._max_iterations
-                        agent._max_iterations = (
-                            self._settings.agents.max_iterations_retry
-                        )
+                        agent._max_iterations = self._settings.agents.max_iterations_retry
 
                     try:
                         retry_result = await asyncio.to_thread(
-                            agent.execute, retry_prompt, **kw_retry,
+                            agent.execute,
+                            retry_prompt,
+                            **kw_retry,
                         )
                     except MaxIterationsError:
                         if is_deepening:
@@ -1833,11 +1864,11 @@ class Orchestrator:
                                 agent.name,
                             )
                             logger.info(
-                                "Agent %s continuing with first-pass "
-                                "output — tokens=%s",
+                                "Agent %s continuing with first-pass output — tokens=%s",
                                 agent.name,
                                 agent_result.usage.get(
-                                    "total_tokens", "?",
+                                    "total_tokens",
+                                    "?",
                                 ),
                             )
                         else:
@@ -1856,11 +1887,7 @@ class Orchestrator:
                             break
 
                         if is_deepening:
-                            merged_content = (
-                                agent_result.content
-                                + "\n\n"
-                                + retry_result.content
-                            )
+                            merged_content = agent_result.content + "\n\n" + retry_result.content
                             retry_result = AgentResult(
                                 agent_name=retry_result.agent_name,
                                 content=merged_content,
@@ -1875,7 +1902,8 @@ class Orchestrator:
                             result.success = False
                             logger.warning(
                                 "Agent %s retry also failed: %s",
-                                agent.name, retry_result.content,
+                                agent.name,
+                                retry_result.content,
                             )
                             break
                         logger.info(
@@ -1884,10 +1912,7 @@ class Orchestrator:
                             retry_result.usage.get("total_tokens", "?"),
                         )
                     finally:
-                        if (
-                            isinstance(agent, ToolAwareAgent)
-                            and original_max_iters is not None
-                        ):
+                        if isinstance(agent, ToolAwareAgent) and original_max_iters is not None:
                             agent._max_iterations = original_max_iters
 
                 # ── Reporter output validation + retry (async) ──────
@@ -1936,7 +1961,9 @@ class Orchestrator:
                                     kw_js["tool_call_store"] = tool_call_store
                                 kw_js["tool_result_cache"] = tool_result_cache
                             json_retry_result = await asyncio.to_thread(
-                                agent.execute, json_retry_prompt, **kw_js,
+                                agent.execute,
+                                json_retry_prompt,
+                                **kw_js,
                             )
                             _accumulate_usage(result, json_retry_result)
                             run_cost_usd += _compute_step_cost(json_retry_result, agent.model)
@@ -1958,8 +1985,7 @@ class Orchestrator:
                                 )
                             else:
                                 logger.warning(
-                                    "Reporter %s JSON retry also failed — "
-                                    "proceeding with original output",
+                                    "Reporter %s JSON retry also failed — proceeding with original output",
                                     agent.name,
                                 )
 
@@ -1994,7 +2020,8 @@ class Orchestrator:
                             reasons.extend(md_issues)
                         logger.warning(
                             "Reporter output has %d issue(s): %s — retrying once",
-                            len(reasons), "; ".join(reasons),
+                            len(reasons),
+                            "; ".join(reasons),
                         )
 
                         reporter_retry_prompt = (
@@ -2016,7 +2043,9 @@ class Orchestrator:
                                 kw_rr["tool_call_store"] = tool_call_store
                             kw_rr["tool_result_cache"] = tool_result_cache
                         reporter_retry = await asyncio.to_thread(
-                            agent.execute, reporter_retry_prompt, **kw_rr,
+                            agent.execute,
+                            reporter_retry_prompt,
+                            **kw_rr,
                         )
                         _accumulate_usage(result, reporter_retry)
                         run_cost_usd += _compute_step_cost(reporter_retry, agent.model)
@@ -2035,7 +2064,8 @@ class Orchestrator:
                             result.success = False
                             logger.warning(
                                 "Reporter %s retry also failed: %s",
-                                agent.name, reporter_retry.content,
+                                agent.name,
+                                reporter_retry.content,
                             )
                             break
                         logger.info(
@@ -2180,7 +2210,8 @@ class Orchestrator:
                 if not agent_result.success:
                     logger.warning(
                         "Gatherer agent %s failed (non-fatal): %s",
-                        agent.name, agent_result.content,
+                        agent.name,
+                        agent_result.content,
                     )
 
         # ── Merge gatherer outputs ────────────────────────────────────────
@@ -2203,8 +2234,7 @@ class Orchestrator:
         context_chain: list[str] = [merged_context]
 
         run_cost_usd: float = sum(
-            _compute_step_cost(r, parallel_agent_models.get(r.agent_name))
-            for r in parallel_results
+            _compute_step_cost(r, parallel_agent_models.get(r.agent_name)) for r in parallel_results
         )
         max_cost_per_run: float = self._settings.budget.max_cost_per_run
         result.run_cost_usd = run_cost_usd
@@ -2214,9 +2244,9 @@ class Orchestrator:
         # ── Post-parallel cost check ──────────────────────────────────────
         if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
             logger.warning(
-                "Cost circuit breaker triggered after parallel phase: "
-                "run_cost_usd=%.6f > max_cost_per_run=%.6f",
-                run_cost_usd, max_cost_per_run,
+                "Cost circuit breaker triggered after parallel phase: run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                run_cost_usd,
+                max_cost_per_run,
             )
             result.success = False
             result.budget_exceeded = True
@@ -2231,13 +2261,16 @@ class Orchestrator:
             idx_global = total_parallel + i
             logger.info(
                 "parallel_sequential: sequential step %d/%d: agent=%s",
-                i + 1, len(sequential_agents), agent.name,
+                i + 1,
+                len(sequential_agents),
+                agent.name,
             )
             if i > 0 and result.agent_results:
                 prev = result.agent_results[-1]
                 context_chain.append(
                     self._build_previous_agent_summary(
-                        sequential_agents[i - 1].role, prev,
+                        sequential_agents[i - 1].role,
+                        prev,
                     ),
                 )
                 current_context = "\n\n---\n\n".join(context_chain)
@@ -2264,9 +2297,10 @@ class Orchestrator:
             result.run_cost_usd = run_cost_usd
             if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
                 logger.warning(
-                    "Cost circuit breaker triggered after agent %s: "
-                    "run_cost_usd=%.6f > max_cost_per_run=%.6f",
-                    agent.name, run_cost_usd, max_cost_per_run,
+                    "Cost circuit breaker triggered after agent %s: run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                    agent.name,
+                    run_cost_usd,
+                    max_cost_per_run,
                 )
                 result.success = False
                 result.budget_exceeded = True
@@ -2285,16 +2319,18 @@ class Orchestrator:
                     if failure_counts[agent.name] >= max_failures:
                         fallback_model = self._settings.models.fallback
                         logger.warning(
-                            "Agent %s failed %d time(s) with error_type=%s — "
-                            "switching to fallback model %s",
-                            agent.name, failure_counts[agent.name],
-                            error_type, fallback_model,
+                            "Agent %s failed %d time(s) with error_type=%s — switching to fallback model %s",
+                            agent.name,
+                            failure_counts[agent.name],
+                            error_type,
+                            fallback_model,
                         )
                         agent._config.model = fallback_model
                         # ── Inline retry with fallback model ─────────────
                         logger.info(
                             "Retrying agent %s inline with fallback model %s",
-                            agent.name, fallback_model,
+                            agent.name,
+                            fallback_model,
                         )
                         retry_ar = agent.execute(query, **kw_seq)
                         run_cost_usd += _compute_step_cost(retry_ar, agent.model)
@@ -2306,7 +2342,8 @@ class Orchestrator:
                             result.success = False
                             logger.warning(
                                 "Agent %s fallback retry also failed: %s",
-                                agent.name, retry_ar.content,
+                                agent.name,
+                                retry_ar.content,
                             )
                             break
                         # Retry succeeded — reset failure counter
@@ -2314,7 +2351,9 @@ class Orchestrator:
                 else:
                     result.success = False
                     logger.warning(
-                        "Sequential agent %s failed: %s", agent.name, agent_result.content,
+                        "Sequential agent %s failed: %s",
+                        agent.name,
+                        agent_result.content,
                     )
                     break
             else:
@@ -2326,6 +2365,40 @@ class Orchestrator:
             any_gatherer_ok = any(r.success for r in parallel_results)
             last_seq_ok = result.agent_results[-1].success if sequential_agents else True
             result.success = any_gatherer_ok and last_seq_ok
+
+            # ── Reporter post-processing (mirrors the sequential path) ────────
+            # When the last sequential agent is a reporter with a response_schema
+            # (e.g. ServiceHealthSkill's health_reporter), capture the structured
+            # report BEFORE post_process_report converts the JSON to Markdown.
+            # Without this, result.structured_report stays None and --format html
+            # silently falls back to raw markdown output.
+            if sequential_agents and last_seq_ok:
+                last_agent = sequential_agents[-1]
+                last_agent_result = result.agent_results[-1]
+                is_reporter = "report" in getattr(last_agent, "role", "").lower()
+                if is_reporter:
+                    schema_cls = getattr(
+                        getattr(last_agent, "config", None),
+                        "response_schema",
+                        None,
+                    )
+                    if (
+                        schema_cls is not None
+                        and hasattr(schema_cls, "model_validate_json")
+                        and result.structured_report is None
+                    ):
+                        try:
+                            result.structured_report = schema_cls.model_validate_json(
+                                last_agent_result.content,
+                            )
+                        except Exception:
+                            pass  # best-effort — keep synthesized_output as-is
+
+                    # Post-process structured output (e.g. JSON → Markdown)
+                    last_agent_result.content = skill.post_process_report(
+                        last_agent_result.content,
+                    )
+
             result.synthesized_output = result.agent_results[-1].content
         else:
             result.success = False
@@ -2418,7 +2491,8 @@ class Orchestrator:
             if not agent_result.success:
                 logger.warning(
                     "Async gatherer agent %s failed (non-fatal): %s",
-                    agent_result.agent_name, agent_result.content,
+                    agent_result.agent_name,
+                    agent_result.content,
                 )
 
         # ── Merge gatherer outputs ────────────────────────────────────────
@@ -2441,8 +2515,7 @@ class Orchestrator:
         context_chain: list[str] = [merged_context]
 
         run_cost_usd: float = sum(
-            _compute_step_cost(r, parallel_agent_models.get(r.agent_name))
-            for r in parallel_results
+            _compute_step_cost(r, parallel_agent_models.get(r.agent_name)) for r in parallel_results
         )
         max_cost_per_run: float = self._settings.budget.max_cost_per_run
         result.run_cost_usd = run_cost_usd
@@ -2452,9 +2525,9 @@ class Orchestrator:
         # ── Post-parallel cost check ──────────────────────────────────────
         if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
             logger.warning(
-                "Cost circuit breaker triggered after async parallel phase: "
-                "run_cost_usd=%.6f > max_cost_per_run=%.6f",
-                run_cost_usd, max_cost_per_run,
+                "Cost circuit breaker triggered after async parallel phase: run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                run_cost_usd,
+                max_cost_per_run,
             )
             result.success = False
             result.budget_exceeded = True
@@ -2469,13 +2542,16 @@ class Orchestrator:
             idx_global = total_parallel + i
             logger.info(
                 "async parallel_sequential: sequential step %d/%d: agent=%s",
-                i + 1, len(sequential_agents), agent.name,
+                i + 1,
+                len(sequential_agents),
+                agent.name,
             )
             if i > 0 and result.agent_results:
                 prev = result.agent_results[-1]
                 context_chain.append(
                     self._build_previous_agent_summary(
-                        sequential_agents[i - 1].role, prev,
+                        sequential_agents[i - 1].role,
+                        prev,
                     ),
                 )
                 current_context = "\n\n---\n\n".join(context_chain)
@@ -2502,9 +2578,10 @@ class Orchestrator:
             result.run_cost_usd = run_cost_usd
             if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
                 logger.warning(
-                    "Cost circuit breaker triggered after async agent %s: "
-                    "run_cost_usd=%.6f > max_cost_per_run=%.6f",
-                    agent.name, run_cost_usd, max_cost_per_run,
+                    "Cost circuit breaker triggered after async agent %s: run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                    agent.name,
+                    run_cost_usd,
+                    max_cost_per_run,
                 )
                 result.success = False
                 result.budget_exceeded = True
@@ -2523,19 +2600,23 @@ class Orchestrator:
                     if failure_counts[agent.name] >= max_failures:
                         fallback_model = self._settings.models.fallback
                         logger.warning(
-                            "Agent %s failed %d time(s) with error_type=%s — "
-                            "switching to fallback model %s",
-                            agent.name, failure_counts[agent.name],
-                            error_type, fallback_model,
+                            "Agent %s failed %d time(s) with error_type=%s — switching to fallback model %s",
+                            agent.name,
+                            failure_counts[agent.name],
+                            error_type,
+                            fallback_model,
                         )
                         agent._config.model = fallback_model
                         # ── Inline retry with fallback model ─────────────
                         logger.info(
                             "Retrying agent %s inline with fallback model %s",
-                            agent.name, fallback_model,
+                            agent.name,
+                            fallback_model,
                         )
                         retry_ar = await asyncio.to_thread(
-                            agent.execute, query, **kw_seq,
+                            agent.execute,
+                            query,
+                            **kw_seq,
                         )
                         run_cost_usd += _compute_step_cost(retry_ar, agent.model)
                         result.run_cost_usd = run_cost_usd
@@ -2546,7 +2627,8 @@ class Orchestrator:
                             result.success = False
                             logger.warning(
                                 "Agent %s fallback retry also failed: %s",
-                                agent.name, retry_ar.content,
+                                agent.name,
+                                retry_ar.content,
                             )
                             break
                         # Retry succeeded — reset failure counter
@@ -2554,7 +2636,9 @@ class Orchestrator:
                 else:
                     result.success = False
                     logger.warning(
-                        "Async sequential agent %s failed: %s", agent.name, agent_result.content,
+                        "Async sequential agent %s failed: %s",
+                        agent.name,
+                        agent_result.content,
                     )
                     break
             else:
@@ -2565,6 +2649,40 @@ class Orchestrator:
             any_gatherer_ok = any(r.success for r in parallel_results)
             last_seq_ok = result.agent_results[-1].success if sequential_agents else True
             result.success = any_gatherer_ok and last_seq_ok
+
+            # ── Reporter post-processing (mirrors the sequential path) ────────
+            # When the last sequential agent is a reporter with a response_schema
+            # (e.g. ServiceHealthSkill's health_reporter), capture the structured
+            # report BEFORE post_process_report converts the JSON to Markdown.
+            # Without this, result.structured_report stays None and --format html
+            # silently falls back to raw markdown output.
+            if sequential_agents and last_seq_ok:
+                last_agent = sequential_agents[-1]
+                last_agent_result = result.agent_results[-1]
+                is_reporter = "report" in getattr(last_agent, "role", "").lower()
+                if is_reporter:
+                    schema_cls = getattr(
+                        getattr(last_agent, "config", None),
+                        "response_schema",
+                        None,
+                    )
+                    if (
+                        schema_cls is not None
+                        and hasattr(schema_cls, "model_validate_json")
+                        and result.structured_report is None
+                    ):
+                        try:
+                            result.structured_report = schema_cls.model_validate_json(
+                                last_agent_result.content,
+                            )
+                        except Exception:
+                            pass  # best-effort — keep synthesized_output as-is
+
+                    # Post-process structured output (e.g. JSON → Markdown)
+                    last_agent_result.content = skill.post_process_report(
+                        last_agent_result.content,
+                    )
+
             result.synthesized_output = result.agent_results[-1].content
         else:
             result.success = False
@@ -2604,8 +2722,7 @@ class Orchestrator:
                 sections.append(f"--- {r.agent_name} ---\n\n{r.content}")
             else:
                 sections.append(
-                    f"--- {r.agent_name} ---\n\n"
-                    f"[ERROR: Agent '{r.agent_name}' failed — {r.content}]",
+                    f"--- {r.agent_name} ---\n\n[ERROR: Agent '{r.agent_name}' failed — {r.content}]",
                 )
         return "\n\n".join(sections)
 
@@ -2694,7 +2811,7 @@ class Orchestrator:
         """
         # Match optional markdown heading markers, then the section name
         pattern = re.compile(
-            rf"^(?:#{1,6}\s+)?{re.escape(section_name)}\s*$",
+            rf"^(?:#{1, 6}\s+)?{re.escape(section_name)}\s*$",
             re.IGNORECASE | re.MULTILINE,
         )
         match = pattern.search(output)
@@ -2808,17 +2925,15 @@ class Orchestrator:
             re.IGNORECASE,
         )
         if not checklist_match:
-            warnings.append(
-                "Investigation Checklist section is missing from the output."
-            )
+            warnings.append("Investigation Checklist section is missing from the output.")
             return warnings
 
         # Extract everything after the checklist header
-        checklist_text = output[checklist_match.end():]
+        checklist_text = output[checklist_match.end() :]
         # Stop at the next markdown heading (if any)
         next_heading = re.search(r"^#{1,6}\s+", checklist_text, re.MULTILINE)
         if next_heading:
-            checklist_text = checklist_text[:next_heading.start()]
+            checklist_text = checklist_text[: next_heading.start()]
 
         # ── Parse checklist items ────────────────────────────────
         # Match lines like:
@@ -2842,10 +2957,7 @@ class Orchestrator:
                 continue  # Step not listed — will be caught by section validation
             status, desc = parsed_steps[step_id]
             if status != "x":
-                warnings.append(
-                    f"Step {step_id} is MANDATORY and cannot be skipped. "
-                    f"Reason given: {desc}"
-                )
+                warnings.append(f"Step {step_id} is MANDATORY and cannot be skipped. Reason given: {desc}")
 
         # ── Validate conditional step skips against evidence ─────
         for step_id, patterns in Orchestrator._SKIP_CONTRADICTION_PATTERNS.items():
@@ -2896,19 +3008,14 @@ class Orchestrator:
 
         if missing_sections:
             sections_list = ", ".join(missing_sections)
-            parts.append(
-                f"Your previous response was missing the following sections: "
-                f"{sections_list}."
-            )
+            parts.append(f"Your previous response was missing the following sections: {sections_list}.")
 
         # Separate regular shallow sections from checklist warnings
         regular_shallow: list[str] = []
         checklist_warnings: list[str] = []
-        for item in (shallow_sections or []):
+        for item in shallow_sections or []:
             if item.startswith("Investigation Checklist: "):
-                checklist_warnings.append(
-                    item.removeprefix("Investigation Checklist: ")
-                )
+                checklist_warnings.append(item.removeprefix("Investigation Checklist: "))
             else:
                 regular_shallow.append(item)
 
@@ -2921,9 +3028,7 @@ class Orchestrator:
             )
 
         if checklist_warnings:
-            parts.append(
-                "Your Investigation Checklist had the following issues:"
-            )
+            parts.append("Your Investigation Checklist had the following issues:")
             for warning in checklist_warnings:
                 parts.append(f"  - {warning}")
             parts.append(
@@ -3012,10 +3117,7 @@ class Orchestrator:
         if len(stripped_output) > 100:
             last_char = stripped_output[-1] if stripped_output else ""
             if last_char and last_char not in ".!?\n`|)":
-                issues.append(
-                    "Output appears truncated "
-                    "(does not end with sentence-ending punctuation)"
-                )
+                issues.append("Output appears truncated (does not end with sentence-ending punctuation)")
 
         # ── Unclosed code blocks ──
         if output.count("```") % 2 != 0:
@@ -3080,11 +3182,7 @@ def _build_tools_summary(agent_role: str, metadata: dict[str, Any] | None) -> st
     if failed_tools:
         summary += (
             f"- Failed calls: {len(failed_tools)} — "
-            + ", ".join(
-                f"{t['name']}({t.get('args', {})}) → "
-                f"{(t.get('output') or 'error')[:80]}"
-                for t in failed_tools
-            )
+            + ", ".join(f"{t['name']}({t.get('args', {})}) → {(t.get('output') or 'error')[:80]}" for t in failed_tools)
             + "\n"
         )
         summary += (
