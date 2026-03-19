@@ -874,7 +874,7 @@ function renderCostUsage() {
 // ── Tool Usage ────────────────────────────────────────────────────
 function renderToolUsage() {
   const tools = REPORT_DATA.metadata && REPORT_DATA.metadata.tool_usage;
-  if (!tools || (!tools.tool_counts && tools.agent_steps == null)) return;
+  if (!tools || (!tools.tool_counts && tools.tool_calls == null)) return;
 
   const section = document.getElementById('section-tools');
   const navItem = document.getElementById('nav-tools-item');
@@ -885,18 +885,23 @@ function renderToolUsage() {
   const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
   const maxVal = entries.length ? entries[0][1] : 1;
 
-  document.getElementById('tool-bar-container').innerHTML = entries.map(([name, count]) => {
-    const pct = maxVal > 0 ? Math.round((count / maxVal) * 100) : 0;
-    return `<div class="tool-row">
-      <div class="tool-name">${esc(name)}</div>
-      <div class="tool-bar-track"><div class="tool-bar-fill" style="width:${pct}%"></div></div>
-      <div class="tool-count">${esc(count)}</div>
-    </div>`;
-  }).join('');
+  if (Object.keys(counts).length === 0) {
+    document.getElementById('tool-bar-container').innerHTML =
+      '<p style="color:var(--text-muted);font-style:italic;padding:0.5rem 0;">No tools were executed</p>';
+  } else {
+    document.getElementById('tool-bar-container').innerHTML = entries.map(([name, count]) => {
+      const pct = maxVal > 0 ? Math.round((count / maxVal) * 100) : 0;
+      return `<div class="tool-row">
+        <div class="tool-name">${esc(name)}</div>
+        <div class="tool-bar-track"><div class="tool-bar-fill" style="width:${pct}%"></div></div>
+        <div class="tool-count">${esc(count)}</div>
+      </div>`;
+    }).join('');
+  }
 
-  if (tools.agent_steps != null) {
+  if (tools.tool_calls != null) {
     document.getElementById('tool-steps-note').innerHTML =
-      `<strong>Total agent steps:</strong> ${esc(tools.agent_steps)}`;
+      `<strong>Total tool calls:</strong> ${esc(tools.tool_calls)}`;
   }
 }
 

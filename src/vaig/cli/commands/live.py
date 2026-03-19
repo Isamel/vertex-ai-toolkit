@@ -969,34 +969,38 @@ def _inject_report_metadata(
         metadata.model_used = model_id
 
     # ── Cost metrics ──────────────────────────────────────────
-    if orch_result is not None and metadata.cost_metrics is None:
+    if orch_result is not None and getattr(metadata, "cost_metrics", None) is None:
         from vaig.skills.service_health.schema import CostMetrics  # noqa: WPS433
 
         run_cost = getattr(orch_result, "run_cost_usd", None)
         total_usage = getattr(orch_result, "total_usage", None)
         total_tokens: int | None = None
         if isinstance(total_usage, dict):
-            total_tokens = sum(total_usage.values()) or None
+            total_tokens = total_usage.get("total_tokens") or (
+                total_usage.get("prompt_tokens", 0) + total_usage.get("completion_tokens", 0)
+            ) or None
+        cost_str = f"${run_cost:.6f}" if (run_cost is not None and run_cost > 0) else None
 
         if run_cost is not None or total_tokens is not None:
             metadata.cost_metrics = CostMetrics(
                 run_cost_usd=run_cost,
                 total_tokens=total_tokens,
+                estimated_cost=cost_str,
             )
 
     # ── Tool usage ────────────────────────────────────────────
-    if tool_logger is not None and metadata.tool_usage is None:
+    if tool_logger is not None and getattr(metadata, "tool_usage", None) is None:
         from vaig.skills.service_health.schema import ToolUsageSummary  # noqa: WPS433
 
         tool_counts = dict(getattr(tool_logger, "tool_name_counts", {})) or None
-        agent_steps = getattr(tool_logger, "tool_count", None)
-        if agent_steps == 0:
-            agent_steps = None
+        tool_calls = getattr(tool_logger, "tool_count", None)
+        if tool_calls == 0:
+            tool_calls = None
 
-        if tool_counts is not None or agent_steps is not None:
+        if tool_counts is not None or tool_calls is not None:
             metadata.tool_usage = ToolUsageSummary(
                 tool_counts=tool_counts,
-                agent_steps=agent_steps,
+                tool_calls=tool_calls,
             )
 
 

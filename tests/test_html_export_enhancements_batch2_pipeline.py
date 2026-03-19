@@ -73,7 +73,7 @@ class TestInjectCostMetrics:
         report = _make_report()
         orch = _make_orch_result(
             run_cost_usd=0.005,
-            total_usage={"input": 1000, "output": 500},
+            total_usage={"prompt_tokens": 1000, "completion_tokens": 500},
         )
 
         _inject_report_metadata(report, orch_result=orch)
@@ -82,17 +82,32 @@ class TestInjectCostMetrics:
         assert report.metadata.cost_metrics.run_cost_usd == 0.005
         assert report.metadata.cost_metrics.total_tokens == 1500  # 1000 + 500
 
-    def test_total_tokens_is_sum_of_usage_dict(self) -> None:
-        """total_tokens is computed as sum(total_usage.values())."""
+    def test_total_tokens_key_takes_precedence(self) -> None:
+        """When total_tokens key is present it is used directly — no double-counting."""
         report = _make_report()
         orch = _make_orch_result(
             run_cost_usd=0.001,
-            total_usage={"prompt_tokens": 200, "completion_tokens": 50, "cached_tokens": 100},
+            total_usage={"prompt_tokens": 200, "completion_tokens": 50, "total_tokens": 250},
         )
 
         _inject_report_metadata(report, orch_result=orch)
 
-        assert report.metadata.cost_metrics.total_tokens == 350
+        # total_tokens key takes precedence over summing prompt + completion
+        assert report.metadata.cost_metrics is not None
+        assert report.metadata.cost_metrics.total_tokens == 250
+
+    def test_total_tokens_fallback_to_prompt_plus_completion(self) -> None:
+        """Without total_tokens key, falls back to prompt_tokens + completion_tokens."""
+        report = _make_report()
+        orch = _make_orch_result(
+            run_cost_usd=0.001,
+            total_usage={"prompt_tokens": 200, "completion_tokens": 50},
+        )
+
+        _inject_report_metadata(report, orch_result=orch)
+
+        assert report.metadata.cost_metrics is not None
+        assert report.metadata.cost_metrics.total_tokens == 250
 
     def test_cost_only_no_total_usage(self) -> None:
         """Only run_cost_usd provided — total_tokens is None."""
@@ -108,7 +123,7 @@ class TestInjectCostMetrics:
     def test_usage_only_no_cost(self) -> None:
         """Only total_usage provided — run_cost_usd is None but metrics still set."""
         report = _make_report()
-        orch = _make_orch_result(run_cost_usd=None, total_usage={"input": 300, "output": 100})
+        orch = _make_orch_result(run_cost_usd=None, total_usage={"prompt_tokens": 300, "completion_tokens": 100})
 
         _inject_report_metadata(report, orch_result=orch)
 
@@ -127,7 +142,7 @@ class TestInjectCostMetrics:
     def test_zero_cost_is_stored(self) -> None:
         """run_cost_usd=0.0 is stored — not treated as absent."""
         report = _make_report()
-        orch = _make_orch_result(run_cost_usd=0.0, total_usage={"input": 10})
+        orch = _make_orch_result(run_cost_usd=0.0, total_usage={"prompt_tokens": 10})
 
         _inject_report_metadata(report, orch_result=orch)
 
@@ -138,7 +153,7 @@ class TestInjectCostMetrics:
         """If cost_metrics is already set on metadata, it is not overwritten."""
         report = _make_report()
         report.metadata.cost_metrics = CostMetrics(run_cost_usd=0.999, total_tokens=999)
-        orch = _make_orch_result(run_cost_usd=0.001, total_usage={"input": 1})
+        orch = _make_orch_result(run_cost_usd=0.001, total_usage={"prompt_tokens": 1})
 
         _inject_report_metadata(report, orch_result=orch)
 
@@ -152,6 +167,7 @@ class TestInjectCostMetrics:
         _inject_report_metadata(report, orch_result=orch)
 
         # sum({}) == 0, which is falsy → total_tokens should be None
+        assert report.metadata.cost_metrics is not None
         assert report.metadata.cost_metrics.total_tokens is None
 
 
@@ -173,7 +189,7 @@ class TestInjectToolUsage:
 
         assert report.metadata.tool_usage is not None
         assert report.metadata.tool_usage.tool_counts == {"kubectl_get": 3, "kubectl_logs": 1}
-        assert report.metadata.tool_usage.agent_steps == 4
+        assert report.metadata.tool_usage.tool_calls == 4
 
     def test_no_tool_logger_leaves_tool_usage_none(self) -> None:
         """When tool_logger=None, tool_usage remains None."""
@@ -194,7 +210,7 @@ class TestInjectToolUsage:
         assert report.metadata.tool_usage is None
 
     def test_counts_only_no_steps(self) -> None:
-        """tool_count=0 is treated as None for agent_steps, but counts still stored."""
+        """tool_count=0 is treated as None for tool_calls, but counts still stored."""
         report = _make_report()
         logger = _make_tool_logger(
             tool_name_counts={"shell_exec": 2},
@@ -205,10 +221,10 @@ class TestInjectToolUsage:
 
         assert report.metadata.tool_usage is not None
         assert report.metadata.tool_usage.tool_counts == {"shell_exec": 2}
-        assert report.metadata.tool_usage.agent_steps is None
+        assert report.metadata.tool_usage.tool_calls is None
 
     def test_steps_only_no_counts(self) -> None:
-        """Empty tool_counts with non-zero steps → agent_steps stored, tool_counts None."""
+        """Empty tool_counts with non-zero steps → tool_calls stored, tool_counts None."""
         report = _make_report()
         logger = _make_tool_logger(tool_name_counts={}, tool_count=5)
 
@@ -216,7 +232,7 @@ class TestInjectToolUsage:
 
         assert report.metadata.tool_usage is not None
         assert report.metadata.tool_usage.tool_counts is None
-        assert report.metadata.tool_usage.agent_steps == 5
+        assert report.metadata.tool_usage.tool_calls == 5
 
 
 # ── Both params None ──────────────────────────────────────────────────────────
@@ -264,7 +280,7 @@ class TestInjectBothPopulated:
     def test_both_fields_set_correctly(self) -> None:
         """Providing both sets both cost_metrics and tool_usage."""
         report = _make_report()
-        orch = _make_orch_result(run_cost_usd=0.0077, total_usage={"in": 500, "out": 200})
+        orch = _make_orch_result(run_cost_usd=0.0077, total_usage={"prompt_tokens": 500, "completion_tokens": 200})
         logger = _make_tool_logger(
             tool_name_counts={"helm_list": 1, "kubectl_get": 5},
             tool_count=6,
@@ -272,7 +288,9 @@ class TestInjectBothPopulated:
 
         _inject_report_metadata(report, orch_result=orch, tool_logger=logger)
 
+        assert report.metadata.cost_metrics is not None
         assert report.metadata.cost_metrics.run_cost_usd == 0.0077
         assert report.metadata.cost_metrics.total_tokens == 700
+        assert report.metadata.tool_usage is not None
         assert report.metadata.tool_usage.tool_counts == {"helm_list": 1, "kubectl_get": 5}
-        assert report.metadata.tool_usage.agent_steps == 6
+        assert report.metadata.tool_usage.tool_calls == 6

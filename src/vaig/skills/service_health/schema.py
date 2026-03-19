@@ -519,6 +519,10 @@ class CostMetrics(BaseModel):
 
     run_cost_usd: float | None = Field(default=None, description="Estimated cost in USD for this run")
     total_tokens: int | None = Field(default=None, description="Total tokens consumed (prompt + completion)")
+    estimated_cost: str | None = Field(
+        default=None,
+        description="Pre-formatted cost string (e.g. '$0.001234'). None when cost is zero or unknown.",
+    )
 
 
 class ToolUsageSummary(BaseModel):
@@ -530,7 +534,7 @@ class ToolUsageSummary(BaseModel):
         default=None,
         description="Per-tool call counts, e.g. {'kubectl_get': 4, 'get_events': 2}",
     )
-    agent_steps: int | None = Field(default=None, description="Total number of tool calls executed")
+    tool_calls: int | None = Field(default=None, description="Total number of tool calls executed")
 
 
 class ReportMetadata(BaseModel):

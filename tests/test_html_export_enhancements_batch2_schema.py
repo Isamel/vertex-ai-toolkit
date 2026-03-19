@@ -24,6 +24,7 @@ class TestCostMetrics:
         m = CostMetrics()
         assert m.run_cost_usd is None
         assert m.total_tokens is None
+        assert m.estimated_cost is None
 
     def test_populated_values(self) -> None:
         """Supplied values are stored correctly."""
@@ -47,7 +48,7 @@ class TestCostMetrics:
         """model_dump produces expected JSON-serialisable dict."""
         m = CostMetrics(run_cost_usd=0.000123, total_tokens=512)
         d = m.model_dump(mode="json")
-        assert d == {"run_cost_usd": 0.000123, "total_tokens": 512}
+        assert d == {"run_cost_usd": 0.000123, "total_tokens": 512, "estimated_cost": None}
 
     def test_serialisation_none_fields(self) -> None:
         """None fields appear as None in model_dump output."""
@@ -55,6 +56,7 @@ class TestCostMetrics:
         d = m.model_dump(mode="json")
         assert d["run_cost_usd"] is None
         assert d["total_tokens"] is None
+        assert d["estimated_cost"] is None
 
     def test_zero_cost_stored(self) -> None:
         """Explicit 0.0 cost is stored (not treated as falsy/None)."""
@@ -74,38 +76,38 @@ class TestToolUsageSummary:
         """Both fields default to None when not supplied."""
         t = ToolUsageSummary()
         assert t.tool_counts is None
-        assert t.agent_steps is None
+        assert t.tool_calls is None
 
     def test_populated_values(self) -> None:
         """Supplied values are stored correctly."""
-        t = ToolUsageSummary(tool_counts={"kubectl_get": 4, "kubectl_logs": 2}, agent_steps=6)
+        t = ToolUsageSummary(tool_counts={"kubectl_get": 4, "kubectl_logs": 2}, tool_calls=6)
         assert t.tool_counts == {"kubectl_get": 4, "kubectl_logs": 2}
-        assert t.agent_steps == 6
+        assert t.tool_calls == 6
 
     def test_partial_counts_only(self) -> None:
-        """Only tool_counts supplied — agent_steps stays None."""
+        """Only tool_counts supplied — tool_calls stays None."""
         t = ToolUsageSummary(tool_counts={"shell_exec": 1})
         assert t.tool_counts == {"shell_exec": 1}
-        assert t.agent_steps is None
+        assert t.tool_calls is None
 
     def test_partial_steps_only(self) -> None:
-        """Only agent_steps supplied — tool_counts stays None."""
-        t = ToolUsageSummary(agent_steps=10)
+        """Only tool_calls supplied — tool_counts stays None."""
+        t = ToolUsageSummary(tool_calls=10)
         assert t.tool_counts is None
-        assert t.agent_steps == 10
+        assert t.tool_calls == 10
 
     def test_serialisation_round_trip(self) -> None:
         """model_dump produces expected JSON-serialisable dict."""
-        t = ToolUsageSummary(tool_counts={"kubectl_get": 4}, agent_steps=4)
+        t = ToolUsageSummary(tool_counts={"kubectl_get": 4}, tool_calls=4)
         d = t.model_dump(mode="json")
-        assert d == {"tool_counts": {"kubectl_get": 4}, "agent_steps": 4}
+        assert d == {"tool_counts": {"kubectl_get": 4}, "tool_calls": 4}
 
     def test_serialisation_none_fields(self) -> None:
         """None fields appear as None in model_dump output."""
         t = ToolUsageSummary()
         d = t.model_dump(mode="json")
         assert d["tool_counts"] is None
-        assert d["agent_steps"] is None
+        assert d["tool_calls"] is None
 
     def test_empty_tool_counts_dict(self) -> None:
         """Empty dict is stored as-is (not coerced to None)."""
@@ -134,20 +136,22 @@ class TestReportMetadataBatch2Fields:
     def test_tool_usage_populated(self) -> None:
         """tool_usage can be set on ReportMetadata."""
         meta = ReportMetadata(
-            tool_usage=ToolUsageSummary(tool_counts={"kubectl_get": 3}, agent_steps=3)
+            tool_usage=ToolUsageSummary(tool_counts={"kubectl_get": 3}, tool_calls=3)
         )
         assert meta.tool_usage is not None
         assert meta.tool_usage.tool_counts == {"kubectl_get": 3}
-        assert meta.tool_usage.agent_steps == 3
+        assert meta.tool_usage.tool_calls == 3
 
     def test_both_fields_populated(self) -> None:
         """Both cost_metrics and tool_usage can be set together."""
         meta = ReportMetadata(
             cost_metrics=CostMetrics(run_cost_usd=0.005, total_tokens=1200),
-            tool_usage=ToolUsageSummary(tool_counts={"search": 2}, agent_steps=2),
+            tool_usage=ToolUsageSummary(tool_counts={"search": 2}, tool_calls=2),
         )
+        assert meta.cost_metrics is not None
         assert meta.cost_metrics.run_cost_usd == 0.005
-        assert meta.tool_usage.agent_steps == 2
+        assert meta.tool_usage is not None
+        assert meta.tool_usage.tool_calls == 2
 
     def test_model_dump_includes_nested_cost_metrics(self) -> None:
         """model_dump(mode='json') includes cost_metrics dict correctly."""
@@ -162,12 +166,12 @@ class TestReportMetadataBatch2Fields:
     def test_model_dump_includes_nested_tool_usage(self) -> None:
         """model_dump(mode='json') includes tool_usage dict correctly."""
         meta = ReportMetadata(
-            tool_usage=ToolUsageSummary(tool_counts={"kubectl_get": 4}, agent_steps=4)
+            tool_usage=ToolUsageSummary(tool_counts={"kubectl_get": 4}, tool_calls=4)
         )
         d = meta.model_dump(mode="json")
         assert d["tool_usage"] is not None
         assert d["tool_usage"]["tool_counts"] == {"kubectl_get": 4}
-        assert d["tool_usage"]["agent_steps"] == 4
+        assert d["tool_usage"]["tool_calls"] == 4
 
     def test_model_dump_none_fields_are_null(self) -> None:
         """When cost_metrics / tool_usage are None, model_dump shows null values."""
