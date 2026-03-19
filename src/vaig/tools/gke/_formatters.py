@@ -367,6 +367,19 @@ def _format_items(resource: str, items: list[Any], output_format: str) -> str:
             serialised = _redact_k8s_secret_data(serialised)
         return _json.dumps(serialised, indent=2, default=str)
 
+    if output_format == "name":
+        # Mirrors `kubectl get <resource> -o name` — one "kind/name" per line.
+        lines: list[str] = []
+        for item in items:
+            meta = getattr(item, "metadata", None)
+            item_name = getattr(meta, "name", None) if meta else None
+            if not item_name:
+                continue
+            # Derive kind: prefer item.kind, fall back to singularising the resource arg.
+            kind = getattr(item, "kind", None) or resource.rstrip("s")
+            lines.append(f"{kind.lower()}/{item_name}")
+        return "\n".join(lines)
+
     if output_format == "yaml":
         try:
             import yaml as _yaml  # noqa: WPS433
