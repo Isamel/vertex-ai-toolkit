@@ -579,7 +579,6 @@ class TestServiceHealthLanguageIntegration:
         """English should NOT modify service-health configs."""
         from vaig.skills.service_health.prompts import (
             HEALTH_ANALYZER_PROMPT,
-            HEALTH_REPORTER_PROMPT,
             HEALTH_VERIFIER_PROMPT,
         )
         from vaig.skills.service_health.skill import ServiceHealthSkill
@@ -587,9 +586,10 @@ class TestServiceHealthLanguageIntegration:
         skill = ServiceHealthSkill()
         configs = skill.get_sequential_agents_config()
 
-        # Capture the gatherer prompt BEFORE language injection
-        # (get_agents_config builds it dynamically based on settings)
+        # Capture dynamic prompts BEFORE language injection
+        # (get_agents_config builds gatherer and reporter dynamically based on settings)
         gatherer_before = configs[0]["system_instruction"]
+        reporter_before = configs[3]["system_instruction"]
 
         inject_language_into_config(configs, "en")
 
@@ -597,7 +597,7 @@ class TestServiceHealthLanguageIntegration:
         assert configs[0]["system_instruction"] == gatherer_before
         assert configs[1]["system_instruction"] == HEALTH_ANALYZER_PROMPT
         assert configs[2]["system_instruction"] == HEALTH_VERIFIER_PROMPT
-        assert configs[3]["system_instruction"] == HEALTH_REPORTER_PROMPT
+        assert configs[3]["system_instruction"] == reporter_before
 
     def test_prompt_constants_not_mutated(self) -> None:
         """Prompt constants must NEVER be mutated by language injection.

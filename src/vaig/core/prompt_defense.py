@@ -17,6 +17,8 @@ appear in legitimate Kubernetes or GCP output.
 
 from __future__ import annotations
 
+import re
+
 # ── Delimiter constants ─────────────────────────────────────────────────
 DELIMITER_SYSTEM_START = "═══════════ SYSTEM INSTRUCTIONS (TRUSTED) ═══════════"
 DELIMITER_SYSTEM_END = "═══════════ END SYSTEM INSTRUCTIONS ═══════════"
@@ -54,3 +56,27 @@ def wrap_untrusted_content(content: str) -> str:
         ``DELIMITER_DATA_END`` markers.
     """
     return f"{DELIMITER_DATA_START}\n{content}\n{DELIMITER_DATA_END}"
+
+
+# ── K8s namespace validation ─────────────────────────────────────────────
+_K8S_NS_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def _sanitize_namespace(ns: str) -> str:
+    """Validate and return a K8s-compliant namespace name, or empty string if invalid.
+
+    Kubernetes namespace names must consist of lowercase alphanumeric characters
+    or hyphens, start and end with an alphanumeric character, and be at most
+    63 characters long.  Any value that does not match is rejected and an empty
+    string is returned, preventing prompt injection through namespace inputs.
+
+    Args:
+        ns: User-supplied namespace name to validate.
+
+    Returns:
+        The stripped namespace string if valid, otherwise an empty string.
+    """
+    ns = ns.strip()
+    if _K8S_NS_RE.match(ns):
+        return ns
+    return ""

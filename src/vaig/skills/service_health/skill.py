@@ -18,7 +18,6 @@ from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.skills.service_health.prompts import (
     HEALTH_ANALYZER_PROMPT,
-    HEALTH_REPORTER_PROMPT,
     HEALTH_VERIFIER_PROMPT,
     PHASE_PROMPTS,
     SYSTEM_INSTRUCTION,
@@ -26,6 +25,7 @@ from vaig.skills.service_health.prompts import (
     build_gatherer_prompt,
     build_logging_gatherer_prompt,
     build_node_gatherer_prompt,
+    build_reporter_prompt,
     build_workload_gatherer_prompt,
 )
 from vaig.skills.service_health.schema import HealthReport
@@ -182,6 +182,7 @@ class ServiceHealthSkill(BaseSkill):
             helm_enabled=settings.gke.helm_enabled,
             argocd_enabled=settings.gke.argocd_enabled,
         )
+        namespace = settings.gke.default_namespace
         return [
             {
                 "name": "health_gatherer",
@@ -215,7 +216,7 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_reporter",
                 "role": "Health Report Generator",
                 "requires_tools": False,
-                "system_instruction": HEALTH_REPORTER_PROMPT,
+                "system_instruction": build_reporter_prompt(namespace=namespace),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,  # Slightly higher for natural writing
                 "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
@@ -253,6 +254,7 @@ class ServiceHealthSkill(BaseSkill):
 
         settings = get_settings()
         is_autopilot = bool(detect_autopilot(settings.gke))
+        namespace = settings.gke.default_namespace
 
         return [
             # ── Parallel group: 4 focused sub-gatherers ──────────────────
@@ -271,7 +273,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Workload Health Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
-                "system_instruction": build_workload_gatherer_prompt(),
+                "system_instruction": build_workload_gatherer_prompt(namespace=namespace),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.0,
                 "max_iterations": 12,
@@ -281,7 +283,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Events & Infrastructure Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
-                "system_instruction": build_event_gatherer_prompt(),
+                "system_instruction": build_event_gatherer_prompt(namespace=namespace),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.0,
                 "max_iterations": 10,
@@ -291,7 +293,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Cloud Logging Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
-                "system_instruction": build_logging_gatherer_prompt(),
+                "system_instruction": build_logging_gatherer_prompt(namespace=namespace),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.0,
                 "max_iterations": 8,
@@ -318,7 +320,7 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_reporter",
                 "role": "Health Report Generator",
                 "requires_tools": False,
-                "system_instruction": HEALTH_REPORTER_PROMPT,
+                "system_instruction": build_reporter_prompt(namespace=namespace),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,
                 "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
