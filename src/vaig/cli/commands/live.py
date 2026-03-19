@@ -785,19 +785,35 @@ def _register_live_tools(gke_config: GKEConfig, settings: Settings | None = None
     return registry
 
 
-def _export_html_report(report: Any, *, console: Any, err_console: Any) -> bool:
+def _export_html_report(
+    report: Any,
+    *,
+    console: Any,
+    err_console: Any,
+    output: Path | None = None,
+) -> bool:
     """Try to write a rich HTML report to disk.
 
     Returns True if the HTML was written successfully, False otherwise.
     ``report`` should be a HealthReport instance (typed as Any to avoid
     a hard import at module level).
+
+    Args:
+        report: The HealthReport instance to render.
+        console: Rich console for success messages.
+        err_console: Rich console for error messages.
+        output: Optional explicit output path. When ``None``, a timestamped
+            filename is generated in the current working directory.
     """
     try:
         from vaig.ui.html_report import render_health_report_html  # noqa: WPS433
 
         html_content = render_health_report_html(report)
-        timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
-        out_path = Path(f"vaig-report-{timestamp}.html")
+        if output is not None:
+            out_path = output
+        else:
+            timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
+            out_path = Path(f"vaig-report-{timestamp}.html")
         out_path.write_text(html_content, encoding="utf-8")
         console.print(
             f"[bold green]✓ HTML report written:[/bold green] [cyan]{out_path.resolve()}[/cyan]"
@@ -808,6 +824,80 @@ def _export_html_report(report: Any, *, console: Any, err_console: Any) -> bool:
             f"[bold red]⚠ Failed to write HTML report:[/bold red] {exc}"
         )
         return False
+
+
+def _dispatch_format_output(
+    orch_result: Any,
+    *,
+    format_: str | None,
+    output: Path | None,
+    question: str,
+    model_id: str,
+    skill_name: str,
+    console: Any,
+    err_console: Any,
+) -> None:
+    """Dispatch output based on *format_* for an orchestrated skill result.
+
+    Handles both the HTML rich-export path and the fallback text/json/md export.
+    This shared helper is called by both the sync and async orchestrated skill
+    functions to avoid duplicating the format-dispatch logic.
+
+    The *format_* value is normalised (stripped and lowercased) once here so
+    callers do not need to worry about case or whitespace.
+
+    Args:
+        orch_result: The :class:`~vaig.agents.orchestrator.OrchestratorResult`.
+        format_: Raw format string from the CLI (may be ``None``).
+        output: Optional output path from ``--output``.
+        question: Original user question (passed to :func:`_handle_export_output`).
+        model_id: Model identifier for metadata.
+        skill_name: Skill name for metadata.
+        console: Rich console for output.
+        err_console: Rich console for errors/warnings.
+    """
+    # Normalize once — handles 'HTML', '  html  ', etc.
+    normalised_format = format_.strip().lower() if format_ else None
+
+    if normalised_format == "html":
+        if orch_result.structured_report is not None:
+            _export_html_report(
+                orch_result.structured_report,
+                console=console,
+                err_console=err_console,
+                output=output,
+            )
+        else:
+            err_console.print(
+                Panel(
+                    "[yellow]No structured report available — cannot render rich HTML.\n"
+                    "Falling back to text output.[/yellow]",
+                    title="[bold red]HTML Export Warning[/bold red]",
+                    border_style="red",
+                )
+            )
+            # Fall back to plain export so the user still gets something
+            _handle_export_output(
+                response_text=orch_result.synthesized_output or "",
+                question=question,
+                model_id=model_id,
+                skill_name=skill_name,
+                format_=None,  # plain text — not html since structured report unavailable
+                output=output,
+                tokens=orch_result.total_usage or None,
+                cost=_compute_cost_str(orch_result.total_usage, model_id),
+            )
+    else:
+        _handle_export_output(
+            response_text=orch_result.synthesized_output or "",
+            question=question,
+            model_id=model_id,
+            skill_name=skill_name,
+            format_=normalised_format,
+            output=output,
+            tokens=orch_result.total_usage or None,
+            cost=_compute_cost_str(orch_result.total_usage, model_id),
+        )
 
 
 def _execute_orchestrated_skill(
@@ -917,34 +1007,17 @@ def _execute_orchestrated_skill(
                 )
         console.print()
 
-        # HTML format — use rich HTML renderer if structured report is available
-        if format_ == "html":
-            if orch_result.structured_report is not None:
-                _export_html_report(
-                    orch_result.structured_report,
-                    console=console,
-                    err_console=err_console,
-                )
-            else:
-                err_console.print(
-                    Panel(
-                        "[yellow]No structured report available — cannot render rich HTML.\n"
-                        "Falling back to [bold]rich[/bold] terminal output.[/yellow]",
-                        title="[bold red]HTML Export Warning[/bold red]",
-                        border_style="red",
-                    )
-                )
-        else:
-            _handle_export_output(
-                response_text=orch_result.synthesized_output or "",
-                question=question,
-                model_id=settings.models.default,
-                skill_name=skill_meta.name,
-                format_=format_,
-                output=output,
-                tokens=orch_result.total_usage or None,
-                cost=_compute_cost_str(orch_result.total_usage, settings.models.default),
-            )
+        # Dispatch output format — HTML or text/json/md fallback
+        _dispatch_format_output(
+            orch_result,
+            format_=format_,
+            output=output,
+            question=question,
+            model_id=settings.models.default,
+            skill_name=skill_meta.name,
+            console=console,
+            err_console=err_console,
+        )
 
         # Show agent pipeline summary (includes cost line)
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
@@ -1272,34 +1345,17 @@ async def _async_execute_orchestrated_skill(
                 )
         console.print()
 
-        # HTML format — use rich HTML renderer if structured report is available
-        if format_ == "html":
-            if orch_result.structured_report is not None:
-                _export_html_report(
-                    orch_result.structured_report,
-                    console=console,
-                    err_console=err_console,
-                )
-            else:
-                err_console.print(
-                    Panel(
-                        "[yellow]No structured report available — cannot render rich HTML.\n"
-                        "Falling back to [bold]rich[/bold] terminal output.[/yellow]",
-                        title="[bold red]HTML Export Warning[/bold red]",
-                        border_style="red",
-                    )
-                )
-        else:
-            _handle_export_output(
-                response_text=orch_result.synthesized_output or "",
-                question=question,
-                model_id=settings.models.default,
-                skill_name=skill_meta.name,
-                format_=format_,
-                output=output,
-                tokens=orch_result.total_usage or None,
-                cost=_compute_cost_str(orch_result.total_usage, settings.models.default),
-            )
+        # Dispatch output format — HTML or text/json/md fallback
+        _dispatch_format_output(
+            orch_result,
+            format_=format_,
+            output=output,
+            question=question,
+            model_id=settings.models.default,
+            skill_name=skill_meta.name,
+            console=console,
+            err_console=err_console,
+        )
 
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
 

@@ -20,7 +20,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -146,6 +146,58 @@ CONTENT_TYPE_FENCE_MAP: dict[ContentType, str] = {
     ContentType.COMMAND: "bash",
     ContentType.UNKNOWN: "text",
 }
+
+
+# ── Enum coercion factory ─────────────────────────────────────
+
+
+def _make_enum_coercer(enum_class: type, default_value: object) -> Callable[[object], object]:
+    """Return a Pydantic v2 field-validator-compatible coercion function.
+
+    Produces a classmethod that:
+    * Returns the value unchanged when it is already an instance of
+      *enum_class*.
+    * Tries ``enum_class(str(v).lower())`` for string values, falling
+      back to *default_value* on ``ValueError``.
+
+    Usage inside a Pydantic model::
+
+        @field_validator("my_field", mode="before")
+        @classmethod
+        def coerce_my_field(cls, v):
+            return _make_enum_coercer(MyEnum, MyEnum.DEFAULT)(v)
+
+    Or via direct assignment (bypasses the decorator boilerplate entirely)::
+
+        _coerce_severity = field_validator("severity", mode="before")(
+            classmethod(_make_enum_coercer(Severity, Severity.INFO))
+        )
+
+    Args:
+        enum_class: The ``StrEnum`` (or any ``Enum``) subclass.
+        default_value: Value returned when *v* cannot be coerced.
+
+    Returns:
+        A coercion callable ``(v: object) -> object``.
+    """
+    def _coerce(v: object) -> object:
+        if isinstance(v, enum_class):
+            return v
+        if isinstance(v, str):
+            # Try the value as-is first, then uppercase and lowercase variants
+            for candidate in (v, v.upper(), v.lower()):
+                try:
+                    return enum_class(candidate)
+                except ValueError:
+                    pass
+            logger.debug(
+                "Unknown %s value %r — coercing to %r",
+                enum_class.__name__, v, default_value,
+            )
+            return default_value
+        return v
+
+    return _coerce
 
 
 # ── Smart timeline collapse helpers ──────────────────────────
@@ -324,14 +376,7 @@ class Finding(BaseModel):
     @field_validator("severity", mode="before")
     @classmethod
     def coerce_severity(cls, v: object) -> object:
-        if isinstance(v, str):
-            upper = v.upper()
-            try:
-                return Severity(upper)
-            except ValueError:
-                logger.debug("Unknown severity %r — coercing to INFO", v)
-                return Severity.INFO
-        return v
+        return _make_enum_coercer(Severity, Severity.INFO)(v)
 
     category: str = Field(default="", description="e.g. 'pod-health', 'scaling', 'networking'")
     service: str = Field(default="")
@@ -343,14 +388,7 @@ class Finding(BaseModel):
     @field_validator("confidence", mode="before")
     @classmethod
     def coerce_confidence(cls, v: object) -> object:
-        if isinstance(v, str):
-            upper = v.upper()
-            try:
-                return Confidence(upper)
-            except ValueError:
-                logger.debug("Unknown confidence %r — coercing to MEDIUM", v)
-                return Confidence.MEDIUM
-        return v
+        return _make_enum_coercer(Confidence, Confidence.MEDIUM)(v)
 
     impact: str = Field(default="")
     affected_resources: list[str] = Field(default_factory=list)
@@ -369,14 +407,7 @@ class DowngradedFinding(BaseModel):
     @field_validator("original_confidence", "final_confidence", mode="before")
     @classmethod
     def coerce_downgraded_confidence(cls, v: object) -> object:
-        if isinstance(v, str):
-            upper = v.upper()
-            try:
-                return Confidence(upper)
-            except ValueError:
-                logger.debug("Unknown confidence %r — coercing to MEDIUM", v)
-                return Confidence.MEDIUM
-        return v
+        return _make_enum_coercer(Confidence, Confidence.MEDIUM)(v)
 
     reason: str = ""
 
@@ -393,14 +424,7 @@ class RootCauseHypothesis(BaseModel):
     @field_validator("confidence", mode="before")
     @classmethod
     def coerce_confidence(cls, v: object) -> object:
-        if isinstance(v, str):
-            upper = v.upper()
-            try:
-                return Confidence(upper)
-            except ValueError:
-                logger.debug("Unknown confidence %r — coercing to MEDIUM", v)
-                return Confidence.MEDIUM
-        return v
+        return _make_enum_coercer(Confidence, Confidence.MEDIUM)(v)
 
     supporting_evidence: list[str] = Field(default_factory=list)
     what_would_confirm: str = Field(default="N/A")
@@ -423,14 +447,7 @@ class EvidenceDetail(BaseModel):
     @field_validator("content_type", mode="before")
     @classmethod
     def coerce_content_type(cls, v: object) -> object:
-        if isinstance(v, str):
-            lower = v.lower()
-            try:
-                return ContentType(lower)
-            except ValueError:
-                logger.debug("Unknown content_type %r — coercing to TEXT", v)
-                return ContentType.TEXT
-        return v
+        return _make_enum_coercer(ContentType, ContentType.TEXT)(v)
 
 
 class RecommendedAction(BaseModel):
@@ -446,28 +463,14 @@ class RecommendedAction(BaseModel):
     @field_validator("urgency", mode="before")
     @classmethod
     def coerce_urgency(cls, v: object) -> object:
-        if isinstance(v, str):
-            upper = v.upper()
-            try:
-                return ActionUrgency(upper)
-            except ValueError:
-                logger.debug("Unknown urgency %r — coercing to SHORT_TERM", v)
-                return ActionUrgency.SHORT_TERM
-        return v
+        return _make_enum_coercer(ActionUrgency, ActionUrgency.SHORT_TERM)(v)
 
     effort: Effort = Effort.MEDIUM
 
     @field_validator("effort", mode="before")
     @classmethod
     def coerce_effort(cls, v: object) -> object:
-        if isinstance(v, str):
-            upper = v.upper()
-            try:
-                return Effort(upper)
-            except ValueError:
-                logger.debug("Unknown effort %r — coercing to MEDIUM", v)
-                return Effort.MEDIUM
-        return v
+        return _make_enum_coercer(Effort, Effort.MEDIUM)(v)
 
     command: str = Field(default="", description="Exact kubectl / gcloud command")
     why: str = Field(default="")
@@ -500,14 +503,7 @@ class TimelineEvent(BaseModel):
     @field_validator("severity", mode="before")
     @classmethod
     def coerce_severity(cls, v: object) -> object:
-        if isinstance(v, str):
-            upper = v.upper()
-            try:
-                return Severity(upper)
-            except ValueError:
-                logger.debug("Unknown severity %r — coercing to INFO", v)
-                return Severity.INFO
-        return v
+        return _make_enum_coercer(Severity, Severity.INFO)(v)
 
     service: str = Field(
         default="",

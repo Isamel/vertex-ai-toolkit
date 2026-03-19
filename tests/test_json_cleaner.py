@@ -115,3 +115,26 @@ class TestCleanLlmJson:
         raw = r'{"msg": "he said \"hi\""}'
         result = clean_llm_json(raw)
         assert result == raw
+
+    # ── Trailing garbage after valid JSON ───────────────────
+
+    def test_trailing_garbage_text_discarded(self) -> None:
+        """Trailing plain text after the closing brace is discarded."""
+        raw = '{"key": "value"} some trailing garbage text'
+        result = clean_llm_json(raw)
+        import json
+        assert json.loads(result) == {"key": "value"}
+
+    def test_trailing_brace_in_string_value_not_boundary(self) -> None:
+        """A '}' inside a string value must not be treated as the JSON boundary."""
+        raw = '{"msg": "ends with }"} trailing garbage'
+        result = clean_llm_json(raw)
+        import json
+        assert json.loads(result) == {"msg": "ends with }"}
+
+    def test_trailing_garbage_with_brace_inside(self) -> None:
+        """Trailing garbage containing a '}' does not corrupt valid JSON."""
+        raw = '{"a": 1} garbage with } inside'
+        result = clean_llm_json(raw)
+        import json
+        assert json.loads(result) == {"a": 1}

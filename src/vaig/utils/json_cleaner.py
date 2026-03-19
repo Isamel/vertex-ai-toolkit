@@ -7,6 +7,7 @@ provides a best-effort cleaner that strips those artefacts before parsing.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 
@@ -23,7 +24,11 @@ def clean_llm_json(raw: str) -> str:
 
     1. Strip markdown code fences (```json...``` or plain ``...``).
     2. Discard any text before the first ``{`` and after the last ``}``.
-    3. Attempt best-effort repair of truncated JSON (unclosed brackets/braces).
+    3. Validate the trimmed slice; if it is not valid JSON, use a
+       stack-based boundary scan to find the actual closing brace instead
+       of the naive ``rfind("}")`` which can match ``}`` inside strings or
+       trailing garbage text.
+    4. Attempt best-effort repair of truncated JSON (unclosed brackets/braces).
 
     The function always returns a string — on failure it returns the original
     *raw* value unchanged so the caller can still attempt ``json.loads`` and
@@ -66,12 +71,71 @@ def clean_llm_json(raw: str) -> str:
                 first_brace,
                 len(cleaned) - last_brace - 1,
             )
-        cleaned = cleaned[first_brace : last_brace + 1]
+        candidate = cleaned[first_brace : last_brace + 1]
 
-    # Step 3 — best-effort repair of truncated JSON
+        # Step 3 — validate the rfind-trimmed candidate.
+        # rfind('}') can match a '}' inside a string value or in trailing
+        # garbage text.  If the candidate is already valid JSON we keep it;
+        # otherwise fall back to the stack-based scanner to find the real
+        # JSON boundary.
+        try:
+            json.loads(candidate)
+            cleaned = candidate
+        except (json.JSONDecodeError, ValueError):
+            logger.debug(
+                "clean_llm_json: rfind candidate invalid JSON — using stack scan"
+            )
+            cleaned = _extract_json_by_stack(cleaned[first_brace:])
+
+    # Step 4 — best-effort repair of truncated JSON
     cleaned = _repair_truncated_json(cleaned)
 
     return cleaned
+
+
+def _extract_json_by_stack(text: str) -> str:
+    """Find the outermost complete JSON object boundary using a brace stack.
+
+    Scans *text* (which must start at the first ``{``) character-by-character
+    to track nested braces, skipping over string literals.  Returns the
+    substring from the start up to (and including) the brace that closes the
+    outermost object.
+
+    If no complete object is found (truncated input), the full *text* is
+    returned so :func:`_repair_truncated_json` can close it.
+
+    Args:
+        text: Input string starting at the first ``{``.
+
+    Returns:
+        The shortest prefix of *text* that forms a complete JSON object, or
+        *text* unchanged if the object is incomplete.
+    """
+    depth = 0
+    in_string = False
+    escape_next = False
+
+    for i, char in enumerate(text):
+        if escape_next:
+            escape_next = False
+            continue
+        if char == "\\" and in_string:
+            escape_next = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[: i + 1]
+
+    # Outermost object never closed — return full text for repair
+    return text
 
 
 def _repair_truncated_json(text: str) -> str:
