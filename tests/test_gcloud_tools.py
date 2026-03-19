@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 from vaig.tools.base import ToolDef
@@ -129,6 +130,124 @@ class TestGcloudLoggingQuery:
             gcloud_logging_query("severity>=ERROR", limit=5000)
             call_kwargs = client.list_entries.call_args
             assert call_kwargs.kwargs.get("max_results") == 1000
+
+
+# ── gcloud_logging_query interval_hours ─────────────────────
+
+
+class TestGcloudLoggingQueryIntervalHours:
+    """Tests for the interval_hours parameter of gcloud_logging_query."""
+
+    def test_zero_interval_does_not_modify_filter(self) -> None:
+        """interval_hours=0 (default) must NOT prepend a timestamp clause."""
+        from vaig.tools.gcloud_tools import gcloud_logging_query
+
+        with patch("vaig.tools.gcloud_tools._get_logging_client") as mock_client:
+            client = MagicMock()
+            mock_client.return_value = (client, None)
+            client.list_entries.return_value = []
+
+            gcloud_logging_query("severity>=ERROR", interval_hours=0.0)
+
+            call_kwargs = client.list_entries.call_args
+            filter_used = call_kwargs.kwargs.get("filter_")
+            assert filter_used == "severity>=ERROR"
+
+    def test_positive_interval_prepends_timestamp_filter(self) -> None:
+        """interval_hours=1.0 must prepend a timestamp>=... clause."""
+        from vaig.tools.gcloud_tools import gcloud_logging_query
+
+        fixed_now = datetime(2026, 3, 19, 12, 0, 0, tzinfo=UTC)
+
+        with patch("vaig.tools.gcloud_tools._get_logging_client") as mock_client:
+            client = MagicMock()
+            mock_client.return_value = (client, None)
+            client.list_entries.return_value = []
+
+            with patch("vaig.tools.gcloud_tools.datetime") as mock_dt:
+                mock_dt.now.return_value = fixed_now
+
+                gcloud_logging_query("severity>=ERROR", interval_hours=1.0)
+
+            call_kwargs = client.list_entries.call_args
+            filter_used = call_kwargs.kwargs.get("filter_")
+            # Expected cutoff: 2026-03-19T11:00:00Z  (12:00 - 1h)
+            assert filter_used is not None
+            assert filter_used.startswith('timestamp>="2026-03-19T11:00:00Z"')
+            assert "severity>=ERROR" in filter_used
+
+    def test_half_hour_interval(self) -> None:
+        """interval_hours=0.5 should set cutoff 30 minutes in the past."""
+        from vaig.tools.gcloud_tools import gcloud_logging_query
+
+        fixed_now = datetime(2026, 3, 19, 12, 0, 0, tzinfo=UTC)
+
+        with patch("vaig.tools.gcloud_tools._get_logging_client") as mock_client:
+            client = MagicMock()
+            mock_client.return_value = (client, None)
+            client.list_entries.return_value = []
+
+            with patch("vaig.tools.gcloud_tools.datetime") as mock_dt:
+                mock_dt.now.return_value = fixed_now
+
+                gcloud_logging_query("severity>=WARNING", interval_hours=0.5)
+
+            call_kwargs = client.list_entries.call_args
+            filter_used = call_kwargs.kwargs.get("filter_")
+            assert filter_used is not None
+            assert filter_used.startswith('timestamp>="2026-03-19T11:30:00Z"')
+            assert "severity>=WARNING" in filter_used
+
+    def test_timestamp_format_is_rfc3339(self) -> None:
+        """Timestamp injected into filter must be RFC3339 (YYYY-MM-DDTHH:MM:SSZ)."""
+        from vaig.tools.gcloud_tools import gcloud_logging_query
+
+        with patch("vaig.tools.gcloud_tools._get_logging_client") as mock_client:
+            client = MagicMock()
+            mock_client.return_value = (client, None)
+            client.list_entries.return_value = []
+
+            gcloud_logging_query("severity>=ERROR", interval_hours=2.0)
+
+            call_kwargs = client.list_entries.call_args
+            filter_used = call_kwargs.kwargs.get("filter_", "")
+            # Extract the timestamp value from: timestamp>="<value>"
+            m = re.search(r'timestamp>="([^"]+)"', filter_used)
+            assert m is not None, f"No timestamp>=... found in filter: {filter_used}"
+            ts_str = m.group(1)
+            # Validate RFC3339 format: YYYY-MM-DDTHH:MM:SSZ
+            parsed = datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ")
+            assert parsed is not None
+
+    def test_interval_hours_param_in_tool_def(self) -> None:
+        """The gcloud_logging_query ToolDef must expose interval_hours parameter."""
+        from vaig.tools.gcloud_tools import create_gcloud_tools
+
+        tools = create_gcloud_tools()
+        logging_tool = next(t for t in tools if t.name == "gcloud_logging_query")
+        param_names = {p.name for p in logging_tool.parameters}
+        assert "interval_hours" in param_names
+
+        ih_param = next(p for p in logging_tool.parameters if p.name == "interval_hours")
+        assert ih_param.type == "number"
+        assert ih_param.required is False
+
+    def test_lambda_accepts_interval_hours_without_type_error(self) -> None:
+        """Calling the ToolDef execute with interval_hours must not raise TypeError."""
+        from vaig.tools.gcloud_tools import create_gcloud_tools
+
+        tools = create_gcloud_tools()
+        logging_tool = next(t for t in tools if t.name == "gcloud_logging_query")
+
+        # Should not raise TypeError — will fail on missing SDK (error=True is fine)
+        with patch("vaig.tools.gcloud_tools._get_logging_client") as mock_client:
+            mock_client.return_value = (None, "SDK not installed")
+            result = logging_tool.execute(
+                filter_expr="severity>=ERROR",
+                interval_hours=1.0,
+            )
+        assert result.error is True
+        assert "TypeError" not in result.output
 
 
 # ── gcloud_monitoring_query ──────────────────────────────────

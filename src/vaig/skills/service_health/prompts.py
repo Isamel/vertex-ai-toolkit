@@ -1418,7 +1418,7 @@ Example filter (substitute actual namespace):
 severity>=ERROR AND resource.type="k8s_container" AND resource.labels.namespace_name="<target-namespace>"
 ```
 
-Recommended params: ``time_range="1h"``, ``limit=50``
+Recommended params: ``interval_hours=1.0``, ``limit=50``
 
 If multiple namespaces are under investigation, run this query for each namespace.
 
@@ -1431,7 +1431,7 @@ Example filter:
 severity>=WARNING AND resource.type="k8s_pod" AND resource.labels.namespace_name="<target-namespace>"
 ```
 
-Recommended params: ``time_range="30m"``, ``limit=30``
+Recommended params: ``interval_hours=0.5``, ``limit=30``
 
 ### Optional Step 7c — Service-specific log drill-down
 If Step 7a reveals errors for a specific container, run a targeted query:
@@ -1442,8 +1442,8 @@ AND resource.labels.namespace_name="<namespace>"
 
 ### Cloud Logging Query Patterns:
 - Always scope to ``resource.labels.namespace_name`` — do NOT query cluster-wide (too noisy).
-- Use ``time_range="1h"`` for error-level queries.
-- Use ``time_range="30m"`` for warning-level queries.
+- Use ``interval_hours=1.0`` for error-level queries.
+- Use ``interval_hours=0.5`` for warning-level queries.
 - If ``gcloud_logging_query`` returns an API error or permission denied, record the error
   verbatim and note "Cloud Logging unavailable — manual investigation required."
 
