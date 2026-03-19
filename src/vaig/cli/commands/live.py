@@ -924,7 +924,7 @@ def _dispatch_format_output(
         else:
             err_console.print(
                 Panel(
-                    "[yellow]No structured health report available — falling back to basic HTML export.[/yellow]",
+                    "[yellow]No structured report available — falling back to basic HTML export.[/yellow]",
                     title="[bold red]HTML Export Warning[/bold red]",
                     border_style="red",
                 )
