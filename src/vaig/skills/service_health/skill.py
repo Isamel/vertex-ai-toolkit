@@ -14,6 +14,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.skills.service_health.prompts import (
     HEALTH_ANALYZER_PROMPT,
@@ -217,7 +218,7 @@ class ServiceHealthSkill(BaseSkill):
                 "system_instruction": HEALTH_REPORTER_PROMPT,
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,  # Slightly higher for natural writing
-                "max_output_tokens": 65536,  # Prevent truncation on complex cluster reports
+                "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
                 "response_schema": HealthReport,
                 "response_mime_type": "application/json",
             },
@@ -320,7 +321,7 @@ class ServiceHealthSkill(BaseSkill):
                 "system_instruction": HEALTH_REPORTER_PROMPT,
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,
-                "max_output_tokens": 65536,  # Prevent truncation on complex cluster reports
+                "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
                 "response_schema": HealthReport,
                 "response_mime_type": "application/json",
             },
