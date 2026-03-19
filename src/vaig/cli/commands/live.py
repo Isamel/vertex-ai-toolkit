@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 import threading
 import time
+import webbrowser
 from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -383,6 +385,10 @@ def register(app: typer.Typer) -> None:
             bool,
             typer.Option("--no-bell", help="Suppress terminal bell after pipeline completes"),
         ] = False,
+        open_browser: Annotated[
+            bool,
+            typer.Option("--open", "-O", help="Open HTML report in default browser (requires --format html)"),
+        ] = False,
     ) -> None:
         """Investigate live GKE/GCP infrastructure using AI with read-only tools.
 
@@ -408,6 +414,14 @@ def register(app: typer.Typer) -> None:
         if watch is not None and watch < MINIMUM_WATCH_INTERVAL:
             err_console.print(f"[red]--watch interval must be >= {MINIMUM_WATCH_INTERVAL}s (got {watch}s)[/red]")
             raise typer.Exit(1)
+
+        # Warn if --open is used without --format html
+        normalised_format_flag = format_.strip().lower() if format_ else None
+        if open_browser and normalised_format_flag != "html":
+            err_console.print(
+                "[yellow]⚠ --open requires --format html — ignoring --open flag.[/yellow]"
+            )
+            open_browser = False
 
         try:  # ── CLI error boundary ──
             settings = _helpers._get_settings(config)
@@ -521,6 +535,7 @@ def register(app: typer.Typer) -> None:
                         tool_call_store=tool_call_store,
                         summary=summary,
                         no_bell=no_bell,
+                        open_browser=open_browser if not watch else False,
                     )
                 else:
                     _execute_live_mode(
@@ -535,6 +550,7 @@ def register(app: typer.Typer) -> None:
                         model_id=model,
                         tool_call_store=tool_call_store,
                         tool_result_cache=tool_result_cache,
+                        open_browser=open_browser if not watch else False,
                     )
 
             if not watch:
@@ -842,6 +858,7 @@ def _export_html_report(
     console: Any,
     err_console: Any,
     output: Path | None = None,
+    open_browser: bool = False,
 ) -> bool:
     """Try to write a rich HTML report to disk.
 
@@ -853,8 +870,12 @@ def _export_html_report(
         report: The HealthReport instance to render.
         console: Rich console for success messages.
         err_console: Rich console for error messages.
-        output: Optional explicit output path. When ``None``, a timestamped
-            filename is generated in the current working directory.
+        output: Optional explicit output path. When ``None`` and ``open_browser``
+            is False, a timestamped filename is generated in the current working
+            directory.  When ``None`` and ``open_browser`` is True, a temporary
+            file is used instead so the working directory is not cluttered.
+        open_browser: When True, open the generated HTML file in the default
+            system web browser after writing.
     """
     try:
         from vaig.ui.html_report import render_health_report_html  # noqa: WPS433
@@ -862,6 +883,11 @@ def _export_html_report(
         html_content = render_health_report_html(report)
         if output is not None:
             out_path = output
+        elif open_browser:
+            # Use a temp file so we don't clutter the working directory when
+            # the user just wants to view the report quickly.
+            with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp:
+                out_path = Path(tmp.name)
         else:
             timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
             out_path = Path(f"vaig-report-{timestamp}.html")
@@ -869,12 +895,65 @@ def _export_html_report(
         console.print(
             f"[bold green]✓ HTML report written:[/bold green] [cyan]{out_path.resolve()}[/cyan]"
         )
+        if open_browser:
+            file_url = out_path.resolve().as_uri()
+            try:
+                opened = webbrowser.open(file_url)
+                if not opened:
+                    console.print(
+                        f"[yellow]⚠ Could not open browser automatically. "
+                        f"Open manually:[/yellow] [cyan]{file_url}[/cyan]"
+                    )
+            except Exception as browser_exc:  # noqa: BLE001
+                console.print(
+                    f"[yellow]⚠ Browser open failed ({browser_exc}). "
+                    f"Open manually:[/yellow] [cyan]{file_url}[/cyan]"
+                )
         return True
     except Exception as exc:  # pragma: no cover
         err_console.print(
             f"[bold red]⚠ Failed to write HTML report:[/bold red] {exc}"
         )
         return False
+
+
+def _inject_report_metadata(report: Any, *, gke_config: Any = None, model_id: str = "") -> None:
+    """Fill empty or placeholder metadata fields in *report* from runtime context.
+
+    Only writes to a field when the current value is ``None``, empty string, or
+    the sentinel string ``"N/A"``.  Existing non-empty values are preserved so
+    that a report whose LLM correctly populated a field is never overwritten.
+
+    Args:
+        report: A ``HealthReport`` instance (typed as ``Any`` to avoid a hard
+            import; we access ``report.metadata`` defensively).
+        gke_config: Optional :class:`~vaig.core.config.GKEConfig`.  When
+            provided, its ``cluster_name`` and ``project_id`` fields are used
+            to fill the corresponding metadata slots.
+        model_id: The model identifier used for the run.  Fills
+            ``metadata.model_used`` when the field is empty.
+    """
+    metadata = getattr(report, "metadata", None)
+    if metadata is None:
+        return
+
+    def _is_empty(value: Any) -> bool:
+        """Return True when *value* is falsy or the sentinel 'N/A'."""
+        if not value:
+            return True
+        if isinstance(value, str) and value.strip().upper() == "N/A":
+            return True
+        return False
+
+    if gke_config is not None:
+        for attr in ["cluster_name", "project_id"]:
+            if _is_empty(getattr(metadata, attr, None)):
+                value = getattr(gke_config, attr, None)
+                if value:
+                    setattr(metadata, attr, value)
+
+    if _is_empty(getattr(metadata, "model_used", None)) and model_id:
+        metadata.model_used = model_id
 
 
 def _dispatch_format_output(
@@ -887,6 +966,8 @@ def _dispatch_format_output(
     skill_name: str,
     console: Any,
     err_console: Any,
+    gke_config: Any = None,
+    open_browser: bool = False,
 ) -> None:
     """Dispatch output based on *format_* for an orchestrated skill result.
 
@@ -897,6 +978,11 @@ def _dispatch_format_output(
     The *format_* value is normalised (stripped and lowercased) once here so
     callers do not need to worry about case or whitespace.
 
+    When ``format_`` is ``"html"`` and ``orch_result.structured_report`` has a
+    ``metadata`` attribute, empty / ``"N/A"`` fields are filled in from
+    *gke_config* and *model_id* so the SPA dashboard never shows placeholder
+    values.
+
     Args:
         orch_result: The :class:`~vaig.agents.orchestrator.OrchestratorResult`.
         format_: Raw format string from the CLI (may be ``None``).
@@ -906,6 +992,10 @@ def _dispatch_format_output(
         skill_name: Skill name for metadata.
         console: Rich console for output.
         err_console: Rich console for errors/warnings.
+        gke_config: Optional :class:`~vaig.core.config.GKEConfig` used to inject
+            cluster / project metadata into the report before HTML rendering.
+        open_browser: When True (and ``format_`` is ``"html"``), open the
+            generated file in the default browser.
     """
     if not format_ and not output:
         return
@@ -915,11 +1005,18 @@ def _dispatch_format_output(
 
     if normalised_format == "html":
         if orch_result.structured_report is not None:
+            # ── Inject runtime metadata into the report before rendering ──────
+            _inject_report_metadata(
+                orch_result.structured_report,
+                gke_config=gke_config,
+                model_id=model_id,
+            )
             _export_html_report(
                 orch_result.structured_report,
                 console=console,
                 err_console=err_console,
                 output=output,
+                open_browser=open_browser,
             )
         else:
             err_console.print(
@@ -929,17 +1026,26 @@ def _dispatch_format_output(
                     border_style="red",
                 )
             )
-            # Fall back to basic HTML export so the user still gets HTML output
+            # Fall back to basic HTML export so the user still gets HTML output.
+            # When --open is requested and no explicit output path was given, write
+            # to a temp file so the browser has a path to open (otherwise the
+            # content would be printed to stdout and there'd be nothing to open).
+            effective_output = output
+            if open_browser and output is None:
+                with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp:
+                    effective_output = Path(tmp.name)
             _handle_export_output(
                 response_text=orch_result.synthesized_output or "",
                 question=question,
                 model_id=model_id,
                 skill_name=skill_name,
                 format_="html",  # basic HTML via ExportPayload.to_html() since structured report unavailable
-                output=output,
+                output=effective_output,
                 tokens=orch_result.total_usage or None,
                 cost=_compute_cost_str(orch_result.total_usage, model_id),
             )
+            if open_browser and effective_output is not None:
+                _open_html_in_browser(effective_output, console)
     else:
         _handle_export_output(
             response_text=orch_result.synthesized_output or "",
@@ -966,6 +1072,7 @@ def _execute_orchestrated_skill(
     tool_call_store: ToolCallStore | None = None,
     summary: bool = False,
     no_bell: bool = False,
+    open_browser: bool = False,
 ) -> None:
     """Execute a skill through the Orchestrator's tool-aware pipeline.
 
@@ -1070,6 +1177,8 @@ def _execute_orchestrated_skill(
             skill_name=skill_meta.name,
             console=console,
             err_console=err_console,
+            gke_config=gke_config,
+            open_browser=open_browser,
         )
 
         # Show agent pipeline summary (includes cost line)
@@ -1108,6 +1217,35 @@ def _show_orchestrated_summary(orch_result: OrchestratorResult, *, model_id: str
         err_console.print("[bold red]⚠ Pipeline completed with errors[/bold red]")
 
 
+def _open_html_in_browser(html_path: Path, console: Any) -> None:
+    """Open *html_path* in the system default browser.
+
+    Creates no temporary files — the caller is responsible for providing a
+    valid path.  Handles browser-open failures gracefully by printing an
+    actionable message instead of raising.
+
+    Args:
+        html_path: Absolute or resolvable path to the HTML file to open.
+        console: Rich ``Console`` instance for user-facing messages.
+    """
+    file_url = html_path.resolve().as_uri()
+    console.print(
+        f"[bold green]✓ Report written:[/bold green] [cyan]{html_path.resolve()}[/cyan]"
+    )
+    try:
+        opened = webbrowser.open(file_url)
+        if not opened:
+            console.print(
+                f"[yellow]⚠ Could not open browser automatically. "
+                f"Open manually:[/yellow] [cyan]{file_url}[/cyan]"
+            )
+    except Exception as browser_exc:  # noqa: BLE001
+        console.print(
+            f"[yellow]⚠ Browser open failed ({browser_exc}). "
+            f"Open manually:[/yellow] [cyan]{file_url}[/cyan]"
+        )
+
+
 def _execute_live_mode(
     client: GeminiClientProtocol,
     gke_config: GKEConfig,
@@ -1121,6 +1259,7 @@ def _execute_live_mode(
     model_id: str | None = None,
     tool_call_store: ToolCallStore | None = None,
     tool_result_cache: ToolResultCache | None = None,
+    open_browser: bool = False,
 ) -> None:
     """Execute an infrastructure investigation using the InfraAgent.
 
@@ -1180,16 +1319,29 @@ def _execute_live_mode(
             print_colored_report(result.content, console=console)
         console.print()
 
+        # When --open is requested, use a temp file so we can pass its path to
+        # the browser.  _handle_export_output writes the file when output is set;
+        # afterwards we open it in the default browser.
+        effective_output = output
+        if open_browser and format_ and format_.strip().lower() == "html" and output is None:
+            with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp:
+                effective_output = Path(tmp.name)
+
         _handle_export_output(
             response_text=result.content or "",
             question=question,
             model_id=model_id or client.current_model,
             skill_name=skill_name,
             format_=format_,
-            output=output,
+            output=effective_output,
             tokens=result.usage or None,
             cost=_compute_cost_str(result.usage, model_id or client.current_model),
         )
+
+        if open_browser and format_ and format_.strip().lower() == "html":
+            open_target = effective_output or output
+            if open_target is not None:
+                _open_html_in_browser(open_target, console)
 
         # Show summary (reuse coding summary — same metadata shape)
         _show_coding_summary(result)
@@ -1219,6 +1371,7 @@ async def _async_execute_live_mode(
     model_id: str | None = None,
     tool_call_store: ToolCallStore | None = None,
     tool_result_cache: ToolResultCache | None = None,
+    open_browser: bool = False,
 ) -> None:
     """Async version of :func:`_execute_live_mode`.
 
@@ -1275,16 +1428,29 @@ async def _async_execute_live_mode(
             print_colored_report(result.content, console=console)
         console.print()
 
+        # When --open is requested, use a temp file so we can pass its path to
+        # the browser.  _handle_export_output writes the file when output is set;
+        # afterwards we open it in the default browser.
+        effective_output = output
+        if open_browser and format_ and format_.strip().lower() == "html" and output is None:
+            with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp:
+                effective_output = Path(tmp.name)
+
         _handle_export_output(
             response_text=result.content or "",
             question=question,
             model_id=model_id or client.current_model,
             skill_name=skill_name,
             format_=format_,
-            output=output,
+            output=effective_output,
             tokens=result.usage or None,
             cost=_compute_cost_str(result.usage, model_id or client.current_model),
         )
+
+        if open_browser and format_ and format_.strip().lower() == "html":
+            open_target = effective_output or output
+            if open_target is not None:
+                _open_html_in_browser(open_target, console)
 
         _show_coding_summary(result)
 
@@ -1310,6 +1476,7 @@ async def _async_execute_orchestrated_skill(
     tool_call_store: ToolCallStore | None = None,
     summary: bool = False,
     no_bell: bool = False,
+    open_browser: bool = False,
 ) -> None:
     """Async version of :func:`_execute_orchestrated_skill`.
 
@@ -1408,6 +1575,8 @@ async def _async_execute_orchestrated_skill(
             skill_name=skill_meta.name,
             console=console,
             err_console=err_console,
+            gke_config=gke_config,
+            open_browser=open_browser,
         )
 
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
