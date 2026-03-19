@@ -512,6 +512,31 @@ class TimelineEvent(BaseModel):
     )
 
 
+class CostMetrics(BaseModel):
+    """Cost and token usage metrics for the report generation run."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    run_cost_usd: float | None = Field(default=None, description="Estimated cost in USD for this run")
+    total_tokens: int | None = Field(default=None, description="Total tokens consumed (prompt + completion)")
+    estimated_cost: str | None = Field(
+        default=None,
+        description="Pre-formatted cost string (e.g. '$0.001234'). None when cost is zero or unknown.",
+    )
+
+
+class ToolUsageSummary(BaseModel):
+    """Summary of tool calls made during the orchestrated pipeline run."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    tool_counts: dict[str, int] | None = Field(
+        default=None,
+        description="Per-tool call counts, e.g. {'kubectl_get': 4, 'get_events': 2}",
+    )
+    tool_calls: int | None = Field(default=None, description="Total number of tool calls executed")
+
+
 class ReportMetadata(BaseModel):
     """Metadata about how and when the report was generated."""
 
@@ -522,6 +547,8 @@ class ReportMetadata(BaseModel):
     project_id: str = Field(default="")
     model_used: str = Field(default="")
     skill_version: str = Field(default="")
+    cost_metrics: CostMetrics | None = Field(default=None, description="Cost and token usage for this run")
+    tool_usage: ToolUsageSummary | None = Field(default=None, description="Tool call statistics for this run")
 
 
 # ── Root model ───────────────────────────────────────────────
