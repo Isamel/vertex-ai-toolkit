@@ -82,7 +82,7 @@ class TestKubectlGetAll:
         _kubectl_get_all(
             gke_config=cfg,
             namespace="production",
-            output_format="table",
+            output="table",
         )
 
         called_resources = [call.args[0] for call in mock_get.call_args_list]
