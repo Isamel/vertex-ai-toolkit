@@ -161,5 +161,177 @@ class TestKubectlGetOutputFormatValidation:
 
 # ══════════════════════════════════════════════════════════════
 # Bug 2: GitOps CRDs in resource whitelist
-# (tests will be added in a separate commit)
 # ══════════════════════════════════════════════════════════════
+
+
+class TestGitOpsCRDsInWhitelist:
+    """Bug 2 — ArgoCD and Flux CRDs must be queryable via kubectl_get."""
+
+    def test_argocd_application_in_resource_map(self) -> None:
+        """applications.argoproj.io must be in the resource API map."""
+        from vaig.tools.gke._resources import _RESOURCE_API_MAP
+
+        assert "applications.argoproj.io" in _RESOURCE_API_MAP, (
+            "ArgoCD Application CRD must be registered in _RESOURCE_API_MAP"
+        )
+        assert _RESOURCE_API_MAP["applications.argoproj.io"] == "custom_argocd"
+
+    def test_flux_helmrelease_in_resource_map(self) -> None:
+        """helmreleases.helm.toolkit.fluxcd.io must be in the resource API map."""
+        from vaig.tools.gke._resources import _RESOURCE_API_MAP
+
+        assert "helmreleases.helm.toolkit.fluxcd.io" in _RESOURCE_API_MAP, (
+            "Flux HelmRelease CRD must be registered in _RESOURCE_API_MAP"
+        )
+        assert _RESOURCE_API_MAP["helmreleases.helm.toolkit.fluxcd.io"] == "custom_flux_helm"
+
+    def test_flux_kustomization_in_resource_map(self) -> None:
+        """kustomizations.kustomize.toolkit.fluxcd.io must be in the resource API map."""
+        from vaig.tools.gke._resources import _RESOURCE_API_MAP
+
+        assert "kustomizations.kustomize.toolkit.fluxcd.io" in _RESOURCE_API_MAP, (
+            "Flux Kustomization CRD must be registered in _RESOURCE_API_MAP"
+        )
+        assert _RESOURCE_API_MAP["kustomizations.kustomize.toolkit.fluxcd.io"] == "custom_flux_kustomize"
+
+    def test_argocd_aliases_resolve(self) -> None:
+        """Short names like 'app', 'application', 'argoapp' must resolve to the full CRD name."""
+        from vaig.tools.gke._resources import _normalise_resource
+
+        assert _normalise_resource("app") == "applications.argoproj.io"
+        assert _normalise_resource("application") == "applications.argoproj.io"
+        assert _normalise_resource("argoapp") == "applications.argoproj.io"
+
+    def test_flux_helm_aliases_resolve(self) -> None:
+        """Short names like 'hr', 'helmrelease' must resolve to the full CRD name."""
+        from vaig.tools.gke._resources import _normalise_resource
+
+        assert _normalise_resource("hr") == "helmreleases.helm.toolkit.fluxcd.io"
+        assert _normalise_resource("helmrelease") == "helmreleases.helm.toolkit.fluxcd.io"
+
+    def test_flux_kustomization_aliases_resolve(self) -> None:
+        """Short names like 'ks', 'kustomization' must resolve to the full CRD name."""
+        from vaig.tools.gke._resources import _normalise_resource
+
+        assert _normalise_resource("ks") == "kustomizations.kustomize.toolkit.fluxcd.io"
+        assert _normalise_resource("kustomization") == "kustomizations.kustomize.toolkit.fluxcd.io"
+
+    @pytest.mark.parametrize("resource,group,version,plural", [
+        (
+            "applications.argoproj.io",
+            "argoproj.io",
+            "v1alpha1",
+            "applications",
+        ),
+        (
+            "helmreleases.helm.toolkit.fluxcd.io",
+            "helm.toolkit.fluxcd.io",
+            "v2beta1",
+            "helmreleases",
+        ),
+        (
+            "kustomizations.kustomize.toolkit.fluxcd.io",
+            "kustomize.toolkit.fluxcd.io",
+            "v1",
+            "kustomizations",
+        ),
+    ])
+    def test_list_resource_calls_custom_api_namespaced(
+        self,
+        resource: str,
+        group: str,
+        version: str,
+        plural: str,
+    ) -> None:
+        """_list_resource() must call list_namespaced_custom_object with correct args."""
+        from vaig.tools.gke._resources import _list_resource
+
+        core_v1 = MagicMock()
+        apps_v1 = MagicMock()
+        custom_api = MagicMock()
+        custom_api.list_namespaced_custom_object.return_value = {"items": []}
+
+        result = _list_resource(
+            core_v1, apps_v1, custom_api,
+            resource=resource,
+            namespace="argocd",
+        )
+
+        custom_api.list_namespaced_custom_object.assert_called_once_with(
+            group=group,
+            version=version,
+            namespace="argocd",
+            plural=plural,
+        )
+        # Result should be a _DictItemList (not a ToolResult error)
+        assert not isinstance(result, ToolResult) or not result.error
+
+    @pytest.mark.parametrize("resource,group,version,plural", [
+        (
+            "applications.argoproj.io",
+            "argoproj.io",
+            "v1alpha1",
+            "applications",
+        ),
+        (
+            "helmreleases.helm.toolkit.fluxcd.io",
+            "helm.toolkit.fluxcd.io",
+            "v2beta1",
+            "helmreleases",
+        ),
+        (
+            "kustomizations.kustomize.toolkit.fluxcd.io",
+            "kustomize.toolkit.fluxcd.io",
+            "v1",
+            "kustomizations",
+        ),
+    ])
+    def test_list_resource_calls_custom_api_cluster_scoped(
+        self,
+        resource: str,
+        group: str,
+        version: str,
+        plural: str,
+    ) -> None:
+        """_list_resource() must call list_cluster_custom_object when namespace='all'."""
+        from vaig.tools.gke._resources import _list_resource
+
+        core_v1 = MagicMock()
+        apps_v1 = MagicMock()
+        custom_api = MagicMock()
+        custom_api.list_cluster_custom_object.return_value = {"items": []}
+
+        result = _list_resource(
+            core_v1, apps_v1, custom_api,
+            resource=resource,
+            namespace="all",
+        )
+
+        custom_api.list_cluster_custom_object.assert_called_once_with(
+            group=group,
+            version=version,
+            plural=plural,
+        )
+        assert not isinstance(result, ToolResult) or not result.error
+
+    def test_kubectl_get_argocd_application_end_to_end(self) -> None:
+        """kubectl_get('applications.argoproj.io') must succeed via the custom_api path."""
+        from vaig.tools.gke.kubectl import kubectl_get
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            core_v1 = MagicMock()
+            apps_v1 = MagicMock()
+            custom_api = MagicMock()
+            mock_clients.return_value = (core_v1, apps_v1, custom_api, MagicMock())
+            custom_api.list_namespaced_custom_object.return_value = {"items": []}
+
+            result = kubectl_get(
+                "applications.argoproj.io",
+                gke_config=cfg,
+                namespace="argocd",
+            )
+
+        assert result.error is False, f"Unexpected error: {result.output}"

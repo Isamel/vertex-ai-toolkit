@@ -106,6 +106,12 @@ _RESOURCE_API_MAP: dict[str, str] = {
     # External Secrets Operator CRDs
     "externalsecrets": "custom_external_secrets",
     "externalsecret": "custom_external_secrets",
+    # ArgoCD CRDs
+    "applications.argoproj.io": "custom_argocd",
+    # Flux HelmRelease CRDs
+    "helmreleases.helm.toolkit.fluxcd.io": "custom_flux_helm",
+    # Flux Kustomization CRDs
+    "kustomizations.kustomize.toolkit.fluxcd.io": "custom_flux_kustomize",
 }
 
 # Canonical aliases so users can type short names
@@ -155,6 +161,16 @@ _RESOURCE_ALIASES: dict[str, str] = {
     "crd": "customresourcedefinitions",
     # External Secrets aliases
     "es": "externalsecrets",
+    # ArgoCD aliases
+    "app": "applications.argoproj.io",
+    "application": "applications.argoproj.io",
+    "argoapp": "applications.argoproj.io",
+    # Flux HelmRelease aliases
+    "hr": "helmreleases.helm.toolkit.fluxcd.io",
+    "helmrelease": "helmreleases.helm.toolkit.fluxcd.io",
+    # Flux Kustomization aliases
+    "ks": "kustomizations.kustomize.toolkit.fluxcd.io",
+    "kustomization": "kustomizations.kustomize.toolkit.fluxcd.io",
 }
 
 # Resource types expanded when ``resource="all"`` is requested.
@@ -354,6 +370,63 @@ def _list_resource(
                 version="v1beta1",
                 namespace=namespace,
                 plural="externalsecrets",
+                **kwargs,
+            )
+        return _DictItemList(raw)
+
+    # ── ArgoCD Applications (custom) ─────────────────────────
+    if api_group == "custom_argocd":
+        if namespace in ("", "all"):
+            raw = custom_api.list_cluster_custom_object(
+                group="argoproj.io",
+                version="v1alpha1",
+                plural="applications",
+                **kwargs,
+            )
+        else:
+            raw = custom_api.list_namespaced_custom_object(
+                group="argoproj.io",
+                version="v1alpha1",
+                namespace=namespace,
+                plural="applications",
+                **kwargs,
+            )
+        return _DictItemList(raw)
+
+    # ── Flux HelmReleases (custom) ───────────────────────────
+    if api_group == "custom_flux_helm":
+        if namespace in ("", "all"):
+            raw = custom_api.list_cluster_custom_object(
+                group="helm.toolkit.fluxcd.io",
+                version="v2beta1",
+                plural="helmreleases",
+                **kwargs,
+            )
+        else:
+            raw = custom_api.list_namespaced_custom_object(
+                group="helm.toolkit.fluxcd.io",
+                version="v2beta1",
+                namespace=namespace,
+                plural="helmreleases",
+                **kwargs,
+            )
+        return _DictItemList(raw)
+
+    # ── Flux Kustomizations (custom) ─────────────────────────
+    if api_group == "custom_flux_kustomize":
+        if namespace in ("", "all"):
+            raw = custom_api.list_cluster_custom_object(
+                group="kustomize.toolkit.fluxcd.io",
+                version="v1",
+                plural="kustomizations",
+                **kwargs,
+            )
+        else:
+            raw = custom_api.list_namespaced_custom_object(
+                group="kustomize.toolkit.fluxcd.io",
+                version="v1",
+                namespace=namespace,
+                plural="kustomizations",
                 **kwargs,
             )
         return _DictItemList(raw)
