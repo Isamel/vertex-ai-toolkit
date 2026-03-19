@@ -384,7 +384,7 @@ def _format_items(resource: str, items: list[Any], output_format: str) -> str:
         try:
             import yaml as _yaml  # noqa: WPS433
         except ImportError:
-            return "PyYAML is not installed. Use output_format='json' instead."
+            return "PyYAML is not installed. Use output='json' instead."
         api = k8s_client.ApiClient()
         serialised = [_serialise_item(i, api) for i in items]
         if is_secret:

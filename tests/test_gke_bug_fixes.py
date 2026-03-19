@@ -132,7 +132,7 @@ class TestKubectlGetOutputFormatValidation:
             result = kubectl_get("pods", gke_config=cfg, output="xml")
 
         assert result.error is True
-        assert "Invalid output_format" in result.output
+        assert "Invalid output" in result.output
 
     def test_all_valid_formats_accepted(self) -> None:
         """All documented formats — table, yaml, json, wide, name — must pass validation."""
