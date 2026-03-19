@@ -86,9 +86,9 @@ def kubectl_get(
             error=True,
         )
 
-    if output_format not in ("table", "yaml", "json", "wide"):
+    if output_format not in ("table", "yaml", "json", "wide", "name"):
         return ToolResult(
-            output=f"Invalid output_format: '{output_format}'. Must be one of: table, yaml, json, wide",
+            output=f"Invalid output_format: '{output_format}'. Must be one of: table, yaml, json, wide, name",
             error=True,
         )
 
