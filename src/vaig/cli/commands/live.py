@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -219,6 +220,10 @@ class AgentProgressDisplay:
     protocol so it can be passed directly to
     ``Orchestrator.execute_with_tools(on_agent_progress=...)``.
 
+    Thread-safe: a :class:`threading.Lock` serialises all ``start``/``end``
+    mutations so parallel gatherers cannot race on ``self._status`` and
+    cause a Rich ``LiveError("Only one live display may be active at once")``.
+
     Args:
         tool_logger: The :class:`ToolCallLogger` for the current pipeline.
             Used to read the running ``tool_count`` for display.
@@ -228,6 +233,22 @@ class AgentProgressDisplay:
         self._tool_logger = tool_logger
         self._status: Status | None = None
         self._agent_start_count: int = 0
+        self._lock = threading.Lock()
+
+    def _stop_current(self) -> None:
+        """Stop and discard the current spinner (if any).
+
+        Swallows any exception from ``Status.stop()`` so a stale or
+        already-stopped spinner never breaks the pipeline.  Must be called
+        with ``self._lock`` held.
+        """
+        if self._status is not None:
+            try:
+                self._status.stop()
+            except Exception:  # noqa: BLE001
+                logger.debug("AgentProgressDisplay: ignored error stopping previous status", exc_info=True)
+            finally:
+                self._status = None
 
     def __call__(
         self,
@@ -236,38 +257,41 @@ class AgentProgressDisplay:
         total_agents: int,
         event: str,
     ) -> None:
-        """Handle agent start/end events."""
-        if event == "start":
-            self._agent_start_count = self._tool_logger.tool_count
-            step = agent_index + 1
-            label = (
-                f"[bold cyan]\\[{step}/{total_agents}][/bold cyan] "
-                f"[green]{agent_name}[/green] — running..."
-            )
-            self._status = console.status(label, spinner="dots")
-            self._status.start()
-        elif event == "end":
-            if self._status is not None:
-                self._status.stop()
-                self._status = None
-            step = agent_index + 1
-            tools = self._tool_logger.tool_count - self._agent_start_count
-            breakdown = self._tool_logger.format_tool_counts()
-            tools_detail = f" ({tools} tool{'s' if tools != 1 else ''} called)"
-            breakdown_detail = f" [dim]{breakdown}[/dim]" if breakdown else ""
-            console.print(
-                f"  [bold cyan]\\[{step}/{total_agents}][/bold cyan] "
-                f"[green]{agent_name}[/green] — [green]done[/green]"
-                f"{tools_detail}{breakdown_detail}"
-            )
-            # Reset per-agent counters for the next agent
-            self._tool_logger.reset()
+        """Handle agent start/end events (thread-safe)."""
+        with self._lock:
+            if event == "start":
+                self._agent_start_count = self._tool_logger.tool_count
+                step = agent_index + 1
+                label = (
+                    f"[bold cyan]\\[{step}/{total_agents}][/bold cyan] "
+                    f"[green]{agent_name}[/green] — running..."
+                )
+                # Stop any existing Live display before creating a new one.
+                # Rich only allows one live display active at a time; without
+                # this the second parallel gatherer raises:
+                #   LiveError: Only one live display may be active at once
+                self._stop_current()
+                self._status = console.status(label, spinner="dots")
+                self._status.start()
+            elif event == "end":
+                self._stop_current()
+                step = agent_index + 1
+                tools = self._tool_logger.tool_count - self._agent_start_count
+                breakdown = self._tool_logger.format_tool_counts()
+                tools_detail = f" ({tools} tool{'s' if tools != 1 else ''} called)"
+                breakdown_detail = f" [dim]{breakdown}[/dim]" if breakdown else ""
+                console.print(
+                    f"  [bold cyan]\\[{step}/{total_agents}][/bold cyan] "
+                    f"[green]{agent_name}[/green] — [green]done[/green]"
+                    f"{tools_detail}{breakdown_detail}"
+                )
+                # Reset per-agent counters for the next agent
+                self._tool_logger.reset()
 
     def stop(self) -> None:
         """Stop the spinner if it's still running (e.g. on error)."""
-        if self._status is not None:
-            self._status.stop()
-            self._status = None
+        with self._lock:
+            self._stop_current()
 
 
 def _emit_bell(*, no_bell: bool) -> None:
