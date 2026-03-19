@@ -142,6 +142,28 @@ class TestDispatchFallbackNoStructuredReport:
                 err_console=err_console,
             )
 
+    def test_fallback_calls_handle_export_with_format_html(self) -> None:
+        """Fallback must pass format_='html' to _handle_export_output, not None."""
+        orch = _make_orch_result(structured_report=None, synthesized_output="some output")
+        console, err_console = _make_consoles()
+
+        with patch("vaig.cli.commands.live._handle_export_output") as mock_handle:
+            _dispatch_format_output(
+                orch,
+                format_="html",
+                output=None,
+                question="what happened?",
+                model_id="gemini-2.0",
+                skill_name="health-skill",
+                console=console,
+                err_console=err_console,
+            )
+            mock_handle.assert_called_once()
+            _kwargs = mock_handle.call_args.kwargs
+            assert _kwargs.get("format_") == "html", (
+                f"Expected format_='html' in fallback call, got format_={_kwargs.get('format_')!r}"
+            )
+
 
 # ── _export_html_report — --output path respected ────────────────────────────
 

@@ -924,19 +924,18 @@ def _dispatch_format_output(
         else:
             err_console.print(
                 Panel(
-                    "[yellow]No structured report available — cannot render rich HTML.\n"
-                    "Falling back to text output.[/yellow]",
+                    "[yellow]No structured report available — falling back to basic HTML export.[/yellow]",
                     title="[bold red]HTML Export Warning[/bold red]",
                     border_style="red",
                 )
             )
-            # Fall back to plain export so the user still gets something
+            # Fall back to basic HTML export so the user still gets HTML output
             _handle_export_output(
                 response_text=orch_result.synthesized_output or "",
                 question=question,
                 model_id=model_id,
                 skill_name=skill_name,
-                format_=None,  # plain text — not html since structured report unavailable
+                format_="html",  # basic HTML via ExportPayload.to_html() since structured report unavailable
                 output=output,
                 tokens=orch_result.total_usage or None,
                 cost=_compute_cost_str(orch_result.total_usage, model_id),
