@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Service Health Report — payment-service @ prod-gke-us-central1</title>
+<title>Service Health Report</title>
 <style>
   /* ── Reset & Base ─────────────────────────────────────────── */
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -471,11 +471,11 @@ const REPORT_DATA = /*{{REPORT_DATA_JSON}}*/null;
     <div class="filter-section">
       <div class="filter-section-label">Filter Findings</div>
       <div class="filter-pills" id="severity-filters">
-        <span class="filter-pill" data-sev="CRITICAL">CRIT</span>
-        <span class="filter-pill" data-sev="HIGH">HIGH</span>
-        <span class="filter-pill" data-sev="MEDIUM">MED</span>
-        <span class="filter-pill" data-sev="LOW">LOW</span>
-        <span class="filter-pill" data-sev="INFO">INFO</span>
+        <span class="filter-pill" data-sev="CRITICAL" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">CRIT</span>
+        <span class="filter-pill" data-sev="HIGH" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">HIGH</span>
+        <span class="filter-pill" data-sev="MEDIUM" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">MED</span>
+        <span class="filter-pill" data-sev="LOW" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">LOW</span>
+        <span class="filter-pill" data-sev="INFO" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">INFO</span>
       </div>
     </div>
   </nav>
@@ -494,7 +494,7 @@ const REPORT_DATA = /*{{REPORT_DATA_JSON}}*/null;
     <section id="section-cluster">
       <h2>
         <span class="section-icon">☸️</span>
-        <span class="section-toggle" onclick="toggleSection(this)">Cluster Overview</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Cluster Overview</span>
       </h2>
       <div class="section-content">
         <div class="card">
@@ -519,7 +519,7 @@ const REPORT_DATA = /*{{REPORT_DATA_JSON}}*/null;
     <section id="section-rootcause">
       <h2>
         <span class="section-icon">🧠</span>
-        <span class="section-toggle" onclick="toggleSection(this)">Root Cause Hypotheses</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Root Cause Hypotheses</span>
       </h2>
       <div class="section-content" id="rootcause-list"></div>
     </section>
@@ -541,7 +541,7 @@ const REPORT_DATA = /*{{REPORT_DATA_JSON}}*/null;
 
 <script>
 // ── Render helpers ──────────────────────────────────────────────
-const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
 
 function sevColor(s) {
   const m = {CRITICAL:'critical',HIGH:'high',MEDIUM:'medium',LOW:'low',INFO:'info',HEALTHY:'healthy',DEGRADED:'degraded',FAILED:'failed',UNKNOWN:'unknown'};
@@ -619,11 +619,11 @@ function renderServices() {
           <div class="service-metric-lbl">Restarts/h</div>
         </div>
         <div class="service-metric">
-          <div class="service-metric-val${cpuWarn ? ' warn' : ''}">${esc(s.cpu_usage.split('/')[0].trim())}</div>
+          <div class="service-metric-val${cpuWarn ? ' warn' : ''}">${esc(s.cpu_usage.includes('/') ? s.cpu_usage.split('/')[0].trim() : s.cpu_usage)}</div>
           <div class="service-metric-lbl">CPU</div>
         </div>
         <div class="service-metric">
-          <div class="service-metric-val${memWarn ? ' crit' : ''}">${esc(s.memory_usage.split('/')[0].trim())}</div>
+          <div class="service-metric-val${memWarn ? ' crit' : ''}">${esc(s.memory_usage.includes('/') ? s.memory_usage.split('/')[0].trim() : s.memory_usage)}</div>
           <div class="service-metric-lbl">Memory</div>
         </div>
       </div>
@@ -653,7 +653,7 @@ function renderFindings() {
     ).join('');
 
     return `<div class="finding-card" data-sev="${esc(f.severity)}" data-id="${esc(f.id)}" id="finding-${esc(f.id)}">
-      <div class="finding-header" onclick="toggleFinding(this.parentElement)">
+      <div class="finding-header" onclick="toggleFinding(this.parentElement)" role="button" tabindex="0" aria-expanded="false" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleFinding(this.parentElement);this.setAttribute('aria-expanded',this.parentElement.classList.contains('open'))}">
         <span class="sev-pill ${esc(f.severity)}">${esc(f.severity)}</span>
         <span class="finding-title">${esc(f.title)}</span>
         ${f.service ? `<span class="finding-service">${esc(f.service)}</span>` : ''}
@@ -687,6 +687,8 @@ function renderFindings() {
 
 function toggleFinding(card) {
   card.classList.toggle('open');
+  const header = card.querySelector('.finding-header');
+  if (header) header.setAttribute('aria-expanded', card.classList.contains('open') ? 'true' : 'false');
 }
 
 function toggleSeverityFilter(sev) {
@@ -786,16 +788,50 @@ function copyCmd(btn, priority) {
   const rec = REPORT_DATA.recommendations.find(r => r.priority === priority);
   if (!rec) return;
   const text = rec.command.split('\n').filter(l => !l.startsWith('#')).join('\n').trim();
-  navigator.clipboard.writeText(text).then(() => {
+  const markCopied = () => {
     btn.textContent = '✓';
     btn.classList.add('copied');
     setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1500);
-  });
+  };
+  const markFailed = () => {
+    btn.textContent = '✗';
+    setTimeout(() => { btn.textContent = 'copy'; }, 1500);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(markCopied).catch(() => {
+      // Fallback for file:// or non-secure contexts
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        ok ? markCopied() : markFailed();
+      } catch (e) { markFailed(); }
+    });
+  } else {
+    // No clipboard API available — use execCommand fallback directly
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      ok ? markCopied() : markFailed();
+    } catch (e) { markFailed(); }
+  }
 }
 
 // ── Section toggle (collapse) ─────────────────────────────────────
 function toggleSection(toggle) {
   toggle.classList.toggle('collapsed');
+  toggle.setAttribute('aria-expanded', toggle.classList.contains('collapsed') ? 'false' : 'true');
 }
 
 // ── Sidebar nav active ────────────────────────────────────────────

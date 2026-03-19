@@ -49,4 +49,8 @@ def render_health_report_html(report: HealthReport) -> str:
     payload = json.dumps(report.model_dump(mode="json"), ensure_ascii=False)
     # Prevent </script> injection: escape the closing tag sequence
     payload = payload.replace("</", "<\\/")
+    # Escape U+2028/U+2029 (line/paragraph separators) — they break JS parsing
+    # inside <script> blocks even though they are valid JSON string content.
+    payload = payload.replace("\u2028", "\\u2028")
+    payload = payload.replace("\u2029", "\\u2029")
     return template.replace(_SENTINEL, payload)

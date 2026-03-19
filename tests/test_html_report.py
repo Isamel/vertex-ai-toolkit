@@ -263,11 +263,17 @@ class TestJsonInjection:
         """The JSON blob injected into the template must be valid JSON."""
         report = _make_minimal_report()
         result = render_health_report_html(report)
-        # Extract the JSON blob: it replaces _SENTINEL (e.g. const REPORT_DATA = <JSON>;)
-        # Find 'const REPORT_DATA = ' and extract until the next ';'
+        # Extract the JSON blob: find 'const REPORT_DATA = ' then the closing ';\n</script>' or ';</script>'
         marker = "const REPORT_DATA = "
         start = result.index(marker) + len(marker)
-        end = result.index(";", start)
+        # Use the closing pattern to avoid false-positive ';' inside JSON strings
+        for end_pattern in (";\n</script>", ";</script>"):
+            end_idx = result.find(end_pattern, start)
+            if end_idx != -1:
+                end = end_idx
+                break
+        else:
+            end = result.index(";", start)
         json_blob = result[start:end]
         parsed = json.loads(json_blob)
         assert isinstance(parsed, dict)
@@ -279,7 +285,14 @@ class TestJsonInjection:
         result = render_health_report_html(report)
         marker = "const REPORT_DATA = "
         start = result.index(marker) + len(marker)
-        end = result.index(";", start)
+        # Use the closing pattern to avoid false-positive ';' inside JSON strings
+        for end_pattern in (";\n</script>", ";</script>"):
+            end_idx = result.find(end_pattern, start)
+            if end_idx != -1:
+                end = end_idx
+                break
+        else:
+            end = result.index(";", start)
         parsed = json.loads(result[start:end])
         assert parsed["executive_summary"]["overall_status"] == "CRITICAL"
         assert len(parsed["findings"]) == 5
@@ -322,6 +335,24 @@ class TestScriptInjectionSafety:
         end = result.index("</script>", start)
         payload_area = result[start:end]
         assert "</" not in payload_area
+
+    def test_line_separator_in_data_is_escaped(self) -> None:
+        """U+2028 and U+2029 inside report data must be escaped to \\u2028/\\u2029."""
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.UNKNOWN,
+                scope="test",
+                summary_text="line\u2028sep\u2029end",
+            )
+        )
+        result = render_health_report_html(report)
+        # Raw U+2028 / U+2029 must NOT appear inside the <script> block
+        marker = "const REPORT_DATA = "
+        start = result.index(marker)
+        end = result.index("</script>", start)
+        script_area = result[start:end]
+        assert "\u2028" not in script_area
+        assert "\u2029" not in script_area
 
 
 # ── Empty / minimal report tests ─────────────────────────────────────────────
