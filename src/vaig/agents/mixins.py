@@ -13,8 +13,10 @@ from typing import TYPE_CHECKING, Any, Protocol
 from google.genai import types
 
 from vaig.core.async_utils import to_async
-from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
+from vaig.core.config import DEFAULT_CHARS_PER_TOKEN, DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.core.exceptions import MaxIterationsError
+from vaig.core.prompt_defense import wrap_untrusted_content
+from vaig.session.summarizer import SUMMARIZATION_PROMPT, estimate_history_tokens
 from vaig.tools.base import ToolCallRecord, ToolRegistry, ToolResult
 
 if TYPE_CHECKING:
@@ -97,6 +99,7 @@ class ToolLoopMixin:
         tool_call_store: ToolCallStore | None = None,
         tool_result_cache: ToolResultCache | None = None,
         required_sections: list[str] | None = None,
+        max_history_tokens: int = 28_000,
     ) -> ToolLoopResult:
         """Drive a Gemini tool-use loop until text or max iterations.
 
@@ -311,6 +314,7 @@ class ToolLoopMixin:
                 accumulated_llm_text,
                 agent_name,
             )
+            self._check_and_summarize(history, client, max_history_tokens)
 
         # -- Max iterations exceeded --------------------------------------
         msg = (
@@ -382,6 +386,162 @@ class ToolLoopMixin:
             agent_name, missing_list, iteration, max_iterations,
         )
         return True
+
+    def _check_and_summarize(
+        self,
+        history: list[Any],
+        client: GeminiClientProtocol,
+        max_history_tokens: int,
+    ) -> None:
+        """Summarize history in-place if it exceeds the token budget.
+
+        When the accumulated tool-loop history grows beyond *max_history_tokens*,
+        the oldest portion is condensed into a single ``[CONVERSATION SUMMARY]``
+        ``Content`` item and the most recent third of entries is kept verbatim.
+        The mutation is performed in-place so the caller's ``history`` reference
+        reflects the change immediately.
+
+        Args:
+            history: Mutable list of ``types.Content`` items (modified in-place).
+            client: The ``GeminiClientProtocol`` used for the summarization call.
+            max_history_tokens: Token ceiling before summarization is triggered.
+        """
+        if not history:
+            return
+        current_tokens = estimate_history_tokens(history)
+        if current_tokens <= max_history_tokens:
+            return
+
+        # Keep the last 1/3 of messages to preserve recent context
+        keep_count = max(1, len(history) // 3)
+        to_summarize = history[:-keep_count]
+        to_keep = history[-keep_count:]
+
+        # Build a text representation of the items to summarize
+        parts_text: list[str] = []
+        for item in to_summarize:
+            text = ""
+            if hasattr(item, "parts") and item.parts:
+                text = " ".join(p.text for p in item.parts if getattr(p, "text", None))
+            if text:
+                role = getattr(item, "role", "unknown").upper()
+                parts_text.append(f"[{role}]: {text}")
+        conversation_text = "\n\n".join(parts_text)
+
+        target_tokens = max_history_tokens // 4
+        target_chars = int(target_tokens * DEFAULT_CHARS_PER_TOKEN)
+        prompt = SUMMARIZATION_PROMPT.format(
+            target_tokens=target_tokens,
+            target_chars=target_chars,
+        )
+
+        # History contains untrusted tool outputs (kubectl results, logs, etc.).
+        # Wrap before sending to the LLM to prevent prompt injection attacks.
+        safe_conversation_text = wrap_untrusted_content(conversation_text)
+
+        try:
+            result = client.generate(
+                safe_conversation_text,
+                system_instruction=prompt,
+                temperature=0.3,
+                max_output_tokens=target_tokens,
+            )
+            summary_text = result.text.strip()
+            if not summary_text.startswith("[CONVERSATION SUMMARY]"):
+                summary_text = f"[CONVERSATION SUMMARY]\n{summary_text}"
+        except Exception:  # noqa: BLE001
+            # Broad catch is intentional: summarization failure must NEVER crash
+            # the tool loop. Any exception (network, quota, malformed response)
+            # should fall back gracefully so the agent can continue operating.
+            logger.warning("History summarization failed — keeping truncated history")
+            summary_text = "[CONVERSATION SUMMARY]\nPrevious conversation could not be summarized."
+
+        summary_content = types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=summary_text)],
+        )
+        history.clear()
+        history.append(summary_content)
+        history.extend(to_keep)
+        logger.info(
+            "History summarized: %d tokens → keeping %d items",
+            current_tokens,
+            len(history),
+        )
+
+    async def _async_check_and_summarize(
+        self,
+        history: list[Any],
+        client: GeminiClientProtocol,
+        max_history_tokens: int,
+    ) -> None:
+        """Async variant of :meth:`_check_and_summarize` for use in async tool loops.
+
+        Uses ``client.async_generate()`` to avoid blocking the event loop.
+        See :meth:`_check_and_summarize` for full behaviour documentation.
+        """
+        if not history:
+            return
+        current_tokens = estimate_history_tokens(history)
+        if current_tokens <= max_history_tokens:
+            return
+
+        # Keep the last 1/3 of messages to preserve recent context
+        keep_count = max(1, len(history) // 3)
+        to_summarize = history[:-keep_count]
+        to_keep = history[-keep_count:]
+
+        # Build a text representation of the items to summarize
+        parts_text: list[str] = []
+        for item in to_summarize:
+            text = ""
+            if hasattr(item, "parts") and item.parts:
+                text = " ".join(p.text for p in item.parts if getattr(p, "text", None))
+            if text:
+                role = getattr(item, "role", "unknown").upper()
+                parts_text.append(f"[{role}]: {text}")
+        conversation_text = "\n\n".join(parts_text)
+
+        target_tokens = max_history_tokens // 4
+        target_chars = int(target_tokens * DEFAULT_CHARS_PER_TOKEN)
+        prompt = SUMMARIZATION_PROMPT.format(
+            target_tokens=target_tokens,
+            target_chars=target_chars,
+        )
+
+        # History contains untrusted tool outputs (kubectl results, logs, etc.).
+        # Wrap before sending to the LLM to prevent prompt injection attacks.
+        safe_conversation_text = wrap_untrusted_content(conversation_text)
+
+        try:
+            result = await client.async_generate(
+                safe_conversation_text,
+                system_instruction=prompt,
+                temperature=0.3,
+                max_output_tokens=target_tokens,
+            )
+            summary_text = result.text.strip()
+            if not summary_text.startswith("[CONVERSATION SUMMARY]"):
+                summary_text = f"[CONVERSATION SUMMARY]\n{summary_text}"
+        except Exception:  # noqa: BLE001
+            # Broad catch is intentional: summarization failure must NEVER crash
+            # the tool loop. Any exception (network, quota, malformed response)
+            # should fall back gracefully so the agent can continue operating.
+            logger.warning("History summarization failed — keeping truncated history")
+            summary_text = "[CONVERSATION SUMMARY]\nPrevious conversation could not be summarized."
+
+        summary_content = types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=summary_text)],
+        )
+        history.clear()
+        history.append(summary_content)
+        history.extend(to_keep)
+        logger.info(
+            "History summarized: %d tokens → keeping %d items",
+            current_tokens,
+            len(history),
+        )
 
     # ── Tool execution (overridable) ─────────────────────────
 
@@ -499,6 +659,7 @@ class ToolLoopMixin:
         max_concurrent_tool_calls: int = 5,
         tool_result_cache: ToolResultCache | None = None,
         required_sections: list[str] | None = None,
+        max_history_tokens: int = 28_000,
     ) -> ToolLoopResult:
         """Async version of :meth:`_run_tool_loop`.
 
@@ -833,6 +994,7 @@ class ToolLoopMixin:
                 accumulated_llm_text,
                 agent_name,
             )
+            await self._async_check_and_summarize(history, client, max_history_tokens)
 
         # -- Max iterations exceeded --------------------------------------
         msg = (

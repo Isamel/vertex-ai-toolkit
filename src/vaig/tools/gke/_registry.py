@@ -95,9 +95,9 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
                 ToolParam(
-                    name="output_format",
+                    name="output",
                     type="string",
-                    description="Output format: 'table' (default), 'yaml', 'json', or 'wide'.",
+                    description="Output format: 'table' (default), 'yaml', 'json', 'wide', or 'name'.",
                     required=False,
                 ),
                 ToolParam(
@@ -113,13 +113,13 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
-            execute=lambda resource, name=None, namespace="default", output_format="table",
+            execute=lambda resource, name=None, namespace="default", output="table",
                     label_selector=None, field_selector=None, _cfg=gke_config: kubectl.kubectl_get(
                 resource,
                 gke_config=_cfg,
                 name=name,
                 namespace=namespace,
-                output_format=output_format,
+                output_format=output,
                 label_selector=label_selector,
                 field_selector=field_selector,
             ),

@@ -856,6 +856,9 @@ def _dispatch_format_output(
         console: Rich console for output.
         err_console: Rich console for errors/warnings.
     """
+    if not format_ and not output:
+        return
+
     # Normalize once — handles 'HTML', '  html  ', etc.
     normalised_format = format_.strip().lower() if format_ else None
 
