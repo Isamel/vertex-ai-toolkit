@@ -325,8 +325,9 @@ class TestToHtml:
     def test_does_not_contain_raw_markdown_pre_block(self, sample_payload: ExportPayload) -> None:
         """The old raw-markdown-in-pre approach must no longer be used."""
         html = sample_payload.to_html()
-        # The entire markdown source must NOT appear verbatim inside a <pre>
-        assert "# VAIG Analysis Report" not in html or "<h1>" in html
+        # Markdown heading markers must be rendered into HTML — not appear as raw text
+        assert "<h1>" in html
+        assert "# VAIG Analysis Report" not in html
 
     def test_headings_rendered_as_html_headings(self, sample_payload: ExportPayload) -> None:
         """Markdown headings must be rendered as <h1>, <h2> etc."""
