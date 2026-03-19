@@ -183,3 +183,32 @@ class TestExportHtmlReportOutputPath:
         assert result is True
         html_files = list(tmp_path.glob("vaig-report-*.html"))
         assert len(html_files) == 1, f"Expected one auto-named HTML file, found: {html_files}"
+
+
+# ── _dispatch_format_output — early-exit guard ───────────────────────────────
+
+
+class TestDispatchEarlyExitGuard:
+    """When both format_ and output are None/empty, _dispatch_format_output returns early."""
+
+    def test_no_format_no_output_returns_early(self) -> None:
+        """format_=None and output=None → no export called, function returns immediately."""
+        orch = _make_orch_result(structured_report=MagicMock(), synthesized_output="text")
+        console, err_console = _make_consoles()
+
+        with (
+            patch("vaig.cli.commands.live._export_html_report") as mock_html,
+            patch("vaig.cli.commands.live._handle_export_output") as mock_handle,
+        ):
+            _dispatch_format_output(
+                orch,
+                format_=None,
+                output=None,
+                question="q",
+                model_id="gemini-2.0",
+                skill_name="test-skill",
+                console=console,
+                err_console=err_console,
+            )
+            mock_html.assert_not_called()
+            mock_handle.assert_not_called()
