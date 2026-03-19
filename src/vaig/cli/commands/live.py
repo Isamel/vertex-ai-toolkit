@@ -232,7 +232,15 @@ class AgentProgressDisplay:
     def __init__(self, tool_logger: ToolCallLogger) -> None:
         self._tool_logger = tool_logger
         self._status: Status | None = None
-        self._agent_start_count: int = 0
+        self._current_agent_name: str | None = None
+        # Per-agent tool counts at start time — keyed by agent_name.
+        # Avoids overwriting a single shared counter when parallel gatherers
+        # fire "start" events before any "end" events arrive.
+        self._agent_start_counts: dict[str, int] = {}
+        # Count of agents that have started but not yet ended.
+        # Used to defer tool_logger.reset() until ALL active agents finish,
+        # so parallel gatherers don't clear shared counters mid-run.
+        self._active_agents: int = 0
         self._lock = threading.Lock()
 
     def _stop_current(self) -> None:
@@ -260,7 +268,13 @@ class AgentProgressDisplay:
         """Handle agent start/end events (thread-safe)."""
         with self._lock:
             if event == "start":
-                self._agent_start_count = self._tool_logger.tool_count
+                # Record tool count at this agent's start for accurate per-agent
+                # tool tallies.  Using a dict keyed by agent_name instead of a
+                # single shared counter prevents parallel gatherers from
+                # overwriting each other's baseline before their "end" fires.
+                self._agent_start_counts[agent_name] = self._tool_logger.tool_count
+                self._current_agent_name = agent_name
+                self._active_agents += 1
                 step = agent_index + 1
                 label = (
                     f"[bold cyan]\\[{step}/{total_agents}][/bold cyan] "
@@ -274,9 +288,17 @@ class AgentProgressDisplay:
                 self._status = console.status(label, spinner="dots")
                 self._status.start()
             elif event == "end":
-                self._stop_current()
+                # In parallel execution, "end" events fire in submission order
+                # but the spinner always belongs to the most-recently-started
+                # gatherer (i.e. the one whose "start" ran last).  Only stop
+                # the spinner when this "end" matches the agent that owns it;
+                # otherwise we would kill the wrong gatherer's spinner.
+                if agent_name == self._current_agent_name:
+                    self._stop_current()
+                    self._current_agent_name = None
                 step = agent_index + 1
-                tools = self._tool_logger.tool_count - self._agent_start_count
+                start_count = self._agent_start_counts.pop(agent_name, 0)
+                tools = self._tool_logger.tool_count - start_count
                 breakdown = self._tool_logger.format_tool_counts()
                 tools_detail = f" ({tools} tool{'s' if tools != 1 else ''} called)"
                 breakdown_detail = f" [dim]{breakdown}[/dim]" if breakdown else ""
@@ -285,8 +307,13 @@ class AgentProgressDisplay:
                     f"[green]{agent_name}[/green] — [green]done[/green]"
                     f"{tools_detail}{breakdown_detail}"
                 )
-                # Reset per-agent counters for the next agent
-                self._tool_logger.reset()
+                # Decrement active agent count; reset per-agent counters only
+                # when ALL active agents have finished.  Calling reset() on every
+                # "end" would clear shared tool_name_counts while other parallel
+                # gatherers are still running, corrupting their breakdowns.
+                self._active_agents = max(0, self._active_agents - 1)
+                if self._active_agents == 0:
+                    self._tool_logger.reset()
 
     def stop(self) -> None:
         """Stop the spinner if it's still running (e.g. on error)."""

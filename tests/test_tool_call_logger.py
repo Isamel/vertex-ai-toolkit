@@ -1239,11 +1239,11 @@ class TestAgentProgressDisplay:
         def status_side_effect(label: str, **kwargs: Any) -> MagicMock:
             call_count["n"] += 1
             mock_st = MagicMock()
-            # Simulate Rich raising LiveError if a second live display is started
-            # while the first is still active (i.e. was never stopped).
-            # The fix stops the previous status before calling start() on the new one.
-            # So by the time start() is called here the previous one is already stopped.
-            # We just make a regular mock — no LiveError raised.
+            # Each call to console.status() returns a fresh mock.  Because the
+            # fix stops the previous spinner BEFORE creating a new one, Rich
+            # never sees two live displays at the same time, so no LiveError
+            # is raised here.  This test verifies that the happy path holds
+            # across 4 consecutive "start" events.
             return mock_st
 
         mock_console.status.side_effect = status_side_effect
@@ -1257,26 +1257,32 @@ class TestAgentProgressDisplay:
 
     @patch("vaig.cli.commands.live.console")
     def test_start_stops_previous_even_if_stop_raises(self, mock_console: MagicMock) -> None:
-        """If the previous status.stop() itself raises, the new spinner is still created.
+        """start() swallows exceptions from the previous spinner's stop().
 
-        Handles edge cases where the Rich internal state is already broken —
-        we must swallow the stop() exception and continue.
+        When Rich's internal state is already broken, ``_status.stop()`` can
+        raise (e.g. ``RuntimeError("already stopped")``).  The new spinner
+        must still be created and started — the stop() exception must not
+        propagate to the caller.
         """
         tool_logger = ToolCallLogger()
         display = AgentProgressDisplay(tool_logger)
 
         mock_status_1 = MagicMock()
+        # Simulate a broken Rich state: stopping the first spinner raises.
         mock_status_1.stop.side_effect = RuntimeError("already stopped")
         mock_status_2 = MagicMock()
         mock_console.status.side_effect = [mock_status_1, mock_status_2]
 
         display("gatherer_a", 0, 2, "start")
-        # Second start — stop() on mock_status_1 raises, but the new one should still start
+
+        # Second start — stop() on mock_status_1 raises RuntimeError, but
+        # AgentProgressDisplay must swallow it and still create the new spinner.
+        # If the exception propagated this line would raise.
         display("gatherer_b", 1, 2, "start")
 
-        mock_status_1.stop.assert_called_once()  # attempted
-        mock_status_2.start.assert_called_once()  # still created and started
-        assert display._status is mock_status_2
+        mock_status_1.stop.assert_called_once()  # stop was attempted despite raising
+        mock_status_2.start.assert_called_once()  # new spinner was created and started
+        assert display._status is mock_status_2  # display now tracks the new spinner
 
     @patch("vaig.cli.commands.live.console")
     def test_end_event_after_second_start_cleans_up_correctly(self, mock_console: MagicMock) -> None:
