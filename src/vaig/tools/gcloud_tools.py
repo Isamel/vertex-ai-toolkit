@@ -332,7 +332,7 @@ def gcloud_logging_query(
     if interval_hours > 0:
         cutoff = datetime.now(tz=UTC) - timedelta(hours=interval_hours)
         ts_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
-        filter_expr = f'timestamp>="{ts_str}" AND {filter_expr}'
+        filter_expr = f'timestamp>="{ts_str}" AND ({filter_expr})'
 
     # Clamp limit to reasonable bounds
     if limit < 1:

@@ -173,7 +173,7 @@ class TestGcloudLoggingQueryIntervalHours:
             filter_used = call_kwargs.kwargs.get("filter_")
             # Expected cutoff: 2026-03-19T11:00:00Z  (12:00 - 1h)
             assert filter_used is not None
-            assert filter_used.startswith('timestamp>="2026-03-19T11:00:00Z"')
+            assert filter_used.startswith('timestamp>="2026-03-19T11:00:00Z" AND (')
             assert "severity>=ERROR" in filter_used
 
     def test_half_hour_interval(self) -> None:
@@ -195,7 +195,7 @@ class TestGcloudLoggingQueryIntervalHours:
             call_kwargs = client.list_entries.call_args
             filter_used = call_kwargs.kwargs.get("filter_")
             assert filter_used is not None
-            assert filter_used.startswith('timestamp>="2026-03-19T11:30:00Z"')
+            assert filter_used.startswith('timestamp>="2026-03-19T11:30:00Z" AND (')
             assert "severity>=WARNING" in filter_used
 
     def test_timestamp_format_is_rfc3339(self) -> None:
@@ -218,6 +218,21 @@ class TestGcloudLoggingQueryIntervalHours:
             # Validate RFC3339 format: YYYY-MM-DDTHH:MM:SSZ
             parsed = datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ")
             assert parsed is not None
+
+    def test_negative_interval_does_not_modify_filter(self) -> None:
+        """interval_hours<0 must NOT prepend a timestamp clause (treated as no filter)."""
+        from vaig.tools.gcloud_tools import gcloud_logging_query
+
+        with patch("vaig.tools.gcloud_tools._get_logging_client") as mock_client:
+            client = MagicMock()
+            mock_client.return_value = (client, None)
+            client.list_entries.return_value = []
+
+            gcloud_logging_query("severity>=ERROR", interval_hours=-1.0)
+
+            call_kwargs = client.list_entries.call_args
+            filter_used = call_kwargs.kwargs.get("filter_")
+            assert filter_used == "severity>=ERROR"
 
     def test_interval_hours_param_in_tool_def(self) -> None:
         """The gcloud_logging_query ToolDef must expose interval_hours parameter."""
