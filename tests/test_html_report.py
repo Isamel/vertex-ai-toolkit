@@ -1,9 +1,15 @@
-"""Tests for the HTML report renderer (vaig.ui.html_report)."""
+"""Tests for the HTML report renderer (vaig.ui.html_report).
+
+The renderer now uses a template-based SPA: it loads spa_template.html via
+importlib.resources and injects the serialised HealthReport JSON in place of
+the sentinel placeholder.  Tests reflect that model.
+"""
 
 from __future__ import annotations
 
-import re
-from unittest.mock import patch
+import json
+
+import pytest
 
 from vaig.skills.service_health.schema import (
     ActionUrgency,
@@ -18,7 +24,7 @@ from vaig.skills.service_health.schema import (
     Severity,
     TimelineEvent,
 )
-from vaig.ui.html_report import render_health_report_html
+from vaig.ui.html_report import _SENTINEL, _load_template, render_health_report_html
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -138,10 +144,46 @@ def _make_full_report() -> HealthReport:
             ),
         ],
         timeline=[
-            TimelineEvent(time="5m ago", event="payment-svc pod OOMKilled", severity=Severity.CRITICAL, service="payment-svc"),
-            TimelineEvent(time="10m ago", event="auth-svc pod entered Pending", severity=Severity.HIGH, service="auth-svc"),
+            TimelineEvent(
+                time="5m ago",
+                event="payment-svc pod OOMKilled",
+                severity=Severity.CRITICAL,
+                service="payment-svc",
+            ),
+            TimelineEvent(
+                time="10m ago",
+                event="auth-svc pod entered Pending",
+                severity=Severity.HIGH,
+                service="auth-svc",
+            ),
         ],
     )
+
+
+# ── Template loading tests ────────────────────────────────────────────────────
+
+
+class TestTemplateLoading:
+    """Verify that the template is loaded and cached correctly."""
+
+    def test_load_template_returns_string(self) -> None:
+        template = _load_template()
+        assert isinstance(template, str)
+
+    def test_load_template_not_empty(self) -> None:
+        template = _load_template()
+        assert len(template) > 1000
+
+    def test_load_template_contains_sentinel(self) -> None:
+        """The raw template must contain the sentinel placeholder."""
+        template = _load_template()
+        assert _SENTINEL in template
+
+    def test_load_template_is_cached(self) -> None:
+        """Second call returns the same object (module-level cache)."""
+        t1 = _load_template()
+        t2 = _load_template()
+        assert t1 is t2
 
 
 # ── HTML structure tests ──────────────────────────────────────────────────────
@@ -151,265 +193,177 @@ class TestHtmlStructure:
     """Validate that the output is valid HTML5 with the expected structure."""
 
     def test_starts_with_doctype(self) -> None:
-        html = render_health_report_html(_make_minimal_report())
-        assert html.startswith("<!DOCTYPE html>")
+        result = render_health_report_html(_make_minimal_report())
+        assert result.startswith("<!DOCTYPE html>")
 
     def test_has_html_open_and_close(self) -> None:
-        html = render_health_report_html(_make_minimal_report())
-        assert "<html" in html
-        assert "</html>" in html
+        result = render_health_report_html(_make_minimal_report())
+        assert "<html" in result
+        assert "</html>" in result
 
     def test_has_head_and_body(self) -> None:
-        html = render_health_report_html(_make_minimal_report())
-        assert "<head>" in html
-        assert "</head>" in html
-        assert "<body>" in html
-        assert "</body>" in html
+        result = render_health_report_html(_make_minimal_report())
+        assert "<head>" in result
+        assert "</head>" in result
+        assert "<body>" in result
+        assert "</body>" in result
 
     def test_has_inline_css_style_block(self) -> None:
-        html = render_health_report_html(_make_minimal_report())
-        assert "<style>" in html
-        assert "</style>" in html
+        result = render_health_report_html(_make_minimal_report())
+        assert "<style>" in result
+        assert "</style>" in result
 
     def test_has_charset_meta(self) -> None:
-        html = render_health_report_html(_make_minimal_report())
-        assert 'charset="UTF-8"' in html or "charset=UTF-8" in html
+        result = render_health_report_html(_make_minimal_report())
+        assert "charset" in result.lower()
 
     def test_has_viewport_meta(self) -> None:
-        html = render_health_report_html(_make_minimal_report())
-        assert "viewport" in html
+        result = render_health_report_html(_make_minimal_report())
+        assert "viewport" in result
 
-    def test_title_contains_vaig(self) -> None:
-        html = render_health_report_html(_make_minimal_report())
-        assert "<title>" in html
-        assert "vaig" in html.lower()
+    def test_has_script_block(self) -> None:
+        result = render_health_report_html(_make_minimal_report())
+        assert "<script>" in result
+        assert "</script>" in result
+
+    def test_returns_string_type(self) -> None:
+        result = render_health_report_html(_make_minimal_report())
+        assert isinstance(result, str)
+
+    def test_output_not_empty(self) -> None:
+        result = render_health_report_html(_make_minimal_report())
+        assert len(result) > 500
 
 
-# ── Content tests ─────────────────────────────────────────────────────────────
+# ── JSON injection tests ──────────────────────────────────────────────────────
 
 
-class TestHtmlContent:
-    """Validate that report data appears in the rendered HTML."""
+class TestJsonInjection:
+    """Verify that the sentinel is replaced with the serialised report JSON."""
 
-    def test_executive_summary_text_present(self) -> None:
+    def test_sentinel_not_in_output(self) -> None:
+        result = render_health_report_html(_make_minimal_report())
+        assert _SENTINEL not in result
+
+    def test_output_contains_report_json(self) -> None:
+        """The serialised executive_summary text must appear in the output."""
         report = _make_minimal_report()
-        html = render_health_report_html(report)
-        assert report.executive_summary.summary_text in html
+        result = render_health_report_html(report)
+        assert report.executive_summary.summary_text in result
 
-    def test_executive_summary_scope_present(self) -> None:
+    def test_output_contains_full_report_json(self) -> None:
+        """Full report data — service names and finding titles must be in output."""
+        report = _make_full_report()
+        result = render_health_report_html(report)
+        assert "payment-svc" in result
+        assert "CrashLoopBackOff on payment-svc" in result
+        assert "auth-svc" in result
+
+    def test_injected_json_is_parseable(self) -> None:
+        """The JSON blob injected into the template must be valid JSON."""
         report = _make_minimal_report()
-        html = render_health_report_html(report)
-        assert report.executive_summary.scope in html
+        result = render_health_report_html(report)
+        # Extract the JSON blob: it replaces _SENTINEL (e.g. const REPORT_DATA = <JSON>;)
+        # Find 'const REPORT_DATA = ' and extract until the next ';'
+        marker = "const REPORT_DATA = "
+        start = result.index(marker) + len(marker)
+        end = result.index(";", start)
+        json_blob = result[start:end]
+        parsed = json.loads(json_blob)
+        assert isinstance(parsed, dict)
+        assert "executive_summary" in parsed
 
-    def test_overall_status_present(self) -> None:
-        report = _make_minimal_report()
-        html = render_health_report_html(report)
-        assert report.executive_summary.overall_status.value in html
-
-    def test_service_names_present(self) -> None:
+    def test_injected_json_matches_report(self) -> None:
+        """The injected JSON must round-trip back to the same report structure."""
         report = _make_full_report()
-        html = render_health_report_html(report)
-        assert "payment-svc" in html
-        assert "auth-svc" in html
-        assert "frontend" in html
-
-    def test_finding_titles_present(self) -> None:
-        report = _make_full_report()
-        html = render_health_report_html(report)
-        assert "CrashLoopBackOff on payment-svc" in html
-        assert "auth-svc pod not ready" in html
-
-    def test_recommendation_command_present(self) -> None:
-        report = _make_full_report()
-        html = render_health_report_html(report)
-        assert "kubectl set resources" in html
-
-    def test_timeline_events_present(self) -> None:
-        report = _make_full_report()
-        html = render_health_report_html(report)
-        assert "payment-svc pod OOMKilled" in html
-        assert "auth-svc pod entered Pending" in html
-
-    def test_cluster_metrics_present(self) -> None:
-        report = _make_full_report()
-        html = render_health_report_html(report)
-        assert "5/5 Ready" in html
-        assert "42/45 Running" in html
-
-    def test_generation_timestamp_present(self) -> None:
-        html = render_health_report_html(_make_minimal_report())
-        # Should contain a UTC timestamp like "2026-03-18"
-        assert re.search(r"\d{4}-\d{2}-\d{2}", html) is not None
-
-    def test_vaig_version_present(self) -> None:
-        with patch("vaig.__version__", "1.2.3-test"):
-            html = render_health_report_html(_make_minimal_report())
-        assert "1.2.3-test" in html
+        result = render_health_report_html(report)
+        marker = "const REPORT_DATA = "
+        start = result.index(marker) + len(marker)
+        end = result.index(";", start)
+        parsed = json.loads(result[start:end])
+        assert parsed["executive_summary"]["overall_status"] == "CRITICAL"
+        assert len(parsed["findings"]) == 5
 
 
-# ── Severity badge / colour tests ─────────────────────────────────────────────
+# ── Script injection safety tests ────────────────────────────────────────────
 
 
-class TestSeverityBadges:
-    """Validate that severity levels render with their correct CSS colours."""
+class TestScriptInjectionSafety:
+    """Verify that </script> in report data is safely escaped."""
 
-    SEVERITY_COLOURS = {
-        Severity.CRITICAL: "#E82424",
-        Severity.HIGH: "#FF9E3B",
-        Severity.MEDIUM: "#E6C384",
-        Severity.LOW: "#7FB4CA",
-        Severity.INFO: "#727169",
-    }
-
-    def test_critical_colour_in_css(self) -> None:
-        html = render_health_report_html(_make_full_report())
-        assert self.SEVERITY_COLOURS[Severity.CRITICAL] in html
-
-    def test_high_colour_in_css(self) -> None:
-        html = render_health_report_html(_make_full_report())
-        assert self.SEVERITY_COLOURS[Severity.HIGH] in html
-
-    def test_medium_colour_in_css(self) -> None:
-        html = render_health_report_html(_make_full_report())
-        assert self.SEVERITY_COLOURS[Severity.MEDIUM] in html
-
-    def test_low_colour_in_css(self) -> None:
-        html = render_health_report_html(_make_full_report())
-        assert self.SEVERITY_COLOURS[Severity.LOW] in html
-
-    def test_info_colour_in_css(self) -> None:
-        html = render_health_report_html(_make_full_report())
-        assert self.SEVERITY_COLOURS[Severity.INFO] in html
-
-    def test_all_severity_values_rendered_in_findings(self) -> None:
-        report = _make_full_report()
-        html = render_health_report_html(report)
-        for severity in [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]:
-            assert severity.value in html, f"Severity {severity.value} not found in HTML"
-
-    def test_kanagawa_bg_colour(self) -> None:
-        """Verify the Kanagawa dark background colour is present."""
-        html = render_health_report_html(_make_minimal_report())
-        assert "#1F1F28" in html
-
-
-# ── Overall status colour tests ───────────────────────────────────────────────
-
-
-class TestStatusColours:
-    """Validate that OverallStatus values render with correct accent colours."""
-
-    def test_critical_status_colour(self) -> None:
-        report = HealthReport(
-            executive_summary=_make_executive_summary(status=OverallStatus.CRITICAL)
-        )
-        html = render_health_report_html(report)
-        assert "#E82424" in html  # CRITICAL → red
-
-    def test_healthy_status_colour(self) -> None:
-        report = HealthReport(
-            executive_summary=_make_executive_summary(status=OverallStatus.HEALTHY)
-        )
-        html = render_health_report_html(report)
-        assert "#98BB6C" in html  # HEALTHY → green
-
-    def test_degraded_status_colour(self) -> None:
-        report = HealthReport(
-            executive_summary=_make_executive_summary(status=OverallStatus.DEGRADED)
-        )
-        html = render_health_report_html(report)
-        assert "#E6C384" in html  # DEGRADED → yellow
-
-
-# ── Edge case tests ───────────────────────────────────────────────────────────
-
-
-class TestEdgeCases:
-    """Edge cases: empty collections, HTML escaping, single-field reports."""
-
-    def test_empty_findings_shows_no_issues_message(self) -> None:
-        report = HealthReport(
-            executive_summary=_make_executive_summary(status=OverallStatus.HEALTHY, issues=0, critical=0, warnings=0),
-            findings=[],
-        )
-        html = render_health_report_html(report)
-        assert "No issues found" in html
-
-    def test_empty_recommendations_section_omitted(self) -> None:
-        report = HealthReport(
-            executive_summary=_make_executive_summary(),
-            recommendations=[],
-        )
-        html = render_health_report_html(report)
-        # Action Plan card should not be present if no recommendations
-        assert "<h2>Action Plan</h2>" not in html
-
-    def test_empty_service_statuses_section_omitted(self) -> None:
-        report = HealthReport(
-            executive_summary=_make_executive_summary(),
-            service_statuses=[],
-        )
-        html = render_health_report_html(report)
-        assert "Service Status" not in html
-
-    def test_empty_cluster_overview_section_omitted(self) -> None:
-        report = HealthReport(
-            executive_summary=_make_executive_summary(),
-            cluster_overview=[],
-        )
-        html = render_health_report_html(report)
-        assert "Cluster Overview" not in html
-
-    def test_empty_timeline_section_omitted(self) -> None:
-        report = HealthReport(
-            executive_summary=_make_executive_summary(),
-            timeline=[],
-        )
-        html = render_health_report_html(report)
-        assert "<h2>Timeline</h2>" not in html
-
-    def test_html_special_chars_escaped_in_summary(self) -> None:
-        """<, > and & in user data must be HTML-escaped to prevent injection."""
+    def test_closing_script_tag_in_data_is_escaped(self) -> None:
+        """</script> inside report data MUST be escaped to <\\/script>."""
         report = HealthReport(
             executive_summary=ExecutiveSummary(
                 overall_status=OverallStatus.UNKNOWN,
-                scope="Resource: deploy/<my-app> & others",
-                summary_text="Status: <unknown> & critical",
+                scope="test",
+                summary_text="Injected </script><script>alert(1)</script>",
             )
         )
-        html = render_health_report_html(report)
-        # Raw < and > should NOT appear in the report body (other than HTML tags)
-        assert "&lt;my-app&gt;" in html
-        assert "&lt;unknown&gt;" in html
-        assert "&amp;" in html
+        result = render_health_report_html(report)
+        # The raw </script> must NOT appear as-is in the inline script block
+        # (it would prematurely close the <script> tag)
+        # The escaped form <\/ must be present instead
+        assert "<\\/script>" in result
 
-    def test_returns_string_type(self) -> None:
-        html = render_health_report_html(_make_minimal_report())
-        assert isinstance(html, str)
-
-    def test_output_not_empty(self) -> None:
-        html = render_health_report_html(_make_minimal_report())
-        assert len(html) > 500
-
-    def test_finding_with_no_optional_fields(self) -> None:
-        """Finding with only required fields should render without error."""
+    def test_closing_slash_sequence_escaped(self) -> None:
+        """Every </ in serialised JSON becomes <\\/ in the output."""
         report = HealthReport(
-            executive_summary=_make_executive_summary(),
-            findings=[
-                Finding(id="bare-finding", title="Bare finding", severity=Severity.INFO)
-            ],
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.UNKNOWN,
+                scope="<br/>",  # has </
+                summary_text="safe",
+            )
         )
-        html = render_health_report_html(report)
-        assert "Bare finding" in html
+        result = render_health_report_html(report)
+        # Find the JSON payload area — the </ from scope must be escaped
+        marker = "const REPORT_DATA = "
+        start = result.index(marker)
+        end = result.index("</script>", start)
+        payload_area = result[start:end]
+        assert "</" not in payload_area
 
-    def test_recommendation_with_no_command(self) -> None:
-        """Recommendation without command should render without terminal block."""
+
+# ── Empty / minimal report tests ─────────────────────────────────────────────
+
+
+class TestEmptyReport:
+    """Verify that a minimal or near-empty report renders without errors."""
+
+    def test_minimal_report_renders(self) -> None:
+        result = render_health_report_html(_make_minimal_report())
+        assert result.startswith("<!DOCTYPE html>")
+
+    def test_all_optional_fields_empty_renders(self) -> None:
         report = HealthReport(
-            executive_summary=_make_executive_summary(),
-            recommendations=[
-                RecommendedAction(priority=1, title="Check logs", command="")
-            ],
+            executive_summary=_make_executive_summary(
+                status=OverallStatus.HEALTHY,
+                issues=0,
+                critical=0,
+                warnings=0,
+            ),
+            findings=[],
+            recommendations=[],
+            service_statuses=[],
+            cluster_overview=[],
+            timeline=[],
         )
-        html = render_health_report_html(report)
-        assert "Check logs" in html
-        assert '<div class="terminal-block">' not in html
+        result = render_health_report_html(report)
+        assert "<!DOCTYPE html>" in result
+        assert "</html>" in result
+
+    def test_empty_report_json_present_in_output(self) -> None:
+        """Even a minimal report must inject JSON (not leave the sentinel)."""
+        report = _make_minimal_report()
+        result = render_health_report_html(report)
+        assert _SENTINEL not in result
+        assert "executive_summary" in result
+
+    @pytest.mark.parametrize(
+        "status",
+        [OverallStatus.HEALTHY, OverallStatus.DEGRADED, OverallStatus.CRITICAL, OverallStatus.UNKNOWN],
+    )
+    def test_all_overall_statuses_render(self, status: OverallStatus) -> None:
+        report = HealthReport(executive_summary=_make_executive_summary(status=status))
+        result = render_health_report_html(report)
+        assert status.value in result
