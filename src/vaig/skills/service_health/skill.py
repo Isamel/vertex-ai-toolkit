@@ -217,6 +217,7 @@ class ServiceHealthSkill(BaseSkill):
                 "system_instruction": HEALTH_REPORTER_PROMPT,
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,  # Slightly higher for natural writing
+                "max_output_tokens": 65536,  # Prevent truncation on complex cluster reports
                 "response_schema": HealthReport,
                 "response_mime_type": "application/json",
             },
@@ -319,6 +320,7 @@ class ServiceHealthSkill(BaseSkill):
                 "system_instruction": HEALTH_REPORTER_PROMPT,
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,
+                "max_output_tokens": 65536,  # Prevent truncation on complex cluster reports
                 "response_schema": HealthReport,
                 "response_mime_type": "application/json",
             },

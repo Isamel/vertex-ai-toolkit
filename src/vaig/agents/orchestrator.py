@@ -1090,35 +1090,14 @@ class Orchestrator:
                                     agent.name,
                                 )
 
-                    # Retain the parsed structured report (if any)
-                    # before post-processing converts it to Markdown.
-                    # The CLI uses this for --summary and Rich rendering.
-                    if (
-                        schema_cls is not None
-                        and hasattr(schema_cls, "model_validate_json")
-                        and result.structured_report is None
-                    ):
-                        try:
-                            result.structured_report = schema_cls.model_validate_json(
-                                agent_result.content,
-                            )
-                        except Exception:
-                            pass  # best-effort
-
-                    # Post-process structured output (e.g. JSON → Markdown)
-                    agent_result.content = skill.post_process_report(
-                        agent_result.content,
-                    )
-
+                    # ── Check finish_reason BEFORE post-processing ──────
+                    # If the LLM truncated mid-JSON (MAX_TOKENS), retry
+                    # while raw JSON is still intact.  post_process_report
+                    # would destroy the raw content, making the retry
+                    # useless (can't repair what isn't there).
                     finish_reason = agent_result.metadata.get("finish_reason", "")
-                    md_issues = self._validate_reporter_output(agent_result.content)
-
-                    if finish_reason == "MAX_TOKENS" or md_issues:
-                        reasons: list[str] = []
-                        if finish_reason == "MAX_TOKENS":
-                            reasons.append("finish_reason=MAX_TOKENS")
-                        if md_issues:
-                            reasons.extend(md_issues)
+                    if finish_reason == "MAX_TOKENS":
+                        reasons: list[str] = ["finish_reason=MAX_TOKENS"]
                         logger.warning(
                             "Reporter output has %d issue(s): %s — retrying once",
                             len(reasons),
@@ -1158,7 +1137,6 @@ class Orchestrator:
                                 f"during reporter retry (actual: ${run_cost_usd:.4f})"
                             )
                             return result
-                        result.agent_results[-1] = reporter_retry
 
                         if not reporter_retry.success:
                             result.success = False
@@ -1172,6 +1150,90 @@ class Orchestrator:
                             "Reporter %s retry succeeded — tokens=%s",
                             agent.name,
                             reporter_retry.usage.get("total_tokens", "?"),
+                        )
+                        # Use retry result for subsequent post-processing
+                        agent_result = reporter_retry
+                        result.agent_results[-1] = agent_result
+
+                    # Retain the parsed structured report (if any)
+                    # before post-processing converts it to Markdown.
+                    # The CLI uses this for --summary and Rich rendering.
+                    if (
+                        schema_cls is not None
+                        and hasattr(schema_cls, "model_validate_json")
+                        and result.structured_report is None
+                    ):
+                        try:
+                            result.structured_report = schema_cls.model_validate_json(
+                                agent_result.content,
+                            )
+                        except Exception:
+                            pass  # best-effort
+
+                    # Post-process structured output (e.g. JSON → Markdown)
+                    agent_result.content = skill.post_process_report(
+                        agent_result.content,
+                    )
+
+                    # ── Check for Markdown issues AFTER post-processing ──
+                    # (finish_reason=MAX_TOKENS was already handled above)
+                    md_issues = self._validate_reporter_output(agent_result.content)
+
+                    if md_issues:
+                        reasons_md: list[str] = list(md_issues)
+                        logger.warning(
+                            "Reporter output has %d issue(s): %s — retrying once",
+                            len(reasons_md),
+                            "; ".join(reasons_md),
+                        )
+
+                        reporter_retry_prompt = (
+                            "Your previous report had formatting issues "
+                            f"({'; '.join(reasons_md)}). "
+                            "Regenerate the report more concisely:\n"
+                            "- Focus on CONFIRMED and HIGH severity findings only\n"
+                            "- Close ALL table rows with a trailing |\n"
+                            "- Close ALL code blocks with ```\n"
+                            "- Keep total output under 12 000 tokens\n\n"
+                            f"## Previous Analysis\n\n{current_context}"
+                        )
+                        agent.reset()
+                        kw_rr_md: dict[str, Any] = {"context": ""}
+                        if isinstance(agent, ToolAwareAgent):
+                            if on_tool_call is not None:
+                                kw_rr_md["on_tool_call"] = on_tool_call
+                            if tool_call_store is not None:
+                                kw_rr_md["tool_call_store"] = tool_call_store
+                            kw_rr_md["tool_result_cache"] = tool_result_cache
+                        reporter_retry_md = agent.execute(
+                            reporter_retry_prompt,
+                            **kw_rr_md,
+                        )
+                        _accumulate_usage(result, reporter_retry_md)
+                        run_cost_usd += _compute_step_cost(reporter_retry_md, agent.model)
+                        result.run_cost_usd = run_cost_usd
+                        if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                            result.success = False
+                            result.budget_exceeded = True
+                            result.synthesized_output = (
+                                f"[WARNING] Cost budget ${max_cost_per_run:.4f} exceeded "
+                                f"during reporter retry (actual: ${run_cost_usd:.4f})"
+                            )
+                            return result
+                        result.agent_results[-1] = reporter_retry_md
+
+                        if not reporter_retry_md.success:
+                            result.success = False
+                            logger.warning(
+                                "Reporter %s retry also failed: %s",
+                                agent.name,
+                                reporter_retry_md.content,
+                            )
+                            break
+                        logger.info(
+                            "Reporter %s retry succeeded — tokens=%s",
+                            agent.name,
+                            reporter_retry_md.usage.get("total_tokens", "?"),
                         )
 
             if result.agent_results:
@@ -1989,35 +2051,14 @@ class Orchestrator:
                                     agent.name,
                                 )
 
-                    # Retain the parsed structured report (if any)
-                    # before post-processing converts it to Markdown.
-                    # The CLI uses this for --summary and Rich rendering.
-                    if (
-                        schema_cls is not None
-                        and hasattr(schema_cls, "model_validate_json")
-                        and result.structured_report is None
-                    ):
-                        try:
-                            result.structured_report = schema_cls.model_validate_json(
-                                agent_result.content,
-                            )
-                        except Exception:
-                            pass  # best-effort
-
-                    # Post-process structured output (e.g. JSON → Markdown)
-                    agent_result.content = skill.post_process_report(
-                        agent_result.content,
-                    )
-
+                    # ── Check finish_reason BEFORE post-processing (async) ──────
+                    # If the LLM truncated mid-JSON (MAX_TOKENS), retry
+                    # while raw JSON is still intact.  post_process_report
+                    # would destroy the raw content, making the retry
+                    # useless (can't repair what isn't there).
                     finish_reason = agent_result.metadata.get("finish_reason", "")
-                    md_issues = self._validate_reporter_output(agent_result.content)
-
-                    if finish_reason == "MAX_TOKENS" or md_issues:
-                        reasons: list[str] = []
-                        if finish_reason == "MAX_TOKENS":
-                            reasons.append("finish_reason=MAX_TOKENS")
-                        if md_issues:
-                            reasons.extend(md_issues)
+                    if finish_reason == "MAX_TOKENS":
+                        reasons: list[str] = ["finish_reason=MAX_TOKENS"]
                         logger.warning(
                             "Reporter output has %d issue(s): %s — retrying once",
                             len(reasons),
@@ -2058,7 +2099,6 @@ class Orchestrator:
                                 f"during reporter retry (actual: ${run_cost_usd:.4f})"
                             )
                             return result
-                        result.agent_results[-1] = reporter_retry
 
                         if not reporter_retry.success:
                             result.success = False
@@ -2072,6 +2112,91 @@ class Orchestrator:
                             "Reporter %s retry succeeded — tokens=%s",
                             agent.name,
                             reporter_retry.usage.get("total_tokens", "?"),
+                        )
+                        # Use retry result for subsequent post-processing
+                        agent_result = reporter_retry
+                        result.agent_results[-1] = agent_result
+
+                    # Retain the parsed structured report (if any)
+                    # before post-processing converts it to Markdown.
+                    # The CLI uses this for --summary and Rich rendering.
+                    if (
+                        schema_cls is not None
+                        and hasattr(schema_cls, "model_validate_json")
+                        and result.structured_report is None
+                    ):
+                        try:
+                            result.structured_report = schema_cls.model_validate_json(
+                                agent_result.content,
+                            )
+                        except Exception:
+                            pass  # best-effort
+
+                    # Post-process structured output (e.g. JSON → Markdown)
+                    agent_result.content = skill.post_process_report(
+                        agent_result.content,
+                    )
+
+                    # ── Check for Markdown issues AFTER post-processing (async) ──
+                    # (finish_reason=MAX_TOKENS was already handled above)
+                    md_issues = self._validate_reporter_output(agent_result.content)
+
+                    if md_issues:
+                        reasons_md: list[str] = list(md_issues)
+                        logger.warning(
+                            "Reporter output has %d issue(s): %s — retrying once",
+                            len(reasons_md),
+                            "; ".join(reasons_md),
+                        )
+
+                        reporter_retry_prompt_md = (
+                            "Your previous report had formatting issues "
+                            f"({'; '.join(reasons_md)}). "
+                            "Regenerate the report more concisely:\n"
+                            "- Focus on CONFIRMED and HIGH severity findings only\n"
+                            "- Close ALL table rows with a trailing |\n"
+                            "- Close ALL code blocks with ```\n"
+                            "- Keep total output under 12 000 tokens\n\n"
+                            f"## Previous Analysis\n\n{current_context}"
+                        )
+                        agent.reset()
+                        kw_rr_md: dict[str, Any] = {"context": ""}
+                        if isinstance(agent, ToolAwareAgent):
+                            if on_tool_call is not None:
+                                kw_rr_md["on_tool_call"] = on_tool_call
+                            if tool_call_store is not None:
+                                kw_rr_md["tool_call_store"] = tool_call_store
+                            kw_rr_md["tool_result_cache"] = tool_result_cache
+                        reporter_retry_md = await asyncio.to_thread(
+                            agent.execute,
+                            reporter_retry_prompt_md,
+                            **kw_rr_md,
+                        )
+                        _accumulate_usage(result, reporter_retry_md)
+                        run_cost_usd += _compute_step_cost(reporter_retry_md, agent.model)
+                        result.run_cost_usd = run_cost_usd
+                        if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                            result.success = False
+                            result.budget_exceeded = True
+                            result.synthesized_output = (
+                                f"[WARNING] Cost budget ${max_cost_per_run:.4f} exceeded "
+                                f"during reporter retry (actual: ${run_cost_usd:.4f})"
+                            )
+                            return result
+                        result.agent_results[-1] = reporter_retry_md
+
+                        if not reporter_retry_md.success:
+                            result.success = False
+                            logger.warning(
+                                "Reporter %s retry also failed: %s",
+                                agent.name,
+                                reporter_retry_md.content,
+                            )
+                            break
+                        logger.info(
+                            "Reporter %s retry succeeded — tokens=%s",
+                            agent.name,
+                            reporter_retry_md.usage.get("total_tokens", "?"),
                         )
 
             if result.agent_results:
