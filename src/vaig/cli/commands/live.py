@@ -1299,7 +1299,14 @@ def _show_orchestrated_summary(orch_result: OrchestratorResult, *, model_id: str
     # and fall back to recalculation only when it is zero/unavailable.
     _raw_cost = getattr(orch_result, "run_cost_usd", None)
     run_cost = _raw_cost if isinstance(_raw_cost, (int, float)) else 0.0
-    effective_model = _format_models_used(getattr(orch_result, "models_used", [])) or model_id
+    models_used_list: list[str] = getattr(orch_result, "models_used", [])
+    # Display label (may be a formatted string like "gemini-2.5-flash ×7")
+    effective_model = _format_models_used(models_used_list) or model_id
+    # Raw model ID for pricing lookups — must not be a formatted display string.
+    # Use the single unique model when all agents share one model, else fall back
+    # to the caller-supplied model_id.
+    unique_models = list(dict.fromkeys(models_used_list))  # deduplicate, preserve order
+    pricing_model_id = unique_models[0] if len(unique_models) == 1 else model_id
     if run_cost > 0.0:
         from vaig.core.pricing import format_cost
 
@@ -1323,8 +1330,9 @@ def _show_orchestrated_summary(orch_result: OrchestratorResult, *, model_id: str
             model_label = f" ({effective_model})" if effective_model else ""
             console.print(f"[dim]📊 Cost: {cost_str}{model_label}[/dim]")
     else:
-        # No pre-computed cost — fall back to recalculation via show_cost_line
-        _show_cost_line(orch_result.total_usage or None, effective_model or model_id)
+        # No pre-computed cost — fall back to recalculation via show_cost_line.
+        # Pass the raw model ID (pricing_model_id), not the formatted display string.
+        _show_cost_line(orch_result.total_usage or None, pricing_model_id or model_id)
 
     if not orch_result.success:
         err_console.print("[bold red]⚠ Pipeline completed with errors[/bold red]")
