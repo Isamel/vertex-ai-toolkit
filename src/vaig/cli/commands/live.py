@@ -966,7 +966,14 @@ def _inject_report_metadata(
                     setattr(metadata, attr, value)
 
     if _is_empty(getattr(metadata, "model_used", None)) and model_id:
-        metadata.model_used = model_id
+        # Prefer the actual models from orch_result over the caller-supplied model_id
+        # (which may be settings.models.default and not the model agents actually used).
+        if orch_result is not None:
+            actual_models = getattr(orch_result, "models_used", [])
+            effective_model = _format_models_used(actual_models) or model_id
+        else:
+            effective_model = model_id
+        metadata.model_used = effective_model
 
     # ── Cost metrics ──────────────────────────────────────────
     if orch_result is not None and getattr(metadata, "cost_metrics", None) is None:
@@ -1251,6 +1258,24 @@ def _execute_orchestrated_skill(
         raise typer.Exit(1)  # noqa: B904
 
 
+def _format_models_used(models_used: list[str]) -> str:
+    """Format a list of model IDs for display.
+
+    Returns a compact human-readable string:
+    - Single unique model → returned as-is (e.g. ``"gemini-2.5-flash"``).
+    - All agents use the same model → ``"gemini-2.5-flash ×7"``.
+    - Multiple distinct models → comma-separated list.
+    - Empty list → empty string.
+    """
+    if not models_used:
+        return ""
+    counts = Counter(models_used)
+    if len(counts) == 1:
+        model, n = next(iter(counts.items()))
+        return f"{model} ×{n}" if n > 1 else model
+    return ", ".join(sorted(counts))
+
+
 def _show_orchestrated_summary(orch_result: OrchestratorResult, *, model_id: str = "") -> None:
     """Display a summary table for an orchestrated skill execution."""
     table = Table(title="Pipeline Summary", show_lines=True)
@@ -1265,8 +1290,37 @@ def _show_orchestrated_summary(orch_result: OrchestratorResult, *, model_id: str
 
     console.print(table)
 
-    # Show cost summary for the full pipeline
-    _show_cost_line(orch_result.total_usage or None, model_id)
+    # Show cost summary for the full pipeline.
+    # Prefer the pre-accumulated run_cost_usd (correct per-agent model pricing)
+    # and fall back to recalculation only when it is zero/unavailable.
+    _raw_cost = getattr(orch_result, "run_cost_usd", None)
+    run_cost = _raw_cost if isinstance(_raw_cost, (int, float)) else 0.0
+    effective_model = _format_models_used(getattr(orch_result, "models_used", [])) or model_id
+    if run_cost > 0.0:
+        from vaig.core.pricing import format_cost
+
+        usage = orch_result.total_usage or {}
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        thinking_tokens = usage.get("thinking_tokens", 0)
+        total_tokens = usage.get("total_tokens", 0)
+        if total_tokens > 0 or prompt_tokens > 0 or completion_tokens > 0:
+            parts = [f"{prompt_tokens:,} in", f"{completion_tokens:,} out"]
+            if thinking_tokens:
+                parts.append(f"{thinking_tokens:,} thinking")
+            cost_str = format_cost(run_cost)
+            model_label = f" ({effective_model})" if effective_model else ""
+            console.print(
+                f"[dim]📊 Tokens: {' / '.join(parts)} "
+                f"({total_tokens:,} total) │ Cost: {cost_str}{model_label}[/dim]"
+            )
+        else:
+            cost_str = format_cost(run_cost)
+            model_label = f" ({effective_model})" if effective_model else ""
+            console.print(f"[dim]📊 Cost: {cost_str}{model_label}[/dim]")
+    else:
+        # No pre-computed cost — fall back to recalculation via show_cost_line
+        _show_cost_line(orch_result.total_usage or None, effective_model or model_id)
 
     if not orch_result.success:
         err_console.print("[bold red]⚠ Pipeline completed with errors[/bold red]")

@@ -121,6 +121,13 @@ class OrchestratorResult:
     ``settings.budget.max_cost_per_run``.  Always ``False`` when the per-run
     budget is disabled (``max_cost_per_run == 0.0``).
     """
+    models_used: list[str] = field(default_factory=list)
+    """Model IDs of all agents that participated in this pipeline run.
+
+    Populated once at pipeline start from ``agent.model`` for each agent in
+    the execution list.  Empty when the pipeline was not invoked via
+    :meth:`execute_with_tools` / :meth:`async_execute_with_tools`.
+    """
 
     def to_skill_result(self) -> SkillResult:
         """Convert to a SkillResult for the skill system."""
@@ -661,6 +668,7 @@ class Orchestrator:
             skill_name=skill.get_metadata().name,
             phase=SkillPhase.EXECUTE,
         )
+        result.models_used = [a.model for a in agents]
 
         known_strategies = {"sequential", "fanout", "single", "parallel_sequential"}
         if strategy not in known_strategies:
@@ -1630,6 +1638,7 @@ class Orchestrator:
             skill_name=skill.get_metadata().name,
             phase=SkillPhase.EXECUTE,
         )
+        result.models_used = [a.model for a in agents]
 
         known_strategies = {"sequential", "fanout", "single", "parallel_sequential"}
         if strategy not in known_strategies:
