@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
@@ -310,6 +310,7 @@ def gcloud_logging_query(
     project: str = "",
     limit: int = 100,
     order_by: str = "timestamp desc",
+    interval_hours: float = 0.0,
     credentials: Credentials | None = None,
 ) -> ToolResult:
     """Query Cloud Logging entries using a filter expression.
@@ -318,8 +319,8 @@ def gcloud_logging_query(
     and payload content.
     """
     logger.debug(
-        "gcloud_logging_query: filter=%r project=%s limit=%d order_by=%s",
-        filter_expr, project, limit, order_by,
+        "gcloud_logging_query: filter=%r project=%s limit=%d order_by=%s interval_hours=%s",
+        filter_expr, project, limit, order_by, interval_hours,
     )
 
     if not filter_expr.strip():
@@ -327,6 +328,11 @@ def gcloud_logging_query(
             output="Filter expression cannot be empty. Example: 'resource.type=\"k8s_container\" severity>=ERROR'",
             error=True,
         )
+
+    if interval_hours > 0:
+        cutoff = datetime.now(tz=UTC) - timedelta(hours=interval_hours)
+        ts_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+        filter_expr = f'timestamp>="{ts_str}" AND ({filter_expr})'
 
     # Clamp limit to reasonable bounds
     if limit < 1:
@@ -592,12 +598,21 @@ def create_gcloud_tools(
                     description="Sort order: 'timestamp desc' (newest first, default) or 'timestamp asc'.",
                     required=False,
                 ),
+                ToolParam(
+                    name="interval_hours",
+                    type="number",
+                    description="Time window in hours for log entries (e.g. 1.0 = last hour, 0.5 = last 30 min). Default 0 = no time filter.",
+                    required=False,
+                ),
             ],
-            execute=lambda filter_expr, project="", limit=0, order_by="timestamp desc", _dp=project, _dl=log_limit, _dc=credentials: gcloud_logging_query(
+            execute=lambda filter_expr, project="", limit=0, order_by="timestamp desc",
+                    interval_hours=0.0,
+                    _dp=project, _dl=log_limit, _dc=credentials: gcloud_logging_query(
                 filter_expr,
                 project=project or _dp,
                 limit=limit or _dl,
                 order_by=order_by,
+                interval_hours=interval_hours,
                 credentials=_dc,
             ),
         ),
