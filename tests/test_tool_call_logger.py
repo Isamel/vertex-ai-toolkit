@@ -336,6 +336,36 @@ class TestToolCallLogger:
         assert logger.tool_count == 2
         assert logger.total_duration == pytest.approx(1.0)
 
+    def test_pipeline_tool_name_counts_accumulates_across_resets(self) -> None:
+        """pipeline_tool_name_counts accumulates per-tool counts across multiple reset() calls."""
+        logger = ToolCallLogger()
+        # First agent: 2× tool_a, 1× tool_b
+        logger("tool_a", {}, 1.0, True)
+        logger("tool_a", {}, 0.8, True)
+        logger("tool_b", {}, 0.5, True)
+        logger.reset()
+        # Second agent: 1× tool_a, 1× tool_c
+        logger("tool_a", {}, 0.6, True)
+        logger("tool_c", {}, 0.4, True)
+        logger.reset()
+        # Pipeline totals must span both agents
+        assert logger.pipeline_tool_name_counts["tool_a"] == 3
+        assert logger.pipeline_tool_name_counts["tool_b"] == 1
+        assert logger.pipeline_tool_name_counts["tool_c"] == 1
+
+    def test_reset_clears_tool_name_counts_but_preserves_pipeline_counts(self) -> None:
+        """reset() clears tool_name_counts (per-agent) but preserves pipeline_tool_name_counts."""
+        logger = ToolCallLogger()
+        logger("kubectl_get", {}, 1.0, True)
+        logger("get_events", {}, 0.5, True)
+        assert len(logger.tool_name_counts) == 2  # pre-reset: populated
+
+        logger.reset()
+
+        assert len(logger.tool_name_counts) == 0  # cleared
+        assert logger.pipeline_tool_name_counts["kubectl_get"] == 1  # preserved
+        assert logger.pipeline_tool_name_counts["get_events"] == 1  # preserved
+
     @patch("vaig.cli.commands.live.console")
     def test_cached_call_shows_cached_tag(self, mock_console: MagicMock) -> None:
         """Cached tool calls display [cached] tag in output."""

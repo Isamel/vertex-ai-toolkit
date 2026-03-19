@@ -112,6 +112,7 @@ class ToolCallLogger:
         self._error_reasons: list[str] = []
         self._pipeline_start: float = time.perf_counter()
         self.tool_name_counts: Counter[str] = Counter()
+        self.pipeline_tool_name_counts: Counter[str] = Counter()
         self.cache_hits: int = 0
 
     @staticmethod
@@ -178,6 +179,7 @@ class ToolCallLogger:
 
     def reset(self) -> None:
         """Reset per-agent counters while keeping pipeline-level totals."""
+        self.pipeline_tool_name_counts.update(self.tool_name_counts)
         self.tool_name_counts.clear()
         self.cache_hits = 0
 
@@ -999,7 +1001,9 @@ def _inject_report_metadata(
     if tool_logger is not None and getattr(metadata, "tool_usage", None) is None:
         from vaig.skills.service_health.schema import ToolUsageSummary  # noqa: WPS433
 
-        tool_counts = dict(getattr(tool_logger, "tool_name_counts", {})) or None
+        pipeline_counts = dict(getattr(tool_logger, "pipeline_tool_name_counts", {}))
+        live_counts = dict(getattr(tool_logger, "tool_name_counts", {}))
+        tool_counts = (pipeline_counts or live_counts) or None
         tool_calls = getattr(tool_logger, "tool_count", None)
         if tool_calls == 0:
             tool_calls = None
@@ -1686,6 +1690,7 @@ async def _async_execute_orchestrated_skill(
             err_console=err_console,
             gke_config=gke_config,
             open_browser=open_browser,
+            tool_logger=tool_logger,
         )
 
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
