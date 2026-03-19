@@ -1125,16 +1125,31 @@ class Orchestrator:
                             "; ".join(reasons),
                         )
 
-                        reporter_retry_prompt = (
-                            "Your previous report had formatting issues "
-                            f"({'; '.join(reasons)}). "
-                            "Regenerate the report more concisely:\n"
-                            "- Focus on CONFIRMED and HIGH severity findings only\n"
-                            "- Close ALL table rows with a trailing |\n"
-                            "- Close ALL code blocks with ```\n"
-                            "- Keep total output under 12 000 tokens\n\n"
-                            f"## Previous Analysis\n\n{current_context}"
+                        uses_structured_output = (
+                            schema_cls is not None
+                            and isinstance(schema_cls, type)
+                            and hasattr(schema_cls, "model_validate_json")
                         )
+                        if uses_structured_output:
+                            reporter_retry_prompt = (
+                                "Your previous JSON response was truncated (hit token limit). "
+                                "Regenerate the response as valid, complete JSON:\n"
+                                "- Focus on CONFIRMED and HIGH severity findings only\n"
+                                "- Reduce detail in descriptions to stay within token limits\n"
+                                "- Ensure the JSON is complete and valid\n\n"
+                                f"## Previous Analysis\n\n{current_context}"
+                            )
+                        else:
+                            reporter_retry_prompt = (
+                                "Your previous report had formatting issues "
+                                f"({'; '.join(reasons)}). "
+                                "Regenerate the report more concisely:\n"
+                                "- Focus on CONFIRMED and HIGH severity findings only\n"
+                                "- Close ALL table rows with a trailing |\n"
+                                "- Close ALL code blocks with ```\n"
+                                "- Keep total output under 12 000 tokens\n\n"
+                                f"## Previous Analysis\n\n{current_context}"
+                            )
                         agent.reset()
                         kw_rr: dict[str, Any] = {"context": ""}
                         if isinstance(agent, ToolAwareAgent):
@@ -1173,6 +1188,24 @@ class Orchestrator:
                             agent.name,
                             reporter_retry.usage.get("total_tokens", "?"),
                         )
+                        # Re-run post-processing on retry result so callers
+                        # always receive the processed (e.g. Markdown) form.
+                        if hasattr(skill, "post_process_report") and callable(
+                            skill.post_process_report
+                        ):
+                            reporter_retry.content = skill.post_process_report(
+                                reporter_retry.content
+                            )
+                            result.agent_results[-1] = reporter_retry
+                        if schema_cls is not None and hasattr(
+                            schema_cls, "model_validate_json"
+                        ):
+                            try:
+                                result.structured_report = (
+                                    schema_cls.model_validate_json(reporter_retry.content)
+                                )
+                            except Exception:
+                                pass  # best-effort
 
             if result.agent_results:
                 result.synthesized_output = result.agent_results[-1].content
@@ -2024,16 +2057,31 @@ class Orchestrator:
                             "; ".join(reasons),
                         )
 
-                        reporter_retry_prompt = (
-                            "Your previous report had formatting issues "
-                            f"({'; '.join(reasons)}). "
-                            "Regenerate the report more concisely:\n"
-                            "- Focus on CONFIRMED and HIGH severity findings only\n"
-                            "- Close ALL table rows with a trailing |\n"
-                            "- Close ALL code blocks with ```\n"
-                            "- Keep total output under 12 000 tokens\n\n"
-                            f"## Previous Analysis\n\n{current_context}"
+                        uses_structured_output = (
+                            schema_cls is not None
+                            and isinstance(schema_cls, type)
+                            and hasattr(schema_cls, "model_validate_json")
                         )
+                        if uses_structured_output:
+                            reporter_retry_prompt = (
+                                "Your previous JSON response was truncated (hit token limit). "
+                                "Regenerate the response as valid, complete JSON:\n"
+                                "- Focus on CONFIRMED and HIGH severity findings only\n"
+                                "- Reduce detail in descriptions to stay within token limits\n"
+                                "- Ensure the JSON is complete and valid\n\n"
+                                f"## Previous Analysis\n\n{current_context}"
+                            )
+                        else:
+                            reporter_retry_prompt = (
+                                "Your previous report had formatting issues "
+                                f"({'; '.join(reasons)}). "
+                                "Regenerate the report more concisely:\n"
+                                "- Focus on CONFIRMED and HIGH severity findings only\n"
+                                "- Close ALL table rows with a trailing |\n"
+                                "- Close ALL code blocks with ```\n"
+                                "- Keep total output under 12 000 tokens\n\n"
+                                f"## Previous Analysis\n\n{current_context}"
+                            )
                         agent.reset()
                         kw_rr: dict[str, Any] = {"context": ""}
                         if isinstance(agent, ToolAwareAgent):
@@ -2073,6 +2121,24 @@ class Orchestrator:
                             agent.name,
                             reporter_retry.usage.get("total_tokens", "?"),
                         )
+                        # Re-run post-processing on retry result so callers
+                        # always receive the processed (e.g. Markdown) form.
+                        if hasattr(skill, "post_process_report") and callable(
+                            skill.post_process_report
+                        ):
+                            reporter_retry.content = skill.post_process_report(
+                                reporter_retry.content
+                            )
+                            result.agent_results[-1] = reporter_retry
+                        if schema_cls is not None and hasattr(
+                            schema_cls, "model_validate_json"
+                        ):
+                            try:
+                                result.structured_report = (
+                                    schema_cls.model_validate_json(reporter_retry.content)
+                                )
+                            except Exception:
+                                pass  # best-effort
 
             if result.agent_results:
                 result.synthesized_output = result.agent_results[-1].content
