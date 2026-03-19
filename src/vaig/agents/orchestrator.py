@@ -2810,8 +2810,10 @@ class Orchestrator:
             Returns ``""`` if the header is not found.
         """
         # Match optional markdown heading markers, then the section name
+        # NOTE: keep #{1,6} as a plain string concat — ruff reformats to #{1, 6}
+        # inside rf-strings which turns it into f-string interpolation of a set.
         pattern = re.compile(
-            rf"^(?:#{1, 6}\s+)?{re.escape(section_name)}\s*$",
+            r"^(?:#{1,6}\s+)?" + rf"{re.escape(section_name)}\s*$",  # noqa: E231
             re.IGNORECASE | re.MULTILINE,
         )
         match = pattern.search(output)
