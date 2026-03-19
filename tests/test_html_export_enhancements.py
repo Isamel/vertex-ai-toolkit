@@ -193,6 +193,8 @@ class TestExportHtmlReportOpenBrowser:
         written = console.print.call_args_list
         # Check that the success message was printed (temp path contains "tmp" or is absolute)
         assert written  # at least one print happened
+        assert len(captured_paths) == 1
+        assert str(captured_paths[0]).endswith(".html")
 
     def test_open_browser_tempfile_path_is_temporary(self, tmp_path: Path) -> None:
         """When output=None and open_browser=True, the generated path is in the temp dir."""

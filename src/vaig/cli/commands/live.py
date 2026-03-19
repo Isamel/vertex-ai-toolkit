@@ -896,7 +896,7 @@ def _export_html_report(
             f"[bold green]✓ HTML report written:[/bold green] [cyan]{out_path.resolve()}[/cyan]"
         )
         if open_browser:
-            file_url = f"file://{out_path.resolve()}"
+            file_url = out_path.resolve().as_uri()
             try:
                 opened = webbrowser.open(file_url)
                 if not opened:
@@ -1026,17 +1026,26 @@ def _dispatch_format_output(
                     border_style="red",
                 )
             )
-            # Fall back to basic HTML export so the user still gets HTML output
+            # Fall back to basic HTML export so the user still gets HTML output.
+            # When --open is requested and no explicit output path was given, write
+            # to a temp file so the browser has a path to open (otherwise the
+            # content would be printed to stdout and there'd be nothing to open).
+            effective_output = output
+            if open_browser and output is None:
+                with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp:
+                    effective_output = Path(tmp.name)
             _handle_export_output(
                 response_text=orch_result.synthesized_output or "",
                 question=question,
                 model_id=model_id,
                 skill_name=skill_name,
                 format_="html",  # basic HTML via ExportPayload.to_html() since structured report unavailable
-                output=output,
+                output=effective_output,
                 tokens=orch_result.total_usage or None,
                 cost=_compute_cost_str(orch_result.total_usage, model_id),
             )
+            if open_browser and effective_output is not None:
+                _open_html_in_browser(effective_output, console)
     else:
         _handle_export_output(
             response_text=orch_result.synthesized_output or "",
@@ -1219,7 +1228,7 @@ def _open_html_in_browser(html_path: Path, console: Any) -> None:
         html_path: Absolute or resolvable path to the HTML file to open.
         console: Rich ``Console`` instance for user-facing messages.
     """
-    file_url = f"file://{html_path.resolve()}"
+    file_url = html_path.resolve().as_uri()
     console.print(
         f"[bold green]✓ Report written:[/bold green] [cyan]{html_path.resolve()}[/cyan]"
     )
