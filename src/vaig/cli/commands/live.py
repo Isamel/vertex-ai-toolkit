@@ -1031,7 +1031,7 @@ def _inject_report_metadata(
             from vaig.skills.service_health.schema import ClusterMetric  # noqa: PLC0415
 
             already_has_ns = any(
-                "namespace" in row.metric.lower() for row in report.cluster_overview
+                row.metric.lower() == "namespace" for row in report.cluster_overview
             )
             if not already_has_ns:
                 report.cluster_overview.insert(
