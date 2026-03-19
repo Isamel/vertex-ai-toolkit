@@ -416,6 +416,33 @@
     display: flex; align-items: center; gap: 8px;
   }
   .urgency-header:first-child { margin-top: 0; }
+
+  /* ── Cost & Usage ─────────────────────────────────────────── */
+  .cost-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .cost-card {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 20px;
+    display: flex; flex-direction: column; gap: 4px;
+    border-left: 3px solid var(--info);
+  }
+  .cost-card-label { font-size: 11px; color: var(--text-dim); letter-spacing: .5px; text-transform: uppercase; }
+  .cost-card-value { font-size: 26px; font-weight: 800; color: var(--info); line-height: 1.1; font-family: var(--font-mono); }
+  .cost-card-sub { font-size: 12px; color: var(--text-dim); }
+
+  /* ── Tool Usage ────────────────────────────────────────────── */
+  .tool-usage-section { margin-top: 8px; }
+  .tool-bar-container { display: flex; flex-direction: column; gap: 8px; }
+  .tool-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 14px; background: var(--bg-surface);
+    border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  .tool-name { font-size: 13px; font-family: var(--font-mono); color: var(--text-bright); min-width: 200px; flex-shrink: 0; }
+  .tool-bar-track { flex: 1; height: 8px; background: var(--bg-muted); border-radius: 4px; overflow: hidden; }
+  .tool-bar-fill { height: 100%; background: var(--info); border-radius: 4px; transition: width 0.4s ease; }
+  .tool-count { font-size: 12px; font-weight: 700; color: var(--info); font-family: var(--font-mono); min-width: 28px; text-align: right; flex-shrink: 0; }
+  .tool-steps-note { margin-top: 10px; font-size: 12px; color: var(--text-dim); }
+  .tool-steps-note strong { color: var(--text-main); }
 </style>
 </head>
 <body>
@@ -465,6 +492,12 @@ const REPORT_DATA = /*{{REPORT_DATA_JSON}}*/null;
     <a class="nav-item" href="#section-recommendations" onclick="setActiveNav(this)">
       <span class="nav-icon">✅</span> Actions
       <span class="nav-count" id="nav-recs-count"></span>
+    </a>
+    <a class="nav-item" href="#section-cost" onclick="setActiveNav(this)" id="nav-cost-item" style="display:none">
+      <span class="nav-icon">💰</span> Cost & Usage
+    </a>
+    <a class="nav-item" href="#section-tools" onclick="setActiveNav(this)" id="nav-tools-item" style="display:none">
+      <span class="nav-icon">🛠</span> Tool Usage
     </a>
 
     <div class="nav-divider"></div>
@@ -534,6 +567,26 @@ const REPORT_DATA = /*{{REPORT_DATA_JSON}}*/null;
     <section id="section-recommendations">
       <h2><span class="section-icon">✅</span> Recommended Actions</h2>
       <div id="recs-list"></div>
+    </section>
+
+    <!-- Cost & Usage -->
+    <section id="section-cost" style="display:none">
+      <h2><span class="section-icon">💰</span> Cost &amp; Usage</h2>
+      <div class="cost-grid" id="cost-grid"></div>
+    </section>
+
+    <!-- Tool Usage -->
+    <section id="section-tools" style="display:none">
+      <h2>
+        <span class="section-icon">🛠</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Tool Usage</span>
+      </h2>
+      <div class="section-content">
+        <div class="tool-usage-section">
+          <div class="tool-bar-container" id="tool-bar-container"></div>
+          <div class="tool-steps-note" id="tool-steps-note"></div>
+        </div>
+      </div>
     </section>
 
   </main>
@@ -783,6 +836,70 @@ function renderRecs() {
   document.getElementById('recs-list').innerHTML = html;
 }
 
+// ── Cost & Usage ──────────────────────────────────────────────────
+function renderCostUsage() {
+  const cost = REPORT_DATA.metadata && REPORT_DATA.metadata.cost_metrics;
+  if (!cost || (cost.run_cost_usd == null && cost.total_tokens == null)) return;
+
+  const section = document.getElementById('section-cost');
+  const navItem = document.getElementById('nav-cost-item');
+  if (section) section.style.display = '';
+  if (navItem) navItem.style.display = '';
+
+  const cards = [];
+  if (cost.run_cost_usd != null) {
+    cards.push({
+      label: 'Estimated Cost',
+      value: '$' + Number(cost.run_cost_usd).toFixed(6),
+      sub: 'USD this run',
+    });
+  }
+  if (cost.total_tokens != null) {
+    cards.push({
+      label: 'Total Tokens',
+      value: Number(cost.total_tokens).toLocaleString(),
+      sub: 'tokens consumed',
+    });
+  }
+
+  document.getElementById('cost-grid').innerHTML = cards.map(c =>
+    `<div class="cost-card">
+      <div class="cost-card-label">${esc(c.label)}</div>
+      <div class="cost-card-value">${esc(c.value)}</div>
+      <div class="cost-card-sub">${esc(c.sub)}</div>
+    </div>`
+  ).join('');
+}
+
+// ── Tool Usage ────────────────────────────────────────────────────
+function renderToolUsage() {
+  const tools = REPORT_DATA.metadata && REPORT_DATA.metadata.tool_usage;
+  if (!tools || (!tools.tool_counts && tools.agent_steps == null)) return;
+
+  const section = document.getElementById('section-tools');
+  const navItem = document.getElementById('nav-tools-item');
+  if (section) section.style.display = '';
+  if (navItem) navItem.style.display = '';
+
+  const counts = tools.tool_counts || {};
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const maxVal = entries.length ? entries[0][1] : 1;
+
+  document.getElementById('tool-bar-container').innerHTML = entries.map(([name, count]) => {
+    const pct = maxVal > 0 ? Math.round((count / maxVal) * 100) : 0;
+    return `<div class="tool-row">
+      <div class="tool-name">${esc(name)}</div>
+      <div class="tool-bar-track"><div class="tool-bar-fill" style="width:${pct}%"></div></div>
+      <div class="tool-count">${esc(count)}</div>
+    </div>`;
+  }).join('');
+
+  if (tools.agent_steps != null) {
+    document.getElementById('tool-steps-note').innerHTML =
+      `<strong>Total agent steps:</strong> ${esc(tools.agent_steps)}`;
+  }
+}
+
 // ── Copy command ──────────────────────────────────────────────────
 function copyCmd(btn, priority) {
   const rec = REPORT_DATA.recommendations.find(r => r.priority === priority);
@@ -868,6 +985,8 @@ document.getElementById('main-content').addEventListener('scroll', updateActiveN
   renderRootCause();
   renderTimeline();
   renderRecs();
+  renderCostUsage();
+  renderToolUsage();
   document.title = `Health Report — ${REPORT_DATA.metadata.cluster_name} — ${REPORT_DATA.executive_summary.overall_status}`;
 })();
 </script>

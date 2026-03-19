@@ -917,7 +917,14 @@ def _export_html_report(
         return False
 
 
-def _inject_report_metadata(report: Any, *, gke_config: Any = None, model_id: str = "") -> None:
+def _inject_report_metadata(
+    report: Any,
+    *,
+    gke_config: Any = None,
+    model_id: str = "",
+    orch_result: Any = None,
+    tool_logger: Any = None,
+) -> None:
     """Fill empty or placeholder metadata fields in *report* from runtime context.
 
     Only writes to a field when the current value is ``None``, empty string, or
@@ -932,6 +939,12 @@ def _inject_report_metadata(report: Any, *, gke_config: Any = None, model_id: st
             to fill the corresponding metadata slots.
         model_id: The model identifier used for the run.  Fills
             ``metadata.model_used`` when the field is empty.
+        orch_result: Optional :class:`~vaig.agents.orchestrator.OrchestratorResult`.
+            When provided, ``run_cost_usd`` and ``total_usage`` are extracted to
+            populate ``metadata.cost_metrics``.
+        tool_logger: Optional :class:`ToolCallLogger`.  When provided, its
+            ``tool_name_counts`` and ``tool_count`` are used to populate
+            ``metadata.tool_usage``.
     """
     metadata = getattr(report, "metadata", None)
     if metadata is None:
@@ -955,6 +968,37 @@ def _inject_report_metadata(report: Any, *, gke_config: Any = None, model_id: st
     if _is_empty(getattr(metadata, "model_used", None)) and model_id:
         metadata.model_used = model_id
 
+    # ── Cost metrics ──────────────────────────────────────────
+    if orch_result is not None and metadata.cost_metrics is None:
+        from vaig.skills.service_health.schema import CostMetrics  # noqa: WPS433
+
+        run_cost = getattr(orch_result, "run_cost_usd", None)
+        total_usage = getattr(orch_result, "total_usage", None)
+        total_tokens: int | None = None
+        if isinstance(total_usage, dict):
+            total_tokens = sum(total_usage.values()) or None
+
+        if run_cost is not None or total_tokens is not None:
+            metadata.cost_metrics = CostMetrics(
+                run_cost_usd=run_cost,
+                total_tokens=total_tokens,
+            )
+
+    # ── Tool usage ────────────────────────────────────────────
+    if tool_logger is not None and metadata.tool_usage is None:
+        from vaig.skills.service_health.schema import ToolUsageSummary  # noqa: WPS433
+
+        tool_counts = dict(getattr(tool_logger, "tool_name_counts", {})) or None
+        agent_steps = getattr(tool_logger, "tool_count", None)
+        if agent_steps == 0:
+            agent_steps = None
+
+        if tool_counts is not None or agent_steps is not None:
+            metadata.tool_usage = ToolUsageSummary(
+                tool_counts=tool_counts,
+                agent_steps=agent_steps,
+            )
+
 
 def _dispatch_format_output(
     orch_result: Any,
@@ -968,6 +1012,7 @@ def _dispatch_format_output(
     err_console: Any,
     gke_config: Any = None,
     open_browser: bool = False,
+    tool_logger: Any = None,
 ) -> None:
     """Dispatch output based on *format_* for an orchestrated skill result.
 
@@ -996,6 +1041,9 @@ def _dispatch_format_output(
             cluster / project metadata into the report before HTML rendering.
         open_browser: When True (and ``format_`` is ``"html"``), open the
             generated file in the default browser.
+        tool_logger: Optional :class:`ToolCallLogger`.  When provided, its
+            ``tool_name_counts`` and ``tool_count`` are injected into
+            ``metadata.tool_usage`` before HTML rendering.
     """
     if not format_ and not output:
         return
@@ -1010,6 +1058,8 @@ def _dispatch_format_output(
                 orch_result.structured_report,
                 gke_config=gke_config,
                 model_id=model_id,
+                orch_result=orch_result,
+                tool_logger=tool_logger,
             )
             _export_html_report(
                 orch_result.structured_report,
@@ -1179,6 +1229,7 @@ def _execute_orchestrated_skill(
             err_console=err_console,
             gke_config=gke_config,
             open_browser=open_browser,
+            tool_logger=tool_logger,
         )
 
         # Show agent pipeline summary (includes cost line)
