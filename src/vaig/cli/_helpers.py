@@ -339,8 +339,17 @@ def _handle_export_output(
     When --output is set (with or without --format), writes to file.
     When --format is set without --output, prints formatted content to stdout.
     When neither is set, does nothing (display already handled by caller).
+
+    ``--format rich`` is a special passthrough: it means "use the default Rich
+    terminal display" (which the caller already rendered), so no file export is
+    performed.  This allows users to explicitly request Rich output without
+    triggering a ValueError from the export formatter.
     """
     if not format_ and not output:
+        return
+
+    # "rich" means terminal display only — already rendered by the caller.
+    if format_ and format_.strip().lower() == "rich":
         return
 
     if format_:

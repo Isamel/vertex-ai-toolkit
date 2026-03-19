@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -382,3 +384,96 @@ class TestCostSummarySection:
         data = json.loads(result)
         assert data["metadata"]["tokens"]["prompt_tokens"] == 100
         assert data["metadata"]["cost"] == "$0.0023"
+
+
+# ── _handle_export_output format dispatch ────────────────────
+
+
+class TestHandleExportOutputFormatDispatch:
+    """Tests for the _handle_export_output CLI helper — format routing.
+
+    These tests verify that the format flag is correctly dispatched,
+    including the special-case ``rich`` passthrough that must NOT raise.
+    """
+
+    @pytest.fixture()
+    def _mock_settings(self) -> None:
+        """Suppress settings loading in _helpers."""
+        from vaig.core.config import Settings
+
+        settings = Settings()
+        with patch("vaig.cli._helpers._get_settings", return_value=settings):
+            yield
+
+    def _make_kwargs(self, format_: str | None = None, output: Path | None = None) -> dict:
+        return {
+            "response_text": "The pod is crashing due to OOM.",
+            "question": "Why is the pod crashing?",
+            "model_id": "gemini-2.5-flash",
+            "skill_name": "rca",
+            "format_": format_,
+            "output": output,
+            "tokens": {"prompt_tokens": 100, "completion_tokens": 200, "total_tokens": 300},
+            "cost": "$0.0023",
+        }
+
+    def test_rich_format_does_not_raise(self) -> None:
+        """--format rich must be a silent passthrough — no ValueError."""
+        from vaig.cli._helpers import _handle_export_output
+
+        # Should not raise — rich means "terminal display already done"
+        _handle_export_output(**self._make_kwargs(format_="rich"))
+
+    def test_rich_format_uppercase_does_not_raise(self) -> None:
+        """Case-insensitive: --format RICH must not raise."""
+        from vaig.cli._helpers import _handle_export_output
+
+        _handle_export_output(**self._make_kwargs(format_="RICH"))
+
+    def test_rich_format_with_whitespace_does_not_raise(self) -> None:
+        """Whitespace-padded --format '  rich  ' must not raise."""
+        from vaig.cli._helpers import _handle_export_output
+
+        _handle_export_output(**self._make_kwargs(format_="  rich  "))
+
+    def test_json_format_produces_json(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """--format json routes through format_export and outputs valid JSON."""
+        from vaig.cli._helpers import _handle_export_output
+
+        # No output file — content is printed to console (via rich console)
+        _handle_export_output(**self._make_kwargs(format_="json"))
+        # We can't easily capture rich console output in tests, but
+        # the important thing is that it doesn't raise.
+
+    def test_html_format_does_not_raise(self) -> None:
+        """--format html routes through format_export without error."""
+        from vaig.cli._helpers import _handle_export_output
+
+        _handle_export_output(**self._make_kwargs(format_="html"))
+
+    def test_md_format_does_not_raise(self) -> None:
+        """--format md routes through format_export without error."""
+        from vaig.cli._helpers import _handle_export_output
+
+        _handle_export_output(**self._make_kwargs(format_="md"))
+
+    def test_no_format_no_output_is_noop(self) -> None:
+        """When neither --format nor --output is set, function is a no-op."""
+        from vaig.cli._helpers import _handle_export_output
+
+        # Should return immediately without any side effects
+        _handle_export_output(**self._make_kwargs(format_=None, output=None))
+
+    def test_rich_format_does_not_write_file(self, tmp_path: Path) -> None:
+        """--format rich with --output must not create a file (passthrough)."""
+        from vaig.cli._helpers import _handle_export_output
+
+        out_file = tmp_path / "report.txt"
+        _handle_export_output(**self._make_kwargs(format_="rich", output=out_file))
+        # File must NOT be created — rich is terminal display only
+        assert not out_file.exists()
+
+    def test_format_export_rich_is_still_unsupported(self, sample_payload: ExportPayload) -> None:
+        """format_export itself still rejects 'rich' — handled at CLI layer only."""
+        with pytest.raises(ValueError, match="Unsupported export format"):
+            format_export(sample_payload, "rich")

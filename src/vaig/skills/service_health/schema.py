@@ -15,13 +15,17 @@ which is required for Gemini's ``response_schema`` compatibility.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+logger = logging.getLogger(__name__)
 
 # ── Text-normalisation regexes (for smart timeline collapse) ──
 
@@ -145,6 +149,58 @@ CONTENT_TYPE_FENCE_MAP: dict[ContentType, str] = {
 }
 
 
+# ── Enum coercion factory ─────────────────────────────────────
+
+
+def _make_enum_coercer(enum_class: type, default_value: object) -> Callable[[object], object]:
+    """Return a Pydantic v2 field-validator-compatible coercion function.
+
+    Produces a classmethod that:
+    * Returns the value unchanged when it is already an instance of
+      *enum_class*.
+    * Tries ``enum_class(str(v).lower())`` for string values, falling
+      back to *default_value* on ``ValueError``.
+
+    Usage inside a Pydantic model::
+
+        @field_validator("my_field", mode="before")
+        @classmethod
+        def coerce_my_field(cls, v):
+            return _make_enum_coercer(MyEnum, MyEnum.DEFAULT)(v)
+
+    Or via direct assignment (bypasses the decorator boilerplate entirely)::
+
+        _coerce_severity = field_validator("severity", mode="before")(
+            classmethod(_make_enum_coercer(Severity, Severity.INFO))
+        )
+
+    Args:
+        enum_class: The ``StrEnum`` (or any ``Enum``) subclass.
+        default_value: Value returned when *v* cannot be coerced.
+
+    Returns:
+        A coercion callable ``(v: object) -> object``.
+    """
+    def _coerce(v: object) -> object:
+        if isinstance(v, enum_class):
+            return v
+        if isinstance(v, str):
+            # Try the value as-is first, then uppercase and lowercase variants
+            for candidate in (v, v.upper(), v.lower()):
+                try:
+                    return enum_class(candidate)
+                except ValueError:
+                    pass
+            logger.debug(
+                "Unknown %s value %r — coercing to %r",
+                enum_class.__name__, v, default_value,
+            )
+            return default_value
+        return v
+
+    return _coerce
+
+
 # ── Smart timeline collapse helpers ──────────────────────────
 
 
@@ -243,7 +299,22 @@ def _collapse_repeated_events(events: list[TimelineEvent]) -> list[_CollapsedEve
 class ExecutiveSummary(BaseModel):
     """Executive summary section of the health report."""
 
+    model_config = ConfigDict(extra="ignore")
+
     overall_status: OverallStatus
+
+    @field_validator("overall_status", mode="before")
+    @classmethod
+    def coerce_overall_status(cls, v: object) -> object:
+        if isinstance(v, str):
+            upper = v.upper()
+            try:
+                return OverallStatus(upper)
+            except ValueError:
+                logger.debug("Unknown overall_status %r — coercing to UNKNOWN", v)
+                return OverallStatus.UNKNOWN
+        return v
+
     scope: str = Field(
         description=(
             "Blast radius: 'Cluster-wide', 'Namespace: <name>', "
@@ -260,6 +331,8 @@ class ExecutiveSummary(BaseModel):
 class ClusterMetric(BaseModel):
     """A single row in the Cluster Overview table."""
 
+    model_config = ConfigDict(extra="ignore")
+
     metric: str
     value: str
 
@@ -267,9 +340,24 @@ class ClusterMetric(BaseModel):
 class ServiceStatus(BaseModel):
     """A single row in the Service Status table."""
 
+    model_config = ConfigDict(extra="ignore")
+
     service: str
     namespace: str = ""
     status: ServiceHealthStatus = ServiceHealthStatus.UNKNOWN
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def coerce_service_health_status(cls, v: object) -> object:
+        if isinstance(v, str):
+            upper = v.upper()
+            try:
+                return ServiceHealthStatus(upper)
+            except ValueError:
+                logger.debug("Unknown service health status %r — coercing to UNKNOWN", v)
+                return ServiceHealthStatus.UNKNOWN
+        return v
+
     pods_ready: str = Field(default="N/A", description="e.g. '3/3'")
     restarts_1h: str = Field(default="N/A", description="Restart count in last hour")
     cpu_usage: str = Field(default="N/A")
@@ -280,15 +368,29 @@ class ServiceStatus(BaseModel):
 class Finding(BaseModel):
     """An individual health finding (issue or observation)."""
 
+    model_config = ConfigDict(extra="ignore")
+
     id: str = Field(description="Slug identifier, e.g. 'crashloop-payment-svc'")
     title: str
     severity: Severity
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def coerce_severity(cls, v: object) -> object:
+        return _make_enum_coercer(Severity, Severity.INFO)(v)
+
     category: str = Field(default="", description="e.g. 'pod-health', 'scaling', 'networking'")
     service: str = Field(default="")
     description: str = Field(default="", description="What is happening")
     root_cause: str = Field(default="", description="The causal mechanism")
     evidence: list[str] = Field(default_factory=list)
     confidence: Confidence = Confidence.MEDIUM
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def coerce_confidence(cls, v: object) -> object:
+        return _make_enum_coercer(Confidence, Confidence.MEDIUM)(v)
+
     impact: str = Field(default="")
     affected_resources: list[str] = Field(default_factory=list)
     remediation: str | None = None
@@ -297,24 +399,42 @@ class Finding(BaseModel):
 class DowngradedFinding(BaseModel):
     """A finding that was downgraded during the verification pass."""
 
+    model_config = ConfigDict(extra="ignore")
+
     title: str
     original_confidence: Confidence = Confidence.MEDIUM
     final_confidence: Confidence = Confidence.LOW
+
+    @field_validator("original_confidence", "final_confidence", mode="before")
+    @classmethod
+    def coerce_downgraded_confidence(cls, v: object) -> object:
+        return _make_enum_coercer(Confidence, Confidence.MEDIUM)(v)
+
     reason: str = ""
 
 
 class RootCauseHypothesis(BaseModel):
     """A root-cause hypothesis for a critical/high/medium finding."""
 
+    model_config = ConfigDict(extra="ignore")
+
     finding_title: str
     mechanism: str = Field(description="Chain of events that produced the issue")
     confidence: Confidence = Confidence.MEDIUM
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def coerce_confidence(cls, v: object) -> object:
+        return _make_enum_coercer(Confidence, Confidence.MEDIUM)(v)
+
     supporting_evidence: list[str] = Field(default_factory=list)
     what_would_confirm: str = Field(default="N/A")
 
 
 class EvidenceDetail(BaseModel):
     """Structured evidence detail with optional YAML/code blocks."""
+
+    model_config = ConfigDict(extra="ignore")
 
     title: str
     description: str = ""
@@ -325,15 +445,34 @@ class EvidenceDetail(BaseModel):
         description="Content type for syntax-highlighted code fences",
     )
 
+    @field_validator("content_type", mode="before")
+    @classmethod
+    def coerce_content_type(cls, v: object) -> object:
+        return _make_enum_coercer(ContentType, ContentType.TEXT)(v)
+
 
 class RecommendedAction(BaseModel):
     """A recommended remediation action."""
+
+    model_config = ConfigDict(extra="ignore")
 
     priority: int = Field(ge=1, description="1 = highest priority")
     title: str
     description: str = ""
     urgency: ActionUrgency = ActionUrgency.SHORT_TERM
+
+    @field_validator("urgency", mode="before")
+    @classmethod
+    def coerce_urgency(cls, v: object) -> object:
+        return _make_enum_coercer(ActionUrgency, ActionUrgency.SHORT_TERM)(v)
+
     effort: Effort = Effort.MEDIUM
+
+    @field_validator("effort", mode="before")
+    @classmethod
+    def coerce_effort(cls, v: object) -> object:
+        return _make_enum_coercer(Effort, Effort.MEDIUM)(v)
+
     command: str = Field(default="", description="Exact kubectl / gcloud command")
     why: str = Field(default="")
     risk: str = Field(default="")
@@ -346,6 +485,8 @@ class RecommendedAction(BaseModel):
 class ManualInvestigation(BaseModel):
     """A finding that could not be automatically verified."""
 
+    model_config = ConfigDict(extra="ignore")
+
     finding_title: str
     reason: str = Field(default="", description="What tool call failed")
     investigation_steps: str = Field(default="", description="Manual steps to verify")
@@ -354,9 +495,17 @@ class ManualInvestigation(BaseModel):
 class TimelineEvent(BaseModel):
     """A single event in the chronological timeline."""
 
+    model_config = ConfigDict(extra="ignore")
+
     time: str = Field(description="Timestamp — relative ('7m ago') or absolute ISO 8601")
     event: str
     severity: Severity = Severity.INFO
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def coerce_severity(cls, v: object) -> object:
+        return _make_enum_coercer(Severity, Severity.INFO)(v)
+
     service: str = Field(
         default="",
         description="Service or component name, e.g. 'payment-svc', 'node/gke-pool-1'",
@@ -365,6 +514,8 @@ class TimelineEvent(BaseModel):
 
 class ReportMetadata(BaseModel):
     """Metadata about how and when the report was generated."""
+
+    model_config = ConfigDict(extra="ignore")
 
     generated_at: str = Field(default="", description="ISO 8601 timestamp")
     cluster_name: str = Field(default="")
@@ -383,6 +534,8 @@ class HealthReport(BaseModel):
     prompt (``HEALTH_REPORTER_PROMPT``).  Every section in the prompt
     maps to a field here.
     """
+
+    model_config = ConfigDict(extra="ignore")
 
     executive_summary: ExecutiveSummary
     cluster_overview: list[ClusterMetric] = Field(default_factory=list)
