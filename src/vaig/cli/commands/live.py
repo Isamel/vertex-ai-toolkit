@@ -946,15 +946,11 @@ def _inject_report_metadata(report: Any, *, gke_config: Any = None, model_id: st
         return False
 
     if gke_config is not None:
-        if _is_empty(getattr(metadata, "cluster_name", None)):
-            cluster = getattr(gke_config, "cluster_name", None)
-            if cluster:
-                metadata.cluster_name = cluster
-
-        if _is_empty(getattr(metadata, "project_id", None)):
-            project = getattr(gke_config, "project_id", None)
-            if project:
-                metadata.project_id = project
+        for attr in ["cluster_name", "project_id"]:
+            if _is_empty(getattr(metadata, attr, None)):
+                value = getattr(gke_config, attr, None)
+                if value:
+                    setattr(metadata, attr, value)
 
     if _is_empty(getattr(metadata, "model_used", None)) and model_id:
         metadata.model_used = model_id
@@ -1212,6 +1208,35 @@ def _show_orchestrated_summary(orch_result: OrchestratorResult, *, model_id: str
         err_console.print("[bold red]⚠ Pipeline completed with errors[/bold red]")
 
 
+def _open_html_in_browser(html_path: Path, console: Any) -> None:
+    """Open *html_path* in the system default browser.
+
+    Creates no temporary files — the caller is responsible for providing a
+    valid path.  Handles browser-open failures gracefully by printing an
+    actionable message instead of raising.
+
+    Args:
+        html_path: Absolute or resolvable path to the HTML file to open.
+        console: Rich ``Console`` instance for user-facing messages.
+    """
+    file_url = f"file://{html_path.resolve()}"
+    console.print(
+        f"[bold green]✓ Report written:[/bold green] [cyan]{html_path.resolve()}[/cyan]"
+    )
+    try:
+        opened = webbrowser.open(file_url)
+        if not opened:
+            console.print(
+                f"[yellow]⚠ Could not open browser automatically. "
+                f"Open manually:[/yellow] [cyan]{file_url}[/cyan]"
+            )
+    except Exception as browser_exc:  # noqa: BLE001
+        console.print(
+            f"[yellow]⚠ Browser open failed ({browser_exc}). "
+            f"Open manually:[/yellow] [cyan]{file_url}[/cyan]"
+        )
+
+
 def _execute_live_mode(
     client: GeminiClientProtocol,
     gke_config: GKEConfig,
@@ -1307,19 +1332,7 @@ def _execute_live_mode(
         if open_browser and format_ and format_.strip().lower() == "html":
             open_target = effective_output or output
             if open_target is not None:
-                file_url = f"file://{open_target.resolve()}"
-                try:
-                    opened = webbrowser.open(file_url)
-                    if not opened:
-                        console.print(
-                            f"[yellow]⚠ Could not open browser automatically. "
-                            f"Open manually:[/yellow] [cyan]{file_url}[/cyan]"
-                        )
-                except Exception as browser_exc:  # noqa: BLE001
-                    console.print(
-                        f"[yellow]⚠ Browser open failed ({browser_exc}). "
-                        f"Open manually:[/yellow] [cyan]{file_url}[/cyan]"
-                    )
+                _open_html_in_browser(open_target, console)
 
         # Show summary (reuse coding summary — same metadata shape)
         _show_coding_summary(result)
@@ -1428,19 +1441,7 @@ async def _async_execute_live_mode(
         if open_browser and format_ and format_.strip().lower() == "html":
             open_target = effective_output or output
             if open_target is not None:
-                file_url = f"file://{open_target.resolve()}"
-                try:
-                    opened = webbrowser.open(file_url)
-                    if not opened:
-                        console.print(
-                            f"[yellow]⚠ Could not open browser automatically. "
-                            f"Open manually:[/yellow] [cyan]{file_url}[/cyan]"
-                        )
-                except Exception as browser_exc:  # noqa: BLE001
-                    console.print(
-                        f"[yellow]⚠ Browser open failed ({browser_exc}). "
-                        f"Open manually:[/yellow] [cyan]{file_url}[/cyan]"
-                    )
+                _open_html_in_browser(open_target, console)
 
         _show_coding_summary(result)
 
