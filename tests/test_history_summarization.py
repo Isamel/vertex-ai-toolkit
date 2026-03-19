@@ -8,13 +8,17 @@ Covers:
 - Recent message preservation during summarization
 - Summarizer with mocked client
 - SessionManager._check_and_summarize integration
+- ToolLoopMixin._check_and_summarize integration
 - Edge cases: empty history, single message, below threshold
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+from google.genai import types
 
 from vaig.core.client import ChatMessage, GenerationResult
 from vaig.core.config import SessionConfig, Settings
@@ -96,7 +100,6 @@ class TestTokenEstimation:
         ``.text``) instead of a ``.content`` string.  This is the exact
         scenario that caused the original AttributeError bug.
         """
-        from types import SimpleNamespace
 
         # Simulate google.genai.types.Content with .parts containing .text
         content_objs = [
@@ -117,7 +120,6 @@ class TestTokenEstimation:
 
     def test_estimate_history_tokens_content_with_non_text_parts(self) -> None:
         """Content objects with function_call parts (no .text) should not crash."""
-        from types import SimpleNamespace
 
         content_objs = [
             SimpleNamespace(
@@ -130,7 +132,6 @@ class TestTokenEstimation:
 
     def test_estimate_history_tokens_content_with_empty_parts(self) -> None:
         """Content with empty or None parts should return 0."""
-        from types import SimpleNamespace
 
         content_objs = [
             SimpleNamespace(role="model", parts=None),
@@ -460,3 +461,105 @@ class TestClientHistoryWarning:
             with patch("vaig.core.client.logger") as mock_logger:
                 GeminiClient._warn_if_history_large(history, max_tokens=10_000)
                 mock_logger.warning.assert_not_called()
+
+
+# ══════════════════════════════════════════════════════════════
+# ToolLoopMixin._check_and_summarize
+# ══════════════════════════════════════════════════════════════
+
+
+def _make_content(text: str, role: str = "user") -> types.Content:
+    """Build a real google-genai Content object for testing."""
+    return types.Content(role=role, parts=[types.Part.from_text(text=text)])
+
+
+class _ConcreteToolLoopMixin:
+    """Minimal concrete subclass so we can instantiate ToolLoopMixin."""
+
+    pass
+
+
+# Mix in dynamically to avoid import cycles if needed
+def _make_mixin_instance():  # type: ignore[return]
+    from vaig.agents.mixins import ToolLoopMixin
+
+    class Concrete(ToolLoopMixin):
+        pass
+
+    return Concrete()
+
+
+class TestToolLoopMixinCheckAndSummarize:
+    """Test ToolLoopMixin._check_and_summarize trigger and behaviour."""
+
+    def _make_mock_client(self, summary_text: str = "[CONVERSATION SUMMARY]\nSummary.") -> MagicMock:
+        client = MagicMock()
+        client.generate.return_value = GenerationResult(
+            text=summary_text,
+            model="gemini-2.5-flash",
+            usage={},
+        )
+        return client
+
+    def test_does_nothing_when_history_empty(self) -> None:
+        mixin = _make_mixin_instance()
+        history: list = []
+        client = self._make_mock_client()
+        mixin._check_and_summarize(history, client, max_history_tokens=28_000)
+        assert history == []
+        client.generate.assert_not_called()
+
+    def test_does_nothing_when_under_threshold(self) -> None:
+        mixin = _make_mixin_instance()
+        history = [_make_content("hello")]
+        client = self._make_mock_client()
+        with patch("vaig.agents.mixins.estimate_history_tokens", return_value=100):
+            mixin._check_and_summarize(history, client, max_history_tokens=1_000)
+        assert len(history) == 1
+        client.generate.assert_not_called()
+
+    def test_summarizes_when_over_threshold(self) -> None:
+        mixin = _make_mixin_instance()
+        history = [_make_content(f"message {i}", role="user" if i % 2 == 0 else "model") for i in range(9)]
+        client = self._make_mock_client()
+        with patch("vaig.agents.mixins.estimate_history_tokens", return_value=50_000):
+            mixin._check_and_summarize(history, client, max_history_tokens=28_000)
+        client.generate.assert_called_once()
+
+    def test_keeps_last_third_of_history(self) -> None:
+        mixin = _make_mixin_instance()
+        # 9 items → keep_count = 9 // 3 = 3 → final = 1 summary + 3 kept
+        history = [_make_content(f"message {i}") for i in range(9)]
+        client = self._make_mock_client()
+        with patch("vaig.agents.mixins.estimate_history_tokens", return_value=50_000):
+            mixin._check_and_summarize(history, client, max_history_tokens=28_000)
+        assert len(history) == 1 + 3
+
+    def test_summary_starts_with_conversation_summary_marker(self) -> None:
+        mixin = _make_mixin_instance()
+        history = [_make_content(f"message {i}") for i in range(9)]
+        client = self._make_mock_client("[CONVERSATION SUMMARY]\nAll summarized.")
+        with patch("vaig.agents.mixins.estimate_history_tokens", return_value=50_000):
+            mixin._check_and_summarize(history, client, max_history_tokens=28_000)
+        assert history[0].parts[0].text.startswith("[CONVERSATION SUMMARY]")
+
+    def test_adds_conversation_summary_marker_when_missing(self) -> None:
+        mixin = _make_mixin_instance()
+        history = [_make_content(f"message {i}") for i in range(9)]
+        # Model returns text WITHOUT the marker
+        client = self._make_mock_client("Plain summary without marker.")
+        with patch("vaig.agents.mixins.estimate_history_tokens", return_value=50_000):
+            mixin._check_and_summarize(history, client, max_history_tokens=28_000)
+        assert history[0].parts[0].text.startswith("[CONVERSATION SUMMARY]")
+
+    def test_handles_generate_failure_gracefully(self) -> None:
+        mixin = _make_mixin_instance()
+        history = [_make_content(f"message {i}") for i in range(9)]
+        client = MagicMock()
+        client.generate.side_effect = RuntimeError("API exploded")
+        with patch("vaig.agents.mixins.estimate_history_tokens", return_value=50_000):
+            mixin._check_and_summarize(history, client, max_history_tokens=28_000)
+        # History is still rebuilt with fallback text
+        assert len(history) > 0
+        assert "[CONVERSATION SUMMARY]" in history[0].parts[0].text
+        assert "could not be summarized" in history[0].parts[0].text
