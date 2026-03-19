@@ -245,7 +245,7 @@ class TestToHtml:
 
     def test_no_skill_element_when_none(self, minimal_payload: ExportPayload) -> None:
         html = minimal_payload.to_html()
-        assert "Skill" not in html or "rca" not in html
+        assert "Skill" not in html
 
     def test_self_contained_no_external_deps(self, sample_payload: ExportPayload) -> None:
         """HTML should not link to any external stylesheet or script."""
