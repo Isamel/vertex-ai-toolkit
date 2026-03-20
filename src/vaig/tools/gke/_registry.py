@@ -1107,19 +1107,20 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             ToolDef(
                 name="argocd_list_applications",
                 description=(
-                    "List all ArgoCD Applications in the given namespace. Shows name, "
-                    "project, sync status, health status, source repo, target revision, "
-                    "and destination. Read-only — does not modify any resources."
+                    "List all ArgoCD Applications. Namespace is auto-discovered when not "
+                    "specified — probes common namespaces (argocd, argo-cd, argocd-system, "
+                    "gitops, argo). Shows name, project, sync status, health status, source "
+                    "repo, target revision, and destination. Read-only — does not modify any resources."
                 ),
                 parameters=[
                     ToolParam(
                         name="namespace",
                         type="string",
-                        description="Namespace where ArgoCD Applications live (default: 'argocd')",
+                        description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
                         required=False,
                     ),
                 ],
-                execute=lambda namespace="argocd",
+                execute=lambda namespace="",
                         _cfg=gke_config: argocd_list_applications(
                     namespace=namespace,
                 ),
@@ -1127,9 +1128,35 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             ToolDef(
                 name="argocd_app_status",
                 description=(
-                    "Get detailed status of a specific ArgoCD Application. Shows sync "
-                    "status, health status, source info, destination, sync policy, "
-                    "conditions, and last operation state. "
+                    "Get detailed status of a specific ArgoCD Application. Namespace is "
+                    "auto-discovered when not specified. Shows sync status, health status, "
+                    "source info, destination, sync policy, conditions, and last operation "
+                    "state. Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="app_name",
+                        type="string",
+                        description="Name of the ArgoCD Application",
+                    ),
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
+                        required=False,
+                    ),
+                ],
+                execute=lambda app_name, namespace="",
+                        _cfg=gke_config: argocd_app_status(
+                    app_name=app_name, namespace=namespace,
+                ),
+            ),
+            ToolDef(
+                name="argocd_app_history",
+                description=(
+                    "Get deployment history of an ArgoCD Application. Namespace is "
+                    "auto-discovered when not specified. Shows past deployments with "
+                    "revision, deployment time, and source info (most recent first). "
                     "Read-only — does not modify any resources."
                 ),
                 parameters=[
@@ -1141,36 +1168,11 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     ToolParam(
                         name="namespace",
                         type="string",
-                        description="Namespace where ArgoCD Applications live (default: 'argocd')",
+                        description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
                         required=False,
                     ),
                 ],
-                execute=lambda app_name, namespace="argocd",
-                        _cfg=gke_config: argocd_app_status(
-                    app_name=app_name, namespace=namespace,
-                ),
-            ),
-            ToolDef(
-                name="argocd_app_history",
-                description=(
-                    "Get deployment history of an ArgoCD Application. Shows past "
-                    "deployments with revision, deployment time, and source info "
-                    "(most recent first). Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="app_name",
-                        type="string",
-                        description="Name of the ArgoCD Application",
-                    ),
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Namespace where ArgoCD Applications live (default: 'argocd')",
-                        required=False,
-                    ),
-                ],
-                execute=lambda app_name, namespace="argocd",
+                execute=lambda app_name, namespace="",
                         _cfg=gke_config: argocd_app_history(
                     app_name=app_name, namespace=namespace,
                 ),
@@ -1179,33 +1181,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 name="argocd_app_diff",
                 description=(
                     "Show resources that are out-of-sync for an ArgoCD Application. "
-                    "Returns resources where sync status is not Synced or health "
-                    "status is not Healthy. Read-only — does not modify any resources."
-                ),
-                parameters=[
-                    ToolParam(
-                        name="app_name",
-                        type="string",
-                        description="Name of the ArgoCD Application",
-                    ),
-                    ToolParam(
-                        name="namespace",
-                        type="string",
-                        description="Namespace where ArgoCD Applications live (default: 'argocd')",
-                        required=False,
-                    ),
-                ],
-                execute=lambda app_name, namespace="argocd",
-                        _cfg=gke_config: argocd_app_diff(
-                    app_name=app_name, namespace=namespace,
-                ),
-            ),
-            ToolDef(
-                name="argocd_app_managed_resources",
-                description=(
-                    "List all resources managed by an ArgoCD Application. Shows "
-                    "resources grouped by kind with group, name, namespace, sync "
-                    "status, health status, and pruning requirements. "
+                    "Namespace is auto-discovered when not specified. Returns resources "
+                    "where sync status is not Synced or health status is not Healthy. "
                     "Read-only — does not modify any resources."
                 ),
                 parameters=[
@@ -1217,11 +1194,37 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     ToolParam(
                         name="namespace",
                         type="string",
-                        description="Namespace where ArgoCD Applications live (default: 'argocd')",
+                        description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
                         required=False,
                     ),
                 ],
-                execute=lambda app_name, namespace="argocd",
+                execute=lambda app_name, namespace="",
+                        _cfg=gke_config: argocd_app_diff(
+                    app_name=app_name, namespace=namespace,
+                ),
+            ),
+            ToolDef(
+                name="argocd_app_managed_resources",
+                description=(
+                    "List all resources managed by an ArgoCD Application. Namespace is "
+                    "auto-discovered when not specified. Shows resources grouped by kind "
+                    "with group, name, namespace, sync status, health status, and pruning "
+                    "requirements. Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="app_name",
+                        type="string",
+                        description="Name of the ArgoCD Application",
+                    ),
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Namespace where ArgoCD Applications live (auto-discovered if not specified)",
+                        required=False,
+                    ),
+                ],
+                execute=lambda app_name, namespace="",
                         _cfg=gke_config: argocd_app_managed_resources(
                     app_name=app_name, namespace=namespace,
                 ),

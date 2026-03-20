@@ -31,6 +31,15 @@ _ARGOCD_GROUP = "argoproj.io"
 _ARGOCD_VERSION = "v1alpha1"
 _ARGOCD_PLURAL = "applications"
 
+_ARGOCD_COMMON_NAMESPACES: tuple[str, ...] = (
+    "argocd",
+    "argo-cd",
+    "argocd-system",
+    "gitops",
+    "argo",
+)
+_argocd_namespace_cache: dict[str, str | None] = {}
+
 
 # ── Helpers ──────────────────────────────────────────────────
 
@@ -84,6 +93,52 @@ def _get_argocd_client(
     if client is None:
         raise RuntimeError("Cannot create CustomObjectsApi — kubernetes SDK unavailable or unconfigured")
     return ("cluster", client)
+
+
+def _discover_argocd_namespace(custom_api: Any) -> str | None:
+    """Auto-discover the ArgoCD namespace by probing common namespace names.
+
+    Results are cached per-process. Returns the namespace string if found,
+    or None if ArgoCD Applications CRD is not found in any known namespace.
+    """
+    cache_key = "default"
+    if cache_key in _argocd_namespace_cache:
+        return _argocd_namespace_cache[cache_key]
+
+    # Try each common namespace first (faster than cluster-wide scan)
+    for ns in _ARGOCD_COMMON_NAMESPACES:
+        try:
+            custom_api.list_namespaced_custom_object(
+                group=_ARGOCD_GROUP,
+                version=_ARGOCD_VERSION,
+                namespace=ns,
+                plural=_ARGOCD_PLURAL,
+                limit=1,
+            )
+            _argocd_namespace_cache[cache_key] = ns
+            return ns
+        except Exception:  # noqa: BLE001,S112
+            continue
+
+    # Fallback: cluster-wide search for any ArgoCD Application
+    try:
+        result = custom_api.list_cluster_custom_object(
+            group=_ARGOCD_GROUP,
+            version=_ARGOCD_VERSION,
+            plural=_ARGOCD_PLURAL,
+            limit=1,
+        )
+        items = result.get("items", [])
+        if items:
+            discovered_ns: str | None = items[0].get("metadata", {}).get("namespace") or None
+            if discovered_ns:
+                _argocd_namespace_cache[cache_key] = discovered_ns
+                return discovered_ns
+    except Exception:  # noqa: BLE001
+        pass
+
+    _argocd_namespace_cache[cache_key] = None
+    return None
 
 
 def _list_applications_raw(
@@ -378,7 +433,7 @@ def _format_managed_resources_table(resources: list[dict[str, Any]]) -> str:
 
 def argocd_list_applications(
     *,
-    namespace: str = "argocd",
+    namespace: str = "",
     _custom_api: Any = None,
 ) -> ToolResult:
     """List all ArgoCD Applications in the given namespace.
@@ -387,25 +442,38 @@ def argocd_list_applications(
     source repo, target revision, and destination for each application.
 
     Args:
-        namespace: Kubernetes namespace where ArgoCD is deployed.
+        namespace: Kubernetes namespace where ArgoCD is deployed. When empty,
+            the namespace is auto-discovered by probing common namespace names.
         _custom_api: Optional pre-configured CustomObjectsApi (for testing).
     """
     if not _K8S_AVAILABLE:
         return _clients._k8s_unavailable()
 
-    # Cache check
-    cache_key = _cache._cache_key_discovery("argocd_list", namespace)
-    cached = _cache._get_cached(cache_key)
-    if cached is not None:
-        return ToolResult(output=cached, error=False)
-
-    # Get client
+    # Auto-discover namespace when not provided
     custom_api = _custom_api
     if custom_api is None:
         try:
             _, custom_api = _get_argocd_client()
         except (RuntimeError, NotImplementedError) as exc:
             return ToolResult(output=f"Failed to connect to ArgoCD: {exc}", error=True)
+
+    if not namespace:
+        namespace = _discover_argocd_namespace(custom_api) or ""
+        if not namespace:
+            return ToolResult(
+                output=(
+                    "ArgoCD not found. No Applications CRD detected in any known"
+                    " namespace. If ArgoCD is installed in a custom namespace,"
+                    " pass namespace=<your-namespace> explicitly."
+                ),
+                error=False,
+            )
+
+    # Cache check
+    cache_key = _cache._cache_key_discovery("argocd_list", namespace)
+    cached = _cache._get_cached(cache_key)
+    if cached is not None:
+        return ToolResult(output=cached, error=False)
 
     apps = _list_applications_raw(custom_api, namespace)
 
@@ -427,7 +495,7 @@ def argocd_list_applications(
 def argocd_app_status(
     *,
     app_name: str,
-    namespace: str = "argocd",
+    namespace: str = "",
     _custom_api: Any = None,
 ) -> ToolResult:
     """Get detailed status of a specific ArgoCD Application.
@@ -437,25 +505,38 @@ def argocd_app_status(
 
     Args:
         app_name: Name of the ArgoCD Application.
-        namespace: Kubernetes namespace where ArgoCD is deployed.
+        namespace: Kubernetes namespace where ArgoCD is deployed. When empty,
+            the namespace is auto-discovered by probing common namespace names.
         _custom_api: Optional pre-configured CustomObjectsApi (for testing).
     """
     if not _K8S_AVAILABLE:
         return _clients._k8s_unavailable()
 
-    # Cache check
-    cache_key = _cache._cache_key_discovery("argocd_status", namespace, app_name)
-    cached = _cache._get_cached(cache_key)
-    if cached is not None:
-        return ToolResult(output=cached, error=False)
-
-    # Get client
+    # Auto-discover namespace when not provided
     custom_api = _custom_api
     if custom_api is None:
         try:
             _, custom_api = _get_argocd_client()
         except (RuntimeError, NotImplementedError) as exc:
             return ToolResult(output=f"Failed to connect to ArgoCD: {exc}", error=True)
+
+    if not namespace:
+        namespace = _discover_argocd_namespace(custom_api) or ""
+        if not namespace:
+            return ToolResult(
+                output=(
+                    "ArgoCD not found. No Applications CRD detected in any known"
+                    " namespace. If ArgoCD is installed in a custom namespace,"
+                    " pass namespace=<your-namespace> explicitly."
+                ),
+                error=False,
+            )
+
+    # Cache check
+    cache_key = _cache._cache_key_discovery("argocd_status", namespace, app_name)
+    cached = _cache._get_cached(cache_key)
+    if cached is not None:
+        return ToolResult(output=cached, error=False)
 
     app = _get_application_raw(custom_api, app_name, namespace)
     if app is None:
@@ -478,7 +559,7 @@ def argocd_app_status(
 def argocd_app_history(
     *,
     app_name: str,
-    namespace: str = "argocd",
+    namespace: str = "",
     _custom_api: Any = None,
 ) -> ToolResult:
     """Get deployment history of an ArgoCD Application.
@@ -488,25 +569,38 @@ def argocd_app_history(
 
     Args:
         app_name: Name of the ArgoCD Application.
-        namespace: Kubernetes namespace where ArgoCD is deployed.
+        namespace: Kubernetes namespace where ArgoCD is deployed. When empty,
+            the namespace is auto-discovered by probing common namespace names.
         _custom_api: Optional pre-configured CustomObjectsApi (for testing).
     """
     if not _K8S_AVAILABLE:
         return _clients._k8s_unavailable()
 
-    # Cache check
-    cache_key = _cache._cache_key_discovery("argocd_history", namespace, app_name)
-    cached = _cache._get_cached(cache_key)
-    if cached is not None:
-        return ToolResult(output=cached, error=False)
-
-    # Get client
+    # Auto-discover namespace when not provided
     custom_api = _custom_api
     if custom_api is None:
         try:
             _, custom_api = _get_argocd_client()
         except (RuntimeError, NotImplementedError) as exc:
             return ToolResult(output=f"Failed to connect to ArgoCD: {exc}", error=True)
+
+    if not namespace:
+        namespace = _discover_argocd_namespace(custom_api) or ""
+        if not namespace:
+            return ToolResult(
+                output=(
+                    "ArgoCD not found. No Applications CRD detected in any known"
+                    " namespace. If ArgoCD is installed in a custom namespace,"
+                    " pass namespace=<your-namespace> explicitly."
+                ),
+                error=False,
+            )
+
+    # Cache check
+    cache_key = _cache._cache_key_discovery("argocd_history", namespace, app_name)
+    cached = _cache._get_cached(cache_key)
+    if cached is not None:
+        return ToolResult(output=cached, error=False)
 
     app = _get_application_raw(custom_api, app_name, namespace)
     if app is None:
@@ -534,7 +628,7 @@ def argocd_app_history(
 def argocd_app_diff(
     *,
     app_name: str,
-    namespace: str = "argocd",
+    namespace: str = "",
     _custom_api: Any = None,
 ) -> ToolResult:
     """Show resources that are out-of-sync for an ArgoCD Application.
@@ -544,25 +638,38 @@ def argocd_app_diff(
 
     Args:
         app_name: Name of the ArgoCD Application.
-        namespace: Kubernetes namespace where ArgoCD is deployed.
+        namespace: Kubernetes namespace where ArgoCD is deployed. When empty,
+            the namespace is auto-discovered by probing common namespace names.
         _custom_api: Optional pre-configured CustomObjectsApi (for testing).
     """
     if not _K8S_AVAILABLE:
         return _clients._k8s_unavailable()
 
-    # Cache check
-    cache_key = _cache._cache_key_discovery("argocd_diff", namespace, app_name)
-    cached = _cache._get_cached(cache_key)
-    if cached is not None:
-        return ToolResult(output=cached, error=False)
-
-    # Get client
+    # Auto-discover namespace when not provided
     custom_api = _custom_api
     if custom_api is None:
         try:
             _, custom_api = _get_argocd_client()
         except (RuntimeError, NotImplementedError) as exc:
             return ToolResult(output=f"Failed to connect to ArgoCD: {exc}", error=True)
+
+    if not namespace:
+        namespace = _discover_argocd_namespace(custom_api) or ""
+        if not namespace:
+            return ToolResult(
+                output=(
+                    "ArgoCD not found. No Applications CRD detected in any known"
+                    " namespace. If ArgoCD is installed in a custom namespace,"
+                    " pass namespace=<your-namespace> explicitly."
+                ),
+                error=False,
+            )
+
+    # Cache check
+    cache_key = _cache._cache_key_discovery("argocd_diff", namespace, app_name)
+    cached = _cache._get_cached(cache_key)
+    if cached is not None:
+        return ToolResult(output=cached, error=False)
 
     app = _get_application_raw(custom_api, app_name, namespace)
     if app is None:
@@ -588,7 +695,7 @@ def argocd_app_diff(
 def argocd_app_managed_resources(
     *,
     app_name: str,
-    namespace: str = "argocd",
+    namespace: str = "",
     _custom_api: Any = None,
 ) -> ToolResult:
     """List all resources managed by an ArgoCD Application.
@@ -598,25 +705,38 @@ def argocd_app_managed_resources(
 
     Args:
         app_name: Name of the ArgoCD Application.
-        namespace: Kubernetes namespace where ArgoCD is deployed.
+        namespace: Kubernetes namespace where ArgoCD is deployed. When empty,
+            the namespace is auto-discovered by probing common namespace names.
         _custom_api: Optional pre-configured CustomObjectsApi (for testing).
     """
     if not _K8S_AVAILABLE:
         return _clients._k8s_unavailable()
 
-    # Cache check
-    cache_key = _cache._cache_key_discovery("argocd_managed", namespace, app_name)
-    cached = _cache._get_cached(cache_key)
-    if cached is not None:
-        return ToolResult(output=cached, error=False)
-
-    # Get client
+    # Auto-discover namespace when not provided
     custom_api = _custom_api
     if custom_api is None:
         try:
             _, custom_api = _get_argocd_client()
         except (RuntimeError, NotImplementedError) as exc:
             return ToolResult(output=f"Failed to connect to ArgoCD: {exc}", error=True)
+
+    if not namespace:
+        namespace = _discover_argocd_namespace(custom_api) or ""
+        if not namespace:
+            return ToolResult(
+                output=(
+                    "ArgoCD not found. No Applications CRD detected in any known"
+                    " namespace. If ArgoCD is installed in a custom namespace,"
+                    " pass namespace=<your-namespace> explicitly."
+                ),
+                error=False,
+            )
+
+    # Cache check
+    cache_key = _cache._cache_key_discovery("argocd_managed", namespace, app_name)
+    cached = _cache._get_cached(cache_key)
+    if cached is not None:
+        return ToolResult(output=cached, error=False)
 
     app = _get_application_raw(custom_api, app_name, namespace)
     if app is None:
