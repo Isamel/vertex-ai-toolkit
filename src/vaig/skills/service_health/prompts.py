@@ -68,7 +68,8 @@ _CORE_TOOLS_TABLE = """\
 | `gcloud_logging_query` | `filter_expr` | `project`, `limit`, `order_by` |
 | `gcloud_monitoring_query` | `metric_type` | `project`, `interval_minutes`, `aggregation`, `filter_str` |
 | `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |
-| `get_scaling_status` | `name` | `namespace` |"""
+| `get_scaling_status` | `name` | `namespace` |
+| `get_datadog_config` | | `namespace`, `deployment` |"""
 
 _HELM_TOOLS_TABLE = """\
 | `helm_list_releases` | | `namespace`, `force_refresh` |
@@ -259,6 +260,27 @@ If the tool IS available:
 - Use `argocd_app_history(app_name=<app>)` to correlate recent deployments with issues
 - This data enriches the report but is NOT required — the report is complete without it
 
+### Step 11: Datadog Observability Assessment (CONDITIONAL — only if Datadog is detected)
+PREREQUISITE: First check if `get_datadog_config` is in your available tools list. If it is NOT available, SKIP this entire step.
+
+If the tool IS available, proceed ONLY when ONE of the following conditions is met from earlier steps:
+- Step 5b output (get_container_status) or Step 4e output (deployment YAML) shows annotations with `ad.datadoghq.com/` or `admission.datadoghq.com/` prefix
+- Step 5b or Step 4e output shows labels with `tags.datadoghq.com/` prefix
+- Step 3 (warning events) contains FailedCreate events mentioning `datadog-auto-instrumentation`
+
+If the Datadog injection conflict condition is triggered (FailedCreate mentioning `datadog-auto-instrumentation`):
+- Flag this as a Datadog admission webhook injection conflict in your Raw Findings
+- Note that the webhook is injecting a volume that was also manually defined in the deployment YAML
+- Record the exact FailedCreate event message as evidence
+
+If Datadog annotations/labels ARE detected (and tool is available):
+- Call `get_datadog_config(namespace=<ns>)` to get the full configuration report
+- If a specific deployment shows issues, also call `get_datadog_config(namespace=<ns>, deployment=<name>)` for detail
+- Record all configuration issues detected (APM without agent host, webhook without service tag, etc.)
+
+If Datadog is NOT detected in Steps 4/5 output AND no relevant FailedCreate events:
+- SKIP this step entirely and mark as SKIPPED in the Investigation Checklist
+
 ## MINIMUM INVESTIGATION DEPTH
 You MUST make at least the following tool calls before producing your final output:
 1. `get_node_conditions()` — ALWAYS (Step 1)
@@ -336,6 +358,7 @@ Steps 9 and 10 MUST be marked as SKIPPED if the corresponding tools are not in y
 - [x] Step 7b: Cloud Logging warnings
 - [ ] Step 9: Helm assessment (SKIPPED — reason: helm_list_releases tool not available)
 - [ ] Step 10: ArgoCD assessment (SKIPPED — reason: argocd_list_applications tool not available)
+- [ ] Step 11: Datadog assessment (SKIPPED — reason: no Datadog annotations/labels detected in Steps 4/5 output)
 ```
 """
 
@@ -852,6 +875,20 @@ of the following when observed:
 - VPA-vs-HPA conflict: ``severity=MEDIUM``, title like ``"VPA Auto mode conflicts with
   CPU-based HPA — <name>"``, evidence from both VPA recommendation and HPA spec.
 - Scaling idle (HPA well below min replicas or no VPA recommendations): ``severity=INFO``.
+
+**Datadog observability findings** — when ``get_datadog_config`` output is present in the
+upstream data, add findings and recommendations as follows:
+- If APM tracing is enabled (``DD_TRACE_ENABLED=true`` present): recommend checking the
+  Datadog APM dashboard for the service identified by ``DD_SERVICE`` in the environment
+  identified by ``DD_ENV``. Create a ``Finding`` with ``category="observability"``.
+- If a Datadog admission webhook injection conflict is detected (FailedCreate events
+  mentioning ``datadog-auto-instrumentation``): create a CRITICAL finding.  The recommended
+  immediate mitigation command is:
+  ``kubectl annotate deployment/<name> admission.datadoghq.com/enabled="false" -n <namespace>``
+  This disables webhook injection on the specific deployment without modifying the spec.
+- If Datadog logs injection is NOT configured (``DD_LOGS_INJECTION`` absent) for a failing
+  service: note this as an observability gap in an INFO finding.  Without log injection,
+  traces and logs cannot be correlated in Datadog.
 
 #### ``findings``
 Each finding MUST include:
