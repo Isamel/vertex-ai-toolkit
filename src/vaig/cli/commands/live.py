@@ -965,18 +965,19 @@ def _inject_report_metadata(
     if gke_config is not None:
         for attr in ["cluster_name", "project_id"]:
             value = getattr(gke_config, attr, None)
-            if value:  # ALWAYS overwrite — LLM may hallucinate these fields
-                setattr(metadata, attr, value)
+            # Overwrite unconditionally — even empty/None clears hallucinated values
+            setattr(metadata, attr, value if value is not None else "")
 
     # ALWAYS overwrite model_used — the LLM may hallucinate this field.
-    if model_id or orch_result is not None:
-        if orch_result is not None:
-            actual_models = getattr(orch_result, "models_used", [])
-            effective_model = _format_models_used(actual_models) or model_id
-        else:
-            effective_model = model_id
-        if effective_model:
-            metadata.model_used = effective_model
+    if orch_result is not None:
+        actual_models = getattr(orch_result, "models_used", [])
+        effective_model = _format_models_used(actual_models) or model_id
+    else:
+        effective_model = model_id
+    if effective_model:
+        metadata.model_used = effective_model
+    else:
+        metadata.model_used = ""
 
     # ── Cost metrics ──────────────────────────────────────────
     if orch_result is not None and getattr(metadata, "cost_metrics", None) is None:

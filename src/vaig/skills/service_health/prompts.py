@@ -925,7 +925,9 @@ upstream data, populate ``ServiceStatus`` fields as follows:
 **CPU and memory usage fields** — for ``service_statuses[].cpu_usage`` and ``memory_usage``:
 - Use PER-POD AVERAGE, not total across all pods
 - If only per-container data is available, sum containers within one pod first
-- Always include units: "18m" for CPU (millicores), "105Mi" for memory
+- **From kubectl_top data**: use absolute units — "18m" for CPU (millicores), "105Mi" for memory
+- **From get_scaling_status HPA data**: percentages are acceptable (e.g., "45% of request")
+- Prefer kubectl_top absolute values when both are available
 - Optionally add context: "18m/pod (450m total across 25 pods)"
 
 **Management context** — when the workload gatherer detected management context
@@ -1027,9 +1029,10 @@ Chronological list of events from the gathered data.  Each event has:
 - ``service``: The deployment, service, or resource this event relates to (e.g. 'chatbot-odin', 'payment-svc', 'node/gke-pool-1'). Populate ``service`` for EVERY event where the source resource is identifiable. Leave empty only for truly cluster-wide or unattributable events.
 
 #### ``metadata``
-Leave ALL metadata fields as empty strings "". The system populates metadata
-(cluster_name, project_id, model_used, generated_at, cost_metrics, tool_usage)
-automatically after your response. Do NOT invent values for these fields.
+Leave metadata fields empty — do NOT invent values. The system populates them automatically:
+- **String fields** (cluster_name, project_id, model_used, generated_at, skill_version): set to ``""``.
+- **Object fields** (cost_metrics, tool_usage): set to ``null`` or omit entirely.
+Do NOT invent or infer any metadata values.
 
 ## STRICT Formatting & Quality Rules
 
@@ -1419,8 +1422,8 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
     DaemonSet, Job, or CronJob), aggregate these per-pod metrics at the workload level:
     - Associate each pod with its owning workload using ownerReferences or standard labels
       (app, app.kubernetes.io/name, or controller-specific labels).
-    - For each workload: CPU Usage = sum of CPU across all its pods, Memory Usage = sum of memory
-      across all its pods.
+    - For each workload: use the **per-pod average** (CPU avg across all pods, memory avg across all pods).
+      Optionally mention totals for context (e.g., "18m/pod avg, 450m total across 25 pods").
     - Include a pod count per workload (ready/total pods).
     - Never report raw per-pod values in the Service Status table — always use aggregated per-workload values.
 
