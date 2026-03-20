@@ -208,8 +208,8 @@ datadog:
   enabled: false                  # Set to true to enable Datadog API tools (or just set api_key + app_key — auto-enables)
   api_key: ""                     # Or use VAIG_DATADOG__API_KEY env var
   app_key: ""                     # Or use VAIG_DATADOG__APP_KEY env var
-  site: "datadoghq.com"           # datadoghq.com | datadoghq.eu | us3.datadoghq.com | ... (VAIG_DATADOG__SITE)
-  timeout: 30                     # HTTP timeout in seconds (VAIG_DATADOG__TIMEOUT)
+  site: ""                        # Default: datadoghq.com; override via VAIG_DATADOG__SITE
+  timeout: ""                     # Default: 30s; override via VAIG_DATADOG__TIMEOUT
 
 mcp:
   enabled: false                    # Set to true to enable MCP integration

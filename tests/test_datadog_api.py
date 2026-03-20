@@ -566,14 +566,13 @@ class TestDatadogAPIConfigAutoEnable:
         cfg = DatadogAPIConfig(enabled=True, api_key="my-api-key", app_key="my-app-key")
         assert cfg.enabled is True
 
-    def test_auto_disables_emits_warning(self) -> None:
+    def test_auto_disables_emits_warning(self, caplog) -> None:
         """When auto-disabling, a WARNING is logged about missing keys."""
         import logging
 
-        with patch.object(
-            logging.getLogger("vaig.core.config"), "warning"
-        ) as mock_warn:
-            DatadogAPIConfig(enabled=True, api_key="", app_key="")
+        with patch.object(logging.getLogger("vaig"), "propagate", True):
+            with caplog.at_level(logging.WARNING, logger="vaig.core.config"):
+                DatadogAPIConfig(enabled=True, api_key="", app_key="")
 
-        mock_warn.assert_called_once()
-        assert "api_key or app_key is missing" in mock_warn.call_args[0][0]
+        assert len(caplog.records) == 1
+        assert "api_key or app_key is missing" in caplog.text
