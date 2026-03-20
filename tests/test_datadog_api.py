@@ -528,3 +528,51 @@ class TestSanitizeServiceName:
         from vaig.tools.gke.datadog_api import _sanitize_service_name
 
         assert _sanitize_service_name("") == ""
+
+
+# ── DatadogAPIConfig auto-enable validator ────────────────────
+
+
+class TestDatadogAPIConfigAutoEnable:
+    """Tests for DatadogAPIConfig model_validator auto-enable/disable logic."""
+
+    def test_auto_enables_when_both_keys_provided(self) -> None:
+        """When enabled=False but both api_key and app_key are set, enabled is auto-set to True."""
+        cfg = DatadogAPIConfig(enabled=False, api_key="my-api-key", app_key="my-app-key")
+        assert cfg.enabled is True
+
+    def test_auto_disables_when_enabled_but_no_keys(self) -> None:
+        """When enabled=True but api_key or app_key is missing, enabled is set to False."""
+        cfg = DatadogAPIConfig(enabled=True, api_key="", app_key="")
+        assert cfg.enabled is False
+
+    def test_auto_disables_when_only_api_key_provided(self) -> None:
+        """When enabled=True but only api_key is set (no app_key), disables."""
+        cfg = DatadogAPIConfig(enabled=True, api_key="my-api-key", app_key="")
+        assert cfg.enabled is False
+
+    def test_auto_disables_when_only_app_key_provided(self) -> None:
+        """When enabled=True but only app_key is set (no api_key), disables."""
+        cfg = DatadogAPIConfig(enabled=True, api_key="", app_key="my-app-key")
+        assert cfg.enabled is False
+
+    def test_stays_false_when_no_keys_and_disabled(self) -> None:
+        """When enabled=False and no keys, stays False (no change)."""
+        cfg = DatadogAPIConfig(enabled=False, api_key="", app_key="")
+        assert cfg.enabled is False
+
+    def test_stays_true_when_both_keys_and_enabled(self) -> None:
+        """When enabled=True and both keys provided, stays True (no change)."""
+        cfg = DatadogAPIConfig(enabled=True, api_key="my-api-key", app_key="my-app-key")
+        assert cfg.enabled is True
+
+    def test_auto_disables_emits_warning(self, caplog) -> None:
+        """When auto-disabling, a WARNING is logged about missing keys."""
+        import logging
+
+        with patch.object(logging.getLogger("vaig"), "propagate", True):
+            with caplog.at_level(logging.WARNING, logger="vaig.core.config"):
+                DatadogAPIConfig(enabled=True, api_key="", app_key="")
+
+        assert len(caplog.records) == 1
+        assert "api_key or app_key is missing" in caplog.text

@@ -6,6 +6,7 @@ with closures that bind the GKEConfig at creation time.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
@@ -35,6 +36,8 @@ from .scaling import get_scaling_status
 
 if TYPE_CHECKING:
     from vaig.core.config import GKEConfig
+
+logger = logging.getLogger(__name__)
 
 
 def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
@@ -1279,6 +1282,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
 
     _dd_config = _get_settings().datadog
     if _dd_config.enabled:
+        logger.info("Datadog API tools registered (site=%s)", _dd_config.site)
         tools.extend([
             ToolDef(
                 name="query_datadog_metrics",
@@ -1378,5 +1382,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ),
         ])
+    else:
+        logger.debug(
+            "Datadog API tools skipped (enabled=False). "
+            "Set datadog.enabled=true or provide API keys to enable."
+        )
 
     return tools
