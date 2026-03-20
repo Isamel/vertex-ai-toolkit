@@ -283,7 +283,8 @@ class ServiceHealthSkill(BaseSkill):
                 ),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.0,
-                "max_iterations": 12,
+                # Extra budget for Step 12 (Datadog API — 4 tool calls) when enabled
+                "max_iterations": 16 if settings.datadog.enabled else 12,
             },
             {
                 "name": "event_gatherer",

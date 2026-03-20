@@ -203,6 +203,14 @@ argocd:
   namespace: "argocd"             # Namespace where ArgoCD Applications live
   verify_ssl: true                # Verify SSL certificates for ArgoCD server
 
+# Datadog API integration — real-time metrics, monitors, APM
+datadog:
+  enabled: false                  # Set to true to enable Datadog API tools
+  api_key: ""                     # Or use DATADOG_API_KEY env var
+  app_key: ""                     # Or use DATADOG_APP_KEY env var
+  site: "datadoghq.com"           # datadoghq.com | datadoghq.eu | us3.datadoghq.com | ...
+  timeout: 30
+
 mcp:
   enabled: false                    # Set to true to enable MCP integration
   auto_register: false              # Auto-register MCP server tools into agent pipelines

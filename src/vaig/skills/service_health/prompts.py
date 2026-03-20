@@ -92,10 +92,8 @@ _DATADOG_API_TOOLS_TABLE = """\
 _DATADOG_API_STEP = """\
 
 ### Step 12 — Datadog API Correlation (real-time metrics & monitors)
-PREREQUISITE: First check if `query_datadog_metrics` is in your available tools list.
-If it is NOT available, SKIP this entire step and mark it as SKIPPED in your output.
+Use the Datadog API tools to gather real-time observability data.
 
-If available:
 19. ``query_datadog_metrics(cluster_name="<cluster>", metric="cpu")``
     — CPU usage time-series for the workloads in the target namespace.
 20. ``query_datadog_metrics(cluster_name="<cluster>", metric="memory")``
@@ -428,9 +426,14 @@ def build_gatherer_prompt(
     return _GATHERER_PROMPT_TEMPLATE.format(tool_reference_table=table)
 
 
-# Backward-compatible constant — includes ALL tools (Helm + ArgoCD enabled).
-# Existing code and tests that import this directly continue to work unchanged.
-HEALTH_GATHERER_PROMPT: str = build_gatherer_prompt(helm_enabled=True, argocd_enabled=True)
+# Backward-compatible constant — Helm + ArgoCD enabled, Datadog API disabled.
+# This is the default/no-Datadog variant used by tests and BC callers.
+# The live sequential pipeline (get_sequential_agents_config) calls
+# build_gatherer_prompt() directly with the runtime datadog_api_enabled flag —
+# do NOT use this constant in any execution path that may have Datadog enabled.
+HEALTH_GATHERER_PROMPT: str = build_gatherer_prompt(
+    helm_enabled=True, argocd_enabled=True, datadog_api_enabled=False
+)
 
 HEALTH_ANALYZER_PROMPT = f"""You are an SRE analysis specialist. You receive raw health data collected from a Kubernetes cluster and perform pattern analysis to identify issues, assess severity, and find correlations.
 
