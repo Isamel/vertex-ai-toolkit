@@ -509,6 +509,92 @@ class TestKubectlTop:
         assert result.error is True
         assert "No metrics found" in result.output
 
+    # ── Helper ───────────────────────────────────────────────────────────────
+
+    @patch("vaig.tools.gke._clients._create_k8s_clients")
+    def _run_kubectl_top_with_mock_items(
+        self, items: list[dict], mock_clients: MagicMock
+    ) -> ToolResult:
+        """Run kubectl_top("pods") with a mocked Metrics API response.
+
+        Sets up all required mocks (clients + _K8S_AVAILABLE), injects the
+        supplied ``items`` list as the ``list_namespaced_custom_object`` return
+        value, and returns the ToolResult from kubectl_top.
+        """
+        from vaig.tools.gke_tools import kubectl_top
+
+        cfg = _make_gke_config()
+        custom_api = MagicMock()
+        mock_clients.return_value = (MagicMock(), MagicMock(), custom_api, MagicMock())
+        custom_api.list_namespaced_custom_object.return_value = {"items": items}
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
+            return kubectl_top("pods", gke_config=cfg)
+
+    # ── Per-container output tests ────────────────────────────────────────────
+
+    def test_single_container_pod_shows_container_name(self) -> None:
+        """Single-container pod shows one row with container name column."""
+        result = self._run_kubectl_top_with_mock_items([
+            {
+                "metadata": {"name": "single-pod"},
+                "containers": [
+                    {"name": "app", "usage": {"cpu": "50m", "memory": "64Mi"}}
+                ],
+            }
+        ])
+
+        assert result.error is False
+        assert "single-pod" in result.output
+        assert "app" in result.output
+        assert "50m" in result.output
+        assert "64Mi" in result.output
+        # Header must include CONTAINER column
+        assert "CONTAINER" in result.output
+
+    def test_multi_container_pod_shows_one_row_per_container(self) -> None:
+        """Multi-container pod (3 containers) shows 3 rows, one per container."""
+        result = self._run_kubectl_top_with_mock_items([
+            {
+                "metadata": {"name": "multi-pod"},
+                "containers": [
+                    {"name": "app",     "usage": {"cpu": "100m", "memory": "128Mi"}},
+                    {"name": "sidecar", "usage": {"cpu": "20m",  "memory": "32Mi"}},
+                    {"name": "proxy",   "usage": {"cpu": "5m",   "memory": "16Mi"}},
+                ],
+            }
+        ])
+
+        assert result.error is False
+        # Each container name must appear in output
+        assert "app" in result.output
+        assert "sidecar" in result.output
+        assert "proxy" in result.output
+        # Each set of metrics must appear
+        assert "100m" in result.output
+        assert "20m" in result.output
+        assert "5m" in result.output
+        # Pod name should repeat once per container row — 3 occurrences total
+        assert result.output.count("multi-pod") == 3
+        # Must NOT fall back to the old "3 containers" placeholder
+        assert "3 containers" not in result.output
+
+    def test_pod_with_empty_containers_list_does_not_crash(self) -> None:
+        """Pod with an empty containers list should not raise and should show no data rows."""
+        result = self._run_kubectl_top_with_mock_items([
+            {
+                "metadata": {"name": "empty-pod"},
+                "containers": [],
+            }
+        ])
+
+        # Should not crash and should return a result (just the header line)
+        assert result.error is False
+        assert "NAME" in result.output
+        assert "CONTAINER" in result.output
+        # No data rows for "empty-pod" since there are no containers
+        assert "empty-pod" not in result.output
+
 
 # ── create_gke_tools factory ─────────────────────────────────
 

@@ -207,6 +207,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             name="kubectl_top",
             description=(
                 "Show CPU and memory usage for pods or nodes. "
+                "For pods, returns per-container metrics — one row per container with a "
+                "CONTAINER column. Sum container rows within each pod to get pod-level totals. "
                 "Requires the metrics-server to be installed in the cluster. "
                 "Read-only — does not modify any resources."
             ),

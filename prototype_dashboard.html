@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Service Health Report — payment-service @ prod-gke-us-central1</title>
+<style>
+  /* ── Reset & Base ─────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg-base:    #1a1b26;
+    --bg-surface: #24283b;
+    --bg-muted:   #414868;
+    --bg-hover:   #2f3549;
+    --text-main:  #c0caf5;
+    --text-dim:   #787c99;
+    --text-bright:#e1e3f4;
+    --border:     #3b3f5c;
+
+    --critical: #f7768e;
+    --high:     #ff9e64;
+    --medium:   #e0af68;
+    --low:      #7aa2f7;
+    --info:     #7dcfff;
+    --healthy:  #9ece6a;
+    --degraded: #e0af68;
+    --failed:   #f7768e;
+    --unknown:  #787c99;
+
+    --sidebar-w: 220px;
+    --header-h:  56px;
+    --radius:    8px;
+    --font-mono: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --transition: 150ms ease;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg-base);
+    color: var(--text-main);
+    line-height: 1.6;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Scrollbar ──────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg-base); }
+  ::-webkit-scrollbar-thumb { background: var(--bg-muted); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #5a617e; }
+
+  /* ── Top Header ─────────────────────────────────────────── */
+  .top-header {
+    position: sticky; top: 0; z-index: 100;
+    height: var(--header-h);
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center;
+    padding: 0 20px; gap: 16px;
+  }
+  .top-header .brand {
+    font-size: 14px; font-weight: 700;
+    color: var(--text-bright); letter-spacing: .4px;
+    flex-shrink: 0;
+  }
+  .top-header .brand span { color: var(--info); }
+  .top-header .cluster-info {
+    font-size: 12px; color: var(--text-dim);
+    font-family: var(--font-mono); flex: 1;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 12px; border-radius: 20px;
+    font-size: 12px; font-weight: 700; letter-spacing: .6px;
+    text-transform: uppercase; flex-shrink: 0;
+  }
+  .status-badge.CRITICAL { background: color-mix(in srgb, var(--critical) 20%, transparent); color: var(--critical); border: 1px solid color-mix(in srgb, var(--critical) 40%, transparent); }
+  .status-badge.DEGRADED { background: color-mix(in srgb, var(--degraded) 20%, transparent); color: var(--degraded); border: 1px solid color-mix(in srgb, var(--degraded) 40%, transparent); }
+  .status-badge.HEALTHY  { background: color-mix(in srgb, var(--healthy) 20%, transparent);  color: var(--healthy);  border: 1px solid color-mix(in srgb, var(--healthy) 40%, transparent); }
+  .status-badge.UNKNOWN  { background: color-mix(in srgb, var(--unknown) 20%, transparent);  color: var(--unknown);  border: 1px solid color-mix(in srgb, var(--unknown) 40%, transparent); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .status-badge.CRITICAL .status-dot { animation: pulse-crit 1.2s ease-in-out infinite; }
+  @keyframes pulse-crit {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: .4; transform: scale(1.4); }
+  }
+  .generated-at { font-size: 11px; color: var(--text-dim); flex-shrink: 0; }
+
+  /* ── Layout ─────────────────────────────────────────────── */
+  .layout {
+    display: flex; flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ─────────────────────────────────────────────── */
+  .sidebar {
+    width: var(--sidebar-w); flex-shrink: 0;
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border);
+    position: sticky; top: var(--header-h);
+    height: calc(100vh - var(--header-h));
+    overflow-y: auto; padding: 20px 0;
+  }
+  .sidebar-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--text-dim);
+    padding: 0 16px 8px;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 16px; cursor: pointer;
+    font-size: 13px; color: var(--text-main);
+    border-left: 2px solid transparent;
+    transition: all var(--transition);
+    text-decoration: none;
+  }
+  .nav-item:hover { background: var(--bg-hover); color: var(--text-bright); }
+  .nav-item.active { border-left-color: var(--info); color: var(--info); background: var(--bg-hover); }
+  .nav-icon { width: 16px; text-align: center; font-size: 14px; flex-shrink: 0; }
+  .nav-count {
+    margin-left: auto; font-size: 10px; padding: 2px 6px;
+    border-radius: 10px; background: var(--bg-muted); color: var(--text-dim);
+  }
+  .nav-count.critical { background: color-mix(in srgb, var(--critical) 25%, transparent); color: var(--critical); }
+  .nav-divider { height: 1px; background: var(--border); margin: 10px 16px; }
+
+  /* Severity filter pills in sidebar */
+  .filter-section { padding: 12px 16px 0; }
+  .filter-section-label { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; }
+  .filter-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+  .filter-pill {
+    padding: 3px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;
+    cursor: pointer; border: 1px solid transparent;
+    transition: all var(--transition); user-select: none;
+  }
+  .filter-pill[data-sev="CRITICAL"] { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 40%, transparent); background: color-mix(in srgb, var(--critical) 15%, transparent); }
+  .filter-pill[data-sev="HIGH"]     { color: var(--high);     border-color: color-mix(in srgb, var(--high) 40%, transparent);     background: color-mix(in srgb, var(--high) 15%, transparent); }
+  .filter-pill[data-sev="MEDIUM"]   { color: var(--medium);   border-color: color-mix(in srgb, var(--medium) 40%, transparent);   background: color-mix(in srgb, var(--medium) 15%, transparent); }
+  .filter-pill[data-sev="LOW"]      { color: var(--low);      border-color: color-mix(in srgb, var(--low) 40%, transparent);      background: color-mix(in srgb, var(--low) 15%, transparent); }
+  .filter-pill[data-sev="INFO"]     { color: var(--info);     border-color: color-mix(in srgb, var(--info) 40%, transparent);     background: color-mix(in srgb, var(--info) 15%, transparent); }
+  .filter-pill.inactive { opacity: .35; }
+
+  /* ── Main content ─────────────────────────────────────────── */
+  .main { flex: 1; overflow-y: auto; padding: 24px; max-width: 1200px; }
+  section { margin-bottom: 32px; scroll-margin-top: calc(var(--header-h) + 20px); }
+  section h2 {
+    font-size: 16px; font-weight: 700; color: var(--text-bright);
+    margin-bottom: 16px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+  }
+  section h2 .section-icon { font-size: 18px; }
+
+  /* ── Cards ──────────────────────────────────────────────── */
+  .card {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .card-body { padding: 16px; }
+
+  /* ── Stat grid ───────────────────────────────────────────── */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .stat-card {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 20px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .stat-label { font-size: 11px; color: var(--text-dim); letter-spacing: .5px; text-transform: uppercase; }
+  .stat-value { font-size: 28px; font-weight: 800; line-height: 1; }
+  .stat-value.critical { color: var(--critical); }
+  .stat-value.warning  { color: var(--high); }
+  .stat-value.healthy  { color: var(--healthy); }
+  .stat-value.info     { color: var(--info); }
+  .stat-sub { font-size: 12px; color: var(--text-dim); }
+
+  .summary-text {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 20px;
+    font-size: 14px; color: var(--text-main); line-height: 1.7;
+    border-left: 3px solid var(--critical);
+  }
+
+  /* ── Service Status Grid ─────────────────────────────────── */
+  .service-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .service-card {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .service-card.FAILED   { border-left: 3px solid var(--failed); }
+  .service-card.DEGRADED { border-left: 3px solid var(--degraded); }
+  .service-card.HEALTHY  { border-left: 3px solid var(--healthy); }
+  .service-card.UNKNOWN  { border-left: 3px solid var(--unknown); }
+  .service-header { display: flex; align-items: center; gap: 10px; }
+  .service-status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .service-status-dot.HEALTHY  { background: var(--healthy); }
+  .service-status-dot.DEGRADED { background: var(--degraded); }
+  .service-status-dot.FAILED   { background: var(--failed); animation: pulse-crit 1.2s ease-in-out infinite; }
+  .service-status-dot.UNKNOWN  { background: var(--unknown); }
+  .service-name { font-weight: 700; color: var(--text-bright); font-size: 14px; flex: 1; }
+  .service-ns { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
+  .service-status-label { font-size: 11px; font-weight: 700; letter-spacing: .4px; }
+  .service-status-label.HEALTHY  { color: var(--healthy); }
+  .service-status-label.DEGRADED { color: var(--degraded); }
+  .service-status-label.FAILED   { color: var(--failed); }
+  .service-status-label.UNKNOWN  { color: var(--unknown); }
+  .service-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .service-metric { text-align: center; padding: 6px 4px; background: var(--bg-base); border-radius: 4px; }
+  .service-metric-val { font-size: 14px; font-weight: 700; color: var(--text-bright); font-family: var(--font-mono); }
+  .service-metric-val.warn { color: var(--high); }
+  .service-metric-val.crit { color: var(--critical); }
+  .service-metric-lbl { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+  .service-issues { font-size: 12px; color: var(--critical); background: color-mix(in srgb, var(--critical) 10%, transparent); border-radius: 4px; padding: 6px 10px; }
+  .no-issues { font-size: 12px; color: var(--healthy); }
+
+  /* ── Findings ─────────────────────────────────────────────── */
+  .finding-card {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 10px; overflow: hidden;
+    transition: opacity var(--transition);
+  }
+  .finding-card.hidden { display: none; }
+  .finding-card[data-sev="CRITICAL"] { border-left: 3px solid var(--critical); }
+  .finding-card[data-sev="HIGH"]     { border-left: 3px solid var(--high); }
+  .finding-card[data-sev="MEDIUM"]   { border-left: 3px solid var(--medium); }
+  .finding-card[data-sev="LOW"]      { border-left: 3px solid var(--low); }
+  .finding-card[data-sev="INFO"]     { border-left: 3px solid var(--info); }
+  .finding-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 16px; cursor: pointer;
+    transition: background var(--transition);
+  }
+  .finding-header:hover { background: var(--bg-hover); }
+  .sev-pill {
+    font-size: 10px; font-weight: 800; letter-spacing: .6px;
+    padding: 3px 8px; border-radius: 3px; text-transform: uppercase; flex-shrink: 0;
+  }
+  .sev-pill.CRITICAL { background: color-mix(in srgb, var(--critical) 25%, transparent); color: var(--critical); }
+  .sev-pill.HIGH     { background: color-mix(in srgb, var(--high) 25%, transparent);     color: var(--high); }
+  .sev-pill.MEDIUM   { background: color-mix(in srgb, var(--medium) 25%, transparent);   color: var(--medium); }
+  .sev-pill.LOW      { background: color-mix(in srgb, var(--low) 25%, transparent);       color: var(--low); }
+  .sev-pill.INFO     { background: color-mix(in srgb, var(--info) 25%, transparent);      color: var(--info); }
+  .finding-title { font-weight: 600; color: var(--text-bright); font-size: 14px; flex: 1; }
+  .finding-service { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
+  .finding-chevron { color: var(--text-dim); font-size: 12px; transition: transform var(--transition); flex-shrink: 0; }
+  .finding-card.open .finding-chevron { transform: rotate(90deg); }
+  .finding-body { padding: 0 16px 16px; display: none; }
+  .finding-card.open .finding-body { display: block; }
+  .finding-row { margin-bottom: 10px; }
+  .finding-row-label { font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 4px; }
+  .finding-row-val { font-size: 13px; color: var(--text-main); }
+  .confidence-badge {
+    display: inline-block; font-size: 10px; font-weight: 700;
+    padding: 2px 8px; border-radius: 3px; letter-spacing: .4px;
+  }
+  .confidence-badge.CONFIRMED { background: color-mix(in srgb, var(--healthy) 25%, transparent); color: var(--healthy); }
+  .confidence-badge.HIGH      { background: color-mix(in srgb, var(--high) 25%, transparent);    color: var(--high); }
+  .confidence-badge.MEDIUM    { background: color-mix(in srgb, var(--medium) 25%, transparent);  color: var(--medium); }
+  .confidence-badge.LOW       { background: color-mix(in srgb, var(--low) 25%, transparent);     color: var(--low); }
+  .evidence-list { list-style: none; }
+  .evidence-list li { position: relative; padding-left: 14px; margin-bottom: 4px; font-size: 13px; color: var(--text-main); }
+  .evidence-list li::before { content: "›"; position: absolute; left: 0; color: var(--text-dim); }
+  pre.evidence-block {
+    background: var(--bg-base); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px 14px;
+    font-family: var(--font-mono); font-size: 12px; color: var(--text-main);
+    overflow-x: auto; white-space: pre; margin-top: 8px; line-height: 1.5;
+  }
+  .affected-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .affected-tag {
+    font-size: 11px; padding: 2px 8px; border-radius: 4px;
+    background: var(--bg-muted); color: var(--text-main); font-family: var(--font-mono);
+  }
+
+  /* ── Timeline ─────────────────────────────────────────────── */
+  .timeline { position: relative; padding-left: 28px; }
+  .timeline::before {
+    content: ""; position: absolute; left: 10px; top: 4px; bottom: 0;
+    width: 2px; background: var(--border);
+  }
+  .tl-event { position: relative; margin-bottom: 18px; }
+  .tl-dot {
+    position: absolute; left: -24px; top: 3px;
+    width: 10px; height: 10px; border-radius: 50%;
+    border: 2px solid var(--bg-surface); z-index: 1;
+  }
+  .tl-dot.CRITICAL { background: var(--critical); box-shadow: 0 0 6px var(--critical); }
+  .tl-dot.HIGH     { background: var(--high);     box-shadow: 0 0 6px var(--high); }
+  .tl-dot.MEDIUM   { background: var(--medium); }
+  .tl-dot.LOW      { background: var(--low); }
+  .tl-dot.INFO     { background: var(--info); }
+  .tl-time { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); margin-bottom: 2px; }
+  .tl-service { display: inline-block; font-size: 11px; font-family: var(--font-mono); margin-right: 6px; color: var(--info); }
+  .tl-text { font-size: 13px; color: var(--text-main); }
+  .tl-sev-badge { display: inline-block; font-size: 10px; font-weight: 700; margin-left: 6px; padding: 1px 5px; border-radius: 2px; vertical-align: middle; }
+  .tl-sev-badge.CRITICAL { background: color-mix(in srgb, var(--critical) 20%, transparent); color: var(--critical); }
+  .tl-sev-badge.HIGH     { background: color-mix(in srgb, var(--high) 20%, transparent);     color: var(--high); }
+  .tl-sev-badge.MEDIUM   { background: color-mix(in srgb, var(--medium) 20%, transparent);   color: var(--medium); }
+  .tl-sev-badge.LOW      { background: color-mix(in srgb, var(--low) 20%, transparent);       color: var(--low); }
+  .tl-sev-badge.INFO     { background: color-mix(in srgb, var(--info) 20%, transparent);      color: var(--info); }
+
+  /* ── Cluster Overview table ──────────────────────────────── */
+  .metrics-table { width: 100%; border-collapse: collapse; }
+  .metrics-table td { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--border); }
+  .metrics-table tr:last-child td { border-bottom: none; }
+  .metrics-table td:first-child { color: var(--text-dim); width: 40%; font-weight: 600; }
+  .metrics-table td:last-child { font-family: var(--font-mono); color: var(--text-bright); }
+  .metrics-table tr:hover td { background: var(--bg-hover); }
+
+  /* ── Recommendations ─────────────────────────────────────── */
+  .rec-card {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 10px; padding: 16px;
+  }
+  .rec-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+  .rec-priority {
+    width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800;
+    background: var(--bg-muted); color: var(--text-bright);
+  }
+  .rec-priority.p1 { background: color-mix(in srgb, var(--critical) 25%, transparent); color: var(--critical); }
+  .rec-priority.p2 { background: color-mix(in srgb, var(--high) 25%, transparent);     color: var(--high); }
+  .rec-priority.p3 { background: color-mix(in srgb, var(--medium) 25%, transparent);   color: var(--medium); }
+  .rec-title { font-weight: 700; color: var(--text-bright); font-size: 14px; flex: 1; }
+  .rec-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+  .urgency-badge {
+    font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 3px;
+    letter-spacing: .4px; text-transform: uppercase;
+  }
+  .urgency-badge.IMMEDIATE  { background: color-mix(in srgb, var(--critical) 25%, transparent); color: var(--critical); }
+  .urgency-badge.SHORT_TERM { background: color-mix(in srgb, var(--high) 25%, transparent);     color: var(--high); }
+  .urgency-badge.LONG_TERM  { background: color-mix(in srgb, var(--info) 20%, transparent);     color: var(--info); }
+  .effort-badge {
+    font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 3px;
+    letter-spacing: .4px; text-transform: uppercase;
+  }
+  .effort-badge.LOW    { background: color-mix(in srgb, var(--healthy) 20%, transparent); color: var(--healthy); }
+  .effort-badge.MEDIUM { background: color-mix(in srgb, var(--medium) 20%, transparent);  color: var(--medium); }
+  .effort-badge.HIGH   { background: color-mix(in srgb, var(--high) 20%, transparent);    color: var(--high); }
+  .rec-body { margin-top: 8px; font-size: 13px; color: var(--text-main); }
+  .rec-cmd {
+    margin-top: 10px; background: var(--bg-base); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px 14px;
+    font-family: var(--font-mono); font-size: 12px; color: var(--healthy);
+    display: flex; align-items: flex-start; gap: 8px; position: relative; overflow: hidden;
+  }
+  .rec-cmd::before { content: "$"; color: var(--text-dim); flex-shrink: 0; }
+  .rec-cmd code { flex: 1; white-space: pre-wrap; word-break: break-all; }
+  .copy-btn {
+    position: absolute; right: 8px; top: 8px;
+    background: var(--bg-muted); border: none; color: var(--text-dim);
+    border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer;
+    transition: all var(--transition);
+  }
+  .copy-btn:hover { background: var(--bg-hover); color: var(--text-bright); }
+  .copy-btn.copied { color: var(--healthy); }
+  .rec-why { margin-top: 8px; font-size: 12px; color: var(--text-dim); }
+  .rec-why strong { color: var(--text-main); }
+  .rec-risk { margin-top: 4px; font-size: 12px; }
+  .rec-risk strong { color: var(--high); }
+
+  /* ── Root Cause ───────────────────────────────────────────── */
+  .hyp-card {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 10px; padding: 16px;
+    border-left: 3px solid var(--medium);
+  }
+  .hyp-title { font-weight: 700; color: var(--text-bright); font-size: 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .hyp-row { margin-bottom: 8px; font-size: 13px; }
+  .hyp-row .label { font-weight: 700; color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 4px; }
+
+  /* ── Collapsible sections ─────────────────────────────────── */
+  .section-toggle {
+    cursor: pointer; user-select: none;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .section-toggle::after {
+    content: "▾"; font-size: 12px; color: var(--text-dim);
+    transition: transform var(--transition); margin-left: auto;
+  }
+  .collapsed + .section-content { display: none; }
+  .section-toggle.collapsed::after { transform: rotate(-90deg); }
+
+  /* ── Responsive ──────────────────────────────────────────── */
+  @media (max-width: 768px) {
+    .sidebar { display: none; }
+    .main { padding: 16px; }
+    .stat-grid { grid-template-columns: repeat(2, 1fr); }
+    .service-grid { grid-template-columns: 1fr; }
+    .service-metrics { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  /* ── Tooltip ─────────────────────────────────────────────── */
+  [data-tip] { position: relative; }
+  [data-tip]:hover::after {
+    content: attr(data-tip);
+    position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%);
+    background: #0d0e17; color: var(--text-bright); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 8px; font-size: 11px; white-space: nowrap; z-index: 200;
+    pointer-events: none;
+  }
+
+  /* ── Urgency section header ──────────────────────────────── */
+  .urgency-header {
+    font-size: 12px; font-weight: 700; letter-spacing: .6px;
+    text-transform: uppercase; color: var(--text-dim);
+    margin-bottom: 10px; margin-top: 20px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .urgency-header:first-child { margin-top: 0; }
+</style>
+</head>
+<body>
+
+<!-- ── Inline JSON data ─────────────────────────────────────── -->
+<script>
+const REPORT_DATA = {
+  "metadata": {
+    "generated_at": "2026-03-19T14:22:07Z",
+    "cluster_name": "prod-gke-us-central1",
+    "project_id": "acme-prod-7a2f",
+    "model_used": "gemini-2.5-pro-exp",
+    "skill_version": "1.4.2"
+  },
+  "executive_summary": {
+    "overall_status": "CRITICAL",
+    "scope": "Namespace: payments",
+    "summary_text": "The payment-service is in a CrashLoopBackOff state due to an OOMKilled container — memory limits (256Mi) are significantly undersized relative to JVM heap requirements (~480Mi observed). Revenue impact is active: payment processing is unavailable. All other services in the namespace are healthy.",
+    "services_checked": 6,
+    "issues_found": 4,
+    "critical_count": 1,
+    "warning_count": 2
+  },
+  "cluster_overview": [
+    { "metric": "Cluster", "value": "prod-gke-us-central1" },
+    { "metric": "Node count", "value": "6 (3 n2-standard-8, 3 n2-standard-16)" },
+    { "metric": "Node pool", "value": "gke-pool-1 (v1.29.3-gke.1093)" },
+    { "metric": "Kubernetes version", "value": "v1.29.3-gke.1093" },
+    { "metric": "Namespace scanned", "value": "payments" },
+    { "metric": "Total pods (namespace)", "value": "18" },
+    { "metric": "Failed pods", "value": "1 (payment-service)" },
+    { "metric": "Cluster CPU utilisation", "value": "34% (10.2 / 30 cores)" },
+    { "metric": "Cluster memory utilisation", "value": "61% (73.2 / 120 GiB)" }
+  ],
+  "service_statuses": [
+    {
+      "service": "payment-service",
+      "namespace": "payments",
+      "status": "FAILED",
+      "pods_ready": "0/3",
+      "restarts_1h": "23",
+      "cpu_usage": "12m / 100m",
+      "memory_usage": "256Mi / 256Mi",
+      "issues": "CrashLoopBackOff — OOMKilled on all replicas"
+    },
+    {
+      "service": "auth-service",
+      "namespace": "payments",
+      "status": "HEALTHY",
+      "pods_ready": "2/2",
+      "restarts_1h": "0",
+      "cpu_usage": "45m / 200m",
+      "memory_usage": "128Mi / 512Mi",
+      "issues": ""
+    },
+    {
+      "service": "order-service",
+      "namespace": "payments",
+      "status": "DEGRADED",
+      "pods_ready": "2/3",
+      "restarts_1h": "3",
+      "cpu_usage": "190m / 250m",
+      "memory_usage": "430Mi / 512Mi",
+      "issues": "High CPU saturation; 1 pending pod scheduling"
+    },
+    {
+      "service": "notification-svc",
+      "namespace": "payments",
+      "status": "HEALTHY",
+      "pods_ready": "2/2",
+      "restarts_1h": "0",
+      "cpu_usage": "8m / 100m",
+      "memory_usage": "64Mi / 256Mi",
+      "issues": ""
+    },
+    {
+      "service": "api-gateway",
+      "namespace": "payments",
+      "status": "DEGRADED",
+      "pods_ready": "3/3",
+      "restarts_1h": "1",
+      "cpu_usage": "220m / 500m",
+      "memory_usage": "310Mi / 512Mi",
+      "issues": "503 error rate elevated (2.4%) — upstream payment-service timeouts"
+    },
+    {
+      "service": "redis-cache",
+      "namespace": "payments",
+      "status": "HEALTHY",
+      "pods_ready": "1/1",
+      "restarts_1h": "0",
+      "cpu_usage": "22m / 100m",
+      "memory_usage": "512Mi / 1Gi",
+      "issues": ""
+    }
+  ],
+  "findings": [
+    {
+      "id": "crashloop-payment-svc",
+      "title": "payment-service in CrashLoopBackOff — OOMKilled",
+      "severity": "CRITICAL",
+      "category": "pod-health",
+      "service": "payment-service",
+      "description": "All 3 replicas of payment-service are OOMKilled on startup. The JVM process requires ~480Mi of heap at steady state, but the container memory limit is set to 256Mi. Each pod restarts, reaches ~256Mi within ~90 seconds, and is killed by the Linux OOM killer before becoming ready.",
+      "root_cause": "Memory limit in deployment.yaml (256Mi) is undersized for the JVM heap. A recent Helm chart upgrade (v2.1.0 → v2.3.0) changed the default memory limit from 512Mi to 256Mi without a corresponding JVM heap tuning change.",
+      "evidence": [
+        "kubectl get pods -n payments: payment-service-6d8bf9c9f-xk2vl   0/1   CrashLoopBackOff   23   47m",
+        "kubectl describe pod payment-service-6d8bf9c9f-xk2vl: Last State: Terminated — Reason: OOMKilled",
+        "kubectl logs payment-service-6d8bf9c9f-xk2vl --previous:\n  2026-03-19T14:20:11Z WARN  JVM heap usage 97% — GC pressure critical\n  2026-03-19T14:20:18Z ERROR java.lang.OutOfMemoryError: Java heap space\n  2026-03-19T14:20:18Z ERROR Killed by signal 9",
+        "kubectl get deployment payment-service -n payments -o yaml: resources.limits.memory: 256Mi",
+        "helm history payment-service -n payments: REVISION 12 — v2.3.0 deployed 2026-03-19T13:45:00Z"
+      ],
+      "confidence": "CONFIRMED",
+      "impact": "Payment processing is fully unavailable. Revenue impact estimated $12k/min. api-gateway is returning HTTP 503 to downstream clients. SLA breach in progress.",
+      "affected_resources": [
+        "deploy/payment-service",
+        "pod/payment-service-6d8bf9c9f-xk2vl",
+        "pod/payment-service-6d8bf9c9f-9bnrd",
+        "pod/payment-service-6d8bf9c9f-mn2zp"
+      ],
+      "remediation": "Immediately roll back the Helm release to revision 11 or patch the memory limit to 512Mi."
+    },
+    {
+      "id": "order-svc-cpu-saturation",
+      "title": "order-service CPU near saturation",
+      "severity": "HIGH",
+      "category": "resource-pressure",
+      "service": "order-service",
+      "description": "order-service pods are consuming 190m of the 250m CPU limit (76%). Under current load patterns, CPU throttling will begin within the next 15–30 minutes.",
+      "root_cause": "Increased order volume due to payment-service outage — orders are queuing and retrying, generating synthetic load on order-service.",
+      "evidence": [
+        "kubectl top pods -n payments: order-service-59967f9ccc-4zdx6   190m   430Mi",
+        "HPA current/desired replicas: 2/3 — 1 pod pending node scheduling",
+        "kubectl get events -n payments: FailedScheduling — 0/6 nodes available: 3 Insufficient memory"
+      ],
+      "confidence": "HIGH",
+      "impact": "If payment-service is not restored within ~30 minutes, order-service will begin throttling and orders will fail cascade.",
+      "affected_resources": ["deploy/order-service", "hpa/order-service-hpa"],
+      "remediation": "Restore payment-service to stop retry storm. Review HPA node affinity to fix pending replica."
+    },
+    {
+      "id": "api-gw-503-rate",
+      "title": "api-gateway elevated 503 error rate",
+      "severity": "MEDIUM",
+      "category": "networking",
+      "service": "api-gateway",
+      "description": "api-gateway is returning HTTP 503 to clients at a 2.4% rate due to upstream payment-service being unavailable. Circuit breaker is partially open.",
+      "root_cause": "payment-service endpoints are unhealthy; Envoy upstream health checks are failing, causing the circuit breaker to trip for /v1/payments/* routes.",
+      "evidence": [
+        "Prometheus: rate(http_requests_total{status='503',service='api-gateway'}[5m]) = 0.024",
+        "kubectl logs api-gateway-7b4dc8-vqn2w: upstream connect error or disconnect/reset before headers — reset reason: connection failure"
+      ],
+      "confidence": "CONFIRMED",
+      "impact": "Client-facing 503 errors for all payment endpoints. Retry storms amplifying order-service load.",
+      "affected_resources": ["deploy/api-gateway", "svc/api-gateway"],
+      "remediation": "Resolve upstream payment-service. Review circuit breaker timeout config to prevent retry storms."
+    },
+    {
+      "id": "helm-chart-regression",
+      "title": "Helm chart v2.3.0 resource regression",
+      "severity": "LOW",
+      "category": "configuration",
+      "service": "payment-service",
+      "description": "The Helm chart upgrade from v2.1.0 to v2.3.0 silently reduced the default memory limit from 512Mi to 256Mi in values.yaml without a CHANGELOG entry.",
+      "root_cause": "Chart maintainer PR #482 changed default limits for cloud cost optimisation without considering JVM services.",
+      "evidence": ["helm diff revision 11 12 (payment-service): -  memory: 512Mi\n+  memory: 256Mi"],
+      "confidence": "HIGH",
+      "impact": "Any future deployment using default values will reproduce this outage.",
+      "affected_resources": ["helm/payment-service"],
+      "remediation": "File issue against chart repo and pin service-specific memory overrides in Argo CD."
+    },
+    {
+      "id": "node-memory-headroom",
+      "title": "3 nodes low on allocatable memory",
+      "severity": "INFO",
+      "category": "cluster-capacity",
+      "service": "",
+      "description": "Nodes gke-pool-1-node-001, -002, -003 have less than 500Mi allocatable memory remaining, contributing to HPA pending replicas.",
+      "root_cause": "Gradual memory fragmentation from long-running DaemonSet allocations.",
+      "evidence": ["kubectl describe nodes | grep -A5 'Allocated resources': Memory requests: 7.4Gi / 7.9Gi (93%)"],
+      "confidence": "MEDIUM",
+      "impact": "New pod scheduling will fail on 3 of 6 nodes until memory is reclaimed.",
+      "affected_resources": ["node/gke-pool-1-node-001", "node/gke-pool-1-node-002", "node/gke-pool-1-node-003"],
+      "remediation": "Scale cluster or evict low-priority DaemonSet pods."
+    }
+  ],
+  "root_cause_hypotheses": [
+    {
+      "finding_title": "payment-service CrashLoopBackOff — OOMKilled",
+      "mechanism": "Helm chart v2.3.0 lowered memory limit 512Mi → 256Mi. JVM process starts, allocates heap per -Xmx384m flag, hits 256Mi container limit first, kernel OOM-kills the process. Kubelet detects exit code 137 (SIGKILL), reschedules pod with exponential back-off. Back-off window now at 5 minutes, causing pod to show NotReady for extended periods.",
+      "confidence": "CONFIRMED",
+      "supporting_evidence": [
+        "Exit code 137 (OOMKilled) in pod describe",
+        "Helm diff shows memory change in revision 12",
+        "JVM logs show OutOfMemoryError 7 seconds before kill"
+      ],
+      "what_would_confirm": "Roll back Helm to revision 11 and observe pods becoming Ready — already confirmed in staging."
+    }
+  ],
+  "recommendations": [
+    {
+      "priority": 1,
+      "title": "Roll back payment-service Helm release to revision 11",
+      "description": "This is the fastest path to restoration. Revision 11 had working memory limits (512Mi). Rollback takes effect immediately without a Docker image rebuild.",
+      "urgency": "IMMEDIATE",
+      "effort": "LOW",
+      "command": "helm rollback payment-service 11 -n payments --wait --timeout 3m",
+      "why": "Revision 12 introduced the OOM regression. Rolling back immediately restores the 512Mi memory limit and brings pods to Ready state.",
+      "risk": "Any non-memory changes in v2.3.0 will also be reverted — verify with `helm diff` first.",
+      "related_findings": ["crashloop-payment-svc", "helm-chart-regression"]
+    },
+    {
+      "priority": 2,
+      "title": "Verify payment-service pod readiness post-rollback",
+      "description": "After rollback, confirm all 3 replicas are Running and Ready, and that api-gateway 503 rate drops to 0.",
+      "urgency": "IMMEDIATE",
+      "effort": "LOW",
+      "command": "kubectl rollout status deployment/payment-service -n payments --timeout=5m && kubectl top pods -n payments",
+      "why": "Confirm rollback success and revenue impact resolution before closing the incident.",
+      "risk": "None — read-only observation.",
+      "related_findings": ["crashloop-payment-svc", "api-gw-503-rate"]
+    },
+    {
+      "priority": 3,
+      "title": "Pin memory limits in service Helm values override",
+      "description": "Add explicit memory overrides to the payments-service Argo CD application values to prevent future chart defaults from regressing limits.",
+      "urgency": "SHORT_TERM",
+      "effort": "LOW",
+      "command": "# In argocd/applications/payment-service/values-override.yaml:\n# resources:\n#   limits:\n#     memory: 512Mi\n#   requests:\n#     memory: 384Mi",
+      "why": "Prevents the same issue recurring on next chart upgrade. Takes 5 minutes.",
+      "risk": "None — values override is additive.",
+      "related_findings": ["helm-chart-regression"]
+    },
+    {
+      "priority": 4,
+      "title": "Add OOMKill alert to payment-service SLO",
+      "description": "Create a Prometheus alerting rule that fires within 2 minutes of an OOMKilled event on any payments namespace pod.",
+      "urgency": "SHORT_TERM",
+      "effort": "MEDIUM",
+      "command": "# AlertRule example:\n# alert: PodOOMKilled\n# expr: kube_pod_container_status_last_terminated_reason{reason='OOMKilled',namespace='payments'} > 0\n# for: 2m",
+      "why": "This incident went undetected for 8 minutes. An OOMKill alert would have reduced MTTR significantly.",
+      "risk": "Alert fatigue if threshold not tuned — start with a 2-minute window.",
+      "related_findings": ["crashloop-payment-svc"]
+    },
+    {
+      "priority": 5,
+      "title": "Scale cluster node pool by +2 nodes for headroom",
+      "description": "3 nodes are at 93% memory allocation. Adding 2 nodes resolves the HPA pending replica and provides buffer for traffic spikes.",
+      "urgency": "LONG_TERM",
+      "effort": "MEDIUM",
+      "command": "gcloud container clusters resize prod-gke-us-central1 --node-pool=gke-pool-1 --num-nodes=8 --region=us-central1",
+      "why": "Current node count leaves insufficient scheduling headroom for burst traffic or additional services.",
+      "risk": "Cost increase ~$400/month. Evaluate cluster autoscaler config first.",
+      "related_findings": ["node-memory-headroom", "order-svc-cpu-saturation"]
+    }
+  ],
+  "timeline": [
+    { "time": "2026-03-19T13:45:00Z", "event": "Helm release payment-service upgraded to v2.3.0 (revision 12)", "severity": "INFO", "service": "payment-service" },
+    { "time": "2026-03-19T13:46:12Z", "event": "payment-service rolling update initiated — 3 pods replacing", "severity": "INFO", "service": "payment-service" },
+    { "time": "2026-03-19T13:47:38Z", "event": "First pod OOMKilled (exit 137) during startup — JVM heap exhausted", "severity": "CRITICAL", "service": "payment-service" },
+    { "time": "2026-03-19T13:47:55Z", "event": "Second pod OOMKilled — all new replicas failing", "severity": "CRITICAL", "service": "payment-service" },
+    { "time": "2026-03-19T13:48:10Z", "event": "Third pod OOMKilled — deployment rollout stalled at 0/3 Ready", "severity": "CRITICAL", "service": "payment-service" },
+    { "time": "2026-03-19T13:49:22Z", "event": "api-gateway circuit breaker tripped for /v1/payments/* routes", "severity": "HIGH", "service": "api-gateway" },
+    { "time": "2026-03-19T13:49:45Z", "event": "503 error rate exceeded 1% — PagerDuty alert fired (P1)", "severity": "HIGH", "service": "api-gateway" },
+    { "time": "2026-03-19T13:52:00Z", "event": "On-call engineer acknowledged incident INC-8821", "severity": "INFO", "service": "" },
+    { "time": "2026-03-19T13:55:00Z", "event": "order-service retry storm begins — CPU ramp from 80m → 190m", "severity": "HIGH", "service": "order-service" },
+    { "time": "2026-03-19T13:57:00Z", "event": "HPA scales order-service to 3 replicas — 1 pod pending (node memory)", "severity": "MEDIUM", "service": "order-service" },
+    { "time": "2026-03-19T14:05:00Z", "event": "payment-service back-off reaches 5m window — CrashLoopBackOff confirmed", "severity": "CRITICAL", "service": "payment-service" },
+    { "time": "2026-03-19T14:18:00Z", "event": "Root cause identified: Helm chart memory regression", "severity": "INFO", "service": "" },
+    { "time": "2026-03-19T14:22:07Z", "event": "Health report generated — rollback command ready", "severity": "INFO", "service": "" }
+  ]
+};
+</script>
+
+<!-- ── Top Header ─────────────────────────────────────────────── -->
+<header class="top-header" id="top">
+  <div class="brand">🔍 vertex-ai-toolkit <span>/ health</span></div>
+  <div class="cluster-info" id="cluster-info-text"></div>
+  <div class="status-badge CRITICAL" id="status-badge">
+    <span class="status-dot"></span>
+    <span id="status-text">CRITICAL</span>
+  </div>
+  <div class="generated-at" id="generated-at"></div>
+</header>
+
+<div class="layout">
+
+  <!-- ── Sidebar ──────────────────────────────────────────────── -->
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-label">Navigation</div>
+    <a class="nav-item active" href="#section-summary" onclick="setActiveNav(this)">
+      <span class="nav-icon">📊</span> Summary
+    </a>
+    <a class="nav-item" href="#section-cluster" onclick="setActiveNav(this)">
+      <span class="nav-icon">☸️</span> Cluster
+    </a>
+    <a class="nav-item" href="#section-services" onclick="setActiveNav(this)">
+      <span class="nav-icon">🔲</span> Services
+      <span class="nav-count" id="nav-services-count"></span>
+    </a>
+    <a class="nav-item" href="#section-findings" onclick="setActiveNav(this)">
+      <span class="nav-icon">🔍</span> Findings
+      <span class="nav-count critical" id="nav-findings-count"></span>
+    </a>
+    <a class="nav-item" href="#section-rootcause" onclick="setActiveNav(this)">
+      <span class="nav-icon">🧠</span> Root Cause
+    </a>
+    <a class="nav-item" href="#section-timeline" onclick="setActiveNav(this)">
+      <span class="nav-icon">📅</span> Timeline
+      <span class="nav-count" id="nav-timeline-count"></span>
+    </a>
+    <a class="nav-item" href="#section-recommendations" onclick="setActiveNav(this)">
+      <span class="nav-icon">✅</span> Actions
+      <span class="nav-count" id="nav-recs-count"></span>
+    </a>
+
+    <div class="nav-divider"></div>
+    <div class="filter-section">
+      <div class="filter-section-label">Filter Findings</div>
+      <div class="filter-pills" id="severity-filters">
+        <span class="filter-pill" data-sev="CRITICAL">CRIT</span>
+        <span class="filter-pill" data-sev="HIGH">HIGH</span>
+        <span class="filter-pill" data-sev="MEDIUM">MED</span>
+        <span class="filter-pill" data-sev="LOW">LOW</span>
+        <span class="filter-pill" data-sev="INFO">INFO</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── Main ─────────────────────────────────────────────────── -->
+  <main class="main" id="main-content">
+
+    <!-- Executive Summary -->
+    <section id="section-summary">
+      <h2><span class="section-icon">📊</span> Executive Summary</h2>
+      <div class="stat-grid" id="stat-grid"></div>
+      <div class="summary-text" id="summary-text"></div>
+    </section>
+
+    <!-- Cluster Overview -->
+    <section id="section-cluster">
+      <h2>
+        <span class="section-icon">☸️</span>
+        <span class="section-toggle" onclick="toggleSection(this)">Cluster Overview</span>
+      </h2>
+      <div class="section-content">
+        <div class="card">
+          <table class="metrics-table" id="cluster-table"></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Service Status -->
+    <section id="section-services">
+      <h2><span class="section-icon">🔲</span> Service Status</h2>
+      <div class="service-grid" id="service-grid"></div>
+    </section>
+
+    <!-- Findings -->
+    <section id="section-findings">
+      <h2><span class="section-icon">🔍</span> Findings</h2>
+      <div id="findings-list"></div>
+    </section>
+
+    <!-- Root Cause -->
+    <section id="section-rootcause">
+      <h2>
+        <span class="section-icon">🧠</span>
+        <span class="section-toggle" onclick="toggleSection(this)">Root Cause Hypotheses</span>
+      </h2>
+      <div class="section-content" id="rootcause-list"></div>
+    </section>
+
+    <!-- Timeline -->
+    <section id="section-timeline">
+      <h2><span class="section-icon">📅</span> Timeline</h2>
+      <div class="timeline" id="timeline-list"></div>
+    </section>
+
+    <!-- Recommendations -->
+    <section id="section-recommendations">
+      <h2><span class="section-icon">✅</span> Recommended Actions</h2>
+      <div id="recs-list"></div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+// ── Render helpers ──────────────────────────────────────────────
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+function sevColor(s) {
+  const m = {CRITICAL:'critical',HIGH:'high',MEDIUM:'medium',LOW:'low',INFO:'info',HEALTHY:'healthy',DEGRADED:'degraded',FAILED:'failed',UNKNOWN:'unknown'};
+  return m[s] || 'unknown';
+}
+
+// ── Header ──────────────────────────────────────────────────────
+function renderHeader() {
+  const m = REPORT_DATA.metadata;
+  const es = REPORT_DATA.executive_summary;
+  document.getElementById('cluster-info-text').textContent =
+    `${m.project_id} / ${m.cluster_name}  •  ${es.scope}  •  model: ${m.model_used}`;
+  const badge = document.getElementById('status-badge');
+  badge.className = 'status-badge ' + es.overall_status;
+  document.getElementById('status-text').textContent = es.overall_status;
+  document.getElementById('generated-at').textContent = 'Report: ' + m.generated_at.replace('T',' ').replace('Z',' UTC');
+}
+
+// ── Stat grid ────────────────────────────────────────────────────
+function renderStats() {
+  const es = REPORT_DATA.executive_summary;
+  const data = [
+    { label: 'Overall Status', value: es.overall_status, cls: sevColor(es.overall_status), sub: es.scope },
+    { label: 'Services Checked', value: es.services_checked, cls: 'info', sub: 'in namespace' },
+    { label: 'Issues Found', value: es.issues_found, cls: 'warning', sub: 'findings' },
+    { label: 'Critical', value: es.critical_count, cls: 'critical', sub: 'severity' },
+    { label: 'Warnings', value: es.warning_count, cls: 'warning', sub: 'high/medium' },
+    { label: 'Healthy', value: REPORT_DATA.service_statuses.filter(s=>s.status==='HEALTHY').length, cls: 'healthy', sub: 'services ok' },
+  ];
+  document.getElementById('stat-grid').innerHTML = data.map(d=>
+    `<div class="stat-card">
+      <div class="stat-label">${esc(d.label)}</div>
+      <div class="stat-value ${d.cls}">${esc(d.value)}</div>
+      <div class="stat-sub">${esc(d.sub)}</div>
+    </div>`
+  ).join('');
+  document.getElementById('summary-text').textContent = es.summary_text;
+}
+
+// ── Cluster overview ──────────────────────────────────────────────
+function renderCluster() {
+  document.getElementById('cluster-table').innerHTML = REPORT_DATA.cluster_overview.map(r=>
+    `<tr><td>${esc(r.metric)}</td><td>${esc(r.value)}</td></tr>`
+  ).join('');
+}
+
+// ── Service grid ──────────────────────────────────────────────────
+function renderServices() {
+  const svcs = REPORT_DATA.service_statuses;
+  document.getElementById('nav-services-count').textContent = svcs.length;
+
+  document.getElementById('service-grid').innerHTML = svcs.map(s => {
+    const memWarn = s.memory_usage && s.memory_usage.split('/').length === 2 &&
+      (() => { try { const parts = s.memory_usage.split('/'); const used = parseInt(parts[0]); const lim = parseInt(parts[1]); return (used / lim) > 0.85; } catch(e){ return false; }})();
+    const cpuWarn = s.cpu_usage && (() => { try { const parts = s.cpu_usage.split('/'); const u = parseInt(parts[0]); const l = parseInt(parts[1]); return (u/l) > 0.75; } catch(e){ return false; }})();
+    const restartsCrit = parseInt(s.restarts_1h) > 10;
+    const restartsWarn = parseInt(s.restarts_1h) > 3;
+
+    return `<div class="service-card ${esc(s.status)}">
+      <div class="service-header">
+        <div class="service-status-dot ${esc(s.status)}"></div>
+        <div>
+          <div class="service-name">${esc(s.service)}</div>
+          <div class="service-ns">${esc(s.namespace)}</div>
+        </div>
+        <div class="service-status-label ${esc(s.status)}">${esc(s.status)}</div>
+      </div>
+      <div class="service-metrics">
+        <div class="service-metric">
+          <div class="service-metric-val${s.pods_ready && s.pods_ready.startsWith('0/') ? ' crit' : ''}">${esc(s.pods_ready)}</div>
+          <div class="service-metric-lbl">Pods Ready</div>
+        </div>
+        <div class="service-metric">
+          <div class="service-metric-val${restartsCrit ? ' crit' : restartsWarn ? ' warn' : ''}">${esc(s.restarts_1h)}</div>
+          <div class="service-metric-lbl">Restarts/h</div>
+        </div>
+        <div class="service-metric">
+          <div class="service-metric-val${cpuWarn ? ' warn' : ''}">${esc(s.cpu_usage.split('/')[0].trim())}</div>
+          <div class="service-metric-lbl">CPU</div>
+        </div>
+        <div class="service-metric">
+          <div class="service-metric-val${memWarn ? ' crit' : ''}">${esc(s.memory_usage.split('/')[0].trim())}</div>
+          <div class="service-metric-lbl">Memory</div>
+        </div>
+      </div>
+      ${s.issues ? `<div class="service-issues">⚠ ${esc(s.issues)}</div>` : '<div class="no-issues">✓ No active issues</div>'}
+    </div>`;
+  }).join('');
+}
+
+// ── Findings ──────────────────────────────────────────────────────
+const activeSeverities = new Set(['CRITICAL','HIGH','MEDIUM','LOW','INFO']);
+
+function renderFindings() {
+  const findings = REPORT_DATA.findings;
+  document.getElementById('nav-findings-count').textContent = findings.length;
+
+  const container = document.getElementById('findings-list');
+  container.innerHTML = findings.map((f, i) => {
+    const evHTML = f.evidence.map(e => {
+      if (e.includes('\n')) {
+        return `<pre class="evidence-block">${esc(e)}</pre>`;
+      }
+      return `<li>${esc(e)}</li>`;
+    }).join('');
+
+    const affectedHTML = f.affected_resources.map(r =>
+      `<span class="affected-tag">${esc(r)}</span>`
+    ).join('');
+
+    return `<div class="finding-card" data-sev="${esc(f.severity)}" data-id="${esc(f.id)}" id="finding-${esc(f.id)}">
+      <div class="finding-header" onclick="toggleFinding(this.parentElement)">
+        <span class="sev-pill ${esc(f.severity)}">${esc(f.severity)}</span>
+        <span class="finding-title">${esc(f.title)}</span>
+        ${f.service ? `<span class="finding-service">${esc(f.service)}</span>` : ''}
+        <span class="finding-chevron">▶</span>
+      </div>
+      <div class="finding-body">
+        ${f.description ? `<div class="finding-row"><div class="finding-row-label">What</div><div class="finding-row-val">${esc(f.description)}</div></div>` : ''}
+        ${f.root_cause ? `<div class="finding-row"><div class="finding-row-label">Root Cause</div><div class="finding-row-val">${esc(f.root_cause)}</div></div>` : ''}
+        ${f.evidence.length ? `<div class="finding-row"><div class="finding-row-label">Evidence</div><ul class="evidence-list">${evHTML}</ul></div>` : ''}
+        <div class="finding-row" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+          <div><div class="finding-row-label">Confidence</div><span class="confidence-badge ${esc(f.confidence)}">${esc(f.confidence)}</span></div>
+          ${f.category ? `<div><div class="finding-row-label">Category</div><span style="font-size:12px;color:var(--text-dim)">${esc(f.category)}</span></div>` : ''}
+        </div>
+        ${f.impact ? `<div class="finding-row"><div class="finding-row-label">Impact</div><div class="finding-row-val">${esc(f.impact)}</div></div>` : ''}
+        ${affectedHTML ? `<div class="finding-row"><div class="finding-row-label">Affected Resources</div><div class="affected-tags">${affectedHTML}</div></div>` : ''}
+        ${f.remediation ? `<div class="finding-row"><div class="finding-row-label">Quick Remediation</div><div class="finding-row-val" style="color:var(--healthy)">${esc(f.remediation)}</div></div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  // auto-open critical
+  document.querySelectorAll('.finding-card[data-sev="CRITICAL"]').forEach(c => {
+    c.classList.add('open');
+  });
+
+  // init filter pills
+  document.querySelectorAll('.filter-pill').forEach(p => {
+    p.addEventListener('click', () => toggleSeverityFilter(p.dataset.sev));
+  });
+}
+
+function toggleFinding(card) {
+  card.classList.toggle('open');
+}
+
+function toggleSeverityFilter(sev) {
+  if (activeSeverities.has(sev)) {
+    activeSeverities.delete(sev);
+  } else {
+    activeSeverities.add(sev);
+  }
+  // Update pills
+  document.querySelectorAll('.filter-pill').forEach(p => {
+    p.classList.toggle('inactive', !activeSeverities.has(p.dataset.sev));
+  });
+  // Show/hide finding cards
+  document.querySelectorAll('.finding-card').forEach(card => {
+    card.classList.toggle('hidden', !activeSeverities.has(card.dataset.sev));
+  });
+}
+
+// ── Root Cause ────────────────────────────────────────────────────
+function renderRootCause() {
+  const hyps = REPORT_DATA.root_cause_hypotheses;
+  document.getElementById('rootcause-list').innerHTML = hyps.map(h => {
+    const evList = h.supporting_evidence.map(e => `<li>${esc(e)}</li>`).join('');
+    return `<div class="hyp-card">
+      <div class="hyp-title">
+        <span>🔬</span> ${esc(h.finding_title)}
+        <span class="confidence-badge ${esc(h.confidence)}" style="margin-left:auto">${esc(h.confidence)}</span>
+      </div>
+      <div class="hyp-row"><div class="label">Mechanism</div><div style="font-size:13px;color:var(--text-main)">${esc(h.mechanism)}</div></div>
+      ${evList ? `<div class="hyp-row"><div class="label">Supporting Evidence</div><ul class="evidence-list">${evList}</ul></div>` : ''}
+      <div class="hyp-row"><div class="label">What Would Confirm</div><div style="font-size:13px;color:var(--info)">${esc(h.what_would_confirm)}</div></div>
+    </div>`;
+  }).join('');
+}
+
+// ── Timeline ──────────────────────────────────────────────────────
+function renderTimeline() {
+  const events = REPORT_DATA.timeline;
+  document.getElementById('nav-timeline-count').textContent = events.length;
+
+  document.getElementById('timeline-list').innerHTML = events.map(e =>
+    `<div class="tl-event">
+      <div class="tl-dot ${esc(e.severity)}"></div>
+      <div class="tl-time">${esc(e.time)}</div>
+      <div>
+        ${e.service ? `<span class="tl-service">[${esc(e.service)}]</span>` : ''}
+        <span class="tl-text">${esc(e.event)}</span>
+        <span class="tl-sev-badge ${esc(e.severity)}">${esc(e.severity)}</span>
+      </div>
+    </div>`
+  ).join('');
+}
+
+// ── Recommendations ────────────────────────────────────────────────
+function renderRecs() {
+  const recs = REPORT_DATA.recommendations;
+  document.getElementById('nav-recs-count').textContent = recs.length;
+
+  const urgencyOrder = ['IMMEDIATE','SHORT_TERM','LONG_TERM'];
+  const urgencyLabels = { IMMEDIATE: '🚨 Immediate (next 5 min)', SHORT_TERM: '⚡ Short-term (next 1h)', LONG_TERM: '📋 Long-term (next sprint)' };
+  let html = '';
+
+  urgencyOrder.forEach(urg => {
+    const group = recs.filter(r => r.urgency === urg).sort((a,b) => a.priority - b.priority);
+    if (!group.length) return;
+    html += `<div class="urgency-header"><span class="urgency-badge ${urg}">${urg.replace('_',' ')}</span> ${urgencyLabels[urg]}</div>`;
+    html += group.map(r => {
+      const pCls = r.priority <= 2 ? `p${r.priority}` : '';
+      const cmdLines = r.command.split('\n').filter(l => !l.startsWith('#')).join('\n').trim();
+      return `<div class="rec-card">
+        <div class="rec-header">
+          <div class="rec-priority ${pCls}">${r.priority}</div>
+          <div>
+            <div class="rec-title">${esc(r.title)}</div>
+            <div class="rec-badges" style="margin-top:6px">
+              <span class="urgency-badge ${esc(r.urgency)}">${esc(r.urgency.replace('_',' '))}</span>
+              <span class="effort-badge ${esc(r.effort)}">effort: ${esc(r.effort)}</span>
+            </div>
+          </div>
+        </div>
+        ${r.description ? `<div class="rec-body">${esc(r.description)}</div>` : ''}
+        ${cmdLines ? `<div class="rec-cmd" id="cmd-${r.priority}">
+          <code>${esc(cmdLines)}</code>
+          <button class="copy-btn" onclick="copyCmd(this, ${r.priority})">copy</button>
+        </div>` : ''}
+        ${r.why ? `<div class="rec-why"><strong>Why:</strong> ${esc(r.why)}</div>` : ''}
+        ${r.risk ? `<div class="rec-risk"><strong style="color:var(--high)">Risk:</strong> <span style="color:var(--text-dim)">${esc(r.risk)}</span></div>` : ''}
+      </div>`;
+    }).join('');
+  });
+
+  document.getElementById('recs-list').innerHTML = html;
+}
+
+// ── Copy command ──────────────────────────────────────────────────
+function copyCmd(btn, priority) {
+  const rec = REPORT_DATA.recommendations.find(r => r.priority === priority);
+  if (!rec) return;
+  const text = rec.command.split('\n').filter(l => !l.startsWith('#')).join('\n').trim();
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✓';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1500);
+  });
+}
+
+// ── Section toggle (collapse) ─────────────────────────────────────
+function toggleSection(toggle) {
+  toggle.classList.toggle('collapsed');
+}
+
+// ── Sidebar nav active ────────────────────────────────────────────
+function setActiveNav(el) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  el.classList.add('active');
+}
+
+// Update active nav on scroll
+function updateActiveNav() {
+  const sections = document.querySelectorAll('section[id]');
+  const scrollTop = document.getElementById('main-content').scrollTop + 80;
+  let current = '';
+  sections.forEach(s => {
+    if (s.offsetTop <= scrollTop) current = s.id;
+  });
+  if (current) {
+    document.querySelectorAll('.nav-item').forEach(n => {
+      const href = n.getAttribute('href');
+      n.classList.toggle('active', href === '#' + current);
+    });
+  }
+}
+
+document.getElementById('main-content').addEventListener('scroll', updateActiveNav, { passive: true });
+
+// ── Init ──────────────────────────────────────────────────────────
+(function init() {
+  renderHeader();
+  renderStats();
+  renderCluster();
+  renderServices();
+  renderFindings();
+  renderRootCause();
+  renderTimeline();
+  renderRecs();
+  document.title = `Health Report — ${REPORT_DATA.metadata.cluster_name} — ${REPORT_DATA.executive_summary.overall_status}`;
+})();
+</script>
+</body>
+</html>
