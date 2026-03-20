@@ -66,21 +66,14 @@ def _scan_deployment_for_datadog(deploy: Any) -> dict[str, Any]:
 
     result["name"] = meta.name or ""
 
-    # ── Annotations ───────────────────────────────────────────
-    annotations: dict[str, str] = meta.annotations or {}
-    for key, val in annotations.items():
-        for prefix in _DD_ANNOTATION_PREFIXES:
-            if key.startswith(prefix):
-                result["annotations"][key] = val
-                result["has_datadog"] = True
-                break
-
-    # ── Labels ────────────────────────────────────────────────
-    labels: dict[str, str] = meta.labels or {}
-    for key, val in labels.items():
-        if key.startswith(_DD_LABEL_PREFIX):
-            result["labels"][key] = val
-            result["has_datadog"] = True
+    # ── Deployment-level annotations & labels ─────────────────
+    dd_ann, dd_lbl = _extract_dd_metadata(
+        meta.annotations or {}, meta.labels or {}
+    )
+    result["annotations"].update(dd_ann)
+    result["labels"].update(dd_lbl)
+    if dd_ann or dd_lbl:
+        result["has_datadog"] = True
 
     # ── Pod template annotations & labels ────────────────────
     spec = deploy.spec
@@ -88,19 +81,13 @@ def _scan_deployment_for_datadog(deploy: Any) -> dict[str, Any]:
     pod_meta = pod_template.metadata if pod_template else None
 
     if pod_meta:
-        pod_annotations: dict[str, str] = pod_meta.annotations or {}
-        for key, val in pod_annotations.items():
-            for prefix in _DD_ANNOTATION_PREFIXES:
-                if key.startswith(prefix):
-                    result["annotations"][key] = val
-                    result["has_datadog"] = True
-                    break
-
-        pod_labels: dict[str, str] = pod_meta.labels or {}
-        for key, val in pod_labels.items():
-            if key.startswith(_DD_LABEL_PREFIX):
-                result["labels"][key] = val
-                result["has_datadog"] = True
+        pod_ann, pod_lbl = _extract_dd_metadata(
+            pod_meta.annotations or {}, pod_meta.labels or {}
+        )
+        result["annotations"].update(pod_ann)
+        result["labels"].update(pod_lbl)
+        if pod_ann or pod_lbl:
+            result["has_datadog"] = True
 
     # ── Env vars in all containers ────────────────────────────
     pod_spec = pod_template.spec if pod_template else None
@@ -110,8 +97,8 @@ def _scan_deployment_for_datadog(deploy: Any) -> dict[str, Any]:
         env_list = container.env or []
         for env_var in env_list:
             if env_var.name in _DD_ENV_VARS:
-                # Don't expose values that might be secrets
-                val = env_var.value or "<from-secret>"
+                # Don't expose values from secrets/configmaps/fieldRefs
+                val = env_var.value or "(from valueFrom)"
                 result["env_vars"][env_var.name] = val
                 result["has_datadog"] = True
 
@@ -131,24 +118,58 @@ def _scan_deployment_for_datadog(deploy: Any) -> dict[str, Any]:
             )
 
         # Admission webhook present but no service tag
+        # Check both the label AND the DD_SERVICE env var
         has_webhook = any(
             k.startswith("admission.datadoghq.com/") for k in annotations_found
         )
-        has_service_tag = any(
-            k == "tags.datadoghq.com/service" for k in result["labels"]
+        has_service_tag = (
+            any(k == "tags.datadoghq.com/service" for k in result["labels"])
+            or "DD_SERVICE" in env_vars
         )
         if has_webhook and not has_service_tag:
             result["issues"].append(
                 "Datadog admission webhook annotation detected but "
-                "'tags.datadoghq.com/service' label is missing. "
+                "'tags.datadoghq.com/service' label and DD_SERVICE env var are both missing. "
                 "Service will be reported under a default name in Datadog APM."
             )
 
     return result
 
 
-def _check_datadog_agent(core_v1: Any) -> dict[str, Any]:
+def _extract_dd_metadata(
+    annotations: dict[str, str], labels: dict[str, str]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Extract Datadog-relevant annotations and labels from a metadata dict.
+
+    Args:
+        annotations: Raw annotations dict from a Kubernetes metadata object.
+        labels: Raw labels dict from a Kubernetes metadata object.
+
+    Returns:
+        A tuple of (dd_annotations, dd_labels) containing only entries that
+        match Datadog annotation prefixes or the Datadog label prefix.
+    """
+    dd_annotations: dict[str, str] = {}
+    for key, val in annotations.items():
+        for prefix in _DD_ANNOTATION_PREFIXES:
+            if key.startswith(prefix):
+                dd_annotations[key] = val
+                break
+
+    dd_labels: dict[str, str] = {
+        key: val for key, val in labels.items() if key.startswith(_DD_LABEL_PREFIX)
+    }
+
+    return dd_annotations, dd_labels
+
+
+def _check_datadog_agent(apps_v1: Any) -> dict[str, Any]:
     """Check for a Datadog agent DaemonSet across common namespaces.
+
+    Uses the AppsV1 API to look for a DaemonSet named ``datadog-agent`` (or
+    labelled ``app=datadog-agent``).  A DaemonSet is the canonical way Datadog
+    is deployed on Kubernetes — checking for it is more accurate than listing
+    pods.
 
     Returns a dict with:
     - found: bool
@@ -161,22 +182,36 @@ def _check_datadog_agent(core_v1: Any) -> dict[str, Any]:
     except ImportError:
         return {"found": False, "namespace": "", "name": "", "error": "kubernetes library not available"}
 
+    permission_denied = False
+
     for ns in _DD_AGENT_NAMESPACES:
         try:
-            ds_list = core_v1.list_namespaced_pod(namespace=ns, label_selector="app=datadog-agent")
+            ds_list = apps_v1.list_namespaced_daemon_set(
+                namespace=ns, label_selector="app=datadog-agent"
+            )
             if ds_list.items:
-                # At least one agent pod found
-                pod_name = ds_list.items[0].metadata.name or "datadog-agent"
-                return {"found": True, "namespace": ns, "name": pod_name, "error": ""}
+                ds_name = ds_list.items[0].metadata.name or "datadog-agent"
+                return {"found": True, "namespace": ns, "name": ds_name, "error": ""}
         except k8s_exceptions.ApiException as exc:
-            if exc.status in (403, 401):
+            if exc.status in (401, 403):
+                permission_denied = True
                 continue
             # Other errors: just continue searching
-            logger.debug("Error checking datadog-agent in namespace %s: %s", ns, exc)
+            logger.debug("Error checking datadog-agent DaemonSet in namespace %s: %s", ns, exc)
             continue
         except Exception as exc:  # noqa: BLE001
-            logger.debug("Unexpected error checking datadog-agent in namespace %s: %s", ns, exc)
+            logger.debug(
+                "Unexpected error checking datadog-agent DaemonSet in namespace %s: %s", ns, exc
+            )
             continue
+
+    if permission_denied:
+        return {
+            "found": False,
+            "namespace": "",
+            "name": "",
+            "error": "insufficient permissions to list DaemonSets in agent namespaces",
+        }
 
     return {"found": False, "namespace": "", "name": "", "error": ""}
 
@@ -197,7 +232,7 @@ def _format_datadog_report(
     lines.append("\n### Datadog Agent Status")
     if agent_info["found"]:
         lines.append(
-            f"✅ Datadog agent detected: pod `{agent_info['name']}` "
+            f"✅ Datadog agent detected: DaemonSet `{agent_info['name']}` "
             f"in namespace `{agent_info['namespace']}`"
         )
     else:
@@ -205,7 +240,7 @@ def _format_datadog_report(
             lines.append(f"⚠️  Could not determine agent status: {agent_info['error']}")
         else:
             lines.append(
-                "❌ No Datadog agent pods found in namespaces: "
+                "❌ No Datadog agent DaemonSet found in namespaces: "
                 + ", ".join(_DD_AGENT_NAMESPACES)
                 + ". APM traces and metrics may not be collected."
             )
@@ -348,7 +383,7 @@ def get_datadog_config(
     ]
 
     # ── Check for Datadog agent ────────────────────────────────
-    agent_info = _check_datadog_agent(core_v1)
+    agent_info = _check_datadog_agent(apps_v1)
 
     report = _format_datadog_report(
         namespace=ns,

@@ -260,13 +260,15 @@ If the tool IS available:
 - Use `argocd_app_history(app_name=<app>)` to correlate recent deployments with issues
 - This data enriches the report but is NOT required — the report is complete without it
 
-### Step 11: Datadog Observability Assessment (CONDITIONAL — only if Datadog is detected)
+### Step 11: Datadog Observability Assessment (CONDITIONAL — only if Datadog is detected AND pods have issues)
 PREREQUISITE: First check if `get_datadog_config` is in your available tools list. If it is NOT available, SKIP this entire step.
 
-If the tool IS available, proceed ONLY when ONE of the following conditions is met from earlier steps:
-- Step 5b output (get_container_status) or Step 4e output (deployment YAML) shows annotations with `ad.datadoghq.com/` or `admission.datadoghq.com/` prefix
-- Step 5b or Step 4e output shows labels with `tags.datadoghq.com/` prefix
-- Step 3 (warning events) contains FailedCreate events mentioning `datadog-auto-instrumentation`
+If the tool IS available, proceed ONLY when ALL of the following conditions are met from earlier steps:
+- At least one pod is unhealthy (CrashLoopBackOff, Pending, Error, high restart count, or unavailable replicas)
+- AND one of the following Datadog signals is present:
+  - Step 5b output (get_container_status) or Step 4e output (deployment YAML) shows annotations with `ad.datadoghq.com/` or `admission.datadoghq.com/` prefix
+  - Step 5b or Step 4e output shows labels with `tags.datadoghq.com/` prefix
+  - Step 3 (warning events) contains FailedCreate events mentioning `datadog-auto-instrumentation`
 
 If the Datadog injection conflict condition is triggered (FailedCreate mentioning `datadog-auto-instrumentation`):
 - Flag this as a Datadog admission webhook injection conflict in your Raw Findings
@@ -358,7 +360,7 @@ Steps 9 and 10 MUST be marked as SKIPPED if the corresponding tools are not in y
 - [x] Step 7b: Cloud Logging warnings
 - [ ] Step 9: Helm assessment (SKIPPED — reason: helm_list_releases tool not available)
 - [ ] Step 10: ArgoCD assessment (SKIPPED — reason: argocd_list_applications tool not available)
-- [ ] Step 11: Datadog assessment (SKIPPED — reason: no Datadog annotations/labels detected in Steps 4/5 output)
+- [ ] Step 11: Datadog assessment (SKIPPED — reason: no Datadog annotations/labels detected in Steps 4/5 output, or no unhealthy pods)
 ```
 """
 
