@@ -386,3 +386,21 @@ class TestFormatCpu:
         from vaig.tools.gke._formatters import _format_cpu
 
         assert _format_cpu("?") == "?"
+
+    def test_nanocore_format(self) -> None:
+        """250000000n should convert to '0.250 cores'."""
+        from vaig.tools.gke._formatters import _format_cpu
+
+        assert _format_cpu("250000000n") == "0.250 cores"
+
+    def test_nanocore_one_core(self) -> None:
+        """1000000000n should convert to '1.000 cores'."""
+        from vaig.tools.gke._formatters import _format_cpu
+
+        assert _format_cpu("1000000000n") == "1.000 cores"
+
+    def test_nanocore_very_small(self) -> None:
+        """500n (very small) should convert to '0.000 cores'."""
+        from vaig.tools.gke._formatters import _format_cpu
+
+        assert _format_cpu("500n") == "0.000 cores"

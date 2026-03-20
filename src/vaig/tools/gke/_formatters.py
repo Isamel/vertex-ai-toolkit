@@ -476,6 +476,14 @@ def _format_cpu(cpu_str: str) -> str:
     """
     if not cpu_str or cpu_str in ("<unknown>", "?"):
         return cpu_str
+    # Nanocore format: e.g. "250000000n"
+    if cpu_str.endswith("n"):
+        try:
+            nanocores = int(cpu_str[:-1])
+            cores = nanocores / 1_000_000_000
+            return f"{cores:.3f} cores"
+        except ValueError:
+            return cpu_str
     # Millicore format: e.g. "500m"
     if cpu_str.endswith("m"):
         try:

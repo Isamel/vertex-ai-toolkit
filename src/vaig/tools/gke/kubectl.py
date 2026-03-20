@@ -719,7 +719,7 @@ def kubectl_top(
         # Format output
         lines: list[str] = []
         if is_pods:
-            lines.append(f"{'NAME':<50}{'CONTAINER':<30}{'CPU(cores)':<20}{'MEMORY(bytes)'}")
+            lines.append(f"{'NAME':<50}{'CONTAINER':<30}{'CPU(cores)':<20}{'MEMORY'}")
             for item in items:
                 pod_name = item.get("metadata", {}).get("name", "")
                 containers = item.get("containers", [])
@@ -732,7 +732,7 @@ def kubectl_top(
                         f"{pod_name:<50}{cname:<30}{cpu:<20}{mem}"
                     )
         else:
-            lines.append(f"{'NAME':<50}{'CPU(cores)':<20}{'CPU%':<10}{'MEMORY(bytes)':<17}{'MEMORY%'}")
+            lines.append(f"{'NAME':<50}{'CPU(cores)':<20}{'CPU%':<10}{'MEMORY':<17}{'MEMORY%'}")
             for item in items:
                 node_name = item.get("metadata", {}).get("name", "")
                 usage = item.get("usage", {})
