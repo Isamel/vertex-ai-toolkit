@@ -6,6 +6,12 @@ from typing import Any
 
 from vaig.tools.base import ToolResult
 
+_K8S_AVAILABLE = True
+try:
+    from kubernetes.client import exceptions as k8s_exceptions  # noqa: WPS433
+except ImportError:
+    _K8S_AVAILABLE = False
+
 
 class _DictMeta:
     """Thin wrapper that exposes dict-based K8s metadata as object attributes."""
@@ -71,6 +77,7 @@ class _DictItemList:
     def __init__(self, raw: dict[str, Any]) -> None:
         self.items = [_DictItem(i) for i in raw.get("items", [])]
 
+
 _RESOURCE_API_MAP: dict[str, str] = {
     "pods": "core",
     "services": "core",
@@ -112,6 +119,8 @@ _RESOURCE_API_MAP: dict[str, str] = {
     "helmreleases.helm.toolkit.fluxcd.io": "custom_flux_helm",
     # Flux Kustomization CRDs
     "kustomizations.kustomize.toolkit.fluxcd.io": "custom_flux_kustomize",
+    # VPA CRDs
+    "verticalpodautoscalers": "custom_vpa",
 }
 
 # Canonical aliases so users can type short names
@@ -171,6 +180,9 @@ _RESOURCE_ALIASES: dict[str, str] = {
     # Flux Kustomization aliases
     "ks": "kustomizations.kustomize.toolkit.fluxcd.io",
     "kustomization": "kustomizations.kustomize.toolkit.fluxcd.io",
+    # VPA aliases
+    "vpa": "verticalpodautoscalers",
+    "verticalpodautoscaler": "verticalpodautoscalers",
 }
 
 # Resource types expanded when ``resource="all"`` is requested.
@@ -190,28 +202,57 @@ _ALL_RESOURCE_TYPES: tuple[str, ...] = (
 # Allowed resource types for write operations (intentionally restrictive).
 _SCALABLE_RESOURCES = frozenset({"deployments", "statefulsets", "replicasets"})
 _RESTARTABLE_RESOURCES = frozenset({"deployments", "statefulsets", "daemonsets"})
-_LABELABLE_RESOURCES = frozenset({
-    "pods", "deployments", "services", "configmaps", "secrets",
-    "statefulsets", "daemonsets", "namespaces", "nodes",
-})
+_LABELABLE_RESOURCES = frozenset(
+    {
+        "pods",
+        "deployments",
+        "services",
+        "configmaps",
+        "secrets",
+        "statefulsets",
+        "daemonsets",
+        "namespaces",
+        "nodes",
+    }
+)
 
 # Cluster-scoped resources (no namespace parameter for list/describe).
-_CLUSTER_SCOPED_RESOURCES = frozenset({
-    "nodes", "namespaces", "pv", "persistentvolumes",
-    "mutatingwebhookconfigurations", "validatingwebhookconfigurations",
-    "customresourcedefinitions", "crds",
-})
+_CLUSTER_SCOPED_RESOURCES = frozenset(
+    {
+        "nodes",
+        "namespaces",
+        "pv",
+        "persistentvolumes",
+        "mutatingwebhookconfigurations",
+        "validatingwebhookconfigurations",
+        "customresourcedefinitions",
+        "crds",
+    }
+)
 
 # Real K8s resources we haven't implemented yet.
 # Used to distinguish "gap in our tools" from "hallucinated resource".
-_KNOWN_K8S_RESOURCES = frozenset({
-    "limitranges", "events", "componentstatuses",
-    "replicationcontrollers", "podtemplates",
-    "controllerrevisions", "leases",
-    "clusterroles", "clusterrolebindings", "roles", "rolebindings",
-    "storageclasses", "volumeattachments", "csidrivers", "csinodes",
-    "priorityclasses", "runtimeclasses",
-})
+_KNOWN_K8S_RESOURCES = frozenset(
+    {
+        "limitranges",
+        "events",
+        "componentstatuses",
+        "replicationcontrollers",
+        "podtemplates",
+        "controllerrevisions",
+        "leases",
+        "clusterroles",
+        "clusterrolebindings",
+        "roles",
+        "rolebindings",
+        "storageclasses",
+        "volumeattachments",
+        "csidrivers",
+        "csinodes",
+        "priorityclasses",
+        "runtimeclasses",
+    }
+)
 
 
 def _normalise_resource(resource: str) -> str:
@@ -250,7 +291,10 @@ def _list_resource(
             "serviceaccounts": ("list_namespaced_service_account", "list_service_account_for_all_namespaces"),
             "endpoints": ("list_namespaced_endpoints", "list_endpoints_for_all_namespaces"),
             "pvc": ("list_namespaced_persistent_volume_claim", "list_persistent_volume_claim_for_all_namespaces"),
-            "persistentvolumeclaims": ("list_namespaced_persistent_volume_claim", "list_persistent_volume_claim_for_all_namespaces"),
+            "persistentvolumeclaims": (
+                "list_namespaced_persistent_volume_claim",
+                "list_persistent_volume_claim_for_all_namespaces",
+            ),
             "resourcequotas": ("list_namespaced_resource_quota", "list_resource_quota_for_all_namespaces"),
             "nodes": ("", "list_node"),
             "namespaces": ("", "list_namespace"),
@@ -430,5 +474,32 @@ def _list_resource(
                 **kwargs,
             )
         return _DictItemList(raw)
+
+    # ── Vertical Pod Autoscaler (custom) ─────────────────────
+    if api_group == "custom_vpa":
+        try:
+            if namespace in ("", "all", None):
+                raw = custom_api.list_cluster_custom_object(
+                    group="autoscaling.k8s.io",
+                    version="v1",
+                    plural="verticalpodautoscalers",
+                    **kwargs,
+                )
+            else:
+                raw = custom_api.list_namespaced_custom_object(
+                    group="autoscaling.k8s.io",
+                    version="v1",
+                    namespace=namespace,
+                    plural="verticalpodautoscalers",
+                    **kwargs,
+                )
+            return _DictItemList(raw)
+        except k8s_exceptions.ApiException as exc:
+            # Check for 404 — VPA CRD not installed
+            if exc.status == 404:
+                return ToolResult(
+                    output="VPA CRD not installed in this cluster. Install the Vertical Pod Autoscaler to use this resource.",
+                )
+            raise
 
     return ToolResult(output=f"Unknown API group for resource: {resource}", error=True)

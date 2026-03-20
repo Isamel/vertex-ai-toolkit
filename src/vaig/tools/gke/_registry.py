@@ -25,6 +25,7 @@ from .helm import (
     helm_release_values,
 )
 from .kubectl import kubectl_get_labels
+from .scaling import get_scaling_status
 
 if TYPE_CHECKING:
     from vaig.core.config import GKEConfig
@@ -930,6 +931,33 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 name=name,
                 label_filter=label_filter,
                 annotation_filter=annotation_filter,
+            ),
+        ),
+        # ── Scaling tools ─────────────────────────────────────
+        ToolDef(
+            name="get_scaling_status",
+            description=(
+                "Fetch HPA and VPA scaling status for a deployment, including "
+                "current/min/max replicas, CPU/memory targets, and VPA recommendations. "
+                "Useful for diagnosing ceiling-hit scenarios (current == max replicas under "
+                "load) and VPA-vs-HPA conflicts. Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="name",
+                    type="string",
+                    description="Deployment name to inspect.",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace (default: 'default').",
+                    required=False,
+                ),
+            ],
+            execute=lambda name, namespace="default",
+                    _cfg=gke_config: get_scaling_status(
+                name, gke_config=_cfg, namespace=namespace,
             ),
         ),
     ]

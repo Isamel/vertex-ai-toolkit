@@ -67,7 +67,8 @@ _CORE_TOOLS_TABLE = """\
 | `check_rbac` | `verb`, `resource`, `namespace` | `service_account`, `resource_name` |
 | `gcloud_logging_query` | `filter_expr` | `project`, `limit`, `order_by` |
 | `gcloud_monitoring_query` | `metric_type` | `project`, `interval_minutes`, `aggregation`, `filter_str` |
-| `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |"""
+| `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |
+| `get_scaling_status` | `name` | `namespace` |"""
 
 _HELM_TOOLS_TABLE = """\
 | `helm_list_releases` | | `namespace`, `force_refresh` |
@@ -791,6 +792,26 @@ use "N/A" as the value — NEVER fabricate numbers.
 One entry per deployment/service investigated.  Map the ``status`` field to one of:
 HEALTHY, DEGRADED, FAILED, UNKNOWN.
 
+**Scaling data mapping** — when ``get_scaling_status`` output is present in the
+upstream data, populate ``ServiceStatus`` fields as follows:
+- ``cpu_usage`` / ``memory_usage``: If the scaling tool reports current utilisation
+  percentages relative to HPA targets, prefer those values over the raw ``kubectl_top``
+  aggregates when they are more precise.
+- ``issues``: Append a brief scaling note when a ceiling-hit or VPA conflict is detected,
+  e.g. ``"HPA ceiling hit (5/5 replicas)"`` or ``"VPA-HPA conflict: VPA Auto mode with
+  CPU-based HPA"``.  Keep this field to a single sentence — detailed analysis goes into
+  a dedicated ``findings`` entry (see below).
+- Do NOT invent a ``scaling_status`` field — it does not exist in the schema.  Use
+  ``issues`` for brief notes and ``findings`` with ``category="scaling"`` for details.
+
+**Scaling findings** — create a ``Finding`` entry with ``category="scaling"`` for each
+of the following when observed:
+- HPA ceiling hit: ``severity=HIGH``, title like ``"HPA at max replicas — <name>"``,
+  evidence from ``get_scaling_status`` output (current/min/max replicas, CPU target).
+- VPA-vs-HPA conflict: ``severity=MEDIUM``, title like ``"VPA Auto mode conflicts with
+  CPU-based HPA — <name>"``, evidence from both VPA recommendation and HPA spec.
+- Scaling idle (HPA well below min replicas or no VPA recommendations): ``severity=INFO``.
+
 #### ``findings``
 Each finding MUST include:
 - ``id``: Slug identifier (e.g. "crashloop-payment-svc").
@@ -1258,6 +1279,17 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
 14. ``kubectl_get(resource="hpa", namespace="<target>", output="wide")``
 15. For HPA at maxReplicas: ``kubectl_describe(resource="hpa", name="<hpa>", namespace="<ns>")``
 16. ``gcloud_monitoring_query(...)`` if HPA uses custom metrics and metric fetch is failing
+
+### Step 6b — Scaling Deep-Dive (HPA + VPA)
+For each deployment that has an HPA or that has a ``VerticalPodAutoscaler`` resource:
+17. Call ``get_scaling_status(name="<deployment_name>", namespace="<target_namespace>")``
+    - Note: **ceiling-hit** — when ``current_replicas == max_replicas`` and the workload is
+      still under load.  This means the HPA cannot scale further and the service is at risk.
+    - Note: **VPA-vs-HPA conflicts** — if both VPA and HPA are present and VPA is in ``Auto``
+      or ``Recreate`` mode while HPA scales on CPU/memory, they may fight each other.
+      Report any mismatch between VPA recommended limits and HPA-driven replica counts.
+    - If ``get_scaling_status`` is not in your available tools list, SKIP this sub-step and
+      mark it as SKIPPED in the Investigation Checklist.
 
 ### Target namespace:
 {ns_context}

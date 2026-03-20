@@ -102,7 +102,10 @@ def kubectl_get(
 
     try:
         api_result = _resources._list_resource(
-            core_v1, apps_v1, custom_api, resource,
+            core_v1,
+            apps_v1,
+            custom_api,
+            resource,
             namespace=ns,
             label_selector=label_selector,
             field_selector=field_selector,
@@ -127,9 +130,13 @@ def kubectl_get(
 
     except k8s_exceptions.ApiException as exc:
         if exc.status == 404:
-            return ToolResult(output=f"Namespace '{ns}' not found or resource type '{resource}' not available", error=True)
+            return ToolResult(
+                output=f"Namespace '{ns}' not found or resource type '{resource}' not available", error=True
+            )
         if exc.status == 403:
-            return ToolResult(output=f"Access denied: insufficient permissions to list {resource} in namespace '{ns}'", error=True)
+            return ToolResult(
+                output=f"Access denied: insufficient permissions to list {resource} in namespace '{ns}'", error=True
+            )
         if exc.status == 401:
             return ToolResult(output="Authentication failed: check your kubeconfig or GKE credentials", error=True)
         return ToolResult(output=f"Kubernetes API error ({exc.status}): {exc.reason}", error=True)
@@ -257,7 +264,8 @@ def _describe_resource(
         from kubernetes.client import AutoscalingV2Api  # noqa: WPS433
 
         return AutoscalingV2Api(api_client=api_client).read_namespaced_horizontal_pod_autoscaler(
-            name=name, namespace=namespace,
+            name=name,
+            namespace=namespace,
         )
 
     # ── Networking ────────────────────────────────────────────
@@ -280,7 +288,8 @@ def _describe_resource(
         from kubernetes.client import PolicyV1Api  # noqa: WPS433
 
         return PolicyV1Api(api_client=api_client).read_namespaced_pod_disruption_budget(
-            name=name, namespace=namespace,
+            name=name,
+            namespace=namespace,
         )
 
     # ── AdmissionRegistration V1 ─────────────────────────────
@@ -313,6 +322,19 @@ def _describe_resource(
         )
         return _resources._DictItem(raw)
 
+    # ── Vertical Pod Autoscaler (custom) ─────────────────────
+    if api_group == "custom_vpa":
+        if custom_api is None:
+            return None
+        raw = custom_api.get_namespaced_custom_object(
+            group="autoscaling.k8s.io",
+            version="v1",
+            plural="verticalpodautoscalers",
+            namespace=namespace,
+            name=name,
+        )
+        return _resources._DictItem(raw)
+
     return None
 
 
@@ -331,9 +353,14 @@ def _format_describe(resource: str, obj: Any, api_client: Any | None = None) -> 
         if meta.namespace:
             lines.append(f"Namespace:    {meta.namespace}")
         labels = meta.labels or {}
-        lines.append("Labels:       " + (", ".join(f"{k}={v}" for k, v in sorted(labels.items())) if labels else "<none>"))
+        lines.append(
+            "Labels:       " + (", ".join(f"{k}={v}" for k, v in sorted(labels.items())) if labels else "<none>")
+        )
         annotations = meta.annotations or {}
-        lines.append("Annotations:  " + (", ".join(f"{k}={v}" for k, v in sorted(annotations.items())) if annotations else "<none>"))
+        lines.append(
+            "Annotations:  "
+            + (", ".join(f"{k}={v}" for k, v in sorted(annotations.items())) if annotations else "<none>")
+        )
         lines.append(f"CreationTimestamp: {meta.creation_timestamp}")
         if obj.spec:
             lines.append("Spec:")
@@ -357,7 +384,9 @@ def _format_describe(resource: str, obj: Any, api_client: Any | None = None) -> 
 
     # Annotations
     annotations = meta.annotations or {}
-    lines.append("Annotations:  " + (", ".join(f"{k}={v}" for k, v in sorted(annotations.items())) if annotations else "<none>"))
+    lines.append(
+        "Annotations:  " + (", ".join(f"{k}={v}" for k, v in sorted(annotations.items())) if annotations else "<none>")
+    )
 
     lines.append(f"CreationTimestamp: {meta.creation_timestamp}")
 
@@ -435,7 +464,8 @@ def _format_describe(resource: str, obj: Any, api_client: Any | None = None) -> 
         field_sel = f"involvedObject.name={meta.name}"
         if meta.namespace:
             ev_list = events_v1.list_namespaced_event(
-                namespace=meta.namespace, field_selector=field_sel,
+                namespace=meta.namespace,
+                field_selector=field_sel,
             )
         else:
             ev_list = events_v1.list_event_for_all_namespaces(field_selector=field_sel)
@@ -501,7 +531,11 @@ def kubectl_describe(
     core_v1, apps_v1, custom_api, api_client_inst = result
 
     try:
-        obj = _describe_resource(core_v1, apps_v1, resource, name, ns, api_client=api_client_inst, custom_api=custom_api)
+        obj = _describe_resource(
+            core_v1, apps_v1, resource, name, ns, api_client=api_client_inst, custom_api=custom_api
+        )
+        if isinstance(obj, ToolResult):
+            return obj
         if obj is None:
             return ToolResult(output=f"Describe not supported for resource type: {resource}", error=True)
         return ToolResult(output=_format_describe(resource, obj, api_client=api_client_inst))
@@ -649,16 +683,22 @@ def kubectl_top(
         if is_pods:
             if ns in ("", "all"):
                 metrics = custom_api.list_cluster_custom_object(
-                    group="metrics.k8s.io", version="v1beta1", plural="pods",
+                    group="metrics.k8s.io",
+                    version="v1beta1",
+                    plural="pods",
                 )
             else:
                 metrics = custom_api.list_namespaced_custom_object(
-                    group="metrics.k8s.io", version="v1beta1",
-                    namespace=ns, plural="pods",
+                    group="metrics.k8s.io",
+                    version="v1beta1",
+                    namespace=ns,
+                    plural="pods",
                 )
         else:
             metrics = custom_api.list_cluster_custom_object(
-                group="metrics.k8s.io", version="v1beta1", plural="nodes",
+                group="metrics.k8s.io",
+                version="v1beta1",
+                plural="nodes",
             )
 
         items = metrics.get("items", [])
@@ -709,7 +749,7 @@ def kubectl_top(
         if exc.status == 404:
             return ToolResult(
                 output="Metrics API not available. Is the metrics-server installed? "
-                       "Install with: kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml",
+                "Install with: kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml",
                 error=True,
             )
         if exc.status in (401, 403):
@@ -765,7 +805,10 @@ def kubectl_get_labels(
 
     try:
         api_result = _resources._list_resource(
-            core_v1, apps_v1, custom_api, resource,
+            core_v1,
+            apps_v1,
+            custom_api,
+            resource,
             namespace=ns,
             label_selector=label_filter or None,
             api_client=api_client_inst,
@@ -822,9 +865,13 @@ def kubectl_get_labels(
 
     except k8s_exceptions.ApiException as exc:
         if exc.status == 404:
-            return ToolResult(output=f"Namespace '{ns}' not found or resource type '{resource}' not available", error=True)
+            return ToolResult(
+                output=f"Namespace '{ns}' not found or resource type '{resource}' not available", error=True
+            )
         if exc.status == 403:
-            return ToolResult(output=f"Access denied: insufficient permissions to list {resource} in namespace '{ns}'", error=True)
+            return ToolResult(
+                output=f"Access denied: insufficient permissions to list {resource} in namespace '{ns}'", error=True
+            )
         if exc.status == 401:
             return ToolResult(output="Authentication failed: check your kubeconfig or GKE credentials", error=True)
         return ToolResult(output=f"Kubernetes API error ({exc.status}): {exc.reason}", error=True)
