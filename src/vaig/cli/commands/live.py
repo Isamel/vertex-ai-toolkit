@@ -927,20 +927,22 @@ def _inject_report_metadata(
     orch_result: Any = None,
     tool_logger: Any = None,
 ) -> None:
-    """Fill empty or placeholder metadata fields in *report* from runtime context.
+    """Fill metadata fields in *report* from runtime context.
 
-    Only writes to a field when the current value is ``None``, empty string, or
-    the sentinel string ``"N/A"``.  Existing non-empty values are preserved so
-    that a report whose LLM correctly populated a field is never overwritten.
+    System-authoritative fields (``model_used``, ``cluster_name``,
+    ``project_id``, ``generated_at``) are ALWAYS overwritten when the runtime
+    has an authoritative value — the LLM may hallucinate these fields so we
+    never trust whatever it wrote.  Cost and tool-usage fields are only set
+    when not already populated (they are never known to the LLM).
 
     Args:
         report: A ``HealthReport`` instance (typed as ``Any`` to avoid a hard
             import; we access ``report.metadata`` defensively).
         gke_config: Optional :class:`~vaig.core.config.GKEConfig`.  When
             provided, its ``cluster_name`` and ``project_id`` fields are used
-            to fill the corresponding metadata slots.
-        model_id: The model identifier used for the run.  Fills
-            ``metadata.model_used`` when the field is empty.
+            to overwrite the corresponding metadata slots unconditionally.
+        model_id: The model identifier used for the run.  Always overwrites
+            ``metadata.model_used`` when a value is available.
         orch_result: Optional :class:`~vaig.agents.orchestrator.OrchestratorResult`.
             When provided, ``run_cost_usd`` and ``total_usage`` are extracted to
             populate ``metadata.cost_metrics``.
@@ -962,20 +964,19 @@ def _inject_report_metadata(
 
     if gke_config is not None:
         for attr in ["cluster_name", "project_id"]:
-            if _is_empty(getattr(metadata, attr, None)):
-                value = getattr(gke_config, attr, None)
-                if value:
-                    setattr(metadata, attr, value)
+            value = getattr(gke_config, attr, None)
+            if value:  # ALWAYS overwrite — LLM may hallucinate these fields
+                setattr(metadata, attr, value)
 
-    if _is_empty(getattr(metadata, "model_used", None)) and model_id:
-        # Prefer the actual models from orch_result over the caller-supplied model_id
-        # (which may be settings.models.default and not the model agents actually used).
+    # ALWAYS overwrite model_used — the LLM may hallucinate this field.
+    if model_id or orch_result is not None:
         if orch_result is not None:
             actual_models = getattr(orch_result, "models_used", [])
             effective_model = _format_models_used(actual_models) or model_id
         else:
             effective_model = model_id
-        metadata.model_used = effective_model
+        if effective_model:
+            metadata.model_used = effective_model
 
     # ── Cost metrics ──────────────────────────────────────────
     if orch_result is not None and getattr(metadata, "cost_metrics", None) is None:
@@ -1014,9 +1015,8 @@ def _inject_report_metadata(
                 tool_calls=tool_calls,
             )
 
-    # ── Generated-at timestamp ────────────────────────────────
-    if _is_empty(getattr(metadata, "generated_at", None)):
-        metadata.generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    # ── Generated-at timestamp — ALWAYS overwrite with actual time ────────────
+    metadata.generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
     # ── Skill version ─────────────────────────────────────────
     if _is_empty(getattr(metadata, "skill_version", None)):
