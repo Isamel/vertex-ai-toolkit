@@ -1224,6 +1224,9 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
 
 ### Step 2 — Pod Status Analysis
 1. ``kubectl_get(resource="pods", namespace="<target>", output="wide")`` — all pods
+1b. ``kubectl_top(resource_type="pods", namespace="<target>")`` — CPU/memory usage per pod
+    This is MANDATORY — the reporter needs real CPU and memory values for the Service Status table.
+    If this call fails, record the error and note "kubectl_top unavailable" — do NOT fabricate values.
 2. For any pod NOT in Running/Succeeded state: ``get_container_status(name="<pod>", namespace="<ns>")``
 3. For pods with restart count > 3: ``kubectl_logs(pod="<pod>", namespace="<ns>")``
 4. For CrashLoopBackOff pods: ``kubectl_describe(resource="pod", name="<pod>", namespace="<ns>")``
@@ -1263,8 +1266,8 @@ Produce exactly these sections at the end of your response:
 
 ## Service Status
 
-| Service/Deployment | Namespace | Status | Ready | Restarts | Issue |
-|--------------------|-----------|--------|-------|----------|-------|
+| Service/Deployment | Namespace | Status | Ready | Restarts | CPU | Memory | Issue |
+|--------------------|-----------|--------|-------|----------|-----|--------|-------|
 (one row per workload; Status: Running/Degraded/Failed/Unknown; use "N/A" for missing values)
 
 ## Raw Findings (Workload)
