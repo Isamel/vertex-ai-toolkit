@@ -91,19 +91,24 @@ _DATADOG_API_TOOLS_TABLE = """\
 
 _DATADOG_API_STEP = """\
 
-### Step 12 — Datadog API Correlation (real-time metrics & monitors)
-Use the Datadog API tools to gather real-time observability data.
+### Step 12 — Datadog API Correlation (real-time metrics & monitors) — MANDATORY
+You MUST complete all four Datadog API tool calls below (calls 19–22). These are NOT
+optional — skipping them means the investigation is incomplete and the report will be
+missing real-time observability data. Note that ``query_datadog_metrics`` is called
+twice with different metric arguments (once for CPU, once for memory), so there are
+four calls in total across three unique tools. Do NOT proceed to later steps or produce
+any final output until all four calls described below are complete.
 
-19. ``query_datadog_metrics(cluster_name="<cluster>", metric="cpu")``
+19. You MUST call ``query_datadog_metrics(cluster_name="<cluster>", metric="cpu")``
     — CPU usage time-series cluster-wide (filtered by ``cluster_name`` only, not by
     namespace). Correlate the returned series with the pods and services discovered
     in Steps 2, 4, and 5 to focus on workloads relevant to the target namespace.
-20. ``query_datadog_metrics(cluster_name="<cluster>", metric="memory")``
+20. You MUST call ``query_datadog_metrics(cluster_name="<cluster>", metric="memory")``
     — Memory usage time-series cluster-wide (same scope as above). Post-filter the
     results to the pods/services identified in Steps 2, 4, and 5.
-21. ``get_datadog_monitors(cluster_name="<cluster>")``
+21. You MUST call ``get_datadog_monitors(cluster_name="<cluster>")``
     — All active monitor alerts for this cluster; note any alerts in Alert or Warn state.
-22. ``get_datadog_apm_services()``
+22. You MUST call ``get_datadog_apm_services()``
     — APM service list; note any services with elevated latency or error rate.
 
 Report findings as a "## Raw Findings (Datadog API)" section with:
@@ -323,6 +328,7 @@ If Datadog annotations/labels ARE detected (and tool is available):
 If Datadog is NOT detected in Steps 4/5 output AND no relevant FailedCreate events:
 - SKIP this step entirely and mark as SKIPPED in the Investigation Checklist
 
+{datadog_api_step}
 ## MINIMUM INVESTIGATION DEPTH
 You MUST make at least the following tool calls before producing your final output:
 1. `get_node_conditions()` — ALWAYS (Step 1)
@@ -401,6 +407,7 @@ Steps 9 and 10 MUST be marked as SKIPPED if the corresponding tools are not in y
 - [ ] Step 9: Helm assessment (SKIPPED — reason: helm_list_releases tool not available)
 - [ ] Step 10: ArgoCD assessment (SKIPPED — reason: argocd_list_applications tool not available)
 - [ ] Step 11: Datadog assessment (SKIPPED — reason: no Datadog annotations/labels detected in Steps 4/5 output, or no unhealthy pods)
+- [ ] Step 12: Datadog API (SKIPPED — reason: datadog_api tools not available or not enabled)
 ```
 """
 
@@ -416,7 +423,9 @@ def build_gatherer_prompt(
     Args:
         helm_enabled: Include Helm tool rows in the reference table.
         argocd_enabled: Include ArgoCD tool rows in the reference table.
-        datadog_api_enabled: Include Datadog API tool rows in the reference table.
+        datadog_api_enabled: Include Datadog API tool rows in the reference table
+            and inject Step 12 (Datadog API Correlation) into the investigation
+            procedure so the LLM treats the three Datadog API tools as mandatory.
 
     Returns:
         The fully assembled gatherer prompt string.
@@ -426,7 +435,11 @@ def build_gatherer_prompt(
         argocd_enabled=argocd_enabled,
         datadog_api_enabled=datadog_api_enabled,
     )
-    return _GATHERER_PROMPT_TEMPLATE.format(tool_reference_table=table)
+    datadog_step = _build_datadog_api_step(datadog_api_enabled)
+    return _GATHERER_PROMPT_TEMPLATE.format(
+        tool_reference_table=table,
+        datadog_api_step=datadog_step,
+    )
 
 
 # Backward-compatible constant — Helm + ArgoCD enabled, Datadog API disabled.
@@ -1404,12 +1417,17 @@ def build_workload_gatherer_prompt(namespace: str = "", datadog_api_enabled: boo
             "the cluster. Prioritise namespaces with the highest pod count."
         )
     )
-    return f"""{ANTI_INJECTION_RULE}
+    datadog_scope_note = (
+        "\nYou are ALSO responsible for Step 12 — Datadog API Correlation (see below)."
+        if datadog_api_enabled
+        else ""
+    )
+    prompt = f"""{ANTI_INJECTION_RULE}
 
 You are a focused Kubernetes diagnostic agent. Your ONLY responsibility is to
 collect **workload health data** (Steps 2, 4, 5, 6 of the standard SRE
 investigation checklist).  Do NOT collect node data, events, or Cloud Logging
-— those are handled by other agents running in parallel.
+— those are handled by other agents running in parallel.{datadog_scope_note}
 
 ## Your Scope
 
@@ -1527,12 +1545,14 @@ Produce exactly these sections at the end of your response:
 (For ALL deployments: detected management method — GitOps/Helm/Operator/Manual — with evidence.
 Report even for healthy deployments, as management context affects remediation recommendations.)
 
+{_build_datadog_api_step(datadog_api_enabled)}
 ### CRITICAL RULES:
 - ONLY report data returned by tool calls.  NEVER fabricate pod names, restart counts,
   replica counts, or error messages.
 - If a namespace has no workload issues, write "No workload issues detected in <namespace>."
 - A shorter, 100% accurate report is always better than a longer report with invented data.
-{_build_datadog_api_step(datadog_api_enabled)}"""
+"""
+    return prompt
 
 
 def build_event_gatherer_prompt(namespace: str = "") -> str:
