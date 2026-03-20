@@ -19,6 +19,11 @@ from .argocd import (
     argocd_list_applications,
 )
 from .datadog import get_datadog_config
+from .datadog_api import (
+    get_datadog_apm_services,
+    get_datadog_monitors,
+    query_datadog_metrics,
+)
 from .helm import (
     helm_list_releases,
     helm_release_history,
@@ -1265,6 +1270,117 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 execute=lambda app_name, namespace="",
                         _cfg=gke_config: argocd_app_managed_resources(
                     app_name=app_name, namespace=namespace,
+                ),
+            ),
+        ])
+
+    # ── Datadog API tools (conditional on datadog.enabled) ────
+    from vaig.core.config import get_settings as _get_settings  # noqa: WPS433
+
+    _dd_config = _get_settings().datadog
+    if _dd_config.enabled:
+        tools.extend([
+            ToolDef(
+                name="query_datadog_metrics",
+                description=(
+                    "Query Datadog metrics for a GKE cluster using the Datadog Metrics v1 API. "
+                    "Supports built-in metric templates (cpu, memory, restarts, network_in, "
+                    "network_out, disk_read, disk_write) or a custom Datadog query string. "
+                    "Returns average, maximum, and latest values per series over the requested "
+                    "time window. Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="cluster_name",
+                        type="string",
+                        description="GKE cluster name used to scope the metric query",
+                    ),
+                    ToolParam(
+                        name="metric",
+                        type="string",
+                        description=(
+                            "Metric template to query: cpu, memory, restarts, network_in, "
+                            "network_out, disk_read, or disk_write (default: cpu)"
+                        ),
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="query",
+                        type="string",
+                        description="Custom Datadog metrics query string (overrides metric template when provided)",
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="from_ts",
+                        type="integer",
+                        description="Unix timestamp for the start of the query window (defaults to now-3600)",
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="to_ts",
+                        type="integer",
+                        description="Unix timestamp for the end of the query window (defaults to now)",
+                        required=False,
+                    ),
+                ],
+                execute=lambda cluster_name, metric="cpu", query="", from_ts=0, to_ts=0,
+                        _dd=_dd_config: query_datadog_metrics(
+                    cluster_name=cluster_name, metric=metric, query=query,
+                    from_ts=from_ts, to_ts=to_ts, config=_dd,
+                ),
+            ),
+            ToolDef(
+                name="get_datadog_monitors",
+                description=(
+                    "Fetch active Datadog monitors using the Datadog Monitors v1 API. "
+                    "Returns monitors filtered by state (default: Alert) and optionally "
+                    "by cluster name tag or additional tags. Shows monitor ID, name, type, "
+                    "and current state. Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="cluster_name",
+                        type="string",
+                        description="Optional cluster name to filter monitors by tag cluster_name:<name>",
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="state",
+                        type="string",
+                        description="Monitor state to filter on: Alert, Warn, No Data (default: Alert)",
+                        required=False,
+                    ),
+                ],
+                execute=lambda cluster_name="", state="Alert",
+                        _dd=_dd_config: get_datadog_monitors(
+                    cluster_name=cluster_name, state=state, config=_dd,
+                ),
+            ),
+            ToolDef(
+                name="get_datadog_apm_services",
+                description=(
+                    "Fetch APM service definitions from the Datadog APM v2 API. "
+                    "Returns service names, team, language, and tier for all registered "
+                    "services in the given environment. Results are cached for 60 seconds. "
+                    "Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="env",
+                        type="string",
+                        description="Datadog environment tag (e.g. production, staging) — default: production",
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="cluster_name",
+                        type="string",
+                        description="Optional cluster name to scope the APM query",
+                        required=False,
+                    ),
+                ],
+                execute=lambda env="production", cluster_name="",
+                        _dd=_dd_config: get_datadog_apm_services(
+                    env=env, cluster_name=cluster_name, config=_dd,
                 ),
             ),
         ])

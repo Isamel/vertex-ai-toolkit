@@ -84,17 +84,54 @@ _ARGOCD_TOOLS_TABLE = """\
 | `argocd_app_diff` | `app_name` | `namespace` |
 | `argocd_app_managed_resources` | `app_name` | `namespace` |"""
 
+_DATADOG_API_TOOLS_TABLE = """\
+| `query_datadog_metrics` | `cluster_name` | `metric`, `query`, `from_ts`, `to_ts` |
+| `get_datadog_monitors` | | `cluster_name`, `tags`, `state` |
+| `get_datadog_apm_services` | | `env`, `cluster_name` |"""
+
+_DATADOG_API_STEP = """\
+
+### Step 12 — Datadog API Correlation (real-time metrics & monitors)
+PREREQUISITE: First check if `query_datadog_metrics` is in your available tools list.
+If it is NOT available, SKIP this entire step and mark it as SKIPPED in your output.
+
+If available:
+19. ``query_datadog_metrics(cluster_name="<cluster>", metric="kubernetes.cpu.usage.total")``
+    — CPU usage time-series for the workloads in the target namespace.
+20. ``query_datadog_metrics(cluster_name="<cluster>", metric="kubernetes.memory.usage")``
+    — Memory usage time-series for the workloads in the target namespace.
+21. ``get_datadog_monitors(cluster_name="<cluster>")``
+    — All active monitor alerts for this cluster; note any alerts in Alert or Warn state.
+22. ``get_datadog_apm_services()``
+    — APM service list; note any services with elevated latency or error rate.
+
+Report findings as a "## Raw Findings (Datadog API)" section with:
+- Any monitors currently in Alert or Warn state (name, status, query)
+- CPU/memory trends that contradict or confirm the kubectl_top data
+- APM services with anomalous p99 latency or error rate > 1%
+- If no issues found: "No active Datadog monitors or APM anomalies detected."
+
+{anti_injection_rule}"""
+
+
+def _build_datadog_api_step(enabled: bool) -> str:
+    """Return the Datadog API step block when *enabled*, otherwise empty string."""
+    if not enabled:
+        return ""
+    return _DATADOG_API_STEP.format(anti_injection_rule=ANTI_INJECTION_RULE)
+
 
 def _build_tool_reference_table(
     *,
     helm_enabled: bool = True,
     argocd_enabled: bool = True,
+    datadog_api_enabled: bool = False,
 ) -> str:
     """Assemble the tool reference table from enabled sections.
 
-    Only includes Helm and ArgoCD tool rows when the corresponding
-    integration is enabled, keeping the prompt lean and within Vertex AI's
-    recommended 10-20 active tools guideline.
+    Only includes Helm, ArgoCD, and Datadog API tool rows when the
+    corresponding integration is enabled, keeping the prompt lean and
+    within Vertex AI's recommended 10-20 active tools guideline.
     """
     header = (
         "| Tool | Required Parameters | Optional Parameters |\n|------|---------------------|---------------------|"
@@ -104,6 +141,8 @@ def _build_tool_reference_table(
         sections.append(_HELM_TOOLS_TABLE)
     if argocd_enabled:
         sections.append(_ARGOCD_TOOLS_TABLE)
+    if datadog_api_enabled:
+        sections.append(_DATADOG_API_TOOLS_TABLE)
     return "\n".join(sections)
 
 
@@ -369,12 +408,14 @@ def build_gatherer_prompt(
     *,
     helm_enabled: bool = True,
     argocd_enabled: bool = True,
+    datadog_api_enabled: bool = False,
 ) -> str:
     """Build the gatherer prompt with only the enabled tool sections.
 
     Args:
         helm_enabled: Include Helm tool rows in the reference table.
         argocd_enabled: Include ArgoCD tool rows in the reference table.
+        datadog_api_enabled: Include Datadog API tool rows in the reference table.
 
     Returns:
         The fully assembled gatherer prompt string.
@@ -382,6 +423,7 @@ def build_gatherer_prompt(
     table = _build_tool_reference_table(
         helm_enabled=helm_enabled,
         argocd_enabled=argocd_enabled,
+        datadog_api_enabled=datadog_api_enabled,
     )
     return _GATHERER_PROMPT_TEMPLATE.format(tool_reference_table=table)
 
@@ -750,7 +792,7 @@ If the command tool is not found in the container (e.g., distroless image), mark
 You MUST reproduce ALL findings in your output with their complete data (title, severity, description, evidence, remediation steps). Although the downstream reporter receives accumulated context from all previous agents, your verified findings are the authoritative source it relies on for the final report. If you produce only a terse summary without the full findings data, the report quality will be severely degraded.
 """
 
-def build_reporter_prompt(namespace: str = "") -> str:
+def build_reporter_prompt(namespace: str = "", datadog_api_enabled: bool = False) -> str:
     """Build the system instruction for the ``health_reporter`` agent.
 
     Injects the target namespace (if known) into the ``cluster_overview``
@@ -761,6 +803,9 @@ def build_reporter_prompt(namespace: str = "") -> str:
         namespace: The Kubernetes namespace under investigation.  User-supplied
             values are wrapped with :func:`wrap_untrusted_content` before
             embedding in the prompt to prevent prompt injection.
+        datadog_api_enabled: When ``True``, appends guidance for correlating
+            Datadog API metrics (from the workload gatherer's Step 12) with
+            Kubernetes findings when generating recommendations.
 
     Returns:
         A formatted system-instruction string for the health reporter agent.
@@ -769,6 +814,29 @@ def build_reporter_prompt(namespace: str = "") -> str:
         f"  - Namespace under investigation: {_sanitize_namespace(namespace)}"
         if namespace and _sanitize_namespace(namespace)
         else "  - Namespace under investigation"
+    )
+    datadog_api_section = (
+        """
+
+### Datadog API Metrics Correlation
+The upstream workload gatherer collected real-time Datadog API data (Step 12).
+When this data is present in your input, use it as follows:
+
+- **Correlate with kubectl_top**: If Datadog CPU/memory metrics confirm the kubectl_top
+  values, note agreement in findings.  If they diverge, flag the discrepancy — upstream
+  resource pressure not reflected in kubectl_top may indicate a node-level issue.
+- **Active monitors**: If any Datadog monitors are in Alert or Warn state, create a
+  finding with ``category="observability"`` and the appropriate severity (Alert → HIGH,
+  Warn → MEDIUM).  Include the monitor query as evidence.
+- **APM services**: If APM data shows elevated p99 latency or error rate > 1%, add an
+  observability finding and reference the APM service name in ``affected_resources``.
+- **Immediate Actions**: When Datadog metrics show high latency or elevated error rates
+  that correlate with a CRITICAL or HIGH Kubernetes finding, reference the Datadog data
+  in the ``why`` field of the corresponding recommendation.
+- If no Datadog API data was collected (Step 12 was skipped or tools were unavailable),
+  omit this section entirely — do NOT fabricate Datadog findings."""
+        if datadog_api_enabled
+        else ""
     )
     return f"""You are an SRE communications specialist. You take analyzed and VERIFIED health findings and produce a clear, actionable service health report suitable for both engineering teams and engineering leadership.
 
@@ -1135,7 +1203,7 @@ Rules:
 - 1-2 findings: Keep descriptions and root causes brief. Use empty lists for unused severity levels.
 - 6+ findings: Each finding's ``description`` ≤ 3 sentences.
 - NEVER pad with generic Kubernetes explanations. The audience knows K8s.
-"""
+{datadog_api_section}"""
 
 
 # Backward-compatibility alias — callers that import HEALTH_REPORTER_PROMPT directly
@@ -1278,7 +1346,7 @@ Produce exactly this section at the end of your response:
 """
 
 
-def build_workload_gatherer_prompt(namespace: str = "") -> str:
+def build_workload_gatherer_prompt(namespace: str = "", datadog_api_enabled: bool = False) -> str:
     """Build the system instruction for the ``workload_gatherer`` sub-agent.
 
     The ``workload_gatherer`` is responsible for **Steps 2, 4, 5, 6** of the
@@ -1299,6 +1367,12 @@ def build_workload_gatherer_prompt(namespace: str = "") -> str:
 
     **Output sections produced**: ``## Service Status``, ``## Raw Findings``
     (workload portion).
+
+    Args:
+        namespace: Kubernetes namespace to investigate.
+        datadog_api_enabled: When ``True``, appends Step 12 (Datadog API
+            correlation) instructing the agent to call the three Datadog API
+            tools for real-time metrics and monitor data.
 
     Returns:
         A formatted system-instruction string injecting
@@ -1434,7 +1508,7 @@ Report even for healthy deployments, as management context affects remediation r
   replica counts, or error messages.
 - If a namespace has no workload issues, write "No workload issues detected in <namespace>."
 - A shorter, 100% accurate report is always better than a longer report with invented data.
-"""
+{_build_datadog_api_step(datadog_api_enabled)}"""
 
 
 def build_event_gatherer_prompt(namespace: str = "") -> str:

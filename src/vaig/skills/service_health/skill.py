@@ -181,6 +181,7 @@ class ServiceHealthSkill(BaseSkill):
         gatherer_prompt = build_gatherer_prompt(
             helm_enabled=settings.gke.helm_enabled,
             argocd_enabled=settings.gke.argocd_enabled,
+            datadog_api_enabled=settings.datadog.enabled,
         )
         namespace = settings.gke.default_namespace
         return [
@@ -216,7 +217,10 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_reporter",
                 "role": "Health Report Generator",
                 "requires_tools": False,
-                "system_instruction": build_reporter_prompt(namespace=namespace),
+                "system_instruction": build_reporter_prompt(
+                    namespace=namespace,
+                    datadog_api_enabled=settings.datadog.enabled,
+                ),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,  # Slightly higher for natural writing
                 "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
@@ -273,7 +277,10 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Workload Health Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
-                "system_instruction": build_workload_gatherer_prompt(namespace=namespace),
+                "system_instruction": build_workload_gatherer_prompt(
+                    namespace=namespace,
+                    datadog_api_enabled=settings.datadog.enabled,
+                ),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.0,
                 "max_iterations": 12,
@@ -320,7 +327,10 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_reporter",
                 "role": "Health Report Generator",
                 "requires_tools": False,
-                "system_instruction": build_reporter_prompt(namespace=namespace),
+                "system_instruction": build_reporter_prompt(
+                    namespace=namespace,
+                    datadog_api_enabled=settings.datadog.enabled,
+                ),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,
                 "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,

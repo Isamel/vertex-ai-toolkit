@@ -31,6 +31,7 @@ live = [
     "google-cloud-monitoring>=2.23.0",
     "google-cloud-container>=2.51.0",
     "google-auth>=2.35.0",
+    "datadog-api-client>=2.0.0,<3.0.0",
 ]
 dev = [
     "pytest>=8.3.0",
@@ -124,6 +125,8 @@ module = [
     "google.cloud.*",
     "google.protobuf",
     "google.protobuf.*",
+    "datadog_api_client",
+    "datadog_api_client.*",
 ]
 ignore_missing_imports = true
 
