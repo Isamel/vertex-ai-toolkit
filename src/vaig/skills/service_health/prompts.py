@@ -922,6 +922,12 @@ upstream data, populate ``ServiceStatus`` fields as follows:
 - Do NOT invent a ``scaling_status`` field — it does not exist in the schema.  Use
   ``issues`` for brief notes and ``findings`` with ``category="scaling"`` for details.
 
+**CPU and memory usage fields** — for ``service_statuses[].cpu_usage`` and ``memory_usage``:
+- Use PER-POD AVERAGE, not total across all pods
+- If only per-container data is available, sum containers within one pod first
+- Always include units: "18m" for CPU (millicores), "105Mi" for memory
+- Optionally add context: "18m/pod (450m total across 25 pods)"
+
 **Management context** — when the workload gatherer detected management context
 via ``kubectl_get_labels``, include it in the ``findings`` entry for that service
 (use ``category="management"`` and ``severity=INFO``):
@@ -1021,8 +1027,9 @@ Chronological list of events from the gathered data.  Each event has:
 - ``service``: The deployment, service, or resource this event relates to (e.g. 'chatbot-odin', 'payment-svc', 'node/gke-pool-1'). Populate ``service`` for EVERY event where the source resource is identifiable. Leave empty only for truly cluster-wide or unattributable events.
 
 #### ``metadata``
-Populate with whatever context is available (cluster name, project ID, model used).
-Use empty strings for unavailable fields.
+Leave ALL metadata fields as empty strings "". The system populates metadata
+(cluster_name, project_id, model_used, generated_at, cost_metrics, tool_usage)
+automatically after your response. Do NOT invent values for these fields.
 
 ## STRICT Formatting & Quality Rules
 
@@ -1416,6 +1423,14 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
       across all its pods.
     - Include a pod count per workload (ready/total pods).
     - Never report raw per-pod values in the Service Status table — always use aggregated per-workload values.
+
+    After collecting per-container metrics from kubectl_top:
+    - Calculate per-POD totals by summing all containers in each pod
+    - Calculate per-DEPLOYMENT averages: CPU/Pod (avg) and Memory/Pod (avg)
+    - Present a summary like:
+      Deployment: payment-svc | Pods: 25 | CPU/Pod avg: 18m | Mem/Pod avg: 105Mi | CPU Total: 450m | Mem Total: 2625Mi
+    - The per-POD AVERAGE is what the reporter needs for cpu_usage/memory_usage fields.
+    - Per-container breakdown goes in Raw Findings for detailed analysis.
 3. For any pod NOT in Running/Succeeded state: ``get_container_status(name="<pod>", namespace="<ns>")``
 4. For pods with restart count > 3: ``kubectl_logs(pod="<pod>", namespace="<ns>")``
 5. For CrashLoopBackOff pods: ``kubectl_describe(resource="pod", name="<pod>", namespace="<ns>")``
