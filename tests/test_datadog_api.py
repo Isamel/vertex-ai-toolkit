@@ -165,24 +165,6 @@ class TestQueryDatadogMetrics:
         assert "my-cluster" in result.output
         assert "Total series: 1" in result.output
 
-    def test_returns_metrics_with_custom_query(self, dd_config: DatadogAPIConfig) -> None:
-        """Custom query string overrides the metric template."""
-        from vaig.tools.gke.datadog_api import query_datadog_metrics
-
-        mock_api = MagicMock()
-        mock_api.query_metrics.return_value = MagicMock(series=[_make_series()])
-
-        with patch.dict("sys.modules", _make_dd_modules()):
-            result = query_datadog_metrics(
-                cluster_name="my-cluster",
-                query="avg:system.cpu.user{*}",
-                config=dd_config,
-                _custom_api=mock_api,
-            )
-
-        assert result.error is False
-        assert "avg:system.cpu.user{*}" in result.output
-
     def test_no_data_returns_no_data_message(self, dd_config: DatadogAPIConfig) -> None:
         """Empty series list returns a 'no data' message, not an error."""
         from vaig.tools.gke.datadog_api import query_datadog_metrics
@@ -258,12 +240,13 @@ class TestQueryDatadogMetrics:
         assert "pip install" in result.output
 
     def test_sanitizes_cluster_name(self) -> None:
-        """Cluster name with special chars is sanitized before use."""
+        """Cluster name with special chars raises ValueError (fail-fast)."""
         from vaig.tools.gke.datadog_api import _sanitize_service_name
 
         assert _sanitize_service_name("my-cluster.prod") == "my-cluster.prod"
-        assert _sanitize_service_name("my cluster!") == "mycluster"
         assert _sanitize_service_name("valid_name-123") == "valid_name-123"
+        with pytest.raises(ValueError, match="Invalid service name"):
+            _sanitize_service_name("my cluster!")
 
 
 # ── get_datadog_monitors ──────────────────────────────────────
@@ -535,10 +518,11 @@ class TestSanitizeServiceName:
 
         assert _sanitize_service_name("my-service_v1.2") == "my-service_v1.2"
 
-    def test_strips_spaces_and_special_chars(self) -> None:
+    def test_raises_on_spaces_and_special_chars(self) -> None:
         from vaig.tools.gke.datadog_api import _sanitize_service_name
 
-        assert _sanitize_service_name("my cluster!@#") == "mycluster"
+        with pytest.raises(ValueError, match="Invalid service name"):
+            _sanitize_service_name("my cluster!@#")
 
     def test_empty_string(self) -> None:
         from vaig.tools.gke.datadog_api import _sanitize_service_name

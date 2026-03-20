@@ -24,9 +24,6 @@ _ERR_AUTH = "Authentication failed. Check your Datadog API key and application k
 _ERR_FORBIDDEN = "Insufficient permissions. Check your Datadog API/app key scopes."
 _ERR_RATE_LIMIT = "Rate limit exceeded. Try again later."
 
-# ── Cache TTL for APM services ───────────────────────────────
-_APM_CACHE_TTL: int = 60  # seconds
-
 # ── Metric query templates ───────────────────────────────────
 _METRIC_TEMPLATES: dict[str, str] = {
     "cpu": "avg:kubernetes.cpu.usage.total{{cluster_name:{cluster}}} by {{pod_name}}",
@@ -42,13 +39,27 @@ _METRIC_TEMPLATES: dict[str, str] = {
 # ── Helpers ──────────────────────────────────────────────────
 
 
-def _sanitize_service_name(name: str) -> str:
-    """Strip characters not allowed in Datadog service/tag names.
+_VALID_SERVICE_NAME_RE = re.compile(r"^[a-zA-Z0-9\-._]+$")
 
-    Keeps alphanumeric characters, hyphens, underscores, and dots.
-    Replaces everything else with an empty string.
+
+def _sanitize_service_name(name: str) -> str:
+    """Validate a Datadog service/tag name and return it unchanged if valid.
+
+    Accepts only alphanumeric characters, hyphens, underscores, and dots.
+    Returns an empty string for an empty input.  Raises ``ValueError`` when
+    the name contains characters outside the allowed set, rather than silently
+    stripping them (fail-fast to avoid sending a mangled name to the API).
+
+    Raises:
+        ValueError: When ``name`` contains disallowed characters.
     """
-    return re.sub(r"[^a-zA-Z0-9\-._]", "", name)
+    if not name:
+        return ""
+    if not _VALID_SERVICE_NAME_RE.match(name):
+        raise ValueError(
+            f"Invalid service name {name!r}: only alphanumeric, hyphens, underscores, and dots are allowed."
+        )
+    return name
 
 
 def _get_dd_api_client(config: DatadogAPIConfig) -> Any:
@@ -85,7 +96,6 @@ def query_datadog_metrics(
     *,
     cluster_name: str,
     metric: str = "cpu",
-    query: str = "",
     from_ts: int = 0,
     to_ts: int = 0,
     config: DatadogAPIConfig | None = None,
@@ -93,15 +103,14 @@ def query_datadog_metrics(
 ) -> ToolResult:
     """Query Datadog metrics for a GKE cluster using the Metrics v1 API.
 
-    Supports built-in metric templates (cpu, memory, restarts, network_in,
-    network_out, disk_read, disk_write) or a custom query string.
+    Supports built-in metric templates: cpu, memory, restarts, network_in,
+    network_out, disk_read, disk_write.  All queries are resolved from the
+    template allowlist — arbitrary query strings are not accepted.
 
     Args:
         cluster_name: GKE cluster name used to scope the metric query.
-        metric: Template name (one of the ``_METRIC_TEMPLATES`` keys). Ignored
-            when ``query`` is provided.
-        query: Custom Datadog metrics query string. When provided, overrides
-            the ``metric`` template.
+        metric: Template key (one of the ``_METRIC_TEMPLATES`` keys).
+            Defaults to ``"cpu"``.
         from_ts: Unix timestamp for the start of the query window.  Defaults to
             ``now - 3600`` (last hour) when ``0``.
         to_ts: Unix timestamp for the end of the query window.  Defaults to
@@ -128,24 +137,27 @@ def query_datadog_metrics(
     end = to_ts if to_ts > 0 else now
     start = from_ts if from_ts > 0 else now - 3600
 
-    # Resolve query string
-    safe_cluster = _sanitize_service_name(cluster_name)
-    if not query:
-        template = _METRIC_TEMPLATES.get(metric)
-        if template is None:
-            available = ", ".join(sorted(_METRIC_TEMPLATES.keys()))
-            return ToolResult(
-                output=f"Unknown metric template '{metric}'. Available: {available}",
-                error=True,
-            )
-        query = template.format(cluster=safe_cluster)
+    # Resolve query string from allowlist only
+    try:
+        safe_cluster = _sanitize_service_name(cluster_name)
+    except ValueError as exc:
+        return ToolResult(output=str(exc), error=True)
+
+    template = _METRIC_TEMPLATES.get(metric)
+    if template is None:
+        available = ", ".join(sorted(_METRIC_TEMPLATES.keys()))
+        return ToolResult(
+            output=f"Unknown metric template '{metric}'. Available: {available}",
+            error=True,
+        )
+    query = template.format(cluster=safe_cluster)
 
     try:
         if _custom_api is not None:
             api = _custom_api
         else:
-            client = _get_dd_api_client(config)
-            api = MetricsApi(client)
+            with _get_dd_api_client(config) as client:
+                api = MetricsApi(client)
 
         response = api.query_metrics(
             _from=start,
@@ -191,15 +203,14 @@ def query_datadog_metrics(
         msg = _dd_error_message(status)
         logger.warning("Datadog metrics API error (HTTP %s): %s", status, exc)
         return ToolResult(output=msg, error=True)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Unexpected error querying Datadog metrics: %s", exc)
-        return ToolResult(output=f"Unexpected error querying Datadog metrics: {exc}", error=True)
+    except Exception:  # noqa: BLE001
+        logger.exception("Unexpected error querying Datadog metrics")
+        return ToolResult(output="Unexpected error querying Datadog metrics. See logs for details.", error=True)
 
 
 def get_datadog_monitors(
     *,
     cluster_name: str = "",
-    tags: list[str] | None = None,
     state: str = "Alert",
     config: DatadogAPIConfig | None = None,
     _custom_api: Any = None,
@@ -207,12 +218,11 @@ def get_datadog_monitors(
     """Fetch active Datadog monitors using the Monitors v1 API.
 
     Returns monitors filtered by state (default: Alert) and optionally
-    by cluster name tag or additional tags.
+    by cluster name tag.
 
     Args:
         cluster_name: Optional cluster name to filter monitors by tag
             ``cluster_name:<name>``.
-        tags: Additional tag filters (e.g. ``["env:production", "team:sre"]``).
         state: Monitor state to filter on (e.g. ``"Alert"``, ``"Warn"``,
             ``"No Data"``).  Case-sensitive.
         config: Optional ``DatadogAPIConfig`` (for testing / injection).
@@ -232,19 +242,22 @@ def get_datadog_monitors(
     if not config.enabled:
         return ToolResult(output=_ERR_NOT_ENABLED, error=True)
 
-    # Build tag filter string
-    all_tags: list[str] = list(tags) if tags else []
+    # Build tag filter string from cluster name only
+    tag_parts: list[str] = []
     if cluster_name:
-        safe_cluster = _sanitize_service_name(cluster_name)
-        all_tags.append(f"cluster_name:{safe_cluster}")
-    tag_filter = ",".join(all_tags) if all_tags else None
+        try:
+            safe_cluster = _sanitize_service_name(cluster_name)
+        except ValueError as exc:
+            return ToolResult(output=str(exc), error=True)
+        tag_parts.append(f"cluster_name:{safe_cluster}")
+    tag_filter = ",".join(tag_parts) if tag_parts else None
 
     try:
         if _custom_api is not None:
             api = _custom_api
         else:
-            client = _get_dd_api_client(config)
-            api = MonitorsApi(client)
+            with _get_dd_api_client(config) as client:
+                api = MonitorsApi(client)
 
         kwargs: dict[str, Any] = {}
         if tag_filter:
@@ -266,8 +279,6 @@ def get_datadog_monitors(
         ]
         if cluster_name:
             lines.append(f"Cluster: {cluster_name}")
-        if all_tags:
-            lines.append(f"Tags: {', '.join(all_tags)}")
         lines.append("")
 
         if not matching:
@@ -295,9 +306,9 @@ def get_datadog_monitors(
         msg = _dd_error_message(status)
         logger.warning("Datadog monitors API error (HTTP %s): %s", status, exc)
         return ToolResult(output=msg, error=True)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Unexpected error fetching Datadog monitors: %s", exc)
-        return ToolResult(output=f"Unexpected error fetching Datadog monitors: {exc}", error=True)
+    except Exception:  # noqa: BLE001
+        logger.exception("Unexpected error fetching Datadog monitors")
+        return ToolResult(output="Unexpected error fetching Datadog monitors. See logs for details.", error=True)
 
 
 def get_datadog_apm_services(
@@ -307,17 +318,22 @@ def get_datadog_apm_services(
     config: DatadogAPIConfig | None = None,
     _custom_api: Any = None,
 ) -> ToolResult:
-    """Fetch APM service list from the Datadog APM v2 API.
+    """Fetch service catalog entries from the Datadog Service Definition v2 API.
 
-    Returns service names, p50/p95/p99 latencies, error rate, and
-    request throughput. Results are cached for 60 seconds per (env, cluster)
-    combination.
+    Returns service names, owning team, primary language, and tier for all
+    registered services in the service catalog.  Results are cached for 60
+    seconds per (env, cluster) combination.
+
+    Note: this function retrieves *service definitions* (catalog metadata),
+    not live APM metrics such as latency or error rate.
 
     Args:
         env: Datadog environment tag (e.g. ``"production"``, ``"staging"``).
-        cluster_name: Optional cluster name to scope the APM query.
+            Used as a display hint and cache key only — the Service Definition
+            API does not filter by environment.
+        cluster_name: Optional cluster name shown in the output header.
         config: Optional ``DatadogAPIConfig`` (for testing / injection).
-        _custom_api: Optional pre-configured APM services API client (for testing).
+        _custom_api: Optional pre-configured ServiceDefinitionApi (for testing).
     """
     try:
         from datadog_api_client.exceptions import ApiException  # noqa: WPS433
@@ -343,8 +359,8 @@ def get_datadog_apm_services(
         if _custom_api is not None:
             api = _custom_api
         else:
-            client = _get_dd_api_client(config)
-            api = ServiceDefinitionApi(client)
+            with _get_dd_api_client(config) as client:
+                api = ServiceDefinitionApi(client)
 
         response = api.list_service_definitions()
 
@@ -396,9 +412,9 @@ def get_datadog_apm_services(
         msg = _dd_error_message(status)
         logger.warning("Datadog APM services API error (HTTP %s): %s", status, exc)
         return ToolResult(output=msg, error=True)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Unexpected error fetching Datadog APM services: %s", exc)
-        return ToolResult(output=f"Unexpected error fetching Datadog APM services: {exc}", error=True)
+    except Exception:  # noqa: BLE001
+        logger.exception("Unexpected error in get_datadog_apm_services")
+        return ToolResult(output="Unexpected error retrieving APM services. See logs for details.", error=True)
 
 
 # ── Async wrappers ───────────────────────────────────────────

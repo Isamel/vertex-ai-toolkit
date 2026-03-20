@@ -85,8 +85,8 @@ _ARGOCD_TOOLS_TABLE = """\
 | `argocd_app_managed_resources` | `app_name` | `namespace` |"""
 
 _DATADOG_API_TOOLS_TABLE = """\
-| `query_datadog_metrics` | `cluster_name` | `metric`, `query`, `from_ts`, `to_ts` |
-| `get_datadog_monitors` | | `cluster_name`, `tags`, `state` |
+| `query_datadog_metrics` | `cluster_name` | `metric`, `from_ts`, `to_ts` |
+| `get_datadog_monitors` | | `cluster_name`, `state` |
 | `get_datadog_apm_services` | | `env`, `cluster_name` |"""
 
 _DATADOG_API_STEP = """\
@@ -96,9 +96,9 @@ PREREQUISITE: First check if `query_datadog_metrics` is in your available tools 
 If it is NOT available, SKIP this entire step and mark it as SKIPPED in your output.
 
 If available:
-19. ``query_datadog_metrics(cluster_name="<cluster>", metric="kubernetes.cpu.usage.total")``
+19. ``query_datadog_metrics(cluster_name="<cluster>", metric="cpu")``
     — CPU usage time-series for the workloads in the target namespace.
-20. ``query_datadog_metrics(cluster_name="<cluster>", metric="kubernetes.memory.usage")``
+20. ``query_datadog_metrics(cluster_name="<cluster>", metric="memory")``
     — Memory usage time-series for the workloads in the target namespace.
 21. ``get_datadog_monitors(cluster_name="<cluster>")``
     — All active monitor alerts for this cluster; note any alerts in Alert or Warn state.

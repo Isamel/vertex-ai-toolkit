@@ -1284,8 +1284,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 name="query_datadog_metrics",
                 description=(
                     "Query Datadog metrics for a GKE cluster using the Datadog Metrics v1 API. "
-                    "Supports built-in metric templates (cpu, memory, restarts, network_in, "
-                    "network_out, disk_read, disk_write) or a custom Datadog query string. "
+                    "Supports built-in metric templates: cpu, memory, restarts, network_in, "
+                    "network_out, disk_read, disk_write. "
                     "Returns average, maximum, and latest values per series over the requested "
                     "time window. Read-only — does not modify any resources."
                 ),
@@ -1305,12 +1305,6 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                     ToolParam(
-                        name="query",
-                        type="string",
-                        description="Custom Datadog metrics query string (overrides metric template when provided)",
-                        required=False,
-                    ),
-                    ToolParam(
                         name="from_ts",
                         type="integer",
                         description="Unix timestamp for the start of the query window (defaults to now-3600)",
@@ -1323,9 +1317,9 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
-                execute=lambda cluster_name, metric="cpu", query="", from_ts=0, to_ts=0,
+                execute=lambda cluster_name, metric="cpu", from_ts=0, to_ts=0,
                         _dd=_dd_config: query_datadog_metrics(
-                    cluster_name=cluster_name, metric=metric, query=query,
+                    cluster_name=cluster_name, metric=metric,
                     from_ts=from_ts, to_ts=to_ts, config=_dd,
                 ),
             ),
@@ -1334,7 +1328,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 description=(
                     "Fetch active Datadog monitors using the Datadog Monitors v1 API. "
                     "Returns monitors filtered by state (default: Alert) and optionally "
-                    "by cluster name tag or additional tags. Shows monitor ID, name, type, "
+                    "by cluster name tag. Shows monitor ID, name, type, "
                     "and current state. Read-only — does not modify any resources."
                 ),
                 parameters=[
