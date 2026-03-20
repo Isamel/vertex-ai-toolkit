@@ -184,7 +184,7 @@ Execute the following steps to build a comprehensive health snapshot. Collect da
 - Use `kubectl_get("deployments", namespace=<ns>)` — check desired vs ready replicas
 - Use `kubectl_get("services", namespace=<ns>)` — check endpoints
 - Use `kubectl_get("hpa", namespace=<ns>)` — check autoscaler targets vs current
-- Use `kubectl_top(resource_type="pods", namespace=<ns>)` — returns per-container CPU/memory metrics (one row per container, with a CONTAINER column). To get pod-level totals, SUM the container rows within each pod. Then aggregate pod totals per workload (deployment/statefulset).
+- Use `kubectl_top(resource_type="pods", namespace=<ns>)` — returns per-container CPU/memory metrics (one row per container, with a CONTAINER column). To get pod-level totals, SUM the container rows within each pod. Then aggregate pod totals per workload (deployment/statefulset). NOTE: CPU values are pre-formatted as ``"N.NNN cores"`` (e.g. ``"0.500 cores"``). Do NOT re-convert or display raw millicore strings.
 
 ### Step 3: Warning Events (important for root cause)
 - Use `get_events(namespace=<ns>, event_type="Warning")` to get ALL warning events

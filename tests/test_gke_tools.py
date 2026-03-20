@@ -547,7 +547,7 @@ class TestKubectlTop:
         assert result.error is False
         assert "single-pod" in result.output
         assert "app" in result.output
-        assert "50m" in result.output
+        assert "0.050 cores" in result.output
         assert "64Mi" in result.output
         # Header must include CONTAINER column
         assert "CONTAINER" in result.output
@@ -570,10 +570,10 @@ class TestKubectlTop:
         assert "app" in result.output
         assert "sidecar" in result.output
         assert "proxy" in result.output
-        # Each set of metrics must appear
-        assert "100m" in result.output
-        assert "20m" in result.output
-        assert "5m" in result.output
+        # Each set of metrics must appear (formatted as cores)
+        assert "0.100 cores" in result.output
+        assert "0.020 cores" in result.output
+        assert "0.005 cores" in result.output
         # Pod name should repeat once per container row — 3 occurrences total
         assert result.output.count("multi-pod") == 3
         # Must NOT fall back to the old "3 containers" placeholder

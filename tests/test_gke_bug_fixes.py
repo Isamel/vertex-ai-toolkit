@@ -2,6 +2,7 @@
 
 Bug 1: kubectl_get 'output_format' param renamed to 'output'.
 Bug 2: Missing GitOps CRDs (ArgoCD, Flux) in resource whitelist.
+Bug 3: CPU values from kubectl_top now formatted as 'N.NNN cores'.
 """
 
 from __future__ import annotations
@@ -334,3 +335,54 @@ class TestGitOpsCRDsInWhitelist:
             )
 
         assert result.error is False, f"Unexpected error: {result.output}"
+
+
+# ══════════════════════════════════════════════════════════════
+# Bug 3: CPU values formatted as 'N.NNN cores' (not raw millicores)
+# ══════════════════════════════════════════════════════════════
+
+
+class TestFormatCpu:
+    """Bug 3 — _format_cpu() must convert Kubernetes CPU strings to human-readable cores."""
+
+    def test_millicore_format(self) -> None:
+        """500m should convert to '0.500 cores'."""
+        from vaig.tools.gke._formatters import _format_cpu
+
+        assert _format_cpu("500m") == "0.500 cores"
+
+    def test_large_millicore_format(self) -> None:
+        """1500m should convert to '1.500 cores'."""
+        from vaig.tools.gke._formatters import _format_cpu
+
+        assert _format_cpu("1500m") == "1.500 cores"
+
+    def test_zero_millicore_format(self) -> None:
+        """0m should convert to '0.000 cores'."""
+        from vaig.tools.gke._formatters import _format_cpu
+
+        assert _format_cpu("0m") == "0.000 cores"
+
+    def test_plain_integer_string_format(self) -> None:
+        """'2' (already in cores) should convert to '2.000 cores'."""
+        from vaig.tools.gke._formatters import _format_cpu
+
+        assert _format_cpu("2") == "2.000 cores"
+
+    def test_unknown_passthrough(self) -> None:
+        """'<unknown>' should pass through unchanged."""
+        from vaig.tools.gke._formatters import _format_cpu
+
+        assert _format_cpu("<unknown>") == "<unknown>"
+
+    def test_empty_string_passthrough(self) -> None:
+        """Empty string should pass through unchanged."""
+        from vaig.tools.gke._formatters import _format_cpu
+
+        assert _format_cpu("") == ""
+
+    def test_question_mark_passthrough(self) -> None:
+        """'?' should pass through unchanged."""
+        from vaig.tools.gke._formatters import _format_cpu
+
+        assert _format_cpu("?") == "?"

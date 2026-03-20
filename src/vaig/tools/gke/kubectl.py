@@ -719,24 +719,26 @@ def kubectl_top(
         # Format output
         lines: list[str] = []
         if is_pods:
-            lines.append(f"{'NAME':<50}{'CONTAINER':<30}{'CPU(cores)':<15}{'MEMORY(bytes)'}")
+            lines.append(f"{'NAME':<50}{'CONTAINER':<30}{'CPU(cores)':<20}{'MEMORY(bytes)'}")
             for item in items:
                 pod_name = item.get("metadata", {}).get("name", "")
                 containers = item.get("containers", [])
                 for c in containers:
                     usage = c.get("usage", {})
                     cname = c.get("name", "")
+                    cpu = _formatters._format_cpu(usage.get("cpu", "0"))
+                    mem = _formatters._format_memory(usage.get("memory", "?"))
                     lines.append(
-                        f"{pod_name:<50}{cname:<30}{usage.get('cpu', '0'):<15}{usage.get('memory', '0')}"
+                        f"{pod_name:<50}{cname:<30}{cpu:<20}{mem}"
                     )
         else:
-            lines.append(f"{'NAME':<50}{'CPU(cores)':<15}{'CPU%':<10}{'MEMORY(bytes)':<17}{'MEMORY%'}")
+            lines.append(f"{'NAME':<50}{'CPU(cores)':<20}{'CPU%':<10}{'MEMORY(bytes)':<17}{'MEMORY%'}")
             for item in items:
                 node_name = item.get("metadata", {}).get("name", "")
                 usage = item.get("usage", {})
-                cpu = usage.get("cpu", "0")
-                mem = usage.get("memory", "0")
-                lines.append(f"{node_name:<50}{cpu:<15}{'N/A':<10}{mem:<17}{'N/A'}")
+                cpu = _formatters._format_cpu(usage.get("cpu", "0"))
+                mem = _formatters._format_memory(usage.get("memory", "?"))
+                lines.append(f"{node_name:<50}{cpu:<20}{'N/A':<10}{mem:<17}{'N/A'}")
 
         return ToolResult(output="\n".join(lines))
 
