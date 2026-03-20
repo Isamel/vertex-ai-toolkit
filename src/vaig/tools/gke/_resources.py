@@ -112,6 +112,8 @@ _RESOURCE_API_MAP: dict[str, str] = {
     "helmreleases.helm.toolkit.fluxcd.io": "custom_flux_helm",
     # Flux Kustomization CRDs
     "kustomizations.kustomize.toolkit.fluxcd.io": "custom_flux_kustomize",
+    # VPA CRDs
+    "verticalpodautoscalers": "custom_vpa",
 }
 
 # Canonical aliases so users can type short names
@@ -171,6 +173,9 @@ _RESOURCE_ALIASES: dict[str, str] = {
     # Flux Kustomization aliases
     "ks": "kustomizations.kustomize.toolkit.fluxcd.io",
     "kustomization": "kustomizations.kustomize.toolkit.fluxcd.io",
+    # VPA aliases
+    "vpa": "verticalpodautoscalers",
+    "verticalpodautoscaler": "verticalpodautoscalers",
 }
 
 # Resource types expanded when ``resource="all"`` is requested.
@@ -430,5 +435,33 @@ def _list_resource(
                 **kwargs,
             )
         return _DictItemList(raw)
+
+    # ── Vertical Pod Autoscaler (custom) ─────────────────────
+    if api_group == "custom_vpa":
+        try:
+            if namespace in ("", "all", None):
+                raw = custom_api.list_cluster_custom_object(
+                    group="autoscaling.k8s.io",
+                    version="v1",
+                    plural="verticalpodautoscalers",
+                    **kwargs,
+                )
+            else:
+                raw = custom_api.list_namespaced_custom_object(
+                    group="autoscaling.k8s.io",
+                    version="v1",
+                    namespace=namespace,
+                    plural="verticalpodautoscalers",
+                    **kwargs,
+                )
+            return _DictItemList(raw)
+        except Exception as exc:
+            # Check for 404 — VPA CRD not installed
+            status = getattr(exc, "status", None)
+            if status == 404:
+                return ToolResult(
+                    output="VPA CRD not installed in this cluster. Install the Vertical Pod Autoscaler to use this resource.",
+                )
+            raise
 
     return ToolResult(output=f"Unknown API group for resource: {resource}", error=True)

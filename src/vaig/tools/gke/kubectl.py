@@ -313,6 +313,26 @@ def _describe_resource(
         )
         return _resources._DictItem(raw)
 
+    # ── Vertical Pod Autoscaler (custom) ─────────────────────
+    if api_group == "custom_vpa":
+        if custom_api is None:
+            return None
+        try:
+            raw = custom_api.get_namespaced_custom_object(
+                group="autoscaling.k8s.io",
+                version="v1",
+                plural="verticalpodautoscalers",
+                namespace=namespace,
+                name=name,
+            )
+            return _resources._DictItem(raw)
+        except k8s_exceptions.ApiException as exc:
+            if exc.status == 404:
+                return ToolResult(
+                    output="VPA CRD not installed in this cluster. Install the Vertical Pod Autoscaler to use this resource.",
+                )
+            raise
+
     return None
 
 

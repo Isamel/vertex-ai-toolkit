@@ -351,6 +351,29 @@ def _serialise_item(item: Any, api: Any) -> Any:
     return api.sanitize_for_serialization(item)
 
 
+def _format_vpa_table(items: list[Any], wide: bool = False) -> str:
+    """Format VerticalPodAutoscaler list as a kubectl-style table."""
+    if not items:
+        return "No resources found."
+    lines: list[str] = []
+    header = "NAME                                     TARGET-KIND   TARGET-NAME                     UPDATE-MODE   AGE"
+    lines.append(header)
+    for item in items:
+        # _DictItem wrapper — use .metadata and .spec dict-style access
+        meta = item.metadata
+        name = meta.name or ""
+        spec = item.spec or {}
+        target_ref = spec.get("targetRef", {})
+        target_kind = target_ref.get("kind", "<unknown>")
+        target_name = target_ref.get("name", "<unknown>")
+        update_policy = spec.get("updatePolicy", {})
+        update_mode = update_policy.get("updateMode", "<unknown>")
+        age = _age(meta.creation_timestamp) if meta.creation_timestamp else "<unknown>"
+        line = f"{name:<41}{target_kind:<14}{target_name:<32}{update_mode:<14}{age}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _format_items(resource: str, items: list[Any], output_format: str) -> str:
     """Format a list of K8s items into the requested output_format."""
     import json as _json
@@ -404,6 +427,8 @@ def _format_items(resource: str, items: list[Any], output_format: str) -> str:
         "crds": _format_crds_table,
         "externalsecrets": _format_external_secrets_table,
         "externalsecret": _format_external_secrets_table,
+        "verticalpodautoscalers": _format_vpa_table,
+        "verticalpodautoscaler": _format_vpa_table,
     }.get(resource)
 
     if formatter:
