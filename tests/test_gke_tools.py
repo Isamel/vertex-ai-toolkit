@@ -6080,3 +6080,127 @@ class TestKubectlGetLabels:
 
         assert result.error
         assert "kubernetes" in result.output.lower() or "pip install" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# ArgoCD auto-discovery tests
+# ---------------------------------------------------------------------------
+
+
+class TestArgoCDDiscovery:
+    """Tests for _discover_argocd_namespace and auto-discovery integration."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_argocd_cache(self):
+        """Clear the ArgoCD namespace cache before each test."""
+        import vaig.tools.gke.argocd as argocd_mod
+        argocd_mod._argocd_namespace_cache.clear()
+        yield
+        argocd_mod._argocd_namespace_cache.clear()
+
+    def test_discover_finds_argocd_in_default_namespace(self) -> None:
+        """Discovers ArgoCD when it's in the 'argocd' namespace (empty items list is valid)."""
+        from vaig.tools.gke.argocd import _discover_argocd_namespace
+
+        mock_api = MagicMock()
+        # list_namespaced_custom_object succeeds on first call (argocd namespace).
+        # An empty items list is still a valid "CRD exists here" signal.
+        mock_api.list_namespaced_custom_object.return_value = {"items": []}
+
+        result = _discover_argocd_namespace(mock_api)
+
+        assert result == "argocd"
+        mock_api.list_namespaced_custom_object.assert_called_once()
+
+    def test_discover_finds_argocd_in_gitops_namespace(self) -> None:
+        """Discovers ArgoCD when it's in a non-default 'gitops' namespace."""
+        from vaig.tools.gke.argocd import _ARGOCD_COMMON_NAMESPACES, _discover_argocd_namespace
+
+        mock_api = MagicMock()
+
+        def side_effect(group, version, namespace, plural, limit):
+            if namespace == "gitops":
+                return {"items": []}
+            # Simulate 404 for all other namespaces (CRD not found there)
+            exc = Exception(f"not found in {namespace}")
+            raise exc
+
+        mock_api.list_namespaced_custom_object.side_effect = side_effect
+
+        result = _discover_argocd_namespace(mock_api)
+
+        assert result == "gitops"
+        # Should have been called for all namespaces up to and including "gitops"
+        gitops_index = list(_ARGOCD_COMMON_NAMESPACES).index("gitops")
+        assert mock_api.list_namespaced_custom_object.call_count == gitops_index + 1
+
+    def test_discover_falls_back_to_cluster_wide_search(self) -> None:
+        """Falls back to cluster-wide search when no common namespace works."""
+        from vaig.tools.gke.argocd import _discover_argocd_namespace
+
+        mock_api = MagicMock()
+        mock_api.list_namespaced_custom_object.side_effect = Exception("not found")
+        mock_api.list_cluster_custom_object.return_value = {
+            "items": [{"metadata": {"namespace": "custom-argo"}}]
+        }
+
+        result = _discover_argocd_namespace(mock_api)
+
+        assert result == "custom-argo"
+        mock_api.list_cluster_custom_object.assert_called_once()
+
+    def test_discover_returns_none_when_not_found(self) -> None:
+        """Returns None when ArgoCD is not found anywhere."""
+        from vaig.tools.gke.argocd import _discover_argocd_namespace
+
+        mock_api = MagicMock()
+        mock_api.list_namespaced_custom_object.side_effect = Exception("not found")
+        mock_api.list_cluster_custom_object.side_effect = Exception("not found")
+
+        result = _discover_argocd_namespace(mock_api)
+
+        assert result is None
+
+    def test_list_applications_auto_discovers_namespace(self) -> None:
+        """argocd_list_applications triggers auto-discovery when namespace is empty."""
+        from vaig.tools.gke.argocd import argocd_list_applications
+
+        mock_api = MagicMock()
+        # Discovery call (limit=1) succeeds on "argocd" namespace
+        # Full list call (no limit) also returns items
+        mock_api.list_namespaced_custom_object.return_value = {
+            "items": [
+                {
+                    "metadata": {"name": "my-app", "namespace": "argocd"},
+                    "spec": {
+                        "destination": {"namespace": "default"},
+                        "source": {"repoURL": "https://github.com/test/repo", "targetRevision": "HEAD"},
+                        "project": "default",
+                    },
+                    "status": {
+                        "health": {"status": "Healthy"},
+                        "sync": {"status": "Synced"},
+                    },
+                }
+            ]
+        }
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True):
+            result = argocd_list_applications(namespace="", _custom_api=mock_api)
+
+        assert not result.error
+        assert result.output is not None
+
+    def test_discover_uses_cache_on_second_call(self) -> None:
+        """Second call to _discover_argocd_namespace uses cache, not re-querying."""
+        from vaig.tools.gke.argocd import _discover_argocd_namespace
+
+        mock_api = MagicMock()
+        mock_api.list_namespaced_custom_object.return_value = {"items": []}
+
+        result1 = _discover_argocd_namespace(mock_api)
+        result2 = _discover_argocd_namespace(mock_api)
+
+        assert result1 == result2 == "argocd"
+        # Should only query once — second call uses cache
+        assert mock_api.list_namespaced_custom_object.call_count == 1

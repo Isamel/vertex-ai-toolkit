@@ -233,6 +233,25 @@ If the tool IS available:
 ### Step 10: ArgoCD Application Assessment (ONLY if `argocd_list_applications` tool exists)
 PREREQUISITE: First check if `argocd_list_applications` is in your available tools list. If it is NOT available, SKIP this entire step and mark it as SKIPPED in the Investigation Checklist. Do NOT fabricate ArgoCD application data.
 
+### ArgoCD Detection (via resource annotations — NOT namespace scanning)
+When inspecting deployment labels/annotations (from kubectl_get_labels output),
+look for these annotations that ArgoCD puts on EVERY resource it manages:
+- Annotation `argocd.argoproj.io/managed-by` → the ArgoCD namespace where the Application lives
+- Annotation `argocd.argoproj.io/tracking-id` → full tracking reference
+- Label `argocd.argoproj.io/instance` → ArgoCD Application name
+
+NOTE: `app.kubernetes.io/instance` is a generic Kubernetes label also used by Helm
+and other tools — it alone does NOT confirm ArgoCD management.
+
+If `argocd.argoproj.io/managed-by` or `argocd.argoproj.io/tracking-id` is present,
+that resource IS managed by ArgoCD.
+Report: "Managed by: ArgoCD (app: <value from annotation>)"
+
+When calling argocd_list_applications(), do NOT pass a namespace — let it auto-detect
+by probing common namespaces (argocd, argo-cd, argocd-system, gitops, argo) and
+falling back to a cluster-wide scan. Only pass namespace explicitly if you found the
+ArgoCD namespace value in an annotation (e.g., from argocd.argoproj.io/managed-by).
+
 If the tool IS available:
 - Use `argocd_list_applications()` to discover ArgoCD-managed apps
 - For each relevant app, use `argocd_app_status(app_name=<app>)` to check sync and health

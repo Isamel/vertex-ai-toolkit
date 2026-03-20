@@ -347,7 +347,7 @@ class ArgoCDConfig(BaseModel):
     server: str = ""
     token: str = ""
     context: str = ""
-    namespace: str = "argocd"
+    namespace: str = ""
     verify_ssl: bool = True
 
 
@@ -381,7 +381,7 @@ class GKEConfig(BaseModel):
     argocd_server: str = ""
     argocd_token: str = ""
     argocd_context: str = ""
-    argocd_namespace: str = "argocd"
+    argocd_namespace: str = ""
     argocd_verify_ssl: bool = True
 
 
