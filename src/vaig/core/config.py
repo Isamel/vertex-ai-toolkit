@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -359,6 +359,23 @@ class DatadogAPIConfig(BaseModel):
     app_key: str = Field(default="", repr=False)
     site: str = "datadoghq.com"
     timeout: int = 30
+
+    @model_validator(mode="after")
+    def _auto_enable_or_disable(self) -> DatadogAPIConfig:
+        """Auto-enable when both keys are present; disable when enabled=True but keys missing."""
+        has_keys = bool(self.api_key and self.app_key)
+        if not self.enabled and has_keys:
+            # Both keys provided — enable automatically so users just need to set the keys.
+            self.enabled = True
+        elif self.enabled and not has_keys:
+            # Requested enabled=True but keys are missing — disable and warn.
+            logger.warning(
+                "datadog.enabled=True but api_key or app_key is missing — "
+                "disabling Datadog API tools. Set VAIG_DATADOG__API_KEY and "
+                "VAIG_DATADOG__APP_KEY (or datadog.api_key/app_key in config)."
+            )
+            self.enabled = False
+        return self
 
 
 class GKEConfig(BaseModel):
