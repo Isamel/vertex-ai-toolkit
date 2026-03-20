@@ -1224,29 +1224,40 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
 
 ### Step 2 — Pod Status Analysis
 1. ``kubectl_get(resource="pods", namespace="<target>", output="wide")`` — all pods
-2. For any pod NOT in Running/Succeeded state: ``get_container_status(name="<pod>", namespace="<ns>")``
-3. For pods with restart count > 3: ``kubectl_logs(pod="<pod>", namespace="<ns>")``
-4. For CrashLoopBackOff pods: ``kubectl_describe(resource="pod", name="<pod>", namespace="<ns>")``
+2. ``kubectl_top(resource_type="pods", namespace="<target>")`` — CPU/memory usage per pod
+    This is MANDATORY — the reporter needs real CPU and memory values for the Service Status table.
+    If this call fails, record the error and note "kubectl_top unavailable" — do NOT fabricate values.
+    When populating the **Service Status** table (one row per workload: Deployment, StatefulSet,
+    DaemonSet, Job, or CronJob), aggregate these per-pod metrics at the workload level:
+    - Associate each pod with its owning workload using ownerReferences or standard labels
+      (app, app.kubernetes.io/name, or controller-specific labels).
+    - For each workload: CPU Usage = sum of CPU across all its pods, Memory Usage = sum of memory
+      across all its pods.
+    - Include a pod count per workload (ready/total pods).
+    - Never report raw per-pod values in the Service Status table — always use aggregated per-workload values.
+3. For any pod NOT in Running/Succeeded state: ``get_container_status(name="<pod>", namespace="<ns>")``
+4. For pods with restart count > 3: ``kubectl_logs(pod="<pod>", namespace="<ns>")``
+5. For CrashLoopBackOff pods: ``kubectl_describe(resource="pod", name="<pod>", namespace="<ns>")``
 
 ### Step 4 — Deployment Deep-Dive
-5. ``kubectl_get(resource="deployments", namespace="<target>", output="wide")`` — all deployments
-6. ``get_rollout_status(deployment="<name>", namespace="<ns>")`` for each deployment
-7. For unhealthy deployments: ``kubectl_describe(resource="deployment", name="<name>", namespace="<ns>")``
-8. ``get_rollout_history(deployment="<name>", namespace="<ns>")`` for recently changed deployments
-9. Check ``kubectl_get_labels`` equivalent via ``kubectl_describe`` to detect management annotations
+6. ``kubectl_get(resource="deployments", namespace="<target>", output="wide")`` — all deployments
+7. ``get_rollout_status(deployment="<name>", namespace="<ns>")`` for each deployment
+8. For unhealthy deployments: ``kubectl_describe(resource="deployment", name="<name>", namespace="<ns>")``
+9. ``get_rollout_history(deployment="<name>", namespace="<ns>")`` for recently changed deployments
+10. Check ``kubectl_get_labels`` equivalent via ``kubectl_describe`` to detect management annotations
    (ArgoCD: ``argocd.argoproj.io/``, Flux: ``fluxcd.io/``, Helm: ``app.kubernetes.io/managed-by: Helm``,
    OwnerReferences for operator-managed resources, ``.spec.template.metadata.annotations`` for
    webhook injection annotations) — report these management indicators for the reporter
 
 ### Step 5 — Service & Endpoint Connectivity
-10. ``kubectl_get(resource="services", namespace="<target>", output="wide")``
-11. ``kubectl_get(resource="endpoints", namespace="<target>")``
-12. For services with 0 endpoints: ``kubectl_describe(resource="service", name="<svc>", namespace="<ns>")``
+11. ``kubectl_get(resource="services", namespace="<target>", output="wide")``
+12. ``kubectl_get(resource="endpoints", namespace="<target>")``
+13. For services with 0 endpoints: ``kubectl_describe(resource="service", name="<svc>", namespace="<ns>")``
 
 ### Step 6 — HPA & Scaling Status
-13. ``kubectl_get(resource="hpa", namespace="<target>", output="wide")``
-14. For HPA at maxReplicas: ``kubectl_describe(resource="hpa", name="<hpa>", namespace="<ns>")``
-15. ``gcloud_monitoring_query(...)`` if HPA uses custom metrics and metric fetch is failing
+14. ``kubectl_get(resource="hpa", namespace="<target>", output="wide")``
+15. For HPA at maxReplicas: ``kubectl_describe(resource="hpa", name="<hpa>", namespace="<ns>")``
+16. ``gcloud_monitoring_query(...)`` if HPA uses custom metrics and metric fetch is failing
 
 ### Target namespace:
 {ns_context}
@@ -1263,8 +1274,8 @@ Produce exactly these sections at the end of your response:
 
 ## Service Status
 
-| Service/Deployment | Namespace | Status | Ready | Restarts | Issue |
-|--------------------|-----------|--------|-------|----------|-------|
+| Service/Deployment | Namespace | Status | Ready | Restarts | CPU Usage | Memory Usage | Issue |
+|--------------------|-----------|--------|-------|----------|-----------|--------------|-------|
 (one row per workload; Status: Running/Degraded/Failed/Unknown; use "N/A" for missing values)
 
 ## Raw Findings (Workload)
