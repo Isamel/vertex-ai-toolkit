@@ -70,7 +70,7 @@ def _get_dd_api_client(config: DatadogAPIConfig) -> Any:
     """
     from datadog_api_client import ApiClient, Configuration  # noqa: WPS433
 
-    configuration = Configuration()
+    configuration = Configuration()  # type: ignore[no-untyped-call]
     configuration.server_variables["site"] = config.site
     configuration.api_key["apiKeyAuth"] = config.api_key
     configuration.api_key["appKeyAuth"] = config.app_key
@@ -157,7 +157,7 @@ def query_datadog_metrics(
             api = _custom_api
         else:
             with _get_dd_api_client(config) as client:
-                api = MetricsApi(client)
+                api = MetricsApi(client)  # type: ignore[no-untyped-call]
 
         response = api.query_metrics(
             _from=start,
@@ -257,7 +257,7 @@ def get_datadog_monitors(
             api = _custom_api
         else:
             with _get_dd_api_client(config) as client:
-                api = MonitorsApi(client)
+                api = MonitorsApi(client)  # type: ignore[no-untyped-call]
 
         kwargs: dict[str, Any] = {}
         if tag_filter:
@@ -360,7 +360,7 @@ def get_datadog_apm_services(
             api = _custom_api
         else:
             with _get_dd_api_client(config) as client:
-                api = ServiceDefinitionApi(client)
+                api = ServiceDefinitionApi(client)  # type: ignore[no-untyped-call]
 
         response = api.list_service_definitions()
 
