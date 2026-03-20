@@ -36,14 +36,15 @@
     --transition: 150ms ease;
   }
 
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; height: 100%; overflow: hidden; }
 
   body {
     font-family: var(--font-sans);
     background: var(--bg-base);
     color: var(--text-main);
     line-height: 1.6;
-    min-height: 100vh;
+    height: 100%;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
   }
@@ -96,6 +97,7 @@
   .layout {
     display: flex; flex: 1;
     overflow: hidden;
+    min-height: 0;
   }
 
   /* ── Sidebar ─────────────────────────────────────────────── */
