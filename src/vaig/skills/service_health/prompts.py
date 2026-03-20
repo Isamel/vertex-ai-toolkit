@@ -95,9 +95,12 @@ _DATADOG_API_STEP = """\
 Use the Datadog API tools to gather real-time observability data.
 
 19. ``query_datadog_metrics(cluster_name="<cluster>", metric="cpu")``
-    — CPU usage time-series for the workloads in the target namespace.
+    — CPU usage time-series cluster-wide (filtered by ``cluster_name`` only, not by
+    namespace). Correlate the returned series with the pods and services discovered
+    in Steps 2, 4, and 5 to focus on workloads relevant to the target namespace.
 20. ``query_datadog_metrics(cluster_name="<cluster>", metric="memory")``
-    — Memory usage time-series for the workloads in the target namespace.
+    — Memory usage time-series cluster-wide (same scope as above). Post-filter the
+    results to the pods/services identified in Steps 2, 4, and 5.
 21. ``get_datadog_monitors(cluster_name="<cluster>")``
     — All active monitor alerts for this cluster; note any alerts in Alert or Warn state.
 22. ``get_datadog_apm_services()``
