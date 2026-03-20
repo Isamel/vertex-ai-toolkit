@@ -448,6 +448,58 @@ def _format_items(resource: str, items: list[Any], output_format: str) -> str:
     return _format_generic_table(items)
 
 
+def _format_cpu(cpu_str: str) -> str:
+    """Convert Kubernetes CPU strings to human-readable cores format.
+
+    Parses millicore values (e.g. '500m') and plain integer/float values
+    (e.g. '2') and converts them to a cores string (e.g. '0.500 cores').
+
+    Args:
+        cpu_str: A Kubernetes CPU value string such as ``'500m'``, ``'2'``,
+            ``'<unknown>'``, or ``''``.
+
+    Returns:
+        A human-readable string in ``'N.NNN cores'`` format, or the original
+        string if it cannot be parsed (e.g. ``'<unknown>'``).
+
+    Examples:
+        >>> _format_cpu("500m")
+        '0.500 cores'
+        >>> _format_cpu("1500m")
+        '1.500 cores'
+        >>> _format_cpu("2")
+        '2.000 cores'
+        >>> _format_cpu("0m")
+        '0.000 cores'
+        >>> _format_cpu("<unknown>")
+        '<unknown>'
+    """
+    if not cpu_str or cpu_str in ("<unknown>", "?"):
+        return cpu_str
+    # Nanocore format: e.g. "250000000n"
+    if cpu_str.endswith("n"):
+        try:
+            nanocores = int(cpu_str[:-1])
+            cores = nanocores / 1_000_000_000
+            return f"{cores:.3f} cores"
+        except ValueError:
+            return cpu_str
+    # Millicore format: e.g. "500m"
+    if cpu_str.endswith("m"):
+        try:
+            millicores = int(cpu_str[:-1])
+            cores = millicores / 1000
+            return f"{cores:.3f} cores"
+        except ValueError:
+            return cpu_str
+    # Plain integer or float (already in cores)
+    try:
+        cores = float(cpu_str)
+        return f"{cores:.3f} cores"
+    except ValueError:
+        return cpu_str
+
+
 def _format_memory(mem_str: str) -> str:
     """Convert Kubernetes memory strings (e.g. '16384Ki') to human-readable."""
     if mem_str == "?" or not mem_str:

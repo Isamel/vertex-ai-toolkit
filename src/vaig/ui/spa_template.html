@@ -458,9 +458,9 @@ const REPORT_DATA = /*{{REPORT_DATA_JSON}}*/null;
 <header class="top-header" id="top">
   <div class="brand">🔍 vertex-ai-toolkit <span>/ health</span></div>
   <div class="cluster-info" id="cluster-info-text"></div>
-  <div class="status-badge CRITICAL" id="status-badge">
+  <div class="status-badge UNKNOWN" id="status-badge">
     <span class="status-dot"></span>
-    <span id="status-text">CRITICAL</span>
+    <span id="status-text">LOADING</span>
   </div>
   <div class="generated-at" id="generated-at"></div>
 </header>
@@ -607,8 +607,17 @@ function sevColor(s) {
 function renderHeader() {
   const m = REPORT_DATA.metadata;
   const es = REPORT_DATA.executive_summary;
-  document.getElementById('cluster-info-text').textContent =
-    `${m.project_id} / ${m.cluster_name}  •  ${es.scope}  •  model: ${m.model_used}`;
+  // Build cluster-info text only from fields that are non-empty
+  const parts = [];
+  if (m.project_id) parts.push(m.project_id);
+  if (m.cluster_name) parts.push(m.cluster_name);
+  // Join project/cluster with " / " separator when both present
+  const clusterPart = parts.join(' / ');
+  const infoParts = [];
+  if (clusterPart) infoParts.push(clusterPart);
+  if (es.scope) infoParts.push(es.scope);
+  if (m.model_used) infoParts.push('model: ' + m.model_used);
+  document.getElementById('cluster-info-text').textContent = infoParts.join('  •  ');
   const badge = document.getElementById('status-badge');
   badge.className = 'status-badge ' + es.overall_status;
   document.getElementById('status-text').textContent = es.overall_status;
@@ -994,7 +1003,9 @@ document.getElementById('main-content').addEventListener('scroll', updateActiveN
   renderRecs();
   renderCostUsage();
   renderToolUsage();
-  document.title = `Health Report — ${REPORT_DATA.metadata.cluster_name} — ${REPORT_DATA.executive_summary.overall_status}`;
+  const _titleCluster = REPORT_DATA.metadata.cluster_name;
+  const _titleStatus  = REPORT_DATA.executive_summary.overall_status;
+  document.title = ['Health Report', _titleCluster, _titleStatus].filter(Boolean).join(' — ');
 })();
 </script>
 </body>
