@@ -351,6 +351,16 @@ class ArgoCDConfig(BaseModel):
     verify_ssl: bool = True
 
 
+class DatadogAPIConfig(BaseModel):
+    """Datadog REST API integration configuration."""
+
+    enabled: bool = False
+    api_key: str = Field(default="", repr=False)
+    app_key: str = Field(default="", repr=False)
+    site: str = "datadoghq.com"
+    timeout: int = 30
+
+
 class GKEConfig(BaseModel):
     """GKE live-cluster connection and query configuration."""
 
@@ -561,6 +571,7 @@ class Settings(BaseSettings):
     gke: GKEConfig = Field(default_factory=GKEConfig)
     helm: HelmConfig = Field(default_factory=HelmConfig)
     argocd: ArgoCDConfig = Field(default_factory=ArgoCDConfig)
+    datadog: DatadogAPIConfig = Field(default_factory=DatadogAPIConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     plugins: PluginConfig = Field(default_factory=PluginConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
