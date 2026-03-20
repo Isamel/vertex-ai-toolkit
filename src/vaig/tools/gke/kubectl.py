@@ -717,23 +717,16 @@ def kubectl_top(
         # Format output
         lines: list[str] = []
         if is_pods:
-            lines.append(f"{'NAME':<50}{'CPU(cores)':<15}{'MEMORY(bytes)'}")
+            lines.append(f"{'NAME':<50}{'CONTAINER':<30}{'CPU(cores)':<15}{'MEMORY(bytes)'}")
             for item in items:
                 pod_name = item.get("metadata", {}).get("name", "")
                 containers = item.get("containers", [])
-                total_cpu = ""
-                total_mem = ""
                 for c in containers:
                     usage = c.get("usage", {})
-                    cpu = usage.get("cpu", "0")
-                    mem = usage.get("memory", "0")
-                    total_cpu = cpu  # For single-container pods
-                    total_mem = mem
-                if len(containers) > 1:
-                    # Sum across containers — simplistic display
-                    total_cpu = f"{len(containers)} containers"
-                    total_mem = f"{len(containers)} containers"
-                lines.append(f"{pod_name:<50}{total_cpu:<15}{total_mem}")
+                    cname = c.get("name", "")
+                    lines.append(
+                        f"{pod_name:<50}{cname:<30}{usage.get('cpu', '0'):<15}{usage.get('memory', '0')}"
+                    )
         else:
             lines.append(f"{'NAME':<50}{'CPU(cores)':<15}{'CPU%':<10}{'MEMORY(bytes)':<17}{'MEMORY%'}")
             for item in items:
