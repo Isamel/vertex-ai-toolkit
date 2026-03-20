@@ -392,7 +392,7 @@ For each affected resource, use `kubectl_get_labels` to identify how it is manag
 - **Operator-managed**: Has `OwnerReferences` in metadata → remediation via the parent CR
 - **Manual**: No management annotations → direct kubectl is acceptable
 
-Use `kubectl_get_labels(resource_type="deployment", namespace=<ns>, name=<deploy>)` to retrieve labels and annotations in a single call.
+Use `kubectl_get_labels(resource_type="deployment", namespace=<ns>)` to retrieve labels and annotations for ALL deployments in a single call.
 
 Include this in every finding's metadata:
 - **Managed by**: [GitOps (ArgoCD) | GitOps (Flux) | Helm | Operator (<name>) | Manual | Unknown]
@@ -804,20 +804,27 @@ upstream data, populate ``ServiceStatus`` fields as follows:
 - Do NOT invent a ``scaling_status`` field — it does not exist in the schema.  Use
   ``issues`` for brief notes and ``findings`` with ``category="scaling"`` for details.
 
-**Management context in issues** — when the workload gatherer detected management context
-via ``kubectl_get_labels``, include it in ``service_statuses[].issues``:
-- Helm-managed: ``"Managed by Helm (release: <release-name>, chart: <chart-name>)"``
-- ArgoCD-managed: ``"Managed by ArgoCD (app: <app-name>)"``
+**Management context** — when the workload gatherer detected management context
+via ``kubectl_get_labels``, include it in the ``findings`` entry for that service
+(use ``category="management"`` and ``severity=INFO``):
+- Helm-managed: title ``"Helm-managed deployment: <name>"``, root_cause with release and chart details
+- ArgoCD-managed: title ``"ArgoCD-managed deployment: <name>"``, root_cause with app name
 - This information is critical for the remediation reasoning framework — DO NOT omit it.
+- Do NOT put management context in ``service_statuses[].issues`` — that field is reserved
+  for a single brief operational note (e.g. ``"HPA ceiling hit (5/5 replicas)"``).
+  If both a scaling note and management context apply, keep only the scaling note in
+  ``issues`` and put management context in a dedicated ``findings`` entry.
 
 **Linking Helm annotations to Helm release data** — when a deployment has annotation
 ``meta.helm.sh/release-name``, use that value to cross-reference Helm data from the
-event gatherer's Step 10 output (if available). Example mapping:
+Helm Release Assessment (Step 9) output (if available). Example mapping:
 - Deployment ``payment-svc`` has ``meta.helm.sh/release-name: payment``
 - Helm data shows release ``payment`` in status ``deployed``, revision 5
-- In ``recommendations``, use: ``helm rollback payment 4 -n production`` for rollback
-  (where 4 = revision 5 - 1, the last known-good revision)
-- Always show rollout history before recommending a specific revision number
+- Use ``helm_release_history`` / ``helm history payment`` (and/or deployment rollout
+  history) to identify a specific known-good revision, then recommend:
+  ``helm rollback payment <revision> -n <namespace>``
+- Always inspect rollout / release history and justify the chosen revision — DO NOT
+  assume that ``current_revision - 1`` is the correct rollback target
 
 **Scaling findings** — create a ``Finding`` entry with ``category="scaling"`` for each
 of the following when observed:
@@ -1285,7 +1292,7 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
    OwnerReferences for operator-managed resources, ``.spec.template.metadata.annotations`` for
    webhook injection annotations) — report these management indicators for the reporter
 
-### Step 4b — Management Context Detection (MANDATORY for ALL deployments)
+### Step 4b — Management Context Detection (extends Step 4; MANDATORY for ALL deployments)
 11. ``kubectl_get_labels(resource_type="deployments", namespace="<target>")`` —
     Get labels and annotations for ALL deployments. This is MANDATORY for detecting
     management context (Helm, ArgoCD, operators). Do NOT skip this step even if all
@@ -1361,7 +1368,8 @@ Produce exactly these sections at the end of your response:
 (For each HPA at maxReplicas or with unknown metrics: name, current/desired/max replicas, metric status)
 
 ### Management Indicators
-(For each failing resource: detected management method — GitOps/Helm/Operator/Manual — with evidence)
+(For ALL deployments: detected management method — GitOps/Helm/Operator/Manual — with evidence.
+Report even for healthy deployments, as management context affects remediation recommendations.)
 
 ### CRITICAL RULES:
 - ONLY report data returned by tool calls.  NEVER fabricate pod names, restart counts,
