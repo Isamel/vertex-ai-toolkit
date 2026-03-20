@@ -6204,3 +6204,292 @@ class TestArgoCDDiscovery:
         assert result1 == result2 == "argocd"
         # Should only query once — second call uses cache
         assert mock_api.list_namespaced_custom_object.call_count == 1
+
+
+# ── TestGetDatadogConfig ─────────────────────────────────────
+
+
+class TestGetDatadogConfig:
+    """Tests for get_datadog_config tool."""
+
+    def _make_deploy(
+        self,
+        name: str = "my-app",
+        annotations: dict | None = None,
+        labels: dict | None = None,
+        pod_annotations: dict | None = None,
+        pod_labels: dict | None = None,
+        env_vars: dict | None = None,
+    ) -> MagicMock:
+        """Build a minimal mock deployment with optional Datadog config."""
+        deploy = MagicMock()
+        deploy.metadata.name = name
+        deploy.metadata.annotations = annotations or {}
+        deploy.metadata.labels = labels or {}
+
+        pod_meta = MagicMock()
+        pod_meta.annotations = pod_annotations or {}
+        pod_meta.labels = pod_labels or {}
+
+        # Build env var objects
+        env_list = []
+        for key, val in (env_vars or {}).items():
+            ev = MagicMock()
+            ev.name = key
+            ev.value = val
+            env_list.append(ev)
+
+        container = MagicMock()
+        container.env = env_list
+
+        pod_spec = MagicMock()
+        pod_spec.containers = [container]
+
+        pod_template = MagicMock()
+        pod_template.metadata = pod_meta
+        pod_template.spec = pod_spec
+
+        deploy.spec.template = pod_template
+        return deploy
+
+    def test_full_datadog_config_detected(self) -> None:
+        """Deployment with full Datadog config — annotations + labels + env vars all detected."""
+        from vaig.tools.gke.datadog import get_datadog_config
+
+        cfg = _make_gke_config()
+        deploy = self._make_deploy(
+            name="payment-svc",
+            pod_annotations={"admission.datadoghq.com/enabled": "true"},
+            pod_labels={
+                "tags.datadoghq.com/service": "payment-svc",
+                "tags.datadoghq.com/env": "production",
+                "tags.datadoghq.com/version": "1.2.3",
+            },
+            env_vars={
+                "DD_AGENT_HOST": "datadog-agent.datadog.svc.cluster.local",
+                "DD_TRACE_ENABLED": "true",
+                "DD_SERVICE": "payment-svc",
+                "DD_ENV": "production",
+            },
+        )
+        mock_list = MagicMock()
+        mock_list.items = [deploy]
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            mock_core = MagicMock()
+            mock_apps = MagicMock()
+            mock_apps.list_namespaced_deployment.return_value = mock_list
+            mock_apps.list_namespaced_daemon_set.return_value = MagicMock(items=[])
+            mock_clients.return_value = (mock_core, mock_apps, MagicMock(), MagicMock())
+
+            result = get_datadog_config(gke_config=cfg, namespace="production")
+
+        assert not result.error
+        assert "payment-svc" in result.output
+        assert "DD_TRACE_ENABLED" in result.output
+        assert "DD_AGENT_HOST" in result.output
+        assert "tags.datadoghq.com/service" in result.output
+
+    def test_no_datadog_detected(self) -> None:
+        """Deployment with no Datadog config — has_datadog false, clean output."""
+        from vaig.tools.gke.datadog import get_datadog_config
+
+        cfg = _make_gke_config()
+        deploy = self._make_deploy(
+            name="frontend",
+            labels={"app": "frontend"},
+            env_vars={"PORT": "8080"},
+        )
+        mock_list = MagicMock()
+        mock_list.items = [deploy]
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            mock_core = MagicMock()
+            mock_apps = MagicMock()
+            mock_apps.list_namespaced_deployment.return_value = mock_list
+            mock_apps.list_namespaced_daemon_set.return_value = MagicMock(items=[])
+            mock_clients.return_value = (mock_core, mock_apps, MagicMock(), MagicMock())
+
+            result = get_datadog_config(gke_config=cfg, namespace="default")
+
+        assert not result.error
+        assert "No Datadog configuration detected" in result.output
+
+    def test_apm_enabled_without_agent_host_issue_detected(self) -> None:
+        """APM enabled (DD_TRACE_ENABLED=true) but no agent host — issue detected."""
+        from vaig.tools.gke.datadog import get_datadog_config
+
+        cfg = _make_gke_config()
+        deploy = self._make_deploy(
+            name="orders-svc",
+            env_vars={
+                "DD_TRACE_ENABLED": "true",
+                "DD_SERVICE": "orders-svc",
+                # Missing DD_AGENT_HOST and DD_TRACE_AGENT_URL
+            },
+        )
+        mock_list = MagicMock()
+        mock_list.items = [deploy]
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            mock_core = MagicMock()
+            mock_apps = MagicMock()
+            mock_apps.list_namespaced_deployment.return_value = mock_list
+            mock_apps.list_namespaced_daemon_set.return_value = MagicMock(items=[])
+            mock_clients.return_value = (mock_core, mock_apps, MagicMock(), MagicMock())
+
+            result = get_datadog_config(gke_config=cfg, namespace="default")
+
+        assert not result.error
+        assert "orders-svc" in result.output
+        assert "APM tracing enabled (DD_TRACE_ENABLED=true) but no agent host configured" in result.output
+
+    def test_admission_webhook_without_service_tag_issue_detected(self) -> None:
+        """Admission webhook present but no service tag — issue detected."""
+        from vaig.tools.gke.datadog import get_datadog_config
+
+        cfg = _make_gke_config()
+        deploy = self._make_deploy(
+            name="inventory-svc",
+            pod_annotations={"admission.datadoghq.com/enabled": "true"},
+            # Missing tags.datadoghq.com/service label AND DD_SERVICE env var
+        )
+        mock_list = MagicMock()
+        mock_list.items = [deploy]
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            mock_core = MagicMock()
+            mock_apps = MagicMock()
+            mock_apps.list_namespaced_deployment.return_value = mock_list
+            mock_apps.list_namespaced_daemon_set.return_value = MagicMock(items=[])
+            mock_clients.return_value = (mock_core, mock_apps, MagicMock(), MagicMock())
+
+            result = get_datadog_config(gke_config=cfg, namespace="default")
+
+        assert not result.error
+        assert "Datadog admission webhook annotation detected" in result.output
+        assert "service" in result.output.lower()
+
+    def test_mixed_deployments_only_dd_ones_in_instrumented_section(self) -> None:
+        """Multiple deployments, mixed — only DD-configured ones in instrumented section."""
+        from vaig.tools.gke.datadog import get_datadog_config
+
+        cfg = _make_gke_config()
+        dd_deploy = self._make_deploy(
+            name="payment-svc",
+            env_vars={"DD_AGENT_HOST": "dd-agent:8126", "DD_SERVICE": "payment-svc"},
+        )
+        plain_deploy = self._make_deploy(name="frontend", env_vars={"PORT": "3000"})
+        mock_list = MagicMock()
+        mock_list.items = [dd_deploy, plain_deploy]
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            mock_core = MagicMock()
+            mock_apps = MagicMock()
+            mock_apps.list_namespaced_deployment.return_value = mock_list
+            mock_apps.list_namespaced_daemon_set.return_value = MagicMock(items=[])
+            mock_clients.return_value = (mock_core, mock_apps, MagicMock(), MagicMock())
+
+            result = get_datadog_config(gke_config=cfg, namespace="default")
+
+        assert not result.error
+        assert "Datadog-Instrumented Deployments (1 found)" in result.output
+        assert "payment-svc" in result.output
+        assert "Deployments Without Datadog (1)" in result.output
+        assert "frontend" in result.output
+
+    def test_empty_namespace_clean_output(self) -> None:
+        """Empty namespace — no deployments, clean 'not detected' message."""
+        from vaig.tools.gke.datadog import get_datadog_config
+
+        cfg = _make_gke_config()
+        mock_list = MagicMock()
+        mock_list.items = []
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            mock_core = MagicMock()
+            mock_apps = MagicMock()
+            mock_apps.list_namespaced_deployment.return_value = mock_list
+            mock_apps.list_namespaced_daemon_set.return_value = MagicMock(items=[])
+            mock_clients.return_value = (mock_core, mock_apps, MagicMock(), MagicMock())
+
+            result = get_datadog_config(gke_config=cfg, namespace="empty-ns")
+
+        assert not result.error
+        assert "No Datadog configuration detected" in result.output
+        assert "Total deployments scanned: 0" in result.output
+
+    def test_agent_daemonset_found_in_datadog_namespace(self) -> None:
+        """Agent DaemonSet detection — found in 'datadog' namespace."""
+        from vaig.tools.gke.datadog import get_datadog_config
+
+        cfg = _make_gke_config()
+        mock_list = MagicMock()
+        mock_list.items = []
+
+        agent_ds = MagicMock()
+        agent_ds.metadata.name = "datadog-agent"
+
+        def side_effect_list_ds(namespace: str, label_selector: str) -> MagicMock:
+            result_mock = MagicMock()
+            if namespace == "datadog":
+                result_mock.items = [agent_ds]
+            else:
+                result_mock.items = []
+            return result_mock
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            mock_core = MagicMock()
+            mock_apps = MagicMock()
+            mock_apps.list_namespaced_deployment.return_value = mock_list
+            mock_apps.list_namespaced_daemon_set.side_effect = side_effect_list_ds
+            mock_clients.return_value = (mock_core, mock_apps, MagicMock(), MagicMock())
+
+            result = get_datadog_config(gke_config=cfg, namespace="default")
+
+        assert not result.error
+        assert "DaemonSet `datadog-agent`" in result.output
+        assert "datadog" in result.output
+
+    def test_agent_not_found_helpful_message(self) -> None:
+        """Agent not found — helpful message in output."""
+        from vaig.tools.gke.datadog import get_datadog_config
+
+        cfg = _make_gke_config()
+        mock_list = MagicMock()
+        mock_list.items = []
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
+            mock_core = MagicMock()
+            mock_apps = MagicMock()
+            mock_apps.list_namespaced_deployment.return_value = mock_list
+            mock_apps.list_namespaced_daemon_set.return_value = MagicMock(items=[])
+            mock_clients.return_value = (mock_core, mock_apps, MagicMock(), MagicMock())
+
+            result = get_datadog_config(gke_config=cfg, namespace="default")
+
+        assert not result.error
+        assert "No Datadog agent DaemonSet found" in result.output
+        assert "APM traces" in result.output or "metrics" in result.output
+
+    def test_k8s_unavailable(self) -> None:
+        """K8s API not available — returns unavailable message."""
+        from vaig.tools.gke.datadog import get_datadog_config
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", False):
+            result = get_datadog_config(gke_config=cfg)
+
+        assert result.error
+        assert "kubernetes" in result.output.lower() or "pip install" in result.output.lower()
+
+

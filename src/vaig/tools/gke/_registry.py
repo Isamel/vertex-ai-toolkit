@@ -18,6 +18,7 @@ from .argocd import (
     argocd_app_status,
     argocd_list_applications,
 )
+from .datadog import get_datadog_config
 from .helm import (
     helm_list_releases,
     helm_release_history,
@@ -933,6 +934,38 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 name=name,
                 label_filter=label_filter,
                 annotation_filter=annotation_filter,
+            ),
+        ),
+        # ── Datadog observability tools ───────────────────────
+        ToolDef(
+            name="get_datadog_config",
+            description=(
+                "Detect and summarize Datadog observability configuration in GKE workloads. "
+                "Scans deployments for Datadog annotations (ad.datadoghq.com/, "
+                "admission.datadoghq.com/), labels (tags.datadoghq.com/), and environment "
+                "variables (DD_AGENT_HOST, DD_TRACE_ENABLED, DD_SERVICE, etc.). "
+                "Also checks for a Datadog agent DaemonSet in common namespaces. "
+                "Detects common misconfigurations such as APM enabled without agent host, "
+                "or admission webhook without a service tag. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace to scan (default: 'default').",
+                    required=False,
+                ),
+                ToolParam(
+                    name="deployment",
+                    type="string",
+                    description="Optional deployment name to filter to a single deployment.",
+                    required=False,
+                ),
+            ],
+            execute=lambda namespace="default", deployment="",
+                    _cfg=gke_config: get_datadog_config(
+                gke_config=_cfg, namespace=namespace, deployment=deployment,
             ),
         ),
         # ── Scaling tools ─────────────────────────────────────
