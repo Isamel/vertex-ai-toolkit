@@ -68,6 +68,11 @@ def _metric_current_value(current_metric: dict[str, Any]) -> str:
             return f"{avg_util}%"
         if avg_val is not None:
             return str(avg_val)
+    elif mtype == "Object":
+        obj = current_metric.get("object", {})
+        current = obj.get("current", {})
+        val = current.get("value") or current.get("averageValue")
+        return str(val) if val is not None else "?"
     return "?"
 
 
@@ -105,6 +110,13 @@ def _metric_target_value(spec_metric: dict[str, Any]) -> tuple[str, str, str]:
         if target_type == "Utilization":
             return mtype, name, f"{target.get('averageUtilization', '?')}%"
         return mtype, name, str(target.get("averageValue", "?"))
+    elif mtype == "Object":
+        obj = spec_metric.get("object", {})
+        metric = obj.get("metric", {})
+        name = metric.get("name", "<unknown>")
+        target = obj.get("target", {})
+        val = target.get("value") or target.get("averageValue")
+        return mtype, name, str(val) if val is not None else "?"
     return mtype, "<unknown>", "?"
 
 
@@ -124,6 +136,8 @@ def _build_current_metrics_index(
             name = cm.get("pods", {}).get("metric", {}).get("name", "<unknown>")
         elif mtype == "ContainerResource":
             name = cm.get("containerResource", {}).get("name", "<unknown>")
+        elif mtype == "Object":
+            name = cm.get("object", {}).get("metric", {}).get("name", "<unknown>")
         index[(mtype, name)] = _metric_current_value(cm)
     return index
 
@@ -143,16 +157,12 @@ def _format_hpa_section(hpa: Any) -> str:
     min_replicas = spec.min_replicas if spec else None
     max_replicas = spec.max_replicas if spec else "?"
     min_str = str(min_replicas) if min_replicas is not None else "1"
-    lines.append(
-        f"- Replicas: {current_replicas}/{desired_replicas} (min: {min_str}, max: {max_replicas})"
-    )
+    lines.append(f"- Replicas: {current_replicas}/{desired_replicas} (min: {min_str}, max: {max_replicas})")
 
     # Conditions
     conditions = (status.conditions or []) if status else []
     if conditions:
-        cond_strs = [
-            f"{c.type}={c.status}" for c in conditions if hasattr(c, "type") and hasattr(c, "status")
-        ]
+        cond_strs = [f"{c.type}={c.status}" for c in conditions if hasattr(c, "type") and hasattr(c, "status")]
         if cond_strs:
             lines.append(f"- Conditions: {', '.join(cond_strs)}")
 
@@ -178,9 +188,7 @@ def _format_hpa_section(hpa: Any) -> str:
 
     if spec_metrics:
         lines.append("\n#### Metrics")
-        lines.append(
-            f"{'Type':<18} {'Name':<22} {'Current':<12} {'Target':<12} {'% of Target':<13} Status"
-        )
+        lines.append(f"{'Type':<18} {'Name':<22} {'Current':<12} {'Target':<12} {'% of Target':<13} Status")
         lines.append("-" * 90)
         for sm in spec_metrics:
             mtype, mname, target = _metric_target_value(sm)
@@ -196,9 +204,7 @@ def _format_hpa_section(hpa: Any) -> str:
                 pass
 
             status_icon = "✅" if current != "?" else "⚠️ "
-            lines.append(
-                f"{mtype:<18} {mname:<22} {current:<12} {target:<12} {pct_str:<13} {status_icon}"
-            )
+            lines.append(f"{mtype:<18} {mname:<22} {current:<12} {target:<12} {pct_str:<13} {status_icon}")
 
     return "\n".join(lines)
 
@@ -237,9 +243,7 @@ def _format_vpa_section(vpa: dict[str, Any]) -> str:
         for cr in container_recommendations:
             container_name = cr.get("containerName", "<unknown>")
             lines.append(f"\n**Container: {container_name}**")
-            lines.append(
-                f"{'Resource':<12} {'Target':<14} {'Lower Bound':<16} {'Upper Bound':<16} Uncapped Target"
-            )
+            lines.append(f"{'Resource':<12} {'Target':<14} {'Lower Bound':<16} {'Upper Bound':<16} Uncapped Target")
             lines.append("-" * 75)
 
             target = cr.get("target", {})
@@ -247,7 +251,9 @@ def _format_vpa_section(vpa: dict[str, Any]) -> str:
             upper = cr.get("upperBound", {})
             uncapped = cr.get("uncappedTarget", {})
 
-            resources = sorted(set(list(target.keys()) + list(lower.keys()) + list(upper.keys())))
+            resources = sorted(
+                set(list(target.keys()) + list(lower.keys()) + list(upper.keys()) + list(uncapped.keys()))
+            )
             for res in resources:
                 t_val = _format_quantity(target.get(res))
                 l_val = _format_quantity(lower.get(res))
@@ -334,14 +340,10 @@ def get_scaling_status(
 
         auto_v2 = AutoscalingV2Api(api_client=api_client)
         hpa_list = auto_v2.list_namespaced_horizontal_pod_autoscaler(namespace=ns)
-        for hpa in (hpa_list.items or []):
+        for hpa in hpa_list.items or []:
             spec = hpa.spec
             scale_target = spec.scale_target_ref if spec else None
-            if (
-                scale_target
-                and scale_target.kind in ("Deployment", "deployment")
-                and scale_target.name == name
-            ):
+            if scale_target and scale_target.kind.lower() == "deployment" and scale_target.name == name:
                 hpa_obj = hpa
                 break
     except k8s_exceptions.ApiException as exc:
@@ -368,13 +370,10 @@ def get_scaling_status(
             namespace=ns,
             plural=_VPA_PLURAL,
         )
-        for vpa in (vpa_list.get("items", []) or []):
+        for vpa in vpa_list.get("items", []) or []:
             spec = vpa.get("spec", {})
             target_ref = spec.get("targetRef", {})
-            if (
-                target_ref.get("kind") in ("Deployment", "deployment")
-                and target_ref.get("name") == name
-            ):
+            if target_ref.get("kind", "").lower() == "deployment" and target_ref.get("name") == name:
                 vpa_obj = vpa
                 break
     except k8s_exceptions.ApiException as exc:
@@ -420,17 +419,13 @@ def get_scaling_status(
     if hpa_obj is not None:
         lines.append(_format_hpa_section(hpa_obj))
     elif hpa_error is None:
-        lines.append(
-            f"\n### Horizontal Pod Autoscaler\nNo HPA configured for deployment/{name} in namespace '{ns}'."
-        )
+        lines.append(f"\n### Horizontal Pod Autoscaler\nNo HPA configured for deployment/{name} in namespace '{ns}'.")
 
     # VPA section
     if vpa_obj is not None:
         lines.append(_format_vpa_section(vpa_obj))
     elif not vpa_not_installed and vpa_error is None:
-        lines.append(
-            f"\n### Vertical Pod Autoscaler\nNo VPA configured for deployment/{name} in namespace '{ns}'."
-        )
+        lines.append(f"\n### Vertical Pod Autoscaler\nNo VPA configured for deployment/{name} in namespace '{ns}'.")
 
     # Assessment
     lines.append(

@@ -14,7 +14,9 @@ def _age(creation_timestamp: datetime | None) -> str:
     if creation_timestamp is None:
         return "<unknown>"
     now = datetime.now(UTC)
-    delta = now - creation_timestamp.replace(tzinfo=UTC) if creation_timestamp.tzinfo is None else now - creation_timestamp
+    delta = (
+        now - creation_timestamp.replace(tzinfo=UTC) if creation_timestamp.tzinfo is None else now - creation_timestamp
+    )
     total_seconds = int(delta.total_seconds())
     if total_seconds < 0:
         return "0s"
@@ -167,7 +169,7 @@ def _format_nodes_table(items: list[Any], wide: bool = False) -> str:
                 status = "Ready" if cond.status == "True" else "NotReady"
                 break
         roles_set: list[str] = []
-        for label_key in (node.metadata.labels or {}):
+        for label_key in node.metadata.labels or {}:
             if label_key.startswith("node-role.kubernetes.io/"):
                 roles_set.append(label_key.split("/")[-1])
         roles = ",".join(roles_set) if roles_set else "<none>"
@@ -203,7 +205,7 @@ def _format_generic_table(items: list[Any]) -> str:
 def _format_webhook_config(item: Any) -> str:
     """Format a MutatingWebhookConfiguration or ValidatingWebhookConfiguration."""
     lines = [f"Name: {item.metadata.name}"]
-    for webhook in (item.webhooks or []):
+    for webhook in item.webhooks or []:
         lines.append(f"  Webhook: {webhook.name}")
         if webhook.namespace_selector:
             lines.append(f"    NamespaceSelector: {webhook.namespace_selector}")
@@ -353,6 +355,7 @@ def _serialise_item(item: Any, api: Any) -> Any:
 
 def _format_vpa_table(items: list[Any], wide: bool = False) -> str:
     """Format VerticalPodAutoscaler list as a kubectl-style table."""
+    _ = wide  # wide output not yet implemented for VPA
     if not items:
         return "No resources found."
     lines: list[str] = []
@@ -368,7 +371,16 @@ def _format_vpa_table(items: list[Any], wide: bool = False) -> str:
         target_name = target_ref.get("name", "<unknown>")
         update_policy = spec.get("updatePolicy", {})
         update_mode = update_policy.get("updateMode", "<unknown>")
-        age = _age(meta.creation_timestamp) if meta.creation_timestamp else "<unknown>"
+        ts = meta.creation_timestamp
+        if ts:
+            if isinstance(ts, str):
+                try:
+                    ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                except ValueError:
+                    ts = None
+            age = _age(ts) if ts is not None else "<unknown>"
+        else:
+            age = "<unknown>"
         line = f"{name:<41}{target_kind:<14}{target_name:<32}{update_mode:<14}{age}"
         lines.append(line)
     return "\n".join(lines)
