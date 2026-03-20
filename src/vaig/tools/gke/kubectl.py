@@ -660,7 +660,9 @@ def kubectl_top(
 ) -> ToolResult:
     """Show CPU and memory usage for pods or nodes (read-only kubectl top equivalent).
 
-    Requires the Metrics Server to be installed in the cluster.
+    For pods, returns per-container metrics — one row per container with a
+    CONTAINER column.  To get pod-level totals, sum the container rows for
+    each pod.  Requires the Metrics Server to be installed in the cluster.
     """
     if not _clients._K8S_AVAILABLE:
         return _clients._k8s_unavailable()
