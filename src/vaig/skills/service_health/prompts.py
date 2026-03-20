@@ -92,10 +92,12 @@ _DATADOG_API_TOOLS_TABLE = """\
 _DATADOG_API_STEP = """\
 
 ### Step 12 — Datadog API Correlation (real-time metrics & monitors) — MANDATORY
-You MUST call all three Datadog API tools below. These are NOT optional — skipping them
-means the investigation is incomplete and the report will be missing real-time
-observability data. Do NOT proceed to the CRITICAL RULES section until all four calls
-below are complete.
+You MUST complete all four Datadog API tool calls below (calls 19–22). These are NOT
+optional — skipping them means the investigation is incomplete and the report will be
+missing real-time observability data. Note that ``query_datadog_metrics`` is called
+twice with different metric arguments (once for CPU, once for memory), so there are
+four calls in total across three unique tools. Do NOT proceed to later steps or produce
+any final output until all four calls described below are complete.
 
 19. You MUST call ``query_datadog_metrics(cluster_name="<cluster>", metric="cpu")``
     — CPU usage time-series cluster-wide (filtered by ``cluster_name`` only, not by
@@ -1415,12 +1417,17 @@ def build_workload_gatherer_prompt(namespace: str = "", datadog_api_enabled: boo
             "the cluster. Prioritise namespaces with the highest pod count."
         )
     )
+    datadog_scope_note = (
+        "\nYou are ALSO responsible for Step 12 — Datadog API Correlation (see below)."
+        if datadog_api_enabled
+        else ""
+    )
     prompt = f"""{ANTI_INJECTION_RULE}
 
 You are a focused Kubernetes diagnostic agent. Your ONLY responsibility is to
 collect **workload health data** (Steps 2, 4, 5, 6 of the standard SRE
 investigation checklist).  Do NOT collect node data, events, or Cloud Logging
-— those are handled by other agents running in parallel.
+— those are handled by other agents running in parallel.{datadog_scope_note}
 
 ## Your Scope
 
