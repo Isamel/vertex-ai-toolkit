@@ -1,7 +1,9 @@
 """Tests for html-export-enhancements-batch1.
 
 Covers:
-- _inject_report_metadata: fills empty / N/A fields, never overwrites populated fields
+- _inject_report_metadata: fills metadata fields from runtime context; system-authoritative
+  fields (cluster_name, project_id, model_used, generated_at) are ALWAYS overwritten so that
+  LLM hallucinations cannot survive post-processing.
 - _export_html_report: --open flag triggers webbrowser.open, uses tempfile when output=None
 - _export_html_report: browser failure is handled gracefully (no crash)
 """
@@ -73,31 +75,31 @@ class TestInjectReportMetadata:
 
         assert report.metadata.model_used == "gemini-pro"
 
-    def test_no_overwrite_populated_cluster_name(self) -> None:
-        """Existing non-empty cluster_name is preserved."""
-        report = _make_report(cluster_name="existing-cluster")
+    def test_overwrites_populated_cluster_name(self) -> None:
+        """cluster_name from gke_config ALWAYS overwrites — LLM may hallucinate this."""
+        report = _make_report(cluster_name="hallucinated-cluster")
         gke = _make_gke_config(cluster_name="different-cluster")
 
         _inject_report_metadata(report, gke_config=gke)
 
-        assert report.metadata.cluster_name == "existing-cluster"
+        assert report.metadata.cluster_name == "different-cluster"
 
-    def test_no_overwrite_populated_project_id(self) -> None:
-        """Existing non-empty project_id is preserved."""
-        report = _make_report(project_id="existing-project")
+    def test_overwrites_populated_project_id(self) -> None:
+        """project_id from gke_config ALWAYS overwrites — LLM may hallucinate this."""
+        report = _make_report(project_id="hallucinated-project")
         gke = _make_gke_config(project_id="other-project")
 
         _inject_report_metadata(report, gke_config=gke)
 
-        assert report.metadata.project_id == "existing-project"
+        assert report.metadata.project_id == "other-project"
 
-    def test_no_overwrite_populated_model_used(self) -> None:
-        """Existing non-empty model_used is preserved."""
-        report = _make_report(model_used="already-set")
+    def test_overwrites_populated_model_used(self) -> None:
+        """model_used ALWAYS overwrites — LLM may hallucinate values like 'gke-sre-model-v1'."""
+        report = _make_report(model_used="gke-sre-model-v1")  # hallucinated
 
         _inject_report_metadata(report, gke_config=None, model_id="new-model")
 
-        assert report.metadata.model_used == "already-set"
+        assert report.metadata.model_used == "new-model"
 
     def test_na_sentinel_overwritten_cluster(self) -> None:
         """cluster_name of 'N/A' is treated as empty and overwritten."""

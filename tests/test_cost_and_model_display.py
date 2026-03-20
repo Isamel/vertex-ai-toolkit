@@ -196,10 +196,10 @@ class TestInjectReportMetadataModel:
 
         assert report.metadata.model_used == "gemini-2.5-pro"
 
-    def test_preserves_existing_non_empty_model_used(self) -> None:
-        """Existing non-empty model_used must not be overwritten."""
+    def test_overwrites_existing_non_empty_model_used(self) -> None:
+        """Hallucinated model_used MUST be overwritten — LLM cannot know the real model."""
         orch = _make_orch_result(models_used=["gemini-2.5-flash"])
-        report = self._make_report(model_used="custom-model")
+        report = self._make_report(model_used="gke-sre-model-v1")  # hallucinated value
 
         _inject_report_metadata(
             report,
@@ -207,8 +207,8 @@ class TestInjectReportMetadataModel:
             orch_result=orch,
         )
 
-        # _is_empty returns False for "custom-model", so it should not be changed
-        assert report.metadata.model_used == "custom-model"
+        # LLM hallucination must be replaced with the real model from orch_result
+        assert report.metadata.model_used == "gemini-2.5-flash"
 
     def test_no_orch_result_uses_model_id_arg(self) -> None:
         """When no orch_result is provided, model_id arg is used directly."""
