@@ -1109,7 +1109,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 description=(
                     "List all ArgoCD Applications. Namespace is auto-discovered when not "
                     "specified — probes common namespaces (argocd, argo-cd, argocd-system, "
-                    "gitops, argo). Shows name, project, sync status, health status, source "
+                    "gitops, argo), then falls back to a cluster-wide scan if none match. "
+                    "Shows name, project, sync status, health status, source "
                     "repo, target revision, and destination. Read-only — does not modify any resources."
                 ),
                 parameters=[
@@ -1129,7 +1130,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 name="argocd_app_status",
                 description=(
                     "Get detailed status of a specific ArgoCD Application. Namespace is "
-                    "auto-discovered when not specified. Shows sync status, health status, "
+                    "auto-discovered when not specified — probes common namespaces then falls "
+                    "back to a cluster-wide scan. Shows sync status, health status, "
                     "source info, destination, sync policy, conditions, and last operation "
                     "state. Read-only — does not modify any resources."
                 ),
@@ -1155,7 +1157,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 name="argocd_app_history",
                 description=(
                     "Get deployment history of an ArgoCD Application. Namespace is "
-                    "auto-discovered when not specified. Shows past deployments with "
+                    "auto-discovered when not specified — probes common namespaces then falls "
+                    "back to a cluster-wide scan. Shows past deployments with "
                     "revision, deployment time, and source info (most recent first). "
                     "Read-only — does not modify any resources."
                 ),
@@ -1181,7 +1184,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 name="argocd_app_diff",
                 description=(
                     "Show resources that are out-of-sync for an ArgoCD Application. "
-                    "Namespace is auto-discovered when not specified. Returns resources "
+                    "Namespace is auto-discovered when not specified — probes common "
+                    "namespaces then falls back to a cluster-wide scan. Returns resources "
                     "where sync status is not Synced or health status is not Healthy. "
                     "Read-only — does not modify any resources."
                 ),
@@ -1207,7 +1211,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 name="argocd_app_managed_resources",
                 description=(
                     "List all resources managed by an ArgoCD Application. Namespace is "
-                    "auto-discovered when not specified. Shows resources grouped by kind "
+                    "auto-discovered when not specified — probes common namespaces then falls "
+                    "back to a cluster-wide scan. Shows resources grouped by kind "
                     "with group, name, namespace, sync status, health status, and pruning "
                     "requirements. Read-only — does not modify any resources."
                 ),

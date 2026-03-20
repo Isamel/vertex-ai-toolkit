@@ -238,15 +238,19 @@ When inspecting deployment labels/annotations (from kubectl_get_labels output),
 look for these annotations that ArgoCD puts on EVERY resource it manages:
 - Annotation `argocd.argoproj.io/managed-by` → the ArgoCD namespace where the Application lives
 - Annotation `argocd.argoproj.io/tracking-id` → full tracking reference
-- Label `app.kubernetes.io/instance` → often set by ArgoCD as the Application name
 - Label `argocd.argoproj.io/instance` → ArgoCD Application name
 
-If ANY of these are present on a resource, that resource IS managed by ArgoCD.
-You do NOT need to find the ArgoCD server namespace — the annotation tells you.
+NOTE: `app.kubernetes.io/instance` is a generic Kubernetes label also used by Helm
+and other tools — it alone does NOT confirm ArgoCD management.
+
+If `argocd.argoproj.io/managed-by` or `argocd.argoproj.io/tracking-id` is present,
+that resource IS managed by ArgoCD.
 Report: "Managed by: ArgoCD (app: <value from annotation>)"
 
-When calling argocd_list_applications(), do NOT pass a namespace — let it auto-detect.
-Only pass namespace if you found the ArgoCD namespace from an annotation value.
+When calling argocd_list_applications(), do NOT pass a namespace — let it auto-detect
+by probing common namespaces (argocd, argo-cd, argocd-system, gitops, argo) and
+falling back to a cluster-wide scan. Only pass namespace explicitly if you found the
+ArgoCD namespace value in an annotation (e.g., from argocd.argoproj.io/managed-by).
 
 If the tool IS available:
 - Use `argocd_list_applications()` to discover ArgoCD-managed apps

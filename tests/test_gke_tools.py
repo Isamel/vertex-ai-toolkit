@@ -6099,11 +6099,12 @@ class TestArgoCDDiscovery:
         argocd_mod._argocd_namespace_cache.clear()
 
     def test_discover_finds_argocd_in_default_namespace(self) -> None:
-        """Discovers ArgoCD when it's in the 'argocd' namespace."""
+        """Discovers ArgoCD when it's in the 'argocd' namespace (empty items list is valid)."""
         from vaig.tools.gke.argocd import _discover_argocd_namespace
 
         mock_api = MagicMock()
-        # list_namespaced_custom_object succeeds on first call (argocd namespace)
+        # list_namespaced_custom_object succeeds on first call (argocd namespace).
+        # An empty items list is still a valid "CRD exists here" signal.
         mock_api.list_namespaced_custom_object.return_value = {"items": []}
 
         result = _discover_argocd_namespace(mock_api)
@@ -6120,7 +6121,9 @@ class TestArgoCDDiscovery:
         def side_effect(group, version, namespace, plural, limit):
             if namespace == "gitops":
                 return {"items": []}
-            raise Exception(f"not found in {namespace}")
+            # Simulate 404 for all other namespaces (CRD not found there)
+            exc = Exception(f"not found in {namespace}")
+            raise exc
 
         mock_api.list_namespaced_custom_object.side_effect = side_effect
 
