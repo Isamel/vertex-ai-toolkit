@@ -804,6 +804,21 @@ upstream data, populate ``ServiceStatus`` fields as follows:
 - Do NOT invent a ``scaling_status`` field — it does not exist in the schema.  Use
   ``issues`` for brief notes and ``findings`` with ``category="scaling"`` for details.
 
+**Management context in issues** — when the workload gatherer detected management context
+via ``kubectl_get_labels``, include it in ``service_statuses[].issues``:
+- Helm-managed: ``"Managed by Helm (release: <release-name>, chart: <chart-name>)"``
+- ArgoCD-managed: ``"Managed by ArgoCD (app: <app-name>)"``
+- This information is critical for the remediation reasoning framework — DO NOT omit it.
+
+**Linking Helm annotations to Helm release data** — when a deployment has annotation
+``meta.helm.sh/release-name``, use that value to cross-reference Helm data from the
+event gatherer's Step 10 output (if available). Example mapping:
+- Deployment ``payment-svc`` has ``meta.helm.sh/release-name: payment``
+- Helm data shows release ``payment`` in status ``deployed``, revision 5
+- In ``recommendations``, use: ``helm rollback payment 4 -n production`` for rollback
+  (where 4 = revision 5 - 1, the last known-good revision)
+- Always show rollout history before recommending a specific revision number
+
 **Scaling findings** — create a ``Finding`` entry with ``category="scaling"`` for each
 of the following when observed:
 - HPA ceiling hit: ``severity=HIGH``, title like ``"HPA at max replicas — <name>"``,
@@ -1270,19 +1285,40 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
    OwnerReferences for operator-managed resources, ``.spec.template.metadata.annotations`` for
    webhook injection annotations) — report these management indicators for the reporter
 
+### Step 4b — Management Context Detection (MANDATORY for ALL deployments)
+11. ``kubectl_get_labels(resource_type="deployments", namespace="<target>")`` —
+    Get labels and annotations for ALL deployments. This is MANDATORY for detecting
+    management context (Helm, ArgoCD, operators). Do NOT skip this step even if all
+    deployments appear healthy — management context affects remediation recommendations.
+
+    Look for these Helm indicators:
+    - Label ``app.kubernetes.io/managed-by: Helm`` → resource is Helm-managed
+    - Label ``helm.sh/chart`` → chart name and version
+    - Annotation ``meta.helm.sh/release-name`` → Helm release name
+    - Annotation ``meta.helm.sh/release-namespace`` → namespace of the release
+
+    Look for these ArgoCD indicators:
+    - Annotation ``argocd.argoproj.io/managed-by`` → ArgoCD app name
+    - Label ``app.kubernetes.io/instance`` → release/app instance name
+
+    For each Helm-managed deployment, report in the Management Indicators section:
+    ``"Managed by: Helm (release: <release-name>, chart: <chart-name>)"``
+    For each ArgoCD-managed deployment, report:
+    ``"Managed by: ArgoCD (app: <app-name>)"``
+
 ### Step 5 — Service & Endpoint Connectivity
-11. ``kubectl_get(resource="services", namespace="<target>", output="wide")``
-12. ``kubectl_get(resource="endpoints", namespace="<target>")``
-13. For services with 0 endpoints: ``kubectl_describe(resource="service", name="<svc>", namespace="<ns>")``
+12. ``kubectl_get(resource="services", namespace="<target>", output="wide")``
+13. ``kubectl_get(resource="endpoints", namespace="<target>")``
+14. For services with 0 endpoints: ``kubectl_describe(resource="service", name="<svc>", namespace="<ns>")``
 
 ### Step 6 — HPA & Scaling Status
-14. ``kubectl_get(resource="hpa", namespace="<target>", output="wide")``
-15. For HPA at maxReplicas: ``kubectl_describe(resource="hpa", name="<hpa>", namespace="<ns>")``
-16. ``gcloud_monitoring_query(...)`` if HPA uses custom metrics and metric fetch is failing
+15. ``kubectl_get(resource="hpa", namespace="<target>", output="wide")``
+16. For HPA at maxReplicas: ``kubectl_describe(resource="hpa", name="<hpa>", namespace="<ns>")``
+17. ``gcloud_monitoring_query(...)`` if HPA uses custom metrics and metric fetch is failing
 
 ### Step 6b — Scaling Deep-Dive (HPA + VPA)
 For each deployment that has an HPA or that has a ``VerticalPodAutoscaler`` resource:
-17. Call ``get_scaling_status(name="<deployment_name>", namespace="<target_namespace>")``
+18. Call ``get_scaling_status(name="<deployment_name>", namespace="<target_namespace>")``
     - Note: **ceiling-hit** — when ``current_replicas == max_replicas`` and the workload is
       still under load.  This means the HPA cannot scale further and the service is at risk.
     - Note: **VPA-vs-HPA conflicts** — if both VPA and HPA are present and VPA is in ``Auto``
