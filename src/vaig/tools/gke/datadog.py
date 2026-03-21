@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from vaig.core.config import get_settings
 from vaig.tools.base import ToolResult
 
 from . import _clients
@@ -14,7 +15,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ── Datadog detection constants ───────────────────────────────
+# ── Datadog detection constants (module-level defaults / fallbacks) ───────────
+# These are kept as fallbacks in case get_settings() is unavailable or raises.
+# Detection functions try config first, then fall back to these defaults.
 
 _DD_ANNOTATION_PREFIXES = (
     "ad.datadoghq.com/",
@@ -93,10 +96,16 @@ def _scan_deployment_for_datadog(deploy: Any) -> dict[str, Any]:
     pod_spec = pod_template.spec if pod_template else None
     containers = (pod_spec.containers or []) if pod_spec else []
 
+    try:
+        detection = get_settings().datadog.detection
+        dd_env_vars: tuple[str, ...] | list[str] = detection.env_vars
+    except Exception:  # noqa: BLE001
+        dd_env_vars = _DD_ENV_VARS
+
     for container in containers:
         env_list = container.env or []
         for env_var in env_list:
-            if env_var.name in _DD_ENV_VARS:
+            if env_var.name in dd_env_vars:
                 # Don't expose values from secrets/configmaps/fieldRefs
                 val = env_var.value or "(from valueFrom)"
                 result["env_vars"][env_var.name] = val
@@ -149,15 +158,23 @@ def _extract_dd_metadata(
         A tuple of (dd_annotations, dd_labels) containing only entries that
         match Datadog annotation prefixes or the Datadog label prefix.
     """
+    try:
+        detection = get_settings().datadog.detection
+        ann_prefixes: tuple[str, ...] | list[str] = detection.annotation_prefixes
+        lbl_prefix: str = detection.label_prefix
+    except Exception:  # noqa: BLE001
+        ann_prefixes = _DD_ANNOTATION_PREFIXES
+        lbl_prefix = _DD_LABEL_PREFIX
+
     dd_annotations: dict[str, str] = {}
     for key, val in annotations.items():
-        for prefix in _DD_ANNOTATION_PREFIXES:
+        for prefix in ann_prefixes:
             if key.startswith(prefix):
                 dd_annotations[key] = val
                 break
 
     dd_labels: dict[str, str] = {
-        key: val for key, val in labels.items() if key.startswith(_DD_LABEL_PREFIX)
+        key: val for key, val in labels.items() if key.startswith(lbl_prefix)
     }
 
     return dd_annotations, dd_labels

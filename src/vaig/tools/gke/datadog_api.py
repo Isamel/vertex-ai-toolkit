@@ -27,15 +27,42 @@ _ERR_RATE_LIMIT = "Rate limit exceeded. Try again later."
 # ── Metric query templates ───────────────────────────────────
 # Templates use {filters} as a placeholder for the full tag filter string.
 # Example rendered: avg:kubernetes.cpu.usage.total{cluster_name:my-cluster,service:api,env:prod}
-_METRIC_TEMPLATES: dict[str, str] = {
-    "cpu": "avg:kubernetes.cpu.usage.total{{{filters}}} by {{pod_name}}",
-    "memory": "avg:kubernetes.memory.usage{{{filters}}} by {{pod_name}}",
-    "restarts": "sum:kubernetes.containers.restarts{{{filters}}} by {{pod_name}}",
-    "network_in": "avg:kubernetes.network.rx_bytes{{{filters}}} by {{pod_name}}",
-    "network_out": "avg:kubernetes.network.tx_bytes{{{filters}}} by {{pod_name}}",
-    "disk_read": "avg:kubernetes.io.read_bytes{{{filters}}} by {{pod_name}}",
-    "disk_write": "avg:kubernetes.io.write_bytes{{{filters}}} by {{pod_name}}",
-}
+
+
+def _build_metric_templates(config: DatadogAPIConfig) -> dict[str, str]:
+    """Build the metric query template dict from config.
+
+    The ``by {pod_name}`` grouping dimension is read from
+    ``config.labels.pod_name`` so it can be overridden per environment.
+    Any entries in ``config.custom_metrics`` are merged in after the
+    built-in templates — the caller may provide additional metric names
+    or override existing ones.
+
+    Raises:
+        ValueError: When a custom metric template is missing the required
+            ``{filters}`` placeholder.
+    """
+    pod_name = config.labels.pod_name
+    # Templates use {filters} as a Python .format() placeholder filled at query time.
+    # The "by {<tag>}" grouping uses {{ }} so .format() leaves them as literal braces
+    # in the final Datadog query string (e.g. "by {pod_name}").
+    _by = "{{" + pod_name + "}}"
+    templates: dict[str, str] = {
+        "cpu": "avg:kubernetes.cpu.usage.total{{{filters}}} by " + _by,
+        "memory": "avg:kubernetes.memory.usage{{{filters}}} by " + _by,
+        "restarts": "sum:kubernetes.containers.restarts{{{filters}}} by " + _by,
+        "network_in": "avg:kubernetes.network.rx_bytes{{{filters}}} by " + _by,
+        "network_out": "avg:kubernetes.network.tx_bytes{{{filters}}} by " + _by,
+        "disk_read": "avg:kubernetes.io.read_bytes{{{filters}}} by " + _by,
+        "disk_write": "avg:kubernetes.io.write_bytes{{{filters}}} by " + _by,
+    }
+    for key, tmpl in config.custom_metrics.items():
+        if "{filters}" not in tmpl:
+            raise ValueError(
+                f"Custom metric template '{key}' is missing the required '{{filters}}' placeholder."
+            )
+        templates[key] = tmpl
+    return templates
 
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -90,6 +117,7 @@ def _build_tag_filter(
     cluster_name: str | None,
     service: str | None,
     env: str | None,
+    config: DatadogAPIConfig | None = None,
 ) -> tuple[str, ToolResult | None]:
     """Build a comma-separated Datadog tag filter string from the given tags.
 
@@ -97,10 +125,16 @@ def _build_tag_filter(
     the function returns ``(empty, ToolResult(error=True))`` so callers can
     return the error immediately.
 
+    Tag key names are read from ``config.labels`` when a config is provided,
+    falling back to the Datadog standard names (``cluster_name``, ``service``,
+    ``env``) when ``config`` is ``None``.  Any ``config.labels.custom`` entries
+    are appended as additional ``key:value`` pairs.
+
     Args:
         cluster_name: Optional cluster name tag value.
         service: Optional service tag value.
         env: Optional environment tag value.
+        config: Optional ``DatadogAPIConfig`` used to resolve tag key names.
 
     Returns:
         A tuple of ``(filter_string, error_result)``.  On success,
@@ -109,11 +143,17 @@ def _build_tag_filter(
         failure, ``filter_string`` is ``""`` and ``error_result`` is a
         ``ToolResult`` with ``error=True``.
     """
+    labels = config.labels if config is not None else None
+
+    cluster_key = labels.cluster_name if labels is not None else "cluster_name"
+    service_key = labels.service if labels is not None else "service"
+    env_key = labels.env if labels is not None else "env"
+
     tag_parts: list[str] = []
     tag_map: list[tuple[str, str | None]] = [
-        ("cluster_name", cluster_name),
-        ("service", service),
-        ("env", env),
+        (cluster_key, cluster_name),
+        (service_key, service),
+        (env_key, env),
     ]
     for tag_key, tag_value in tag_map:
         if not tag_value:
@@ -123,6 +163,18 @@ def _build_tag_filter(
         except ValueError as exc:
             return "", ToolResult(output=str(exc), error=True)
         tag_parts.append(f"{tag_key}:{safe_value}")
+
+    # Append custom labels from config (key=tag_key, value=tag_value)
+    if labels is not None:
+        for custom_key, custom_value in labels.custom.items():
+            if not custom_value:
+                continue
+            try:
+                safe_custom = _sanitize_tag_value(custom_key, custom_value)
+            except ValueError as exc:
+                return "", ToolResult(output=str(exc), error=True)
+            tag_parts.append(f"{custom_key}:{safe_custom}")
+
     return ",".join(tag_parts), None
 
 
@@ -212,13 +264,14 @@ def query_datadog_metrics(
     start = from_ts if from_ts > 0 else now - 3600
 
     # Build tag filter string: always include cluster_name; optionally service/env
-    filters, tag_err = _build_tag_filter(cluster_name, service, env)
+    filters, tag_err = _build_tag_filter(cluster_name, service, env, config)
     if tag_err is not None:
         return tag_err
 
-    template = _METRIC_TEMPLATES.get(metric)
+    metric_templates = _build_metric_templates(config)
+    template = metric_templates.get(metric)
     if template is None:
-        available = ", ".join(sorted(_METRIC_TEMPLATES.keys()))
+        available = ", ".join(sorted(metric_templates.keys()))
         return ToolResult(
             output=f"Unknown metric template '{metric}'. Available: {available}",
             error=True,
@@ -322,7 +375,7 @@ def get_datadog_monitors(
         return ToolResult(output=_ERR_NOT_ENABLED, error=True)
 
     # Build tag filter string from cluster name, service, and env
-    tag_filter_str, tag_err = _build_tag_filter(cluster_name, service, env)
+    tag_filter_str, tag_err = _build_tag_filter(cluster_name, service, env, config)
     if tag_err is not None:
         return tag_err
     tag_filter = tag_filter_str if tag_filter_str else None
