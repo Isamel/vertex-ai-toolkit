@@ -59,8 +59,15 @@ def _build_metric_templates(config: DatadogAPIConfig) -> dict[str, str]:
     for key, tmpl in config.custom_metrics.items():
         if "{filters}" not in tmpl:
             raise ValueError(
-                f"Custom metric template '{key}' is missing the required '{{filters}}' placeholder."
+                f"Custom metric template '{key}' with value '{tmpl}' is missing the required '{{filters}}' placeholder."
             )
+        try:
+            tmpl.format(filters="test")
+        except KeyError as exc:
+            raise ValueError(
+                f"Custom metric template '{key}' with value '{tmpl}' contains an unescaped placeholder {exc}. "
+                f"Use {{{{...}}}} (double braces) for literal braces in the template (e.g. {{{{pod_name}}}} instead of {{pod_name}})."
+            ) from exc
         templates[key] = tmpl
     return templates
 
@@ -69,6 +76,24 @@ def _build_metric_templates(config: DatadogAPIConfig) -> dict[str, str]:
 
 
 _VALID_SERVICE_NAME_RE = re.compile(r"^[a-zA-Z0-9\-._]+$")
+_VALID_TAG_KEY_RE = re.compile(r"^[a-zA-Z0-9_./-]+$")
+
+
+def _validate_tag_key(key: str) -> None:
+    """Validate a Datadog tag key name.
+
+    Tag keys must contain only alphanumeric characters, underscores, hyphens,
+    dots, or slashes.  Characters like ``,``, ``:``, ``{``, ``}`` are rejected
+    because they would corrupt the Datadog query filter string.
+
+    Raises:
+        ValueError: When ``key`` contains disallowed characters.
+    """
+    if not _VALID_TAG_KEY_RE.match(key):
+        raise ValueError(
+            f"Invalid Datadog tag key '{key}': must contain only alphanumeric, "
+            "underscore, hyphen, dot, or slash characters"
+        )
 
 
 def _sanitize_service_name(name: str) -> str:
@@ -159,6 +184,7 @@ def _build_tag_filter(
         if not tag_value:
             continue
         try:
+            _validate_tag_key(tag_key)
             safe_value = _sanitize_tag_value(tag_key, tag_value)
         except ValueError as exc:
             return "", ToolResult(output=str(exc), error=True)
@@ -170,6 +196,7 @@ def _build_tag_filter(
             if not custom_value:
                 continue
             try:
+                _validate_tag_key(custom_key)
                 safe_custom = _sanitize_tag_value(custom_key, custom_value)
             except ValueError as exc:
                 return "", ToolResult(output=str(exc), error=True)

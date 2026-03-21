@@ -386,11 +386,14 @@ class DatadogDetectionConfig(BaseModel):
     env_vars: list[str] = Field(
         default_factory=lambda: [
             "DD_AGENT_HOST",
+            "DD_TRACE_AGENT_URL",
             "DD_SERVICE",
             "DD_ENV",
             "DD_VERSION",
             "DD_TRACE_ENABLED",
             "DD_PROFILING_ENABLED",
+            "DD_LOGS_INJECTION",
+            "DD_RUNTIME_METRICS_ENABLED",
         ]
     )
 

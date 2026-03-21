@@ -99,7 +99,8 @@ def _scan_deployment_for_datadog(deploy: Any) -> dict[str, Any]:
     try:
         detection = get_settings().datadog.detection
         dd_env_vars: tuple[str, ...] | list[str] = detection.env_vars
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Failed to load datadog detection settings: {e!r}")
         dd_env_vars = _DD_ENV_VARS
 
     for container in containers:
@@ -162,7 +163,8 @@ def _extract_dd_metadata(
         detection = get_settings().datadog.detection
         ann_prefixes: tuple[str, ...] | list[str] = detection.annotation_prefixes
         lbl_prefix: str = detection.label_prefix
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Failed to load datadog detection settings: {e!r}")
         ann_prefixes = _DD_ANNOTATION_PREFIXES
         lbl_prefix = _DD_LABEL_PREFIX
 

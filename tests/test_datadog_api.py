@@ -989,7 +989,7 @@ class TestConfigurableLabelsMetricTemplates:
             enabled=True,
             api_key="k",
             app_key="k",
-            custom_metrics={"my_metric": "avg:custom.metric{{{filters}}} by {pod_name}"},
+            custom_metrics={"my_metric": "avg:custom.metric{{{filters}}} by {{pod_name}}"},
         )
         templates = _build_metric_templates(config)
 
@@ -1003,7 +1003,7 @@ class TestConfigurableLabelsMetricTemplates:
         """A custom_metrics entry with the same key as a built-in template overrides it."""
         from vaig.tools.gke.datadog_api import _build_metric_templates
 
-        custom_cpu = "avg:my.custom.cpu{{{filters}}} by {pod_name}"
+        custom_cpu = "avg:my.custom.cpu{{{filters}}} by {{pod_name}}"
         config = DatadogAPIConfig(
             enabled=True,
             api_key="k",
@@ -1054,6 +1054,40 @@ class TestConfigurableLabelsMetricTemplates:
         query_str = call_kwargs.get("query", "")
         assert "{custom_pod}" in query_str
         assert "{pod_name}" not in query_str
+
+    def test_custom_metric_query_end_to_end(self) -> None:
+        """query_datadog_metrics with a custom metric name calls the API without format errors.
+
+        Verifies that .format(filters=...) doesn't raise when the custom template
+        uses properly escaped braces ({{pod_name}} instead of {pod_name}).
+        """
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            custom_metrics={"my_custom": "avg:custom.metric{{{filters}}} by {{pod_name}}"},
+        )
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="my_custom",
+                config=config,
+                _custom_api=mock_api,
+            )
+
+        # Should succeed — no KeyError from .format(filters=...)
+        assert not result.error
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        query_str = call_kwargs.get("query", "")
+        # filters placeholder was filled in, pod_name is literal in the result
+        assert "my-cluster" in query_str
+        assert "{filters}" not in query_str
+        assert "{pod_name}" in query_str  # rendered literal after .format(filters=...)
 
 
 # ── Detection config — _extract_dd_metadata ──────────────────

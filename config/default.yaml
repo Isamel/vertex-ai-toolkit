@@ -231,16 +231,19 @@ datadog:
       - "admission.datadoghq.com/"
     label_prefix: "tags.datadoghq.com/"  # Label key prefix for Datadog unified service tagging
     env_vars:                       # Environment variable names that indicate Datadog instrumentation
+      - "DD_AGENT_HOST"
+      - "DD_TRACE_AGENT_URL"
       - "DD_SERVICE"
       - "DD_ENV"
       - "DD_VERSION"
-      - "DD_AGENT_HOST"
-      - "DD_TRACE_AGENT_URL"
-      - "DD_DOGSTATSD_URL"
+      - "DD_TRACE_ENABLED"
+      - "DD_PROFILING_ENABLED"
+      - "DD_LOGS_INJECTION"
+      - "DD_RUNTIME_METRICS_ENABLED"
 
   # custom_metrics: {}  # Add custom metric query templates here.
   # Templates must include the {filters} placeholder for tag injection.
-  # Example: {"my_metric": "avg:custom.metric{{{filters}}} by {pod_name}"}
+  # Example: {"my_metric": "avg:custom.metric{{{filters}}} by {{pod_name}}"}
 
 mcp:
   enabled: false                    # Set to true to enable MCP integration
