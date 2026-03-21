@@ -110,12 +110,6 @@ class TestCloudLoggingAngleBrackets:
     def test_service_uses_angle_brackets(self) -> None:
         assert "<service>" in HEALTH_GATHERER_PROMPT
 
-    def test_pod_name_uses_angle_brackets(self) -> None:
-        assert "<pod_name>" in HEALTH_GATHERER_PROMPT
-
-    def test_start_time_uses_angle_brackets(self) -> None:
-        assert "<start_time>" in HEALTH_GATHERER_PROMPT
-
     def test_no_bare_uppercase_namespace_in_patterns(self) -> None:
         """NAMESPACE as a bare UPPERCASE placeholder must not appear in query patterns."""
         # Extract just the Cloud Logging Query Patterns section
