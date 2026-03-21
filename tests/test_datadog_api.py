@@ -576,3 +576,284 @@ class TestDatadogAPIConfigAutoEnable:
 
         assert len(caplog.records) == 1
         assert "api_key or app_key is missing" in caplog.text
+
+
+# ── Label-aware filtering ─────────────────────────────────────
+
+
+class TestQueryDatadogMetricsLabelFilters:
+    """Tests for the new service/env filter parameters on query_datadog_metrics."""
+
+    def test_service_and_env_appear_in_query(self, dd_config: DatadogAPIConfig) -> None:
+        """When service and env are provided, they appear as tags in the metric query."""
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="cpu",
+                service="my-api",
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        query_str = call_kwargs.get("query", "")
+        assert "service:my-api" in query_str
+        assert "env:production" in query_str
+        assert "cluster_name:my-cluster" in query_str
+
+    def test_backward_compat_no_service_no_env(self, dd_config: DatadogAPIConfig) -> None:
+        """Without service/env params, query only contains cluster_name filter."""
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="cpu",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        query_str = call_kwargs.get("query", "")
+        assert "cluster_name:my-cluster" in query_str
+        assert "service:" not in query_str
+        assert "env:" not in query_str
+
+    def test_only_service_filter(self, dd_config: DatadogAPIConfig) -> None:
+        """Providing only service (no env) includes just cluster and service tags."""
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="memory",
+                service="worker",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        query_str = call_kwargs.get("query", "")
+        assert "service:worker" in query_str
+        assert "env:" not in query_str
+
+    def test_invalid_service_name_returns_error(self, dd_config: DatadogAPIConfig) -> None:
+        """Service name with invalid characters returns an error without calling the API."""
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        mock_api = MagicMock()
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                service="bad service!",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is True
+        assert "Invalid service" in result.output
+        mock_api.query_metrics.assert_not_called()
+
+
+class TestGetDatadogMonitorsLabelFilters:
+    """Tests for the new service/env filter parameters on get_datadog_monitors."""
+
+    def test_service_and_env_added_to_monitor_tags(self, dd_config: DatadogAPIConfig) -> None:
+        """When service and env are provided, they appear in the monitor_tags filter."""
+        from vaig.tools.gke.datadog_api import get_datadog_monitors
+
+        mock_api = MagicMock()
+        mock_api.list_monitors.return_value = []
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            get_datadog_monitors(
+                cluster_name="prod-cluster",
+                service="my-api",
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        call_kwargs = mock_api.list_monitors.call_args.kwargs
+        tags = call_kwargs.get("monitor_tags", "")
+        assert "service:my-api" in tags
+        assert "env:production" in tags
+        assert "cluster_name:prod-cluster" in tags
+
+    def test_backward_compat_no_service_no_env(self, dd_config: DatadogAPIConfig) -> None:
+        """Without service/env, monitor_tags only contains cluster_name (when provided)."""
+        from vaig.tools.gke.datadog_api import get_datadog_monitors
+
+        mock_api = MagicMock()
+        mock_api.list_monitors.return_value = []
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            get_datadog_monitors(
+                cluster_name="prod-cluster",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        call_kwargs = mock_api.list_monitors.call_args.kwargs
+        tags = call_kwargs.get("monitor_tags", "")
+        assert "cluster_name:prod-cluster" in tags
+        assert "service:" not in tags
+        assert "env:" not in tags
+
+    def test_no_cluster_service_env_omits_monitor_tags(self, dd_config: DatadogAPIConfig) -> None:
+        """When no cluster, service, or env are provided, monitor_tags kwarg is omitted entirely."""
+        from vaig.tools.gke.datadog_api import get_datadog_monitors
+
+        mock_api = MagicMock()
+        mock_api.list_monitors.return_value = []
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            get_datadog_monitors(
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        call_kwargs = mock_api.list_monitors.call_args.kwargs
+        assert "monitor_tags" not in call_kwargs
+
+    def test_invalid_env_returns_error(self, dd_config: DatadogAPIConfig) -> None:
+        """Env value with invalid characters returns an error without calling the API."""
+        from vaig.tools.gke.datadog_api import get_datadog_monitors
+
+        mock_api = MagicMock()
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_monitors(
+                env="prod env!",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is True
+        assert "Invalid env" in result.output
+        mock_api.list_monitors.assert_not_called()
+
+
+class TestGetDatadogApmServicesLabelFilters:
+    """Tests for the new service_name filter parameter on get_datadog_apm_services."""
+
+    def setup_method(self) -> None:
+        """Clear the discovery cache before each test."""
+        from vaig.tools.gke._cache import clear_discovery_cache
+
+        clear_discovery_cache()
+
+    def test_service_name_filter_returns_only_matching_service(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """When service_name is provided, only the matching service is returned."""
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        mock_api = MagicMock()
+        mock_api.list_service_definitions.return_value = MagicMock(
+            data=[
+                _make_service("frontend", "platform", "python", "critical"),
+                _make_service("backend", "core", "go", "high"),
+                _make_service("worker", "infra", "python", "low"),
+            ]
+        )
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                env="production",
+                service_name="frontend",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        assert "frontend" in result.output
+        assert "backend" not in result.output
+        assert "worker" not in result.output
+        assert "Service filter: frontend" in result.output
+        assert "Total services: 1" in result.output
+
+    def test_service_name_filter_no_match_returns_no_services(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """When service_name matches nothing, returns 'no APM service definitions found'."""
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        mock_api = MagicMock()
+        mock_api.list_service_definitions.return_value = MagicMock(
+            data=[
+                _make_service("frontend", "platform", "python", "critical"),
+            ]
+        )
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="nonexistent-service",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        assert "No APM service definitions found" in result.output
+
+    def test_backward_compat_no_service_name_returns_all(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """Without service_name, all services are returned (backward compat)."""
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        mock_api = MagicMock()
+        mock_api.list_service_definitions.return_value = MagicMock(
+            data=[
+                _make_service("frontend", "platform", "python", "critical"),
+                _make_service("backend", "core", "go", "high"),
+            ]
+        )
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        assert "frontend" in result.output
+        assert "backend" in result.output
+        assert "Total services: 2" in result.output
+        assert "Service filter:" not in result.output
+
+    def test_service_name_uses_separate_cache_key(self, dd_config: DatadogAPIConfig) -> None:
+        """Calls with and without service_name use different cache keys (no cross-contamination)."""
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        mock_api = MagicMock()
+        mock_api.list_service_definitions.return_value = MagicMock(
+            data=[
+                _make_service("frontend"),
+                _make_service("backend"),
+            ]
+        )
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            # Unfiltered call
+            get_datadog_apm_services(env="production", config=dd_config, _custom_api=mock_api)
+            # Filtered call — different cache key, must hit the API again
+            get_datadog_apm_services(
+                env="production", service_name="frontend", config=dd_config, _custom_api=mock_api
+            )
+
+        assert mock_api.list_service_definitions.call_count == 2
