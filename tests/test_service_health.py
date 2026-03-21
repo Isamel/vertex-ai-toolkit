@@ -380,7 +380,9 @@ class TestServiceHealthSkillPromptContent:
         agents = skill.get_sequential_agents_config()
         analyzer_prompt = agents[1]["system_instruction"]
         assert "CRITICAL" in analyzer_prompt
-        assert "WARNING" in analyzer_prompt
+        assert "HIGH" in analyzer_prompt
+        assert "MEDIUM" in analyzer_prompt
+        assert "LOW" in analyzer_prompt
 
     def test_analyzer_prompt_mentions_crashloopbackoff(self) -> None:
         from vaig.skills.service_health.skill import ServiceHealthSkill

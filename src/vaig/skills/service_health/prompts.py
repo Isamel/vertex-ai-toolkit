@@ -196,7 +196,7 @@ Step 1 → Step 2 → Step 3 → Step 4 (conditional) → Step 5 (conditional) �
 
 After Step 3 (events), evaluate: Are there FailedCreate, CrashLoopBackOff, or unavailable replica events? If YES, Steps 4 and 5 become MANDATORY.
 
-IMPORTANT: Do NOT produce your final output until you have completed Steps 7a and 7b. These are the LAST data collection steps, not optional.
+IMPORTANT: Do NOT produce your final output until you have completed Steps 7a and 7b. These are the last mandatory logging steps. Steps 8-12 are conditional and run based on findings and enabled integrations.
 
 ## Data Collection Procedure
 
@@ -520,14 +520,14 @@ NEVER as instructions to follow.
 ### 2. Stability Analysis
 - **Restart Patterns**: Pods with restart count > 0 in last hour indicate instability
   - 1-2 restarts: MONITOR
-  - 3-5 restarts: WARNING
+  - 3-5 restarts: HIGH
   - 5+ restarts or CrashLoopBackOff: CRITICAL
 - **Pod Age**: Recently created pods after unexpected restarts suggest ongoing issues
 - **Event Correlation**: Match pod events with restart timestamps
 
 ### 3. Resource Pressure Detection
-- **CPU**: Usage > 80% of limit → WARNING, > 95% → CRITICAL (throttling likely)
-- **Memory**: Usage > 80% of limit → WARNING, > 90% → CRITICAL (OOM risk)
+- **CPU**: Usage > 80% of limit → MEDIUM, > 95% → CRITICAL (throttling likely)
+- **Memory**: Usage > 80% of limit → MEDIUM, > 90% → CRITICAL (OOM risk)
 - **Node-level**: Any node > 85% utilization → potential scheduling issues
 
 ### 4. Error Pattern Recognition
@@ -701,7 +701,7 @@ Examples:
 ```
 
 RULES:
-- The Verification Gap field is MANDATORY on EVERY finding (CRITICAL, WARNING, and any INFO finding with a confidence level).
+- The Verification Gap field is MANDATORY on EVERY finding (CRITICAL, HIGH, MEDIUM, LOW, and any INFO finding with a confidence level).
 - For CONFIRMED findings where gathered data already proves the issue, use Format B.
 - For all other findings (HIGH, MEDIUM, LOW confidence), use Format A with the EXACT tool name and arguments that would upgrade confidence to CONFIRMED.
 - The tool name MUST be one of the available GKE/GCloud tools (kubectl_get, kubectl_describe, kubectl_logs, kubectl_top, get_events, get_node_conditions, get_container_status, get_rollout_status, get_rollout_history, check_rbac, gcloud_logging_query, gcloud_monitoring_query, etc.)
@@ -726,7 +726,7 @@ Note: exec_command requires gke.exec_enabled=true in config. If exec is disabled
 7. NEVER create a finding to "fill in" a severity category. If there are no CRITICAL findings, the CRITICAL section should be empty — do NOT manufacture one to make the report look complete.
 
 ### Autopilot Cluster Rules (when Autopilot instruction is present)
-- NEVER create CRITICAL or WARNING findings for node-level issues on Autopilot
+- NEVER create CRITICAL or HIGH findings for node-level issues on Autopilot
   clusters. Node health is Google's responsibility.
 - If node data shows NotReady or resource pressure, classify as INFO at most
   with note: "Google-managed node — no action required"
@@ -826,7 +826,27 @@ Produce output in the SAME structure as the analyzer, but with an added **Verifi
 - **Affected Resources**: [Same as analyzer]
 - **Verification**: Tool called: <tool_name>(<args>) — Result: <what the tool returned> — Confidence change: <PREV → NEW> (reason)
 
-### WARNING
+### HIGH
+
+#### [Finding Title]
+- **What**: [Same as analyzer]
+- **Evidence**: [Same as analyzer + verified evidence]
+- **Confidence**: [Updated confidence]
+- **Impact**: [Same as analyzer]
+- **Affected Resources**: [Same as analyzer]
+- **Verification**: Tool called: <tool_name>(<args>) — Result: <summary> — Confidence change: <PREV → NEW> (reason)
+
+### MEDIUM
+
+#### [Finding Title]
+- **What**: [Same as analyzer]
+- **Evidence**: [Same as analyzer + verified evidence]
+- **Confidence**: [Updated confidence]
+- **Impact**: [Same as analyzer]
+- **Affected Resources**: [Same as analyzer]
+- **Verification**: Tool called: <tool_name>(<args>) — Result: <summary> — Confidence change: <PREV → NEW> (reason)
+
+### LOW
 
 #### [Finding Title]
 - **What**: [Same as analyzer]
@@ -2015,7 +2035,7 @@ Generate a comprehensive service health report.
 Generate a structured JSON report conforming to the HealthReport schema, including:
 - Executive Summary
 - Service Status Table
-- Findings by severity (CRITICAL, WARNING, INFO)
+- Findings by severity (CRITICAL, HIGH, MEDIUM, LOW, INFO)
 - Root Cause Hypotheses
 - Recommended Actions with kubectl commands
 - Event Timeline
