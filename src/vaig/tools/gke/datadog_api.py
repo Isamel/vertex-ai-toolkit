@@ -25,14 +25,16 @@ _ERR_FORBIDDEN = "Insufficient permissions. Check your Datadog API/app key scope
 _ERR_RATE_LIMIT = "Rate limit exceeded. Try again later."
 
 # ── Metric query templates ───────────────────────────────────
+# Templates use {filters} as a placeholder for the full tag filter string.
+# Example rendered: avg:kubernetes.cpu.usage.total{cluster_name:my-cluster,service:api,env:prod}
 _METRIC_TEMPLATES: dict[str, str] = {
-    "cpu": "avg:kubernetes.cpu.usage.total{{cluster_name:{cluster}}} by {{pod_name}}",
-    "memory": "avg:kubernetes.memory.usage{{cluster_name:{cluster}}} by {{pod_name}}",
-    "restarts": "sum:kubernetes.containers.restarts{{cluster_name:{cluster}}} by {{pod_name}}",
-    "network_in": "avg:kubernetes.network.rx_bytes{{cluster_name:{cluster}}} by {{pod_name}}",
-    "network_out": "avg:kubernetes.network.tx_bytes{{cluster_name:{cluster}}} by {{pod_name}}",
-    "disk_read": "avg:kubernetes.io.read_bytes{{cluster_name:{cluster}}} by {{pod_name}}",
-    "disk_write": "avg:kubernetes.io.write_bytes{{cluster_name:{cluster}}} by {{pod_name}}",
+    "cpu": "avg:kubernetes.cpu.usage.total{{{filters}}} by {{pod_name}}",
+    "memory": "avg:kubernetes.memory.usage{{{filters}}} by {{pod_name}}",
+    "restarts": "sum:kubernetes.containers.restarts{{{filters}}} by {{pod_name}}",
+    "network_in": "avg:kubernetes.network.rx_bytes{{{filters}}} by {{pod_name}}",
+    "network_out": "avg:kubernetes.network.tx_bytes{{{filters}}} by {{pod_name}}",
+    "disk_read": "avg:kubernetes.io.read_bytes{{{filters}}} by {{pod_name}}",
+    "disk_write": "avg:kubernetes.io.write_bytes{{{filters}}} by {{pod_name}}",
 }
 
 
@@ -98,6 +100,8 @@ def query_datadog_metrics(
     metric: str = "cpu",
     from_ts: int = 0,
     to_ts: int = 0,
+    service: str | None = None,
+    env: str | None = None,
     config: DatadogAPIConfig | None = None,
     _custom_api: Any = None,
 ) -> ToolResult:
@@ -107,6 +111,10 @@ def query_datadog_metrics(
     network_out, disk_read, disk_write.  All queries are resolved from the
     template allowlist — arbitrary query strings are not accepted.
 
+    When ``service`` and/or ``env`` are provided the tag filter string is
+    extended beyond ``cluster_name`` — e.g.
+    ``avg:kubernetes.cpu.usage.total{cluster_name:X,service:Y,env:Z}``.
+
     Args:
         cluster_name: GKE cluster name used to scope the metric query.
         metric: Template key (one of the ``_METRIC_TEMPLATES`` keys).
@@ -115,6 +123,10 @@ def query_datadog_metrics(
             ``now - 3600`` (last hour) when ``0``.
         to_ts: Unix timestamp for the end of the query window.  Defaults to
             ``now`` when ``0``.
+        service: Optional Datadog service tag (e.g. ``"my-api"``).  When
+            provided, narrows the query to that service.
+        env: Optional Datadog environment tag (e.g. ``"production"``).  When
+            provided, narrows the query to that environment.
         config: Optional ``DatadogAPIConfig`` (for testing / injection).
         _custom_api: Optional pre-configured Datadog MetricsApi (for testing).
     """
@@ -143,6 +155,22 @@ def query_datadog_metrics(
     except ValueError as exc:
         return ToolResult(output=str(exc), error=True)
 
+    # Build tag filter string: always include cluster_name; optionally service/env
+    filter_parts: list[str] = [f"cluster_name:{safe_cluster}"]
+    if service:
+        try:
+            safe_service = _sanitize_service_name(service)
+        except ValueError as exc:
+            return ToolResult(output=str(exc), error=True)
+        filter_parts.append(f"service:{safe_service}")
+    if env:
+        try:
+            safe_env = _sanitize_service_name(env)
+        except ValueError as exc:
+            return ToolResult(output=str(exc), error=True)
+        filter_parts.append(f"env:{safe_env}")
+    filters = ",".join(filter_parts)
+
     template = _METRIC_TEMPLATES.get(metric)
     if template is None:
         available = ", ".join(sorted(_METRIC_TEMPLATES.keys()))
@@ -150,7 +178,7 @@ def query_datadog_metrics(
             output=f"Unknown metric template '{metric}'. Available: {available}",
             error=True,
         )
-    query = template.format(cluster=safe_cluster)
+    query = template.format(filters=filters)
 
     try:
         if _custom_api is not None:
@@ -212,19 +240,25 @@ def get_datadog_monitors(
     *,
     cluster_name: str = "",
     state: str = "Alert",
+    service: str | None = None,
+    env: str | None = None,
     config: DatadogAPIConfig | None = None,
     _custom_api: Any = None,
 ) -> ToolResult:
     """Fetch active Datadog monitors using the Monitors v1 API.
 
     Returns monitors filtered by state (default: Alert) and optionally
-    by cluster name tag.
+    by cluster name, service, and environment tags.
 
     Args:
         cluster_name: Optional cluster name to filter monitors by tag
             ``cluster_name:<name>``.
         state: Monitor state to filter on (e.g. ``"Alert"``, ``"Warn"``,
             ``"No Data"``).  Case-sensitive.
+        service: Optional Datadog service tag to filter monitors (e.g.
+            ``"my-api"``).  Appended to the ``monitor_tags`` filter.
+        env: Optional Datadog environment tag to filter monitors (e.g.
+            ``"production"``).  Appended to the ``monitor_tags`` filter.
         config: Optional ``DatadogAPIConfig`` (for testing / injection).
         _custom_api: Optional pre-configured Datadog MonitorsApi (for testing).
     """
@@ -242,7 +276,7 @@ def get_datadog_monitors(
     if not config.enabled:
         return ToolResult(output=_ERR_NOT_ENABLED, error=True)
 
-    # Build tag filter string from cluster name only
+    # Build tag filter string from cluster name, service, and env
     tag_parts: list[str] = []
     if cluster_name:
         try:
@@ -250,6 +284,18 @@ def get_datadog_monitors(
         except ValueError as exc:
             return ToolResult(output=str(exc), error=True)
         tag_parts.append(f"cluster_name:{safe_cluster}")
+    if service:
+        try:
+            safe_service = _sanitize_service_name(service)
+        except ValueError as exc:
+            return ToolResult(output=str(exc), error=True)
+        tag_parts.append(f"service:{safe_service}")
+    if env:
+        try:
+            safe_env = _sanitize_service_name(env)
+        except ValueError as exc:
+            return ToolResult(output=str(exc), error=True)
+        tag_parts.append(f"env:{safe_env}")
     tag_filter = ",".join(tag_parts) if tag_parts else None
 
     try:
@@ -315,6 +361,7 @@ def get_datadog_apm_services(
     *,
     env: str = "production",
     cluster_name: str = "",
+    service_name: str | None = None,
     config: DatadogAPIConfig | None = None,
     _custom_api: Any = None,
 ) -> ToolResult:
@@ -322,16 +369,18 @@ def get_datadog_apm_services(
 
     Returns service names, owning team, primary language, and tier for all
     registered services in the service catalog.  Results are cached for 60
-    seconds per (env, cluster) combination.
+    seconds per (env, cluster, service_name) combination.
 
     Note: this function retrieves *service definitions* (catalog metadata),
     not live APM metrics such as latency or error rate.
 
     Args:
         env: Datadog environment tag (e.g. ``"production"``, ``"staging"``).
-            Used as a display hint and cache key only — the Service Definition
-            API does not filter by environment.
+            Used as a display hint and cache key — the Service Definition
+            API does not filter by environment natively.
         cluster_name: Optional cluster name shown in the output header.
+        service_name: Optional service name to filter results to a single
+            service.  Matched against the ``dd-service`` field (exact match).
         config: Optional ``DatadogAPIConfig`` (for testing / injection).
         _custom_api: Optional pre-configured ServiceDefinitionApi (for testing).
     """
@@ -349,8 +398,8 @@ def get_datadog_apm_services(
     if not config.enabled:
         return ToolResult(output=_ERR_NOT_ENABLED, error=True)
 
-    # Cache check (TTL = 60s)
-    cache_key = _cache._cache_key_discovery("dd_apm_services", env, cluster_name)
+    # Cache check (TTL = 60s) — include service_name in key for filtered results
+    cache_key = _cache._cache_key_discovery("dd_apm_services", env, cluster_name, service_name or "")
     cached = _cache._get_cached(cache_key)
     if cached is not None:
         return ToolResult(output=cached, error=False)
@@ -364,7 +413,22 @@ def get_datadog_apm_services(
 
         response = api.list_service_definitions()
 
-        services = getattr(response, "data", []) or []
+        all_services = getattr(response, "data", []) or []
+
+        # Filter by service_name when provided (client-side exact match on dd-service)
+        if service_name:
+            services = []
+            for svc in all_services:
+                attrs = getattr(svc, "attributes", None)
+                if attrs is None:
+                    continue
+                schema = getattr(attrs, "schema", None) or {}
+                if hasattr(schema, "to_dict"):
+                    schema = schema.to_dict()
+                if str(schema.get("dd-service", "")) == service_name:
+                    services.append(svc)
+        else:
+            services = list(all_services)
 
         lines: list[str] = [
             "=== Datadog APM Services ===",
@@ -372,6 +436,8 @@ def get_datadog_apm_services(
         ]
         if cluster_name:
             lines.append(f"Cluster: {cluster_name}")
+        if service_name:
+            lines.append(f"Service filter: {service_name}")
         lines.append("")
 
         if not services:

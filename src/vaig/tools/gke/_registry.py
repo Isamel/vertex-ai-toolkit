@@ -1290,6 +1290,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     "Query Datadog metrics for a GKE cluster using the Datadog Metrics v1 API. "
                     "Supports built-in metric templates: cpu, memory, restarts, network_in, "
                     "network_out, disk_read, disk_write. "
+                    "Optionally filter by service and env tags (e.g. from DD_SERVICE/DD_ENV labels) "
+                    "to scope the query to a specific workload. "
                     "Returns average, maximum, and latest values per series over the requested "
                     "time window. Read-only — does not modify any resources."
                 ),
@@ -1320,11 +1322,30 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         description="Unix timestamp for the end of the query window (defaults to now)",
                         required=False,
                     ),
+                    ToolParam(
+                        name="service",
+                        type="string",
+                        description=(
+                            "Optional Datadog service tag to narrow the query "
+                            "(e.g. value of DD_SERVICE or tags.datadoghq.com/service label)"
+                        ),
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="env",
+                        type="string",
+                        description=(
+                            "Optional Datadog environment tag to narrow the query "
+                            "(e.g. value of DD_ENV or tags.datadoghq.com/env label)"
+                        ),
+                        required=False,
+                    ),
                 ],
                 execute=lambda cluster_name, metric="cpu", from_ts=0, to_ts=0,
+                        service=None, env=None,
                         _dd=_dd_config: query_datadog_metrics(
                     cluster_name=cluster_name, metric=metric,
-                    from_ts=from_ts, to_ts=to_ts, config=_dd,
+                    from_ts=from_ts, to_ts=to_ts, service=service, env=env, config=_dd,
                 ),
             ),
             ToolDef(
@@ -1332,7 +1353,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 description=(
                     "Fetch active Datadog monitors using the Datadog Monitors v1 API. "
                     "Returns monitors filtered by state (default: Alert) and optionally "
-                    "by cluster name tag. Shows monitor ID, name, type, "
+                    "by cluster name, service, and environment tags. Shows monitor ID, name, type, "
                     "and current state. Read-only — does not modify any resources."
                 ),
                 parameters=[
@@ -1348,10 +1369,29 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         description="Monitor state to filter on: Alert, Warn, No Data (default: Alert)",
                         required=False,
                     ),
+                    ToolParam(
+                        name="service",
+                        type="string",
+                        description=(
+                            "Optional Datadog service tag to filter monitors "
+                            "(e.g. value of DD_SERVICE or tags.datadoghq.com/service label)"
+                        ),
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="env",
+                        type="string",
+                        description=(
+                            "Optional Datadog environment tag to filter monitors "
+                            "(e.g. value of DD_ENV or tags.datadoghq.com/env label)"
+                        ),
+                        required=False,
+                    ),
                 ],
                 execute=lambda cluster_name="", state="Alert",
+                        service=None, env=None,
                         _dd=_dd_config: get_datadog_monitors(
-                    cluster_name=cluster_name, state=state, config=_dd,
+                    cluster_name=cluster_name, state=state, service=service, env=env, config=_dd,
                 ),
             ),
             ToolDef(
@@ -1359,7 +1399,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 description=(
                     "Fetch APM service definitions from the Datadog APM v2 API. "
                     "Returns service names, team, language, and tier for all registered "
-                    "services in the given environment. Results are cached for 60 seconds. "
+                    "services in the given environment. Optionally filter by service_name "
+                    "to narrow results to a single service. Results are cached for 60 seconds. "
                     "Read-only — does not modify any resources."
                 ),
                 parameters=[
@@ -1375,10 +1416,20 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         description="Optional cluster name to scope the APM query",
                         required=False,
                     ),
+                    ToolParam(
+                        name="service_name",
+                        type="string",
+                        description=(
+                            "Optional service name to filter results to a single service "
+                            "(e.g. value of DD_SERVICE or tags.datadoghq.com/service label)"
+                        ),
+                        required=False,
+                    ),
                 ],
                 execute=lambda env="production", cluster_name="",
+                        service_name=None,
                         _dd=_dd_config: get_datadog_apm_services(
-                    env=env, cluster_name=cluster_name, config=_dd,
+                    env=env, cluster_name=cluster_name, service_name=service_name, config=_dd,
                 ),
             ),
         ])

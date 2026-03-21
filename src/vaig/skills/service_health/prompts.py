@@ -85,9 +85,9 @@ _ARGOCD_TOOLS_TABLE = """\
 | `argocd_app_managed_resources` | `app_name` | `namespace` |"""
 
 _DATADOG_API_TOOLS_TABLE = """\
-| `query_datadog_metrics` | `cluster_name` | `metric`, `from_ts`, `to_ts` |
-| `get_datadog_monitors` | | `cluster_name`, `state` |
-| `get_datadog_apm_services` | | `env`, `cluster_name` |"""
+| `query_datadog_metrics` | `cluster_name` | `metric`, `from_ts`, `to_ts`, `service`, `env` |
+| `get_datadog_monitors` | | `cluster_name`, `state`, `service`, `env` |
+| `get_datadog_apm_services` | | `env`, `cluster_name`, `service_name` |"""
 
 _DATADOG_API_STEP = """\
 
@@ -99,19 +99,40 @@ twice with different metric arguments (once for CPU, once for memory), so there 
 four calls in total across three unique tools. Do NOT proceed to later steps or produce
 any final output until all four calls described below are complete.
 
-19. You MUST call ``query_datadog_metrics(cluster_name="<cluster>", metric="cpu")``
-    — CPU usage time-series cluster-wide (filtered by ``cluster_name`` only, not by
-    namespace). Correlate the returned series with the pods and services discovered
-    in Steps 2, 4, and 5 to focus on workloads relevant to the target namespace.
-20. You MUST call ``query_datadog_metrics(cluster_name="<cluster>", metric="memory")``
-    — Memory usage time-series cluster-wide (same scope as above). Post-filter the
-    results to the pods/services identified in Steps 2, 4, and 5.
-21. You MUST call ``get_datadog_monitors(cluster_name="<cluster>")``
-    — All active monitor alerts for this cluster; note any alerts in Alert or Warn state.
-22. You MUST call ``get_datadog_apm_services()``
-    — APM service list; note any services with elevated latency or error rate.
+**LABEL-AWARE FILTERING — MANDATORY**: Before making these calls, check what Step 11
+(``get_datadog_config``) extracted from the workload's environment variables and labels:
+- If ``DD_SERVICE`` was found (or ``tags.datadoghq.com/service`` label), store it as
+  ``<dd_service>``.
+- If ``DD_ENV`` was found (or ``tags.datadoghq.com/env`` label), store it as ``<dd_env>``.
+You MUST pass these values as ``service=`` and ``env=`` parameters in ALL four calls
+below. If a value was NOT found in Step 11, omit that parameter (do NOT pass None or
+empty string — simply leave the parameter out).
+
+19. You MUST call ``query_datadog_metrics(cluster_name="<cluster>", metric="cpu",
+    service="<dd_service>", env="<dd_env>")``  [include service/env only if found in
+    Step 11] — CPU usage time-series scoped to this service when labels are present,
+    or cluster-wide when they are absent. Correlate the returned series with the pods
+    and services discovered in Steps 2, 4, and 5.
+    Example with labels: ``query_datadog_metrics(cluster_name="prod", metric="cpu",
+    service="my-api", env="production")``
+    Example without labels: ``query_datadog_metrics(cluster_name="prod", metric="cpu")``
+20. You MUST call ``query_datadog_metrics(cluster_name="<cluster>", metric="memory",
+    service="<dd_service>", env="<dd_env>")``  [include service/env only if found in
+    Step 11] — Memory usage time-series (same service/env scope as call 19).
+21. You MUST call ``get_datadog_monitors(cluster_name="<cluster>", service="<dd_service>",
+    env="<dd_env>")``  [include service/env only if found in Step 11]
+    — Monitor alerts scoped to this service when labels are present, or all cluster
+    monitors when they are absent. Note any alerts in Alert or Warn state.
+22. You MUST call ``get_datadog_apm_services(service_name="<dd_service>",
+    env="<dd_env>")``  [include service_name/env only if found in Step 11]
+    — APM service data; note any elevated latency or error rate.
+    Example with labels: ``get_datadog_apm_services(service_name="my-api", env="production")``
+    Example without labels: ``get_datadog_apm_services()``
 
 Report findings as a "## Raw Findings (Datadog API)" section with:
+- Whether data is **service-filtered** (DD_SERVICE/DD_ENV were passed as params) or
+  **cluster-wide** (no service labels found — data covers all services in the cluster).
+  ALWAYS state which scope applies so the reporter can interpret the data correctly.
 - Any monitors currently in Alert or Warn state (name, status, query)
 - CPU/memory trends that contradict or confirm the kubectl_top data
 - APM services with anomalous p99 latency or error rate > 1%
@@ -212,12 +233,27 @@ Execute the following steps to build a comprehensive health snapshot. Collect da
       - Compare volumes/containers in spec against known webhook-injected names (datadog-auto-instrumentation, istio-proxy, linkerd-proxy, vault-agent)
       - This data helps explain WHY spec issues exist, but is not required if tools return no results.
    g. When inspecting deployment YAML, look for:
-      - `.metadata.annotations` — ArgoCD, Flux, Helm management annotations
-      - `.metadata.labels` — `app.kubernetes.io/managed-by`, `helm.sh/chart`
-      - `.metadata.ownerReferences` — operator management
-      - `.spec.template.metadata.annotations` — webhook injection annotations
-      Report these management indicators in your Raw Findings — the reporter 
-      needs them to recommend the correct remediation path.
+       - `.metadata.annotations` — ArgoCD, Flux, Helm management annotations
+       - `.metadata.labels` — `app.kubernetes.io/managed-by`, `helm.sh/chart`
+       - `.metadata.ownerReferences` — operator management
+       - `.spec.template.metadata.annotations` — webhook injection annotations
+       Report these management indicators in your Raw Findings — the reporter 
+       needs them to recommend the correct remediation path.
+
+       **Helm annotation (CRITICAL — record explicitly)**:
+       Look for annotation ``meta.helm.sh/release-name`` in ``.metadata.annotations``.
+       If found, record its exact value as ``<helm_release_name>``. This value is used
+       directly in Step 9 — it is the Helm release name for this workload.
+
+       **Datadog labels (CRITICAL — record explicitly)**:
+       Look for the following in ``.spec.template.spec.containers[].env`` and
+       ``.metadata.labels`` / ``.spec.template.metadata.labels``:
+       - Environment variable ``DD_SERVICE`` or label ``tags.datadoghq.com/service``
+         → If found, record its exact value as ``<dd_service>``.
+       - Environment variable ``DD_ENV`` or label ``tags.datadoghq.com/env``
+         → If found, record its exact value as ``<dd_env>``.
+       These values are passed directly to the Datadog API tools in Step 12.
+       Record them prominently so Step 11 and Step 12 can use them.
 
 ### Step 5: Pod-Level Investigation
 - For any pod showing CrashLoopBackOff, Error, Pending, or high restart counts:
@@ -270,10 +306,18 @@ When using `gcloud_logging_query`, use these GKE-specific filters (replace `<nam
 PREREQUISITE: First check if `helm_list_releases` is in your available tools list. If it is NOT available, SKIP this entire step and mark it as SKIPPED in the Investigation Checklist. Do NOT fabricate Helm release data.
 
 If the tool IS available:
-- Use `helm_list_releases(namespace=<ns>)` to discover Helm-managed deployments in the namespace
-- For each relevant release, use `helm_release_status(release_name=<release>, namespace=<ns>)` to check health
-- Use `helm_release_history(release_name=<release>, namespace=<ns>)` to identify recent changes that may correlate with issues
-- Use `helm_release_values(release_name=<release>, namespace=<ns>)` to check for misconfiguration in overrides
+- **ANNOTATION-FIRST STRATEGY**: Check if Step 4g recorded a ``<helm_release_name>``
+  value from the ``meta.helm.sh/release-name`` annotation.
+  - If ``<helm_release_name>`` IS present: You MUST call
+    ``helm_release_status(release_name="<helm_release_name>", namespace=<ns>)`` directly.
+    Do NOT call ``helm_list_releases()`` first — the annotation already provides the
+    release name and calling list is unnecessary overhead.
+  - If ``<helm_release_name>`` is NOT present (annotation absent): Fall back to
+    ``helm_list_releases(namespace=<ns>)`` to discover release names, then proceed as
+    normal for each relevant release found.
+- For each relevant release (whether found via annotation or list):
+  - Use `helm_release_history(release_name=<release>, namespace=<ns>)` to identify recent changes that may correlate with issues
+  - Use `helm_release_values(release_name=<release>, namespace=<ns>)` to check for misconfiguration in overrides
 - This data enriches the report but is NOT required — the report is complete without it
 
 ### Step 10: ArgoCD Application Assessment (ONLY if `argocd_list_applications` tool exists)
@@ -324,6 +368,18 @@ If Datadog annotations/labels ARE detected (and tool is available):
 - Call `get_datadog_config(namespace=<ns>)` to get the full configuration report
 - If a specific deployment shows issues, also call `get_datadog_config(namespace=<ns>, deployment=<name>)` for detail
 - Record all configuration issues detected (APM without agent host, webhook without service tag, etc.)
+
+**DD_SERVICE / DD_ENV bridge to Step 12 — MANDATORY when Datadog API tools are enabled**:
+After calling ``get_datadog_config``, extract and record:
+- The value of ``DD_SERVICE`` (from env var or ``tags.datadoghq.com/service`` label).
+  If ``get_datadog_config`` returned it or Step 4g already recorded it, store it as
+  ``<dd_service>``.
+- The value of ``DD_ENV`` (from env var or ``tags.datadoghq.com/env`` label).
+  If ``get_datadog_config`` returned it or Step 4g already recorded it, store it as
+  ``<dd_env>``.
+You MUST carry ``<dd_service>`` and ``<dd_env>`` into Step 12 — pass them as ``service=``
+and ``env=`` parameters on EVERY Datadog API tool call in Step 12. If either value was
+not found, omit that parameter from the call. NEVER pass empty strings or None.
 
 If Datadog is NOT detected in Steps 4/5 output AND no relevant FailedCreate events:
 - SKIP this step entirely and mark as SKIPPED in the Investigation Checklist
@@ -841,17 +897,37 @@ def build_reporter_prompt(namespace: str = "", datadog_api_enabled: bool = False
 The upstream workload gatherer collected real-time Datadog API data (Step 12).
 When this data is present in your input, use it as follows:
 
+#### Data Scope — Service-Filtered vs. Cluster-Wide
+The gatherer MUST report whether Datadog data was collected with service-level filters
+or cluster-wide.  Look for this in the "## Raw Findings (Datadog API)" section:
+- **Service-filtered** (preferred): metrics and monitors were queried with
+  ``service=<dd_service>`` and/or ``env=<dd_env>`` parameters extracted from the
+  workload's ``DD_SERVICE``/``DD_ENV`` labels or ``tags.datadoghq.com/service`` /
+  ``tags.datadoghq.com/env`` annotations.  This data is precise and scoped to the
+  specific workload.
+- **Cluster-wide** (fallback): labels were absent — data covers all services and may
+  include noise from unrelated workloads.  Note this explicitly in findings:
+  ``"Datadog data is cluster-wide (no DD_SERVICE label found) — results may include noise.``
+
+Always state the scope in the observability finding's ``evidence`` field.
+
+#### Correlating Metrics with Kubernetes Findings
 - **Correlate with kubectl_top**: If Datadog CPU/memory metrics confirm the kubectl_top
   values, note agreement in findings.  If they diverge, flag the discrepancy — upstream
   resource pressure not reflected in kubectl_top may indicate a node-level issue.
 - **Active monitors**: If any Datadog monitors are in Alert or Warn state, create a
   finding with ``category="observability"`` and the appropriate severity (Alert → HIGH,
   Warn → MEDIUM).  Include the monitor query as evidence.
-- **APM services**: If APM data shows elevated p99 latency or error rate > 1%, add an
-  observability finding and reference the APM service name in ``affected_resources``.
+- **APM service cross-reference**: When ``DD_SERVICE`` was extracted from the workload,
+  verify that this service name appears in ``get_datadog_apm_services`` results.
+  If the service is ABSENT from APM data, create an INFO finding:
+  ``"Service <dd_service> not found in Datadog APM — tracing may be misconfigured or inactive."``
+  If p99 latency or error rate > 1% is present for the matched service, add a HIGH or
+  MEDIUM observability finding and reference the APM service name in ``affected_resources``.
 - **Immediate Actions**: When Datadog metrics show high latency or elevated error rates
   that correlate with a CRITICAL or HIGH Kubernetes finding, reference the Datadog data
-  in the ``why`` field of the corresponding recommendation.
+  in the ``why`` field of the corresponding recommendation.  Include the ``DD_SERVICE``
+  and ``DD_ENV`` values used so the on-call engineer can reproduce the query.
 - If no Datadog API data was collected (Step 12 was skipped or tools were unavailable),
   omit this section entirely — do NOT fabricate Datadog findings."""
         if datadog_api_enabled
@@ -1478,9 +1554,26 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
     - Annotation ``meta.helm.sh/release-name`` → Helm release name
     - Annotation ``meta.helm.sh/release-namespace`` → namespace of the release
 
+    **``meta.helm.sh/release-name`` (CRITICAL — record explicitly)**:
+    If annotation ``meta.helm.sh/release-name`` is present on a deployment, record its
+    exact value as ``<helm_release_name>`` for that deployment. This value is used
+    directly in Step 9 (Helm assessment) — it is the Helm release name and allows
+    skipping ``helm_list_releases()``.
+
     Look for these ArgoCD indicators:
     - Annotation ``argocd.argoproj.io/managed-by`` → ArgoCD app name
     - Label ``app.kubernetes.io/instance`` → release/app instance name
+
+    **Datadog labels (CRITICAL — record explicitly)**:
+    Look for the following in deployment labels (from ``kubectl_get_labels`` output)
+    and in ``.spec.template.spec.containers[].env`` (from any deployment YAML retrieved
+    in Step 4 deep-dive):
+    - Label ``tags.datadoghq.com/service`` or env var ``DD_SERVICE``
+      → If found, record its exact value as ``<dd_service>`` for that deployment.
+    - Label ``tags.datadoghq.com/env`` or env var ``DD_ENV``
+      → If found, record its exact value as ``<dd_env>`` for that deployment.
+    These values are passed as ``service=`` and ``env=`` parameters in Step 12
+    (Datadog API calls). Record them prominently in the Management Indicators section.
 
     For each Helm-managed deployment, report in the Management Indicators section:
     ``"Managed by: Helm (release: <release-name>, chart: <chart-name>)"``
@@ -1625,6 +1718,24 @@ agents running in parallel.
 11. ``kubectl_get(resource="applications.argoproj.io", namespace="argocd")`` — if ArgoCD is present
 12. ``kubectl_get(resource="helmreleases.helm.toolkit.fluxcd.io", namespace="<ns>")`` — if Flux is present
 13. For out-of-sync ArgoCD apps: ``kubectl_describe(resource="application", name="<app>", namespace="argocd")``
+
+**Helm Release Assessment (ANNOTATION-FIRST STRATEGY)**:
+PREREQUISITE: Check if ``helm_list_releases`` is in your available tools list. If NOT
+available, SKIP Helm tool calls entirely and mark as SKIPPED.
+
+If Helm tools are available, check the context from the workload_gatherer for
+``<helm_release_name>`` values recorded from ``meta.helm.sh/release-name`` annotations:
+- If ``<helm_release_name>`` IS present for a deployment: You MUST call
+  ``helm_release_status(release_name="<helm_release_name>", namespace=<ns>)`` directly.
+  Do NOT call ``helm_list_releases()`` first — the annotation already provides the
+  release name. Skipping the list call reduces unnecessary API overhead.
+  Example: ``helm_release_status(release_name="my-chart", namespace="production")``
+- If ``<helm_release_name>`` is NOT present (annotation absent): Fall back to
+  ``helm_list_releases(namespace=<ns>)`` to discover release names, then call
+  ``helm_release_status`` for each relevant release found.
+- For each release (found via annotation or list): also call
+  ``helm_release_history(release_name=<release>, namespace=<ns>)`` to check for
+  recent changes that may correlate with issues.
 
 ### Data collection rules:
 - If ArgoCD or Flux CRDs are not installed, note "ArgoCD/Flux not detected" and skip Steps 11-13.
