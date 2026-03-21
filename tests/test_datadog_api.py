@@ -857,3 +857,430 @@ class TestGetDatadogApmServicesLabelFilters:
             )
 
         assert mock_api.list_service_definitions.call_count == 2
+
+
+# ── Configurable labels — _build_tag_filter ───────────────────
+
+
+class TestConfigurableLabelsTagFilter:
+    """Tests for configurable tag key names in _build_tag_filter."""
+
+    def test_custom_service_label_used_in_tag_filter(self) -> None:
+        """When config.labels.service is overridden, the custom key name appears in the filter."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import _build_tag_filter
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            labels=DatadogLabelConfig(service="svc"),
+        )
+        tag_filter, err = _build_tag_filter("my-cluster", "my-api", None, config)
+
+        assert err is None
+        assert "svc:my-api" in tag_filter
+        assert "service:my-api" not in tag_filter
+
+    def test_custom_cluster_name_label_used_in_tag_filter(self) -> None:
+        """When config.labels.cluster_name is overridden, the custom key appears in the filter."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import _build_tag_filter
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            labels=DatadogLabelConfig(cluster_name="kube_cluster"),
+        )
+        tag_filter, err = _build_tag_filter("prod-cluster", None, None, config)
+
+        assert err is None
+        assert "kube_cluster:prod-cluster" in tag_filter
+        assert "cluster_name:prod-cluster" not in tag_filter
+
+    def test_custom_env_label_used_in_tag_filter(self) -> None:
+        """When config.labels.env is overridden, the custom key name appears in the filter."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import _build_tag_filter
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            labels=DatadogLabelConfig(env="environment"),
+        )
+        tag_filter, err = _build_tag_filter(None, None, "production", config)
+
+        assert err is None
+        assert "environment:production" in tag_filter
+        assert "env:production" not in tag_filter
+
+    def test_custom_labels_dict_appended_to_filter(self) -> None:
+        """custom label entries from config.labels.custom are appended to the tag filter."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import _build_tag_filter
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            labels=DatadogLabelConfig(custom={"team": "platform", "region": "us-east"}),
+        )
+        tag_filter, err = _build_tag_filter("my-cluster", None, None, config)
+
+        assert err is None
+        assert "cluster_name:my-cluster" in tag_filter
+        assert "team:platform" in tag_filter
+        assert "region:us-east" in tag_filter
+
+    def test_default_labels_used_when_config_is_none(self) -> None:
+        """When config=None, standard Datadog tag names are used as defaults."""
+        from vaig.tools.gke.datadog_api import _build_tag_filter
+
+        tag_filter, err = _build_tag_filter("my-cluster", "my-svc", "prod", None)
+
+        assert err is None
+        assert "cluster_name:my-cluster" in tag_filter
+        assert "service:my-svc" in tag_filter
+        assert "env:prod" in tag_filter
+
+
+# ── Configurable labels — _build_metric_templates ────────────
+
+
+class TestConfigurableLabelsMetricTemplates:
+    """Tests for configurable label names and custom metrics in _build_metric_templates."""
+
+    def test_custom_pod_name_label_used_in_grouping(self) -> None:
+        """When config.labels.pod_name is overridden, the by {} grouping uses the custom name."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            labels=DatadogLabelConfig(pod_name="pod"),
+        )
+        templates = _build_metric_templates(config)
+
+        # Templates use {{ }} so the braces remain literal in the final Datadog query string.
+        # "by {{pod}}" in the raw template renders to "by {pod}" after .format(filters=...).
+        assert "{{pod}}" in templates["cpu"]
+        assert "{{pod_name}}" not in templates["cpu"]
+
+    def test_default_pod_name_in_metric_templates(self) -> None:
+        """Default config uses 'pod_name' as the grouping dimension in all built-in templates."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        templates = _build_metric_templates(config)
+
+        for tmpl_name, tmpl_str in templates.items():
+            # Templates use {{ }} so braces are literal; {{pod_name}} renders to {pod_name}.
+            assert "{{pod_name}}" in tmpl_str, f"Template '{tmpl_name}' missing '{{pod_name}}' grouping"
+
+    def test_custom_metrics_merged_into_templates(self) -> None:
+        """Entries in config.custom_metrics are merged alongside the built-in templates."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            custom_metrics={"my_metric": "avg:custom.metric{{{filters}}} by {{pod_name}}"},
+        )
+        templates = _build_metric_templates(config)
+
+        assert "my_metric" in templates
+        assert "custom.metric" in templates["my_metric"]
+        # Built-in templates still present
+        assert "cpu" in templates
+        assert "memory" in templates
+
+    def test_custom_metric_can_override_builtin(self) -> None:
+        """A custom_metrics entry with the same key as a built-in template overrides it."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        custom_cpu = "avg:my.custom.cpu{{{filters}}} by {{pod_name}}"
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            custom_metrics={"cpu": custom_cpu},
+        )
+        templates = _build_metric_templates(config)
+
+        assert templates["cpu"] == custom_cpu
+
+    def test_custom_metric_missing_filters_placeholder_raises(self) -> None:
+        """A custom_metrics template without {filters} raises ValueError."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            custom_metrics={"broken": "avg:custom.metric{cluster_name:X} by {pod_name}"},
+        )
+        with pytest.raises(ValueError, match="missing the required"):
+            _build_metric_templates(config)
+
+    def test_query_uses_custom_pod_name_in_api_call(self, dd_config: DatadogAPIConfig) -> None:
+        """query_datadog_metrics uses config.labels.pod_name in the actual API query string."""
+        from vaig.core.config import DatadogAPIConfig as _DDConfig
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        config = _DDConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            labels=DatadogLabelConfig(pod_name="custom_pod"),
+        )
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="cpu",
+                config=config,
+                _custom_api=mock_api,
+            )
+
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        query_str = call_kwargs.get("query", "")
+        assert "{custom_pod}" in query_str
+        assert "{pod_name}" not in query_str
+
+    def test_custom_metric_query_end_to_end(self) -> None:
+        """query_datadog_metrics with a custom metric name calls the API without format errors.
+
+        Verifies that .format(filters=...) doesn't raise when the custom template
+        uses properly escaped braces ({{pod_name}} instead of {pod_name}).
+        """
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            custom_metrics={"my_custom": "avg:custom.metric{{{filters}}} by {{pod_name}}"},
+        )
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="my_custom",
+                config=config,
+                _custom_api=mock_api,
+            )
+
+        # Should succeed — no KeyError from .format(filters=...)
+        assert not result.error
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        query_str = call_kwargs.get("query", "")
+        # filters placeholder was filled in, pod_name is literal in the result
+        assert "my-cluster" in query_str
+        assert "{filters}" not in query_str
+        assert "{pod_name}" in query_str  # rendered literal after .format(filters=...)
+
+
+# ── Detection config — _extract_dd_metadata ──────────────────
+
+
+class TestDetectionConfigMetadata:
+    """Tests for configurable annotation/label prefixes in _extract_dd_metadata."""
+
+    def test_default_annotation_prefixes_detected(self) -> None:
+        """Default annotation prefixes (ad.datadoghq.com/, admission.datadoghq.com/) are matched."""
+        from unittest.mock import MagicMock
+
+        from vaig.core.config import DatadogDetectionConfig
+        from vaig.tools.gke.datadog import _extract_dd_metadata
+
+        annotations = {
+            "ad.datadoghq.com/check_names": '["nginx"]',
+            "admission.datadoghq.com/enabled": "true",
+            "other.annotation/key": "value",
+        }
+        labels = {
+            "tags.datadoghq.com/service": "my-svc",
+            "app": "nginx",
+        }
+
+        mock_settings = MagicMock()
+        mock_settings.datadog.detection = DatadogDetectionConfig()
+
+        with patch("vaig.tools.gke.datadog.get_settings", return_value=mock_settings):
+            dd_ann, dd_lbl = _extract_dd_metadata(annotations, labels)
+
+        assert "ad.datadoghq.com/check_names" in dd_ann
+        assert "admission.datadoghq.com/enabled" in dd_ann
+        assert "other.annotation/key" not in dd_ann
+        assert "tags.datadoghq.com/service" in dd_lbl
+        assert "app" not in dd_lbl
+
+    def test_custom_annotation_prefixes_used(self) -> None:
+        """Custom annotation_prefixes from config are used instead of defaults."""
+        from vaig.core.config import DatadogDetectionConfig
+        from vaig.tools.gke.datadog import _extract_dd_metadata
+
+        annotations = {
+            "custom.prefix/check_names": '["nginx"]',
+            "ad.datadoghq.com/check_names": '["standard"]',  # default prefix — NOT matched
+        }
+        labels: dict[str, str] = {}
+
+        mock_settings = MagicMock()
+        mock_settings.datadog.detection = DatadogDetectionConfig(
+            annotation_prefixes=["custom.prefix/"]
+        )
+
+        with patch("vaig.tools.gke.datadog.get_settings", return_value=mock_settings):
+            dd_ann, _ = _extract_dd_metadata(annotations, labels)
+
+        assert "custom.prefix/check_names" in dd_ann
+        assert "ad.datadoghq.com/check_names" not in dd_ann
+
+    def test_custom_label_prefix_used(self) -> None:
+        """Custom label_prefix from config is used instead of the default."""
+        from vaig.core.config import DatadogDetectionConfig
+        from vaig.tools.gke.datadog import _extract_dd_metadata
+
+        annotations: dict[str, str] = {}
+        labels = {
+            "myorg.datadoghq.com/service": "my-svc",
+            "tags.datadoghq.com/service": "other-svc",  # default — NOT matched
+        }
+
+        mock_settings = MagicMock()
+        mock_settings.datadog.detection = DatadogDetectionConfig(
+            label_prefix="myorg.datadoghq.com/"
+        )
+
+        with patch("vaig.tools.gke.datadog.get_settings", return_value=mock_settings):
+            _, dd_lbl = _extract_dd_metadata(annotations, labels)
+
+        assert "myorg.datadoghq.com/service" in dd_lbl
+        assert "tags.datadoghq.com/service" not in dd_lbl
+
+    def test_fallback_to_module_defaults_when_get_settings_raises(self) -> None:
+        """When get_settings() raises, the module-level fallback constants are used."""
+        from vaig.tools.gke.datadog import _extract_dd_metadata
+
+        annotations = {
+            "ad.datadoghq.com/check_names": '["nginx"]',
+        }
+        labels = {
+            "tags.datadoghq.com/service": "my-svc",
+        }
+
+        with patch("vaig.tools.gke.datadog.get_settings", side_effect=RuntimeError("no settings")):
+            dd_ann, dd_lbl = _extract_dd_metadata(annotations, labels)
+
+        # Fallback constants include ad.datadoghq.com/ and tags.datadoghq.com/
+        assert "ad.datadoghq.com/check_names" in dd_ann
+        assert "tags.datadoghq.com/service" in dd_lbl
+
+
+# ── Detection config — _scan_deployment_for_datadog ──────────
+
+
+class TestDetectionConfigEnvVars:
+    """Tests for configurable env var names in _scan_deployment_for_datadog."""
+
+    def _make_deploy_with_env(self, env_vars: dict[str, str]) -> MagicMock:
+        """Build a minimal mock deployment with the given env vars on one container."""
+        env_list = [MagicMock(name="EnvVar", value=v) for v in env_vars.values()]
+        for mock_var, (k, _) in zip(env_list, env_vars.items(), strict=True):
+            mock_var.name = k
+
+        container = MagicMock()
+        container.env = env_list
+
+        pod_spec = MagicMock()
+        pod_spec.containers = [container]
+
+        pod_template = MagicMock()
+        pod_template.spec = pod_spec
+        pod_template.metadata = MagicMock()
+        pod_template.metadata.annotations = {}
+        pod_template.metadata.labels = {}
+
+        deploy = MagicMock()
+        deploy.metadata = MagicMock()
+        deploy.metadata.name = "test-deploy"
+        deploy.metadata.annotations = {}
+        deploy.metadata.labels = {}
+        deploy.spec = MagicMock()
+        deploy.spec.template = pod_template
+
+        return deploy
+
+    def test_default_env_vars_trigger_detection(self) -> None:
+        """Standard DD_ env vars (DD_SERVICE, DD_AGENT_HOST) are detected with default config."""
+        from vaig.core.config import DatadogDetectionConfig
+        from vaig.tools.gke.datadog import _scan_deployment_for_datadog
+
+        deploy = self._make_deploy_with_env({"DD_SERVICE": "my-svc", "DD_AGENT_HOST": "datadog-agent"})
+
+        mock_settings = MagicMock()
+        mock_settings.datadog.detection = DatadogDetectionConfig()
+
+        with patch("vaig.tools.gke.datadog.get_settings", return_value=mock_settings):
+            result = _scan_deployment_for_datadog(deploy)
+
+        assert result["has_datadog"] is True
+        assert "DD_SERVICE" in result["env_vars"]
+        assert "DD_AGENT_HOST" in result["env_vars"]
+
+    def test_custom_env_vars_trigger_detection(self) -> None:
+        """Custom env_vars from config are used to detect Datadog-instrumented workloads."""
+        from vaig.core.config import DatadogDetectionConfig
+        from vaig.tools.gke.datadog import _scan_deployment_for_datadog
+
+        deploy = self._make_deploy_with_env({"MY_CUSTOM_DD_FLAG": "true"})
+
+        mock_settings = MagicMock()
+        mock_settings.datadog.detection = DatadogDetectionConfig(
+            env_vars=["MY_CUSTOM_DD_FLAG"]
+        )
+
+        with patch("vaig.tools.gke.datadog.get_settings", return_value=mock_settings):
+            result = _scan_deployment_for_datadog(deploy)
+
+        assert result["has_datadog"] is True
+        assert "MY_CUSTOM_DD_FLAG" in result["env_vars"]
+
+    def test_non_dd_env_var_not_detected_with_default_config(self) -> None:
+        """An unrecognised env var is not reported as Datadog configuration."""
+        from vaig.core.config import DatadogDetectionConfig
+        from vaig.tools.gke.datadog import _scan_deployment_for_datadog
+
+        deploy = self._make_deploy_with_env({"SOME_OTHER_VAR": "value"})
+
+        mock_settings = MagicMock()
+        mock_settings.datadog.detection = DatadogDetectionConfig()
+
+        with patch("vaig.tools.gke.datadog.get_settings", return_value=mock_settings):
+            result = _scan_deployment_for_datadog(deploy)
+
+        assert result["has_datadog"] is False
+        assert "SOME_OTHER_VAR" not in result["env_vars"]
+
+    def test_fallback_env_vars_when_get_settings_raises(self) -> None:
+        """When get_settings() raises, fallback module-level env vars are used for detection."""
+        from vaig.tools.gke.datadog import _scan_deployment_for_datadog
+
+        deploy = self._make_deploy_with_env({"DD_AGENT_HOST": "datadog-agent"})
+
+        with patch("vaig.tools.gke.datadog.get_settings", side_effect=RuntimeError("no settings")):
+            result = _scan_deployment_for_datadog(deploy)
+
+        assert result["has_datadog"] is True
+        assert "DD_AGENT_HOST" in result["env_vars"]

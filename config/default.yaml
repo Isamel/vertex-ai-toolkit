@@ -211,6 +211,40 @@ datadog:
   site: ""                        # Default: datadoghq.com; override via VAIG_DATADOG__SITE
   timeout: ""                     # Default: 30s; override via VAIG_DATADOG__TIMEOUT
 
+  # Configurable tag/label names used in Datadog metric queries and monitor filters.
+  # Override these when your Datadog agent uses custom tag naming conventions.
+  labels:
+    cluster_name: "cluster_name"    # Tag name for the GKE cluster (default: cluster_name)
+    service: "service"              # Tag name for the service (default: service)
+    env: "env"                      # Tag name for the environment (default: env)
+    version: "version"              # Tag name for the application version (default: version)
+    namespace: "kube_namespace"     # Tag name for the Kubernetes namespace (default: kube_namespace)
+    deployment: "kube_deployment"   # Tag name for the Kubernetes deployment (default: kube_deployment)
+    pod_name: "pod_name"            # Tag name for the pod (used in "by {}" metric grouping)
+    # custom: {}  # Add custom tag mappings here, e.g. {"team": "team_tag", "region": "region"}
+
+  # Detection settings for identifying Datadog-instrumented workloads.
+  # Override these when your cluster uses non-standard annotation or label prefixes.
+  detection:
+    annotation_prefixes:            # Annotation key prefixes that indicate Datadog instrumentation
+      - "ad.datadoghq.com/"
+      - "admission.datadoghq.com/"
+    label_prefix: "tags.datadoghq.com/"  # Label key prefix for Datadog unified service tagging
+    env_vars:                       # Environment variable names that indicate Datadog instrumentation
+      - "DD_AGENT_HOST"
+      - "DD_TRACE_AGENT_URL"
+      - "DD_SERVICE"
+      - "DD_ENV"
+      - "DD_VERSION"
+      - "DD_TRACE_ENABLED"
+      - "DD_PROFILING_ENABLED"
+      - "DD_LOGS_INJECTION"
+      - "DD_RUNTIME_METRICS_ENABLED"
+
+  # custom_metrics: {}  # Add custom metric query templates here.
+  # Templates must include the {filters} placeholder for tag injection.
+  # Example: {"my_metric": "avg:custom.metric{{{filters}}} by {{pod_name}}"}
+
 mcp:
   enabled: false                    # Set to true to enable MCP integration
   auto_register: false              # Auto-register MCP server tools into agent pipelines

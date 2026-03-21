@@ -351,6 +351,53 @@ class ArgoCDConfig(BaseModel):
     verify_ssl: bool = True
 
 
+class DatadogLabelConfig(BaseModel):
+    """Configurable tag/label names for Datadog API queries.
+
+    Override these to match custom Datadog tag naming conventions used
+    in your organisation.  All defaults match the standard Kubernetes
+    integration tag names shipped by the Datadog agent.
+    """
+
+    cluster_name: str = "cluster_name"
+    service: str = "service"
+    env: str = "env"
+    version: str = "version"
+    namespace: str = "kube_namespace"
+    deployment: str = "kube_deployment"
+    pod_name: str = "pod_name"
+    custom: dict[str, str] = Field(default_factory=dict)
+
+
+class DatadogDetectionConfig(BaseModel):
+    """Configurable annotation/label prefixes for Datadog detection in K8s.
+
+    Override these when your cluster uses non-standard annotation or
+    label prefixes to signal Datadog instrumentation.
+    """
+
+    annotation_prefixes: list[str] = Field(
+        default_factory=lambda: [
+            "ad.datadoghq.com/",
+            "admission.datadoghq.com/",
+        ]
+    )
+    label_prefix: str = "tags.datadoghq.com/"
+    env_vars: list[str] = Field(
+        default_factory=lambda: [
+            "DD_AGENT_HOST",
+            "DD_TRACE_AGENT_URL",
+            "DD_SERVICE",
+            "DD_ENV",
+            "DD_VERSION",
+            "DD_TRACE_ENABLED",
+            "DD_PROFILING_ENABLED",
+            "DD_LOGS_INJECTION",
+            "DD_RUNTIME_METRICS_ENABLED",
+        ]
+    )
+
+
 class DatadogAPIConfig(BaseModel):
     """Datadog REST API integration configuration."""
 
@@ -359,6 +406,9 @@ class DatadogAPIConfig(BaseModel):
     app_key: str = Field(default="", repr=False)
     site: str = "datadoghq.com"
     timeout: int = 30
+    labels: DatadogLabelConfig = Field(default_factory=DatadogLabelConfig)
+    detection: DatadogDetectionConfig = Field(default_factory=DatadogDetectionConfig)
+    custom_metrics: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _auto_enable_or_disable(self) -> DatadogAPIConfig:
