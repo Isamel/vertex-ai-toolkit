@@ -664,7 +664,7 @@ class TestQueryDatadogMetricsLabelFilters:
             )
 
         assert result.error is True
-        assert "Invalid service name" in result.output
+        assert "Invalid service" in result.output
         mock_api.query_metrics.assert_not_called()
 
 
@@ -743,7 +743,7 @@ class TestGetDatadogMonitorsLabelFilters:
             )
 
         assert result.error is True
-        assert "Invalid service name" in result.output
+        assert "Invalid env" in result.output
         mock_api.list_monitors.assert_not_called()
 
 

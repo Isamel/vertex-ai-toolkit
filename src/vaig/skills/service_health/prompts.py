@@ -125,7 +125,9 @@ empty string — simply leave the parameter out).
     monitors when they are absent. Note any alerts in Alert or Warn state.
 22. You MUST call ``get_datadog_apm_services(service_name="<dd_service>",
     env="<dd_env>")``  [include service_name/env only if found in Step 11]
-    — APM service data; note any elevated latency or error rate.
+    — confirm the service exists in the Datadog catalog and fetch ownership metadata
+    (team, language, tier).  This tool returns service *definition* metadata, NOT live
+    latency or error-rate metrics.
     Example with labels: ``get_datadog_apm_services(service_name="my-api", env="production")``
     Example without labels: ``get_datadog_apm_services()``
 
@@ -135,7 +137,8 @@ Report findings as a "## Raw Findings (Datadog API)" section with:
   ALWAYS state which scope applies so the reporter can interpret the data correctly.
 - Any monitors currently in Alert or Warn state (name, status, query)
 - CPU/memory trends that contradict or confirm the kubectl_top data
-- APM services with anomalous p99 latency or error rate > 1%
+- Whether the service was found in the Datadog service catalog (team, language, tier ownership metadata)
+- If the service is absent from the catalog: note that tracing may be misconfigured or inactive
 - If no issues found: "No active Datadog monitors or APM anomalies detected."
 
 {anti_injection_rule}"""
@@ -903,11 +906,11 @@ or cluster-wide.  Look for this in the "## Raw Findings (Datadog API)" section:
 - **Service-filtered** (preferred): metrics and monitors were queried with
   ``service=<dd_service>`` and/or ``env=<dd_env>`` parameters extracted from the
   workload's ``DD_SERVICE``/``DD_ENV`` labels or ``tags.datadoghq.com/service`` /
-  ``tags.datadoghq.com/env`` annotations.  This data is precise and scoped to the
+  ``tags.datadoghq.com/env`` labels.  This data is precise and scoped to the
   specific workload.
 - **Cluster-wide** (fallback): labels were absent — data covers all services and may
   include noise from unrelated workloads.  Note this explicitly in findings:
-  ``"Datadog data is cluster-wide (no DD_SERVICE label found) — results may include noise.``
+  ``"Datadog data is cluster-wide (no DD_SERVICE label found) — results may include noise."``
 
 Always state the scope in the observability finding's ``evidence`` field.
 
@@ -920,10 +923,10 @@ Always state the scope in the observability finding's ``evidence`` field.
   Warn → MEDIUM).  Include the monitor query as evidence.
 - **APM service cross-reference**: When ``DD_SERVICE`` was extracted from the workload,
   verify that this service name appears in ``get_datadog_apm_services`` results.
-  If the service is ABSENT from APM data, create an INFO finding:
-  ``"Service <dd_service> not found in Datadog APM — tracing may be misconfigured or inactive."``
-  If p99 latency or error rate > 1% is present for the matched service, add a HIGH or
-  MEDIUM observability finding and reference the APM service name in ``affected_resources``.
+  If the service is ABSENT from the catalog, create an INFO finding:
+  ``"Service <dd_service> not found in Datadog service catalog — tracing may be misconfigured or inactive."``
+  If the service IS present, note its ownership metadata (team, language, tier) in the findings.
+  Do NOT infer p99 latency or error rate from this tool — it returns catalog metadata only.
 - **Immediate Actions**: When Datadog metrics show high latency or elevated error rates
   that correlate with a CRITICAL or HIGH Kubernetes finding, reference the Datadog data
   in the ``why`` field of the corresponding recommendation.  Include the ``DD_SERVICE``

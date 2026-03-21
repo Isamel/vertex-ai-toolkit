@@ -64,6 +64,68 @@ def _sanitize_service_name(name: str) -> str:
     return name
 
 
+def _sanitize_tag_value(param_name: str, value: str) -> str:
+    """Validate a Datadog tag value and return it unchanged if valid.
+
+    Like :func:`_sanitize_service_name` but includes *param_name* in the error
+    message so callers get context-specific feedback (e.g. "Invalid env …"
+    rather than the generic "Invalid service name …").
+
+    Returns an empty string for an empty input.  Raises ``ValueError`` when the
+    value contains characters outside the allowed set.
+
+    Raises:
+        ValueError: When ``value`` contains disallowed characters.
+    """
+    if not value:
+        return ""
+    if not _VALID_SERVICE_NAME_RE.match(value):
+        raise ValueError(
+            f"Invalid {param_name} {value!r}: only alphanumeric, hyphens, underscores, and dots are allowed."
+        )
+    return value
+
+
+def _build_tag_filter(
+    cluster_name: str | None,
+    service: str | None,
+    env: str | None,
+) -> tuple[str, ToolResult | None]:
+    """Build a comma-separated Datadog tag filter string from the given tags.
+
+    Each tag value is validated/sanitized before use.  If any value is invalid
+    the function returns ``(empty, ToolResult(error=True))`` so callers can
+    return the error immediately.
+
+    Args:
+        cluster_name: Optional cluster name tag value.
+        service: Optional service tag value.
+        env: Optional environment tag value.
+
+    Returns:
+        A tuple of ``(filter_string, error_result)``.  On success,
+        ``error_result`` is ``None`` and ``filter_string`` is the joined tag
+        filter (e.g. ``"cluster_name:foo,service:bar,env:prod"``).  On
+        failure, ``filter_string`` is ``""`` and ``error_result`` is a
+        ``ToolResult`` with ``error=True``.
+    """
+    tag_parts: list[str] = []
+    tag_map: list[tuple[str, str | None]] = [
+        ("cluster_name", cluster_name),
+        ("service", service),
+        ("env", env),
+    ]
+    for tag_key, tag_value in tag_map:
+        if not tag_value:
+            continue
+        try:
+            safe_value = _sanitize_tag_value(tag_key, tag_value)
+        except ValueError as exc:
+            return "", ToolResult(output=str(exc), error=True)
+        tag_parts.append(f"{tag_key}:{safe_value}")
+    return ",".join(tag_parts), None
+
+
 def _get_dd_api_client(config: DatadogAPIConfig) -> Any:
     """Create a configured Datadog API client.
 
@@ -149,27 +211,10 @@ def query_datadog_metrics(
     end = to_ts if to_ts > 0 else now
     start = from_ts if from_ts > 0 else now - 3600
 
-    # Resolve query string from allowlist only
-    try:
-        safe_cluster = _sanitize_service_name(cluster_name)
-    except ValueError as exc:
-        return ToolResult(output=str(exc), error=True)
-
     # Build tag filter string: always include cluster_name; optionally service/env
-    filter_parts: list[str] = [f"cluster_name:{safe_cluster}"]
-    if service:
-        try:
-            safe_service = _sanitize_service_name(service)
-        except ValueError as exc:
-            return ToolResult(output=str(exc), error=True)
-        filter_parts.append(f"service:{safe_service}")
-    if env:
-        try:
-            safe_env = _sanitize_service_name(env)
-        except ValueError as exc:
-            return ToolResult(output=str(exc), error=True)
-        filter_parts.append(f"env:{safe_env}")
-    filters = ",".join(filter_parts)
+    filters, tag_err = _build_tag_filter(cluster_name, service, env)
+    if tag_err is not None:
+        return tag_err
 
     template = _METRIC_TEMPLATES.get(metric)
     if template is None:
@@ -277,26 +322,10 @@ def get_datadog_monitors(
         return ToolResult(output=_ERR_NOT_ENABLED, error=True)
 
     # Build tag filter string from cluster name, service, and env
-    tag_parts: list[str] = []
-    if cluster_name:
-        try:
-            safe_cluster = _sanitize_service_name(cluster_name)
-        except ValueError as exc:
-            return ToolResult(output=str(exc), error=True)
-        tag_parts.append(f"cluster_name:{safe_cluster}")
-    if service:
-        try:
-            safe_service = _sanitize_service_name(service)
-        except ValueError as exc:
-            return ToolResult(output=str(exc), error=True)
-        tag_parts.append(f"service:{safe_service}")
-    if env:
-        try:
-            safe_env = _sanitize_service_name(env)
-        except ValueError as exc:
-            return ToolResult(output=str(exc), error=True)
-        tag_parts.append(f"env:{safe_env}")
-    tag_filter = ",".join(tag_parts) if tag_parts else None
+    tag_filter_str, tag_err = _build_tag_filter(cluster_name, service, env)
+    if tag_err is not None:
+        return tag_err
+    tag_filter = tag_filter_str if tag_filter_str else None
 
     try:
         if _custom_api is not None:
@@ -397,6 +426,13 @@ def get_datadog_apm_services(
 
     if not config.enabled:
         return ToolResult(output=_ERR_NOT_ENABLED, error=True)
+
+    # Validate inputs before cache lookup so invalid inputs never get cached
+    if service_name:
+        try:
+            service_name = _sanitize_tag_value("service_name", service_name)
+        except ValueError as exc:
+            return ToolResult(output=str(exc), error=True)
 
     # Cache check (TTL = 60s) — include service_name in key for filtered results
     cache_key = _cache._cache_key_discovery("dd_apm_services", env, cluster_name, service_name or "")
