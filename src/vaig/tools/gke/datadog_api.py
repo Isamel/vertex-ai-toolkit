@@ -649,6 +649,12 @@ def get_datadog_apm_services(
     if not service_name:
         return ToolResult(output="service_name is required for APM lookup.", error=True)
 
+    # Sanitize env to prevent tag injection or malformed queries
+    try:
+        env = _sanitize_tag_value("env", env)
+    except ValueError as exc:
+        return ToolResult(output=str(exc), error=True)
+
     # Cache check (TTL = 60s)
     cache_key = _cache._cache_key_discovery("dd_apm_trace", service_name, env)
     cached = _cache._get_cached(cache_key)
@@ -666,17 +672,12 @@ def get_datadog_apm_services(
         "duration": f"avg:trace.web.request.duration{{{scope}}}",
     }
 
-    try:
+    def _execute_queries(api: Any) -> ToolResult:
+        """Run all three metric queries against the given API instance."""
         results: dict[str, float | None] = {}
         found_any_series = False
 
         for metric_key, query in metric_queries.items():
-            if _custom_api is not None:
-                api = _custom_api
-            else:
-                with _get_dd_api_client(config) as client:
-                    api = MetricsApi(client)
-
             response = api.query_metrics(_from=start, to=now, query=query)
             series = getattr(response, "series", []) or []
 
@@ -695,11 +696,11 @@ def get_datadog_apm_services(
             results[metric_key] = sum(all_points) / len(all_points) if all_points else None
 
         if not found_any_series:
-            output = (
+            no_data_msg = (
                 f"No APM trace data found for service '{service_name}' in env '{env}'. "
                 "Verify the service_name matches the 'service' tag in Datadog APM."
             )
-            return ToolResult(output=output, error=False)
+            return ToolResult(output=no_data_msg, error=False)
 
         # Format output
         hits = results.get("hits")
@@ -721,12 +722,19 @@ def get_datadog_apm_services(
             "",
             f"Throughput: {throughput_str}",
             f"Error rate: {error_rate_str}",
-            f"Avg latency:{latency_str}",
+            f"Avg latency: {latency_str}",
         ]
 
-        output = "\n".join(lines)
-        _cache._set_cache(cache_key, output)
-        return ToolResult(output=output, error=False)
+        output_str = "\n".join(lines)
+        _cache._set_cache(cache_key, output_str)
+        return ToolResult(output=output_str, error=False)
+
+    try:
+        if _custom_api is not None:
+            return _execute_queries(_custom_api)
+
+        with _get_dd_api_client(config) as client:
+            return _execute_queries(MetricsApi(client))
 
     except ApiException as exc:
         status = getattr(exc, "status", 0)

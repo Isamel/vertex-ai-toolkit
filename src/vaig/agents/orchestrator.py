@@ -2307,7 +2307,7 @@ class Orchestrator:
                     kw["tool_result_cache"] = tool_result_cache
                 futures_map.append((agent, executor.submit(agent.execute, query, **kw)))
 
-            for idx, (agent, future) in enumerate(futures_map):
+            for _idx, (agent, future) in enumerate(futures_map):
                 try:
                     agent_result = future.result()
                 except Exception:
@@ -2320,7 +2320,6 @@ class Orchestrator:
                         content=f"Agent '{agent.name}' failed with an unexpected error.",
                         success=False,
                     )
-                _fire_agent_progress(on_agent_progress, agent.name, idx, total_agents, "end")
                 parallel_results.append(agent_result)
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
@@ -2330,6 +2329,12 @@ class Orchestrator:
                         agent.name,
                         agent_result.content,
                     )
+
+        # Emit a single collective end event after ALL parallel gatherers finish.
+        # Matches the collective start event fired before the executor started.
+        # This keeps _active_agents balanced (1 start → 1 end) so AgentProgressDisplay
+        # correctly resets tool_logger counters and stops the spinner.
+        _fire_agent_progress(on_agent_progress, "parallel gatherers", 0, total_agents, "end")
 
         # ── Merge gatherer outputs ────────────────────────────────────────
         merged_context = self._merge_parallel_outputs(parallel_results)
@@ -2595,7 +2600,6 @@ class Orchestrator:
                     content=f"Agent '{agent.name}' failed with an unexpected error.",
                     success=False,
                 )
-            _fire_agent_progress(on_agent_progress, agent.name, idx, total_agents, "end")
             return agent_result
 
         # Fire a single collective start event for all parallel gatherers.
@@ -2605,6 +2609,11 @@ class Orchestrator:
         _fire_agent_progress(on_agent_progress, "parallel gatherers", 0, total_agents, "start")
         coros = [_run_gatherer(agent, idx) for idx, agent in enumerate(parallel_agents)]
         parallel_results: list[AgentResult] = await gather_with_errors(*coros, return_exceptions=False)
+
+        # Emit a single collective end event after ALL async gatherers finish.
+        # Matches the collective start event above so AgentProgressDisplay keeps
+        # _active_agents balanced and triggers tool_logger.reset() exactly once.
+        _fire_agent_progress(on_agent_progress, "parallel gatherers", 0, total_agents, "end")
 
         for agent_result in parallel_results:
             result.agent_results.append(agent_result)
