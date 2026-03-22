@@ -1398,10 +1398,11 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 name="get_datadog_apm_services",
                 description=(
                     "Fetch service catalog entries from the Datadog Service Definition v2 API / service catalog. "
-                    "Returns service names, team, language, and tier for all registered "
-                    "services in the given environment. Optionally filter by service_name "
-                    "to narrow results to a single service. Results are cached for 60 seconds. "
-                    "Read-only — does not modify any resources."
+                    "Returns service name, team, language, and tier ownership metadata for a specific service. "
+                    "Always provide service_name — calling without it returns all registered services and should "
+                    "be avoided (high cost, low signal). Resolve service_name from 'tags.datadoghq.com/service' "
+                    "pod labels first, then DD_SERVICE env var; skip the call entirely if neither is available. "
+                    "Results are cached for 60 seconds. Read-only — does not modify any resources."
                 ),
                 parameters=[
                     ToolParam(

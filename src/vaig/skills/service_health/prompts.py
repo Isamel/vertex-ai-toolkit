@@ -113,21 +113,22 @@ _DATADOG_API_TOOLS_TABLE = """\
 _DATADOG_API_STEP = """\
 
 ### Step 12 — Datadog API Correlation (real-time metrics & monitors) — MANDATORY
-You MUST complete all four Datadog API tool calls below (calls 19–22). These are NOT
-optional — skipping them means the investigation is incomplete and the report will be
-missing real-time observability data. Note that ``query_datadog_metrics`` is called
-twice with different metric arguments (once for CPU, once for memory), so there are
-four calls in total across three unique tools. Do NOT proceed to later steps or produce
-any final output until all four calls described below are complete.
+You MUST complete calls 19–21 below. They are NOT optional — skipping them means the
+investigation is incomplete and the report will be missing real-time observability data.
+Note that ``query_datadog_metrics`` is called twice with different metric arguments
+(once for CPU, once for memory). Call 22 (``get_datadog_apm_services``) is CONDITIONAL
+— make it only when a ``service_name`` can be resolved (see call 22 for resolution rules).
+Do NOT proceed to later steps or produce any final output until calls 19–21 are complete.
 
 **LABEL-AWARE FILTERING — MANDATORY**: Before making these calls, check what Step 11
 (``get_datadog_config``) extracted from the workload's environment variables and labels:
 - If ``DD_SERVICE`` was found (or ``tags.datadoghq.com/service`` label), store it as
   ``<dd_service>``.
 - If ``DD_ENV`` was found (or ``tags.datadoghq.com/env`` label), store it as ``<dd_env>``.
-You MUST pass these values as ``service=`` and ``env=`` parameters in ALL four calls
-below. If a value was NOT found in Step 11, omit that parameter (do NOT pass None or
-empty string — simply leave the parameter out).
+You MUST pass these values as ``service=`` and ``env=`` parameters in calls 19–21 below.
+For call 22, the parameter name is ``service_name=`` (not ``service=``) — see call 22 for
+the full resolution rules. If a value was NOT found in Step 11, omit that parameter
+(do NOT pass None or empty string — simply leave the parameter out).
 
 19. You MUST call ``query_datadog_metrics(cluster_name="<cluster>", metric="cpu",
     service="<dd_service>", env="<dd_env>")``  [include service/env only if found in
