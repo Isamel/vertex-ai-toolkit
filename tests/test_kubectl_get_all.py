@@ -383,3 +383,71 @@ class TestKubectlGetCommaSeparated:
             assert result.error, f"Expected error for input {bad!r}"
             assert "'all' cannot be used" in result.output
 
+
+# ═══════════════════════════════════════════════════════════════
+# PR #66 review: edge-case validation
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestKubectlGetCommaEdgeCases:
+    """Edge-case validation added by PR #66 review comments."""
+
+    # ── Comment 1: name + comma-separated is rejected ────────
+
+    def test_name_with_comma_resources_returns_error(self) -> None:
+        """kubectl_get(resource='pods,deployments', name='foo') must return an error."""
+        from vaig.tools.gke.kubectl import kubectl_get
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
+            result = kubectl_get("pods,deployments", gke_config=cfg, name="my-pod")
+
+        assert result.error
+        assert "Cannot use 'name' filter with comma-separated resources" in result.output
+
+    # ── Comment 2: empty/whitespace-only input is rejected ───
+
+    def test_empty_comma_string_returns_error(self) -> None:
+        """resource=',' (only commas) must return an explicit error."""
+        from vaig.tools.gke.kubectl import _kubectl_get_comma_separated
+
+        cfg = _make_gke_config()
+        result = _kubectl_get_comma_separated(",", gke_config=cfg)
+
+        assert result.error
+        assert "No resource types provided" in result.output
+
+    def test_whitespace_only_comma_string_returns_error(self) -> None:
+        """resource=' , ' (whitespace around commas) must return an explicit error."""
+        from vaig.tools.gke.kubectl import _kubectl_get_comma_separated
+
+        cfg = _make_gke_config()
+        result = _kubectl_get_comma_separated(" , ", gke_config=cfg)
+
+        assert result.error
+        assert "No resource types provided" in result.output
+
+    # ── Comment 3: 'all' inside a comma list is rejected ─────
+
+    def test_all_in_comma_list_returns_error(self) -> None:
+        """resource='pods,all' must be rejected — 'all' cannot be mixed with other types."""
+        from vaig.tools.gke.kubectl import _kubectl_get_comma_separated
+
+        cfg = _make_gke_config()
+        result = _kubectl_get_comma_separated("pods,all", gke_config=cfg)
+
+        assert result.error
+        assert "'all' cannot be used" in result.output
+
+    def test_all_in_comma_list_via_kubectl_get(self) -> None:
+        """kubectl_get(resource='pods,all') must also be rejected."""
+        from vaig.tools.gke.kubectl import kubectl_get
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
+            result = kubectl_get("pods,all", gke_config=cfg)
+
+        assert result.error
+        assert "'all' cannot be used" in result.output

@@ -146,6 +146,11 @@ def kubectl_get(
     # LLMs often call kubectl_get(resource="pods,deployments,replicasets,hpa").
     # Split, validate each part individually, and combine results.
     if "," in resource:
+        if name:
+            return ToolResult(
+                output="Cannot use 'name' filter with comma-separated resources. Specify a single resource type instead.",
+                error=True,
+            )
         return _kubectl_get_comma_separated(
             resource,
             gke_config=gke_config,
