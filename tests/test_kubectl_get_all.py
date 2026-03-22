@@ -363,3 +363,23 @@ class TestKubectlGetCommaSeparated:
         assert "deployments" in called_resources
         assert "replicasets" in called_resources
 
+    def test_empty_resource_string_returns_error(self) -> None:
+        """Comma-only input (e.g. ',' or ' , ') must return an explicit error."""
+        from vaig.tools.gke.kubectl import _kubectl_get_comma_separated
+
+        cfg = _make_gke_config()
+        for bad in (",", " , ", "  ,  ,  "):
+            result = _kubectl_get_comma_separated(bad, gke_config=cfg)
+            assert result.error, f"Expected error for input {bad!r}"
+            assert "No resource types provided" in result.output
+
+    def test_all_inside_comma_list_returns_error(self) -> None:
+        """'all' must not be accepted as a part of a comma-separated resource list."""
+        from vaig.tools.gke.kubectl import _kubectl_get_comma_separated
+
+        cfg = _make_gke_config()
+        for bad in ("pods,all", "all,deployments", "all"):
+            result = _kubectl_get_comma_separated(bad, gke_config=cfg)
+            assert result.error, f"Expected error for input {bad!r}"
+            assert "'all' cannot be used" in result.output
+

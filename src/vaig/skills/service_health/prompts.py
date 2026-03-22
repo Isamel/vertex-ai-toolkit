@@ -458,7 +458,7 @@ If no events were found, write: "No events found in namespace [NS] within the co
 [All gcloud_logging_query results — error-level and warning-level log entries with timestamps. If gcloud_logging_query returned no entries, state "No log entries found matching filter: <filter>". If the tool call failed, include the error message.]
 
 NOTE: The Cluster Overview, Service Status, Events Timeline, and Cloud Logging Findings sections are NOT optional. Every report MUST include them. If data for a section was not obtainable, explain WHY (which tool failed, what error was returned) instead of omitting the section.
-ALL field values in the Service Status table MUST be in English — use 'Yes'/'No'/'N/A', never translated equivalents (e.g. not 'sí', 'no', 'ninguno').
+ALL field values in the Service Status table MUST be in English — use 'Yes'/'No'/'N/A', never translated equivalents (e.g. not 'sí', 'ninguno').
 
 ### Investigation Checklist
 

@@ -46,11 +46,25 @@ def _kubectl_get_comma_separated(
     """
     parts = [p.strip() for p in resource.split(",") if p.strip()]
 
+    if not parts:
+        return ToolResult(
+            output="No resource types provided; expected comma-separated list like 'pods,deployments'.",
+            error=True,
+        )
+
     # Validate all parts first — fail fast on any invalid resource
     normalised: list[str] = []
     for part in parts:
         norm = _resources._normalise_resource(part)
-        if norm not in _resources._RESOURCE_API_MAP and norm != "all":
+        if norm == "all":
+            return ToolResult(
+                output=(
+                    "'all' cannot be used inside a comma-separated resource list. "
+                    "Use resource='all' by itself to list all resource types."
+                ),
+                error=True,
+            )
+        if norm not in _resources._RESOURCE_API_MAP:
             if norm in _resources._KNOWN_K8S_RESOURCES:
                 return ToolResult(
                     output=(
