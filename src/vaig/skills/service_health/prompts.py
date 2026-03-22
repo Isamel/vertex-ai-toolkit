@@ -144,13 +144,31 @@ empty string — simply leave the parameter out).
     env="<dd_env>")``  [include service/env only if found in Step 11]
     — Monitor alerts scoped to this service when labels are present, or all cluster
     monitors when they are absent. Note any alerts in Alert or Warn state.
-22. You MUST call ``get_datadog_apm_services(service_name="<dd_service>",
-    env="<dd_env>")``  [include service_name/env only if found in Step 11]
+22. You MUST call ``get_datadog_apm_services`` — but ONLY if you can determine a
+    ``service_name``. Resolve the service identity using this priority order:
+
+    **Tier 1 — Datadog Unified Service Tagging labels** (check pod/deployment YAML
+    output from earlier kubectl calls):
+    - ``tags.datadoghq.com/service`` → use as ``service_name``
+    - ``tags.datadoghq.com/env``     → use as ``env``
+    - ``tags.datadoghq.com/version`` → note for context only
+
+    **Tier 2 — Custom config labels** (if Tier 1 labels are absent, check for
+    custom Datadog labels configured in the tool descriptions, such as ``dd_service``,
+    ``dd_env``, or any env-var values extracted in Step 11):
+    - If ``DD_SERVICE`` was found in env vars → use as ``service_name``
+    - If ``DD_ENV`` was found in env vars → use as ``env``
+
+    **Tier 3 — SKIP** (if NEITHER Tier 1 nor Tier 2 yields a ``service_name``):
+    - SKIP this tool entirely — do NOT call it without a ``service_name``.
+    - Record "APM lookup skipped — no service identity found" in Raw Findings.
+
+    When ``service_name`` IS resolved: call
+    ``get_datadog_apm_services(service_name="<resolved>", env="<resolved>")``
     — confirm the service exists in the Datadog catalog and fetch ownership metadata
     (team, language, tier).  This tool returns service *definition* metadata, NOT live
     latency or error-rate metrics.
-    Example with labels: ``get_datadog_apm_services(service_name="my-api", env="production")``
-    Example without labels: ``get_datadog_apm_services()``
+    Example: ``get_datadog_apm_services(service_name="my-api", env="production")``
 
 Report findings as a "## Raw Findings (Datadog API)" section with:
 - Whether data is **service-filtered** (DD_SERVICE/DD_ENV were passed as params) or

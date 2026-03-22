@@ -1420,8 +1420,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         name="service_name",
                         type="string",
                         description=(
-                            "Optional service name to filter results to a single service "
-                            "(e.g. value of DD_SERVICE or tags.datadoghq.com/service label)"
+                            "Service name to filter APM results. "
+                            "Look for 'tags.datadoghq.com/service' label on pods/deployments first, "
+                            "then custom Datadog labels from config (e.g. DD_SERVICE env var). "
+                            "Do NOT call this tool without a service_name — if unknown, skip the call entirely."
                         ),
                         required=False,
                     ),

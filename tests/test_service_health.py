@@ -2648,3 +2648,87 @@ class TestServiceStatusColumnPreservation:
 
         assert "NOT sufficient to populate all ServiceStatus fields" in HEALTH_REPORTER_PROMPT
 
+
+class TestDatadogAPMTagResolution:
+    """Validate that the Datadog APM step uses proper tag resolution and prohibits
+    calling get_datadog_apm_services() without a service_name.
+
+    Prevents regression where _DATADOG_API_STEP directed the LLM to call
+    get_datadog_apm_services() without arguments when no service was found,
+    causing noisy/misleading APM lookups.
+    """
+
+    def test_apm_step_references_unified_service_tagging_label(self) -> None:
+        """_DATADOG_API_STEP must instruct the LLM to look for the
+        tags.datadoghq.com/service label as the primary service identity source."""
+        from vaig.skills.service_health.prompts import _DATADOG_API_STEP
+
+        assert "tags.datadoghq.com/service" in _DATADOG_API_STEP, (
+            "_DATADOG_API_STEP must reference 'tags.datadoghq.com/service' "
+            "as Tier 1 (Unified Service Tagging) label for APM lookup."
+        )
+
+    def test_apm_step_references_env_unified_service_tagging_label(self) -> None:
+        """_DATADOG_API_STEP must instruct the LLM to look for
+        tags.datadoghq.com/env as the primary environment source."""
+        from vaig.skills.service_health.prompts import _DATADOG_API_STEP
+
+        assert "tags.datadoghq.com/env" in _DATADOG_API_STEP, (
+            "_DATADOG_API_STEP must reference 'tags.datadoghq.com/env' "
+            "as Tier 1 label for APM env parameter."
+        )
+
+    def test_apm_step_instructs_skip_when_no_service_found(self) -> None:
+        """_DATADOG_API_STEP must explicitly say SKIP when no service identity
+        can be determined — preventing a no-arg get_datadog_apm_services() call."""
+        from vaig.skills.service_health.prompts import _DATADOG_API_STEP
+
+        assert "SKIP" in _DATADOG_API_STEP, (
+            "_DATADOG_API_STEP must contain 'SKIP' instruction for when no "
+            "service_name is resolvable, preventing a no-arg APM call."
+        )
+
+    def test_apm_step_does_not_contain_no_arg_example(self) -> None:
+        """_DATADOG_API_STEP must NOT contain the bad example
+        get_datadog_apm_services() without any arguments."""
+        from vaig.skills.service_health.prompts import _DATADOG_API_STEP
+
+        # The bad example was: "get_datadog_apm_services()" — a bare no-arg call
+        # It must not exist; the LLM should always pass service_name or skip entirely.
+        assert "get_datadog_apm_services()" not in _DATADOG_API_STEP, (
+            "_DATADOG_API_STEP must NOT contain 'get_datadog_apm_services()' "
+            "(no-argument call) — it sends the LLM on unscoped APM queries."
+        )
+
+    def test_workload_gatherer_prompt_apm_step_uses_unified_tagging(self) -> None:
+        """build_workload_gatherer_prompt with datadog enabled must include the
+        unified service tagging instructions (shared _DATADOG_API_STEP constant)."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", datadog_api_enabled=True)
+
+        assert "tags.datadoghq.com/service" in prompt, (
+            "workload_gatherer prompt with datadog enabled must reference "
+            "tags.datadoghq.com/service for APM tag resolution."
+        )
+        assert "get_datadog_apm_services()" not in prompt, (
+            "workload_gatherer prompt must NOT contain a no-arg "
+            "get_datadog_apm_services() example."
+        )
+
+    def test_gatherer_prompt_apm_step_uses_unified_tagging(self) -> None:
+        """build_gatherer_prompt with datadog enabled must include the
+        unified service tagging instructions (shared _DATADOG_API_STEP constant)."""
+        from vaig.skills.service_health.prompts import build_gatherer_prompt
+
+        prompt = build_gatherer_prompt(datadog_api_enabled=True)
+
+        assert "tags.datadoghq.com/service" in prompt, (
+            "Sequential gatherer prompt with datadog enabled must reference "
+            "tags.datadoghq.com/service for APM tag resolution."
+        )
+        assert "get_datadog_apm_services()" not in prompt, (
+            "Sequential gatherer prompt must NOT contain a no-arg "
+            "get_datadog_apm_services() example."
+        )
+
