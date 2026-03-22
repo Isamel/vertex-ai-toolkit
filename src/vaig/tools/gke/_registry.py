@@ -89,7 +89,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     type="string",
                     description=(
                         "Kubernetes resource type to list (e.g. 'pods', 'deployments', "
-                        "'services', 'nodes')"
+                        "'services', 'nodes', or comma-separated like 'pods,deployments')"
                     ),
                 ),
                 ToolParam(

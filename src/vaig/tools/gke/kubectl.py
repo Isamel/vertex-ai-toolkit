@@ -25,6 +25,97 @@ except ImportError:
     _K8S_AVAILABLE = False
 
 
+# ── _kubectl_get_comma_separated ──────────────────────────────
+
+
+def _kubectl_get_comma_separated(
+    resource: str,
+    *,
+    gke_config: GKEConfig,
+    namespace: str = "default",
+    output: str = "table",
+    label_selector: str | None = None,
+    field_selector: str | None = None,
+) -> ToolResult:
+    """Handle comma-separated resource types (e.g. 'pods,deployments,hpa').
+
+    Splits the resource string, validates each part individually via
+    ``_normalise_resource()``, then calls the single-resource logic for each
+    valid type and combines the results — mirroring the ``resource='all'``
+    pattern.
+    """
+    parts = [p.strip() for p in resource.split(",") if p.strip()]
+
+    if not parts:
+        return ToolResult(
+            output="No resource types provided; expected comma-separated list like 'pods,deployments'.",
+            error=True,
+        )
+
+    # Validate all parts first — fail fast on any invalid resource
+    normalised: list[str] = []
+    for part in parts:
+        norm = _resources._normalise_resource(part)
+        if norm == "all":
+            return ToolResult(
+                output=(
+                    "'all' cannot be used inside a comma-separated resource list. "
+                    "Use resource='all' by itself to list all resource types."
+                ),
+                error=True,
+            )
+        if norm not in _resources._RESOURCE_API_MAP:
+            if norm in _resources._KNOWN_K8S_RESOURCES:
+                return ToolResult(
+                    output=(
+                        f"Resource type '{part}' is a valid Kubernetes resource but is not yet "
+                        f"supported by this tool. Consider using kubectl directly for this resource."
+                    ),
+                    error=True,
+                )
+            supported = sorted(_resources._RESOURCE_API_MAP.keys())
+            return ToolResult(
+                output=f"Unsupported resource type: '{part}'. Supported: {', '.join(supported)}",
+                error=True,
+            )
+        normalised.append(norm)
+
+    sections: list[str] = []
+    errors: list[str] = []
+    any_success = False
+
+    for rtype in normalised:
+        sub = kubectl_get(
+            rtype,
+            gke_config=gke_config,
+            namespace=namespace,
+            output=output,
+            label_selector=label_selector,
+            field_selector=field_selector,
+        )
+        if sub.error:
+            errors.append(f"{rtype}: {sub.output}")
+            continue
+        any_success = True
+        body = sub.output.strip() if sub.output else ""
+        if body and body != "No resources found." and body != "[]":
+            sections.append(f"=== {rtype.upper()} ===\n{body}")
+
+    if not any_success and errors:
+        return ToolResult(
+            output="Failed to list resources:\n" + "\n".join(errors),
+            error=True,
+        )
+
+    combined = "\n\n".join(sections)
+    if errors:
+        combined += "\n\n--- Errors ---\n" + "\n".join(errors)
+    if not combined:
+        ns = namespace or gke_config.default_namespace
+        combined = f"No resources found in namespace '{ns}'."
+    return ToolResult(output=combined)
+
+
 # ── kubectl_get ──────────────────────────────────────────────
 
 
@@ -50,6 +141,24 @@ def kubectl_get(
     """
     if not _clients._K8S_AVAILABLE:
         return _clients._k8s_unavailable()
+
+    # ── Handle comma-separated resource types ────────────────
+    # LLMs often call kubectl_get(resource="pods,deployments,replicasets,hpa").
+    # Split, validate each part individually, and combine results.
+    if "," in resource:
+        if name:
+            return ToolResult(
+                output="Cannot use 'name' filter with comma-separated resources. Specify a single resource type instead.",
+                error=True,
+            )
+        return _kubectl_get_comma_separated(
+            resource,
+            gke_config=gke_config,
+            namespace=namespace,
+            output=output,
+            label_selector=label_selector,
+            field_selector=field_selector,
+        )
 
     resource = _resources._normalise_resource(resource)
 

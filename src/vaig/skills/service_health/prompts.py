@@ -440,7 +440,7 @@ After completing all diagnostic steps, you MUST structure your output with these
 For EACH deployment/service investigated:
 | Deployment | Ready Replicas | Total Replicas | Available | Status |
 |------------|---------------|----------------|-----------|--------|
-| [name]     | [X]           | [Y]            | [yes/no]  | [Healthy/Degraded/Failed] |
+| [name]     | [X]           | [Y]            | [Yes/No/N/A]  | [Healthy/Degraded/Failed] |
 
 ### Events Timeline
 List ALL events collected, in CHRONOLOGICAL order with timestamps:
@@ -458,6 +458,7 @@ If no events were found, write: "No events found in namespace [NS] within the co
 [All gcloud_logging_query results — error-level and warning-level log entries with timestamps. If gcloud_logging_query returned no entries, state "No log entries found matching filter: <filter>". If the tool call failed, include the error message.]
 
 NOTE: The Cluster Overview, Service Status, Events Timeline, and Cloud Logging Findings sections are NOT optional. Every report MUST include them. If data for a section was not obtainable, explain WHY (which tool failed, what error was returned) instead of omitting the section.
+ALL field values in the Service Status table MUST be in English — use 'Yes'/'No'/'N/A', never translated equivalents (e.g. not 'sí', 'ninguno').
 
 ### Investigation Checklist
 
@@ -627,9 +628,11 @@ When deployment/pod YAML is available in gathered data:
 Before listing individual findings, provide:
 
 ### Service Status Summary
-| Service/Deployment | Status | Primary Issue |
-|-------------------|--------|---------------|
-| [name] | [Healthy/Degraded/Critical] | [one-line summary or "None"] |
+| Service/Deployment | Namespace | Status | Ready | Restarts | CPU Usage | Memory Usage | Primary Issue |
+|-------------------|-----------|--------|-------|----------|-----------|--------------|---------------|
+| [name] | [namespace] | [Healthy/Degraded/Critical] | [ready/total] | [count] | [cpu] | [memory] | [one-line summary or "None"] |
+
+PRESERVE all columns from the workload_gatherer's Service Status table. Do NOT reduce or summarize the table — only ADD the 'Primary Issue' column with your analysis. If a column value was not collected, use "N/A".
 
 ### Findings Overview
 - Total findings: [N]
@@ -1193,6 +1196,14 @@ use "N/A" as the value — NEVER fabricate numbers.
 #### ``service_statuses``
 One entry per deployment/service investigated.  Map the ``status`` field to one of:
 HEALTHY, DEGRADED, FAILED, UNKNOWN.
+
+**Primary data source for service_statuses** — When populating ``service_statuses``,
+look FIRST for the ``## Service Status`` table in the ``--- workload_gatherer ---``
+section of the merged gatherer output.  The analyzer's ``### Service Status Summary``
+is a 3-column overview — it is NOT sufficient to populate all ServiceStatus fields.
+You MUST use the workload_gatherer's original columns for ``Ready``, ``Restarts``,
+``CPU Usage``, ``Memory Usage`` values.  If the workload_gatherer table is not
+available, use the best data available from the analyzer summary.
 
 **Scaling data mapping** — when ``get_scaling_status`` output is present in the
 upstream data, populate ``ServiceStatus`` fields as follows:
