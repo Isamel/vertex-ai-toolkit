@@ -2476,6 +2476,18 @@ class TestBuildReporterPromptConditional:
                 f"_REMEDIATION_CORE_SECTION missing for management_context={ctx!r}"
             )
 
+    def test_compound_context_helm_argocd_includes_both_sections(self) -> None:
+        """helm+argocd compound context → both GitOps and Helm sections included."""
+        from vaig.skills.service_health.prompts import (
+            _REMEDIATION_GITOPS_SECTION,
+            _REMEDIATION_HELM_SECTION,
+            build_reporter_prompt,
+        )
+
+        prompt = build_reporter_prompt(management_context="helm+argocd")
+        assert _REMEDIATION_GITOPS_SECTION in prompt
+        assert _REMEDIATION_HELM_SECTION in prompt
+
     def test_health_reporter_prompt_constant_backward_compat(self) -> None:
         """HEALTH_REPORTER_PROMPT module constant must still equal no-args call."""
         from vaig.skills.service_health.prompts import (

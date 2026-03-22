@@ -61,7 +61,7 @@ When identifying issues, ALWAYS go beyond surface-level symptom identification. 
 - **Root Mechanism** → What system interaction produced the proximate cause (e.g., "Datadog admission webhook injecting a volume that was also manually defined in the deployment YAML")
 - **Process Gap** → Why the root mechanism wasn't prevented (e.g., "No validation in CI/CD to detect webhook-injected resource conflicts")
 
-This principle applies to ALL agents in the pipeline.
+This principle applies to the analyzer and reporter agents in this pipeline.
 """
 
 # Full SYSTEM_INSTRUCTION (backward-compatible — equals universal + analysis).
@@ -935,7 +935,7 @@ You MUST reproduce ALL findings in your output with their complete data (title, 
 #
 # The Remediation Reasoning Framework is split into 4 constants so callers can
 # omit deployment-method-specific blocks when the management context is already
-# known, reducing prompt token usage by ~30-50 tokens per excluded block.
+# known, reducing overall prompt token usage when sections are excluded.
 #
 # _REMEDIATION_CORE_SECTION     — always included (Steps 1-2, Step 4, General Rules)
 # _REMEDIATION_GITOPS_SECTION   — only when GitOps (ArgoCD/Flux) is detected
@@ -1077,11 +1077,11 @@ def build_reporter_prompt(
             + _REMEDIATION_MANUAL_SECTION
         )
     else:
-        ctx = management_context.lower()
+        contexts = {part.strip() for part in management_context.lower().split("+")}
         remediation_section = _REMEDIATION_CORE_SECTION
-        if "argocd" in ctx or "gitops" in ctx:
+        if "argocd" in contexts or "gitops" in contexts or "flux" in contexts:
             remediation_section += _REMEDIATION_GITOPS_SECTION
-        if "helm" in ctx:
+        if "helm" in contexts:
             remediation_section += _REMEDIATION_HELM_SECTION
         remediation_section += _REMEDIATION_MANUAL_SECTION
     # ─────────────────────────────────────────────────────────────────────
