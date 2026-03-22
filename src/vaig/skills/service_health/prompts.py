@@ -8,7 +8,16 @@ from vaig.core.prompt_defense import (
     wrap_untrusted_content,  # noqa: F401  — re-exported for downstream consumers
 )
 
-SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+# ── P3: Split SYSTEM_INSTRUCTION into universal vs analysis-specific ────────
+#
+# _SYSTEM_INSTRUCTION_UNIVERSAL: rules relevant to ALL agents (gatherer,
+#   analyzer, verifier, reporter).  Safe to inject into tool-aware agents.
+# _SYSTEM_INSTRUCTION_ANALYSIS: rules only relevant to non-tool agents that
+#   perform reasoning (analyzer, reporter).  Adds ~150 tokens — skip for
+#   pure data-collection agents (gatherer, verifier) where causal reasoning
+#   instructions are not applicable and just consume context.
+
+_SYSTEM_INSTRUCTION_UNIVERSAL = f"""{ANTI_INJECTION_RULE}
 
 You are a Senior Site Reliability Engineer specializing in Kubernetes service health assessment. You coordinate a systematic health check across all services in a cluster, identifying degraded components, resource pressure, and emerging issues before they become incidents.
 
@@ -18,22 +27,6 @@ You are a Senior Site Reliability Engineer specializing in Kubernetes service he
 - Resource management (CPU/memory requests vs limits, QoS classes, resource pressure)
 - Observability (logs, events, metrics, health probes)
 - SRE principles (error budgets, SLOs, toil reduction)
-
-## Assessment Framework
-1. **Availability**: Are all expected pods running and ready?
-2. **Stability**: Are pods restarting, crashing, or being evicted?
-3. **Resource Health**: CPU/memory usage vs limits — any pressure?
-4. **Error Signals**: Error rates in logs, failed probes, warning events
-5. **Dependency Health**: Are downstream services and external dependencies healthy?
-
-## Causal Reasoning Principle
-When identifying issues, ALWAYS go beyond surface-level symptom identification. For every finding, trace the causal chain:
-- **Symptom** → What is observably wrong (e.g., "pods failing to create")
-- **Proximate Cause** → What directly causes the symptom (e.g., "duplicate volume definition in pod spec")
-- **Root Mechanism** → What system interaction produced the proximate cause (e.g., "Datadog admission webhook injecting a volume that was also manually defined in the deployment YAML")
-- **Process Gap** → Why the root mechanism wasn't prevented (e.g., "No validation in CI/CD to detect webhook-injected resource conflicts")
-
-This principle applies to ALL agents in the pipeline.
 
 ## STRICT RULES — VIOLATIONS DESTROY REPORT CREDIBILITY
 
@@ -52,6 +45,34 @@ This principle applies to ALL agents in the pipeline.
 7. NEVER say the cluster is "DEGRADED" or "CRITICAL" unless cluster-wide resources (nodes, control plane, kube-system) are actually affected. A single failing deployment is a RESOURCE-LEVEL issue, not a cluster-level degradation.
 8. Always specify the exact scope in your assessment: which namespace, which deployment, which pod.
 """
+
+_SYSTEM_INSTRUCTION_ANALYSIS = """
+## Assessment Framework
+1. **Availability**: Are all expected pods running and ready?
+2. **Stability**: Are pods restarting, crashing, or being evicted?
+3. **Resource Health**: CPU/memory usage vs limits — any pressure?
+4. **Error Signals**: Error rates in logs, failed probes, warning events
+5. **Dependency Health**: Are downstream services and external dependencies healthy?
+
+## Causal Reasoning Principle
+When identifying issues, ALWAYS go beyond surface-level symptom identification. For every finding, trace the causal chain:
+- **Symptom** → What is observably wrong (e.g., "pods failing to create")
+- **Proximate Cause** → What directly causes the symptom (e.g., "duplicate volume definition in pod spec")
+- **Root Mechanism** → What system interaction produced the proximate cause (e.g., "Datadog admission webhook injecting a volume that was also manually defined in the deployment YAML")
+- **Process Gap** → Why the root mechanism wasn't prevented (e.g., "No validation in CI/CD to detect webhook-injected resource conflicts")
+
+This principle applies to ALL agents in the pipeline.
+"""
+
+# Full SYSTEM_INSTRUCTION (backward-compatible — equals universal + analysis).
+# Injected into the analyzer and reporter agents that need causal reasoning.
+SYSTEM_INSTRUCTION = _SYSTEM_INSTRUCTION_UNIVERSAL + _SYSTEM_INSTRUCTION_ANALYSIS
+
+# Lightweight variant for tool-aware data-collection agents (gatherer, verifier).
+# Omits the Assessment Framework and Causal Reasoning sections that are not
+# applicable during pure data-collection phases, saving ~150 tokens per call.
+# Export this constant so skill.py (or other callers) can opt in explicitly.
+SYSTEM_INSTRUCTION_GATHERER: str = _SYSTEM_INSTRUCTION_UNIVERSAL
 
 _CORE_TOOLS_TABLE = """\
 | `kubectl_get` | `resource` | `name`, `namespace`, `output`, `label_selector`, `field_selector` |
@@ -910,7 +931,115 @@ You MUST reproduce ALL findings in your output with their complete data (title, 
 ⚠️ REMINDER: Reproduce ALL findings with complete data — the reporter depends entirely on your output.
 """
 
-def build_reporter_prompt(namespace: str = "", datadog_api_enabled: bool = False) -> str:
+# ── P2: Conditional Remediation Framework ───────────────────────────────────
+#
+# The Remediation Reasoning Framework is split into 4 constants so callers can
+# omit deployment-method-specific blocks when the management context is already
+# known, reducing prompt token usage by ~30-50 tokens per excluded block.
+#
+# _REMEDIATION_CORE_SECTION     — always included (Steps 1-2, Step 4, General Rules)
+# _REMEDIATION_GITOPS_SECTION   — only when GitOps (ArgoCD/Flux) is detected
+# _REMEDIATION_HELM_SECTION     — only when Helm is detected
+# _REMEDIATION_MANUAL_SECTION   — always included (operator + manual fallback)
+#
+# When management_context is None (default), ALL sections are included for
+# full backward compatibility with existing callers.
+
+_REMEDIATION_CORE_SECTION: str = """
+### Remediation Reasoning Framework
+
+When recommending actions, DO NOT jump to "edit the YAML and re-apply". 
+First, reason about the PROCESS that caused the issue:
+
+#### Step 1: Identify the Change Source
+Use the management context from the analyzer's findings (detected via `kubectl_get_labels`):
+- Is this resource managed by GitOps (ArgoCD, Flux)? Look for annotations:
+  `argocd.argoproj.io/`, `fluxcd.io/`, `kustomize.toolkit.fluxcd.io/`
+- Is this managed by Helm? Look for labels: `app.kubernetes.io/managed-by: Helm`,
+  `helm.sh/chart`
+- Is this managed by an operator? Look for `OwnerReferences` in metadata
+- Was this a manual `kubectl apply`/`kubectl edit`? (no management annotations)
+
+#### Step 2: Reason About Root Process
+For each finding, answer: "How did this bad state get into the cluster?"
+
+Example reasoning chain:
+- "Duplicate volume exists" → WHY?
+- "One is manual in the YAML, one injected by webhook" → WHY is it manual?
+- "If GitOps is in place, someone committed this to the repo" → fix is in the repo
+- "If no GitOps, someone ran kubectl apply with a stale YAML" → fix is the process
+
+#### Step 3: Recommend Actions Based on Source
+"""
+
+_REMEDIATION_GITOPS_SECTION: str = """
+IF managed by GitOps:
+- Immediate: Investigate the Git source — is the conflicting definition in the 
+  repo? If yes, fix it there and let the pipeline reconcile.
+- DO NOT recommend `kubectl apply` or `kubectl patch` as first action — that would 
+  create GitOps drift and get reverted on next sync.
+- If the gatherer collected ArgoCD data (Step 10), reference the app sync status
+  and diff to identify drift. If the app is OutOfSync, recommend:
+  1. Fix the issue in the Git repository (the source of truth)
+  2. Wait for ArgoCD to detect and sync, or manually trigger sync after the Git fix
+- NEVER recommend `argocd app sync` to force-apply a broken state — only sync after
+  the Git source has been corrected.
+- Command: Show the git-level investigation, e.g., 
+  "Search your deployment YAML in Git for the duplicate volume definition and remove it"
+"""
+
+_REMEDIATION_HELM_SECTION: str = """
+IF managed by Helm:
+- Immediate: Check `helm get values <release>` for the conflicting value.
+- Fix in `values.yaml` and `helm upgrade`, not `kubectl apply`.
+- NEVER recommend `kubectl apply` or `kubectl patch` for Helm-managed resources — manual
+  changes will be reverted on the next `helm upgrade` and create dangerous state drift.
+- If the gatherer collected Helm data (Step 9), reference the release status and
+  history to identify which revision introduced the issue. Recommend:
+  ```
+  helm rollback <release> <known-good-revision> -n <namespace>
+  ```
+  for immediate mitigation, and a values.yaml fix for permanent resolution.
+"""
+
+_REMEDIATION_MANUAL_SECTION: str = """
+IF managed by operator:
+- DO NOT edit the managed resource directly — the operator will revert it.
+- Fix the CRD/CR that the operator watches.
+
+IF manual (no management annotations):
+- Then `kubectl apply -f` with corrected YAML is appropriate.
+- But ALSO recommend establishing GitOps or at minimum version-controlling 
+  the YAML to prevent recurrence.
+
+#### Step 4: Immediate Mitigation vs Permanent Fix
+Always separate:
+- **Immediate mitigation** (stop the bleeding): The fastest safe action to restore 
+  service. For webhook conflicts, this is often disabling the injection via annotation 
+  on the affected resource. For other issues, it might be a rollback to a known-good 
+  revision.
+- **Permanent fix** (fix the process): Address WHY the bad state was introduced. 
+  This is always about the delivery pipeline, not the cluster.
+
+#### General Rules
+1. When the root cause is a conflict between a manual resource definition and an 
+   automatically injected one (webhook, operator, sidecar), the immediate mitigation 
+   is to disable the automatic injection on the specific resource via its opt-out 
+   annotation. This is preferred because it's reversible, doesn't modify the spec, 
+   and survives reconciliation.
+2. The permanent fix is ALWAYS about the source of truth (Git repo, Helm chart, 
+   operator CR) — never about patching the live cluster directly.
+3. NEVER recommend `kubectl edit` in production.
+4. If you cannot determine the management method from the gathered data, state that 
+   explicitly and provide actions for BOTH scenarios (GitOps and manual).
+"""
+
+
+def build_reporter_prompt(
+    namespace: str = "",
+    datadog_api_enabled: bool = False,
+    management_context: str | None = None,
+) -> str:
     """Build the system instruction for the ``health_reporter`` agent.
 
     Injects the target namespace (if known) into the ``cluster_overview``
@@ -924,6 +1053,11 @@ def build_reporter_prompt(namespace: str = "", datadog_api_enabled: bool = False
         datadog_api_enabled: When ``True``, appends guidance for correlating
             Datadog API metrics (from the workload gatherer's Step 12) with
             Kubernetes findings when generating recommendations.
+        management_context: Optional hint about how the workload is managed
+            (e.g. ``"helm"``, ``"argocd"``, ``"gitops"``, ``"manual"``).
+            When provided, only the relevant remediation sub-sections are
+            included, reducing prompt length.  Pass ``None`` (default) to
+            include all sub-sections for full backward compatibility.
 
     Returns:
         A formatted system-instruction string for the health reporter agent.
@@ -933,6 +1067,24 @@ def build_reporter_prompt(namespace: str = "", datadog_api_enabled: bool = False
         if namespace and _sanitize_namespace(namespace)
         else "  - Namespace under investigation"
     )
+    # ── P2: build remediation section conditionally ──────────────────────
+    if management_context is None:
+        # backward compat: include all deployment-method sections
+        remediation_section = (
+            _REMEDIATION_CORE_SECTION
+            + _REMEDIATION_GITOPS_SECTION
+            + _REMEDIATION_HELM_SECTION
+            + _REMEDIATION_MANUAL_SECTION
+        )
+    else:
+        ctx = management_context.lower()
+        remediation_section = _REMEDIATION_CORE_SECTION
+        if "argocd" in ctx or "gitops" in ctx:
+            remediation_section += _REMEDIATION_GITOPS_SECTION
+        if "helm" in ctx:
+            remediation_section += _REMEDIATION_HELM_SECTION
+        remediation_section += _REMEDIATION_MANUAL_SECTION
+    # ─────────────────────────────────────────────────────────────────────
     datadog_api_section = (
         """
 
@@ -1228,88 +1380,7 @@ NEVER use empty values without explanation.
 1. NEVER recommend `kubectl edit` as a first option — it is dangerous in production (no audit trail, bypasses GitOps, one typo breaks things). Instead, recommend exporting YAML, editing, and applying with `kubectl apply -f`.
 2. NEVER say "No direct kubectl command" or "Requires external investigation" when vaig tools exist that can investigate. Available tools include: kubectl_describe for HPAs, gcloud_monitoring_query for metrics, gcloud_logging_query for logs.
 3. NEVER recommend rollback without first showing rollout history. Use `get_rollout_history` to show available revisions.
-
-### Remediation Reasoning Framework
-
-When recommending actions, DO NOT jump to "edit the YAML and re-apply". 
-First, reason about the PROCESS that caused the issue:
-
-#### Step 1: Identify the Change Source
-Use the management context from the analyzer's findings (detected via `kubectl_get_labels`):
-- Is this resource managed by GitOps (ArgoCD, Flux)? Look for annotations:
-  `argocd.argoproj.io/`, `fluxcd.io/`, `kustomize.toolkit.fluxcd.io/`
-- Is this managed by Helm? Look for labels: `app.kubernetes.io/managed-by: Helm`,
-  `helm.sh/chart`
-- Is this managed by an operator? Look for `OwnerReferences` in metadata
-- Was this a manual `kubectl apply`/`kubectl edit`? (no management annotations)
-
-#### Step 2: Reason About Root Process
-For each finding, answer: "How did this bad state get into the cluster?"
-
-Example reasoning chain:
-- "Duplicate volume exists" → WHY?
-- "One is manual in the YAML, one injected by webhook" → WHY is it manual?
-- "If GitOps is in place, someone committed this to the repo" → fix is in the repo
-- "If no GitOps, someone ran kubectl apply with a stale YAML" → fix is the process
-
-#### Step 3: Recommend Actions Based on Source
-
-IF managed by GitOps:
-- Immediate: Investigate the Git source — is the conflicting definition in the 
-  repo? If yes, fix it there and let the pipeline reconcile.
-- DO NOT recommend `kubectl apply` or `kubectl patch` as first action — that would 
-  create GitOps drift and get reverted on next sync.
-- If the gatherer collected ArgoCD data (Step 10), reference the app sync status
-  and diff to identify drift. If the app is OutOfSync, recommend:
-  1. Fix the issue in the Git repository (the source of truth)
-  2. Wait for ArgoCD to detect and sync, or manually trigger sync after the Git fix
-- NEVER recommend `argocd app sync` to force-apply a broken state — only sync after
-  the Git source has been corrected.
-- Command: Show the git-level investigation, e.g., 
-  "Search your deployment YAML in Git for the duplicate volume definition and remove it"
-
-IF managed by Helm:
-- Immediate: Check `helm get values <release>` for the conflicting value.
-- Fix in `values.yaml` and `helm upgrade`, not `kubectl apply`.
-- NEVER recommend `kubectl apply` or `kubectl patch` for Helm-managed resources — manual
-  changes will be reverted on the next `helm upgrade` and create dangerous state drift.
-- If the gatherer collected Helm data (Step 9), reference the release status and
-  history to identify which revision introduced the issue. Recommend:
-  ```
-  helm rollback <release> <known-good-revision> -n <namespace>
-  ```
-  for immediate mitigation, and a values.yaml fix for permanent resolution.
-
-IF managed by operator:
-- DO NOT edit the managed resource directly — the operator will revert it.
-- Fix the CRD/CR that the operator watches.
-
-IF manual (no management annotations):
-- Then `kubectl apply -f` with corrected YAML is appropriate.
-- But ALSO recommend establishing GitOps or at minimum version-controlling 
-  the YAML to prevent recurrence.
-
-#### Step 4: Immediate Mitigation vs Permanent Fix
-Always separate:
-- **Immediate mitigation** (stop the bleeding): The fastest safe action to restore 
-  service. For webhook conflicts, this is often disabling the injection via annotation 
-  on the affected resource. For other issues, it might be a rollback to a known-good 
-  revision.
-- **Permanent fix** (fix the process): Address WHY the bad state was introduced. 
-  This is always about the delivery pipeline, not the cluster.
-
-#### General Rules
-1. When the root cause is a conflict between a manual resource definition and an 
-   automatically injected one (webhook, operator, sidecar), the immediate mitigation 
-   is to disable the automatic injection on the specific resource via its opt-out 
-   annotation. This is preferred because it's reversible, doesn't modify the spec, 
-   and survives reconciliation.
-2. The permanent fix is ALWAYS about the source of truth (Git repo, Helm chart, 
-   operator CR) — never about patching the live cluster directly.
-3. NEVER recommend `kubectl edit` in production.
-4. If you cannot determine the management method from the gathered data, state that 
-   explicitly and provide actions for BOTH scenarios (GitOps and manual).
-
+{remediation_section}
 ### Rollback Recommendations (ALWAYS include context)
 When recommending rollback:
 1. Show the rollout history (from get_rollout_history output)
