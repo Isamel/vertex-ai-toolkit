@@ -2593,3 +2593,58 @@ class TestServiceStatusTableFormat:
         prompt = build_workload_gatherer_prompt()
         assert "[yes/no]" not in prompt
 
+
+# ═══════════════════════════════════════════════════════════════
+# Service Status column preservation — analyzer and reporter
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestServiceStatusColumnPreservation:
+    """Validate that the analyzer prompt mandates full 8-column Service Status
+    Summary and that the reporter prompt directs it to the workload_gatherer data.
+
+    Prevents regression where the analyzer strips the rich workload_gatherer
+    columns down to a 3-column summary, causing downstream data loss.
+    """
+
+    def test_analyzer_service_status_summary_has_eight_columns(self) -> None:
+        """Analyzer prompt must mandate the full 8-column Service Status Summary table."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        # All eight required column headers must be present
+        required_columns = [
+            "Service/Deployment",
+            "Namespace",
+            "Status",
+            "Ready",
+            "Restarts",
+            "CPU Usage",
+            "Memory Usage",
+            "Primary Issue",
+        ]
+        for col in required_columns:
+            assert col in HEALTH_ANALYZER_PROMPT, (
+                f"Analyzer Service Status Summary is missing column: '{col}'"
+            )
+
+    def test_analyzer_service_status_preserves_workload_gatherer_columns(self) -> None:
+        """Analyzer prompt must instruct the model to PRESERVE gatherer columns, not reduce them."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "PRESERVE all columns from the workload_gatherer" in HEALTH_ANALYZER_PROMPT
+        assert "Do NOT reduce or summarize the table" in HEALTH_ANALYZER_PROMPT
+
+    def test_reporter_directs_to_workload_gatherer_for_service_statuses(self) -> None:
+        """Reporter prompt must explicitly tell the model to use workload_gatherer data for service_statuses."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        # The reporter must reference the workload_gatherer section as the primary data source
+        assert "workload_gatherer" in HEALTH_REPORTER_PROMPT
+        assert "--- workload_gatherer ---" in HEALTH_REPORTER_PROMPT
+
+    def test_reporter_warns_analyzer_summary_is_insufficient(self) -> None:
+        """Reporter prompt must explicitly state the analyzer 3-col summary is NOT sufficient."""
+        from vaig.skills.service_health.prompts import HEALTH_REPORTER_PROMPT
+
+        assert "NOT sufficient to populate all ServiceStatus fields" in HEALTH_REPORTER_PROMPT
+
