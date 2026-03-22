@@ -734,7 +734,7 @@ def get_datadog_apm_services(
             return _execute_queries(_custom_api)
 
         with _get_dd_api_client(config) as client:
-            return _execute_queries(MetricsApi(client))
+            return _execute_queries(MetricsApi(client))  # type: ignore[no-untyped-call]
 
     except ApiException as exc:
         status = getattr(exc, "status", 0)
