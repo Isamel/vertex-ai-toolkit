@@ -2282,6 +2282,7 @@ class Orchestrator:
 
         # ── Concurrent phase ─────────────────────────────────────────────
         total_parallel = len(parallel_agents)
+        total_agents = len(parallel_agents) + len(sequential_agents)
         parallel_results: list[AgentResult] = []
         # Capture model IDs before the executor starts — needed for cost
         # accounting after futures complete (agent refs are still valid here).
@@ -2291,7 +2292,7 @@ class Orchestrator:
             futures_map: list[tuple[BaseAgent, concurrent.futures.Future[AgentResult]]] = []
             for idx, agent in enumerate(parallel_agents):
                 logger.info("parallel_sequential: submitting gatherer agent=%s", agent.name)
-                _fire_agent_progress(on_agent_progress, agent.name, idx, total_parallel, "start")
+                _fire_agent_progress(on_agent_progress, agent.name, idx, total_agents, "start")
                 kw: dict[str, Any] = {"context": query}
                 if isinstance(agent, ToolAwareAgent):
                     if on_tool_call is not None:
@@ -2314,7 +2315,7 @@ class Orchestrator:
                         content=f"Agent '{agent.name}' failed with an unexpected error.",
                         success=False,
                     )
-                _fire_agent_progress(on_agent_progress, agent.name, idx, total_parallel, "end")
+                _fire_agent_progress(on_agent_progress, agent.name, idx, total_agents, "end")
                 parallel_results.append(agent_result)
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
@@ -2340,7 +2341,6 @@ class Orchestrator:
                 )
 
         # ── Sequential phase ──────────────────────────────────────────────
-        total_agents = len(parallel_agents) + len(sequential_agents)
         current_context = merged_context
         context_chain: list[str] = [merged_context]
 
@@ -2564,13 +2564,14 @@ class Orchestrator:
 
         # ── Concurrent phase ─────────────────────────────────────────────
         total_parallel = len(parallel_agents)
+        total_agents = len(parallel_agents) + len(sequential_agents)
         # Capture model IDs before coroutines start — needed for cost
         # accounting after gather returns.
         parallel_agent_models: dict[str, str] = {a.name: a.model for a in parallel_agents}
 
         async def _run_gatherer(agent: BaseAgent, idx: int) -> AgentResult:
             logger.info("async parallel_sequential: launching gatherer=%s", agent.name)
-            _fire_agent_progress(on_agent_progress, agent.name, idx, total_parallel, "start")
+            _fire_agent_progress(on_agent_progress, agent.name, idx, total_agents, "start")
             try:
                 kw: dict[str, Any] = {"context": query}
                 if isinstance(agent, ToolAwareAgent):
@@ -2590,7 +2591,7 @@ class Orchestrator:
                     content=f"Agent '{agent.name}' failed with an unexpected error.",
                     success=False,
                 )
-            _fire_agent_progress(on_agent_progress, agent.name, idx, total_parallel, "end")
+            _fire_agent_progress(on_agent_progress, agent.name, idx, total_agents, "end")
             return agent_result
 
         coros = [_run_gatherer(agent, idx) for idx, agent in enumerate(parallel_agents)]
@@ -2621,7 +2622,6 @@ class Orchestrator:
                 )
 
         # ── Sequential phase ──────────────────────────────────────────────
-        total_agents = len(parallel_agents) + len(sequential_agents)
         current_context = merged_context
         context_chain: list[str] = [merged_context]
 

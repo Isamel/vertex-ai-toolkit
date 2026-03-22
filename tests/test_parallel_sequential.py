@@ -948,3 +948,149 @@ class TestStructuredReportPopulation:
 
         assert post_process_calls == [reporter_json]
         assert result.synthesized_output == "## Async Processed Markdown"
+
+
+class TestProgressCounterConsistency:
+    """Validate that on_agent_progress callbacks use the combined total (parallel +
+    sequential) as the denominator in BOTH the parallel and sequential phases.
+
+    Before the fix, the parallel phase used `total_parallel` (e.g. 4) while the
+    sequential phase used `total_agents` (e.g. 7), making the counter jump from
+    [4/4] back to [5/7].  After the fix, both phases must use `total_agents`.
+    """
+
+    def _make_gatherer(self, name: str) -> MagicMock:
+        agent = MagicMock(spec=SpecialistAgent)
+        agent.name = name
+        agent.role = f"{name} role"
+        agent.parallel_group = "gather"
+        agent.execute.return_value = _make_agent_result(name)
+        return agent
+
+    def _make_sequential(self, name: str) -> MagicMock:
+        agent = MagicMock(spec=SpecialistAgent)
+        agent.name = name
+        agent.role = f"{name} role"
+        agent.parallel_group = None
+        agent.execute.return_value = _make_agent_result(name)
+        return agent
+
+    def test_sync_parallel_phase_uses_combined_total(self) -> None:
+        """Parallel phase on_agent_progress callbacks must report the combined
+        (parallel + sequential) total, not just the parallel count."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        # 2 parallel gatherers + 1 sequential analyzer = 3 total
+        skill = ParallelSkill(
+            gatherer_names=["node_gatherer", "workload_gatherer"],
+            sequential_names=["analyzer"],
+        )
+        tool_registry = MagicMock(spec=ToolRegistry)
+        progress_calls: list[tuple[str, int, int, str]] = []
+
+        def _capture(agent_name: str, agent_index: int, total_agents: int, event: str) -> None:
+            progress_calls.append((agent_name, agent_index, total_agents, event))
+
+        with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
+            mock_create.return_value = [
+                self._make_gatherer("node_gatherer"),
+                self._make_gatherer("workload_gatherer"),
+                self._make_sequential("analyzer"),
+            ]
+            orchestrator.execute_with_tools(
+                "query",
+                skill,
+                tool_registry,
+                strategy="parallel_sequential",
+                on_agent_progress=_capture,
+            )
+
+        # All callbacks must use total=3 (2 parallel + 1 sequential), never total=2
+        totals_seen = {total for (_name, _idx, total, _event) in progress_calls}
+        assert totals_seen == {3}, (
+            f"Expected all progress callbacks to use total=3 (combined count), "
+            f"but saw totals: {totals_seen}. "
+            "Parallel phase must not use total_parallel=2 as the denominator."
+        )
+
+    def test_sync_no_denominator_reset_between_phases(self) -> None:
+        """The total denominator must never change between the parallel and
+        sequential phases — there must be no [N/parallel_count] then [M/total] jump."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        # 4 parallel gatherers + 3 sequential = 7 total (realistic pipeline shape)
+        skill = ParallelSkill(
+            gatherer_names=["node_gatherer", "workload_gatherer", "event_gatherer", "log_gatherer"],
+            sequential_names=["analyzer", "verifier", "reporter"],
+        )
+        tool_registry = MagicMock(spec=ToolRegistry)
+        progress_calls: list[tuple[str, int, int, str]] = []
+
+        def _capture(agent_name: str, agent_index: int, total_agents: int, event: str) -> None:
+            progress_calls.append((agent_name, agent_index, total_agents, event))
+
+        with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
+            mock_create.return_value = [
+                self._make_gatherer("node_gatherer"),
+                self._make_gatherer("workload_gatherer"),
+                self._make_gatherer("event_gatherer"),
+                self._make_gatherer("log_gatherer"),
+                self._make_sequential("analyzer"),
+                self._make_sequential("verifier"),
+                self._make_sequential("reporter"),
+            ]
+            orchestrator.execute_with_tools(
+                "query",
+                skill,
+                tool_registry,
+                strategy="parallel_sequential",
+                on_agent_progress=_capture,
+            )
+
+        totals_seen = {total for (_name, _idx, total, _event) in progress_calls}
+        assert len(totals_seen) == 1, (
+            f"Progress denominator changed between phases! Saw totals: {totals_seen}. "
+            "All callbacks must use the same combined total=7."
+        )
+        assert 7 in totals_seen, (
+            f"Expected combined total=7 in progress callbacks, got: {totals_seen}"
+        )
+
+    def test_async_parallel_phase_uses_combined_total(self) -> None:
+        """Async parallel phase on_agent_progress callbacks must also use the
+        combined total as the denominator."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        # 2 parallel + 1 sequential = 3 total
+        skill = ParallelSkill(
+            gatherer_names=["node_gatherer", "workload_gatherer"],
+            sequential_names=["analyzer"],
+        )
+        tool_registry = MagicMock(spec=ToolRegistry)
+        progress_calls: list[tuple[str, int, int, str]] = []
+
+        def _capture(agent_name: str, agent_index: int, total_agents: int, event: str) -> None:
+            progress_calls.append((agent_name, agent_index, total_agents, event))
+
+        with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
+            mock_create.return_value = [
+                self._make_gatherer("node_gatherer"),
+                self._make_gatherer("workload_gatherer"),
+                self._make_sequential("analyzer"),
+            ]
+            asyncio.run(
+                orchestrator.async_execute_with_tools(
+                    "query",
+                    skill,
+                    tool_registry,
+                    strategy="parallel_sequential",
+                    on_agent_progress=_capture,
+                )
+            )
+
+        totals_seen = {total for (_name, _idx, total, _event) in progress_calls}
+        assert totals_seen == {3}, (
+            f"Async path: expected all progress callbacks to use total=3 (combined), "
+            f"but saw totals: {totals_seen}."
+        )
+

@@ -113,21 +113,22 @@ _DATADOG_API_TOOLS_TABLE = """\
 _DATADOG_API_STEP = """\
 
 ### Step 12 — Datadog API Correlation (real-time metrics & monitors) — MANDATORY
-You MUST complete all four Datadog API tool calls below (calls 19–22). These are NOT
-optional — skipping them means the investigation is incomplete and the report will be
-missing real-time observability data. Note that ``query_datadog_metrics`` is called
-twice with different metric arguments (once for CPU, once for memory), so there are
-four calls in total across three unique tools. Do NOT proceed to later steps or produce
-any final output until all four calls described below are complete.
+You MUST complete calls 19–21 below. They are NOT optional — skipping them means the
+investigation is incomplete and the report will be missing real-time observability data.
+Note that ``query_datadog_metrics`` is called twice with different metric arguments
+(once for CPU, once for memory). Call 22 (``get_datadog_apm_services``) is CONDITIONAL
+— make it only when a ``service_name`` can be resolved (see call 22 for resolution rules).
+Do NOT proceed to later steps or produce any final output until calls 19–21 are complete.
 
 **LABEL-AWARE FILTERING — MANDATORY**: Before making these calls, check what Step 11
 (``get_datadog_config``) extracted from the workload's environment variables and labels:
 - If ``DD_SERVICE`` was found (or ``tags.datadoghq.com/service`` label), store it as
   ``<dd_service>``.
 - If ``DD_ENV`` was found (or ``tags.datadoghq.com/env`` label), store it as ``<dd_env>``.
-You MUST pass these values as ``service=`` and ``env=`` parameters in ALL four calls
-below. If a value was NOT found in Step 11, omit that parameter (do NOT pass None or
-empty string — simply leave the parameter out).
+You MUST pass these values as ``service=`` and ``env=`` parameters in calls 19–21 below.
+For call 22, the parameter name is ``service_name=`` (not ``service=``) — see call 22 for
+the full resolution rules. If a value was NOT found in Step 11, omit that parameter
+(do NOT pass None or empty string — simply leave the parameter out).
 
 19. You MUST call ``query_datadog_metrics(cluster_name="<cluster>", metric="cpu",
     service="<dd_service>", env="<dd_env>")``  [include service/env only if found in
@@ -144,13 +145,31 @@ empty string — simply leave the parameter out).
     env="<dd_env>")``  [include service/env only if found in Step 11]
     — Monitor alerts scoped to this service when labels are present, or all cluster
     monitors when they are absent. Note any alerts in Alert or Warn state.
-22. You MUST call ``get_datadog_apm_services(service_name="<dd_service>",
-    env="<dd_env>")``  [include service_name/env only if found in Step 11]
+22. You MUST call ``get_datadog_apm_services`` — but ONLY if you can determine a
+    ``service_name``. Resolve the service identity using this priority order:
+
+    **Tier 1 — Datadog Unified Service Tagging labels** (check pod/deployment YAML
+    output from earlier kubectl calls):
+    - ``tags.datadoghq.com/service`` → use as ``service_name``
+    - ``tags.datadoghq.com/env``     → use as ``env``
+    - ``tags.datadoghq.com/version`` → note for context only
+
+    **Tier 2 — Custom config labels** (if Tier 1 labels are absent, check for
+    custom Datadog labels configured in the tool descriptions, such as ``dd_service``,
+    ``dd_env``, or any env-var values extracted in Step 11):
+    - If ``DD_SERVICE`` was found in env vars → use as ``service_name``
+    - If ``DD_ENV`` was found in env vars → use as ``env``
+
+    **Tier 3 — SKIP** (if NEITHER Tier 1 nor Tier 2 yields a ``service_name``):
+    - SKIP this tool entirely — do NOT call it without a ``service_name``.
+    - Record "APM lookup skipped — no service identity found" in Raw Findings.
+
+    When ``service_name`` IS resolved: call
+    ``get_datadog_apm_services(service_name="<resolved>", env="<resolved>")``
     — confirm the service exists in the Datadog catalog and fetch ownership metadata
     (team, language, tier).  This tool returns service *definition* metadata, NOT live
     latency or error-rate metrics.
-    Example with labels: ``get_datadog_apm_services(service_name="my-api", env="production")``
-    Example without labels: ``get_datadog_apm_services()``
+    Example: ``get_datadog_apm_services(service_name="my-api", env="production")``
 
 Report findings as a "## Raw Findings (Datadog API)" section with:
 - Whether data is **service-filtered** (DD_SERVICE/DD_ENV were passed as params) or
