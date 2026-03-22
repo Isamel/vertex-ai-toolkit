@@ -2393,3 +2393,153 @@ class TestParallelSubGathererPromptBuilders:
             assert "pod_name" not in call, (
                 f"workload_gatherer uses 'pod_name' in kubectl_logs: {call}"
             )
+
+
+class TestBuildReporterPromptConditional:
+    """P2 — Conditional Remediation Framework: management_context parameter."""
+
+    def test_no_context_includes_all_sections(self) -> None:
+        """Default (None) includes all remediation sections — backward compat."""
+        from vaig.skills.service_health.prompts import (
+            _REMEDIATION_CORE_SECTION,
+            _REMEDIATION_GITOPS_SECTION,
+            _REMEDIATION_HELM_SECTION,
+            _REMEDIATION_MANUAL_SECTION,
+            build_reporter_prompt,
+        )
+
+        prompt = build_reporter_prompt()
+        assert _REMEDIATION_CORE_SECTION in prompt
+        assert _REMEDIATION_HELM_SECTION in prompt
+        assert _REMEDIATION_GITOPS_SECTION in prompt
+        assert _REMEDIATION_MANUAL_SECTION in prompt
+
+    def test_helm_context_includes_helm_excludes_gitops(self) -> None:
+        """helm context → Helm section included, GitOps section excluded."""
+        from vaig.skills.service_health.prompts import (
+            _REMEDIATION_GITOPS_SECTION,
+            _REMEDIATION_HELM_SECTION,
+            build_reporter_prompt,
+        )
+
+        prompt = build_reporter_prompt(management_context="helm")
+        assert _REMEDIATION_HELM_SECTION in prompt
+        assert _REMEDIATION_GITOPS_SECTION not in prompt
+
+    def test_argocd_context_includes_gitops_excludes_helm(self) -> None:
+        """argocd context → GitOps section included, Helm section excluded."""
+        from vaig.skills.service_health.prompts import (
+            _REMEDIATION_GITOPS_SECTION,
+            _REMEDIATION_HELM_SECTION,
+            build_reporter_prompt,
+        )
+
+        prompt = build_reporter_prompt(management_context="argocd")
+        assert _REMEDIATION_GITOPS_SECTION in prompt
+        assert _REMEDIATION_HELM_SECTION not in prompt
+
+    def test_gitops_context_includes_gitops_excludes_helm(self) -> None:
+        """gitops context → GitOps section included, Helm section excluded."""
+        from vaig.skills.service_health.prompts import (
+            _REMEDIATION_GITOPS_SECTION,
+            _REMEDIATION_HELM_SECTION,
+            build_reporter_prompt,
+        )
+
+        prompt = build_reporter_prompt(management_context="gitops")
+        assert _REMEDIATION_GITOPS_SECTION in prompt
+        assert _REMEDIATION_HELM_SECTION not in prompt
+
+    def test_manual_section_always_included(self) -> None:
+        """_REMEDIATION_MANUAL_SECTION is always present regardless of context."""
+        from vaig.skills.service_health.prompts import (
+            _REMEDIATION_MANUAL_SECTION,
+            build_reporter_prompt,
+        )
+
+        for ctx in [None, "helm", "argocd", "gitops", "manual"]:
+            prompt = build_reporter_prompt(management_context=ctx)
+            assert _REMEDIATION_MANUAL_SECTION in prompt, (
+                f"_REMEDIATION_MANUAL_SECTION missing for management_context={ctx!r}"
+            )
+
+    def test_core_section_always_included(self) -> None:
+        """_REMEDIATION_CORE_SECTION is always present regardless of context."""
+        from vaig.skills.service_health.prompts import (
+            _REMEDIATION_CORE_SECTION,
+            build_reporter_prompt,
+        )
+
+        for ctx in [None, "helm", "argocd", "gitops"]:
+            prompt = build_reporter_prompt(management_context=ctx)
+            assert _REMEDIATION_CORE_SECTION in prompt, (
+                f"_REMEDIATION_CORE_SECTION missing for management_context={ctx!r}"
+            )
+
+    def test_compound_context_helm_argocd_includes_both_sections(self) -> None:
+        """helm+argocd compound context → both GitOps and Helm sections included."""
+        from vaig.skills.service_health.prompts import (
+            _REMEDIATION_GITOPS_SECTION,
+            _REMEDIATION_HELM_SECTION,
+            build_reporter_prompt,
+        )
+
+        prompt = build_reporter_prompt(management_context="helm+argocd")
+        assert _REMEDIATION_GITOPS_SECTION in prompt
+        assert _REMEDIATION_HELM_SECTION in prompt
+
+    def test_health_reporter_prompt_constant_backward_compat(self) -> None:
+        """HEALTH_REPORTER_PROMPT module constant must still equal no-args call."""
+        from vaig.skills.service_health.prompts import (
+            HEALTH_REPORTER_PROMPT,
+            build_reporter_prompt,
+        )
+
+        assert build_reporter_prompt() == HEALTH_REPORTER_PROMPT
+
+
+class TestSystemInstructionSplit:
+    """P3 — SYSTEM_INSTRUCTION split into universal vs analysis-specific."""
+
+    def test_system_instruction_gatherer_exported(self) -> None:
+        """SYSTEM_INSTRUCTION_GATHERER must be a non-empty string export."""
+        from vaig.skills.service_health.prompts import SYSTEM_INSTRUCTION_GATHERER
+
+        assert isinstance(SYSTEM_INSTRUCTION_GATHERER, str)
+        assert len(SYSTEM_INSTRUCTION_GATHERER) > 0
+
+    def test_gatherer_contains_anti_hallucination(self) -> None:
+        """SYSTEM_INSTRUCTION_GATHERER must contain Anti-Hallucination rules."""
+        from vaig.skills.service_health.prompts import SYSTEM_INSTRUCTION_GATHERER
+
+        assert "NEVER invent" in SYSTEM_INSTRUCTION_GATHERER
+
+    def test_gatherer_does_not_contain_assessment_framework(self) -> None:
+        """SYSTEM_INSTRUCTION_GATHERER must NOT contain Assessment Framework."""
+        from vaig.skills.service_health.prompts import SYSTEM_INSTRUCTION_GATHERER
+
+        assert "Assessment Framework" not in SYSTEM_INSTRUCTION_GATHERER
+
+    def test_gatherer_does_not_contain_causal_reasoning(self) -> None:
+        """SYSTEM_INSTRUCTION_GATHERER must NOT contain Causal Reasoning Principle."""
+        from vaig.skills.service_health.prompts import SYSTEM_INSTRUCTION_GATHERER
+
+        assert "Causal Reasoning" not in SYSTEM_INSTRUCTION_GATHERER
+
+    def test_full_system_instruction_contains_all_original_content(self) -> None:
+        """SYSTEM_INSTRUCTION must still contain all original content after split."""
+        from vaig.skills.service_health.prompts import SYSTEM_INSTRUCTION
+
+        assert "NEVER invent" in SYSTEM_INSTRUCTION
+        assert "Assessment Framework" in SYSTEM_INSTRUCTION
+        assert "Causal Reasoning" in SYSTEM_INSTRUCTION
+
+    def test_system_instruction_equals_universal_plus_analysis(self) -> None:
+        """SYSTEM_INSTRUCTION must equal universal + analysis concatenation."""
+        from vaig.skills.service_health.prompts import (
+            _SYSTEM_INSTRUCTION_ANALYSIS,
+            _SYSTEM_INSTRUCTION_UNIVERSAL,
+            SYSTEM_INSTRUCTION,
+        )
+
+        assert SYSTEM_INSTRUCTION == _SYSTEM_INSTRUCTION_UNIVERSAL + _SYSTEM_INSTRUCTION_ANALYSIS
