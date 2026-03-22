@@ -205,3 +205,161 @@ class TestKubectlGetAll:
 
         assert not result.error
         assert "No resources found" in result.output
+
+
+# ═══════════════════════════════════════════════════════════════
+# kubectl_get with comma-separated resource types
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestKubectlGetCommaSeparated:
+    """Tests for comma-separated resource handling in kubectl_get."""
+
+    @patch("vaig.tools.gke.kubectl.kubectl_get", wraps=None)
+    def test_comma_resources_call_each_type(self, _: MagicMock) -> None:
+        """Comma-separated resources must delegate to per-type calls."""
+        from vaig.tools.base import ToolResult
+        from vaig.tools.gke.kubectl import _kubectl_get_comma_separated
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke.kubectl.kubectl_get") as mock_get:
+            mock_get.return_value = ToolResult(output="NAME\nfoo")
+            result = _kubectl_get_comma_separated(
+                "pods,deployments",
+                gke_config=cfg,
+                namespace="default",
+            )
+
+        called_resources = [call.args[0] for call in mock_get.call_args_list]
+        assert "pods" in called_resources
+        assert "deployments" in called_resources
+        assert not result.error
+
+    def test_comma_resources_combines_output_with_headers(self) -> None:
+        """Each resource type in a comma-separated list gets its own section header."""
+        from vaig.tools.base import ToolResult
+        from vaig.tools.gke.kubectl import _kubectl_get_comma_separated
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke.kubectl.kubectl_get") as mock_get:
+            mock_get.return_value = ToolResult(output="NAME\nfoo")
+            result = _kubectl_get_comma_separated(
+                "pods,deployments,replicasets",
+                gke_config=cfg,
+            )
+
+        assert not result.error
+        assert "=== PODS ===" in result.output
+        assert "=== DEPLOYMENTS ===" in result.output
+        assert "=== REPLICASETS ===" in result.output
+
+    def test_comma_resources_invalid_type_returns_error(self) -> None:
+        """An invalid resource type in a comma-separated list must return an error."""
+        from vaig.tools.gke.kubectl import _kubectl_get_comma_separated
+
+        cfg = _make_gke_config()
+        result = _kubectl_get_comma_separated(
+            "pods,not_a_real_resource_xyz",
+            gke_config=cfg,
+        )
+
+        assert result.error
+        assert "not_a_real_resource_xyz" in result.output
+
+    def test_comma_resources_partial_error_appended(self) -> None:
+        """If some types succeed and one fails at runtime, errors are appended."""
+        from vaig.tools.base import ToolResult
+        from vaig.tools.gke.kubectl import _kubectl_get_comma_separated
+
+        cfg = _make_gke_config()
+
+        def side_effect(resource: str, **kwargs: object) -> ToolResult:
+            if resource == "hpa":
+                return ToolResult(output="Access denied", error=True)
+            return ToolResult(output=f"NAME\n{resource}-item")
+
+        with patch("vaig.tools.gke.kubectl.kubectl_get", side_effect=side_effect):
+            result = _kubectl_get_comma_separated(
+                "pods,hpa",
+                gke_config=cfg,
+            )
+
+        assert not result.error  # partial success → no top-level error
+        assert "=== PODS ===" in result.output
+        assert "--- Errors ---" in result.output
+        assert "hpa: Access denied" in result.output
+
+    def test_comma_resources_all_errors_returns_error(self) -> None:
+        """If ALL types fail in a comma-separated request, the result is an error."""
+        from vaig.tools.base import ToolResult
+        from vaig.tools.gke.kubectl import _kubectl_get_comma_separated
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke.kubectl.kubectl_get") as mock_get:
+            mock_get.return_value = ToolResult(output="API error", error=True)
+            result = _kubectl_get_comma_separated(
+                "pods,deployments",
+                gke_config=cfg,
+            )
+
+        assert result.error
+        assert "Failed to list resources" in result.output
+
+    def test_single_resource_no_comma_works_normally(self) -> None:
+        """A single resource without a comma must still work through kubectl_get."""
+        from vaig.tools.gke.kubectl import kubectl_get
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients, \
+             patch("vaig.tools.gke._resources._list_resource") as mock_list:
+
+            mock_list_obj = MagicMock()
+            mock_list_obj.items = []
+            mock_list.return_value = mock_list_obj
+            mock_clients.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock())
+
+            result = kubectl_get("pods", gke_config=cfg, namespace="default")
+
+        assert not result.error
+
+    def test_kubectl_get_dispatches_comma_resource(self) -> None:
+        """kubectl_get with comma-separated resource must route to comma handler."""
+        from vaig.tools.gke.kubectl import kubectl_get
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.kubectl._kubectl_get_comma_separated") as mock_comma:
+            from vaig.tools.base import ToolResult
+            mock_comma.return_value = ToolResult(output="combined result")
+
+            result = kubectl_get("pods,deployments", gke_config=cfg)
+
+        mock_comma.assert_called_once()
+        assert result.output == "combined result"
+
+    def test_comma_with_whitespace_is_handled(self) -> None:
+        """Whitespace around commas must be stripped before validation."""
+        from vaig.tools.base import ToolResult
+        from vaig.tools.gke.kubectl import _kubectl_get_comma_separated
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke.kubectl.kubectl_get") as mock_get:
+            mock_get.return_value = ToolResult(output="NAME\nfoo")
+            result = _kubectl_get_comma_separated(
+                "pods , deployments , replicasets",
+                gke_config=cfg,
+            )
+
+        assert not result.error
+        called_resources = [call.args[0] for call in mock_get.call_args_list]
+        assert "pods" in called_resources
+        assert "deployments" in called_resources
+        assert "replicasets" in called_resources
+

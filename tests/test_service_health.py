@@ -2543,3 +2543,53 @@ class TestSystemInstructionSplit:
         )
 
         assert SYSTEM_INSTRUCTION == _SYSTEM_INSTRUCTION_UNIVERSAL + _SYSTEM_INSTRUCTION_ANALYSIS
+
+
+# ═══════════════════════════════════════════════════════════════
+# Service Status table format — language enforcement
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestServiceStatusTableFormat:
+    """Validate the Service Status table format in gatherer prompts.
+
+    Prevents regression of the 'ninguno' bug where Spanish-locale models
+    translated [yes/no] to non-English values because the placeholder was
+    ambiguous lowercase.
+    """
+
+    def test_sequential_gatherer_uses_yes_no_na_placeholder(self) -> None:
+        """Sequential gatherer Service Status table must use [Yes/No/N/A], not [yes/no]."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "[Yes/No/N/A]" in HEALTH_GATHERER_PROMPT
+        assert "[yes/no]" not in HEALTH_GATHERER_PROMPT
+
+    def test_sequential_gatherer_enforces_english_values(self) -> None:
+        """Sequential gatherer must explicitly require English in the Service Status table."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        assert "MUST be in English" in HEALTH_GATHERER_PROMPT
+
+    def test_sequential_gatherer_lists_example_translations_to_avoid(self) -> None:
+        """Prompt must name the specific translated values to reject."""
+        from vaig.skills.service_health.prompts import HEALTH_GATHERER_PROMPT
+
+        # Ensure common Spanish translations are explicitly blocked
+        assert "sí" in HEALTH_GATHERER_PROMPT or "ninguno" in HEALTH_GATHERER_PROMPT
+
+    def test_build_gatherer_prompt_uses_yes_no_na_placeholder(self) -> None:
+        """build_gatherer_prompt() output must also contain [Yes/No/N/A]."""
+        from vaig.skills.service_health.prompts import build_gatherer_prompt
+
+        prompt = build_gatherer_prompt(helm_enabled=True, argocd_enabled=True)
+        assert "[Yes/No/N/A]" in prompt
+        assert "[yes/no]" not in prompt
+
+    def test_parallel_workload_gatherer_has_no_ambiguous_placeholder(self) -> None:
+        """Parallel workload gatherer must not contain ambiguous [yes/no] placeholder."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt()
+        assert "[yes/no]" not in prompt
+
