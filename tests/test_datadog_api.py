@@ -364,11 +364,11 @@ class TestGetDatadogMonitors:
         assert "..." in result.output
 
 
-# ── get_datadog_apm_services ──────────────────────────────────
+# ── get_datadog_service_catalog ───────────────────────────────
 
 
-class TestGetDatadogApmServices:
-    """Tests for get_datadog_apm_services."""
+class TestGetDatadogServiceCatalog:
+    """Tests for get_datadog_service_catalog."""
 
     def setup_method(self) -> None:
         """Clear the discovery cache before each test."""
@@ -377,8 +377,8 @@ class TestGetDatadogApmServices:
         clear_discovery_cache()
 
     def test_returns_service_list(self, dd_config: DatadogAPIConfig) -> None:
-        """Returns formatted table of APM services."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+        """Returns formatted table of services from the service catalog."""
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
 
         mock_api = MagicMock()
         mock_api.list_service_definitions.return_value = MagicMock(
@@ -389,44 +389,44 @@ class TestGetDatadogApmServices:
         )
 
         with patch.dict("sys.modules", _make_dd_modules()):
-            result = get_datadog_apm_services(
+            result = get_datadog_service_catalog(
                 env="production",
                 config=dd_config,
                 _custom_api=mock_api,
             )
 
         assert result.error is False
-        assert "=== Datadog APM Services ===" in result.output
+        assert "=== Datadog Service Catalog ===" in result.output
         assert "frontend" in result.output
         assert "backend" in result.output
         assert "Total services: 2" in result.output
 
     def test_no_services_returns_appropriate_message(self, dd_config: DatadogAPIConfig) -> None:
         """Empty service list returns 'no services found' message."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
 
         mock_api = MagicMock()
         mock_api.list_service_definitions.return_value = MagicMock(data=[])
 
         with patch.dict("sys.modules", _make_dd_modules()):
-            result = get_datadog_apm_services(
+            result = get_datadog_service_catalog(
                 config=dd_config,
                 _custom_api=mock_api,
             )
 
         assert result.error is False
-        assert "No APM service definitions found" in result.output
+        assert "No service catalog entries found" in result.output
 
     def test_result_is_cached(self, dd_config: DatadogAPIConfig) -> None:
         """Second call with same args hits the cache and does NOT call the API again."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
 
         mock_api = MagicMock()
         mock_api.list_service_definitions.return_value = MagicMock(data=[_make_service()])
 
         with patch.dict("sys.modules", _make_dd_modules()):
             # First call — populates cache
-            result1 = get_datadog_apm_services(
+            result1 = get_datadog_service_catalog(
                 env="production",
                 cluster_name="my-cluster",
                 config=dd_config,
@@ -434,7 +434,7 @@ class TestGetDatadogApmServices:
             )
 
             # Second call — should return from cache WITHOUT calling the API again
-            result2 = get_datadog_apm_services(
+            result2 = get_datadog_service_catalog(
                 env="production",
                 cluster_name="my-cluster",
                 config=dd_config,
@@ -446,36 +446,36 @@ class TestGetDatadogApmServices:
 
     def test_different_env_not_cached(self, dd_config: DatadogAPIConfig) -> None:
         """Different env values use separate cache keys."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
 
         mock_api = MagicMock()
         mock_api.list_service_definitions.return_value = MagicMock(data=[_make_service()])
 
         with patch.dict("sys.modules", _make_dd_modules()):
-            get_datadog_apm_services(env="production", config=dd_config, _custom_api=mock_api)
-            get_datadog_apm_services(env="staging", config=dd_config, _custom_api=mock_api)
+            get_datadog_service_catalog(env="production", config=dd_config, _custom_api=mock_api)
+            get_datadog_service_catalog(env="staging", config=dd_config, _custom_api=mock_api)
 
         assert mock_api.list_service_definitions.call_count == 2
 
     def test_disabled_config_returns_error(self, dd_config_disabled: DatadogAPIConfig) -> None:
         """Disabled config returns error without calling API."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
 
         with patch.dict("sys.modules", _make_dd_modules()):
-            result = get_datadog_apm_services(config=dd_config_disabled)
+            result = get_datadog_service_catalog(config=dd_config_disabled)
 
         assert result.error is True
         assert "disabled" in result.output.lower()
 
     def test_cluster_name_shown_in_output(self, dd_config: DatadogAPIConfig) -> None:
         """Cluster name appears in output when provided."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
 
         mock_api = MagicMock()
         mock_api.list_service_definitions.return_value = MagicMock(data=[])
 
         with patch.dict("sys.modules", _make_dd_modules()):
-            result = get_datadog_apm_services(
+            result = get_datadog_service_catalog(
                 env="production",
                 cluster_name="prod-cluster",
                 config=dd_config,
@@ -486,7 +486,7 @@ class TestGetDatadogApmServices:
 
     def test_import_error_returns_install_message(self, dd_config: DatadogAPIConfig) -> None:
         """Missing datadog-api-client returns install instructions."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
 
         null_modules: dict[str, ModuleType | None] = {
             "datadog_api_client": None,
@@ -496,7 +496,7 @@ class TestGetDatadogApmServices:
             "datadog_api_client.v2.api.service_definition_api": None,
         }
         with patch.dict("sys.modules", null_modules):
-            result = get_datadog_apm_services(config=dd_config)
+            result = get_datadog_service_catalog(config=dd_config)
 
         assert result.error is True
         assert "pip install" in result.output
@@ -747,8 +747,8 @@ class TestGetDatadogMonitorsLabelFilters:
         mock_api.list_monitors.assert_not_called()
 
 
-class TestGetDatadogApmServicesLabelFilters:
-    """Tests for the new service_name filter parameter on get_datadog_apm_services."""
+class TestGetDatadogServiceCatalogLabelFilters:
+    """Tests for the service_name filter parameter on get_datadog_service_catalog."""
 
     def setup_method(self) -> None:
         """Clear the discovery cache before each test."""
@@ -760,7 +760,7 @@ class TestGetDatadogApmServicesLabelFilters:
         self, dd_config: DatadogAPIConfig
     ) -> None:
         """When service_name is provided, only the matching service is returned."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
 
         mock_api = MagicMock()
         mock_api.list_service_definitions.return_value = MagicMock(
@@ -772,7 +772,7 @@ class TestGetDatadogApmServicesLabelFilters:
         )
 
         with patch.dict("sys.modules", _make_dd_modules()):
-            result = get_datadog_apm_services(
+            result = get_datadog_service_catalog(
                 env="production",
                 service_name="frontend",
                 config=dd_config,
@@ -789,8 +789,8 @@ class TestGetDatadogApmServicesLabelFilters:
     def test_service_name_filter_no_match_returns_no_services(
         self, dd_config: DatadogAPIConfig
     ) -> None:
-        """When service_name matches nothing, returns 'no APM service definitions found'."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+        """When service_name matches nothing, returns 'no service catalog entries found'."""
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
 
         mock_api = MagicMock()
         mock_api.list_service_definitions.return_value = MagicMock(
@@ -800,20 +800,20 @@ class TestGetDatadogApmServicesLabelFilters:
         )
 
         with patch.dict("sys.modules", _make_dd_modules()):
-            result = get_datadog_apm_services(
+            result = get_datadog_service_catalog(
                 service_name="nonexistent-service",
                 config=dd_config,
                 _custom_api=mock_api,
             )
 
         assert result.error is False
-        assert "No APM service definitions found" in result.output
+        assert "No service catalog entries found." in result.output
 
     def test_backward_compat_no_service_name_returns_all(
         self, dd_config: DatadogAPIConfig
     ) -> None:
         """Without service_name, all services are returned (backward compat)."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
 
         mock_api = MagicMock()
         mock_api.list_service_definitions.return_value = MagicMock(
@@ -824,7 +824,7 @@ class TestGetDatadogApmServicesLabelFilters:
         )
 
         with patch.dict("sys.modules", _make_dd_modules()):
-            result = get_datadog_apm_services(
+            result = get_datadog_service_catalog(
                 env="production",
                 config=dd_config,
                 _custom_api=mock_api,
@@ -838,7 +838,7 @@ class TestGetDatadogApmServicesLabelFilters:
 
     def test_service_name_uses_separate_cache_key(self, dd_config: DatadogAPIConfig) -> None:
         """Calls with and without service_name use different cache keys (no cross-contamination)."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
 
         mock_api = MagicMock()
         mock_api.list_service_definitions.return_value = MagicMock(
@@ -850,9 +850,9 @@ class TestGetDatadogApmServicesLabelFilters:
 
         with patch.dict("sys.modules", _make_dd_modules()):
             # Unfiltered call
-            get_datadog_apm_services(env="production", config=dd_config, _custom_api=mock_api)
+            get_datadog_service_catalog(env="production", config=dd_config, _custom_api=mock_api)
             # Filtered call — different cache key, must hit the API again
-            get_datadog_apm_services(
+            get_datadog_service_catalog(
                 env="production", service_name="frontend", config=dd_config, _custom_api=mock_api
             )
 
@@ -1284,3 +1284,131 @@ class TestDetectionConfigEnvVars:
 
         assert result["has_datadog"] is True
         assert "DD_AGENT_HOST" in result["env_vars"]
+
+
+# ── get_datadog_apm_services (real APM trace metrics) ─────────
+
+
+def _make_metrics_response(
+    series: list[list[tuple[float, float | None]]] | None = None,
+) -> MagicMock:
+    """Build a mock MetricsApi.query_metrics response with optional data points.
+
+    Each element of ``series`` is a list of (timestamp, value) pairs for one series.
+    Pass an empty list to simulate no data.
+    """
+    if series is None:
+        series = [[(1700000000.0, 1.5), (1700000060.0, 2.0)]]
+
+    mock_series = []
+    for points in series:
+        s = MagicMock()
+        s.pointlist = [[t, v] for t, v in points]
+        mock_series.append(s)
+
+    resp = MagicMock()
+    resp.series = mock_series
+    return resp
+
+
+class TestGetDatadogApmServices:
+    """Tests for get_datadog_apm_services (real APM trace metrics via MetricsApi)."""
+
+    def setup_method(self) -> None:
+        """Clear the discovery cache before each test."""
+        from vaig.tools.gke._cache import clear_discovery_cache
+
+        clear_discovery_cache()
+
+    def test_returns_apm_metrics_table(self, dd_config: DatadogAPIConfig) -> None:
+        """When MetricsApi returns series with data, output contains the metrics table."""
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        mock_api = MagicMock()
+        # Return data for all three queries (hits, errors, duration)
+        mock_api.query_metrics.return_value = _make_metrics_response(
+            [[(1700000000.0, 5.0), (1700000060.0, 10.0)]]
+        )
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="my-service",
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        assert "=== Datadog APM Trace Metrics ===" in result.output
+        assert "my-service" in result.output
+        assert "production" in result.output
+        assert "Throughput:" in result.output
+        assert "Error rate:" in result.output
+        assert "Avg latency:" in result.output
+
+    def test_returns_not_found_when_no_series(self, dd_config: DatadogAPIConfig) -> None:
+        """When all metric queries return empty series, output contains a not-found message."""
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        mock_api = MagicMock()
+        # Return empty series for all queries
+        empty_resp = MagicMock()
+        empty_resp.series = []
+        mock_api.query_metrics.return_value = empty_resp
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="ghost-service",
+                env="staging",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        assert "ghost-service" in result.output
+        assert "No APM trace data found" in result.output
+
+    def test_uses_env_in_query(self, dd_config: DatadogAPIConfig) -> None:
+        """The env value is included in the metric query scope sent to MetricsApi."""
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = _make_metrics_response()
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            get_datadog_apm_services(
+                service_name="checkout",
+                env="staging",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        # Every call to query_metrics should have "env:staging" in the query string
+        for call_args in mock_api.query_metrics.call_args_list:
+            query_str = call_args.kwargs.get("query", "") or str(call_args)
+            assert "env:staging" in query_str
+
+    def test_caches_result(self, dd_config: DatadogAPIConfig) -> None:
+        """Calling get_datadog_apm_services twice with the same args only calls the API once."""
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = _make_metrics_response()
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result1 = get_datadog_apm_services(
+                service_name="cached-svc",
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+            result2 = get_datadog_apm_services(
+                service_name="cached-svc",
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        # 3 metric queries on first call, 0 on second call (served from cache)
+        assert mock_api.query_metrics.call_count == 3
+        assert result1.output == result2.output

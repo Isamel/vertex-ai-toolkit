@@ -2290,9 +2290,14 @@ class Orchestrator:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(total_parallel, 1)) as executor:
             futures_map: list[tuple[BaseAgent, concurrent.futures.Future[AgentResult]]] = []
-            for idx, agent in enumerate(parallel_agents):
+            # Fire a single collective start event for all parallel gatherers.
+            # Individual start events would all fire synchronously in the submission
+            # loop before any thread executes, causing the spinner to jump straight
+            # to [N/total] and get stuck. One collective event at idx=0 shows
+            # [1/total] parallel gatherers — running... while the threads work.
+            _fire_agent_progress(on_agent_progress, "parallel gatherers", 0, total_agents, "start")
+            for _idx, agent in enumerate(parallel_agents):
                 logger.info("parallel_sequential: submitting gatherer agent=%s", agent.name)
-                _fire_agent_progress(on_agent_progress, agent.name, idx, total_agents, "start")
                 kw: dict[str, Any] = {"context": query}
                 if isinstance(agent, ToolAwareAgent):
                     if on_tool_call is not None:
@@ -2571,7 +2576,6 @@ class Orchestrator:
 
         async def _run_gatherer(agent: BaseAgent, idx: int) -> AgentResult:
             logger.info("async parallel_sequential: launching gatherer=%s", agent.name)
-            _fire_agent_progress(on_agent_progress, agent.name, idx, total_agents, "start")
             try:
                 kw: dict[str, Any] = {"context": query}
                 if isinstance(agent, ToolAwareAgent):
@@ -2594,6 +2598,11 @@ class Orchestrator:
             _fire_agent_progress(on_agent_progress, agent.name, idx, total_agents, "end")
             return agent_result
 
+        # Fire a single collective start event for all parallel gatherers.
+        # Individual start events inside _run_gatherer would all fire synchronously
+        # in the coroutine creation loop before any coroutine actually executes,
+        # causing the same stuck-spinner issue as the synchronous path.
+        _fire_agent_progress(on_agent_progress, "parallel gatherers", 0, total_agents, "start")
         coros = [_run_gatherer(agent, idx) for idx, agent in enumerate(parallel_agents)]
         parallel_results: list[AgentResult] = await gather_with_errors(*coros, return_exceptions=False)
 

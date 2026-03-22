@@ -1094,3 +1094,112 @@ class TestProgressCounterConsistency:
             f"but saw totals: {totals_seen}."
         )
 
+    def test_sync_parallel_phase_fires_single_collective_start(self) -> None:
+        """Parallel phase must fire exactly ONE 'start' event for the whole group,
+        not one per gatherer agent. Individual per-agent start events would all fire
+        synchronously before any thread executes, causing the spinner to jump to
+        [N/total] and get stuck.  The collective event uses agent_name='parallel
+        gatherers' at idx=0."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        skill = ParallelSkill(
+            gatherer_names=["node_gatherer", "workload_gatherer", "event_gatherer", "log_gatherer"],
+            sequential_names=["analyzer"],
+        )
+        tool_registry = MagicMock(spec=ToolRegistry)
+        start_events: list[tuple[str, int, int]] = []
+
+        def _capture(agent_name: str, agent_index: int, total_agents: int, event: str) -> None:
+            if event == "start":
+                start_events.append((agent_name, agent_index, total_agents))
+
+        with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
+            mock_create.return_value = [
+                self._make_gatherer("node_gatherer"),
+                self._make_gatherer("workload_gatherer"),
+                self._make_gatherer("event_gatherer"),
+                self._make_gatherer("log_gatherer"),
+                self._make_sequential("analyzer"),
+            ]
+            orchestrator.execute_with_tools(
+                "query",
+                skill,
+                tool_registry,
+                strategy="parallel_sequential",
+                on_agent_progress=_capture,
+            )
+
+        # Parallel phase: exactly one collective start event
+        parallel_start_events = [e for e in start_events if e[0] == "parallel gatherers"]
+        assert len(parallel_start_events) == 1, (
+            f"Expected exactly 1 collective 'parallel gatherers' start event, "
+            f"got {len(parallel_start_events)}: {parallel_start_events}"
+        )
+        # The collective event must be at idx=0 with the combined total
+        name, idx, total = parallel_start_events[0]
+        assert idx == 0, f"Collective start event must be at idx=0, got idx={idx}"
+        assert total == 5, f"Collective start total must be 5 (4+1), got {total}"
+
+        # No individual per-gatherer start events
+        individual_gatherer_starts = [
+            e for e in start_events
+            if e[0] in {"node_gatherer", "workload_gatherer", "event_gatherer", "log_gatherer"}
+        ]
+        assert individual_gatherer_starts == [], (
+            f"Expected no individual per-gatherer start events, got: {individual_gatherer_starts}"
+        )
+
+        # Sequential phase still fires its own start event
+        sequential_starts = [e for e in start_events if e[0] == "analyzer"]
+        assert len(sequential_starts) == 1, (
+            f"Sequential agent must still fire its own start event, got: {sequential_starts}"
+        )
+
+    def test_async_parallel_phase_fires_single_collective_start(self) -> None:
+        """Async path: parallel phase must fire exactly ONE collective start event."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        skill = ParallelSkill(
+            gatherer_names=["node_gatherer", "workload_gatherer", "event_gatherer"],
+            sequential_names=["analyzer"],
+        )
+        tool_registry = MagicMock(spec=ToolRegistry)
+        start_events: list[tuple[str, int, int]] = []
+
+        def _capture(agent_name: str, agent_index: int, total_agents: int, event: str) -> None:
+            if event == "start":
+                start_events.append((agent_name, agent_index, total_agents))
+
+        with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
+            mock_create.return_value = [
+                self._make_gatherer("node_gatherer"),
+                self._make_gatherer("workload_gatherer"),
+                self._make_gatherer("event_gatherer"),
+                self._make_sequential("analyzer"),
+            ]
+            asyncio.run(
+                orchestrator.async_execute_with_tools(
+                    "query",
+                    skill,
+                    tool_registry,
+                    strategy="parallel_sequential",
+                    on_agent_progress=_capture,
+                )
+            )
+
+        # Parallel phase: exactly one collective start event
+        parallel_start_events = [e for e in start_events if e[0] == "parallel gatherers"]
+        assert len(parallel_start_events) == 1, (
+            f"Async: expected exactly 1 collective 'parallel gatherers' start event, "
+            f"got {len(parallel_start_events)}: {parallel_start_events}"
+        )
+
+        # No individual per-gatherer start events
+        individual_gatherer_starts = [
+            e for e in start_events
+            if e[0] in {"node_gatherer", "workload_gatherer", "event_gatherer"}
+        ]
+        assert individual_gatherer_starts == [], (
+            f"Async: expected no individual per-gatherer start events, got: {individual_gatherer_starts}"
+        )
+

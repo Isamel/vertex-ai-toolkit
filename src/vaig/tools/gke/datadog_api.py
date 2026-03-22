@@ -466,7 +466,7 @@ def get_datadog_monitors(
         return ToolResult(output="Unexpected error fetching Datadog monitors. See logs for details.", error=True)
 
 
-def get_datadog_apm_services(
+def get_datadog_service_catalog(
     *,
     env: str = "production",
     cluster_name: str = "",
@@ -474,14 +474,16 @@ def get_datadog_apm_services(
     config: DatadogAPIConfig | None = None,
     _custom_api: Any = None,
 ) -> ToolResult:
-    """Fetch service catalog entries from the Datadog Service Definition v2 API.
+    """Fetch service ownership metadata from the Datadog Service Catalog (Service Definition v2 API).
 
     Returns service names, owning team, primary language, and tier for all
     registered services in the service catalog.  Results are cached for 60
     seconds per (env, cluster, service_name) combination.
 
     Note: this function retrieves *service definitions* (catalog metadata),
-    not live APM metrics such as latency or error rate.
+    not live APM metrics such as latency or error rate.  To get live trace
+    data (throughput, error rate, latency), use ``get_datadog_apm_services``
+    instead.
 
     Args:
         env: Datadog environment tag (e.g. ``"production"``, ``"staging"``).
@@ -515,7 +517,7 @@ def get_datadog_apm_services(
             return ToolResult(output=str(exc), error=True)
 
     # Cache check (TTL = 60s) — include service_name in key for filtered results
-    cache_key = _cache._cache_key_discovery("dd_apm_services", env, cluster_name, service_name or "")
+    cache_key = _cache._cache_key_discovery("dd_service_catalog", env, cluster_name, service_name or "")
     cached = _cache._get_cached(cache_key)
     if cached is not None:
         return ToolResult(output=cached, error=False)
@@ -547,7 +549,7 @@ def get_datadog_apm_services(
             services = list(all_services)
 
         lines: list[str] = [
-            "=== Datadog APM Services ===",
+            "=== Datadog Service Catalog ===",
             f"Environment: {env}",
         ]
         if cluster_name:
@@ -557,7 +559,7 @@ def get_datadog_apm_services(
         lines.append("")
 
         if not services:
-            lines.append("No APM service definitions found.")
+            lines.append("No service catalog entries found.")
         else:
             lines.append(f"  {'SERVICE':<40} {'TEAM':<20} {'LANGUAGE':<15} {'TIER':<10}")
             lines.append("  " + "-" * 85)
@@ -592,11 +594,148 @@ def get_datadog_apm_services(
     except ApiException as exc:
         status = getattr(exc, "status", 0)
         msg = _dd_error_message(status)
-        logger.warning("Datadog APM services API error (HTTP %s): %s", status, exc)
+        logger.warning("Datadog service catalog API error (HTTP %s): %s", status, exc)
+        return ToolResult(output=msg, error=True)
+    except Exception:  # noqa: BLE001
+        logger.exception("Unexpected error in get_datadog_service_catalog")
+        return ToolResult(output="Unexpected error retrieving service catalog. See logs for details.", error=True)
+
+
+def get_datadog_apm_services(
+    *,
+    service_name: str,
+    env: str = "production",
+    config: DatadogAPIConfig | None = None,
+    _custom_api: Any = None,
+) -> ToolResult:
+    """Fetch live APM trace metrics for a specific service from Datadog.
+
+    Queries Datadog trace metrics (throughput, error rate, latency) for the
+    given service and environment using the Metrics v1 API.  The ``env``
+    parameter is used to scope the query — only trace data tagged with the
+    matching environment is returned.
+
+    Results are cached for 60 seconds per (service_name, env) combination.
+
+    Args:
+        service_name: Service name to query — must match the ``service`` tag
+            in Datadog APM (typically from ``tags.datadoghq.com/service``
+            label or custom APM instrumentation).  Required.
+        env: Datadog environment tag (e.g. ``"production"``, ``"staging"``).
+            Used to scope the APM query.  Defaults to ``"production"``.
+        config: Optional ``DatadogAPIConfig`` (for testing / injection).
+        _custom_api: Optional pre-configured Datadog MetricsApi (for testing).
+    """
+    try:
+        from datadog_api_client.exceptions import ApiException  # noqa: WPS433
+        from datadog_api_client.v1.api.metrics_api import MetricsApi  # noqa: WPS433
+    except ImportError:
+        return ToolResult(output=_ERR_NOT_INSTALLED, error=True)
+
+    if config is None:
+        from vaig.core.config import get_settings  # noqa: WPS433
+
+        config = get_settings().datadog
+
+    if not config.enabled:
+        return ToolResult(output=_ERR_NOT_ENABLED, error=True)
+
+    # Validate service_name before cache lookup
+    try:
+        service_name = _sanitize_tag_value("service_name", service_name)
+    except ValueError as exc:
+        return ToolResult(output=str(exc), error=True)
+
+    if not service_name:
+        return ToolResult(output="service_name is required for APM lookup.", error=True)
+
+    # Cache check (TTL = 60s)
+    cache_key = _cache._cache_key_discovery("dd_apm_trace", service_name, env)
+    cached = _cache._get_cached(cache_key)
+    if cached is not None:
+        return ToolResult(output=cached, error=False)
+
+    now = int(time.time())
+    start = now - 900  # 15-minute lookback window
+    scope = f"service:{service_name},env:{env}"
+
+    # Metric queries: throughput (hits), errors, duration
+    metric_queries = {
+        "hits": f"sum:trace.web.request.hits{{{scope}}}.as_rate()",
+        "errors": f"sum:trace.web.request.errors{{{scope}}}.as_rate()",
+        "duration": f"avg:trace.web.request.duration{{{scope}}}",
+    }
+
+    try:
+        results: dict[str, float | None] = {}
+        found_any_series = False
+
+        for metric_key, query in metric_queries.items():
+            if _custom_api is not None:
+                api = _custom_api
+            else:
+                with _get_dd_api_client(config) as client:
+                    api = MetricsApi(client)
+
+            response = api.query_metrics(_from=start, to=now, query=query)
+            series = getattr(response, "series", []) or []
+
+            if not series:
+                results[metric_key] = None
+                continue
+
+            found_any_series = True
+            # Collect all non-None data points across all series
+            all_points: list[float] = []
+            for s in series:
+                for point in getattr(s, "pointlist", []) or []:
+                    if point[1] is not None:
+                        all_points.append(point[1])
+
+            results[metric_key] = sum(all_points) / len(all_points) if all_points else None
+
+        if not found_any_series:
+            output = (
+                f"No APM trace data found for service '{service_name}' in env '{env}'. "
+                "Verify the service_name matches the 'service' tag in Datadog APM."
+            )
+            return ToolResult(output=output, error=False)
+
+        # Format output
+        hits = results.get("hits")
+        errors = results.get("errors")
+        duration = results.get("duration")
+
+        throughput_str = f"{hits:.2f} req/s" if hits is not None else "N/A"
+        error_rate_str = (
+            f"{(errors / hits * 100):.2f}%" if hits is not None and hits > 0 and errors is not None
+            else ("0.00%" if hits is not None and hits == 0 else "N/A")
+        )
+        latency_str = f"{(duration * 1000):.2f} ms" if duration is not None else "N/A"
+
+        lines: list[str] = [
+            "=== Datadog APM Trace Metrics ===",
+            f"Service:    {service_name}",
+            f"Env:        {env}",
+            "Window:     last 15 minutes",
+            "",
+            f"Throughput: {throughput_str}",
+            f"Error rate: {error_rate_str}",
+            f"Avg latency:{latency_str}",
+        ]
+
+        output = "\n".join(lines)
+        _cache._set_cache(cache_key, output)
+        return ToolResult(output=output, error=False)
+
+    except ApiException as exc:
+        status = getattr(exc, "status", 0)
+        msg = _dd_error_message(status)
+        logger.warning("Datadog APM trace metrics API error (HTTP %s): %s", status, exc)
         return ToolResult(output=msg, error=True)
     except Exception:  # noqa: BLE001
         logger.exception("Unexpected error in get_datadog_apm_services")
-        return ToolResult(output="Unexpected error retrieving APM services. See logs for details.", error=True)
+        return ToolResult(output="Unexpected error retrieving APM trace metrics. See logs for details.", error=True)
 
 
 # ── Async wrappers ───────────────────────────────────────────
@@ -605,4 +744,5 @@ from vaig.core.async_utils import to_async  # noqa: E402
 
 async_query_datadog_metrics = to_async(query_datadog_metrics)
 async_get_datadog_monitors = to_async(get_datadog_monitors)
+async_get_datadog_service_catalog = to_async(get_datadog_service_catalog)
 async_get_datadog_apm_services = to_async(get_datadog_apm_services)

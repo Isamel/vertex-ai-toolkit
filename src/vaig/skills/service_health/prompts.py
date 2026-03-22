@@ -108,7 +108,8 @@ _ARGOCD_TOOLS_TABLE = """\
 _DATADOG_API_TOOLS_TABLE = """\
 | `query_datadog_metrics` | `cluster_name` | `metric`, `from_ts`, `to_ts`, `service`, `env` |
 | `get_datadog_monitors` | | `cluster_name`, `state`, `service`, `env` |
-| `get_datadog_apm_services` | | `env`, `cluster_name`, `service_name` |"""
+| `get_datadog_service_catalog` | | `env`, `cluster_name`, `service_name` |
+| `get_datadog_apm_services` | `service_name` | `env` |"""
 
 _DATADOG_API_STEP = """\
 
@@ -116,8 +117,9 @@ _DATADOG_API_STEP = """\
 You MUST complete calls 19–21 below. They are NOT optional — skipping them means the
 investigation is incomplete and the report will be missing real-time observability data.
 Note that ``query_datadog_metrics`` is called twice with different metric arguments
-(once for CPU, once for memory). Call 22 (``get_datadog_apm_services``) is CONDITIONAL
-— make it only when a ``service_name`` can be resolved (see call 22 for resolution rules).
+(once for CPU, once for memory). Calls 22–23 (``get_datadog_service_catalog`` and
+``get_datadog_apm_services``) are CONDITIONAL — make them only when a ``service_name``
+can be resolved (see calls 22–23 for resolution rules).
 Do NOT proceed to later steps or produce any final output until calls 19–21 are complete.
 
 **LABEL-AWARE FILTERING — MANDATORY**: Before making these calls, check what Step 11
@@ -126,9 +128,9 @@ Do NOT proceed to later steps or produce any final output until calls 19–21 ar
   ``<dd_service>``.
 - If ``DD_ENV`` was found (or ``tags.datadoghq.com/env`` label), store it as ``<dd_env>``.
 You MUST pass these values as ``service=`` and ``env=`` parameters in calls 19–21 below.
-For call 22, the parameter name is ``service_name=`` (not ``service=``) — see call 22 for
-the full resolution rules. If a value was NOT found in Step 11, omit that parameter
-(do NOT pass None or empty string — simply leave the parameter out).
+For calls 22–23, the parameter name is ``service_name=`` (not ``service=``) — see calls
+22–23 for the full resolution rules. If a value was NOT found in Step 11, omit that
+parameter (do NOT pass None or empty string — simply leave the parameter out).
 
 19. You MUST call ``query_datadog_metrics(cluster_name="<cluster>", metric="cpu",
     service="<dd_service>", env="<dd_env>")``  [include service/env only if found in
@@ -145,7 +147,7 @@ the full resolution rules. If a value was NOT found in Step 11, omit that parame
     env="<dd_env>")``  [include service/env only if found in Step 11]
     — Monitor alerts scoped to this service when labels are present, or all cluster
     monitors when they are absent. Note any alerts in Alert or Warn state.
-22. You MUST call ``get_datadog_apm_services`` — but ONLY if you can determine a
+22. Call ``get_datadog_service_catalog`` — but ONLY if you can determine a
     ``service_name``. Resolve the service identity using this priority order:
 
     **Tier 1 — Datadog Unified Service Tagging labels** (check pod/deployment YAML
@@ -162,13 +164,28 @@ the full resolution rules. If a value was NOT found in Step 11, omit that parame
 
     **Tier 3 — SKIP** (if NEITHER Tier 1 nor Tier 2 yields a ``service_name``):
     - SKIP this tool entirely — do NOT call it without a ``service_name``.
-    - Record "APM lookup skipped — no service identity found" in Raw Findings.
+    - Record "Service catalog lookup skipped — no service identity found" in Raw Findings.
 
     When ``service_name`` IS resolved: call
-    ``get_datadog_apm_services(service_name="<resolved>", env="<resolved>")``
+    ``get_datadog_service_catalog(service_name="<resolved>", env="<resolved>")``
     — confirm the service exists in the Datadog catalog and fetch ownership metadata
     (team, language, tier).  This tool returns service *definition* metadata, NOT live
     latency or error-rate metrics.
+    Example: ``get_datadog_service_catalog(service_name="my-api", env="production")``
+
+23. Call ``get_datadog_apm_services`` — but ONLY if the same ``service_name`` was
+    resolved in call 22. This tool queries LIVE APM trace data (throughput, error rate,
+    avg latency) for the last 15 minutes, scoped to the resolved service and env.
+    It complements call 22: call 22 gives ownership metadata, call 23 gives real-time
+    performance signals.
+
+    **Tier 3 — SKIP** (same rule as call 22 — no ``service_name``, no call):
+    - SKIP if no service identity was found.
+    - Record "APM trace lookup skipped — no service identity found" in Raw Findings.
+
+    When ``service_name`` IS resolved: call
+    ``get_datadog_apm_services(service_name="<resolved>", env="<resolved>")``
+    — fetch live throughput, error rate, and latency.
     Example: ``get_datadog_apm_services(service_name="my-api", env="production")``
 
 Report findings as a "## Raw Findings (Datadog API)" section with:
@@ -178,6 +195,7 @@ Report findings as a "## Raw Findings (Datadog API)" section with:
 - Any monitors currently in Alert or Warn state (name, status, query)
 - CPU/memory trends that contradict or confirm the kubectl_top data
 - Whether the service was found in the Datadog service catalog (team, language, tier ownership metadata)
+- Live APM trace metrics: throughput (req/s), error rate (%), avg latency (ms) — if available
 - If the service is absent from the catalog: note that tracing may be misconfigured or inactive
 - If no issues found: "No active Datadog monitors or APM anomalies detected."
 """
@@ -1136,11 +1154,13 @@ Always state the scope in the observability finding's ``evidence`` field.
   finding with ``category="observability"`` and the appropriate severity (Alert → HIGH,
   Warn → MEDIUM).  Include the monitor query as evidence.
 - **APM service cross-reference**: When ``DD_SERVICE`` was extracted from the workload,
-  verify that this service name appears in ``get_datadog_apm_services`` results.
+  verify that this service name appears in ``get_datadog_service_catalog`` results.
   If the service is ABSENT from the catalog, create an INFO finding:
   ``"Service <dd_service> not found in Datadog service catalog — tracing may be misconfigured or inactive."``
   If the service IS present, note its ownership metadata (team, language, tier) in the findings.
-  Do NOT infer p99 latency or error rate from this tool — it returns catalog metadata only.
+  Also check ``get_datadog_apm_services`` results for live performance data (throughput,
+  error rate, latency).  Do NOT infer p99 latency or error rate from the service catalog tool
+  — it returns catalog metadata only.  Use ``get_datadog_apm_services`` for live metrics.
 - **Immediate Actions**: When Datadog metrics show high latency or elevated error rates
   that correlate with a CRITICAL or HIGH Kubernetes finding, reference the Datadog data
   in the ``why`` field of the corresponding recommendation.  Include the ``DD_SERVICE``
