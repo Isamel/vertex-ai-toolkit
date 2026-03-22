@@ -23,6 +23,7 @@ from .datadog import get_datadog_config
 from .datadog_api import (
     get_datadog_apm_services,
     get_datadog_monitors,
+    get_datadog_service_catalog,
     query_datadog_metrics,
 )
 from .helm import (
@@ -1395,9 +1396,9 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ),
             ToolDef(
-                name="get_datadog_apm_services",
+                name="get_datadog_service_catalog",
                 description=(
-                    "Fetch service catalog entries from the Datadog Service Definition v2 API / service catalog. "
+                    "Fetch service ownership metadata from the Datadog Service Catalog (Service Definition v2 API). "
                     "Returns service name, team, language, and tier ownership metadata for a specific service. "
                     "Always provide service_name — calling without it returns all registered services and should "
                     "be avoided (high cost, low signal). Resolve service_name from 'tags.datadoghq.com/service' "
@@ -1414,14 +1415,14 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     ToolParam(
                         name="cluster_name",
                         type="string",
-                        description="Optional cluster name to scope the APM query",
+                        description="Optional cluster name to include in the output header",
                         required=False,
                     ),
                     ToolParam(
                         name="service_name",
                         type="string",
                         description=(
-                            "Service name to filter APM results. "
+                            "Service name to filter catalog results. "
                             "Look for 'tags.datadoghq.com/service' label on pods/deployments first, "
                             "then custom Datadog labels from config (e.g. DD_SERVICE env var). "
                             "Do NOT call this tool without a service_name — if unknown, skip the call entirely."
@@ -1431,8 +1432,43 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ],
                 execute=lambda env="production", cluster_name="",
                         service_name=None,
-                        _dd=_dd_config: get_datadog_apm_services(
+                        _dd=_dd_config: get_datadog_service_catalog(
                     env=env, cluster_name=cluster_name, service_name=service_name, config=_dd,
+                ),
+            ),
+            ToolDef(
+                name="get_datadog_apm_services",
+                description=(
+                    "Fetch live APM trace metrics for a specific service from Datadog. "
+                    "Returns throughput, error rate, and avg latency from actual trace data over the last 15 minutes. "
+                    "Use this for real-time performance data — NOT for ownership metadata (use get_datadog_service_catalog for that). "
+                    "Always provide service_name — it must match the 'service' tag in Datadog APM. "
+                    "Results are cached for 60 seconds. Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="service_name",
+                        type="string",
+                        description=(
+                            "Service name to query APM trace metrics for. Required. "
+                            "Must match the 'service' tag in Datadog APM — typically from the "
+                            "'tags.datadoghq.com/service' label or custom APM instrumentation (DD_SERVICE env var)."
+                        ),
+                        required=True,
+                    ),
+                    ToolParam(
+                        name="env",
+                        type="string",
+                        description=(
+                            "Datadog environment tag used to scope the APM query "
+                            "(e.g. production, staging) — default: production"
+                        ),
+                        required=False,
+                    ),
+                ],
+                execute=lambda service_name, env="production",
+                        _dd=_dd_config: get_datadog_apm_services(
+                    service_name=service_name, env=env, config=_dd,
                 ),
             ),
         ])
