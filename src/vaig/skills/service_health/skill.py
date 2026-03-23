@@ -270,7 +270,7 @@ class ServiceHealthSkill(BaseSkill):
         Pipeline structure:
         - **Parallel group** (``parallel_group="gather"``): 4 sub-gatherers,
           each covering a focused subset of the 10-step investigation checklist.
-          All use ``gemini-2.5-flash`` for speed and cost efficiency.
+          All use ``gemini-2.5-pro`` for speed and cost efficiency.
         - **Sequential tail** (unchanged): health_analyzer → health_verifier →
           health_reporter.  The merged output of the parallel group is passed
           as context to the analyzer.
