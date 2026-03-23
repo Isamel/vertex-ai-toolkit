@@ -2779,33 +2779,45 @@ class TestDatadogAPMTagResolution:
             "source of truth for deployment status."
         )
 
-    def test_workload_gatherer_datadog_step_before_output_format(self) -> None:
-        """In build_workload_gatherer_prompt, the Datadog step must appear BEFORE
-        the MANDATORY OUTPUT FORMAT section.
+    def test_datadog_step_moved_to_dedicated_gatherer_prompt(self) -> None:
+        """After the split-workload-gatherer refactor, Step 12 (Datadog API Correlation)
+        must NO LONGER be injected into build_workload_gatherer_prompt and MUST be the
+        core content of build_datadog_gatherer_prompt.
 
-        Root cause of the regression: the Datadog step was placed inside the output
-        format block, causing the LLM to treat it as a template rather than an action.
+        Regression guard: the old behaviour embedded the Datadog step inside the
+        workload_gatherer output format block, causing the LLM to treat it as a
+        template. The new architecture gives Datadog its own focused agent prompt.
         """
-        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
-
-        prompt = build_workload_gatherer_prompt(namespace="default", datadog_api_enabled=True)
-
-        datadog_pos = prompt.find("Step 12 — Datadog API Correlation")
-        output_format_pos = prompt.find("MANDATORY OUTPUT FORMAT")
-
-        assert datadog_pos != -1, (
-            "Datadog step must be present in workload_gatherer_prompt when "
-            "datadog_api_enabled=True."
+        from vaig.skills.service_health.prompts import (
+            build_datadog_gatherer_prompt,
+            build_workload_gatherer_prompt,
         )
-        assert output_format_pos != -1, (
-            "MANDATORY OUTPUT FORMAT section must exist in workload_gatherer_prompt."
+
+        workload_prompt = build_workload_gatherer_prompt(namespace="default")
+        datadog_prompt = build_datadog_gatherer_prompt(
+            namespace="default", datadog_api_enabled=True
         )
-        assert datadog_pos < output_format_pos, (
-            "Datadog step (Step 12) must appear BEFORE the MANDATORY OUTPUT FORMAT "
-            "section. If it's inside the output format block, the LLM treats it as "
-            "a template rather than an action to execute — that's the root cause of "
-            "Datadog tools never being called."
+
+        # The injected Datadog step block must NOT be in workload_gatherer_prompt
+        assert "DD_SERVICE / DD_ENV bridge to Step 12" not in workload_prompt, (
+            "Datadog API Correlation content must have been removed from "
+            "build_workload_gatherer_prompt — it now lives in build_datadog_gatherer_prompt."
         )
+
+        # Datadog API correlation must be the core content of datadog_gatherer_prompt
+        assert "Datadog API correlation data" in datadog_prompt, (
+            "build_datadog_gatherer_prompt must contain 'Datadog API correlation data' "
+            "when datadog_api_enabled=True."
+        )
+
+        # Must still appear before the output format section (original regression guard)
+        datadog_pos = datadog_prompt.find("Datadog API correlation data")
+        output_format_pos = datadog_prompt.find("MANDATORY OUTPUT FORMAT")
+        if output_format_pos != -1:
+            assert datadog_pos < output_format_pos, (
+                "Datadog API Correlation content must appear BEFORE the MANDATORY OUTPUT "
+                "FORMAT section in build_datadog_gatherer_prompt."
+            )
 
 
 class TestNamespacePropagation:
@@ -2961,4 +2973,273 @@ class TestTargetPlaceholderReplacement:
         assert "<target>" not in prompt
         assert "<target-namespace>" not in prompt
         assert "<target_namespace>" not in prompt
+
+
+# ── Batch 3: datadog_gatherer tests ──────────────────────────────────────────
+
+
+class TestDatadogGathererPromptBuilder:
+    """Unit tests for ``build_datadog_gatherer_prompt()``."""
+
+    def test_returns_empty_string_when_disabled(self) -> None:
+        """build_datadog_gatherer_prompt returns '' when datadog_api_enabled=False."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        result = build_datadog_gatherer_prompt(namespace="default", datadog_api_enabled=False)
+        assert result == ""
+
+    def test_returns_non_empty_string_when_enabled(self) -> None:
+        """build_datadog_gatherer_prompt returns a non-empty string when datadog_api_enabled=True."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        result = build_datadog_gatherer_prompt(namespace="default", datadog_api_enabled=True)
+        assert isinstance(result, str)
+        assert len(result) > 200
+
+    def test_prompt_contains_datadog_api_correlation_description(self) -> None:
+        """Prompt must describe its purpose as Datadog API correlation data collection."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        prompt = build_datadog_gatherer_prompt(namespace="default", datadog_api_enabled=True)
+        assert "Datadog API correlation data" in prompt
+
+    def test_prompt_includes_kubectl_get_labels_step_zero(self) -> None:
+        """Step 0 must be label resolution via kubectl_get_labels (independent label discovery)."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        prompt = build_datadog_gatherer_prompt(namespace="default", datadog_api_enabled=True)
+        assert "kubectl_get_labels" in prompt
+        assert "Step 0" in prompt or "step 0" in prompt.lower() or "Label Resolution" in prompt
+
+    def test_prompt_includes_datadog_api_tools(self) -> None:
+        """Prompt must reference Datadog API tools: metrics, monitors, APM."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        prompt = build_datadog_gatherer_prompt(namespace="default", datadog_api_enabled=True)
+        assert "query_datadog_metrics" in prompt
+        assert "get_datadog_monitors" in prompt
+        assert "get_datadog_apm_services" in prompt
+
+    def test_prompt_includes_anti_injection_rule(self) -> None:
+        """build_datadog_gatherer_prompt must embed ANTI_INJECTION_RULE for security."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        fragment = "EXTERNAL, UNTRUSTED sources"
+        prompt = build_datadog_gatherer_prompt(namespace="default", datadog_api_enabled=True)
+        assert fragment in prompt, (
+            f"build_datadog_gatherer_prompt is missing ANTI_INJECTION_RULE fragment '{fragment}'"
+        )
+
+    def test_prompt_injects_namespace_value(self) -> None:
+        """build_datadog_gatherer_prompt must embed the supplied namespace."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        prompt = build_datadog_gatherer_prompt(namespace="prod-ns", datadog_api_enabled=True)
+        assert "prod-ns" in prompt
+
+    def test_prompt_no_target_placeholder_with_namespace(self) -> None:
+        """Literal '<target>' must not remain when a real namespace is provided."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        prompt = build_datadog_gatherer_prompt(namespace="test-ns", datadog_api_enabled=True)
+        assert "<target>" not in prompt
+
+    def test_prompt_datadog_content_before_output_format(self) -> None:
+        """Datadog purpose description must appear before MANDATORY OUTPUT FORMAT section (if present)."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        prompt = build_datadog_gatherer_prompt(namespace="default", datadog_api_enabled=True)
+        datadog_pos = prompt.find("Datadog API correlation data")
+        output_format_pos = prompt.find("MANDATORY OUTPUT FORMAT")
+        if output_format_pos != -1:
+            assert datadog_pos < output_format_pos, (
+                "Datadog API correlation content must appear BEFORE the MANDATORY OUTPUT FORMAT section."
+            )
+
+
+class TestDatadogGathererPipelineConfig:
+    """Tests for the datadog_gatherer agent in ``get_parallel_agents_config()``."""
+
+    def _get_agents(self, datadog_enabled: bool) -> list:
+        """Return agents config with datadog.enabled patched to the given value."""
+        from unittest.mock import MagicMock, patch
+
+        from vaig.core.config import get_settings
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        real_settings = get_settings()
+        mock_settings = MagicMock()
+        mock_settings.datadog.enabled = datadog_enabled
+        mock_settings.gke = real_settings.gke
+
+        with patch("vaig.core.config.get_settings", return_value=mock_settings):
+            return ServiceHealthSkill().get_parallel_agents_config()
+
+    def test_datadog_gatherer_excluded_when_disabled(self) -> None:
+        """Pipeline must NOT include datadog_gatherer when settings.datadog.enabled=False."""
+        agents = self._get_agents(datadog_enabled=False)
+        names = [a["name"] for a in agents]
+        assert "datadog_gatherer" not in names
+
+    def test_datadog_gatherer_included_when_enabled(self) -> None:
+        """Pipeline must include datadog_gatherer when settings.datadog.enabled=True."""
+        agents = self._get_agents(datadog_enabled=True)
+        names = [a["name"] for a in agents]
+        assert "datadog_gatherer" in names
+
+    def test_datadog_gatherer_uses_flash_model(self) -> None:
+        """datadog_gatherer must use gemini-2.5-flash (cost-optimised for API calls)."""
+        agents = self._get_agents(datadog_enabled=True)
+        datadog_agent = next(a for a in agents if a["name"] == "datadog_gatherer")
+        assert datadog_agent["model"] == "gemini-2.5-flash", (
+            f"datadog_gatherer uses '{datadog_agent['model']}', expected 'gemini-2.5-flash'"
+        )
+
+    def test_datadog_gatherer_max_iterations_is_eight(self) -> None:
+        """datadog_gatherer must have max_iterations=8 (6 Datadog tool calls — step 0 label resolution plus calls 1–5 — + 2 overhead iterations)."""
+        agents = self._get_agents(datadog_enabled=True)
+        datadog_agent = next(a for a in agents if a["name"] == "datadog_gatherer")
+        assert datadog_agent["max_iterations"] == 8
+
+    def test_datadog_gatherer_temperature_is_zero(self) -> None:
+        """datadog_gatherer must use temperature=0.0 for deterministic API calls."""
+        agents = self._get_agents(datadog_enabled=True)
+        datadog_agent = next(a for a in agents if a["name"] == "datadog_gatherer")
+        assert datadog_agent.get("temperature") == 0.0
+
+    def test_datadog_gatherer_in_parallel_group(self) -> None:
+        """datadog_gatherer must carry parallel_group='gather' to run concurrently."""
+        agents = self._get_agents(datadog_enabled=True)
+        datadog_agent = next(a for a in agents if a["name"] == "datadog_gatherer")
+        assert datadog_agent.get("parallel_group") == "gather"
+
+    def test_datadog_gatherer_requires_tools(self) -> None:
+        """datadog_gatherer must set requires_tools=True."""
+        agents = self._get_agents(datadog_enabled=True)
+        datadog_agent = next(a for a in agents if a["name"] == "datadog_gatherer")
+        assert datadog_agent.get("requires_tools") is True
+
+    def test_pipeline_has_eight_agents_when_datadog_enabled(self) -> None:
+        """When Datadog is enabled, parallel pipeline must have 8 agents total."""
+        agents = self._get_agents(datadog_enabled=True)
+        assert len(agents) == 8, (
+            f"Expected 8 agents with Datadog enabled, got {len(agents)}"
+        )
+
+    def test_pipeline_has_five_parallel_gatherers_when_datadog_enabled(self) -> None:
+        """When Datadog is enabled, 5 agents must carry parallel_group='gather'."""
+        agents = self._get_agents(datadog_enabled=True)
+        parallel = [a for a in agents if a.get("parallel_group") == "gather"]
+        assert len(parallel) == 5, (
+            f"Expected 5 parallel gatherers with Datadog enabled, got {len(parallel)}"
+        )
+
+    def test_pipeline_gatherer_names_with_datadog_enabled(self) -> None:
+        """With Datadog enabled, gatherer names must include all 5 expected agents."""
+        agents = self._get_agents(datadog_enabled=True)
+        parallel_names = {a["name"] for a in agents if a.get("parallel_group") == "gather"}
+        assert parallel_names == {
+            "node_gatherer",
+            "workload_gatherer",
+            "event_gatherer",
+            "logging_gatherer",
+            "datadog_gatherer",
+        }
+
+    def test_core_gatherers_use_pro_model_datadog_uses_flash(self) -> None:
+        """The 4 core gatherers must use gemini-2.5-pro; datadog_gatherer uses gemini-2.5-flash."""
+        agents = self._get_agents(datadog_enabled=True)
+        core_gatherers = [
+            a for a in agents
+            if a.get("parallel_group") == "gather" and a["name"] != "datadog_gatherer"
+        ]
+        for agent in core_gatherers:
+            assert agent["model"] == "gemini-2.5-pro", (
+                f"Core gatherer '{agent['name']}' uses '{agent['model']}', expected 'gemini-2.5-pro'"
+            )
+
+        datadog_agent = next(a for a in agents if a["name"] == "datadog_gatherer")
+        assert datadog_agent["model"] == "gemini-2.5-flash"
+
+
+class TestWorkloadGathererSplit:
+    """Regression tests for the workload_gatherer after the split-workload-gatherer refactor.
+
+    Verifies that:
+    - Datadog API step content is NOT injected into workload_gatherer by default.
+    - workload_gatherer max_iterations is statically 12 in the parallel pipeline.
+    - build_workload_gatherer_prompt() still accepts datadog_api_enabled param (backward compat).
+    """
+
+    def test_workload_gatherer_no_datadog_tools_by_default(self) -> None:
+        """workload_gatherer prompt must not contain Datadog API tool calls by default."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt()
+        assert "query_datadog_metrics" not in prompt, (
+            "build_workload_gatherer_prompt() must NOT contain 'query_datadog_metrics' — "
+            "Datadog API correlation has moved to build_datadog_gatherer_prompt()."
+        )
+        assert "get_datadog_monitors" not in prompt, (
+            "build_workload_gatherer_prompt() must NOT contain 'get_datadog_monitors'."
+        )
+        assert "get_datadog_apm_services" not in prompt, (
+            "build_workload_gatherer_prompt() must NOT contain 'get_datadog_apm_services'."
+        )
+
+    def test_workload_gatherer_accepts_datadog_api_enabled_param(self) -> None:
+        """build_workload_gatherer_prompt still accepts datadog_api_enabled for backward compat."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        # Must not raise — backward-compatible signature
+        result = build_workload_gatherer_prompt(datadog_api_enabled=True)
+        assert isinstance(result, str)
+        assert len(result) > 200
+
+    def test_workload_gatherer_max_iterations_is_twelve_in_pipeline(self) -> None:
+        """workload_gatherer must have max_iterations=12 (static) in get_parallel_agents_config()."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        agents = ServiceHealthSkill().get_parallel_agents_config()
+        workload = next(a for a in agents if a["name"] == "workload_gatherer")
+        assert workload["max_iterations"] == 12, (
+            f"workload_gatherer has max_iterations={workload['max_iterations']}, expected 12."
+        )
+
+    def test_workload_gatherer_no_datadog_step_block(self) -> None:
+        """workload_gatherer prompt must not contain the old Datadog injection marker."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default")
+        assert "DD_SERVICE / DD_ENV bridge to Step 12" not in prompt, (
+            "The old Datadog API step injection marker must not appear in workload_gatherer prompt."
+        )
+
+
+class TestEventGathererNoPhantomInstruction:
+    """Regression test: event_gatherer prompt must not contain phantom instructions
+    that were accidentally copied from workload_gatherer during the split refactor.
+    """
+
+    def test_event_gatherer_has_no_workload_gatherer_reference(self) -> None:
+        """event_gatherer prompt must not reference 'workload_gatherer' in its instructions."""
+        from vaig.skills.service_health.prompts import build_event_gatherer_prompt
+
+        prompt = build_event_gatherer_prompt()
+        assert "from workload_gatherer" not in prompt, (
+            "event_gatherer prompt contains 'from workload_gatherer' — phantom instruction detected. "
+            "This was a copy-paste artefact that must be removed."
+        )
+
+    def test_event_gatherer_does_not_reference_datadog_api(self) -> None:
+        """event_gatherer prompt must not contain Datadog API step instructions."""
+        from vaig.skills.service_health.prompts import build_event_gatherer_prompt
+
+        prompt = build_event_gatherer_prompt()
+        assert "query_datadog_metrics" not in prompt, (
+            "event_gatherer must not contain Datadog API tool calls — those belong to datadog_gatherer."
+        )
+        assert "get_datadog_monitors" not in prompt, (
+            "event_gatherer must not contain 'get_datadog_monitors'."
+        )
 
