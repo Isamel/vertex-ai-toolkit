@@ -24,6 +24,18 @@ _ERR_AUTH = "Authentication failed. Check your Datadog API key and application k
 _ERR_FORBIDDEN = "Insufficient permissions. Check your Datadog API/app key scopes."
 _ERR_RATE_LIMIT = "Rate limit exceeded. Try again later."
 
+# ── APM metric namespace families ───────────────────────────
+# Tried in order — stop at the first family that returns any data.
+# This allows the tool to work for HTTP, gRPC, Kafka, and other trace sources.
+_APM_METRIC_FAMILIES = [
+    "trace.web.request",   # HTTP frameworks (Flask, Django, Express, Rails, etc.)
+    "trace.grpc.server",   # gRPC server-side
+    "trace.grpc.client",   # gRPC client-side
+    "trace.kafka.produce", # Kafka producers
+    "trace.kafka.consume", # Kafka consumers
+    "trace",               # Generic "trace.*" fallback
+]
+
 # ── Metric query templates ───────────────────────────────────
 # Templates use {filters} as a placeholder for the full tag filter string.
 # Example rendered: avg:kubernetes.cpu.usage.total{cluster_name:my-cluster,service:api,env:prod}
@@ -665,29 +677,49 @@ def get_datadog_apm_services(
     except ValueError as exc:
         return ToolResult(output=str(exc), error=True)
 
-    # Cache check (TTL = 60s)
+    # Build tag filter using config.labels for configurable tag key names
+    # (e.g. config.labels.service may be "service" or a custom key like "svc")
+    scope, tag_err = _build_tag_filter(None, service_name, env, config)
+    if tag_err is not None:
+        return tag_err
+
+    # Cache check (TTL = 60s) — key includes service+env (metric family resolved at runtime)
     cache_key = _cache._cache_key_discovery("dd_apm_trace", service_name, env)
     cached = _cache._get_cached(cache_key)
     if cached is not None:
         return ToolResult(output=cached, error=False)
 
     now = int(time.time())
-    start = now - 900  # 15-minute lookback window
-    scope = f"service:{service_name},env:{env}"
+    # 30-minute lookback window — wider than 15 min to catch low-traffic services
+    # that may not have had requests in the last 15 minutes.
+    start = now - 1800
 
-    # Metric queries: throughput (hits), errors, duration
-    metric_queries = {
-        "hits": f"sum:trace.web.request.hits{{{scope}}}.as_rate()",
-        "errors": f"sum:trace.web.request.errors{{{scope}}}.as_rate()",
-        "duration": f"avg:trace.web.request.duration{{{scope}}}",
-    }
+    def _try_metric_family(api: Any, family: str) -> tuple[dict[str, float | None], bool]:
+        """Query hits/errors/duration for one metric namespace family.
 
-    def _execute_queries(api: Any) -> ToolResult:
-        """Run all three metric queries against the given API instance."""
+        Returns (results_dict, found_any). ``found_any`` is True if any
+        non-empty metric series were found for this family. The generic "trace"
+        family uses trace.request.* metric names (no ".web." segment).
+        """
+        # Build the three query strings for this family
+        if family == "trace":
+            # Generic fallback uses trace.request.* (no sub-namespace)
+            queries = {
+                "hits": f"sum:trace.request.hits{{{scope}}}.as_rate()",
+                "errors": f"sum:trace.request.errors{{{scope}}}.as_rate()",
+                "duration": f"avg:trace.request.duration{{{scope}}}",
+            }
+        else:
+            queries = {
+                "hits": f"sum:{family}.hits{{{scope}}}.as_rate()",
+                "errors": f"sum:{family}.errors{{{scope}}}.as_rate()",
+                "duration": f"avg:{family}.duration{{{scope}}}",
+            }
+
         results: dict[str, float | None] = {}
-        found_any_series = False
+        found_any = False
 
-        for metric_key, query in metric_queries.items():
+        for metric_key, query in queries.items():
             response = api.query_metrics(_from=start, to=now, query=query)
             series = getattr(response, "series", []) or []
 
@@ -695,8 +727,7 @@ def get_datadog_apm_services(
                 results[metric_key] = None
                 continue
 
-            found_any_series = True
-            # Collect all non-None data points across all series
+            found_any = True
             all_points: list[float] = []
             for s in series:
                 for point in getattr(s, "pointlist", []) or []:
@@ -705,10 +736,30 @@ def get_datadog_apm_services(
 
             results[metric_key] = sum(all_points) / len(all_points) if all_points else None
 
-        if not found_any_series:
+        return results, found_any
+
+    def _execute_queries(api: Any) -> ToolResult:
+        """Try each APM metric family in order; stop at the first that returns data."""
+        matched_family: str | None = None
+        results: dict[str, float | None] = {}
+
+        # TODO: Optimize by probing a single metric (e.g. hits) per family first,
+        # then query errors/duration only for the matched family.
+        for family in _APM_METRIC_FAMILIES:
+            family_results, found_any = _try_metric_family(api, family)
+            if found_any:
+                matched_family = family
+                results = family_results
+                break
+
+        if matched_family is None:
             no_data_msg = (
                 f"No APM trace data found for service '{service_name}' in env '{env}'. "
-                "Verify the service_name matches the 'service' tag in Datadog APM."
+                "Tried metric families: "
+                + ", ".join(_APM_METRIC_FAMILIES)
+                + ". Verify the service_name matches the '"
+                + config.labels.service
+                + "' tag in Datadog APM."
             )
             return ToolResult(output=no_data_msg, error=False)
 
@@ -728,7 +779,8 @@ def get_datadog_apm_services(
             "=== Datadog APM Trace Metrics ===",
             f"Service:    {service_name}",
             f"Env:        {env}",
-            "Window:     last 15 minutes",
+            "Window:     last 30 minutes",
+            f"Metric family: {matched_family}",
             "",
             f"Throughput: {throughput_str}",
             f"Error rate: {error_rate_str}",
