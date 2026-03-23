@@ -1412,3 +1412,30 @@ class TestGetDatadogApmServices:
         # 3 metric queries on first call, 0 on second call (served from cache)
         assert mock_api.query_metrics.call_count == 3
         assert result1.output == result2.output
+
+    def test_empty_service_name_returns_guidance_not_error(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """When service_name is omitted or empty, the tool returns guidance (not an error).
+
+        This allows the LLM to call the tool speculatively and receive instructions on
+        how to resolve the service name from Kubernetes labels, rather than failing hard.
+        """
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="",
+                config=dd_config,
+            )
+
+        assert result.error is False, (
+            "Empty service_name should NOT be an error — it should return guidance "
+            "so the LLM can resolve the service name and retry."
+        )
+        assert "service_name" in result.output.lower(), (
+            "Guidance message must mention 'service_name' so the LLM knows what to provide."
+        )
+        assert "kubernetes" in result.output.lower() or "pod label" in result.output.lower(), (
+            "Guidance must direct the LLM to resolve service_name from Kubernetes labels."
+        )

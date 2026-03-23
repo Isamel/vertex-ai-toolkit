@@ -603,7 +603,7 @@ def get_datadog_service_catalog(
 
 def get_datadog_apm_services(
     *,
-    service_name: str,
+    service_name: str = "",
     env: str = "production",
     config: DatadogAPIConfig | None = None,
     _custom_api: Any = None,
@@ -620,7 +620,9 @@ def get_datadog_apm_services(
     Args:
         service_name: Service name to query — must match the ``service`` tag
             in Datadog APM (typically from ``tags.datadoghq.com/service``
-            label or custom APM instrumentation).  Required.
+            label or custom APM instrumentation).  If omitted or empty, the
+            tool returns guidance on how to resolve it from Kubernetes labels
+            rather than raising an error.
         env: Datadog environment tag (e.g. ``"production"``, ``"staging"``).
             Used to scope the APM query.  Defaults to ``"production"``.
         config: Optional ``DatadogAPIConfig`` (for testing / injection).
@@ -647,7 +649,15 @@ def get_datadog_apm_services(
         return ToolResult(output=str(exc), error=True)
 
     if not service_name:
-        return ToolResult(output="service_name is required for APM lookup.", error=True)
+        return ToolResult(
+            output=(
+                "service_name parameter is required to query APM trace data. "
+                "Resolve it from Kubernetes pod labels (tags.datadoghq.com/service, "
+                "app.kubernetes.io/name, or app label) or from the deployment/service "
+                "name first."
+            ),
+            error=False,
+        )
 
     # Sanitize env to prevent tag injection or malformed queries
     try:

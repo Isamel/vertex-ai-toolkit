@@ -988,7 +988,13 @@ class TestProgressCounterConsistency:
         tool_registry = MagicMock(spec=ToolRegistry)
         progress_calls: list[tuple[str, int, int, str]] = []
 
-        def _capture(agent_name: str, agent_index: int, total_agents: int, event: str) -> None:
+        def _capture(
+            agent_name: str,
+            agent_index: int,
+            total_agents: int,
+            event: str,
+            end_agent_index: int | None = None,  # noqa: ARG001
+        ) -> None:
             progress_calls.append((agent_name, agent_index, total_agents, event))
 
         with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
@@ -1026,7 +1032,13 @@ class TestProgressCounterConsistency:
         tool_registry = MagicMock(spec=ToolRegistry)
         progress_calls: list[tuple[str, int, int, str]] = []
 
-        def _capture(agent_name: str, agent_index: int, total_agents: int, event: str) -> None:
+        def _capture(
+            agent_name: str,
+            agent_index: int,
+            total_agents: int,
+            event: str,
+            end_agent_index: int | None = None,  # noqa: ARG001
+        ) -> None:
             progress_calls.append((agent_name, agent_index, total_agents, event))
 
         with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
@@ -1069,7 +1081,13 @@ class TestProgressCounterConsistency:
         tool_registry = MagicMock(spec=ToolRegistry)
         progress_calls: list[tuple[str, int, int, str]] = []
 
-        def _capture(agent_name: str, agent_index: int, total_agents: int, event: str) -> None:
+        def _capture(
+            agent_name: str,
+            agent_index: int,
+            total_agents: int,
+            event: str,
+            end_agent_index: int | None = None,  # noqa: ARG001
+        ) -> None:
             progress_calls.append((agent_name, agent_index, total_agents, event))
 
         with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
@@ -1109,7 +1127,13 @@ class TestProgressCounterConsistency:
         tool_registry = MagicMock(spec=ToolRegistry)
         start_events: list[tuple[str, int, int]] = []
 
-        def _capture(agent_name: str, agent_index: int, total_agents: int, event: str) -> None:
+        def _capture(
+            agent_name: str,
+            agent_index: int,
+            total_agents: int,
+            event: str,
+            end_agent_index: int | None = None,  # noqa: ARG001
+        ) -> None:
             if event == "start":
                 start_events.append((agent_name, agent_index, total_agents))
 
@@ -1166,7 +1190,13 @@ class TestProgressCounterConsistency:
         tool_registry = MagicMock(spec=ToolRegistry)
         start_events: list[tuple[str, int, int]] = []
 
-        def _capture(agent_name: str, agent_index: int, total_agents: int, event: str) -> None:
+        def _capture(
+            agent_name: str,
+            agent_index: int,
+            total_agents: int,
+            event: str,
+            end_agent_index: int | None = None,  # noqa: ARG001
+        ) -> None:
             if event == "start":
                 start_events.append((agent_name, agent_index, total_agents))
 
@@ -1202,4 +1232,108 @@ class TestProgressCounterConsistency:
         assert individual_gatherer_starts == [], (
             f"Async: expected no individual per-gatherer start events, got: {individual_gatherer_starts}"
         )
+
+    def test_sync_parallel_collective_event_includes_end_agent_index(self) -> None:
+        """Parallel collective start/end events must include end_agent_index=total_parallel-1
+        so the CLI can display '[1-4/7]' range notation instead of '[1/7]'."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        # 4 parallel gatherers + 3 sequential = 7 total
+        skill = ParallelSkill(
+            gatherer_names=["node_gatherer", "workload_gatherer", "event_gatherer", "log_gatherer"],
+            sequential_names=["analyzer", "verifier", "reporter"],
+        )
+        tool_registry = MagicMock(spec=ToolRegistry)
+        parallel_events: list[tuple[str, int, int, str, int | None]] = []
+
+        def _capture(
+            agent_name: str,
+            agent_index: int,
+            total_agents: int,
+            event: str,
+            end_agent_index: int | None = None,
+        ) -> None:
+            if agent_name == "parallel gatherers":
+                parallel_events.append((agent_name, agent_index, total_agents, event, end_agent_index))
+
+        with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
+            mock_create.return_value = [
+                self._make_gatherer("node_gatherer"),
+                self._make_gatherer("workload_gatherer"),
+                self._make_gatherer("event_gatherer"),
+                self._make_gatherer("log_gatherer"),
+                self._make_sequential("analyzer"),
+                self._make_sequential("verifier"),
+                self._make_sequential("reporter"),
+            ]
+            orchestrator.execute_with_tools(
+                "query",
+                skill,
+                tool_registry,
+                strategy="parallel_sequential",
+                on_agent_progress=_capture,
+            )
+
+        assert len(parallel_events) == 2, (  # start + end
+            f"Expected 2 parallel collective events (start + end), got: {parallel_events}"
+        )
+
+        for _name, idx, total, _event, end_idx in parallel_events:
+            assert idx == 0, f"Collective parallel event agent_index must be 0, got {idx}"
+            assert total == 7, f"Collective parallel event total must be 7, got {total}"
+            assert end_idx == 3, (
+                f"Collective parallel event end_agent_index must be 3 (total_parallel-1=4-1), "
+                f"got {end_idx}"
+            )
+
+    def test_async_parallel_collective_event_includes_end_agent_index(self) -> None:
+        """Async path: parallel collective events must also include end_agent_index."""
+        client = _make_mock_client()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        # 3 parallel gatherers + 1 sequential = 4 total
+        skill = ParallelSkill(
+            gatherer_names=["node_gatherer", "workload_gatherer", "event_gatherer"],
+            sequential_names=["analyzer"],
+        )
+        tool_registry = MagicMock(spec=ToolRegistry)
+        parallel_events: list[tuple[str, int, int, str, int | None]] = []
+
+        def _capture(
+            agent_name: str,
+            agent_index: int,
+            total_agents: int,
+            event: str,
+            end_agent_index: int | None = None,
+        ) -> None:
+            if agent_name == "parallel gatherers":
+                parallel_events.append((agent_name, agent_index, total_agents, event, end_agent_index))
+
+        with patch.object(orchestrator, "create_agents_for_skill") as mock_create:
+            mock_create.return_value = [
+                self._make_gatherer("node_gatherer"),
+                self._make_gatherer("workload_gatherer"),
+                self._make_gatherer("event_gatherer"),
+                self._make_sequential("analyzer"),
+            ]
+            asyncio.run(
+                orchestrator.async_execute_with_tools(
+                    "query",
+                    skill,
+                    tool_registry,
+                    strategy="parallel_sequential",
+                    on_agent_progress=_capture,
+                )
+            )
+
+        assert len(parallel_events) == 2, (  # start + end
+            f"Async: expected 2 parallel collective events (start + end), got: {parallel_events}"
+        )
+
+        for _name, idx, total, _event, end_idx in parallel_events:
+            assert idx == 0, f"Async: collective parallel event agent_index must be 0, got {idx}"
+            assert total == 4, f"Async: collective parallel event total must be 4, got {total}"
+            assert end_idx == 2, (
+                f"Async: collective parallel event end_agent_index must be 2 (total_parallel-1=3-1), "
+                f"got {end_idx}"
+            )
 

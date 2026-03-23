@@ -114,41 +114,52 @@ _DATADOG_API_TOOLS_TABLE = """\
 _DATADOG_API_STEP = """\
 
 ### Step 12 — Datadog API Correlation (real-time metrics & monitors) — MANDATORY
+
+**PRIORITY HIERARCHY — READ THIS FIRST:**
+1. Kubernetes cluster data is the ABSOLUTE source of truth for deployment status.
+2. If K8s shows a service/deployment exists and is running, it IS deployed — regardless of Datadog results.
+3. Datadog monitoring data is SUPPLEMENTARY — it enriches the analysis but NEVER determines deployment status.
+4. Empty Datadog results mean "monitoring not configured" NOT "service not deployed".
+5. NEVER conclude a service is "not deployed" or "doesn't exist" based on Datadog tool results.
+
 You MUST complete calls 19–21 below. They are NOT optional — skipping them means the
 investigation is incomplete and the report will be missing real-time observability data.
 Note that ``query_datadog_metrics`` is called twice with different metric arguments
 (once for CPU, once for memory). Calls 22–23 (``get_datadog_service_catalog`` and
-``get_datadog_apm_services``) are CONDITIONAL — make them only when a ``service_name``
-can be resolved (see calls 22–23 for resolution rules).
-Do NOT proceed to later steps or produce any final output until calls 19–21 are complete.
+``get_datadog_apm_services``) MUST also always be attempted — the tools accept an empty
+or absent ``service_name`` and will return guidance on how to proceed if resolution fails.
+Calls 19–21 are high priority but should not block the analysis if they fail.
 
-**LABEL-AWARE FILTERING — MANDATORY**: Before making these calls, check what Step 11
-(``get_datadog_config``) extracted from the workload's environment variables and labels:
-- If ``DD_SERVICE`` was found (or ``tags.datadoghq.com/service`` label), store it as
-  ``<dd_service>``.
-- If ``DD_ENV`` was found (or ``tags.datadoghq.com/env`` label), store it as ``<dd_env>``.
+**LABEL-AWARE FILTERING — MANDATORY**: Before making these calls, resolve the service
+identity from Kubernetes data you have already gathered. Use this priority order:
+- ``tags.datadoghq.com/service`` pod label → store as ``<dd_service>``
+- ``app.kubernetes.io/name`` pod label → store as ``<dd_service>`` (if above absent)
+- ``app`` pod label → store as ``<dd_service>`` (if above absent)
+- Deployment or Service name from Kubernetes → store as ``<dd_service>`` (fallback)
+- ``tags.datadoghq.com/env`` pod label or ``DD_ENV`` env var → store as ``<dd_env>``
 You MUST pass these values as ``service=`` and ``env=`` parameters in calls 19–21 below.
 For calls 22–23, the parameter name is ``service_name=`` (not ``service=``) — see calls
-22–23 for the full resolution rules. If a value was NOT found in Step 11, omit that
-parameter (do NOT pass None or empty string — simply leave the parameter out).
+22–23 for the full resolution rules. If a value was NOT found, omit that parameter
+(do NOT pass None or empty string — simply leave the parameter out).
 
 19. You MUST call ``query_datadog_metrics(cluster_name="<cluster>", metric="cpu",
-    service="<dd_service>", env="<dd_env>")``  [include service/env only if found in
-    Step 11] — CPU usage time-series scoped to this service when labels are present,
+    service="<dd_service>", env="<dd_env>")``  [include service/env only if resolved
+    above] — CPU usage time-series scoped to this service when labels are present,
     or cluster-wide when they are absent. Correlate the returned series with the pods
-    and services discovered in Steps 2, 4, and 5.
+    and services discovered in earlier steps.
     Example with labels: ``query_datadog_metrics(cluster_name="prod", metric="cpu",
     service="my-api", env="production")``
     Example without labels: ``query_datadog_metrics(cluster_name="prod", metric="cpu")``
 20. You MUST call ``query_datadog_metrics(cluster_name="<cluster>", metric="memory",
-    service="<dd_service>", env="<dd_env>")``  [include service/env only if found in
-    Step 11] — Memory usage time-series (same service/env scope as call 19).
+    service="<dd_service>", env="<dd_env>")``  [include service/env only if resolved
+    above] — Memory usage time-series (same service/env scope as call 19).
 21. You MUST call ``get_datadog_monitors(cluster_name="<cluster>", service="<dd_service>",
-    env="<dd_env>")``  [include service/env only if found in Step 11]
+    env="<dd_env>")``  [include service/env only if resolved above]
     — Monitor alerts scoped to this service when labels are present, or all cluster
     monitors when they are absent. Note any alerts in Alert or Warn state.
-22. Call ``get_datadog_service_catalog`` — but ONLY if you can determine a
-    ``service_name``. Resolve the service identity using this priority order:
+22. ALWAYS call ``get_datadog_service_catalog`` — attempt it even if ``service_name``
+    cannot be resolved. The tool handles empty service_name gracefully and returns
+    guidance on resolution. Resolve the service identity using this priority order:
 
     **Tier 1 — Datadog Unified Service Tagging labels** (check pod/deployment YAML
     output from earlier kubectl calls):
@@ -156,32 +167,33 @@ parameter (do NOT pass None or empty string — simply leave the parameter out).
     - ``tags.datadoghq.com/env``     → use as ``env``
     - ``tags.datadoghq.com/version`` → note for context only
 
-    **Tier 2 — Custom config labels** (if Tier 1 labels are absent, check for
-    custom Datadog labels configured in the tool descriptions, such as ``dd_service``,
-    ``dd_env``, or any env-var values extracted in Step 11):
-    - If ``DD_SERVICE`` was found in env vars → use as ``service_name``
-    - If ``DD_ENV`` was found in env vars → use as ``env``
+    **Tier 2 — Kubernetes identity** (if Tier 1 labels are absent):
+    - ``app.kubernetes.io/name`` label → use as ``service_name``
+    - ``app`` label → use as ``service_name``
+    - Deployment or Service name → use as ``service_name`` (last resort)
 
-    **Tier 3 — SKIP** (if NEITHER Tier 1 nor Tier 2 yields a ``service_name``):
-    - SKIP this tool entirely — do NOT call it without a ``service_name``.
-    - Record "Service catalog lookup skipped — no service identity found" in Raw Findings.
+    **Tier 3 — Call without service_name** (if NEITHER Tier 1 nor Tier 2 yields a value):
+    - Call the tool without ``service_name`` — it will return guidance on how to
+      resolve the service identity. Record the guidance in Raw Findings.
 
     When ``service_name`` IS resolved: call
     ``get_datadog_service_catalog(service_name="<resolved>", env="<resolved>")``
-    — confirm the service exists in the Datadog catalog and fetch ownership metadata
+    — check if monitoring data is available and fetch ownership metadata
     (team, language, tier).  This tool returns service *definition* metadata, NOT live
     latency or error-rate metrics.
     Example: ``get_datadog_service_catalog(service_name="my-api", env="production")``
 
-23. Call ``get_datadog_apm_services`` — but ONLY if the same ``service_name`` was
-    resolved in call 22. This tool queries LIVE APM trace data (throughput, error rate,
+23. ALWAYS call ``get_datadog_apm_services`` — attempt it even if ``service_name``
+    cannot be resolved. The tool handles empty service_name gracefully and returns
+    guidance. This tool queries LIVE APM trace data (throughput, error rate,
     avg latency) for the last 15 minutes, scoped to the resolved service and env.
     It complements call 22: call 22 gives ownership metadata, call 23 gives real-time
     performance signals.
 
-    **Tier 3 — SKIP** (same rule as call 22 — no ``service_name``, no call):
-    - SKIP if no service identity was found.
-    - Record "APM trace lookup skipped — no service identity found" in Raw Findings.
+    **Tier 3 — Call without service_name** (same rule as call 22 — if no service
+    identity was found, call the tool anyway without ``service_name``):
+    - The tool will return guidance on resolution.
+    - Record the guidance in Raw Findings.
 
     When ``service_name`` IS resolved: call
     ``get_datadog_apm_services(service_name="<resolved>", env="<resolved>")``
@@ -189,14 +201,14 @@ parameter (do NOT pass None or empty string — simply leave the parameter out).
     Example: ``get_datadog_apm_services(service_name="my-api", env="production")``
 
 Report findings as a "## Raw Findings (Datadog API)" section with:
-- Whether data is **service-filtered** (DD_SERVICE/DD_ENV were passed as params) or
+- Whether data is **service-filtered** (service/env were passed as params) or
   **cluster-wide** (no service labels found — data covers all services in the cluster).
   ALWAYS state which scope applies so the reporter can interpret the data correctly.
 - Any monitors currently in Alert or Warn state (name, status, query)
 - CPU/memory trends that contradict or confirm the kubectl_top data
 - Whether the service was found in the Datadog service catalog (team, language, tier ownership metadata)
 - Live APM trace metrics: throughput (req/s), error rate (%), avg latency (ms) — if available
-- If the service is absent from the catalog: note that tracing may be misconfigured or inactive
+- If the service is absent from the catalog: note that Datadog monitoring may not be configured
 - If no issues found: "No active Datadog monitors or APM anomalies detected."
 """
 
@@ -255,6 +267,13 @@ Step 1 → Step 2 → Step 3 → Step 4 (conditional) → Step 5 (conditional) �
 After Step 3 (events), evaluate: Are there FailedCreate, CrashLoopBackOff, or unavailable replica events? If YES, Steps 4 and 5 become MANDATORY.
 
 IMPORTANT: Do NOT produce your final output until you have completed Steps 7a and 7b. These are the last mandatory logging steps. Steps 8-12 are conditional and run based on findings and enabled integrations.
+
+## PRIORITY HIERARCHY — Kubernetes vs Datadog
+1. Kubernetes cluster data is the ABSOLUTE source of truth for deployment status.
+2. If K8s shows a service/deployment exists and is running, it IS deployed — regardless of Datadog results.
+3. Datadog monitoring data is SUPPLEMENTARY — it enriches the analysis but NEVER determines deployment status.
+4. Empty Datadog results mean "monitoring not configured" NOT "service not deployed".
+5. NEVER conclude a service is "not deployed" or "doesn't exist" based on Datadog tool results.
 
 ## Data Collection Procedure
 
@@ -1774,6 +1793,14 @@ For each deployment that has an HPA or that has a ``VerticalPodAutoscaler`` reso
 - If a tool call fails, record the error and continue — NEVER invent substitute output.
 - Collect management annotations (ArgoCD, Flux, Helm, OwnerReferences) for every failing workload.
 
+### PRIORITY HIERARCHY — Kubernetes vs Datadog
+1. Kubernetes cluster data is the ABSOLUTE source of truth for deployment status.
+2. If K8s shows a service/deployment exists and is running, it IS deployed — regardless of Datadog results.
+3. Datadog monitoring data is SUPPLEMENTARY — it enriches the analysis but NEVER determines deployment status.
+4. Empty Datadog results mean "monitoring not configured" NOT "service not deployed".
+5. NEVER conclude a service is "not deployed" or "doesn't exist" based on Datadog tool results.
+
+{_build_datadog_api_step(datadog_api_enabled)}
 ### MANDATORY OUTPUT FORMAT
 
 Produce exactly these sections at the end of your response:
@@ -1802,7 +1829,6 @@ Produce exactly these sections at the end of your response:
 (For ALL deployments: detected management method — GitOps/Helm/Operator/Manual — with evidence.
 Report even for healthy deployments, as management context affects remediation recommendations.)
 
-{_build_datadog_api_step(datadog_api_enabled)}
 ### CRITICAL RULES:
 - ONLY report data returned by tool calls.  NEVER fabricate pod names, restart counts,
   replica counts, or error messages.

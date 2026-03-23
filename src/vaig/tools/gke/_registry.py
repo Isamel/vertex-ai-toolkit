@@ -1400,9 +1400,11 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 description=(
                     "Fetch service ownership metadata from the Datadog Service Catalog (Service Definition v2 API). "
                     "Returns service name, team, language, and tier ownership metadata for a specific service. "
-                    "Always provide service_name — calling without it returns all registered services and should "
-                    "be avoided (high cost, low signal). Resolve service_name from 'tags.datadoghq.com/service' "
-                    "pod labels first, then DD_SERVICE env var; skip the call entirely if neither is available. "
+                    "Always call this tool — provide service_name when resolved from Kubernetes pod labels, "
+                    "but call it even without service_name: the tool handles the empty case gracefully and "
+                    "returns guidance on how to resolve service identity. "
+                    "Resolve service_name from 'tags.datadoghq.com/service' pod labels first, "
+                    "then app.kubernetes.io/name, then app label, then deployment name. "
                     "Results are cached for 60 seconds. Read-only — does not modify any resources."
                 ),
                 parameters=[
@@ -1423,9 +1425,13 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         type="string",
                         description=(
                             "Service name to filter catalog results. "
-                            "Look for 'tags.datadoghq.com/service' label on pods/deployments first, "
-                            "then custom Datadog labels from config (e.g. DD_SERVICE env var). "
-                            "Do NOT call this tool without a service_name — if unknown, skip the call entirely."
+                            "Resolve from Kubernetes pod labels in priority order: "
+                            "(1) tags.datadoghq.com/service label, "
+                            "(2) app.kubernetes.io/name label, "
+                            "(3) app label, "
+                            "(4) deployment or service name. "
+                            "If service_name cannot be resolved, call without it — "
+                            "the tool returns guidance on resolution."
                         ),
                         required=False,
                     ),
@@ -1442,7 +1448,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     "Fetch live APM trace metrics for a specific service from Datadog. "
                     "Returns throughput, error rate, and avg latency from actual trace data over the last 15 minutes. "
                     "Use this for real-time performance data — NOT for ownership metadata (use get_datadog_service_catalog for that). "
-                    "Always provide service_name — it must match the 'service' tag in Datadog APM. "
+                    "Provide service_name when known — resolve it from Kubernetes pod labels before calling. "
+                    "If service_name cannot be determined, call the tool anyway — it will return guidance on resolution. "
                     "Results are cached for 60 seconds. Read-only — does not modify any resources."
                 ),
                 parameters=[
@@ -1450,11 +1457,15 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         name="service_name",
                         type="string",
                         description=(
-                            "Service name to query APM trace metrics for. Required. "
-                            "Must match the 'service' tag in Datadog APM — typically from the "
-                            "'tags.datadoghq.com/service' label or custom APM instrumentation (DD_SERVICE env var)."
+                            "Service name to query APM trace metrics for. Strongly recommended. "
+                            "Must match the 'service' tag in Datadog APM. "
+                            "Resolve from Kubernetes pod labels in priority order: "
+                            "(1) tags.datadoghq.com/service label, "
+                            "(2) app.kubernetes.io/name label, "
+                            "(3) app label, "
+                            "(4) the deployment or service name from Kubernetes."
                         ),
-                        required=True,
+                        required=False,
                     ),
                     ToolParam(
                         name="env",
@@ -1466,7 +1477,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
-                execute=lambda service_name, env="production",
+                execute=lambda service_name="", env="production",
                         _dd=_dd_config: get_datadog_apm_services(
                     service_name=service_name, env=env, config=_dd,
                 ),
