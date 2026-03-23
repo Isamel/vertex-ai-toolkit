@@ -2779,33 +2779,45 @@ class TestDatadogAPMTagResolution:
             "source of truth for deployment status."
         )
 
-    def test_workload_gatherer_datadog_step_before_output_format(self) -> None:
-        """In build_workload_gatherer_prompt, the Datadog step must appear BEFORE
-        the MANDATORY OUTPUT FORMAT section.
+    def test_datadog_step_moved_to_dedicated_gatherer_prompt(self) -> None:
+        """After the split-workload-gatherer refactor, Step 12 (Datadog API Correlation)
+        must NO LONGER be injected into build_workload_gatherer_prompt and MUST be the
+        core content of build_datadog_gatherer_prompt.
 
-        Root cause of the regression: the Datadog step was placed inside the output
-        format block, causing the LLM to treat it as a template rather than an action.
+        Regression guard: the old behaviour embedded the Datadog step inside the
+        workload_gatherer output format block, causing the LLM to treat it as a
+        template. The new architecture gives Datadog its own focused agent prompt.
         """
-        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
-
-        prompt = build_workload_gatherer_prompt(namespace="default", datadog_api_enabled=True)
-
-        datadog_pos = prompt.find("Step 12 — Datadog API Correlation")
-        output_format_pos = prompt.find("MANDATORY OUTPUT FORMAT")
-
-        assert datadog_pos != -1, (
-            "Datadog step must be present in workload_gatherer_prompt when "
-            "datadog_api_enabled=True."
+        from vaig.skills.service_health.prompts import (
+            build_datadog_gatherer_prompt,
+            build_workload_gatherer_prompt,
         )
-        assert output_format_pos != -1, (
-            "MANDATORY OUTPUT FORMAT section must exist in workload_gatherer_prompt."
+
+        workload_prompt = build_workload_gatherer_prompt(namespace="default")
+        datadog_prompt = build_datadog_gatherer_prompt(
+            namespace="default", datadog_api_enabled=True
         )
-        assert datadog_pos < output_format_pos, (
-            "Datadog step (Step 12) must appear BEFORE the MANDATORY OUTPUT FORMAT "
-            "section. If it's inside the output format block, the LLM treats it as "
-            "a template rather than an action to execute — that's the root cause of "
-            "Datadog tools never being called."
+
+        # The injected Datadog step block must NOT be in workload_gatherer_prompt
+        assert "DD_SERVICE / DD_ENV bridge to Step 12" not in workload_prompt, (
+            "Datadog API Correlation content must have been removed from "
+            "build_workload_gatherer_prompt — it now lives in build_datadog_gatherer_prompt."
         )
+
+        # Datadog API correlation must be the core content of datadog_gatherer_prompt
+        assert "Datadog API correlation data" in datadog_prompt, (
+            "build_datadog_gatherer_prompt must contain 'Datadog API correlation data' "
+            "when datadog_api_enabled=True."
+        )
+
+        # Must still appear before the output format section (original regression guard)
+        datadog_pos = datadog_prompt.find("Datadog API correlation data")
+        output_format_pos = datadog_prompt.find("MANDATORY OUTPUT FORMAT")
+        if output_format_pos != -1:
+            assert datadog_pos < output_format_pos, (
+                "Datadog API Correlation content must appear BEFORE the MANDATORY OUTPUT "
+                "FORMAT section in build_datadog_gatherer_prompt."
+            )
 
 
 class TestNamespacePropagation:

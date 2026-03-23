@@ -21,6 +21,7 @@ from vaig.skills.service_health.prompts import (
     HEALTH_VERIFIER_PROMPT,
     PHASE_PROMPTS,
     SYSTEM_INSTRUCTION,
+    build_datadog_gatherer_prompt,
     build_event_gatherer_prompt,
     build_gatherer_prompt,
     build_logging_gatherer_prompt,
@@ -129,7 +130,7 @@ class ServiceHealthSkill(BaseSkill):
             )
 
     def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
-        """Return the default pipeline configuration — the 7-agent parallel config.
+        """Return the default pipeline configuration — the parallel pipeline config.
 
         Delegates to :meth:`get_parallel_agents_config` so that the
         ``parallel_sequential`` execution strategy is used by default.  The
@@ -148,9 +149,10 @@ class ServiceHealthSkill(BaseSkill):
                 :meth:`get_parallel_agents_config`.
 
         Returns:
-            The 7-agent parallel pipeline: 4 parallel sub-gatherers
+            The parallel pipeline: 4–5 parallel sub-gatherers
             (``node_gatherer``, ``workload_gatherer``, ``event_gatherer``,
-            ``logging_gatherer``) followed by the unchanged sequential tail
+            ``logging_gatherer``, and optionally ``datadog_gatherer``)
+            followed by the unchanged sequential tail
             (``health_analyzer`` → ``health_verifier`` → ``health_reporter``).
         """
         namespace: str = kwargs.get("namespace", "")
@@ -261,16 +263,17 @@ class ServiceHealthSkill(BaseSkill):
         location: str = "",
         cluster_name: str = "",
     ) -> list[dict[str, Any]]:
-        """Return the 7-agent parallel-then-sequential pipeline configuration.
+        """Return the parallel-then-sequential pipeline configuration.
 
         Phase 3 of the parallel-gatherer design replaces the single monolithic
-        ``health_gatherer`` with 4 focused sub-gatherers that run concurrently
+        ``health_gatherer`` with focused sub-gatherers that run concurrently
         via ``_execute_parallel_then_sequential`` in the Orchestrator.
 
         Pipeline structure:
-        - **Parallel group** (``parallel_group="gather"``): 4 sub-gatherers,
-          each covering a focused subset of the 10-step investigation checklist.
-          All use ``gemini-2.5-pro`` for speed and cost efficiency.
+        - **Parallel group** (``parallel_group="gather"``): 4–5 sub-gatherers,
+          each covering a focused subset of the investigation checklist.
+          Core gatherers use ``gemini-2.5-pro``; ``datadog_gatherer`` uses
+          ``gemini-2.5-flash`` (structured API calls only).
         - **Sequential tail** (unchanged): health_analyzer → health_verifier →
           health_reporter.  The merged output of the parallel group is passed
           as context to the analyzer.
@@ -280,6 +283,8 @@ class ServiceHealthSkill(BaseSkill):
         - ``workload_gatherer``: Steps 2, 4, 5, 6 — pods, deployments, services, HPA
         - ``event_gatherer``: Steps 3, 8, 9, 10 — events, networking, storage, GitOps
         - ``logging_gatherer``: Steps 7a, 7b — Cloud Logging error & warning queries
+        - ``datadog_gatherer`` (optional): Datadog API correlation — only included
+          when ``settings.datadog.enabled`` is ``True``
 
         Requires orchestrator strategy ``"parallel_sequential"`` (implemented in
         Phase 1 via ``_execute_parallel_then_sequential``).
@@ -313,8 +318,8 @@ class ServiceHealthSkill(BaseSkill):
         is_autopilot = bool(detect_autopilot(effective_gke))
         effective_namespace = effective_gke.default_namespace
 
-        return [
-            # ── Parallel group: 4 focused sub-gatherers ──────────────────
+        agents: list[dict[str, Any]] = [
+            # ── Parallel group: core sub-gatherers ───────────────────────
             {
                 "name": "node_gatherer",
                 "role": "Cluster & Node Health Gatherer",
@@ -332,12 +337,10 @@ class ServiceHealthSkill(BaseSkill):
                 "parallel_group": "gather",
                 "system_instruction": build_workload_gatherer_prompt(
                     namespace=effective_namespace,
-                    datadog_api_enabled=settings.datadog.enabled,
                 ),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
-                # Extra budget for Step 12 (Datadog API — 4 tool calls) when enabled
-                "max_iterations": 16 if settings.datadog.enabled else 12,
+                "max_iterations": 12,
             },
             {
                 "name": "event_gatherer",
@@ -359,6 +362,26 @@ class ServiceHealthSkill(BaseSkill):
                 "temperature": 0.0,
                 "max_iterations": 8,
             },
+        ]
+
+        if settings.datadog.enabled:
+            agents.append(
+                {
+                    "name": "datadog_gatherer",
+                    "role": "Datadog API Correlation Gatherer",
+                    "requires_tools": True,
+                    "parallel_group": "gather",
+                    "system_instruction": build_datadog_gatherer_prompt(
+                        namespace=effective_namespace,
+                        datadog_api_enabled=True,
+                    ),
+                    "model": "gemini-2.5-flash",
+                    "temperature": 0.0,
+                    "max_iterations": 8,
+                }
+            )
+
+        agents += [
             # ── Sequential tail: unchanged from get_agents_config() ──────
             {
                 "name": "health_analyzer",
@@ -392,6 +415,8 @@ class ServiceHealthSkill(BaseSkill):
                 "response_mime_type": "application/json",
             },
         ]
+
+        return agents
 
     def post_process_report(self, content: str) -> str:
         """Convert the reporter's structured JSON output to Markdown.
