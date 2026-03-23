@@ -138,6 +138,15 @@ module = [
 ]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = [
+    "vaig.tools.gke.datadog_api",
+    "vaig.tools.gcloud_tools",
+]
+# CI (Python 3.12) stubs differ from local — type: ignore[no-untyped-call] needed in CI
+# but reported as unused locally. Suppress the unused-ignore warning for these files.
+warn_unused_ignores = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

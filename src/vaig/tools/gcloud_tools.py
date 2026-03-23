@@ -35,7 +35,7 @@ def _get_logging_client(
             kwargs["project"] = project
         if credentials is not None:
             kwargs["credentials"] = credentials
-        client = cloud_logging.Client(**kwargs)
+        client = cloud_logging.Client(**kwargs)  # type: ignore[no-untyped-call]
         return client, None
     except Exception as exc:  # noqa: BLE001
         return None, f"Failed to create Cloud Logging client: {exc}"
