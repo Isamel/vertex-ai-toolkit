@@ -1,9 +1,10 @@
 """Tests for the CLI routing fallback behaviour in the ``live`` command.
 
 When a skill has ``requires_live_tools=True`` but NO infrastructure tools are
-available at runtime, the CLI must NOT crash.  Instead it falls back to the
-legacy context-prepend path (``_execute_live_mode`` / ``_async_execute_live_mode``)
-and displays a warning message to the user.
+available at runtime, the CLI must NOT crash.  Instead it falls back to a true
+offline path: it calls ``client.generate()`` / ``client.async_generate()``
+directly with the skill context prepended to the question, and prints the
+response.
 
 Tasks covered: 1.1, 1.2, 1.3 of the requires-live-tools change.
 """
@@ -50,6 +51,13 @@ def _make_populated_registry(count: int = 3) -> MagicMock:
     return registry
 
 
+def _make_generation_result(text: str = "Offline analysis result") -> MagicMock:
+    """Create a mock GenerationResult with a .text attribute."""
+    result = MagicMock()
+    result.text = text
+    return result
+
+
 # ══════════════════════════════════════════════════════════════
 # Sync path — _execute_orchestrated_skill
 # ══════════════════════════════════════════════════════════════
@@ -58,48 +66,75 @@ def _make_populated_registry(count: int = 3) -> MagicMock:
 class TestSyncOrchestratedFallback:
     """Covers Task 1.1: sync fallback on zero tools."""
 
-    def test_sync_fallback_on_zero_tools_calls_live_mode(self) -> None:
-        """With requires_live_tools=True and zero tools, _execute_live_mode is called."""
+    def test_sync_fallback_on_zero_tools_calls_generate(self) -> None:
+        """With requires_live_tools=True and zero tools, client.generate() is called."""
         from vaig.cli.commands.live import _execute_orchestrated_skill
 
         skill = _make_skill_mock(requires_live_tools=True)
-        mock_live_mode = MagicMock()
+        mock_client = MagicMock()
+        mock_client.generate.return_value = _make_generation_result()
 
-        with (
-            patch(
-                "vaig.cli.commands.live._register_live_tools",
-                return_value=_make_empty_registry(),
-            ),
-            patch("vaig.cli.commands.live._execute_live_mode", mock_live_mode),
+        with patch(
+            "vaig.cli.commands.live._register_live_tools",
+            return_value=_make_empty_registry(),
         ):
-            # Must NOT raise typer.Exit / SystemExit
             _execute_orchestrated_skill(
-                MagicMock(),
+                mock_client,
                 Settings(),
                 GKEConfig(),
                 skill,
                 "Why is the service down?",
             )
 
-        mock_live_mode.assert_called_once()
+        mock_client.generate.assert_called_once()
+
+    def test_sync_generate_called_with_skill_context_and_question(self) -> None:
+        """client.generate() receives a prompt containing the skill context and question."""
+        from vaig.cli.commands.live import _execute_orchestrated_skill
+
+        skill = _make_skill_mock(
+            requires_live_tools=True,
+            name="rca",
+            display_name="Root Cause Analysis",
+            description="Perform RCA on incidents.",
+        )
+        mock_client = MagicMock()
+        mock_client.generate.return_value = _make_generation_result()
+        question = "Why did the service crash?"
+
+        with patch(
+            "vaig.cli.commands.live._register_live_tools",
+            return_value=_make_empty_registry(),
+        ):
+            _execute_orchestrated_skill(
+                mock_client,
+                Settings(),
+                GKEConfig(),
+                skill,
+                question,
+            )
+
+        call_args = mock_client.generate.call_args
+        prompt = call_args[0][0]  # first positional argument
+        assert "Root Cause Analysis" in prompt
+        assert "Perform RCA on incidents." in prompt
+        assert question in prompt
 
     def test_sync_no_exit_on_zero_tools(self) -> None:
         """With zero tools, _execute_orchestrated_skill does NOT raise SystemExit."""
         from vaig.cli.commands.live import _execute_orchestrated_skill
 
         skill = _make_skill_mock(requires_live_tools=True)
+        mock_client = MagicMock()
+        mock_client.generate.return_value = _make_generation_result()
 
-        with (
-            patch(
-                "vaig.cli.commands.live._register_live_tools",
-                return_value=_make_empty_registry(),
-            ),
-            patch("vaig.cli.commands.live._execute_live_mode"),
+        with patch(
+            "vaig.cli.commands.live._register_live_tools",
+            return_value=_make_empty_registry(),
         ):
-            # This should complete without exception
             try:
                 _execute_orchestrated_skill(
-                    MagicMock(),
+                    mock_client,
                     Settings(),
                     GKEConfig(),
                     skill,
@@ -124,7 +159,7 @@ class TestSyncOrchestratedFallback:
         mock_orchestrator = MagicMock()
         mock_orchestrator.execute_with_tools.return_value = mock_orch_result
 
-        mock_live_mode = MagicMock()
+        mock_client = MagicMock()
 
         with (
             patch(
@@ -132,10 +167,9 @@ class TestSyncOrchestratedFallback:
                 return_value=_make_populated_registry(3),
             ),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
-            patch("vaig.cli.commands.live._execute_live_mode", mock_live_mode),
         ):
             _execute_orchestrated_skill(
-                MagicMock(),
+                mock_client,
                 Settings(),
                 GKEConfig(),
                 skill,
@@ -144,8 +178,8 @@ class TestSyncOrchestratedFallback:
 
         # Orchestrated path was used
         mock_orchestrator.execute_with_tools.assert_called_once()
-        # Fallback was NOT called
-        mock_live_mode.assert_not_called()
+        # Direct generate fallback was NOT called
+        mock_client.generate.assert_not_called()
 
     def test_fallback_warning_message_is_shown(self, capsys) -> None:
         """The user sees a warning explaining offline context-prepend mode."""
@@ -156,16 +190,15 @@ class TestSyncOrchestratedFallback:
             name="rca",
             display_name="RCA",
         )
+        mock_client = MagicMock()
+        mock_client.generate.return_value = _make_generation_result()
 
-        with (
-            patch(
-                "vaig.cli.commands.live._register_live_tools",
-                return_value=_make_empty_registry(),
-            ),
-            patch("vaig.cli.commands.live._execute_live_mode"),
+        with patch(
+            "vaig.cli.commands.live._register_live_tools",
+            return_value=_make_empty_registry(),
         ):
             _execute_orchestrated_skill(
-                MagicMock(),
+                mock_client,
                 Settings(),
                 GKEConfig(),
                 skill,
@@ -203,29 +236,60 @@ class TestAsyncOrchestratedFallback:
     """Covers Task 1.2: async fallback on zero tools."""
 
     @pytest.mark.asyncio
-    async def test_async_fallback_on_zero_tools_calls_async_live_mode(self) -> None:
-        """With zero tools, _async_execute_live_mode is awaited (not typer.Exit)."""
+    async def test_async_fallback_on_zero_tools_calls_async_generate(self) -> None:
+        """With zero tools, client.async_generate() is awaited (not typer.Exit)."""
         from vaig.cli.commands.live import _async_execute_orchestrated_skill
 
         skill = _make_skill_mock(requires_live_tools=True)
-        mock_live_mode = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.async_generate = AsyncMock(return_value=_make_generation_result())
 
-        with (
-            patch(
-                "vaig.cli.commands.live._register_live_tools",
-                return_value=_make_empty_registry(),
-            ),
-            patch("vaig.cli.commands.live._async_execute_live_mode", mock_live_mode),
+        with patch(
+            "vaig.cli.commands.live._register_live_tools",
+            return_value=_make_empty_registry(),
         ):
             await _async_execute_orchestrated_skill(
-                MagicMock(),
+                mock_client,
                 Settings(),
                 GKEConfig(),
                 skill,
                 "query",
             )
 
-        mock_live_mode.assert_awaited_once()
+        mock_client.async_generate.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_async_generate_called_with_skill_context_and_question(self) -> None:
+        """client.async_generate() receives a prompt with the skill context + question."""
+        from vaig.cli.commands.live import _async_execute_orchestrated_skill
+
+        skill = _make_skill_mock(
+            requires_live_tools=True,
+            name="rca",
+            display_name="Root Cause Analysis",
+            description="Perform RCA on incidents.",
+        )
+        mock_client = MagicMock()
+        question = "Why did the pod OOMKill?"
+        mock_client.async_generate = AsyncMock(return_value=_make_generation_result())
+
+        with patch(
+            "vaig.cli.commands.live._register_live_tools",
+            return_value=_make_empty_registry(),
+        ):
+            await _async_execute_orchestrated_skill(
+                mock_client,
+                Settings(),
+                GKEConfig(),
+                skill,
+                question,
+            )
+
+        call_args = mock_client.async_generate.call_args
+        prompt = call_args[0][0]
+        assert "Root Cause Analysis" in prompt
+        assert "Perform RCA on incidents." in prompt
+        assert question in prompt
 
     @pytest.mark.asyncio
     async def test_async_no_exit_on_zero_tools(self) -> None:
@@ -233,17 +297,16 @@ class TestAsyncOrchestratedFallback:
         from vaig.cli.commands.live import _async_execute_orchestrated_skill
 
         skill = _make_skill_mock(requires_live_tools=True)
+        mock_client = MagicMock()
+        mock_client.async_generate = AsyncMock(return_value=_make_generation_result())
 
-        with (
-            patch(
-                "vaig.cli.commands.live._register_live_tools",
-                return_value=_make_empty_registry(),
-            ),
-            patch("vaig.cli.commands.live._async_execute_live_mode", AsyncMock()),
+        with patch(
+            "vaig.cli.commands.live._register_live_tools",
+            return_value=_make_empty_registry(),
         ):
             try:
                 await _async_execute_orchestrated_skill(
-                    MagicMock(),
+                    mock_client,
                     Settings(),
                     GKEConfig(),
                     skill,
@@ -269,7 +332,8 @@ class TestAsyncOrchestratedFallback:
         mock_orchestrator = MagicMock()
         mock_orchestrator.async_execute_with_tools = AsyncMock(return_value=mock_orch_result)
 
-        mock_async_live_mode = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.async_generate = AsyncMock()
 
         with (
             patch(
@@ -277,10 +341,9 @@ class TestAsyncOrchestratedFallback:
                 return_value=_make_populated_registry(3),
             ),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
-            patch("vaig.cli.commands.live._async_execute_live_mode", mock_async_live_mode),
         ):
             await _async_execute_orchestrated_skill(
-                MagicMock(),
+                mock_client,
                 Settings(),
                 GKEConfig(),
                 skill,
@@ -289,5 +352,5 @@ class TestAsyncOrchestratedFallback:
 
         # Async orchestrated path was used
         mock_orchestrator.async_execute_with_tools.assert_awaited_once()
-        # Fallback was NOT called
-        mock_async_live_mode.assert_not_called()
+        # Direct async_generate fallback was NOT called
+        mock_client.async_generate.assert_not_called()

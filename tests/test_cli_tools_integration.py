@@ -231,8 +231,9 @@ class TestLiveSkillRouting:
     def test_no_tools_available_falls_back_to_context_prepend(self) -> None:
         """When requires_live_tools=True but no tools are loaded, fall back gracefully.
 
-        The skill should NOT crash. Instead it falls back to the legacy
-        context-prepend path (_execute_live_mode) with a warning message.
+        The skill should NOT crash. Instead it falls back to the true offline
+        path: ``client.generate()`` is called directly with a warning message.
+        InfraAgent is NOT involved — that path also crashes with zero tools.
         """
         skill = _make_skill_mock(requires_live_tools=True)
 
@@ -243,30 +244,25 @@ class TestLiveSkillRouting:
         mock_tool_registry = MagicMock()
         mock_tool_registry.list_tools.return_value = []
 
-        mock_agent_result = MagicMock()
-        mock_agent_result.content = "Offline analysis complete"
-        mock_agent_result.success = True
-        mock_agent_result.metadata = {}
-        mock_agent_result.usage = {}
+        mock_gen_result = MagicMock()
+        mock_gen_result.text = "Offline analysis complete"
 
-        mock_infra_agent = MagicMock()
-        mock_infra_agent.execute.return_value = mock_agent_result
-        mock_infra_agent.registry.list_tools.return_value = [MagicMock()] * 3
+        mock_client = MagicMock()
+        mock_client.generate.return_value = mock_gen_result
 
         with (
-            patch("vaig.core.client.GeminiClient"),
+            patch("vaig.core.client.GeminiClient", return_value=mock_client),
             patch("vaig.skills.registry.SkillRegistry", return_value=mock_registry),
             patch("vaig.cli.commands.live._register_live_tools", return_value=mock_tool_registry),
-            patch("vaig.agents.infra_agent.InfraAgent", return_value=mock_infra_agent),
         ):
             result = runner.invoke(app, ["live", "Check health", "--skill", "test-skill"])
 
         # Must NOT crash — graceful fallback
         assert result.exit_code == 0, f"CLI crashed with fallback: {result.output}"
         # Warning message shown to user
-        assert "offline context-prepend mode" in result.output.lower() or "No live tools" in result.output
-        # Fell back to InfraAgent (context-prepend path)
-        mock_infra_agent.execute.assert_called_once()
+        assert "offline" in result.output.lower() or "no live tools" in result.output.lower()
+        # Fell back to direct LLM generation (not InfraAgent)
+        mock_client.generate.assert_called_once()
 
     def test_output_saved_to_file(self, tmp_path) -> None:
         """Orchestrated skill output is saved to file when --output is given."""

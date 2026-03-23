@@ -669,7 +669,7 @@ class TestAsyncExecuteOrchestratedSkill:
 
     @pytest.mark.asyncio
     async def test_falls_back_when_no_tools(self) -> None:
-        """When tool_count==0, the async orchestrated path falls back to _async_execute_live_mode.
+        """When tool_count==0, the async orchestrated path falls back to client.async_generate.
 
         The coroutine must NOT raise SystemExit / typer.Exit — it should
         degrade gracefully to the context-prepend path.
@@ -689,19 +689,20 @@ class TestAsyncExecuteOrchestratedSkill:
         mock_registry = MagicMock()
         mock_registry.list_tools.return_value = []  # No tools
 
-        mock_live_mode = AsyncMock()
+        mock_gen_result = MagicMock()
+        mock_gen_result.text = "fallback response"
 
-        with (
-            patch("vaig.cli.commands.live._register_live_tools", return_value=mock_registry),
-            patch("vaig.cli.commands.live._async_execute_live_mode", mock_live_mode),
-        ):
+        mock_client = MagicMock()
+        mock_client.async_generate = AsyncMock(return_value=mock_gen_result)
+
+        with patch("vaig.cli.commands.live._register_live_tools", return_value=mock_registry):
             # Should NOT raise — fallback occurs instead
             await _async_execute_orchestrated_skill(
-                MagicMock(), Settings(), GKEConfig(), mock_skill, "query",
+                mock_client, Settings(), GKEConfig(), mock_skill, "query",
             )
 
-        # Verify fallback was called
-        mock_live_mode.assert_awaited_once()
+        # Verify fallback called client.async_generate directly
+        mock_client.async_generate.assert_awaited_once()
 
 
 # ══════════════════════════════════════════════════════════════

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from vaig.skills.base import SkillPhase
 
 
@@ -47,13 +49,6 @@ class TestRCASkill:
         assert "log_analyzer" in names
         assert "metric_correlator" in names
         assert "rca_lead" in names
-
-    def test_metadata_requires_live_tools(self) -> None:
-        from vaig.skills.rca.skill import RCASkill
-
-        skill = RCASkill()
-        meta = skill.get_metadata()
-        assert meta.requires_live_tools is True
 
     def test_gatherer_has_requires_tools(self) -> None:
         from vaig.skills.rca.skill import RCASkill
@@ -158,13 +153,6 @@ class TestLogAnalysisSkill:
             assert "model" in agent
             assert isinstance(agent["system_instruction"], str)
             assert len(agent["system_instruction"]) > 0
-
-    def test_metadata_requires_live_tools(self) -> None:
-        from vaig.skills.log_analysis.skill import LogAnalysisSkill
-
-        skill = LogAnalysisSkill()
-        meta = skill.get_metadata()
-        assert meta.requires_live_tools is True
 
     def test_gatherer_has_requires_tools(self) -> None:
         from vaig.skills.log_analysis.skill import LogAnalysisSkill
@@ -284,13 +272,6 @@ class TestConfigAuditSkill:
             assert "model" in agent
             assert isinstance(agent["system_instruction"], str)
             assert len(agent["system_instruction"]) > 0
-
-    def test_metadata_requires_live_tools(self) -> None:
-        from vaig.skills.config_audit.skill import ConfigAuditSkill
-
-        skill = ConfigAuditSkill()
-        meta = skill.get_metadata()
-        assert meta.requires_live_tools is True
 
     def test_gatherer_has_requires_tools(self) -> None:
         from vaig.skills.config_audit.skill import ConfigAuditSkill
@@ -732,13 +713,6 @@ class TestComplianceCheckSkill:
             assert "system_instruction" in agent
             assert "model" in agent
 
-    def test_metadata_requires_live_tools(self) -> None:
-        from vaig.skills.compliance_check.skill import ComplianceCheckSkill
-
-        skill = ComplianceCheckSkill()
-        meta = skill.get_metadata()
-        assert meta.requires_live_tools is True
-
     def test_gatherer_has_requires_tools(self) -> None:
         from vaig.skills.compliance_check.skill import ComplianceCheckSkill
 
@@ -1099,13 +1073,6 @@ class TestPerfAnalysisSkill:
             assert "model" in agent
             assert isinstance(agent["system_instruction"], str)
             assert len(agent["system_instruction"]) > 0
-
-    def test_metadata_requires_live_tools(self) -> None:
-        from vaig.skills.perf_analysis.skill import PerfAnalysisSkill
-
-        skill = PerfAnalysisSkill()
-        meta = skill.get_metadata()
-        assert meta.requires_live_tools is True
 
     def test_gatherer_has_requires_tools(self) -> None:
         from vaig.skills.perf_analysis.skill import PerfAnalysisSkill
@@ -1591,3 +1558,47 @@ class TestAdrGeneratorSkill:
             assert "model" in agent
             assert isinstance(agent["system_instruction"], str)
             assert len(agent["system_instruction"]) > 0
+
+
+# ══════════════════════════════════════════════════════════════
+# Parametrized cross-skill tests for requires_live_tools contract
+# ══════════════════════════════════════════════════════════════
+
+_LIVE_TOOLS_SKILLS = [
+    ("vaig.skills.rca.skill", "RCASkill", "rca_gatherer"),
+    ("vaig.skills.log_analysis.skill", "LogAnalysisSkill", "log_analysis_gatherer"),
+    ("vaig.skills.config_audit.skill", "ConfigAuditSkill", "config_gatherer"),
+    ("vaig.skills.compliance_check.skill", "ComplianceCheckSkill", "compliance_gatherer"),
+    ("vaig.skills.perf_analysis.skill", "PerfAnalysisSkill", "perf_gatherer"),
+]
+
+
+@pytest.mark.parametrize(
+    ("module_path", "class_name", "gatherer_name"),
+    _LIVE_TOOLS_SKILLS,
+    ids=[row[1] for row in _LIVE_TOOLS_SKILLS],
+)
+def test_metadata_requires_live_tools(module_path: str, class_name: str, gatherer_name: str) -> None:
+    """Every skill that gates on live tools must expose requires_live_tools=True."""
+    import importlib
+
+    module = importlib.import_module(module_path)
+    skill_cls = getattr(module, class_name)
+    meta = skill_cls().get_metadata()
+    assert meta.requires_live_tools is True
+
+
+@pytest.mark.parametrize(
+    ("module_path", "class_name", "gatherer_name"),
+    _LIVE_TOOLS_SKILLS,
+    ids=[row[1] for row in _LIVE_TOOLS_SKILLS],
+)
+def test_gatherer_has_requires_tools(module_path: str, class_name: str, gatherer_name: str) -> None:
+    """The gatherer agent (index 0) for each live-tools skill must have requires_tools=True."""
+    import importlib
+
+    module = importlib.import_module(module_path)
+    skill_cls = getattr(module, class_name)
+    agents = skill_cls().get_agents_config()
+    gatherer = next(a for a in agents if a["name"] == gatherer_name)
+    assert gatherer.get("requires_tools") is True
