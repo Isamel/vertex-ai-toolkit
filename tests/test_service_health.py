@@ -2802,3 +2802,158 @@ class TestDatadogAPMTagResolution:
             "Datadog tools never being called."
         )
 
+
+class TestNamespacePropagation:
+    """Regression tests for Bug 1 & 3 — namespace/location/cluster_name propagation.
+
+    Verifies that:
+    - get_agents_config() and get_parallel_agents_config() accept and forward
+      namespace, location, and cluster_name kwargs.
+    - The effective namespace appears in namespace-scoped gatherer prompts (workload,
+      event) but NOT necessarily in cluster-scoped gatherers (node_gatherer).
+    - get_sequential_agents_config() also respects the namespace override.
+    """
+
+    def test_parallel_gatherer_prompts_use_overridden_namespace(self) -> None:
+        """When namespace='odin-dev' is passed, namespace-scoped gatherer prompts must
+        reference 'odin-dev' and NOT use 'default' as the target namespace.
+
+        node_gatherer is cluster-scoped (nodes, kube-system) so it is excluded.
+        """
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        agents = skill.get_parallel_agents_config(namespace="odin-dev")
+
+        # Only check namespace-scoped gatherers — node_gatherer is cluster-scoped
+        namespace_scoped = [
+            a for a in agents
+            if a.get("parallel_group") == "gather"
+            and a.get("name") in ("workload_gatherer", "event_gatherer", "logging_gatherer")
+        ]
+        assert namespace_scoped, "Expected at least one namespace-scoped gatherer agent"
+
+        for agent in namespace_scoped:
+            prompt = agent.get("system_instruction", "")
+            assert "odin-dev" in prompt, (
+                f"Agent '{agent.get('name')}' prompt does not contain 'odin-dev'. "
+                "Namespace override is not being propagated to the prompt builder."
+            )
+
+    def test_get_agents_config_accepts_namespace_kwarg(self) -> None:
+        """get_agents_config() must accept a namespace kwarg without raising."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        # Should not raise
+        agents = skill.get_agents_config(namespace="odin-dev")
+        assert isinstance(agents, list)
+
+    def test_get_agents_config_accepts_location_and_cluster_name(self) -> None:
+        """get_agents_config() must accept location and cluster_name kwargs."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        agents = skill.get_agents_config(
+            namespace="staging",
+            location="us-central1",
+            cluster_name="my-cluster",
+        )
+        assert isinstance(agents, list)
+
+    def test_sequential_agents_config_accepts_namespace_kwarg(self) -> None:
+        """get_sequential_agents_config() must accept namespace without raising."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        agents = skill.get_sequential_agents_config(namespace="production")
+        assert isinstance(agents, list)
+
+
+class TestTargetPlaceholderReplacement:
+    """Regression tests for Bug 2 — literal '<target>' placeholder in prompts.
+
+    After the fix, no gatherer prompt should contain the literal string '<target>'
+    when a namespace is provided.  The placeholder must be replaced with the
+    sanitized namespace value before the prompt is returned.
+    """
+
+    def test_workload_gatherer_no_target_placeholder_with_namespace(self) -> None:
+        """build_workload_gatherer_prompt with a namespace must not contain '<target>'."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="odin-dev")
+        assert "<target>" not in prompt, (
+            "build_workload_gatherer_prompt still contains literal '<target>' "
+            "after fix — namespace substitution is broken."
+        )
+
+    def test_event_gatherer_no_target_placeholder_with_namespace(self) -> None:
+        """build_event_gatherer_prompt with a namespace must not contain '<target>'."""
+        from vaig.skills.service_health.prompts import build_event_gatherer_prompt
+
+        prompt = build_event_gatherer_prompt(namespace="odin-dev")
+        assert "<target>" not in prompt, (
+            "build_event_gatherer_prompt still contains literal '<target>' "
+            "after fix — namespace substitution is broken."
+        )
+
+    def test_workload_gatherer_injects_namespace_value(self) -> None:
+        """The actual namespace value must appear in the workload gatherer prompt."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="odin-dev")
+        assert "odin-dev" in prompt, (
+            "build_workload_gatherer_prompt does not inject the namespace value "
+            "into tool call examples."
+        )
+
+    def test_event_gatherer_injects_namespace_value(self) -> None:
+        """The actual namespace value must appear in the event gatherer prompt."""
+        from vaig.skills.service_health.prompts import build_event_gatherer_prompt
+
+        prompt = build_event_gatherer_prompt(namespace="odin-dev")
+        assert "odin-dev" in prompt, (
+            "build_event_gatherer_prompt does not inject the namespace value "
+            "into tool call examples."
+        )
+
+    def test_workload_gatherer_default_namespace_no_target_placeholder(self) -> None:
+        """Even with no namespace arg, '<target>' must not remain in the prompt."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt()
+        assert "<target>" not in prompt, (
+            "build_workload_gatherer_prompt() with no namespace still contains "
+            "literal '<target>' — the default substitution is broken."
+        )
+
+    def test_event_gatherer_default_namespace_no_target_placeholder(self) -> None:
+        """Even with no namespace arg, '<target>' must not remain in the prompt."""
+        from vaig.skills.service_health.prompts import build_event_gatherer_prompt
+
+        prompt = build_event_gatherer_prompt()
+        assert "<target>" not in prompt, (
+            "build_event_gatherer_prompt() with no namespace still contains "
+            "literal '<target>' — the default substitution is broken."
+        )
+
+    def test_logging_gatherer_default_namespace_no_target_placeholder(self) -> None:
+        """Logging gatherer should not contain <target> when using default namespace."""
+        from vaig.skills.service_health.prompts import build_logging_gatherer_prompt
+
+        prompt = build_logging_gatherer_prompt(namespace="default")
+        assert "<target>" not in prompt
+        assert "<target-namespace>" not in prompt
+        assert "<target_namespace>" not in prompt
+
+    def test_logging_gatherer_injects_namespace_value(self) -> None:
+        """Logging gatherer should contain the actual namespace value."""
+        from vaig.skills.service_health.prompts import build_logging_gatherer_prompt
+
+        prompt = build_logging_gatherer_prompt(namespace="prod-ns")
+        assert "prod-ns" in prompt
+        assert "<target>" not in prompt
+        assert "<target-namespace>" not in prompt
+        assert "<target_namespace>" not in prompt
+

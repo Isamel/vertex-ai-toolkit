@@ -1251,6 +1251,9 @@ def _execute_orchestrated_skill(
                 on_tool_call=tool_logger,
                 tool_call_store=tool_call_store,
                 on_agent_progress=progress_display,
+                gke_namespace=gke_config.default_namespace,
+                gke_location=gke_config.location,
+                gke_cluster_name=gke_config.cluster_name,
             )
         finally:
             progress_display.stop()
@@ -1705,6 +1708,9 @@ async def _async_execute_orchestrated_skill(
                 on_tool_call=tool_logger,
                 tool_call_store=tool_call_store,
                 on_agent_progress=progress_display,
+                gke_namespace=gke_config.default_namespace,
+                gke_location=gke_config.location,
+                gke_cluster_name=gke_config.cluster_name,
             )
         finally:
             progress_display.stop()

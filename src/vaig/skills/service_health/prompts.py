@@ -1681,6 +1681,9 @@ def build_workload_gatherer_prompt(namespace: str = "", datadog_api_enabled: boo
         if datadog_api_enabled
         else ""
     )
+    # Safe namespace for embedding in tool call examples — validated K8s name.
+    # Falls back to "default" when the input is empty or invalid (injection attempt).
+    ns = _sanitize_namespace(namespace) or "default"
     prompt = f"""{ANTI_INJECTION_RULE}
 
 You are a focused Kubernetes diagnostic agent. Your ONLY responsibility is to
@@ -1835,7 +1838,8 @@ Report even for healthy deployments, as management context affects remediation r
 - If a namespace has no workload issues, write "No workload issues detected in <namespace>."
 - A shorter, 100% accurate report is always better than a longer report with invented data.
 """
-    return prompt
+    # Replace placeholder tokens with the validated namespace so agents call the right target.
+    return prompt.replace("<target>", ns).replace("<target_namespace>", ns)
 
 
 def build_event_gatherer_prompt(namespace: str = "") -> str:
@@ -1865,6 +1869,7 @@ def build_event_gatherer_prompt(namespace: str = "") -> str:
         :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the full
         event-gatherer task description.
     """
+    ns = _sanitize_namespace(namespace) or "default"
     ns_context = (
         f"Target namespace: {_sanitize_namespace(namespace)}.  "
         "Also check kube-system for system-level events."
@@ -1874,7 +1879,7 @@ def build_event_gatherer_prompt(namespace: str = "") -> str:
             "non-system namespaces found in the cluster."
         )
     )
-    return f"""{ANTI_INJECTION_RULE}
+    prompt = f"""{ANTI_INJECTION_RULE}
 
 You are a focused Kubernetes diagnostic agent. Your ONLY responsibility is to
 collect **event, networking, storage, and GitOps data** (Steps 3, 8, 9, 10
@@ -1973,6 +1978,8 @@ Produce exactly these sections at the end of your response:
 - Preserve event messages verbatim — do not paraphrase them.
 - If the target namespace is unclear, query all non-system namespaces.
 """
+    # Replace placeholder tokens with the validated namespace so agents call the right target.
+    return prompt.replace("<target>", ns).replace("<target_namespace>", ns)
 
 
 def build_logging_gatherer_prompt(namespace: str = "") -> str:
@@ -2005,8 +2012,8 @@ def build_logging_gatherer_prompt(namespace: str = "") -> str:
         :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the full
         logging-gatherer task description.
     """
-    safe_ns = _sanitize_namespace(namespace) if namespace else "<target-namespace>"
-    return f"""{ANTI_INJECTION_RULE}
+    safe_ns = _sanitize_namespace(namespace) or "default"
+    prompt = f"""{ANTI_INJECTION_RULE}
 
 You are a focused Kubernetes diagnostic agent. Your ONLY responsibility is to
 collect **Cloud Logging data** (Steps 7a and 7b of the standard SRE
@@ -2097,6 +2104,7 @@ If queries failed: "Cloud Logging queries failed — see error details above.")
 - Cloud Logging Findings sections are NOT optional — you MUST produce the full
   ## Cloud Logging Findings section even if all sub-sections are empty.
 """
+    return prompt.replace("<target>", safe_ns).replace("<target_namespace>", safe_ns).replace("<target-namespace>", safe_ns)
 
 
 PHASE_PROMPTS = {

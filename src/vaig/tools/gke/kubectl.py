@@ -100,6 +100,12 @@ def _kubectl_get_comma_separated(
         body = sub.output.strip() if sub.output else ""
         if body and body != "No resources found." and body != "[]":
             sections.append(f"=== {rtype.upper()} ===\n{body}")
+        else:
+            logger.debug(
+                "kubectl_get comma-separated: no results for resource '%s' in namespace '%s' — skipping section",
+                rtype,
+                namespace,
+            )
 
     if not any_success and errors:
         return ToolResult(

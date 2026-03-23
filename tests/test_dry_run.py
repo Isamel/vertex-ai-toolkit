@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -59,7 +60,7 @@ class FakeOrchSkill(BaseSkill):
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         return f"phase={phase}, context={context}, input={user_input}"
 
-    def get_agents_config(self) -> list[dict]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict]:
         return [
             {
                 "name": "gatherer",
@@ -97,7 +98,7 @@ class FakeContextSkill(BaseSkill):
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         return ""
 
-    def get_agents_config(self) -> list[dict]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict]:
         return []
 
 

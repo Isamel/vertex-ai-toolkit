@@ -90,7 +90,7 @@ class ServiceHealthParallelSkill(BaseSkill):
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         return f"[{phase.value}] {user_input}"
 
-    def get_agents_config(self) -> list[dict[str, Any]]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         """Return 7-agent config: 4 parallel gatherers + 3 sequential tail."""
         return [
             # ── Parallel group ─────────────────────────────────────────────
@@ -178,7 +178,7 @@ class SequentialOnlySkill(BaseSkill):
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         return f"[{phase.value}] {user_input}"
 
-    def get_agents_config(self) -> list[dict[str, Any]]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
             {
                 "name": "gatherer",

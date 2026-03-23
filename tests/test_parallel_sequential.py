@@ -81,7 +81,7 @@ class ParallelSkill(BaseSkill):
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         return f"[{phase.value}] {user_input}"
 
-    def get_agents_config(self) -> list[dict]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict]:
         configs: list[dict] = []
         for name in self._gatherer_names:
             configs.append(

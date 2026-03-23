@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from vaig.skills.service_health.schema import (
     CONTENT_TYPE_FENCE_MAP,
@@ -940,7 +941,7 @@ class TestServiceHealthSkillSchemaIntegration:
                 return ""
             def get_phase_prompt(self, phase, context, user_input) -> str:  # type: ignore[override]
                 return ""
-            def get_agents_config(self) -> list:
+            def get_agents_config(self, **kwargs: Any) -> list:
                 return []
 
         skill = DummySkill()
