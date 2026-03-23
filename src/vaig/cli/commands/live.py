@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from vaig.agents.orchestrator import OrchestratorResult
     from vaig.core.config import GKEConfig, Settings
     from vaig.core.protocols import GeminiClientProtocol
-    from vaig.skills.base import BaseSkill
+    from vaig.skills.base import BaseSkill, SkillMetadata
     from vaig.tools.base import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -1168,6 +1168,24 @@ def _dispatch_format_output(
         )
 
 
+def _get_offline_fallback_context(skill_meta: SkillMetadata) -> str:
+    """Return the context string used when no live tools are available.
+
+    Emits a warning to the console and returns a plain-text context block
+    that describes the active skill.  Used by both sync and async orchestrated
+    skill paths when ``tool_count == 0``.
+    """
+    console.print(
+        f"[bold yellow]⚠️  No live tools available for skill '{skill_meta.name}'. "
+        "Running in offline context-prepend mode. Results may be limited.[/bold yellow]"
+    )
+    return (
+        f"## Active Skill: {skill_meta.display_name}\n\n"
+        f"{skill_meta.description}\n\n"
+        f"Apply the {skill_meta.name} analysis methodology to the investigation below."
+    )
+
+
 def _execute_orchestrated_skill(
     client: GeminiClientProtocol,
     settings: Settings,
@@ -1216,13 +1234,17 @@ def _execute_orchestrated_skill(
 
     tool_count = len(tool_registry.list_tools())
     if tool_count == 0:
-        err_console.print(
-            "[bold red]No infrastructure tools available![/bold red]\n"
-            "[yellow]Install optional dependencies:[/yellow]\n"
-            "  pip install vertex-ai-toolkit[live]       # GKE tools\n"
-            "  pip install google-cloud-logging google-cloud-monitoring  # GCP observability"
-        )
-        raise typer.Exit(1)
+        context_str = _get_offline_fallback_context(skill_meta)
+        prompt = f"{context_str}\n\n## Investigation Question\n\n{question}"
+        try:
+            result = client.generate(prompt)
+        except Exception as exc:  # noqa: BLE001
+            handle_cli_error(exc)
+            raise typer.Exit(1) from exc
+        console.print()
+        console.print("[bold]Assistant response (offline mode):[/bold]")
+        console.print(result.text)
+        return
 
     console.print(
         Panel.fit(
@@ -1703,13 +1725,17 @@ async def _async_execute_orchestrated_skill(
 
     tool_count = len(tool_registry.list_tools())
     if tool_count == 0:
-        err_console.print(
-            "[bold red]No infrastructure tools available![/bold red]\n"
-            "[yellow]Install optional dependencies:[/yellow]\n"
-            "  pip install vertex-ai-toolkit[live]       # GKE tools\n"
-            "  pip install google-cloud-logging google-cloud-monitoring  # GCP observability"
-        )
-        raise typer.Exit(1)
+        context_str = _get_offline_fallback_context(skill_meta)
+        prompt = f"{context_str}\n\n## Investigation Question\n\n{question}"
+        try:
+            result = await client.async_generate(prompt)
+        except Exception as exc:  # noqa: BLE001
+            handle_cli_error(exc)
+            raise typer.Exit(1) from exc
+        console.print()
+        console.print("[bold]Assistant response (offline mode):[/bold]")
+        console.print(result.text)
+        return
 
     console.print(
         Panel.fit(

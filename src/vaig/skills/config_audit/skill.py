@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
-from vaig.skills.config_audit.prompts import PHASE_PROMPTS, SYSTEM_INSTRUCTION
+from vaig.skills.config_audit.prompts import CONFIG_AUDIT_GATHERER_PROMPT, PHASE_PROMPTS, SYSTEM_INSTRUCTION
 
 
 class ConfigAuditSkill(BaseSkill):
@@ -22,12 +22,13 @@ class ConfigAuditSkill(BaseSkill):
             display_name="Config Audit",
             description="Audit infrastructure and application configs for security issues, misconfigurations, and reliability risks",
             version="1.0.0",
-            tags=["config", "sre", "security", "audit", "compliance", "infrastructure", "reliability"],
+            tags=["config", "sre", "security", "audit", "compliance", "infrastructure", "reliability", "live"],
             supported_phases=[
                 SkillPhase.ANALYZE,
                 SkillPhase.REPORT,
             ],
             recommended_model="gemini-2.5-pro",
+            requires_live_tools=True,
         )
 
     def get_system_instruction(self) -> str:
@@ -39,6 +40,15 @@ class ConfigAuditSkill(BaseSkill):
 
     def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
+            {
+                "name": "config_gatherer",
+                "role": "Configuration Data Gatherer",
+                "requires_tools": True,
+                "system_instruction": CONFIG_AUDIT_GATHERER_PROMPT,
+                "model": "gemini-2.5-flash",
+                "temperature": 0.0,
+                "max_iterations": 12,
+            },
             {
                 "name": "security_scanner",
                 "role": "Security Scanner",

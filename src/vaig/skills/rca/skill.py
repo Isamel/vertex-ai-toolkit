@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
-from vaig.skills.rca.prompts import PHASE_PROMPTS, SYSTEM_INSTRUCTION
+from vaig.skills.rca.prompts import PHASE_PROMPTS, RCA_GATHERER_PROMPT, SYSTEM_INSTRUCTION
 
 
 class RCASkill(BaseSkill):
@@ -23,7 +23,7 @@ class RCASkill(BaseSkill):
             display_name="Root Cause Analysis",
             description="Investigate production incidents using 5 Whys + Fishbone methodology",
             version="1.0.0",
-            tags=["incident", "sre", "debugging", "post-mortem", "logs", "metrics"],
+            tags=["incident", "sre", "debugging", "post-mortem", "logs", "metrics", "live"],
             supported_phases=[
                 SkillPhase.ANALYZE,
                 SkillPhase.PLAN,
@@ -31,6 +31,7 @@ class RCASkill(BaseSkill):
                 SkillPhase.REPORT,
             ],
             recommended_model="gemini-2.5-pro",
+            requires_live_tools=True,
         )
 
     def get_system_instruction(self) -> str:
@@ -42,6 +43,15 @@ class RCASkill(BaseSkill):
 
     def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
+            {
+                "name": "rca_gatherer",
+                "role": "RCA Data Gatherer",
+                "requires_tools": True,
+                "system_instruction": RCA_GATHERER_PROMPT,
+                "model": "gemini-2.5-flash",
+                "temperature": 0.0,
+                "max_iterations": 10,
+            },
             {
                 "name": "log_analyzer",
                 "role": "Log Analyzer",
