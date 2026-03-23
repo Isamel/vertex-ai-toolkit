@@ -2180,13 +2180,13 @@ class TestParallelAgentsConfig:
         names = [a["name"] for a in sequential]
         assert names == ["health_analyzer", "health_verifier", "health_reporter"]
 
-    def test_all_gatherers_use_flash_model(self) -> None:
-        """All 4 parallel gatherers must use gemini-2.5-flash for speed/cost."""
+    def test_all_gatherers_use_pro_model(self) -> None:
+        """All 4 parallel gatherers must use gemini-2.5-pro for quality."""
         agents = self._get_agents()
         parallel = [a for a in agents if a.get("parallel_group") == "gather"]
         for agent in parallel:
-            assert agent["model"] == "gemini-2.5-flash", (
-                f"Gatherer '{agent['name']}' uses '{agent['model']}', expected 'gemini-2.5-flash'"
+            assert agent["model"] == "gemini-2.5-pro", (
+                f"Gatherer '{agent['name']}' uses '{agent['model']}', expected 'gemini-2.5-pro'"
             )
 
     def test_all_gatherers_require_tools(self) -> None:
