@@ -1693,6 +1693,9 @@ collect **workload health data** (Steps 2, 4, 5, 6 of the standard SRE
 investigation checklist).  Do NOT collect node data, events, or Cloud Logging
 — those are handled by other agents running in parallel.{datadog_scope_note}
 
+### Target namespace:
+{ns_context}
+
 ## Your Scope
 
 ### Step 2 — Pod Status Analysis
@@ -1789,9 +1792,6 @@ For each deployment that has an HPA or that has a ``VerticalPodAutoscaler`` reso
     - If ``get_scaling_status`` is not in your available tools list, SKIP this sub-step and
       mark it as SKIPPED in the Investigation Checklist.
 
-### Target namespace:
-{ns_context}
-
 ### Data collection rules:
 - For kubectl_logs: use ``pod="<name>"`` — NOT ``pod_name``. No ``previous`` parameter.
 - For get_container_status: use ``name="<name>"`` — NOT ``pod_name``.
@@ -1841,7 +1841,7 @@ Report even for healthy deployments, as management context affects remediation r
 - A shorter, 100% accurate report is always better than a longer report with invented data.
 """
     # Replace placeholder tokens with the validated namespace so agents call the right target.
-    return prompt.replace("<target>", ns).replace("<target_namespace>", ns)
+    return prompt.replace("<target>", ns).replace("<target_namespace>", ns).replace("<ns>", ns)
 
 
 def build_event_gatherer_prompt(namespace: str = "") -> str:
@@ -1985,7 +1985,7 @@ Produce exactly these sections at the end of your response:
 - If the target namespace is unclear, query all non-system namespaces.
 """
     # Replace placeholder tokens with the validated namespace so agents call the right target.
-    return prompt.replace("<target>", ns).replace("<target_namespace>", ns)
+    return prompt.replace("<target>", ns).replace("<target_namespace>", ns).replace("<ns>", ns)
 
 
 def build_logging_gatherer_prompt(namespace: str = "") -> str:
