@@ -33,6 +33,11 @@ live = [
     "google-auth>=2.35.0",
     "datadog-api-client>=2.0.0,<3.0.0",
 ]
+rag = [
+    "google-cloud-bigquery>=3.20.0",
+    "google-cloud-storage>=2.16.0",
+    "google-cloud-aiplatform>=1.60.0",
+]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
@@ -42,6 +47,7 @@ dev = [
     "mypy>=1.13.0",
     "types-PyYAML>=6.0.0",
     "vertex-ai-toolkit[live]",
+    "vertex-ai-toolkit[rag]",
 ]
 
 [project.scripts]
@@ -120,6 +126,8 @@ module = [
     "kubernetes.*",
     "mcp",
     "mcp.*",
+    "yaml",
+    "yaml.*",
     "fitz",
     "google.cloud",
     "google.cloud.*",
@@ -129,6 +137,15 @@ module = [
     "datadog_api_client.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "vaig.tools.gke.datadog_api",
+    "vaig.tools.gcloud_tools",
+]
+# CI (Python 3.12) stubs differ from local — type: ignore[no-untyped-call] needed in CI
+# but reported as unused locally. Suppress the unused-ignore warning for these files.
+warn_unused_ignores = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

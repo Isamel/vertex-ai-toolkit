@@ -1297,6 +1297,12 @@ def _execute_orchestrated_skill(
         # Show agent pipeline summary (includes cost line)
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
 
+        # Auto-export report if configured.
+        # ADR-4: auto-export fires here for the health report only, immediately after the live
+        # summary.  Telemetry and tool-calls are higher-volume and use the explicit CLI push
+        # commands (vaig cloud push telemetry / tool-calls) so they are never auto-exported.
+        _auto_export_report(settings, orch_result, gke_config)
+
         # Notify via terminal bell
         _emit_bell(no_bell=no_bell)
 
@@ -1307,6 +1313,30 @@ def _execute_orchestrated_skill(
             "Try narrowing the scope of your question or specifying a namespace/resource.[/yellow]"
         )
         raise typer.Exit(1)  # noqa: B904
+
+
+def _auto_export_report(
+    settings: Settings,
+    orch_result: OrchestratorResult,
+    gke_config: GKEConfig,
+) -> None:
+    """Fire-and-forget auto-export of a health report if configured.
+
+    Checks whether auto-export is enabled and a structured report exists, then
+    delegates to :func:`vaig.core.export.auto_export_report` on a daemon thread.
+    """
+    if not (settings.export.enabled and settings.export.auto_export_reports and orch_result.structured_report is not None):
+        return
+    from vaig.core.export import auto_export_report
+
+    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    auto_export_report(
+        config=settings.export,
+        report=orch_result.structured_report.to_dict(),
+        run_id=run_id,
+        cluster_name=gke_config.cluster_name or "",
+        namespace=gke_config.default_namespace or "",
+    )
 
 
 def _format_models_used(models_used: list[str]) -> str:
@@ -1752,6 +1782,12 @@ async def _async_execute_orchestrated_skill(
         )
 
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
+
+        # Auto-export report if configured.
+        # ADR-4: auto-export fires here for the health report only, immediately after the live
+        # summary.  Telemetry and tool-calls are higher-volume and use the explicit CLI push
+        # commands (vaig cloud push telemetry / tool-calls) so they are never auto-exported.
+        _auto_export_report(settings, orch_result, gke_config)
 
         # Notify via terminal bell
         _emit_bell(no_bell=no_bell)

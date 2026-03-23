@@ -25,7 +25,7 @@ def _get_logging_client(
 ) -> tuple[Any, str | None]:
     """Create a Cloud Logging client with lazy import."""
     try:
-        from google.cloud import logging as cloud_logging  # noqa: I001
+        import google.cloud.logging as cloud_logging  # noqa: I001
     except ImportError:
         return None, "google-cloud-logging SDK is not installed. Run: pip install google-cloud-logging"
 

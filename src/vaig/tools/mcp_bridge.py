@@ -31,12 +31,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+class _MCPTypesFallback:
+    """Fallback namespace used when the MCP SDK is unavailable."""
+
+    Tool = Any
+
+
+mcp_types: Any = _MCPTypesFallback
+
 # Optional import — MCP SDK may not be installed.
 try:
-    from mcp import types as mcp_types
+    from mcp import types as mcp_types_mod
     from mcp.client.session import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
 
+    mcp_types = mcp_types_mod
     _MCP_AVAILABLE = True
     _MCP_IMPORT_ERROR: str | None = None
 except ImportError as _exc:  # pragma: no cover
@@ -49,8 +59,6 @@ except ImportError as _exc:  # pragma: no cover
 
     class ClientSession:  # type: ignore[no-redef]
         """Stub."""
-
-    mcp_types = None
 
 
 def is_mcp_available() -> bool:

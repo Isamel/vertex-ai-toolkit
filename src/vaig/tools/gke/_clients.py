@@ -80,7 +80,7 @@ def _query_autopilot_status(
         ImportError: If ``google-cloud-container`` is not installed.
         Exception: On any API or network error.
     """
-    from google.cloud import container_v1  # noqa: WPS433
+    import google.cloud.container_v1 as container_v1  # noqa: WPS433
 
     kwargs: dict[str, Any] = {}
     if credentials is not None:

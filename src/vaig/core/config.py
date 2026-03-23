@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -562,6 +562,68 @@ class TelemetryConfig(BaseModel):
     buffer_size: int = 50
 
 
+class ExportConfig(BaseModel):
+    """RAG data pipeline export configuration.
+
+    Controls export of vaig telemetry, tool calls, and health reports
+    to GCP (BigQuery and GCS).  Disabled by default — enable explicitly
+    with ``export.enabled = true`` in config or ``VAIG_EXPORT__ENABLED=true``.
+
+    Requires the ``[rag]`` optional dependency group:
+    ``pip install 'vertex-ai-toolkit[rag]'``
+    """
+
+    enabled: bool = False
+    gcp_project_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("gcp_project_id", "bigquery_project"),
+    )
+    bigquery_dataset: str = "vaig_analytics"
+    gcs_bucket: str = ""
+    gcs_prefix: str = "rag_data/"
+    auto_export_reports: bool = False
+    auto_export_telemetry: bool = False
+    vertex_rag_corpus_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("vertex_rag_corpus_id", "rag_corpus_name"),
+    )
+
+    @model_validator(mode="after")
+    def _normalize_export_fields(self) -> ExportConfig:
+        """Normalize legacy aliases and ensure stable path formatting."""
+        self.gcp_project_id = self.gcp_project_id.strip()
+        self.gcs_bucket = self.gcs_bucket.strip()
+        self.vertex_rag_corpus_id = self.vertex_rag_corpus_id.strip()
+
+        prefix = self.gcs_prefix.strip()
+        if prefix:
+            self.gcs_prefix = prefix.rstrip("/") + "/"
+        else:
+            self.gcs_prefix = ""
+
+        return self
+
+    @property
+    def bigquery_project(self) -> str:
+        """Backward-compatible alias for the configured GCP project ID."""
+        return self.gcp_project_id
+
+    @bigquery_project.setter
+    def bigquery_project(self, value: str) -> None:
+        """Backward-compatible setter for legacy callers."""
+        self.gcp_project_id = value
+
+    @property
+    def rag_corpus_name(self) -> str:
+        """Backward-compatible alias for the Vertex AI RAG corpus ID."""
+        return self.vertex_rag_corpus_id
+
+    @rag_corpus_name.setter
+    def rag_corpus_name(self, value: str) -> None:
+        """Backward-compatible setter for legacy callers."""
+        self.vertex_rag_corpus_id = value
+
+
 def _strip_empty_strings(data: dict[str, Any]) -> dict[str, Any]:
     """Recursively remove keys whose value is an empty string.
 
@@ -645,6 +707,7 @@ class Settings(BaseSettings):
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    export: ExportConfig = Field(default_factory=ExportConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> Settings:
