@@ -382,6 +382,8 @@ class TelemetryCollector:
         # Flush buffer first so queries see latest data
         self.flush()
 
+        # SECURITY: conditions MUST only contain hardcoded column comparisons with '?' placeholders.
+        # Parameters are passed separately via `params` list. NEVER interpolate user input into conditions.
         conditions: list[str] = []
         params: list[Any] = []
 
@@ -422,6 +424,8 @@ class TelemetryCollector:
         # Flush buffer first so summary includes latest data
         self.flush()
 
+        # SECURITY: conditions MUST only contain hardcoded column comparisons with '?' placeholders.
+        # Parameters are passed separately via `params` list. NEVER interpolate user input into conditions.
         conditions: list[str] = []
         params: list[Any] = []
 
@@ -555,6 +559,8 @@ class TelemetryCollector:
         """
         await self.async_flush()
 
+        # SECURITY: conditions MUST only contain hardcoded column comparisons with '?' placeholders.
+        # Parameters are passed separately via `params` list. NEVER interpolate user input into conditions.
         conditions: list[str] = []
         params: list[Any] = []
 
@@ -590,6 +596,8 @@ class TelemetryCollector:
         """Async version of :meth:`get_summary`."""
         await self.async_flush()
 
+        # SECURITY: conditions MUST only contain hardcoded column comparisons with '?' placeholders.
+        # Parameters are passed separately via `params` list. NEVER interpolate user input into conditions.
         conditions: list[str] = []
         params: list[Any] = []
 

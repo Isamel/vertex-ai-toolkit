@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import tempfile
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,10 +31,35 @@ class ToolCallStore:
     """
 
     def __init__(self, base_dir: str | Path = ".") -> None:
-        self._base_dir = Path(base_dir)
+        self._base_dir = Path(base_dir).expanduser()
         self._lock = threading.Lock()
         self._run_id = ""
         self._current_file: Path | None = None
+
+        # SECURITY: Validate that the base directory is within a safe location
+        # to prevent path traversal or accidental writes to system directories.
+        resolved = self._base_dir.resolve()
+        home = Path.home()
+        cwd = Path.cwd()
+        tmp = Path(tempfile.gettempdir()).resolve()
+        safe = (
+            str(resolved).startswith(str(home))
+            or str(resolved).startswith(str(cwd))
+            or str(resolved).startswith(str(tmp))
+        )
+        if not safe:
+            raise ValueError(
+                f"tool_results_dir must be under home ({home}), cwd ({cwd}), "
+                f"or temp ({tmp}), got: {resolved}"
+            )
+        # Warn if the path is outside the default ~/.vaig/ location
+        default_vaig_dir = home / ".vaig"
+        if not str(resolved).startswith(str(default_vaig_dir)) and not str(resolved).startswith(str(cwd)):
+            logger.warning(
+                "ToolCallStore base_dir is outside ~/.vaig/: %s — "
+                "verify this is intentional.",
+                resolved,
+            )
 
     def start_run(self, run_id: str = "") -> str:
         """Start a new execution run. Returns the run_id."""

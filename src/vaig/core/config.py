@@ -344,8 +344,8 @@ class ArgoCDConfig(BaseModel):
     """ArgoCD integration configuration."""
 
     enabled: bool = False
-    server: str = ""
-    token: str = ""
+    server: str = Field(default="", repr=False)
+    token: str = Field(default="", repr=False)
     context: str = ""
     namespace: str = ""
     verify_ssl: bool = True
