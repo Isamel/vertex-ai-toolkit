@@ -24,6 +24,7 @@ from vaig.core.language import (
     inject_autopilot_into_config,
     inject_language_into_config,
 )
+from vaig.core.models import PipelineState, apply_state_patch
 from vaig.core.pricing import calculate_cost
 from vaig.core.prompt_defense import ANTI_INJECTION_RULE, wrap_untrusted_content
 from vaig.skills.base import BaseSkill, SkillPhase, SkillResult
@@ -157,6 +158,12 @@ class OrchestratorResult:
     Populated once at pipeline start from ``agent.model`` for each agent in
     the execution list.  Empty when the pipeline was not invoked via
     :meth:`execute_with_tools` / :meth:`async_execute_with_tools`.
+    """
+    final_state: PipelineState | None = None
+    """The accumulated shared state after all agents have run.
+
+    Equals the skill's initial state when no agents emit patches.
+    ``None`` only when the skill does not define an initial state.
     """
 
     def to_skill_result(self) -> SkillResult:
@@ -309,6 +316,8 @@ class Orchestrator:
         prompt = skill.get_phase_prompt(phase, context, user_input)
         context_chain: list[str] = []
 
+        current_state = skill.get_initial_state()
+
         run_cost_usd: float = 0.0
         max_cost_per_run: float = self._settings.budget.max_cost_per_run
         failure_counts: dict[str, int] = {}
@@ -326,7 +335,7 @@ class Orchestrator:
             # First agent gets the original prompt; subsequent agents get the accumulated context
             if i == 0:
                 _seq_ctx = current_context
-                agent_result = agent.execute(prompt, context=_seq_ctx)
+                agent_result = agent.execute(prompt, context=_seq_ctx, state=current_state)
             else:
                 # Feed ALL previous agents' outputs as accumulated context
                 prev = result.agent_results[-1]
@@ -335,10 +344,11 @@ class Orchestrator:
                 )
                 accumulated = f"{current_context}\n\n" + "\n\n---\n\n".join(context_chain)
                 _seq_ctx = accumulated
-                agent_result = agent.execute(prompt, context=_seq_ctx)
+                agent_result = agent.execute(prompt, context=_seq_ctx, state=current_state)
 
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
+            current_state = apply_state_patch(current_state, agent_result.state_patch)
 
             # ── Cost circuit breaker ──────────────────────────────────────
             run_cost_usd += _compute_step_cost(agent_result, agent.model)
@@ -415,6 +425,7 @@ class Orchestrator:
         if result.agent_results:
             result.synthesized_output = result.agent_results[-1].content
 
+        result.final_state = current_state
         return result
 
     def execute_fanout(
@@ -438,13 +449,14 @@ class Orchestrator:
         )
 
         prompt = skill.get_phase_prompt(phase, context, user_input)
+        current_state = skill.get_initial_state()
 
         # Submit all agents concurrently, collect in submission order
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(agents)) as executor:
             futures = []
             for agent in agents:
                 logger.info("Fan-out: submitting agent=%s", agent.name)
-                futures.append(executor.submit(agent.execute, prompt, context=context))
+                futures.append(executor.submit(agent.execute, prompt, context=context, state=current_state))
 
             for agent, future in zip(agents, futures, strict=True):
                 try:
@@ -467,10 +479,14 @@ class Orchestrator:
         for agent_result in result.agent_results:
             _accumulate_usage(result, agent_result)
 
+        # Apply state patches sequentially (fanout order)
+        for agent_result in result.agent_results:
+            current_state = apply_state_patch(current_state, agent_result.state_patch)
+
         # Merge all agent outputs
         result.success = any(r.success for r in result.agent_results)
         result.synthesized_output = self._merge_agent_outputs(result.agent_results)
-
+        result.final_state = current_state
         return result
 
     def execute_single(
@@ -743,6 +759,8 @@ class Orchestrator:
                 ", ".join(sorted(known_strategies)),
             )
 
+        current_state = skill.get_initial_state()
+
         if strategy == "parallel_sequential":
             result = self._execute_parallel_then_sequential(
                 agents=agents,
@@ -753,6 +771,7 @@ class Orchestrator:
                 on_tool_call=on_tool_call,
                 tool_call_store=tool_call_store,
                 tool_result_cache=tool_result_cache,
+                initial_state=current_state,
             )
 
         elif strategy == "fanout":
@@ -763,7 +782,7 @@ class Orchestrator:
                 for idx, agent in enumerate(agents):
                     logger.info("Fan-out (tools): submitting agent=%s", agent.name)
                     _fire_agent_progress(on_agent_progress, agent.name, idx, total, "start")
-                    kw: dict[str, Any] = {"context": query}
+                    kw: dict[str, Any] = {"context": query, "state": current_state}
                     if isinstance(agent, ToolAwareAgent):
                         if on_tool_call is not None:
                             kw["on_tool_call"] = on_tool_call
@@ -798,12 +817,17 @@ class Orchestrator:
             for agent_result in result.agent_results:
                 _accumulate_usage(result, agent_result)
 
+            # Apply state patches sequentially (fanout order)
+            for agent_result in result.agent_results:
+                current_state = apply_state_patch(current_state, agent_result.state_patch)
+
             result.success = any(r.success for r in result.agent_results)
             result.synthesized_output = self._merge_agent_outputs(result.agent_results)
+            result.final_state = current_state
 
         elif strategy == "single":
             if agents:
-                kw_single: dict[str, Any] = {}
+                kw_single: dict[str, Any] = {"state": current_state}
                 if isinstance(agents[0], ToolAwareAgent):
                     if on_tool_call is not None:
                         kw_single["on_tool_call"] = on_tool_call
@@ -817,8 +841,10 @@ class Orchestrator:
                     _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
+                current_state = apply_state_patch(current_state, agent_result.state_patch)
                 result.success = agent_result.success
                 result.synthesized_output = agent_result.content
+                result.final_state = current_state
             else:
                 result.success = False
                 result.synthesized_output = "No agents created for skill."
@@ -827,6 +853,8 @@ class Orchestrator:
             current_context = ""
             context_chain: list[str] = []
             required_sections = skill.get_required_output_sections()
+
+            # current_state already initialized above for all branches
 
             run_cost_usd: float = 0.0
             max_cost_per_run: float = self._settings.budget.max_cost_per_run
@@ -853,7 +881,7 @@ class Orchestrator:
                     )
                     current_context = "\n\n---\n\n".join(context_chain)
 
-                kw_seq: dict[str, Any] = {"context": current_context}
+                kw_seq: dict[str, Any] = {"context": current_context, "state": current_state}
                 if isinstance(agent, ToolAwareAgent):
                     if on_tool_call is not None:
                         kw_seq["on_tool_call"] = on_tool_call
@@ -870,7 +898,7 @@ class Orchestrator:
                     _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
-
+                current_state = apply_state_patch(current_state, agent_result.state_patch)
                 # ── Cost circuit breaker ──────────────────────────────────
                 run_cost_usd += _compute_step_cost(agent_result, agent.model)
                 result.run_cost_usd = run_cost_usd
@@ -1287,6 +1315,8 @@ class Orchestrator:
             if result.agent_results:
                 result.synthesized_output = result.agent_results[-1].content
 
+            result.final_state = current_state
+
         # Telemetry: emit orchestrator event for execute_with_tools
         try:
             duration_ms = (time.perf_counter() - t0_ewt) * 1000
@@ -1395,11 +1425,12 @@ class Orchestrator:
         )
 
         prompt = skill.get_phase_prompt(phase, context, user_input)
+        current_state = skill.get_initial_state()
 
         async def _run_agent(agent: BaseAgent) -> AgentResult:
             logger.info("Async fan-out: launching agent=%s", agent.name)
             try:
-                return await asyncio.to_thread(agent.execute, prompt, context=context)
+                return await asyncio.to_thread(agent.execute, prompt, context=context, state=current_state)
             except Exception:
                 logger.exception(
                     "Agent %s raised an exception during async fan-out execution",
@@ -1424,9 +1455,13 @@ class Orchestrator:
                     agent_result.content,
                 )
 
+        # Apply state patches sequentially (fanout order)
+        for agent_result in result.agent_results:
+            current_state = apply_state_patch(current_state, agent_result.state_patch)
+
         result.success = any(r.success for r in result.agent_results)
         result.synthesized_output = self._merge_agent_outputs(result.agent_results)
-
+        result.final_state = current_state
         return result
 
     async def async_execute_sequential(
@@ -1452,6 +1487,8 @@ class Orchestrator:
         prompt = skill.get_phase_prompt(phase, context, user_input)
         context_chain: list[str] = []
 
+        current_state = skill.get_initial_state()
+
         run_cost_usd: float = 0.0
         max_cost_per_run: float = self._settings.budget.max_cost_per_run
         failure_counts: dict[str, int] = {}
@@ -1470,6 +1507,7 @@ class Orchestrator:
                     agent.execute,
                     prompt,
                     context=current_context,
+                    state=current_state,
                 )
             else:
                 prev = result.agent_results[-1]
@@ -1481,10 +1519,12 @@ class Orchestrator:
                     agent.execute,
                     prompt,
                     context=accumulated,
+                    state=current_state,
                 )
 
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
+            current_state = apply_state_patch(current_state, agent_result.state_patch)
 
             # ── Cost circuit breaker ──────────────────────────────────────
             run_cost_usd += _compute_step_cost(agent_result, agent.model)
@@ -1531,6 +1571,7 @@ class Orchestrator:
         if result.agent_results:
             result.synthesized_output = result.agent_results[-1].content
 
+        result.final_state = current_state
         return result
 
     async def async_execute_skill_phase(
@@ -1751,6 +1792,8 @@ class Orchestrator:
                 ", ".join(sorted(known_strategies)),
             )
 
+        current_state = skill.get_initial_state()
+
         if strategy == "parallel_sequential":
             result = await self._async_execute_parallel_then_sequential(
                 agents=agents,
@@ -1761,6 +1804,7 @@ class Orchestrator:
                 on_tool_call=on_tool_call,
                 tool_call_store=tool_call_store,
                 tool_result_cache=tool_result_cache,
+                initial_state=current_state,
             )
 
         elif strategy == "fanout":
@@ -1771,7 +1815,7 @@ class Orchestrator:
                 logger.info("Async fan-out (tools): launching agent=%s", agent.name)
                 _fire_agent_progress(on_agent_progress, agent.name, idx, total, "start")
                 try:
-                    kw: dict[str, Any] = {"context": query}
+                    kw: dict[str, Any] = {"context": query, "state": current_state}
                     if isinstance(agent, ToolAwareAgent):
                         if on_tool_call is not None:
                             kw["on_tool_call"] = on_tool_call
@@ -1808,12 +1852,17 @@ class Orchestrator:
             for agent_result in result.agent_results:
                 _accumulate_usage(result, agent_result)
 
+            # Apply state patches sequentially (fanout order)
+            for agent_result in result.agent_results:
+                current_state = apply_state_patch(current_state, agent_result.state_patch)
+
             result.success = any(r.success for r in result.agent_results)
             result.synthesized_output = self._merge_agent_outputs(result.agent_results)
+            result.final_state = current_state
 
         elif strategy == "single":
             if agents:
-                kw_single: dict[str, Any] = {}
+                kw_single: dict[str, Any] = {"state": current_state}
                 if isinstance(agents[0], ToolAwareAgent):
                     if on_tool_call is not None:
                         kw_single["on_tool_call"] = on_tool_call
@@ -1827,8 +1876,10 @@ class Orchestrator:
                     _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
+                current_state = apply_state_patch(current_state, agent_result.state_patch)
                 result.success = agent_result.success
                 result.synthesized_output = agent_result.content
+                result.final_state = current_state
             else:
                 result.success = False
                 result.synthesized_output = "No agents created for skill."
@@ -1857,7 +1908,7 @@ class Orchestrator:
                     )
                     current_context = "\n\n---\n\n".join(context_chain)
 
-                kw_seq: dict[str, Any] = {"context": current_context}
+                kw_seq: dict[str, Any] = {"context": current_context, "state": current_state}
                 if isinstance(agent, ToolAwareAgent):
                     if on_tool_call is not None:
                         kw_seq["on_tool_call"] = on_tool_call
@@ -1878,6 +1929,7 @@ class Orchestrator:
                     _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
+                current_state = apply_state_patch(current_state, agent_result.state_patch)
 
                 # ── Cost circuit breaker ──────────────────────────────────
                 run_cost_usd += _compute_step_cost(agent_result, agent.model)
@@ -2257,6 +2309,8 @@ class Orchestrator:
             if result.agent_results:
                 result.synthesized_output = result.agent_results[-1].content
 
+            result.final_state = current_state
+
         # Telemetry
         try:
             duration_ms = (time.perf_counter() - t0_ewt) * 1000
@@ -2289,6 +2343,7 @@ class Orchestrator:
         on_tool_call: Any | None,
         tool_call_store: Any | None,
         tool_result_cache: Any,
+        initial_state: PipelineState | None = None,
     ) -> OrchestratorResult:
         """Run gatherer agents concurrently, then remaining agents sequentially.
 
@@ -2347,6 +2402,9 @@ class Orchestrator:
             len(sequential_agents),
         )
 
+        # ── Initial pipeline state ────────────────────────────────────────
+        current_state = initial_state if initial_state is not None else skill.get_initial_state()
+
         # ── Pre-execution hook (sequential, before threads start) ─────────
         skill.pre_execute_parallel(query)
 
@@ -2379,7 +2437,7 @@ class Orchestrator:
                 )
             for _idx, agent in enumerate(parallel_agents):
                 logger.info("parallel_sequential: submitting gatherer agent=%s", agent.name)
-                kw: dict[str, Any] = {"context": query}
+                kw: dict[str, Any] = {"context": query, "state": current_state}
                 if isinstance(agent, ToolAwareAgent):
                     if on_tool_call is not None:
                         kw["on_tool_call"] = on_tool_call
@@ -2428,6 +2486,10 @@ class Orchestrator:
 
         # ── Merge gatherer outputs ────────────────────────────────────────
         merged_context = self._merge_parallel_outputs(parallel_results)
+
+        # Apply state patches from parallel gatherers sequentially
+        for agent_result in parallel_results:
+            current_state = apply_state_patch(current_state, agent_result.state_patch)
 
         # ── Validate gatherer outputs (task 1.4) ─────────────────────────
         required_sections = skill.get_required_output_sections()
@@ -2486,7 +2548,7 @@ class Orchestrator:
                 )
                 current_context = "\n\n---\n\n".join(context_chain)
 
-            kw_seq: dict[str, Any] = {"context": current_context}
+            kw_seq: dict[str, Any] = {"context": current_context, "state": current_state}
             if isinstance(agent, ToolAwareAgent):
                 if on_tool_call is not None:
                     kw_seq["on_tool_call"] = on_tool_call
@@ -2502,6 +2564,7 @@ class Orchestrator:
 
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
+            current_state = apply_state_patch(current_state, agent_result.state_patch)
 
             # ── Cost circuit breaker ──────────────────────────────────────
             run_cost_usd += _compute_step_cost(agent_result, agent.model)
@@ -2615,6 +2678,7 @@ class Orchestrator:
             result.success = False
             result.synthesized_output = "No agents ran."
 
+        result.final_state = current_state
         return result
 
     async def _async_execute_parallel_then_sequential(
@@ -2628,6 +2692,7 @@ class Orchestrator:
         on_tool_call: Any | None,
         tool_call_store: Any | None,
         tool_result_cache: Any,
+        initial_state: PipelineState | None = None,
     ) -> OrchestratorResult:
         """Async version of :meth:`_execute_parallel_then_sequential`.
 
@@ -2659,6 +2724,9 @@ class Orchestrator:
             len(sequential_agents),
         )
 
+        # ── Initial pipeline state ────────────────────────────────────────
+        current_state = initial_state if initial_state is not None else skill.get_initial_state()
+
         # ── Pre-execution hook (sequential, before tasks launch) ──────────
         skill.pre_execute_parallel(query)
 
@@ -2672,7 +2740,7 @@ class Orchestrator:
         async def _run_gatherer(agent: BaseAgent, idx: int) -> AgentResult:
             logger.info("async parallel_sequential: launching gatherer=%s", agent.name)
             try:
-                kw: dict[str, Any] = {"context": query}
+                kw: dict[str, Any] = {"context": query, "state": current_state}
                 if isinstance(agent, ToolAwareAgent):
                     if on_tool_call is not None:
                         kw["on_tool_call"] = on_tool_call
@@ -2738,6 +2806,10 @@ class Orchestrator:
         # ── Merge gatherer outputs ────────────────────────────────────────
         merged_context = self._merge_parallel_outputs(parallel_results)
 
+        # Apply state patches from parallel gatherers sequentially
+        for agent_result in parallel_results:
+            current_state = apply_state_patch(current_state, agent_result.state_patch)
+
         # ── Validate gatherer outputs (task 1.4) ─────────────────────────
         required_sections = skill.get_required_output_sections()
         if required_sections:
@@ -2795,7 +2867,7 @@ class Orchestrator:
                 )
                 current_context = "\n\n---\n\n".join(context_chain)
 
-            kw_seq: dict[str, Any] = {"context": current_context}
+            kw_seq: dict[str, Any] = {"context": current_context, "state": current_state}
             if isinstance(agent, ToolAwareAgent):
                 if on_tool_call is not None:
                     kw_seq["on_tool_call"] = on_tool_call
@@ -2811,6 +2883,7 @@ class Orchestrator:
 
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
+            current_state = apply_state_patch(current_state, agent_result.state_patch)
 
             # ── Cost circuit breaker ──────────────────────────────────────
             run_cost_usd += _compute_step_cost(agent_result, agent.model)
@@ -2927,6 +3000,7 @@ class Orchestrator:
             result.success = False
             result.synthesized_output = "No agents ran."
 
+        result.final_state = current_state
         return result
 
     def _merge_parallel_outputs(self, results: list[AgentResult]) -> str:

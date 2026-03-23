@@ -9,12 +9,12 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from google.genai import types
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
-    from pydantic import BaseModel
-
+    from vaig.core.models import PipelineState
     from vaig.core.protocols import GeminiClientProtocol
 
 logger = logging.getLogger(__name__)
@@ -64,6 +64,7 @@ class AgentResult:
     success: bool = True
     usage: dict[str, int] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    state_patch: dict[str, Any] | BaseModel | None = None
 
 
 class BaseAgent(ABC):
@@ -105,12 +106,13 @@ class BaseAgent(ABC):
         return self._conversation
 
     @abstractmethod
-    def execute(self, prompt: str, *, context: str = "") -> AgentResult:
+    def execute(self, prompt: str, *, context: str = "", state: PipelineState | None = None) -> AgentResult:
         """Execute a task and return a result.
 
         Args:
             prompt: The task or question for the agent.
             context: Optional context (files, data, previous results).
+            state: Optional shared pipeline state to read from.
 
         Returns:
             AgentResult with the agent's response.

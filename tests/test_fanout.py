@@ -190,7 +190,7 @@ class TestExecuteFanoutConcurrent:
         orchestrator = Orchestrator(client, _make_mock_settings())
         skill = FanoutSkill(agent_count=3)
 
-        def _slow_execute(prompt: str, *, context: str = "") -> AgentResult:
+        def _slow_execute(prompt: str, *, context: str = "", state: object = None) -> AgentResult:
             time.sleep(0.2)
             return _make_agent_result(threading.current_thread().name)
 

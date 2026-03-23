@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from vaig.core.models import PipelineState
+
 
 class SkillPhase(StrEnum):
     """Phases a skill can execute."""
@@ -82,6 +84,22 @@ class BaseSkill(ABC):
             user_input: The user's specific request.
         """
         ...
+
+    def get_initial_state(self) -> PipelineState | None:
+        """Return the initial pipeline state for this skill.
+
+        Called once by the orchestrator before any agent executes.
+        Override in subclasses that need to seed the shared state with
+        skill-specific data (e.g. namespace, cluster context, config flags).
+
+        The default implementation returns ``None``, which disables
+        state-threading for skills that have not opted in.
+
+        Returns:
+            A :class:`~vaig.core.models.PipelineState` instance to seed the
+            pipeline, or ``None`` to leave state-threading disabled.
+        """
+        return None
 
     def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         """Return agent configurations for multi-agent execution.
