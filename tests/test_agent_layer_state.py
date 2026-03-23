@@ -99,7 +99,7 @@ class TestAgentResultStatePatch:
         patch = PipelineState(errors=["oops"])
         result = AgentResult(agent_name="a", content="done", state_patch=patch)
         assert isinstance(result.state_patch, PipelineState)
-        assert result.state_patch.errors == ["oops"]  # type: ignore[union-attr]
+        assert result.state_patch.errors == ("oops",)  # type: ignore[union-attr]
 
     def test_other_fields_unaffected(self) -> None:
         """Existing fields still work correctly after adding state_patch."""
@@ -253,8 +253,8 @@ class TestBaseSkillGetInitialState:
         state = skill.get_initial_state()
         assert state is not None
         assert state.metrics == {"skill": "state-skill"}
-        assert state.findings == []
-        assert state.errors == []
+        assert state.findings == ()
+        assert state.errors == ()
 
     def test_method_is_not_abstract(self) -> None:
         """get_initial_state is a concrete method — can be instantiated without override."""

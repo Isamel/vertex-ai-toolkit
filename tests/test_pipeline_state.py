@@ -12,9 +12,9 @@ class TestPipelineState:
 
     def test_default_instantiation(self) -> None:
         state = PipelineState()
-        assert state.findings == []
+        assert state.findings == ()
         assert state.metrics == {}
-        assert state.errors == []
+        assert state.errors == ()
 
     def test_custom_instantiation(self) -> None:
         state = PipelineState(
@@ -22,20 +22,20 @@ class TestPipelineState:
             metrics={"latency_ms": 120},
             errors=["oops"],
         )
-        assert state.findings == [{"key": "value"}]
+        assert state.findings == ({"key": "value"},)
         assert state.metrics == {"latency_ms": 120}
-        assert state.errors == ["oops"]
+        assert state.errors == ("oops",)
 
     def test_frozen_raises_on_assignment(self) -> None:
         state = PipelineState()
         with pytest.raises(Exception):  # ValidationError (frozen model)
-            state.errors = ["mutating"]  # type: ignore[misc]
+            state.errors = ("mutating",)  # type: ignore[misc]
 
     def test_model_copy_produces_new_instance(self) -> None:
         state = PipelineState(errors=["first"])
-        new_state = state.model_copy(update={"errors": [*state.errors, "second"]})
-        assert new_state.errors == ["first", "second"]
-        assert state.errors == ["first"]  # original unchanged
+        new_state = state.model_copy(update={"errors": (*state.errors, "second")})
+        assert new_state.errors == ("first", "second")
+        assert state.errors == ("first",)  # original unchanged
 
     def test_is_pydantic_base_model(self) -> None:
         from pydantic import BaseModel
@@ -60,25 +60,25 @@ class TestApplyStatePatch:
         result = apply_state_patch(None, None)
         assert result is None
 
-    # ── List field extension ─────────────────────────────────
+    # ── Tuple field extension ─────────────────────────────────
 
     def test_findings_are_extended(self) -> None:
         state = PipelineState(findings=[{"a": 1}])
         result = apply_state_patch(state, {"findings": [{"b": 2}]})
         assert result is not None
-        assert result.findings == [{"a": 1}, {"b": 2}]
+        assert result.findings == ({"a": 1}, {"b": 2})
 
     def test_errors_are_extended(self) -> None:
         state = PipelineState(errors=["err1"])
         result = apply_state_patch(state, {"errors": ["err2", "err3"]})
         assert result is not None
-        assert result.errors == ["err1", "err2", "err3"]
+        assert result.errors == ("err1", "err2", "err3")
 
     def test_list_fields_with_empty_patch_list(self) -> None:
         state = PipelineState(findings=[{"x": 1}])
         result = apply_state_patch(state, {"findings": []})
         assert result is not None
-        assert result.findings == [{"x": 1}]
+        assert result.findings == ({"x": 1},)
 
     # ── Dict field shallow merge ─────────────────────────────
 
@@ -117,9 +117,9 @@ class TestApplyStatePatch:
             },
         )
         # Original state must be unchanged
-        assert state.findings == [{"original": True}]
+        assert state.findings == ({"original": True},)
         assert state.metrics == {"k": 1}
-        assert state.errors == ["e1"]
+        assert state.errors == ("e1",)
 
     # ── PipelineState as patch ───────────────────────────────
 
@@ -128,7 +128,7 @@ class TestApplyStatePatch:
         patch = PipelineState(errors=["extra"], metrics={"m": 1})
         result = apply_state_patch(state, patch)
         assert result is not None
-        assert result.errors == ["base", "extra"]
+        assert result.errors == ("base", "extra")
         assert result.metrics == {"m": 1}
 
     # ── Empty state + full patch ─────────────────────────────
@@ -144,9 +144,9 @@ class TestApplyStatePatch:
             },
         )
         assert result is not None
-        assert result.findings == [{"issue": "high cpu"}]
+        assert result.findings == ({"issue": "high cpu"},)
         assert result.metrics == {"cpu": 95}
-        assert result.errors == ["timeout"]
+        assert result.errors == ("timeout",)
 
     # ── Patch with unknown keys ignored gracefully ───────────
 
@@ -156,7 +156,7 @@ class TestApplyStatePatch:
         # simply not present in PipelineState and are discarded.
         result = apply_state_patch(state, {"errors": ["f"], "unknown_field": "ignored"})
         assert result is not None
-        assert result.errors == ["e", "f"]
+        assert result.errors == ("e", "f")
 
 
 # ── Public API surface check ─────────────────────────────────────────────────

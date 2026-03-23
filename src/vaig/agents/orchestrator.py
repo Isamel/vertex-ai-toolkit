@@ -160,13 +160,10 @@ class OrchestratorResult:
     :meth:`execute_with_tools` / :meth:`async_execute_with_tools`.
     """
     final_state: PipelineState | None = None
-    """Accumulated :class:`~vaig.core.models.PipelineState` after all agents
-    have executed.
+    """The accumulated shared state after all agents have run.
 
-    ``None`` when the skill does not define an initial state via
-    :meth:`~vaig.skills.base.BaseSkill.get_initial_state` (the default) or
-    when no state patches were emitted.  Present only for skills that opt in to
-    shared pipeline state.
+    Equals the skill's initial state when no agents emit patches.
+    ``None`` only when the skill does not define an initial state.
     """
 
     def to_skill_result(self) -> SkillResult:
@@ -774,6 +771,7 @@ class Orchestrator:
                 on_tool_call=on_tool_call,
                 tool_call_store=tool_call_store,
                 tool_result_cache=tool_result_cache,
+                initial_state=current_state,
             )
 
         elif strategy == "fanout":
@@ -1806,6 +1804,7 @@ class Orchestrator:
                 on_tool_call=on_tool_call,
                 tool_call_store=tool_call_store,
                 tool_result_cache=tool_result_cache,
+                initial_state=current_state,
             )
 
         elif strategy == "fanout":
@@ -2344,6 +2343,7 @@ class Orchestrator:
         on_tool_call: Any | None,
         tool_call_store: Any | None,
         tool_result_cache: Any,
+        initial_state: PipelineState | None = None,
     ) -> OrchestratorResult:
         """Run gatherer agents concurrently, then remaining agents sequentially.
 
@@ -2403,7 +2403,7 @@ class Orchestrator:
         )
 
         # ── Initial pipeline state ────────────────────────────────────────
-        current_state = skill.get_initial_state()
+        current_state = initial_state if initial_state is not None else skill.get_initial_state()
 
         # ── Pre-execution hook (sequential, before threads start) ─────────
         skill.pre_execute_parallel(query)
@@ -2692,6 +2692,7 @@ class Orchestrator:
         on_tool_call: Any | None,
         tool_call_store: Any | None,
         tool_result_cache: Any,
+        initial_state: PipelineState | None = None,
     ) -> OrchestratorResult:
         """Async version of :meth:`_execute_parallel_then_sequential`.
 
@@ -2724,7 +2725,7 @@ class Orchestrator:
         )
 
         # ── Initial pipeline state ────────────────────────────────────────
-        current_state = skill.get_initial_state()
+        current_state = initial_state if initial_state is not None else skill.get_initial_state()
 
         # ── Pre-execution hook (sequential, before tasks launch) ──────────
         skill.pre_execute_parallel(query)

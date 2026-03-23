@@ -64,7 +64,7 @@ class AgentResult:
     success: bool = True
     usage: dict[str, int] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-    state_patch: dict[str, Any] | PipelineState | None = None
+    state_patch: dict[str, Any] | BaseModel | None = None
 
 
 class BaseAgent(ABC):
