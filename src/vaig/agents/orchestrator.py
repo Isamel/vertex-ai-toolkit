@@ -1624,7 +1624,8 @@ class Orchestrator:
                 Passed to ``skill.get_agents_config()`` so gatherer prompts
                 use the correct namespace.
             gke_location: GKE cluster location from the CLI.
-            gke_cluster_name: GKE cluster name from the CLI.
+            gke_cluster_name: GKE cluster name from the CLI
+                (``--cluster`` flag).  Used for Autopilot detection.
 
         Returns:
             :class:`OrchestratorResult` with the aggregated outcome.

@@ -293,25 +293,22 @@ class ServiceHealthSkill(BaseSkill):
             cluster_name: Override cluster name.  When provided, overrides
                 ``settings.gke.cluster_name`` for Autopilot detection.
         """
-        from vaig.core.config import GKEConfig, get_settings  # noqa: PLC0415
+        from vaig.core.config import get_settings  # noqa: PLC0415
         from vaig.tools.gke._clients import detect_autopilot  # noqa: PLC0415
 
         settings = get_settings()
 
         # Build an effective GKEConfig that merges CLI overrides with file defaults.
         # This ensures detect_autopilot uses the cluster the user actually targeted.
-        effective_gke = GKEConfig(
-            cluster_name=cluster_name or settings.gke.cluster_name,
-            project_id=settings.gke.project_id,
-            location=location or settings.gke.location,
-            default_namespace=namespace or settings.gke.default_namespace,
-            # Carry all other fields unchanged from settings
-            kubeconfig_path=settings.gke.kubeconfig_path,
-            context=settings.gke.context,
-            helm_enabled=settings.gke.helm_enabled,
-            argocd_enabled=settings.gke.argocd_enabled,
-            log_limit=settings.gke.log_limit,
-            metrics_interval_minutes=settings.gke.metrics_interval_minutes,
+        # Use model_copy so ALL fields from settings.gke are preserved
+        # (proxy_url, impersonate_sa, exec_enabled, argocd_*, etc.) and only
+        # the CLI-supplied overrides are replaced.
+        effective_gke = settings.gke.model_copy(
+            update={
+                "cluster_name": cluster_name or settings.gke.cluster_name,
+                "location": location or settings.gke.location,
+                "default_namespace": namespace or settings.gke.default_namespace,
+            }
         )
         is_autopilot = bool(detect_autopilot(effective_gke))
         effective_namespace = effective_gke.default_namespace

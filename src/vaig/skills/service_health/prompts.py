@@ -1667,15 +1667,6 @@ def build_workload_gatherer_prompt(namespace: str = "", datadog_api_enabled: boo
         :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the full
         workload-gatherer task description.
     """
-    ns_context = (
-        f"Target namespace: {_sanitize_namespace(namespace)}.  "
-        "Also check any other non-system namespaces if relevant."
-        if namespace and _sanitize_namespace(namespace)
-        else (
-            "If no explicit namespace is given in the query, investigate ALL non-system namespaces found in\n"
-            "the cluster. Prioritise namespaces with the highest pod count."
-        )
-    )
     datadog_scope_note = (
         "\nYou are ALSO responsible for Step 12 — Datadog API Correlation (see below)."
         if datadog_api_enabled
@@ -1684,6 +1675,17 @@ def build_workload_gatherer_prompt(namespace: str = "", datadog_api_enabled: boo
     # Safe namespace for embedding in tool call examples — validated K8s name.
     # Falls back to "default" when the input is empty or invalid (injection attempt).
     ns = _sanitize_namespace(namespace) or "default"
+    # Derive ns_context from ns (not from raw namespace) so the context message
+    # is consistent with the fallback value used in tool call examples.
+    ns_context = (
+        f"Target namespace: {ns}.  "
+        "Also check any other non-system namespaces if relevant."
+        if namespace and _sanitize_namespace(namespace)
+        else (
+            "If no explicit namespace is given in the query, investigate ALL non-system namespaces found in\n"
+            "the cluster. Prioritise namespaces with the highest pod count."
+        )
+    )
     prompt = f"""{ANTI_INJECTION_RULE}
 
 You are a focused Kubernetes diagnostic agent. Your ONLY responsibility is to
@@ -1869,9 +1871,13 @@ def build_event_gatherer_prompt(namespace: str = "") -> str:
         :data:`~vaig.core.prompt_defense.ANTI_INJECTION_RULE` and the full
         event-gatherer task description.
     """
+    # Safe namespace for embedding in tool call examples — validated K8s name.
+    # Falls back to "default" when the input is empty or invalid (injection attempt).
     ns = _sanitize_namespace(namespace) or "default"
+    # Derive ns_context from ns (not from raw namespace) so the context message
+    # is consistent with the fallback value used in tool call examples.
     ns_context = (
-        f"Target namespace: {_sanitize_namespace(namespace)}.  "
+        f"Target namespace: {ns}.  "
         "Also check kube-system for system-level events."
         if namespace and _sanitize_namespace(namespace)
         else (
@@ -2104,7 +2110,9 @@ If queries failed: "Cloud Logging queries failed — see error details above.")
 - Cloud Logging Findings sections are NOT optional — you MUST produce the full
   ## Cloud Logging Findings section even if all sub-sections are empty.
 """
-    return prompt.replace("<target>", safe_ns).replace("<target_namespace>", safe_ns).replace("<target-namespace>", safe_ns)
+    # The logging gatherer prompt is an f-string that embeds safe_ns directly
+    # (via {safe_ns}), so no placeholder substitution is needed.
+    return prompt
 
 
 PHASE_PROMPTS = {
