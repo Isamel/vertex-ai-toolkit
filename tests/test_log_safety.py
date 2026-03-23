@@ -6,6 +6,7 @@ import logging
 from unittest.mock import patch
 
 import pytest
+from rich.logging import RichHandler
 
 from vaig.core.log import _SafeRichHandler, _stderr_console
 
@@ -39,9 +40,9 @@ class TestSafeRichHandler:
         handler = self._make_handler()
         record = self._make_record("hello from test")
         # Should not raise
-        with patch.object(type(handler).__bases__[0], "emit", return_value=None) as mock_emit:
+        with patch.object(RichHandler, "emit", autospec=True, return_value=None) as mock_emit:
             handler.emit(record)
-            mock_emit.assert_called_once_with(record)
+            mock_emit.assert_called_once_with(handler, record)
 
     def test_emit_swallows_oserror(self) -> None:
         """OSError raised by the underlying RichHandler.emit must be silently dropped."""
