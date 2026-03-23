@@ -10,6 +10,7 @@ Tests the following components:
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from vaig.agents.base import AgentResult
@@ -101,7 +102,7 @@ class SimpleSkill(BaseSkill):
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         return f"[{phase.value}] {user_input}"
 
-    def get_agents_config(self) -> list[dict]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict]:
         return [
             {
                 "name": "agent_a",
@@ -136,7 +137,7 @@ class ParallelSkill(BaseSkill):
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         return f"[{phase.value}] {user_input}"
 
-    def get_agents_config(self) -> list[dict]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict]:
         return [
             {
                 "name": "node_gatherer",

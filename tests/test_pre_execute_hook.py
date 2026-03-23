@@ -67,7 +67,7 @@ class SkillWithHook(BaseSkill):
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         return f"[{phase.value}] {user_input}"
 
-    def get_agents_config(self) -> list[dict[str, Any]]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
             {
                 "name": "data_gatherer",
@@ -105,7 +105,7 @@ class SkillWithoutHook(BaseSkill):
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         return f"[{phase.value}] {user_input}"
 
-    def get_agents_config(self) -> list[dict[str, Any]]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
             {
                 "name": "data_gatherer",
@@ -235,7 +235,7 @@ class TestOrchestratorCallsHook:
 
             # Override skill to track calls using the SkillWithHook
             skill2 = SkillWithHook()
-            skill2.get_agents_config = lambda: [  # type: ignore[method-assign]
+            skill2.get_agents_config = lambda **kwargs: [  # type: ignore[method-assign]
                 {"name": "node_gatherer", "role": "Node Gatherer",
                  "system_instruction": "gather", "model": "gemini-2.5-pro", "requires_tools": True},
                 {"name": "workload_gatherer", "role": "Workload Gatherer",

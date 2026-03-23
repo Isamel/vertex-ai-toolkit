@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -45,7 +46,7 @@ class _StubSkillB(BaseSkill):
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         return f"Beta {phase.value}: {user_input}"
 
-    def get_agents_config(self) -> list[dict]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict]:
         return [
             {"name": "beta_primary", "role": "Beta Primary", "system_instruction": "Primary", "model": "gemini-2.5-flash"},
             {"name": "beta_secondary", "role": "Beta Secondary", "system_instruction": "Secondary", "model": "gemini-2.5-flash"},

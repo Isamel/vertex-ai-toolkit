@@ -63,7 +63,7 @@ class FanoutSkill(BaseSkill):
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         return f"[{phase.value}] {user_input}"
 
-    def get_agents_config(self) -> list[dict]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict]:
         return list(self._agents)
 
 
@@ -96,7 +96,7 @@ class ToolFanoutSkill(BaseSkill):
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         return f"[{phase.value}] {user_input}"
 
-    def get_agents_config(self) -> list[dict]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict]:
         return list(self._agents)
 
 

@@ -49,7 +49,7 @@ class AdrGeneratorSkill(BaseSkill):
         template = PHASE_PROMPTS.get(phase.value, PHASE_PROMPTS["analyze"])
         return template.format(context=context, user_input=user_input)
 
-    def get_agents_config(self) -> list[dict[str, Any]]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
             {
                 "name": "context_researcher",

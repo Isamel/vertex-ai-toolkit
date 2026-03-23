@@ -83,11 +83,24 @@ class BaseSkill(ABC):
         """
         ...
 
-    def get_agents_config(self) -> list[dict[str, Any]]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         """Return agent configurations for multi-agent execution.
 
         Override this to define specialized agents for the skill.
         Default: single agent with the skill's system instruction.
+
+        The ``**kwargs`` signature allows the orchestrator to always pass
+        ``namespace=``, ``location=``, and ``cluster_name=`` without breaking
+        subclasses that don't need those parameters.  Subclasses that do need
+        them (e.g. :class:`~vaig.skills.service_health.skill.ServiceHealthSkill`)
+        may declare explicit keyword arguments — mypy accepts a more specific
+        signature when the base uses ``**kwargs``.
+
+        Args:
+            **kwargs: Caller-supplied keyword arguments.  The orchestrator
+                passes ``namespace``, ``location``, and ``cluster_name``.
+                Subclasses that don't use them simply ignore them via
+                ``**kwargs``.
         """
         meta = self.get_metadata()
         return [
@@ -228,12 +241,12 @@ class CompositeSkill(BaseSkill):
             + "\n\n---\n\n".join(prompts)
         )
 
-    def get_agents_config(self) -> list[dict[str, Any]]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         """Merge agent configs from all component skills (deduplicated by name)."""
         agents: list[dict[str, Any]] = []
         seen_names: set[str] = set()
         for skill in self._skills:
-            for agent in skill.get_agents_config():
+            for agent in skill.get_agents_config(**kwargs):
                 if agent["name"] not in seen_names:
                     seen_names.add(agent["name"])
                     agents.append(agent)

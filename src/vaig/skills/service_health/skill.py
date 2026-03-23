@@ -128,7 +128,7 @@ class ServiceHealthSkill(BaseSkill):
                 exc_info=True,
             )
 
-    def get_agents_config(self) -> list[dict[str, Any]]:
+    def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         """Return the default pipeline configuration — the 7-agent parallel config.
 
         Delegates to :meth:`get_parallel_agents_config` so that the
@@ -141,15 +141,34 @@ class ServiceHealthSkill(BaseSkill):
         ``health_gatherer`` agent), use
         :meth:`get_sequential_agents_config` directly.
 
+        Args:
+            **kwargs: Caller-supplied keyword arguments.  The orchestrator
+                passes ``namespace``, ``location``, and ``cluster_name``.
+                These are extracted and forwarded to
+                :meth:`get_parallel_agents_config`.
+
         Returns:
             The 7-agent parallel pipeline: 4 parallel sub-gatherers
             (``node_gatherer``, ``workload_gatherer``, ``event_gatherer``,
             ``logging_gatherer``) followed by the unchanged sequential tail
             (``health_analyzer`` → ``health_verifier`` → ``health_reporter``).
         """
-        return self.get_parallel_agents_config()
+        namespace: str = kwargs.get("namespace", "")
+        location: str = kwargs.get("location", "")
+        cluster_name: str = kwargs.get("cluster_name", "")
+        return self.get_parallel_agents_config(
+            namespace=namespace,
+            location=location,
+            cluster_name=cluster_name,
+        )
 
-    def get_sequential_agents_config(self) -> list[dict[str, Any]]:
+    def get_sequential_agents_config(
+        self,
+        *,
+        namespace: str = "",
+        location: str = "",  # noqa: ARG002 — reserved for future cluster routing
+        cluster_name: str = "",  # noqa: ARG002 — reserved for future cluster routing
+    ) -> list[dict[str, Any]]:
         """Return the legacy 4-agent sequential pipeline configuration.
 
         This is the original pre-Phase-3 configuration: a single monolithic
@@ -174,6 +193,12 @@ class ServiceHealthSkill(BaseSkill):
         The gatherer prompt's tool-reference table is built dynamically from
         ``gke.helm_enabled`` / ``gke.argocd_enabled`` settings so disabled
         tools are excluded from the prompt (R4).
+
+        Args:
+            namespace: Override namespace from CLI.  Empty string falls back
+                to ``settings.gke.default_namespace``.
+            location: Reserved for future cluster-routing support.
+            cluster_name: Reserved for future cluster-routing support.
         """
         from vaig.core.config import get_settings
 
@@ -183,7 +208,7 @@ class ServiceHealthSkill(BaseSkill):
             argocd_enabled=settings.gke.argocd_enabled,
             datadog_api_enabled=settings.datadog.enabled,
         )
-        namespace = settings.gke.default_namespace
+        namespace = namespace or settings.gke.default_namespace
         return [
             {
                 "name": "health_gatherer",
@@ -229,7 +254,13 @@ class ServiceHealthSkill(BaseSkill):
             },
         ]
 
-    def get_parallel_agents_config(self) -> list[dict[str, Any]]:
+    def get_parallel_agents_config(
+        self,
+        *,
+        namespace: str = "",
+        location: str = "",
+        cluster_name: str = "",
+    ) -> list[dict[str, Any]]:
         """Return the 7-agent parallel-then-sequential pipeline configuration.
 
         Phase 3 of the parallel-gatherer design replaces the single monolithic
@@ -252,13 +283,35 @@ class ServiceHealthSkill(BaseSkill):
 
         Requires orchestrator strategy ``"parallel_sequential"`` (implemented in
         Phase 1 via ``_execute_parallel_then_sequential``).
+
+        Args:
+            namespace: Override namespace from CLI (takes precedence over
+                ``settings.gke.default_namespace``).  Empty string falls back
+                to the configured default.
+            location: Override GKE location.  When provided, overrides
+                ``settings.gke.location`` for Autopilot detection.
+            cluster_name: Override cluster name.  When provided, overrides
+                ``settings.gke.cluster_name`` for Autopilot detection.
         """
         from vaig.core.config import get_settings  # noqa: PLC0415
         from vaig.tools.gke._clients import detect_autopilot  # noqa: PLC0415
 
         settings = get_settings()
-        is_autopilot = bool(detect_autopilot(settings.gke))
-        namespace = settings.gke.default_namespace
+
+        # Build an effective GKEConfig that merges CLI overrides with file defaults.
+        # This ensures detect_autopilot uses the cluster the user actually targeted.
+        # Use model_copy so ALL fields from settings.gke are preserved
+        # (proxy_url, impersonate_sa, exec_enabled, argocd_*, etc.) and only
+        # the CLI-supplied overrides are replaced.
+        effective_gke = settings.gke.model_copy(
+            update={
+                "cluster_name": cluster_name or settings.gke.cluster_name,
+                "location": location or settings.gke.location,
+                "default_namespace": namespace or settings.gke.default_namespace,
+            }
+        )
+        is_autopilot = bool(detect_autopilot(effective_gke))
+        effective_namespace = effective_gke.default_namespace
 
         return [
             # ── Parallel group: 4 focused sub-gatherers ──────────────────
@@ -278,7 +331,7 @@ class ServiceHealthSkill(BaseSkill):
                 "requires_tools": True,
                 "parallel_group": "gather",
                 "system_instruction": build_workload_gatherer_prompt(
-                    namespace=namespace,
+                    namespace=effective_namespace,
                     datadog_api_enabled=settings.datadog.enabled,
                 ),
                 "model": "gemini-2.5-flash",
@@ -291,7 +344,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Events & Infrastructure Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
-                "system_instruction": build_event_gatherer_prompt(namespace=namespace),
+                "system_instruction": build_event_gatherer_prompt(namespace=effective_namespace),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.0,
                 "max_iterations": 10,
@@ -301,7 +354,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Cloud Logging Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
-                "system_instruction": build_logging_gatherer_prompt(namespace=namespace),
+                "system_instruction": build_logging_gatherer_prompt(namespace=effective_namespace),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.0,
                 "max_iterations": 8,
@@ -329,7 +382,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Health Report Generator",
                 "requires_tools": False,
                 "system_instruction": build_reporter_prompt(
-                    namespace=namespace,
+                    namespace=effective_namespace,
                     datadog_api_enabled=settings.datadog.enabled,
                 ),
                 "model": "gemini-2.5-flash",

@@ -9,6 +9,8 @@ Validates:
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from vaig.core.language import (
@@ -458,7 +460,7 @@ class TestOrchestratorLanguageIntegration:
             def get_phase_prompt(self, phase, context, user_input) -> str:
                 return "test"
 
-            def get_agents_config(self) -> list[dict]:
+            def get_agents_config(self, **kwargs: Any) -> list[dict]:
                 return [
                     {
                         "name": "test-agent",
@@ -528,7 +530,7 @@ class TestOrchestratorLanguageIntegration:
             def get_phase_prompt(self, phase, context, user_input) -> str:
                 return "test"
 
-            def get_agents_config(self) -> list[dict]:
+            def get_agents_config(self, **kwargs: Any) -> list[dict]:
                 return [
                     {
                         "name": "test-agent",

@@ -574,6 +574,9 @@ class Orchestrator:
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
         on_agent_progress: OnAgentProgress | None = None,
+        gke_namespace: str = "",
+        gke_location: str = "",
+        gke_cluster_name: str = "",
     ) -> OrchestratorResult:
         """Execute a skill with tool-aware agents.
 
@@ -601,6 +604,14 @@ class Orchestrator:
             on_agent_progress: Optional callback invoked when each agent
                 starts and finishes execution.  Used by the CLI to show
                 live progress indicators.
+            gke_namespace: Target Kubernetes namespace from the CLI
+                (``--namespace`` flag).  Passed to ``skill.get_agents_config()``
+                so gatherer prompts use the correct namespace.  Empty string
+                falls back to the skill's configured default.
+            gke_location: GKE cluster location from the CLI
+                (``--location`` flag).  Used for Autopilot detection.
+            gke_cluster_name: GKE cluster name from the CLI
+                (``--cluster`` flag).  Used for Autopilot detection.
 
         Returns:
             :class:`OrchestratorResult` with the aggregated outcome.
@@ -615,6 +626,9 @@ class Orchestrator:
                 on_tool_call=on_tool_call,
                 tool_call_store=tool_call_store,
                 on_agent_progress=on_agent_progress,
+                gke_namespace=gke_namespace,
+                gke_location=gke_location,
+                gke_cluster_name=gke_cluster_name,
             )
         except (VaigAuthError, VAIGError):
             raise  # Let known errors propagate with their actionable messages
@@ -633,6 +647,9 @@ class Orchestrator:
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
         on_agent_progress: OnAgentProgress | None = None,
+        gke_namespace: str = "",
+        gke_location: str = "",
+        gke_cluster_name: str = "",
     ) -> OrchestratorResult:
         """Inner implementation of execute_with_tools (no error boundary)."""
         logger.info(
@@ -657,7 +674,11 @@ class Orchestrator:
         # into each agent's system prompt so the entire pipeline responds
         # in the same language as the query.
         lang = detect_language(query)
-        agent_configs = skill.get_agents_config()
+        agent_configs = skill.get_agents_config(
+            namespace=gke_namespace,
+            location=gke_location,
+            cluster_name=gke_cluster_name,
+        )
         if lang != "en":
             inject_language_into_config(agent_configs, lang)
             logger.info(
@@ -1574,6 +1595,9 @@ class Orchestrator:
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
         on_agent_progress: OnAgentProgress | None = None,
+        gke_namespace: str = "",
+        gke_location: str = "",
+        gke_cluster_name: str = "",
     ) -> OrchestratorResult:
         """Async version of :meth:`execute_with_tools`.
 
@@ -1596,6 +1620,12 @@ class Orchestrator:
             on_agent_progress: Optional callback invoked when each agent
                 starts and finishes execution.  Used by the CLI to show
                 live progress indicators.
+            gke_namespace: Target Kubernetes namespace from the CLI.
+                Passed to ``skill.get_agents_config()`` so gatherer prompts
+                use the correct namespace.
+            gke_location: GKE cluster location from the CLI.
+            gke_cluster_name: GKE cluster name from the CLI
+                (``--cluster`` flag).  Used for Autopilot detection.
 
         Returns:
             :class:`OrchestratorResult` with the aggregated outcome.
@@ -1610,6 +1640,9 @@ class Orchestrator:
                 on_tool_call=on_tool_call,
                 tool_call_store=tool_call_store,
                 on_agent_progress=on_agent_progress,
+                gke_namespace=gke_namespace,
+                gke_location=gke_location,
+                gke_cluster_name=gke_cluster_name,
             )
         except (VaigAuthError, VAIGError):
             raise  # Let known errors propagate with their actionable messages
@@ -1628,6 +1661,9 @@ class Orchestrator:
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
         on_agent_progress: OnAgentProgress | None = None,
+        gke_namespace: str = "",
+        gke_location: str = "",
+        gke_cluster_name: str = "",
     ) -> OrchestratorResult:
         """Inner implementation of async_execute_with_tools (no error boundary)."""
         logger.info(
@@ -1649,7 +1685,11 @@ class Orchestrator:
 
         # ── Dynamic language detection & injection ───────────
         lang = detect_language(query)
-        agent_configs = skill.get_agents_config()
+        agent_configs = skill.get_agents_config(
+            namespace=gke_namespace,
+            location=gke_location,
+            cluster_name=gke_cluster_name,
+        )
         if lang != "en":
             inject_language_into_config(agent_configs, lang)
             logger.info(
