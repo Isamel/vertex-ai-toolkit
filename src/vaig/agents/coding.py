@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
 
     from vaig.core.cache import ToolResultCache
+    from vaig.core.models import PipelineState
     from vaig.core.protocols import GeminiClientProtocol
     from vaig.core.tool_call_store import ToolCallStore
 
@@ -206,6 +207,7 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
         on_tool_call: OnToolCall | None = None,
         tool_call_store: ToolCallStore | None = None,
         tool_result_cache: ToolResultCache | None = None,
+        state: PipelineState | None = None,
     ) -> AgentResult:
         """Execute a coding task using the tool-use loop.
 

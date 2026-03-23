@@ -16,6 +16,7 @@ from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import OnToolCall, ToolLoopMixin
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.core.exceptions import MaxIterationsError
+from vaig.core.models import PipelineState
 from vaig.tools.base import ToolRegistry
 
 if TYPE_CHECKING:
@@ -170,6 +171,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         tool_call_store: ToolCallStore | None = None,
         tool_result_cache: ToolResultCache | None = None,
         required_sections: list[str] | None = None,
+        state: PipelineState | None = None,
     ) -> AgentResult:
         """Execute a task using the tool-use loop.
 
@@ -191,6 +193,10 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 iteration budget reaches 80%, a warning is injected into
                 the conversation for any sections still missing.  Ignored
                 when ``None`` or when ``max_iterations`` is 2 or fewer.
+            state: Optional current :class:`~vaig.core.models.PipelineState`
+                passed in by the orchestrator.  The agent may inspect it
+                but must not mutate it directly; emit deltas via
+                ``AgentResult.state_patch`` instead.
 
         Returns:
             ``AgentResult`` with the final text response and metadata.

@@ -417,7 +417,9 @@ class TestExecuteWithToolsFanout:
         assert agent1.execute.call_args.args == ("analyze this",)
         assert agent1.execute.call_args.kwargs["context"] == "analyze this"
         assert "tool_result_cache" in agent1.execute.call_args.kwargs
-        agent2.execute.assert_called_once_with("analyze this", context="analyze this")
+        agent2.execute.assert_called_once()
+        assert agent2.execute.call_args.args == ("analyze this",)
+        assert agent2.execute.call_args.kwargs["context"] == "analyze this"
         # Merged output
         assert "agent-1" in result.synthesized_output
         assert "agent-2" in result.synthesized_output
@@ -1743,7 +1745,9 @@ class TestAsyncExecuteWithTools:
         assert agent1.execute.call_args.args == ("analyze this",)
         assert agent1.execute.call_args.kwargs["context"] == "analyze this"
         assert "tool_result_cache" in agent1.execute.call_args.kwargs
-        agent2.execute.assert_called_once_with("analyze this", context="analyze this")
+        agent2.execute.assert_called_once()
+        assert agent2.execute.call_args.args == ("analyze this",)
+        assert agent2.execute.call_args.kwargs["context"] == "analyze this"
         # Merged output
         assert "agent-1" in result.synthesized_output
         assert "agent-2" in result.synthesized_output

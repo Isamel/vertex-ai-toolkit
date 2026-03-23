@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
 from vaig.core.client import ChatMessage
 from vaig.core.exceptions import GeminiConnectionError, GeminiRateLimitError
+from vaig.core.models import PipelineState
 
 if TYPE_CHECKING:
     from vaig.core.protocols import GeminiClientProtocol
@@ -30,11 +31,19 @@ class SpecialistAgent(BaseAgent):
     def __init__(self, config: AgentConfig, client: GeminiClientProtocol) -> None:
         super().__init__(config, client)
 
-    def execute(self, prompt: str, *, context: str = "") -> AgentResult:
+    def execute(self, prompt: str, *, context: str = "", state: PipelineState | None = None) -> AgentResult:
         """Execute a task using the configured model and system instruction.
 
         Builds a full prompt with optional context, sends to Gemini,
         and returns a structured result.
+
+        Args:
+            prompt: The user query or task.
+            context: Optional upstream context.
+            state: Optional current :class:`~vaig.core.models.PipelineState`
+                passed in by the orchestrator.  The agent may inspect it
+                but must not mutate it directly; emit deltas via
+                ``AgentResult.state_patch`` instead.
         """
         full_prompt = self._build_prompt(prompt, context)
         history = self._build_chat_history()
