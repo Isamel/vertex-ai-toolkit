@@ -454,10 +454,10 @@ class TestGracefulFallback:
         # This is a truly malformed scenario — should not crash
         items = [_make_secret(data={"k": "v"}), "not-a-dict"]  # type: ignore[list-item]
         # _redact_secret_item will fail on a string — but _redact_k8s_secret_data
-        # wraps in try/except and returns original
+        # wraps in try/except and returns empty list (fail-closed to avoid leaking secrets)
         result = _redact_k8s_secret_data(items)
-        # Should return the original unmodified list (graceful fallback)
-        assert result == items
+        # Should return empty list (fail-closed) rather than unredacted data
+        assert result == []
 
 
 # ═══════════════════════════════════════════════════════════════

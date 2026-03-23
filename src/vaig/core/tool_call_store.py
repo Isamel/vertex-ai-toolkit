@@ -125,8 +125,11 @@ class ToolCallStore:
                 logger.debug("Skipping non-date directory in tool_results: %s", date_dir.name)
                 continue
 
-            if since is not None and dir_date < since.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=UTC):
-                continue
+            if since is not None:
+                since_utc = since.astimezone(UTC) if since.tzinfo else since.replace(tzinfo=UTC)
+                since_start_of_day = since_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+                if dir_date < since_start_of_day:
+                    continue
 
             for jsonl_file in sorted(date_dir.glob("*.jsonl")):
                 run_id = jsonl_file.stem
@@ -160,17 +163,33 @@ class ToolCallStore:
         files_to_read: list[Path] = []
 
         if run_id is not None:
-            # Find the specific run file across all date directories
+            # Collect ALL matching candidates with their dates, then pick newest.
+            matching_candidates: list[tuple[datetime, Path]] = []
             for date_dir in results_dir.iterdir():
                 if not date_dir.is_dir():
                     continue
+                try:
+                    dir_date = datetime.strptime(date_dir.name, "%Y-%m-%d").replace(tzinfo=UTC)
+                except ValueError:
+                    continue
                 candidate = date_dir / f"{run_id}.jsonl"
                 if candidate.is_file():
-                    files_to_read.append(candidate)
-                    break
-            else:
+                    matching_candidates.append((dir_date, candidate))
+
+            if not matching_candidates:
                 logger.warning("No JSONL file found for run_id=%r in %s", run_id, results_dir)
                 return []
+
+            matching_candidates.sort(key=lambda item: item[0], reverse=True)
+            chosen_date, chosen_path = matching_candidates[0]
+            files_to_read.append(chosen_path)
+
+            if len(matching_candidates) > 1:
+                logger.warning(
+                    "Multiple JSONL files for run_id=%r; using newest at %s",
+                    run_id,
+                    chosen_path,
+                )
         else:
             # Collect all date directories, optionally filtered by `since`
             for date_dir in sorted(results_dir.iterdir()):
@@ -182,33 +201,32 @@ class ToolCallStore:
                     logger.debug("Skipping non-date directory in tool_results: %s", date_dir.name)
                     continue
 
-                if since is not None and dir_date < since.replace(
-                    hour=0, minute=0, second=0, microsecond=0, tzinfo=UTC
-                ):
-                    continue
+                if since is not None:
+                    since_utc = since.astimezone(UTC) if since.tzinfo else since.replace(tzinfo=UTC)
+                    since_start_of_day = since_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+                    if dir_date < since_start_of_day:
+                        continue
 
                 files_to_read.extend(sorted(date_dir.glob("*.jsonl")))
 
         records: list[dict[str, Any]] = []
         for path in files_to_read:
             try:
-                text = path.read_text(encoding="utf-8")
+                with path.open("r", encoding="utf-8") as f:
+                    for lineno, line in enumerate(f, start=1):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            records.append(json.loads(line))
+                        except json.JSONDecodeError as exc:
+                            logger.warning(
+                                "Skipping malformed JSON line %d in %s: %s",
+                                lineno,
+                                path,
+                                exc,
+                            )
             except OSError as exc:
                 logger.warning("Could not read tool call records from %s: %s", path, exc)
-                continue
-
-            for lineno, line in enumerate(text.splitlines(), start=1):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError as exc:
-                    logger.warning(
-                        "Skipping malformed JSON line %d in %s: %s",
-                        lineno,
-                        path,
-                        exc,
-                    )
 
         return records
