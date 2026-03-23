@@ -141,7 +141,7 @@ class ContextBuilder:
                     loaded.path = filepath.relative_to(dir_path)
                     self._bundle.add_file(loaded)
                     added += 1
-                except Exception:
+                except Exception:  # noqa: BLE001
                     logger.warning("Failed to load file: %s", filepath, exc_info=True)
 
         logger.info("Added %d files from %s", added, dir_path)

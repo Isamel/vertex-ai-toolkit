@@ -78,7 +78,7 @@ def _load_python_plugins(plugin_config: PluginConfig) -> list[ToolDef]:
 
                 module = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(module)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.warning(
                     "Failed to load plugin module '%s'. Skipping.",
                     py_file,
@@ -96,7 +96,7 @@ def _load_python_plugins(plugin_config: PluginConfig) -> list[ToolDef]:
 
             try:
                 tools = register_fn()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.warning(
                     "register_tools() raised an error in plugin '%s'. Skipping.",
                     py_file.name,
@@ -146,7 +146,7 @@ def load_all_plugin_tools(settings: Settings) -> list[ToolDef]:
             from vaig.tools.mcp_bridge import create_mcp_tools
 
             mcp_tools = create_mcp_tools(settings.mcp)
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.warning(
                 "Failed to load MCP plugin tools. Skipping.",
                 exc_info=True,
@@ -156,7 +156,7 @@ def load_all_plugin_tools(settings: Settings) -> list[ToolDef]:
     if settings.plugins.enabled:
         try:
             python_tools = _load_python_plugins(settings.plugins)
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.warning(
                 "Failed to load Python plugin tools. Skipping.",
                 exc_info=True,

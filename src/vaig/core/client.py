@@ -598,7 +598,7 @@ class GeminiClient:
                     self._reinitialize_with_fallback()
                     try:
                         return fn()
-                    except Exception as fallback_exc:
+                    except Exception as fallback_exc:  # noqa: BLE001
                         last_exception = fallback_exc
                         break
                 if attempt < retry_cfg.max_retries:
@@ -624,7 +624,7 @@ class GeminiClient:
                     self._reinitialize_with_fallback()
                     try:
                         return fn()
-                    except Exception as fallback_exc:
+                    except Exception as fallback_exc:  # noqa: BLE001
                         last_exception = fallback_exc
                         break
                 raise  # Non-SSL, non-retryable — propagate immediately.
@@ -689,7 +689,7 @@ class GeminiClient:
                     await self._async_reinitialize_with_fallback()
                     try:
                         return await fn()
-                    except Exception as fallback_exc:
+                    except Exception as fallback_exc:  # noqa: BLE001
                         last_exception = fallback_exc
                         break
                 if attempt < retry_cfg.max_retries:
@@ -715,7 +715,7 @@ class GeminiClient:
                     await self._async_reinitialize_with_fallback()
                     try:
                         return await fn()
-                    except Exception as fallback_exc:
+                    except Exception as fallback_exc:  # noqa: BLE001
                         last_exception = fallback_exc
                         break
                 raise
@@ -1177,7 +1177,7 @@ class GeminiClient:
             response = client.models.count_tokens(model=mid, contents=prompt)  # type: ignore[arg-type]
             total: int = response.total_tokens if response.total_tokens is not None else 0
             return total
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("Token counting failed: %s", exc)
             return None
 
@@ -1455,7 +1455,7 @@ class GeminiClient:
             )
             total: int = response.total_tokens if response.total_tokens is not None else 0
             return total
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("Token counting failed: %s", exc)
             return None
 

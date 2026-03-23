@@ -190,7 +190,7 @@ class SessionManager:
                 len(older) + len(recent),
                 len(self._active.history),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Summarization is non-critical — if it fails, keep the original history.
             # The message-count trimming in add_message() is still the safety net.
             logger.warning("History summarization failed — keeping original history", exc_info=True)

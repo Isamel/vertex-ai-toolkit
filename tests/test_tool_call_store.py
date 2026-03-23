@@ -7,7 +7,9 @@ and the ToolCallRecord dataclass serialization.
 from __future__ import annotations
 
 import json
+import logging
 import threading
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,6 +40,14 @@ def _make_record(**overrides: object) -> ToolCallRecord:
     }
     defaults.update(overrides)
     return ToolCallRecord(**defaults)  # type: ignore[arg-type]
+
+
+def _write_jsonl(path: Path, records: list[dict]) -> None:
+    """Write a list of dicts to a JSONL file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -274,3 +284,227 @@ class TestToolCallStorePathSecurity:
         ):
             with pytest.raises(ValueError, match="tool_results_dir must be under"):
                 ToolCallStore(base_dir="/etc/passwd_dir")
+
+
+# ---------------------------------------------------------------------------
+# list_runs() tests
+# ---------------------------------------------------------------------------
+
+
+class TestListRuns:
+    """Tests for ToolCallStore.list_runs()."""
+
+    def test_list_runs_returns_correct_format(self, tmp_path: Path) -> None:
+        """list_runs() returns (run_id, date) tuples with UTC-aware datetimes."""
+        store = ToolCallStore(base_dir=tmp_path)
+        date_dir = tmp_path / "tool_results" / "2026-03-16"
+        _write_jsonl(date_dir / "run-abc.jsonl", [{"tool_name": "t1"}])
+
+        runs = store.list_runs()
+
+        assert len(runs) == 1
+        run_id, date = runs[0]
+        assert run_id == "run-abc"
+        assert date == datetime(2026, 3, 16, tzinfo=UTC)
+        assert date.tzinfo is not None  # must be timezone-aware
+
+    def test_list_runs_returns_multiple_sorted_ascending(self, tmp_path: Path) -> None:
+        """list_runs() returns all runs sorted by date ascending."""
+        store = ToolCallStore(base_dir=tmp_path)
+        for date_str, run_name in [("2026-03-14", "run-old"), ("2026-03-16", "run-new")]:
+            _write_jsonl(
+                tmp_path / "tool_results" / date_str / f"{run_name}.jsonl",
+                [{"tool_name": "t"}],
+            )
+
+        runs = store.list_runs()
+
+        assert len(runs) == 2
+        assert runs[0][0] == "run-old"
+        assert runs[1][0] == "run-new"
+
+    def test_list_runs_empty_when_no_results_dir(self, tmp_path: Path) -> None:
+        store = ToolCallStore(base_dir=tmp_path)
+        assert store.list_runs() == []
+
+    def test_list_runs_since_filters_old_dates(self, tmp_path: Path) -> None:
+        """list_runs(since=...) excludes directories before the cutoff date."""
+        store = ToolCallStore(base_dir=tmp_path)
+        for date_str, run_name in [
+            ("2026-03-14", "run-old"),
+            ("2026-03-16", "run-new"),
+        ]:
+            _write_jsonl(
+                tmp_path / "tool_results" / date_str / f"{run_name}.jsonl",
+                [{"tool_name": "t"}],
+            )
+
+        since = datetime(2026, 3, 15, tzinfo=UTC)
+        runs = store.list_runs(since=since)
+
+        run_ids = [r[0] for r in runs]
+        assert "run-old" not in run_ids
+        assert "run-new" in run_ids
+
+    def test_list_runs_since_with_naive_datetime(self, tmp_path: Path) -> None:
+        """list_runs(since=...) handles naive datetimes by treating them as UTC."""
+        store = ToolCallStore(base_dir=tmp_path)
+        _write_jsonl(
+            tmp_path / "tool_results" / "2026-03-16" / "run-x.jsonl",
+            [{"tool_name": "t"}],
+        )
+
+        # Naive datetime — should be treated as UTC (no exception)
+        since_naive = datetime(2026, 3, 15)  # no tzinfo
+        runs = store.list_runs(since=since_naive)
+
+        assert len(runs) == 1
+
+    def test_list_runs_since_with_aware_datetime(self, tmp_path: Path) -> None:
+        """list_runs(since=...) properly converts timezone-aware datetimes."""
+        store = ToolCallStore(base_dir=tmp_path)
+        _write_jsonl(
+            tmp_path / "tool_results" / "2026-03-16" / "run-y.jsonl",
+            [{"tool_name": "t"}],
+        )
+
+        # Timezone-aware datetime — should be converted, not overwritten
+        since_aware = datetime(2026, 3, 15, 12, 0, tzinfo=UTC)
+        runs = store.list_runs(since=since_aware)
+
+        assert len(runs) == 1
+
+
+# ---------------------------------------------------------------------------
+# read_records() tests
+# ---------------------------------------------------------------------------
+
+
+class TestReadRecords:
+    """Tests for ToolCallStore.read_records()."""
+
+    def test_read_records_returns_correct_records(self, tmp_path: Path) -> None:
+        """read_records(run_id=...) returns the records from the matching file."""
+        store = ToolCallStore(base_dir=tmp_path)
+        records = [
+            {"tool_name": "kubectl_get_pods", "run_id": "run-1"},
+            {"tool_name": "kubectl_get_nodes", "run_id": "run-1"},
+        ]
+        _write_jsonl(tmp_path / "tool_results" / "2026-03-16" / "run-1.jsonl", records)
+
+        result = store.read_records(run_id="run-1")
+
+        assert len(result) == 2
+        assert result[0]["tool_name"] == "kubectl_get_pods"
+        assert result[1]["tool_name"] == "kubectl_get_nodes"
+
+    def test_read_records_skips_malformed_json_with_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """read_records() skips malformed JSON lines and logs a warning."""
+        store = ToolCallStore(base_dir=tmp_path)
+        jsonl_path = tmp_path / "tool_results" / "2026-03-16" / "run-bad.jsonl"
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        jsonl_path.write_text(
+            '{"tool_name": "good_tool"}\n'
+            "NOT JSON AT ALL\n"
+            '{"tool_name": "another_good_tool"}\n',
+            encoding="utf-8",
+        )
+
+        # The "vaig" parent logger has propagate=False (set by setup_logging()),
+        # so we must patch the parent's propagate to let records reach caplog.
+        vaig_logger = logging.getLogger("vaig")
+        original_propagate = vaig_logger.propagate
+        vaig_logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="vaig.core.tool_call_store"):
+                result = store.read_records(run_id="run-bad")
+        finally:
+            vaig_logger.propagate = original_propagate
+
+        assert len(result) == 2
+        assert result[0]["tool_name"] == "good_tool"
+        assert result[1]["tool_name"] == "another_good_tool"
+        assert any("malformed" in msg.lower() for msg in caplog.messages)
+
+    def test_read_records_empty_when_run_id_not_found(self, tmp_path: Path) -> None:
+        """read_records() returns [] and logs warning when run_id doesn't exist."""
+        store = ToolCallStore(base_dir=tmp_path)
+        (tmp_path / "tool_results" / "2026-03-16").mkdir(parents=True)
+
+        result = store.read_records(run_id="nonexistent-run")
+
+        assert result == []
+
+    def test_read_records_selects_newest_on_duplicate_run_id(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """read_records() picks the newest date dir when run_id exists in multiple."""
+        store = ToolCallStore(base_dir=tmp_path)
+        run_id = "dup-run"
+
+        # Older date: has record A
+        _write_jsonl(
+            tmp_path / "tool_results" / "2026-03-14" / f"{run_id}.jsonl",
+            [{"tool_name": "old_tool", "date": "2026-03-14"}],
+        )
+        # Newer date: has record B
+        _write_jsonl(
+            tmp_path / "tool_results" / "2026-03-16" / f"{run_id}.jsonl",
+            [{"tool_name": "new_tool", "date": "2026-03-16"}],
+        )
+
+        # The "vaig" parent logger has propagate=False (set by setup_logging()),
+        # so we must patch the parent's propagate to let records reach caplog.
+        vaig_logger = logging.getLogger("vaig")
+        original_propagate = vaig_logger.propagate
+        vaig_logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="vaig.core.tool_call_store"):
+                result = store.read_records(run_id=run_id)
+        finally:
+            vaig_logger.propagate = original_propagate
+
+        # Should use the newest (2026-03-16)
+        assert len(result) == 1
+        assert result[0]["tool_name"] == "new_tool"
+        # Should warn about duplicates
+        assert any("multiple" in msg.lower() for msg in caplog.messages)
+
+    def test_read_records_all_without_run_id(self, tmp_path: Path) -> None:
+        """read_records() without run_id returns all records across all dates."""
+        store = ToolCallStore(base_dir=tmp_path)
+        _write_jsonl(
+            tmp_path / "tool_results" / "2026-03-14" / "run-a.jsonl",
+            [{"tool_name": "tool_a"}],
+        )
+        _write_jsonl(
+            tmp_path / "tool_results" / "2026-03-16" / "run-b.jsonl",
+            [{"tool_name": "tool_b"}],
+        )
+
+        result = store.read_records()
+
+        tool_names = [r["tool_name"] for r in result]
+        assert "tool_a" in tool_names
+        assert "tool_b" in tool_names
+
+    def test_read_records_since_filters_old_dates(self, tmp_path: Path) -> None:
+        """read_records(since=...) excludes records before the cutoff date."""
+        store = ToolCallStore(base_dir=tmp_path)
+        _write_jsonl(
+            tmp_path / "tool_results" / "2026-03-14" / "run-old.jsonl",
+            [{"tool_name": "old_tool"}],
+        )
+        _write_jsonl(
+            tmp_path / "tool_results" / "2026-03-16" / "run-new.jsonl",
+            [{"tool_name": "new_tool"}],
+        )
+
+        since = datetime(2026, 3, 15, tzinfo=UTC)
+        result = store.read_records(since=since)
+
+        tool_names = [r["tool_name"] for r in result]
+        assert "old_tool" not in tool_names
+        assert "new_tool" in tool_names

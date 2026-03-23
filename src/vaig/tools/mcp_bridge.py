@@ -277,7 +277,7 @@ def create_mcp_tools(mcp_config: MCPConfig) -> list[ToolDef]:
                     env=server.env or None,
                 )
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.warning(
                 "Failed to discover tools from MCP server '%s' (%s). Skipping.",
                 server.name,

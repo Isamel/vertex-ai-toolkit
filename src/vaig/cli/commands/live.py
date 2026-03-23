@@ -68,7 +68,7 @@ def _create_tool_call_store(settings: Settings) -> ToolCallStore | None:
         store = ToolCallStore(base_dir=base_dir)
         logger.debug("ToolCallStore initialised: %s", base_dir)
         return store
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.warning("Failed to create ToolCallStore; tool results will not be persisted.", exc_info=True)
         return None
 
@@ -588,7 +588,7 @@ def register(app: typer.Typer) -> None:
             )
         except typer.Exit:
             raise  # Let typer exits pass through
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             handle_cli_error(exc, debug=debug)
 
 
@@ -863,7 +863,7 @@ def _register_live_tools(gke_config: GKEConfig, settings: Settings | None = None
 
             for tool in load_all_plugin_tools(settings):
                 registry.register(tool)
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.warning(
                 "Failed to load plugin tools for live mode. Skipping.",
                 exc_info=True,
@@ -930,7 +930,7 @@ def _export_html_report(
                     f"Open manually:[/yellow] [cyan]{file_url}[/cyan]"
                 )
         return True
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # pragma: no cover  # noqa: BLE001
         err_console.print(
             f"[bold red]⚠ Failed to write HTML report:[/bold red] {exc}"
         )

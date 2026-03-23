@@ -331,7 +331,7 @@ class ChunkedProcessor:
                     )
                 )
                 logger.info("Chunk %d/%d processed successfully", i + 1, total)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("Chunk %d/%d failed: %s", i + 1, total, exc, exc_info=True)
                 chunk_results.append(
                     ChunkResult(

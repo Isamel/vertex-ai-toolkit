@@ -597,7 +597,7 @@ def _format_describe(resource: str, obj: Any, api_client: Any | None = None) -> 
                 lines.append(f"  {ev_type:<10}{reason:<25}{ev_age:<8}{message}")
         else:
             lines.append("Events:       <none>")
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.debug("Failed to retrieve events for %s/%s", resource, meta.name, exc_info=True)
         lines.append("Events:       <unable to retrieve>")
 

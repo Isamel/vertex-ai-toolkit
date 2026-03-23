@@ -91,14 +91,14 @@ def _fire_agent_progress(
         # (agent_name, agent_index, total_agents, event) without end_agent_index.
         try:
             callback(agent_name, agent_index, total_agents, event)
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.debug(
                 "on_agent_progress callback error (swallowed, 4-arg fallback): agent=%s event=%s",
                 agent_name,
                 event,
                 exc_info=True,
             )
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.debug(
             "on_agent_progress callback error (swallowed): agent=%s event=%s",
             agent_name,
@@ -1103,7 +1103,7 @@ class Orchestrator:
                         try:
                             _json.loads(agent_result.content)
                             schema_cls.model_validate_json(agent_result.content)
-                        except Exception as schema_exc:
+                        except Exception as schema_exc:  # noqa: BLE001
                             logger.warning(
                                 "Reporter %s structured output failed "
                                 "schema validation (%s) — retrying with "
@@ -1178,7 +1178,7 @@ class Orchestrator:
                             result.structured_report = schema_cls.model_validate_json(
                                 agent_result.content,
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # best-effort
 
                     # Post-process structured output (e.g. JSON → Markdown)
@@ -1281,7 +1281,7 @@ class Orchestrator:
                                 result.structured_report = (
                                     schema_cls.model_validate_json(reporter_retry.content)
                                 )
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass  # best-effort
 
             if result.agent_results:
@@ -2080,7 +2080,7 @@ class Orchestrator:
                         try:
                             _json.loads(agent_result.content)
                             schema_cls.model_validate_json(agent_result.content)
-                        except Exception as schema_exc:
+                        except Exception as schema_exc:  # noqa: BLE001
                             logger.warning(
                                 "Reporter %s structured output failed "
                                 "schema validation (%s) — retrying with "
@@ -2147,7 +2147,7 @@ class Orchestrator:
                             result.structured_report = schema_cls.model_validate_json(
                                 agent_result.content,
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # best-effort
 
                     # Post-process structured output (e.g. JSON → Markdown)
@@ -2251,7 +2251,7 @@ class Orchestrator:
                                 result.structured_report = (
                                     schema_cls.model_validate_json(reporter_retry.content)
                                 )
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass  # best-effort
 
             if result.agent_results:
@@ -2602,7 +2602,7 @@ class Orchestrator:
                             result.structured_report = schema_cls.model_validate_json(
                                 last_agent_result.content,
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # best-effort — keep synthesized_output as-is
 
                     # Post-process structured output (e.g. JSON → Markdown)
@@ -2914,7 +2914,7 @@ class Orchestrator:
                             result.structured_report = schema_cls.model_validate_json(
                                 last_agent_result.content,
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # best-effort — keep synthesized_output as-is
 
                     # Post-process structured output (e.g. JSON → Markdown)

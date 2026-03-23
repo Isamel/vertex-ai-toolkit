@@ -200,7 +200,7 @@ def _try_chunked_ask(
             question,
             model_id=model_id or settings.models.default,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         err_console.print(f"[dim]Chunking budget calculation failed ({exc}), using normal pipeline[/dim]")
         return False
 
@@ -270,7 +270,7 @@ async def _async_try_chunked_ask(
             question,
             model_id=model_id or settings.models.default,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         err_console.print(f"[dim]Chunking budget calculation failed ({exc}), using normal pipeline[/dim]")
         return False
 

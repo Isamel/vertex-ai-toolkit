@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import importlib.resources
 import json
 from dataclasses import asdict, dataclass, field
@@ -19,19 +20,17 @@ _md_renderer: MarkdownIt = MarkdownIt("commonmark", {"html": False}).enable(
 # Loaded once from vaig/ui/general_report_template.html (same pattern as
 # html_report.py uses for spa_template.html).
 # Single placeholder: {content} — the rendered HTML fragment.
-_GENERAL_REPORT_TEMPLATE_CACHE: str | None = None
+# Thread-safe via functools.lru_cache (no global mutable state).
 
 
+@functools.lru_cache(maxsize=1)
 def _load_general_report_template() -> str:
     """Load general_report_template.html from the vaig.ui package, caching the result."""
-    global _GENERAL_REPORT_TEMPLATE_CACHE
-    if _GENERAL_REPORT_TEMPLATE_CACHE is None:
-        _GENERAL_REPORT_TEMPLATE_CACHE = (
-            importlib.resources.files("vaig.ui")
-            .joinpath("general_report_template.html")
-            .read_text(encoding="utf-8")
-        )
-    return _GENERAL_REPORT_TEMPLATE_CACHE
+    return (
+        importlib.resources.files("vaig.ui")
+        .joinpath("general_report_template.html")
+        .read_text(encoding="utf-8")
+    )
 
 
 @dataclass(frozen=True, slots=True)

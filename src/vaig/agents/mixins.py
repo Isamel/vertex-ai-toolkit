@@ -595,7 +595,7 @@ class ToolLoopMixin:
             )
             self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="TypeError", error_message=str(exc))
             return result
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("Tool %s unexpected error: %s", tool_name, exc)
             result = ToolResult(
                 output=f"Tool execution error ({tool_name}): {exc}",
@@ -1065,7 +1065,7 @@ class ToolLoopMixin:
             )
             self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="TypeError", error_message=str(exc))
             return result
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("Tool %s unexpected error: %s", tool_name, exc)
             result = ToolResult(
                 output=f"Tool execution error ({tool_name}): {exc}",

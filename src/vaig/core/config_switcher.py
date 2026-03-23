@@ -98,7 +98,7 @@ def switch_project(
         try:
             client.reinitialize(project=new_project)
             reinitialized.append("GeminiClient")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             # Rollback on failure
             logger.error("Client reinit failed for project '%s': %s", new_project, exc)
             settings.gcp.project_id = old_project
@@ -167,7 +167,7 @@ def switch_location(
         try:
             client.reinitialize(location=new_location)
             reinitialized.append("GeminiClient")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             # Rollback on failure
             logger.error("Client reinit failed for location '%s': %s", new_location, exc)
             settings.gcp.location = old_location
