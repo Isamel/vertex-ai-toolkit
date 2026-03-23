@@ -270,7 +270,7 @@ class ServiceHealthSkill(BaseSkill):
         Pipeline structure:
         - **Parallel group** (``parallel_group="gather"``): 4 sub-gatherers,
           each covering a focused subset of the 10-step investigation checklist.
-          All use ``gemini-2.5-flash`` for speed and cost efficiency.
+          All use ``gemini-2.5-pro`` for speed and cost efficiency.
         - **Sequential tail** (unchanged): health_analyzer → health_verifier →
           health_reporter.  The merged output of the parallel group is passed
           as context to the analyzer.
@@ -321,7 +321,7 @@ class ServiceHealthSkill(BaseSkill):
                 "requires_tools": True,
                 "parallel_group": "gather",
                 "system_instruction": build_node_gatherer_prompt(is_autopilot=is_autopilot),
-                "model": "gemini-2.5-flash",
+                "model": "gemini-2.5-pro",
                 "temperature": 0.0,
                 "max_iterations": 4 if is_autopilot else 8,
             },
@@ -334,7 +334,7 @@ class ServiceHealthSkill(BaseSkill):
                     namespace=effective_namespace,
                     datadog_api_enabled=settings.datadog.enabled,
                 ),
-                "model": "gemini-2.5-flash",
+                "model": "gemini-2.5-pro",
                 "temperature": 0.0,
                 # Extra budget for Step 12 (Datadog API — 4 tool calls) when enabled
                 "max_iterations": 16 if settings.datadog.enabled else 12,
@@ -345,7 +345,7 @@ class ServiceHealthSkill(BaseSkill):
                 "requires_tools": True,
                 "parallel_group": "gather",
                 "system_instruction": build_event_gatherer_prompt(namespace=effective_namespace),
-                "model": "gemini-2.5-flash",
+                "model": "gemini-2.5-pro",
                 "temperature": 0.0,
                 "max_iterations": 10,
             },
@@ -355,7 +355,7 @@ class ServiceHealthSkill(BaseSkill):
                 "requires_tools": True,
                 "parallel_group": "gather",
                 "system_instruction": build_logging_gatherer_prompt(namespace=effective_namespace),
-                "model": "gemini-2.5-flash",
+                "model": "gemini-2.5-pro",
                 "temperature": 0.0,
                 "max_iterations": 8,
             },
