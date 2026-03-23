@@ -1,4 +1,4 @@
-"""RAG data pipeline export — BigQuery, GCS, and Vertex AI RAG Engine integration."""
+"""RAG data pipeline export — BigQuery and GCS export."""
 
 from __future__ import annotations
 
@@ -217,6 +217,8 @@ class DataExporter:
         self._gcs_client_override = gcs_client
         self._bq_client: bigquery.Client | None = None
         self._gcs_client: storage.Client | None = None
+        self._bq_lock = threading.Lock()
+        self._gcs_lock = threading.Lock()
 
     # ── Public properties ────────────────────────────────────
 
@@ -262,6 +264,7 @@ class DataExporter:
 
         Uses the injected client when one was provided at construction time,
         otherwise creates a new one via ``google.cloud.bigquery.Client``.
+        Thread-safe via double-checked locking on lazy initialization.
 
         Raises:
             ImportError: If ``google-cloud-bigquery`` is not installed.
@@ -269,10 +272,12 @@ class DataExporter:
         if self._bq_client_override is not None:
             return self._bq_client_override
         if self._bq_client is None:
-            _require_rag_deps()
-            from google.cloud import bigquery
+            with self._bq_lock:
+                if self._bq_client is None:
+                    _require_rag_deps()
+                    from google.cloud import bigquery
 
-            self._bq_client = bigquery.Client(project=self._effective_project_id())
+                    self._bq_client = bigquery.Client(project=self._effective_project_id())
         return self._bq_client
 
     def _get_gcs_client(self) -> storage.Client:
@@ -280,6 +285,7 @@ class DataExporter:
 
         Uses the injected client when one was provided at construction time,
         otherwise creates a new one via ``google.cloud.storage.Client``.
+        Thread-safe via double-checked locking on lazy initialization.
 
         Raises:
             ImportError: If ``google-cloud-storage`` is not installed.
@@ -287,10 +293,12 @@ class DataExporter:
         if self._gcs_client_override is not None:
             return self._gcs_client_override
         if self._gcs_client is None:
-            _require_rag_deps()
-            from google.cloud import storage
+            with self._gcs_lock:
+                if self._gcs_client is None:
+                    _require_rag_deps()
+                    from google.cloud import storage
 
-            self._gcs_client = storage.Client(project=self._effective_project_id())
+                    self._gcs_client = storage.Client(project=self._effective_project_id())
         return self._gcs_client
 
     # ── BigQuery schema management ───────────────────────────
@@ -680,12 +688,13 @@ class DataExporter:
     # ── GCS export methods ───────────────────────────────────
 
     def export_report_to_gcs(self, report: dict[str, Any], run_id: str) -> str | None:
-        """Upload a health report as a JSON blob to GCS.
+        """Upload a health report as a single JSON document to GCS (one JSON file per report).
 
         The blob is written to ``{gcs_prefix}reports/{YYYY-MM-DD}/{run_id}.json``.
+        Note: this uploads a single JSON document, not JSONL.
 
         Args:
-            report: Health report dict to serialise as JSON.
+            report: Health report dict to serialise as a JSON document.
             run_id: Unique identifier for this pipeline run (used as filename).
 
         Returns:

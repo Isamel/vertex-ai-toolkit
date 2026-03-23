@@ -113,9 +113,9 @@ def push_telemetry(
         str,
         typer.Option("--since", help="Time range (e.g. '7d', '30d', '1h')"),
     ] = "7d",
-    to: Annotated[
+    dest: Annotated[
         str,
-        typer.Option("--to", help="Destination: bigquery, gcs, or both"),
+        typer.Option("--dest", help="Destination: bigquery, gcs, or both"),
     ] = "both",
     dry_run: Annotated[
         bool,
@@ -131,7 +131,7 @@ def push_telemetry(
     from vaig.core.export import DataExporter
     from vaig.core.telemetry import get_telemetry_collector
 
-    _validate_destination(to)
+    _validate_destination(dest)
     since_dt = _parse_since(since)
 
     settings = _get_settings(config)
@@ -147,7 +147,7 @@ def push_telemetry(
     records = collector.query_events(None, since=since_iso, limit=50_000)
 
     if dry_run:
-        _print_dry_run_summary("Telemetry Events", records, to, since_dt)
+        _print_dry_run_summary("Telemetry Events", records, dest, since_dt)
         return
 
     if not records:
@@ -160,9 +160,9 @@ def push_telemetry(
     gcs_uri: str | None = None
 
     with console.status("[bold cyan]Exporting telemetry…[/bold cyan]"):
-        if to in ("bigquery", "both"):
+        if dest in ("bigquery", "both"):
             bq_count = exporter.export_telemetry_to_bigquery(records)
-        if to in ("gcs", "both"):
+        if dest in ("gcs", "both"):
             gcs_uri = exporter.export_telemetry_to_gcs(records)
 
     _print_export_results("Telemetry Events", bq_count, gcs_uri)
@@ -181,9 +181,9 @@ def push_tool_calls(
         str,
         typer.Option("--since", help="Time range (e.g. '7d', '30d', '1h')"),
     ] = "7d",
-    to: Annotated[
+    dest: Annotated[
         str,
-        typer.Option("--to", help="Destination: bigquery, gcs, or both"),
+        typer.Option("--dest", help="Destination: bigquery, gcs, or both"),
     ] = "both",
     dry_run: Annotated[
         bool,
@@ -195,11 +195,13 @@ def push_tool_calls(
     ] = None,
 ) -> None:
     """Push tool call records to BigQuery and/or GCS."""
+    from pathlib import Path
+
     from vaig.cli._helpers import _get_settings
     from vaig.core.export import DataExporter
     from vaig.core.tool_call_store import ToolCallStore
 
-    _validate_destination(to)
+    _validate_destination(dest)
     since_dt = _parse_since(since)
 
     settings = _get_settings(config)
@@ -210,11 +212,11 @@ def push_tool_calls(
         )
         raise typer.Exit(1)
 
-    store = ToolCallStore()
+    store = ToolCallStore(base_dir=Path(settings.logging.tool_results_dir).expanduser())
     records = store.read_records(run_id=run_id, since=since_dt if run_id is None else None)
 
     if dry_run:
-        _print_dry_run_summary("Tool Calls", records, to, since_dt)
+        _print_dry_run_summary("Tool Calls", records, dest, since_dt)
         return
 
     if not records:
@@ -229,9 +231,9 @@ def push_tool_calls(
 
     with console.status("[bold cyan]Exporting tool calls…[/bold cyan]"):
         effective_run_id = run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        if to in ("bigquery", "both"):
+        if dest in ("bigquery", "both"):
             bq_count = exporter.export_tool_calls_to_bigquery(records)
-        if to in ("gcs", "both"):
+        if dest in ("gcs", "both"):
             gcs_uri = exporter.export_tool_results_to_gcs(records, effective_run_id)
 
     _print_export_results("Tool Calls", bq_count, gcs_uri)
@@ -246,9 +248,9 @@ def push_reports(
         str,
         typer.Option("--since", help="Time range (e.g. '30d', '7d', '1h')"),
     ] = "30d",
-    to: Annotated[
+    dest: Annotated[
         str,
-        typer.Option("--to", help="Destination: bigquery, gcs, or both"),
+        typer.Option("--dest", help="Destination: bigquery, gcs, or both"),
     ] = "both",
     dry_run: Annotated[
         bool,
@@ -266,7 +268,7 @@ def push_reports(
     from vaig.cli._helpers import _get_settings
     from vaig.core.export import DataExporter
 
-    _validate_destination(to)
+    _validate_destination(dest)
     since_dt = _parse_since(since)
 
     settings = _get_settings(config)
@@ -290,7 +292,7 @@ def push_reports(
                 continue
 
     if dry_run:
-        _print_dry_run_summary("Health Reports", report_files, to, since_dt)
+        _print_dry_run_summary("Health Reports", report_files, dest, since_dt)
         return
 
     if not report_files:
@@ -310,11 +312,11 @@ def push_reports(
                 continue
 
             run_id = report_path.stem
-            if to in ("bigquery", "both"):
+            if dest in ("bigquery", "both"):
                 ok = exporter.export_report_to_bigquery(report, run_id=run_id)
                 if ok:
                     exported_bq += 1
-            if to in ("gcs", "both"):
+            if dest in ("gcs", "both"):
                 uri = exporter.export_report_to_gcs(report, run_id)
                 if uri:
                     exported_gcs += 1
@@ -322,9 +324,9 @@ def push_reports(
     table = Table(title="[bold]Export Results — Health Reports[/bold]", show_header=True, header_style="bold green")
     table.add_column("Destination", style="cyan")
     table.add_column("Result", style="yellow")
-    if to in ("bigquery", "both"):
+    if dest in ("bigquery", "both"):
         table.add_row("BigQuery", f"[green]{exported_bq}/{len(report_files)} reports inserted[/green]")
-    if to in ("gcs", "both"):
+    if dest in ("gcs", "both"):
         table.add_row("GCS", f"[green]{exported_gcs}/{len(report_files)} reports uploaded[/green]")
     console.print(table)
 

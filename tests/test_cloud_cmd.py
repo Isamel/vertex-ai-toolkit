@@ -198,7 +198,7 @@ class TestPushTelemetry:
     def test_push_telemetry_to_bigquery_only(
         self, _export_enabled_settings: Settings, mock_exporter: MagicMock
     ) -> None:
-        """--to bigquery calls only BigQuery export, not GCS."""
+        """--dest bigquery calls only BigQuery export, not GCS."""
         fake_records = [{"event_type": "tool_call"}] * 3
 
         with (
@@ -210,7 +210,7 @@ class TestPushTelemetry:
             mock_collector.query_events.return_value = fake_records
             mock_collector_factory.return_value = mock_collector
 
-            result = runner.invoke(app, ["cloud", "push", "telemetry", "--to", "bigquery"])
+            result = runner.invoke(app, ["cloud", "push", "telemetry", "--dest", "bigquery"])
 
         assert result.exit_code == 0
         mock_exporter.export_telemetry_to_bigquery.assert_called_once()
@@ -219,7 +219,7 @@ class TestPushTelemetry:
     def test_push_telemetry_to_gcs_only(
         self, _export_enabled_settings: Settings, mock_exporter: MagicMock
     ) -> None:
-        """--to gcs calls only GCS export, not BigQuery."""
+        """--dest gcs calls only GCS export, not BigQuery."""
         fake_records = [{"event_type": "tool_call"}] * 3
 
         with (
@@ -231,7 +231,7 @@ class TestPushTelemetry:
             mock_collector.query_events.return_value = fake_records
             mock_collector_factory.return_value = mock_collector
 
-            result = runner.invoke(app, ["cloud", "push", "telemetry", "--to", "gcs"])
+            result = runner.invoke(app, ["cloud", "push", "telemetry", "--dest", "gcs"])
 
         assert result.exit_code == 0
         mock_exporter.export_telemetry_to_gcs.assert_called_once()
@@ -240,9 +240,9 @@ class TestPushTelemetry:
     def test_push_telemetry_invalid_destination(
         self, _export_enabled_settings: Settings
     ) -> None:
-        """Invalid --to value exits with non-zero code."""
+        """Invalid --dest value exits with non-zero code."""
         with patch("vaig.cli._helpers._get_settings", return_value=_export_enabled_settings):
-            result = runner.invoke(app, ["cloud", "push", "telemetry", "--to", "s3"])
+            result = runner.invoke(app, ["cloud", "push", "telemetry", "--dest", "s3"])
 
         assert result.exit_code != 0
 

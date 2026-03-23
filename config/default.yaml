@@ -267,10 +267,10 @@ plugins:
   # - "~/.vaig/plugins"
 
 # RAG data pipeline export — stream telemetry, tool calls, and health reports to GCP
-# Requires: pip install vaig[rag]  (google-cloud-bigquery + google-cloud-storage)
+# Requires: pip install 'vertex-ai-toolkit[rag]'  (google-cloud-bigquery + google-cloud-storage)
 export:
   enabled: false                    # Set to true to enable GCP export (opt-in — safe to leave off)
-  gcp_project_id: ""               # GCP project for BigQuery/GCS — defaults to gcp.project_id if empty
+  gcp_project_id: ""               # GCP project for BigQuery/GCS — required; if empty, BigQuery export is skipped
   bigquery_dataset: "vaig_analytics"  # BigQuery dataset name (created automatically if missing)
   auto_export_reports: false        # Automatically export HealthReport after each pipeline run
   auto_export_telemetry: false      # Automatically export telemetry events (higher volume — opt-in)

@@ -570,7 +570,7 @@ class ExportConfig(BaseModel):
     with ``export.enabled = true`` in config or ``VAIG_EXPORT__ENABLED=true``.
 
     Requires the ``[rag]`` optional dependency group:
-    ``pip install vaig[rag]``
+    ``pip install 'vertex-ai-toolkit[rag]'``
     """
 
     enabled: bool = False

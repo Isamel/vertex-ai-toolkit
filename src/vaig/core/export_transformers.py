@@ -51,7 +51,8 @@ def _parse_timestamp(value: Any) -> datetime:
         return value.astimezone(UTC)
     if isinstance(value, str):
         try:
-            parsed = datetime.fromisoformat(value)
+            ts_str = value.replace("Z", "+00:00")  # fromisoformat() doesn't accept 'Z' suffix
+            parsed = datetime.fromisoformat(ts_str)
             if parsed.tzinfo is None:
                 return parsed.replace(tzinfo=UTC)
             return parsed.astimezone(UTC)

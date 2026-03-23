@@ -347,7 +347,8 @@ class TestTransformToolCall:
 
     def test_timestamp_string_parsed_to_datetime(self) -> None:
         row = transform_tool_call_record(_make_tool_call(timestamp="2025-06-01T13:00:00Z"))
-        assert isinstance(row["timestamp"], datetime)
+        # Must parse the 'Z' suffix and return a UTC-aware datetime at the exact moment
+        assert row["timestamp"] == datetime(2025, 6, 1, 13, 0, 0, tzinfo=UTC)
 
     def test_error_message_none_when_absent(self) -> None:
         row = transform_tool_call_record({"tool_name": "noop"})

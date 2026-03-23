@@ -152,21 +152,21 @@ class TestLazyClientInit:
     """ADR-3: clients must not be created until first use."""
 
     def test_bq_client_created_on_first_get(self, export_config: ExportConfig) -> None:
-        """_get_bq_client() must return a real client on first call."""
-        mock_client = MagicMock()
-        mock_bq_module = MagicMock()
-        mock_bq_module.Client.return_value = mock_client
+        """_get_bq_client() must create a real client on first call and reuse it."""
+        mock_client = MagicMock(name="bq_client_instance")
 
         exporter = DataExporter(export_config)
         assert exporter._bq_client is None  # noqa: SLF001 — not yet created
 
-        with patch.dict("sys.modules", {"google.cloud.bigquery": mock_bq_module}):
-            # Ensure _require_rag_deps passes
-            with patch("vaig.core.export._require_rag_deps"):
-                with patch("vaig.core.export.DataExporter._get_bq_client", return_value=mock_client) as mock_method:
-                    client = exporter._get_bq_client()  # noqa: SLF001
+        with patch("vaig.core.export._require_rag_deps"):
+            with patch("google.cloud.bigquery.Client", return_value=mock_client) as mock_cls:
+                client_first = exporter._get_bq_client()   # noqa: SLF001
+                client_second = exporter._get_bq_client()  # noqa: SLF001
 
-        assert client is mock_client
+        # Client constructor called exactly once — reused on second call
+        mock_cls.assert_called_once()
+        assert client_first is mock_client
+        assert client_second is mock_client
 
     def test_gcs_client_not_created_before_first_call(self, export_config: ExportConfig) -> None:
         exporter = DataExporter(export_config)

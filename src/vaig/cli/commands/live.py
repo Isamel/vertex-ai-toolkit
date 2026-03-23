@@ -1297,7 +1297,10 @@ def _execute_orchestrated_skill(
         # Show agent pipeline summary (includes cost line)
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
 
-        # Auto-export report if configured
+        # Auto-export report if configured.
+        # ADR-4: auto-export fires here for the health report only, immediately after the live
+        # summary.  Telemetry and tool-calls are higher-volume and use the explicit CLI push
+        # commands (vaig cloud push telemetry / tool-calls) so they are never auto-exported.
         if settings.export.enabled and settings.export.auto_export_reports and orch_result.structured_report is not None:
             from vaig.core.export import auto_export_report
 
@@ -1766,7 +1769,10 @@ async def _async_execute_orchestrated_skill(
 
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
 
-        # Auto-export report if configured
+        # Auto-export report if configured.
+        # ADR-4: auto-export fires here for the health report only, immediately after the live
+        # summary.  Telemetry and tool-calls are higher-volume and use the explicit CLI push
+        # commands (vaig cloud push telemetry / tool-calls) so they are never auto-exported.
         if settings.export.enabled and settings.export.auto_export_reports and orch_result.structured_report is not None:
             from vaig.core.export import auto_export_report
 
