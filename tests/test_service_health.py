@@ -2732,3 +2732,68 @@ class TestDatadogAPMTagResolution:
             "get_datadog_apm_services() example."
         )
 
+    def test_workload_gatherer_prompt_has_k8s_priority_hierarchy(self) -> None:
+        """build_workload_gatherer_prompt must include the K8s-first priority hierarchy.
+
+        Kubernetes data is the absolute source of truth — Datadog results must NEVER
+        override K8s deployment status. The priority hierarchy must be explicit.
+        """
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", datadog_api_enabled=True)
+
+        assert "PRIORITY HIERARCHY" in prompt, (
+            "workload_gatherer prompt must contain PRIORITY HIERARCHY section "
+            "to ensure the LLM never overrides K8s truth with Datadog results."
+        )
+        assert "ABSOLUTE source of truth" in prompt, (
+            "Priority hierarchy must state that Kubernetes data is the ABSOLUTE "
+            "source of truth for deployment status."
+        )
+        assert "monitoring not configured" in prompt or "not monitored" in prompt, (
+            "Prompt must clarify that empty Datadog results mean 'monitoring not "
+            "configured', NOT 'service not deployed'."
+        )
+
+    def test_gatherer_prompt_has_k8s_priority_hierarchy(self) -> None:
+        """build_gatherer_prompt (sequential) must also include the K8s-first priority hierarchy."""
+        from vaig.skills.service_health.prompts import build_gatherer_prompt
+
+        prompt = build_gatherer_prompt(datadog_api_enabled=True)
+
+        assert "PRIORITY HIERARCHY" in prompt, (
+            "Sequential gatherer prompt must contain PRIORITY HIERARCHY section."
+        )
+        assert "ABSOLUTE source of truth" in prompt, (
+            "Priority hierarchy must state that Kubernetes data is the ABSOLUTE "
+            "source of truth for deployment status."
+        )
+
+    def test_workload_gatherer_datadog_step_before_output_format(self) -> None:
+        """In build_workload_gatherer_prompt, the Datadog step must appear BEFORE
+        the MANDATORY OUTPUT FORMAT section.
+
+        Root cause of the regression: the Datadog step was placed inside the output
+        format block, causing the LLM to treat it as a template rather than an action.
+        """
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", datadog_api_enabled=True)
+
+        datadog_pos = prompt.find("Step 12 — Datadog API Correlation")
+        output_format_pos = prompt.find("MANDATORY OUTPUT FORMAT")
+
+        assert datadog_pos != -1, (
+            "Datadog step must be present in workload_gatherer_prompt when "
+            "datadog_api_enabled=True."
+        )
+        assert output_format_pos != -1, (
+            "MANDATORY OUTPUT FORMAT section must exist in workload_gatherer_prompt."
+        )
+        assert datadog_pos < output_format_pos, (
+            "Datadog step (Step 12) must appear BEFORE the MANDATORY OUTPUT FORMAT "
+            "section. If it's inside the output format block, the LLM treats it as "
+            "a template rather than an action to execute — that's the root cause of "
+            "Datadog tools never being called."
+        )
+

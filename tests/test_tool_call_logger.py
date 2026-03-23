@@ -983,7 +983,7 @@ class TestFireAgentProgress:
         """Callback receives all arguments correctly."""
         cb = MagicMock()
         _fire_agent_progress(cb, "analyzer", 1, 4, "end")
-        cb.assert_called_once_with("analyzer", 1, 4, "end")
+        cb.assert_called_once_with("analyzer", 1, 4, "end", None)
 
     def test_swallows_callback_exceptions(self) -> None:
         """Exceptions from the callback are swallowed — never propagated."""

@@ -268,8 +268,28 @@ class AgentProgressDisplay:
         agent_index: int,
         total_agents: int,
         event: str,
+        end_agent_index: int | None = None,
     ) -> None:
-        """Handle agent start/end events (thread-safe)."""
+        """Handle agent start/end events (thread-safe).
+
+        Args:
+            agent_name: Display name of the agent or agent group.
+            agent_index: Zero-based start index in the pipeline.
+            total_agents: Total agents in the pipeline.
+            event: ``"start"`` or ``"end"``.
+            end_agent_index: Optional inclusive end index for a range display.
+                When set and different from *agent_index*, the step counter
+                renders as ``[start+1-end+1/total]`` (e.g. ``[1-4/7]``)
+                instead of the default ``[index+1/total]``.
+        """
+        # Build step label: "[1-4/7]" for a range, "[3/7]" for a single agent.
+        def _step_label() -> str:
+            start = agent_index + 1
+            if end_agent_index is not None and end_agent_index != agent_index:
+                end = end_agent_index + 1
+                return f"{start}-{end}/{total_agents}"
+            return f"{start}/{total_agents}"
+
         with self._lock:
             if event == "start":
                 # Record tool count at this agent's start for accurate per-agent
@@ -279,9 +299,8 @@ class AgentProgressDisplay:
                 self._agent_start_counts[agent_name] = self._tool_logger.tool_count
                 self._current_agent_name = agent_name
                 self._active_agents += 1
-                step = agent_index + 1
                 label = (
-                    f"[bold cyan]\\[{step}/{total_agents}][/bold cyan] "
+                    f"[bold cyan]\\[{_step_label()}][/bold cyan] "
                     f"[green]{agent_name}[/green] — running..."
                 )
                 # Stop any existing Live display before creating a new one.
@@ -300,14 +319,13 @@ class AgentProgressDisplay:
                 if agent_name == self._current_agent_name:
                     self._stop_current()
                     self._current_agent_name = None
-                step = agent_index + 1
                 start_count = self._agent_start_counts.pop(agent_name, 0)
                 tools = self._tool_logger.tool_count - start_count
                 breakdown = self._tool_logger.format_tool_counts()
                 tools_detail = f" ({tools} tool{'s' if tools != 1 else ''} called)"
                 breakdown_detail = f" [dim]{breakdown}[/dim]" if breakdown else ""
                 console.print(
-                    f"  [bold cyan]\\[{step}/{total_agents}][/bold cyan] "
+                    f"  [bold cyan]\\[{_step_label()}][/bold cyan] "
                     f"[green]{agent_name}[/green] — [green]done[/green]"
                     f"{tools_detail}{breakdown_detail}"
                 )

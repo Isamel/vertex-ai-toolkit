@@ -1442,7 +1442,8 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     "Fetch live APM trace metrics for a specific service from Datadog. "
                     "Returns throughput, error rate, and avg latency from actual trace data over the last 15 minutes. "
                     "Use this for real-time performance data — NOT for ownership metadata (use get_datadog_service_catalog for that). "
-                    "Always provide service_name — it must match the 'service' tag in Datadog APM. "
+                    "Provide service_name when known — resolve it from Kubernetes pod labels before calling. "
+                    "If service_name cannot be determined, call the tool anyway — it will return guidance on resolution. "
                     "Results are cached for 60 seconds. Read-only — does not modify any resources."
                 ),
                 parameters=[
@@ -1450,11 +1451,15 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         name="service_name",
                         type="string",
                         description=(
-                            "Service name to query APM trace metrics for. Required. "
-                            "Must match the 'service' tag in Datadog APM — typically from the "
-                            "'tags.datadoghq.com/service' label or custom APM instrumentation (DD_SERVICE env var)."
+                            "Service name to query APM trace metrics for. Strongly recommended. "
+                            "Must match the 'service' tag in Datadog APM. "
+                            "Resolve from Kubernetes pod labels in priority order: "
+                            "(1) tags.datadoghq.com/service label, "
+                            "(2) app.kubernetes.io/name label, "
+                            "(3) app label, "
+                            "(4) the deployment or service name from Kubernetes."
                         ),
-                        required=True,
+                        required=False,
                     ),
                     ToolParam(
                         name="env",
@@ -1466,7 +1471,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
-                execute=lambda service_name, env="production",
+                execute=lambda service_name="", env="production",
                         _dd=_dd_config: get_datadog_apm_services(
                     service_name=service_name, env=env, config=_dd,
                 ),
