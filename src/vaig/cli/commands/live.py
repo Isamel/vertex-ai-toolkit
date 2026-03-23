@@ -1297,6 +1297,19 @@ def _execute_orchestrated_skill(
         # Show agent pipeline summary (includes cost line)
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
 
+        # Auto-export report if configured
+        if settings.export.enabled and settings.export.auto_export_reports and orch_result.structured_report is not None:
+            from vaig.core.export import auto_export_report
+
+            run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            auto_export_report(
+                config=settings.export,
+                report=orch_result.structured_report.to_dict(),
+                run_id=run_id,
+                cluster_name=gke_config.cluster_name or "",
+                namespace=gke_config.default_namespace or "",
+            )
+
         # Notify via terminal bell
         _emit_bell(no_bell=no_bell)
 
@@ -1752,6 +1765,19 @@ async def _async_execute_orchestrated_skill(
         )
 
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
+
+        # Auto-export report if configured
+        if settings.export.enabled and settings.export.auto_export_reports and orch_result.structured_report is not None:
+            from vaig.core.export import auto_export_report
+
+            run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            auto_export_report(
+                config=settings.export,
+                report=orch_result.structured_report.to_dict(),
+                run_id=run_id,
+                cluster_name=gke_config.cluster_name or "",
+                namespace=gke_config.default_namespace or "",
+            )
 
         # Notify via terminal bell
         _emit_bell(no_bell=no_bell)

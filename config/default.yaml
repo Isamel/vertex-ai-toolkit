@@ -266,6 +266,18 @@ plugins:
   # - "./plugins"
   # - "~/.vaig/plugins"
 
+# RAG data pipeline export — stream telemetry, tool calls, and health reports to GCP
+# Requires: pip install vaig[rag]  (google-cloud-bigquery + google-cloud-storage)
+export:
+  enabled: false                    # Set to true to enable GCP export (opt-in — safe to leave off)
+  gcp_project_id: ""               # GCP project for BigQuery/GCS — defaults to gcp.project_id if empty
+  bigquery_dataset: "vaig_analytics"  # BigQuery dataset name (created automatically if missing)
+  auto_export_reports: false        # Automatically export HealthReport after each pipeline run
+  auto_export_telemetry: false      # Automatically export telemetry events (higher volume — opt-in)
+  gcs_bucket: ""                    # GCS bucket for raw export artifacts — required for GCS export
+  gcs_prefix: "rag_data/"           # Key prefix for all objects written to GCS
+  vertex_rag_corpus_id: ""          # Vertex AI RAG corpus ID (Phase 2 — leave empty for now)
+
 safety:
   enabled: true                     # Set to false to skip sending safety settings entirely
   settings: []                      # List of safety settings — example:

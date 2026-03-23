@@ -184,11 +184,13 @@ from vaig.cli.commands import (
 from vaig.cli.commands import (
     stats as _stats_mod,
 )
+from vaig.cli.commands.cloud_cmd import cloud_app  # noqa: E402
 
 _chat_mod.register(app)
 _ask_mod.register(app)
 _live_mod.register(app)
 _export_mod.register(app)
+app.add_typer(cloud_app, name="cloud")
 
 _sessions_mod.register(sessions_app)
 _models_mod.register(models_app)

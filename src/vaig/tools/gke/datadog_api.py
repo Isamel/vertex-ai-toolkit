@@ -225,7 +225,7 @@ def _get_dd_api_client(config: DatadogAPIConfig) -> Any:
     """
     from datadog_api_client import ApiClient, Configuration  # noqa: WPS433
 
-    configuration = Configuration()  # type: ignore[no-untyped-call]
+    configuration = Configuration()
     configuration.server_variables["site"] = config.site
     configuration.api_key["apiKeyAuth"] = config.api_key
     configuration.api_key["appKeyAuth"] = config.app_key
@@ -322,7 +322,7 @@ def query_datadog_metrics(
             api = _custom_api
         else:
             with _get_dd_api_client(config) as client:
-                api = MetricsApi(client)  # type: ignore[no-untyped-call]
+                api = MetricsApi(client)
 
         response = api.query_metrics(
             _from=start,
@@ -424,7 +424,7 @@ def get_datadog_monitors(
             api = _custom_api
         else:
             with _get_dd_api_client(config) as client:
-                api = MonitorsApi(client)  # type: ignore[no-untyped-call]
+                api = MonitorsApi(client)
 
         kwargs: dict[str, Any] = {}
         if tag_filter:
@@ -539,7 +539,7 @@ def get_datadog_service_catalog(
             api = _custom_api
         else:
             with _get_dd_api_client(config) as client:
-                api = ServiceDefinitionApi(client)  # type: ignore[no-untyped-call]
+                api = ServiceDefinitionApi(client)
 
         response = api.list_service_definitions()
 
@@ -796,7 +796,7 @@ def get_datadog_apm_services(
             return _execute_queries(_custom_api)
 
         with _get_dd_api_client(config) as client:
-            return _execute_queries(MetricsApi(client))  # type: ignore[no-untyped-call]
+            return _execute_queries(MetricsApi(client))
 
     except ApiException as exc:
         status = getattr(exc, "status", 0)
