@@ -2199,14 +2199,19 @@ class TestParallelAgentsConfig:
             )
 
     def test_gatherer_max_iterations_within_range(self) -> None:
-        """All gatherers must have max_iterations between 8 and 12 (inclusive)."""
+        """All gatherers must have max_iterations between 8 and 15 (inclusive).
+
+        Upper bound is 15 to cover clusters up to 10 nodes
+        (5 base calls + 10 per-node calls). Dynamic calculation is planned
+        for Phase 2 item 3.5 (split workload_gatherer).
+        """
         agents = self._get_agents()
         parallel = [a for a in agents if a.get("parallel_group") == "gather"]
         for agent in parallel:
             iters = agent.get("max_iterations", 0)
-            assert 8 <= iters <= 12, (
+            assert 8 <= iters <= 15, (
                 f"Gatherer '{agent['name']}' has max_iterations={iters}, "
-                "expected 8–12"
+                "expected 8–15"
             )
 
     def test_gatherer_temperature_is_zero(self) -> None:
