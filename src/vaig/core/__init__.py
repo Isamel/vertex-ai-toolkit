@@ -31,9 +31,12 @@ from vaig.core.exceptions import (
     VAIGError,
     format_error_for_user,
 )
+from vaig.core.models import PipelineState, apply_state_patch
 from vaig.core.subscribers import TelemetrySubscriber
 
 __all__ = [
+    "PipelineState",
+    "apply_state_patch",
     "ApiCalled",
     "BudgetChecked",
     "BudgetConfig",
