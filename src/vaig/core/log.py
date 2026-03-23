@@ -16,6 +16,19 @@ from rich.logging import RichHandler
 # Stderr console for diagnostics — never interferes with stdout output.
 _stderr_console = Console(stderr=True)
 
+
+class _SafeRichHandler(RichHandler):
+    """RichHandler that silently drops OSError on Windows thread contexts."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            super().emit(record)
+        except OSError:
+            # Windows: stderr not writable from background threads using
+            # concurrent.futures — the handle is invalid in thread context.
+            # Silently drop rather than crash the pipeline.
+            pass
+
 # Sentinel to make setup_logging() idempotent.
 _configured = False
 
@@ -65,7 +78,7 @@ def setup_logging(
     vaig_logger.setLevel(min(numeric_level, file_numeric))
     vaig_logger.propagate = False  # Don't leak to root logger
 
-    handler = RichHandler(
+    handler = _SafeRichHandler(
         console=_stderr_console,
         show_time=True,
         show_level=True,

@@ -323,7 +323,7 @@ class ServiceHealthSkill(BaseSkill):
                 "system_instruction": build_node_gatherer_prompt(is_autopilot=is_autopilot),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
-                "max_iterations": 4 if is_autopilot else 8,
+                "max_iterations": 4 if is_autopilot else 12,
             },
             {
                 "name": "workload_gatherer",
