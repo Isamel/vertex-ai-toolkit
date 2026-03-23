@@ -455,8 +455,8 @@ class GKEConfig(BaseModel):
     helm_enabled: bool = True
     # ArgoCD integration — disabled by default, requires explicit opt-in.
     argocd_enabled: bool = False
-    argocd_server: str = ""
-    argocd_token: str = ""
+    argocd_server: str = Field(default="", repr=False)
+    argocd_token: str = Field(default="", repr=False)
     argocd_context: str = ""
     argocd_namespace: str = ""
     argocd_verify_ssl: bool = True

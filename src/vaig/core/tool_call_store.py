@@ -42,11 +42,19 @@ class ToolCallStore:
         home = Path.home()
         cwd = Path.cwd()
         tmp = Path(tempfile.gettempdir()).resolve()
-        safe = (
-            str(resolved).startswith(str(home))
-            or str(resolved).startswith(str(cwd))
-            or str(resolved).startswith(str(tmp))
-        )
+
+        if cwd == Path("/"):
+            # Don't use cwd=/ as an allowed root — it would permit everything
+            safe = (
+                (resolved == home or home in resolved.parents)
+                or (resolved == tmp or tmp in resolved.parents)
+            )
+        else:
+            safe = (
+                (resolved == home or home in resolved.parents)
+                or (resolved == cwd or cwd in resolved.parents)
+                or (resolved == tmp or tmp in resolved.parents)
+            )
         if not safe:
             raise ValueError(
                 f"tool_results_dir must be under home ({home}), cwd ({cwd}), "
@@ -54,7 +62,9 @@ class ToolCallStore:
             )
         # Warn if the path is outside the default ~/.vaig/ location
         default_vaig_dir = home / ".vaig"
-        if not str(resolved).startswith(str(default_vaig_dir)) and not str(resolved).startswith(str(cwd)):
+        in_default_vaig = resolved == default_vaig_dir or default_vaig_dir in resolved.parents
+        in_cwd = resolved == cwd or cwd in resolved.parents
+        if not in_default_vaig and not in_cwd:
             logger.warning(
                 "ToolCallStore base_dir is outside ~/.vaig/: %s — "
                 "verify this is intentional.",
