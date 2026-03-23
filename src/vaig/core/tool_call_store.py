@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import tempfile
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,10 +31,45 @@ class ToolCallStore:
     """
 
     def __init__(self, base_dir: str | Path = ".") -> None:
-        self._base_dir = Path(base_dir)
+        self._base_dir = Path(base_dir).expanduser()
         self._lock = threading.Lock()
         self._run_id = ""
         self._current_file: Path | None = None
+
+        # SECURITY: Validate that the base directory is within a safe location
+        # to prevent path traversal or accidental writes to system directories.
+        resolved = self._base_dir.resolve()
+        home = Path.home()
+        cwd = Path.cwd()
+        tmp = Path(tempfile.gettempdir()).resolve()
+
+        if cwd == Path("/"):
+            # Don't use cwd=/ as an allowed root — it would permit everything
+            safe = (
+                (resolved == home or home in resolved.parents)
+                or (resolved == tmp or tmp in resolved.parents)
+            )
+        else:
+            safe = (
+                (resolved == home or home in resolved.parents)
+                or (resolved == cwd or cwd in resolved.parents)
+                or (resolved == tmp or tmp in resolved.parents)
+            )
+        if not safe:
+            raise ValueError(
+                f"tool_results_dir must be under home ({home}), cwd ({cwd}), "
+                f"or temp ({tmp}), got: {resolved}"
+            )
+        # Warn if the path is outside the default ~/.vaig/ location
+        default_vaig_dir = home / ".vaig"
+        in_default_vaig = resolved == default_vaig_dir or default_vaig_dir in resolved.parents
+        in_cwd = resolved == cwd or cwd in resolved.parents
+        if not in_default_vaig and not in_cwd:
+            logger.warning(
+                "ToolCallStore base_dir is outside ~/.vaig/: %s — "
+                "verify this is intentional.",
+                resolved,
+            )
 
     def start_run(self, run_id: str = "") -> str:
         """Start a new execution run. Returns the run_id."""

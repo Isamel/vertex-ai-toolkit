@@ -1,7 +1,7 @@
 """Tests for ToolCallStore and ToolCallRecord.
 
-Covers the JSONL storage backend, thread safety, and the
-ToolCallRecord dataclass serialization.
+Covers the JSONL storage backend, thread safety, path validation security,
+and the ToolCallRecord dataclass serialization.
 """
 
 from __future__ import annotations
@@ -9,6 +9,9 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 from vaig.core.tool_call_store import ToolCallStore
 from vaig.tools.base import ToolCallRecord
@@ -207,3 +210,67 @@ class TestToolCallStore:
         assert len(parts[1]) == 10  # YYYY-MM-DD
         assert parts[1].count("-") == 2
         assert parts[2] == "layout-test.jsonl"
+
+
+# ---------------------------------------------------------------------------
+# Path validation security tests
+# ---------------------------------------------------------------------------
+
+
+class TestToolCallStorePathSecurity:
+    """Tests for the path safety check in ToolCallStore.__init__."""
+
+    def test_tmp_path_is_accepted(self, tmp_path: Path) -> None:
+        """A pytest tmp_path (under /tmp) must be accepted."""
+        # tmp_path is under tempfile.gettempdir() — passes the tmp safe check.
+        store = ToolCallStore(base_dir=tmp_path)
+        assert store is not None
+
+    def test_home_relative_dir_is_accepted(self) -> None:
+        """A directory under the user's home dir must be accepted."""
+        home = Path.home()
+        home_subdir = home / ".vaig" / "runs"
+        # No mocking needed — home is always a valid allowed root.
+        store = ToolCallStore(base_dir=home_subdir)
+        assert store is not None
+
+    def test_system_path_raises_value_error(self) -> None:
+        """/etc/evil is not under home, cwd, or tmp — must raise ValueError."""
+        fake_home = Path("/home/security-test-user-xyzzy")
+        fake_cwd = Path("/workspaces/security-test-project-xyzzy")
+        # Both fake_home and fake_cwd are paths that /etc/evil is NOT under.
+        with (
+            patch("pathlib.Path.home", return_value=fake_home),
+            patch("pathlib.Path.cwd", return_value=fake_cwd),
+        ):
+            with pytest.raises(ValueError, match="tool_results_dir must be under"):
+                ToolCallStore(base_dir="/etc/evil")
+
+    def test_warning_logged_for_path_outside_vaig(self) -> None:
+        """A path outside ~/.vaig/ and outside cwd should emit a warning."""
+        home = Path.home()
+        # Use a subdir of home that is NOT under ~/.vaig/
+        outside_vaig = home / ".some_other_tool" / "runs"
+        # Force cwd to something that doesn't cover this path
+        unrelated_cwd = Path("/workspaces/unrelated-xyzzy")
+
+        with (
+            patch("pathlib.Path.cwd", return_value=unrelated_cwd),
+            patch("vaig.core.tool_call_store.logger") as mock_logger,
+        ):
+            ToolCallStore(base_dir=outside_vaig)
+
+        # The warning should have been issued for the out-of-~/.vaig/ path
+        assert mock_logger.warning.called, "Expected logger.warning to be called"
+        call_args = mock_logger.warning.call_args
+        assert "outside ~/.vaig/" in call_args[0][0]
+
+    def test_cwd_root_does_not_allow_arbitrary_path(self) -> None:
+        """When cwd is /, the cwd branch must NOT allow arbitrary system paths."""
+        fake_home = Path("/home/security-test-user-xyzzy")
+        with (
+            patch("pathlib.Path.home", return_value=fake_home),
+            patch("pathlib.Path.cwd", return_value=Path("/")),
+        ):
+            with pytest.raises(ValueError, match="tool_results_dir must be under"):
+                ToolCallStore(base_dir="/etc/passwd_dir")
