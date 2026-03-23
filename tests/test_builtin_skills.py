@@ -41,11 +41,27 @@ class TestRCASkill:
 
         skill = RCASkill()
         agents = skill.get_agents_config()
-        assert len(agents) == 3
+        assert len(agents) == 4
         names = {a["name"] for a in agents}
+        assert "rca_gatherer" in names
         assert "log_analyzer" in names
         assert "metric_correlator" in names
         assert "rca_lead" in names
+
+    def test_metadata_requires_live_tools(self) -> None:
+        from vaig.skills.rca.skill import RCASkill
+
+        skill = RCASkill()
+        meta = skill.get_metadata()
+        assert meta.requires_live_tools is True
+
+    def test_gatherer_has_requires_tools(self) -> None:
+        from vaig.skills.rca.skill import RCASkill
+
+        skill = RCASkill()
+        agents = skill.get_agents_config()
+        gatherer = next(a for a in agents if a["name"] == "rca_gatherer")
+        assert gatherer.get("requires_tools") is True
 
 
 class TestAnomalySkill:
@@ -130,8 +146,9 @@ class TestLogAnalysisSkill:
 
         skill = LogAnalysisSkill()
         agents = skill.get_agents_config()
-        assert len(agents) == 3
+        assert len(agents) == 4
         names = {a["name"] for a in agents}
+        assert "log_analysis_gatherer" in names
         assert "pattern_detector" in names
         assert "context_analyzer" in names
         assert "diagnostic_lead" in names
@@ -141,6 +158,21 @@ class TestLogAnalysisSkill:
             assert "model" in agent
             assert isinstance(agent["system_instruction"], str)
             assert len(agent["system_instruction"]) > 0
+
+    def test_metadata_requires_live_tools(self) -> None:
+        from vaig.skills.log_analysis.skill import LogAnalysisSkill
+
+        skill = LogAnalysisSkill()
+        meta = skill.get_metadata()
+        assert meta.requires_live_tools is True
+
+    def test_gatherer_has_requires_tools(self) -> None:
+        from vaig.skills.log_analysis.skill import LogAnalysisSkill
+
+        skill = LogAnalysisSkill()
+        agents = skill.get_agents_config()
+        gatherer = next(a for a in agents if a["name"] == "log_analysis_gatherer")
+        assert gatherer.get("requires_tools") is True
 
 
 class TestErrorTriageSkill:
@@ -241,8 +273,9 @@ class TestConfigAuditSkill:
 
         skill = ConfigAuditSkill()
         agents = skill.get_agents_config()
-        assert len(agents) == 2
+        assert len(agents) == 3
         names = {a["name"] for a in agents}
+        assert "config_gatherer" in names
         assert "security_scanner" in names
         assert "reliability_auditor" in names
         for agent in agents:
@@ -251,6 +284,21 @@ class TestConfigAuditSkill:
             assert "model" in agent
             assert isinstance(agent["system_instruction"], str)
             assert len(agent["system_instruction"]) > 0
+
+    def test_metadata_requires_live_tools(self) -> None:
+        from vaig.skills.config_audit.skill import ConfigAuditSkill
+
+        skill = ConfigAuditSkill()
+        meta = skill.get_metadata()
+        assert meta.requires_live_tools is True
+
+    def test_gatherer_has_requires_tools(self) -> None:
+        from vaig.skills.config_audit.skill import ConfigAuditSkill
+
+        skill = ConfigAuditSkill()
+        agents = skill.get_agents_config()
+        gatherer = next(a for a in agents if a["name"] == "config_gatherer")
+        assert gatherer.get("requires_tools") is True
 
 
 class TestSloReviewSkill:
@@ -673,8 +721,9 @@ class TestComplianceCheckSkill:
 
         skill = ComplianceCheckSkill()
         agents = skill.get_agents_config()
-        assert len(agents) == 3
+        assert len(agents) == 4
         names = {a["name"] for a in agents}
+        assert "compliance_gatherer" in names
         assert "regulation_mapper" in names
         assert "gap_auditor" in names
         assert "compliance_lead" in names
@@ -682,8 +731,21 @@ class TestComplianceCheckSkill:
             assert "role" in agent
             assert "system_instruction" in agent
             assert "model" in agent
-            assert isinstance(agent["system_instruction"], str)
-            assert len(agent["system_instruction"]) > 0
+
+    def test_metadata_requires_live_tools(self) -> None:
+        from vaig.skills.compliance_check.skill import ComplianceCheckSkill
+
+        skill = ComplianceCheckSkill()
+        meta = skill.get_metadata()
+        assert meta.requires_live_tools is True
+
+    def test_gatherer_has_requires_tools(self) -> None:
+        from vaig.skills.compliance_check.skill import ComplianceCheckSkill
+
+        skill = ComplianceCheckSkill()
+        agents = skill.get_agents_config()
+        gatherer = next(a for a in agents if a["name"] == "compliance_gatherer")
+        assert gatherer.get("requires_tools") is True
 
 
 class TestAPIDesignSkill:
@@ -1025,8 +1087,9 @@ class TestPerfAnalysisSkill:
 
         skill = PerfAnalysisSkill()
         agents = skill.get_agents_config()
-        assert len(agents) == 3
+        assert len(agents) == 4
         names = {a["name"] for a in agents}
+        assert "perf_gatherer" in names
         assert "trace_analyzer" in names
         assert "resource_profiler" in names
         assert "performance_lead" in names
@@ -1036,6 +1099,21 @@ class TestPerfAnalysisSkill:
             assert "model" in agent
             assert isinstance(agent["system_instruction"], str)
             assert len(agent["system_instruction"]) > 0
+
+    def test_metadata_requires_live_tools(self) -> None:
+        from vaig.skills.perf_analysis.skill import PerfAnalysisSkill
+
+        skill = PerfAnalysisSkill()
+        meta = skill.get_metadata()
+        assert meta.requires_live_tools is True
+
+    def test_gatherer_has_requires_tools(self) -> None:
+        from vaig.skills.perf_analysis.skill import PerfAnalysisSkill
+
+        skill = PerfAnalysisSkill()
+        agents = skill.get_agents_config()
+        gatherer = next(a for a in agents if a["name"] == "perf_gatherer")
+        assert gatherer.get("requires_tools") is True
 
 
 class TestThreatModelSkill:

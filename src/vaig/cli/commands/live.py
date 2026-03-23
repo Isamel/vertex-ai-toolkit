@@ -1216,13 +1216,29 @@ def _execute_orchestrated_skill(
 
     tool_count = len(tool_registry.list_tools())
     if tool_count == 0:
-        err_console.print(
-            "[bold red]No infrastructure tools available![/bold red]\n"
-            "[yellow]Install optional dependencies:[/yellow]\n"
-            "  pip install vertex-ai-toolkit[live]       # GKE tools\n"
-            "  pip install google-cloud-logging google-cloud-monitoring  # GCP observability"
+        console.print(
+            f"[bold yellow]⚠️  No live tools available for skill '{skill_meta.name}'. "
+            "Running in offline context-prepend mode. Results may be limited.[/bold yellow]"
         )
-        raise typer.Exit(1)
+        context_str = (
+            f"## Active Skill: {skill_meta.display_name}\n\n"
+            f"{skill_meta.description}\n\n"
+            f"Apply the {skill_meta.name} analysis methodology to the investigation below."
+        )
+        _execute_live_mode(
+            client,
+            gke_config,
+            question,
+            context_str,
+            settings=settings,
+            output=output,
+            format_=format_,
+            skill_name=skill_meta.name,
+            model_id=model_id,
+            tool_call_store=tool_call_store,
+            open_browser=open_browser,
+        )
+        return
 
     console.print(
         Panel.fit(
@@ -1703,13 +1719,29 @@ async def _async_execute_orchestrated_skill(
 
     tool_count = len(tool_registry.list_tools())
     if tool_count == 0:
-        err_console.print(
-            "[bold red]No infrastructure tools available![/bold red]\n"
-            "[yellow]Install optional dependencies:[/yellow]\n"
-            "  pip install vertex-ai-toolkit[live]       # GKE tools\n"
-            "  pip install google-cloud-logging google-cloud-monitoring  # GCP observability"
+        console.print(
+            f"[bold yellow]⚠️  No live tools available for skill '{skill_meta.name}'. "
+            "Running in offline context-prepend mode. Results may be limited.[/bold yellow]"
         )
-        raise typer.Exit(1)
+        context_str = (
+            f"## Active Skill: {skill_meta.display_name}\n\n"
+            f"{skill_meta.description}\n\n"
+            f"Apply the {skill_meta.name} analysis methodology to the investigation below."
+        )
+        await _async_execute_live_mode(
+            client,
+            gke_config,
+            question,
+            context_str,
+            settings=settings,
+            output=output,
+            format_=format_,
+            skill_name=skill_meta.name,
+            model_id=model_id,
+            tool_call_store=tool_call_store,
+            open_browser=open_browser,
+        )
+        return
 
     console.print(
         Panel.fit(

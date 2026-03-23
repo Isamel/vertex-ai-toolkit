@@ -228,8 +228,12 @@ class TestLiveSkillRouting:
         assert result.exit_code == 1
         assert "Skill not found" in result.output
 
-    def test_no_tools_available_shows_error(self) -> None:
-        """When requires_live_tools=True but no tools can be loaded, exit with error."""
+    def test_no_tools_available_falls_back_to_context_prepend(self) -> None:
+        """When requires_live_tools=True but no tools are loaded, fall back gracefully.
+
+        The skill should NOT crash. Instead it falls back to the legacy
+        context-prepend path (_execute_live_mode) with a warning message.
+        """
         skill = _make_skill_mock(requires_live_tools=True)
 
         mock_registry = MagicMock()
@@ -239,15 +243,30 @@ class TestLiveSkillRouting:
         mock_tool_registry = MagicMock()
         mock_tool_registry.list_tools.return_value = []
 
+        mock_agent_result = MagicMock()
+        mock_agent_result.content = "Offline analysis complete"
+        mock_agent_result.success = True
+        mock_agent_result.metadata = {}
+        mock_agent_result.usage = {}
+
+        mock_infra_agent = MagicMock()
+        mock_infra_agent.execute.return_value = mock_agent_result
+        mock_infra_agent.registry.list_tools.return_value = [MagicMock()] * 3
+
         with (
             patch("vaig.core.client.GeminiClient"),
             patch("vaig.skills.registry.SkillRegistry", return_value=mock_registry),
             patch("vaig.cli.commands.live._register_live_tools", return_value=mock_tool_registry),
+            patch("vaig.agents.infra_agent.InfraAgent", return_value=mock_infra_agent),
         ):
             result = runner.invoke(app, ["live", "Check health", "--skill", "test-skill"])
 
-        assert result.exit_code == 1
-        assert "No infrastructure tools available" in result.output
+        # Must NOT crash — graceful fallback
+        assert result.exit_code == 0, f"CLI crashed with fallback: {result.output}"
+        # Warning message shown to user
+        assert "offline context-prepend mode" in result.output.lower() or "No live tools" in result.output
+        # Fell back to InfraAgent (context-prepend path)
+        mock_infra_agent.execute.assert_called_once()
 
     def test_output_saved_to_file(self, tmp_path) -> None:
         """Orchestrated skill output is saved to file when --output is given."""

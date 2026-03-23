@@ -668,7 +668,14 @@ class TestAsyncExecuteOrchestratedSkill:
         mock_orchestrator.async_execute_with_tools.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_exits_when_no_tools(self) -> None:
+    async def test_falls_back_when_no_tools(self) -> None:
+        """When tool_count==0, the async orchestrated path falls back to _async_execute_live_mode.
+
+        The coroutine must NOT raise SystemExit / typer.Exit — it should
+        degrade gracefully to the context-prepend path.
+        """
+        from unittest.mock import AsyncMock
+
         from vaig.cli.commands.live import _async_execute_orchestrated_skill
         from vaig.core.config import GKEConfig
 
@@ -676,18 +683,25 @@ class TestAsyncExecuteOrchestratedSkill:
         mock_skill.get_metadata.return_value = MagicMock(
             display_name="RCA",
             name="rca",
+            description="Root cause analysis",
         )
 
         mock_registry = MagicMock()
         mock_registry.list_tools.return_value = []  # No tools
 
+        mock_live_mode = AsyncMock()
+
         with (
             patch("vaig.cli.commands.live._register_live_tools", return_value=mock_registry),
-            pytest.raises(ClickExit),
+            patch("vaig.cli.commands.live._async_execute_live_mode", mock_live_mode),
         ):
+            # Should NOT raise — fallback occurs instead
             await _async_execute_orchestrated_skill(
                 MagicMock(), Settings(), GKEConfig(), mock_skill, "query",
             )
+
+        # Verify fallback was called
+        mock_live_mode.assert_awaited_once()
 
 
 # ══════════════════════════════════════════════════════════════

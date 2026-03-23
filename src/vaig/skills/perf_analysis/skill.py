@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
-from vaig.skills.perf_analysis.prompts import PHASE_PROMPTS, SYSTEM_INSTRUCTION
+from vaig.skills.perf_analysis.prompts import PERF_ANALYSIS_GATHERER_PROMPT, PHASE_PROMPTS, SYSTEM_INSTRUCTION
 
 
 class PerfAnalysisSkill(BaseSkill):
@@ -33,6 +33,7 @@ class PerfAnalysisSkill(BaseSkill):
                 "tracing",
                 "optimization",
                 "bottleneck",
+                "live",
             ],
             supported_phases=[
                 SkillPhase.ANALYZE,
@@ -42,6 +43,7 @@ class PerfAnalysisSkill(BaseSkill):
                 SkillPhase.REPORT,
             ],
             recommended_model="gemini-2.5-flash",
+            requires_live_tools=True,
         )
 
     def get_system_instruction(self) -> str:
@@ -53,6 +55,15 @@ class PerfAnalysisSkill(BaseSkill):
 
     def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
+            {
+                "name": "perf_gatherer",
+                "role": "Performance Data Gatherer",
+                "requires_tools": True,
+                "system_instruction": PERF_ANALYSIS_GATHERER_PROMPT,
+                "model": "gemini-2.5-flash",
+                "temperature": 0.0,
+                "max_iterations": 10,
+            },
             {
                 "name": "trace_analyzer",
                 "role": "Distributed Trace Analyzer",

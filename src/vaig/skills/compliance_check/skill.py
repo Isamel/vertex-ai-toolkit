@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
-from vaig.skills.compliance_check.prompts import PHASE_PROMPTS, SYSTEM_INSTRUCTION
+from vaig.skills.compliance_check.prompts import COMPLIANCE_GATHERER_PROMPT, PHASE_PROMPTS, SYSTEM_INSTRUCTION
 
 
 class ComplianceCheckSkill(BaseSkill):
@@ -23,13 +23,14 @@ class ComplianceCheckSkill(BaseSkill):
             display_name="Compliance Check",
             description="Audit systems for regulatory compliance (SOC 2, ISO 27001, HIPAA, PCI-DSS, GDPR) and generate remediation plans",
             version="1.0.0",
-            tags=["compliance", "audit", "security", "regulatory", "soc2", "gdpr", "hipaa", "governance"],
+            tags=["compliance", "audit", "security", "regulatory", "soc2", "gdpr", "hipaa", "governance", "live"],
             supported_phases=[
                 SkillPhase.ANALYZE,
                 SkillPhase.PLAN,
                 SkillPhase.REPORT,
             ],
             recommended_model="gemini-2.5-pro",
+            requires_live_tools=True,
         )
 
     def get_system_instruction(self) -> str:
@@ -41,6 +42,15 @@ class ComplianceCheckSkill(BaseSkill):
 
     def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
+            {
+                "name": "compliance_gatherer",
+                "role": "Compliance Data Gatherer",
+                "requires_tools": True,
+                "system_instruction": COMPLIANCE_GATHERER_PROMPT,
+                "model": "gemini-2.5-flash",
+                "temperature": 0.0,
+                "max_iterations": 12,
+            },
             {
                 "name": "regulation_mapper",
                 "role": "Regulation Mapper",

@@ -5,13 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
-from vaig.skills.log_analysis.prompts import PHASE_PROMPTS, SYSTEM_INSTRUCTION
+from vaig.skills.log_analysis.prompts import LOG_ANALYSIS_GATHERER_PROMPT, PHASE_PROMPTS, SYSTEM_INSTRUCTION
 
 
 class LogAnalysisSkill(BaseSkill):
     """Log Analysis skill for SRE diagnostic investigation of production logs.
 
     Supports multi-agent execution with specialized agents:
+    - Log Analysis Gatherer: Collects live pod logs and events from the cluster
     - Pattern Detector: Identifies error patterns, frequency, timing correlations
     - Context Analyzer: Correlates log entries with system context
     - Diagnostic Lead: Synthesizes findings into actionable diagnostic report
@@ -23,13 +24,14 @@ class LogAnalysisSkill(BaseSkill):
             display_name="Log Analysis",
             description="Analyze production logs to identify error patterns, timing anomalies, and root cause hypotheses",
             version="1.0.0",
-            tags=["logs", "sre", "diagnostics", "patterns", "incident", "observability"],
+            tags=["logs", "sre", "diagnostics", "patterns", "incident", "observability", "live"],
             supported_phases=[
                 SkillPhase.ANALYZE,
                 SkillPhase.PLAN,
                 SkillPhase.REPORT,
             ],
             recommended_model="gemini-2.5-pro",
+            requires_live_tools=True,
         )
 
     def get_system_instruction(self) -> str:
@@ -41,6 +43,15 @@ class LogAnalysisSkill(BaseSkill):
 
     def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
+            {
+                "name": "log_analysis_gatherer",
+                "role": "Log Data Gatherer",
+                "requires_tools": True,
+                "system_instruction": LOG_ANALYSIS_GATHERER_PROMPT,
+                "model": "gemini-2.5-flash",
+                "temperature": 0.0,
+                "max_iterations": 10,
+            },
             {
                 "name": "pattern_detector",
                 "role": "Pattern Detector",
