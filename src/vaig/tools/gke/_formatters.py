@@ -331,7 +331,7 @@ def _redact_k8s_secret_data(
     """
     try:
         return [_redact_secret_item(item) for item in serialised]
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.warning("Failed to redact secret data — returning unredacted output")
         return serialised
 

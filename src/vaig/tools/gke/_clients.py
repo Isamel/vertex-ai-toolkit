@@ -140,7 +140,7 @@ def detect_autopilot(
         _AUTOPILOT_CACHE[cache_key] = None
         return None
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.warning("Autopilot detection failed for %s: %s", cluster, exc)
         _AUTOPILOT_CACHE[cache_key] = None
         return None
@@ -381,7 +381,7 @@ def _load_k8s_config(
                     k8s_config.load_incluster_config()
                     return _InClusterClient(k8s_client.ApiClient())
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return ToolResult(
             output=f"Failed to configure Kubernetes client: {exc}",
             error=True,

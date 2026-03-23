@@ -232,7 +232,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
 
                 for tool in load_all_plugin_tools(self._settings):
                     self._registry.register(tool)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.warning(
                     "Failed to load plugin tools for InfraAgent. Skipping.",
                     exc_info=True,

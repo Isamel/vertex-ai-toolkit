@@ -37,7 +37,7 @@ def _get_logging_client(
             kwargs["credentials"] = credentials
         client = cloud_logging.Client(**kwargs)  # type: ignore[no-untyped-call]
         return client, None
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return None, f"Failed to create Cloud Logging client: {exc}"
 
 
@@ -57,7 +57,7 @@ def _get_monitoring_client(
             kwargs["credentials"] = credentials
         client = monitoring_v3.MetricServiceClient(**kwargs)
         return client, None
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return None, f"Failed to create Cloud Monitoring client: {exc}"
 
 
@@ -361,7 +361,7 @@ def gcloud_logging_query(
                 max_results=limit,
             )
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return ToolResult(
             output=_handle_gcp_api_error(exc, service="Cloud Logging"),
             error=True,
@@ -440,7 +440,7 @@ def gcloud_monitoring_query(
             import google.auth
             _, detected_project = google.auth.default()
             effective_project = detected_project
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.debug("Could not auto-detect GCP project from auth", exc_info=True)
 
     if not effective_project:
@@ -528,7 +528,7 @@ def gcloud_monitoring_query(
     try:
         results = client.list_time_series(request=request)
         time_series_list = list(results)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return ToolResult(
             output=_handle_gcp_api_error(exc, service="Cloud Monitoring"),
             error=True,

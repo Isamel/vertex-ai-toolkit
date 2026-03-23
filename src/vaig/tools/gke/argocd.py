@@ -217,7 +217,7 @@ def _list_applications_raw(
             return []
         logger.warning("K8s API error listing ArgoCD applications: %s", exc)
         return []
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.warning("Unexpected error listing ArgoCD applications: %s", exc)
         return []
 
@@ -244,7 +244,7 @@ def _get_application_raw(
             return None
         logger.warning("K8s API error getting ArgoCD application '%s': %s", app_name, exc)
         return None
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.warning("Unexpected error getting ArgoCD application '%s': %s", app_name, exc)
         return None
 

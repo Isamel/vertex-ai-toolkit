@@ -188,7 +188,7 @@ def load_pdf_with_text(filepath: Path) -> LoadedFile:
                 mime_type="application/pdf",
                 token_estimate=int(len(content) / DEFAULT_CHARS_PER_TOKEN),
             )
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.warning("Failed to extract text from PDF: %s — using binary mode", filepath, exc_info=True)
 
     # Fallback to binary part

@@ -860,7 +860,7 @@ def _try_chunked_chat(state: REPLState, user_input: str, context: str) -> bool:
             user_input,
             model_id=state.model,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.debug("Chunked budget calculation failed, using normal pipeline", exc_info=True)
         return False
 
@@ -1168,7 +1168,7 @@ def _cmd_add(state: REPLState, args: str) -> None:
                 console.print(f"[green]✓ Added {loaded.path} ({loaded.file_type.value})[/green]")
             else:
                 console.print(f"[red]Not found: {path}[/red]")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             console.print(f"[red]Failed to add {path}: {e}[/red]")
 
     state.context_builder.show_summary()

@@ -105,7 +105,7 @@ def register(mcp_app: typer.Typer) -> None:
                         env=srv.env or None,
                     )
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 err_console.print(f"[red]Failed to connect to {server_name}: {exc}[/red]")
                 raise typer.Exit(1) from None
 

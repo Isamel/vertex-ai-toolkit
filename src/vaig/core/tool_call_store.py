@@ -13,6 +13,7 @@ import tempfile
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from vaig.tools.base import ToolCallRecord
@@ -97,3 +98,117 @@ class ToolCallStore:
     def get_run_file(self) -> Path | None:
         """Get the path to the current run's JSONL file."""
         return self._current_file
+
+    def list_runs(self, since: datetime | None = None) -> list[tuple[str, datetime]]:
+        """List available run IDs with their dates.
+
+        Args:
+            since: If provided, only return runs from date directories on or after
+                this datetime (compared at day granularity in UTC).
+
+        Returns:
+            List of ``(run_id, date)`` tuples sorted by date ascending.
+            ``date`` is a timezone-aware UTC datetime at midnight for the
+            directory's date.
+        """
+        results_dir = self._base_dir / "tool_results"
+        if not results_dir.is_dir():
+            return []
+
+        runs: list[tuple[str, datetime]] = []
+        for date_dir in sorted(results_dir.iterdir()):
+            if not date_dir.is_dir():
+                continue
+            try:
+                dir_date = datetime.strptime(date_dir.name, "%Y-%m-%d").replace(tzinfo=UTC)
+            except ValueError:
+                logger.debug("Skipping non-date directory in tool_results: %s", date_dir.name)
+                continue
+
+            if since is not None and dir_date < since.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=UTC):
+                continue
+
+            for jsonl_file in sorted(date_dir.glob("*.jsonl")):
+                run_id = jsonl_file.stem
+                runs.append((run_id, dir_date))
+
+        return runs
+
+    def read_records(
+        self,
+        run_id: str | None = None,
+        since: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read tool call records from JSONL files.
+
+        Args:
+            run_id: If provided, reads only the specific run file.  The date
+                directory is located by scanning all date dirs for a matching
+                ``{run_id}.jsonl`` file.
+            since: If provided, only reads files from date directories on or
+                after this datetime.  Ignored when ``run_id`` is given.
+
+        Returns:
+            List of record dicts (one per tool call).  Returns an empty list
+            if no matching files exist.  Malformed JSON lines are skipped with
+            a warning.
+        """
+        results_dir = self._base_dir / "tool_results"
+        if not results_dir.is_dir():
+            return []
+
+        files_to_read: list[Path] = []
+
+        if run_id is not None:
+            # Find the specific run file across all date directories
+            for date_dir in results_dir.iterdir():
+                if not date_dir.is_dir():
+                    continue
+                candidate = date_dir / f"{run_id}.jsonl"
+                if candidate.is_file():
+                    files_to_read.append(candidate)
+                    break
+            else:
+                logger.warning("No JSONL file found for run_id=%r in %s", run_id, results_dir)
+                return []
+        else:
+            # Collect all date directories, optionally filtered by `since`
+            for date_dir in sorted(results_dir.iterdir()):
+                if not date_dir.is_dir():
+                    continue
+                try:
+                    dir_date = datetime.strptime(date_dir.name, "%Y-%m-%d").replace(tzinfo=UTC)
+                except ValueError:
+                    logger.debug("Skipping non-date directory in tool_results: %s", date_dir.name)
+                    continue
+
+                if since is not None and dir_date < since.replace(
+                    hour=0, minute=0, second=0, microsecond=0, tzinfo=UTC
+                ):
+                    continue
+
+                files_to_read.extend(sorted(date_dir.glob("*.jsonl")))
+
+        records: list[dict[str, Any]] = []
+        for path in files_to_read:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError as exc:
+                logger.warning("Could not read tool call records from %s: %s", path, exc)
+                continue
+
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "Skipping malformed JSON line %d in %s: %s",
+                        lineno,
+                        path,
+                        exc,
+                    )
+
+        return records

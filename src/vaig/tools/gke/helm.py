@@ -204,7 +204,7 @@ def _find_release_secrets(
     except k8s_exceptions.ApiException as exc:
         logger.warning("K8s API error listing Helm secrets in %s: %s", namespace, exc)
         raise HelmError(f"K8s API error listing Helm secrets in {namespace}: {exc}") from exc
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.warning("Unexpected error listing Helm secrets in %s: %s", namespace, exc)
         return []
 
@@ -229,7 +229,7 @@ def _decode_secret_release_data(secret: Any) -> dict[str, Any] | None:
     except (binascii.Error, gzip.BadGzipFile, json.JSONDecodeError, UnicodeDecodeError) as exc:
         logger.warning("Failed to decode Helm release data: %s", exc)
         return None
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.warning("Unexpected error decoding Helm release data: %s", exc)
         return None
 
@@ -326,7 +326,7 @@ def helm_list_releases(
         msg = f"Error listing Helm secrets: {exc}"
         logger.warning(msg)
         return ToolResult(output=msg, error=True)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         msg = f"Unexpected error listing Helm secrets: {exc}"
         logger.warning(msg)
         return ToolResult(output=msg, error=True)

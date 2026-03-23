@@ -269,7 +269,7 @@ def register(app: typer.Typer) -> None:
                     )
         except typer.Exit:
             raise  # Let typer exits pass through
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             handle_cli_error(exc, debug=debug)
 
 

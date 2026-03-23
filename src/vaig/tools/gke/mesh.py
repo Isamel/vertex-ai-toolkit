@@ -95,7 +95,7 @@ def _detect_mesh_presence(
     try:
         core_v1.read_namespace("istio-system")
         result["installed"] = True
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         if _K8S_AVAILABLE and isinstance(exc, k8s_exceptions.ApiException):
             if exc.status == 404:
                 # Namespace doesn't exist — mesh not installed via standard path
@@ -125,7 +125,7 @@ def _detect_mesh_presence(
                 result["warnings"].append(
                     f"istiod: {ready}/{desired} replicas ready"
                 )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             if _K8S_AVAILABLE and isinstance(exc, k8s_exceptions.ApiException):
                 if exc.status == 404:
                     # istiod deployment not found — might be managed ASM
@@ -151,7 +151,7 @@ def _detect_mesh_presence(
                 result["managed"] = True
                 result["installed"] = True
                 break
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         if _K8S_AVAILABLE and isinstance(exc, k8s_exceptions.ApiException):
             if exc.status == 403:
                 result["warnings"].append(
@@ -193,7 +193,7 @@ def _get_istio_version(
                 tag = image.rsplit(":", 1)[-1]
                 if tag and (tag[0].isdigit() or tag.startswith("v")):
                     return tag
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Strategy 2: IstioOperator CR
@@ -211,7 +211,7 @@ def _get_istio_version(
             version = spec.get("tag") or spec.get("version", "")
             if version:
                 return str(version)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return "unknown"
@@ -246,7 +246,7 @@ def _resolve_crd_version(
             )
             _CRD_VERSION_CACHE[cache_key] = version
             return version
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             if _K8S_AVAILABLE and isinstance(exc, k8s_exceptions.ApiException):
                 if exc.status in (404, 403):
                     continue
@@ -307,7 +307,7 @@ def _read_custom_resources(
         else:
             items = all_items
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         if _K8S_AVAILABLE and isinstance(exc, k8s_exceptions.ApiException):
             if exc.status == 403:
                 logger.warning(
@@ -774,7 +774,7 @@ def get_mesh_overview(
             try:
                 ns_obj = core_v1.read_namespace(namespace)
                 ns_items = [ns_obj]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 ns_items = []
                 warnings.append(f"Cannot read namespace '{namespace}'")
         else:
@@ -803,7 +803,7 @@ def get_mesh_overview(
                 "revision": rev_label,
             })
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         if _K8S_AVAILABLE and isinstance(exc, k8s_exceptions.ApiException):
             if exc.status == 403:
                 warnings.append(
@@ -1098,7 +1098,7 @@ def get_sidecar_status(
             ns_injection_map[ns_name] = (
                 injection_label == "enabled" or bool(rev_label)
             )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         if _K8S_AVAILABLE and isinstance(exc, k8s_exceptions.ApiException):
             if exc.status == 403:
                 warnings.append(
@@ -1172,7 +1172,7 @@ def get_sidecar_status(
                 "anomaly": anomaly,
             })
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         if _K8S_AVAILABLE and isinstance(exc, k8s_exceptions.ApiException):
             if exc.status == 403:
                 warnings.append("RBAC: cannot list pods (403 Forbidden)")

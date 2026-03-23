@@ -122,7 +122,7 @@ class ServiceHealthSkill(BaseSkill):
 
             settings = get_settings()
             ensure_client_initialized(settings.gke)
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.debug(
                 "K8s client pre-warm skipped (non-fatal): see ensure_client_initialized logs",
                 exc_info=True,

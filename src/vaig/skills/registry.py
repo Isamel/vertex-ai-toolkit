@@ -119,7 +119,7 @@ class SkillRegistry:
                 skill = _import_skill(module_path)
                 self._register(skill)
                 logger.info("Loaded built-in skill: %s", name)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.warning("Failed to load built-in skill: %s", name, exc_info=True)
 
     def _load_custom_skills(self) -> None:
@@ -145,7 +145,7 @@ class SkillRegistry:
                 skill = _import_skill_from_path(skill_file)
                 self._register(skill)
                 logger.info("Loaded custom skill: %s from %s", skill.get_metadata().name, skill_file)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.warning("Failed to load custom skill from: %s", skill_file, exc_info=True)
 
     def _register(self, skill: BaseSkill) -> None:
