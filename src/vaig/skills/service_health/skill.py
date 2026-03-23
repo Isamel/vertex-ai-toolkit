@@ -373,6 +373,7 @@ class ServiceHealthSkill(BaseSkill):
                     "parallel_group": "gather",
                     "system_instruction": build_datadog_gatherer_prompt(
                         namespace=effective_namespace,
+                        cluster_name=effective_gke.cluster_name,
                         datadog_api_enabled=True,
                     ),
                     "model": "gemini-2.5-flash",

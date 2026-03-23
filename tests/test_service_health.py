@@ -3096,7 +3096,7 @@ class TestDatadogGathererPipelineConfig:
         )
 
     def test_datadog_gatherer_max_iterations_is_eight(self) -> None:
-        """datadog_gatherer must have max_iterations=8 (5 Datadog calls + 3 overhead)."""
+        """datadog_gatherer must have max_iterations=8 (6 Datadog tool calls — step 0 label resolution plus calls 1–5 — + 2 overhead iterations)."""
         agents = self._get_agents(datadog_enabled=True)
         datadog_agent = next(a for a in agents if a["name"] == "datadog_gatherer")
         assert datadog_agent["max_iterations"] == 8

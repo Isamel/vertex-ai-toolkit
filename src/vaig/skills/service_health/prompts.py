@@ -1846,6 +1846,7 @@ Report even for healthy deployments, as management context affects remediation r
 
 def build_datadog_gatherer_prompt(
     namespace: str = "",
+    cluster_name: str = "",
     datadog_api_enabled: bool = False,
 ) -> str:
     """Build the system instruction for the ``datadog_gatherer`` sub-agent.
@@ -1863,8 +1864,9 @@ def build_datadog_gatherer_prompt(
     **Scope** — Datadog API correlation only:
 
     * **Step 0** — Label Resolution: call ``kubectl_get_labels`` to discover
-      ``tags.datadoghq.com/service``, ``tags.datadoghq.com/env``, ``DD_SERVICE``,
-      and ``DD_ENV`` values from pod/deployment metadata.
+      ``tags.datadoghq.com/service`` and ``tags.datadoghq.com/env`` values from
+      pod/deployment labels and annotations (environment variables such as
+      ``DD_SERVICE``/``DD_ENV`` are NOT available via this tool).
     * **Calls 1–2** — ``query_datadog_metrics`` (CPU, then memory).
     * **Call 3** — ``get_datadog_monitors`` for active alerts.
     * **Call 4** — ``get_datadog_service_catalog`` for ownership metadata.
@@ -1878,6 +1880,9 @@ def build_datadog_gatherer_prompt(
 
     Args:
         namespace: Kubernetes namespace to investigate.
+        cluster_name: GKE cluster name, embedded verbatim in Datadog tool call
+            examples (``cluster_name=`` parameter for ``query_datadog_metrics``
+            and ``get_datadog_monitors``).
         datadog_api_enabled: When ``False``, returns an empty string so the
             caller can gate the agent on the runtime Datadog setting.
 
@@ -1896,13 +1901,18 @@ def build_datadog_gatherer_prompt(
         if namespace and _sanitize_namespace(namespace)
         else "No explicit namespace given — query all non-system namespaces or use cluster-wide scope."
     )
+    # Embed the actual cluster name in tool call examples so the LLM produces
+    # correct calls.  Fall back to the generic placeholder when not supplied.
+    cluster = cluster_name if cluster_name else "<cluster>"
 
-    # Build tool reference table: core tools (for kubectl_get_labels) + Datadog API tools.
+    # Build a focused tool reference table: only kubectl_get_labels (for Step 0 label
+    # resolution) plus the Datadog API tools.  Including the full _CORE_TOOLS_TABLE
+    # (kubectl_logs, get_events, etc.) would confuse the LLM — those tools belong to
+    # other gatherers and are irrelevant to this agent's scope.
     tool_reference_table = (
         "| Tool | Required Parameters | Optional Parameters |\n"
         "|------|---------------------|---------------------|\n"
-        + _CORE_TOOLS_TABLE
-        + "\n"
+        '| `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |\n'
         + _DATADOG_API_TOOLS_TABLE
     )
 
@@ -1946,7 +1956,8 @@ access its output.  Resolve the Datadog service identity independently:
 1. Call ``kubectl_get_labels(resource_type="deployments", namespace="{ns}")``
    to retrieve labels and annotations for all deployments in the target namespace.
 2. From the output, identify the Datadog Unified Service Tagging values using
-   this priority order:
+   this priority order (``kubectl_get_labels`` returns labels and annotations ONLY —
+   container environment variables such as ``DD_SERVICE``/``DD_ENV`` are NOT available):
    - **Tier 1** — Datadog UST pod/deployment labels:
      - ``tags.datadoghq.com/service`` → store as ``<dd_service>``
      - ``tags.datadoghq.com/env``     → store as ``<dd_env>``
@@ -1954,8 +1965,6 @@ access its output.  Resolve the Datadog service identity independently:
      - ``app.kubernetes.io/name`` → store as ``<dd_service>``
      - ``app`` → store as ``<dd_service>``
      - Deployment name → store as ``<dd_service>`` (last resort)
-   - **Tier 2 env** — Environment env vars (if ``tags.datadoghq.com/env`` absent):
-     - Container env var ``DD_ENV`` → store as ``<dd_env>``
 3. If ``kubectl_get_labels`` fails or returns no useful data, proceed with
    cluster-wide Datadog queries (omit ``service=`` and ``env=`` parameters).
    Record the failure reason in Raw Findings.
@@ -1963,33 +1972,35 @@ access its output.  Resolve the Datadog service identity independently:
 ### Calls 1–2 — Datadog Metrics (CPU and Memory)
 
 **Call 1** — CPU metrics:
-You MUST call ``query_datadog_metrics(cluster_name="<cluster>", metric="cpu")``
+You MUST call ``query_datadog_metrics(cluster_name="{cluster}", metric="cpu")``
 [add ``service="<dd_service>", env="<dd_env>"`` ONLY if resolved in Step 0].
 - Correlate the returned CPU time-series with the namespace under investigation.
-- Example with labels: ``query_datadog_metrics(cluster_name="prod", metric="cpu", service="my-api", env="production")``
-- Example without labels: ``query_datadog_metrics(cluster_name="prod", metric="cpu")``
+- Example with labels: ``query_datadog_metrics(cluster_name="{cluster}", metric="cpu", service="my-api", env="production")``
+- Example without labels: ``query_datadog_metrics(cluster_name="{cluster}", metric="cpu")``
 
 **Call 2** — Memory metrics:
-You MUST call ``query_datadog_metrics(cluster_name="<cluster>", metric="memory")``
+You MUST call ``query_datadog_metrics(cluster_name="{cluster}", metric="memory")``
 [add ``service=`` and ``env=`` with the same values as Call 1 if they were resolved].
 
 ### Call 3 — Datadog Monitors
 
-You MUST call ``get_datadog_monitors(cluster_name="<cluster>")``
+You MUST call ``get_datadog_monitors(cluster_name="{cluster}")``
 [add ``service="<dd_service>", env="<dd_env>"`` ONLY if resolved in Step 0].
 Note any monitors currently in Alert or Warn state (name, status, query).
 
 ### Call 4 — Datadog Service Catalog
 
-ALWAYS call ``get_datadog_service_catalog`` — attempt it even if ``service_name``
-cannot be resolved. The tool handles empty ``service_name`` gracefully.
+Call ``get_datadog_service_catalog`` ONLY when a ``service_name`` can be resolved —
+calling it without a ``service_name`` returns the ENTIRE catalog which is a token
+budget hazard.
 
 **Resolution order for ``service_name`` parameter**:
 - **Tier 1** — ``tags.datadoghq.com/service`` label → use as ``service_name``
 - **Tier 2** — ``app.kubernetes.io/name`` label → use as ``service_name``
 - **Tier 2** — ``app`` label → use as ``service_name``
-- **Tier 3** — Call without ``service_name`` if nothing found; record the
-  tool's guidance in Raw Findings.
+- **Tier 3** — If no label yields a ``service_name``, SKIP calling
+  ``get_datadog_service_catalog`` and record in Raw Findings that the service
+  catalog was not queried because ``service_name`` could not be resolved.
 
 When ``service_name`` IS resolved:
 ``get_datadog_service_catalog(service_name="<resolved>", env="<resolved>")``
@@ -2145,15 +2156,15 @@ If Helm tools are available, look for ``<helm_release_name>`` values from
 ``kubectl_get_labels(resource_type="deployments", namespace="<ns>")`` to inspect
 deployment labels and annotations:
 - If ``<helm_release_name>`` IS found in annotations: You MUST call
-  ``helm_release_status(release_name="<helm_release_name>", namespace=<ns>)`` directly.
+  ``helm_release_status(release_name="<helm_release_name>", namespace="<ns>")`` directly.
   Do NOT call ``helm_list_releases()`` first — the annotation already provides the
   release name. Skipping the list call reduces unnecessary API overhead.
   Example: ``helm_release_status(release_name="my-chart", namespace="production")``
 - If ``<helm_release_name>`` is NOT found (annotation absent): Fall back to
-  ``helm_list_releases(namespace=<ns>)`` to discover release names, then call
+  ``helm_list_releases(namespace="<ns>")`` to discover release names, then call
   ``helm_release_status`` for each relevant release found.
 - For each release (found via annotation or list): also call
-  ``helm_release_history(release_name=<release>, namespace=<ns>)`` to check for
+  ``helm_release_history(release_name="<release>", namespace="<ns>")`` to check for
   recent changes that may correlate with issues.
 
 ### Data collection rules:
