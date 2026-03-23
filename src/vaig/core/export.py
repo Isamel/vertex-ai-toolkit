@@ -28,6 +28,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Lazy import of google.api_core.exceptions — available when [rag] deps are installed.
+# Methods that already require rag deps can safely use _GCP_EXC for specific exception catches.
+try:
+    from google.api_core import exceptions as _gcp_exc
+except ImportError:  # pragma: no cover
+    _gcp_exc = None  # type: ignore[assignment]
+
+# Exception tuple for GCP export methods. Covers GoogleAPICallError (network / quota /
+# permission failures), RuntimeError (GCP SDK internal errors), ValueError (bad data),
+# and OSError (I/O).  Falls back to the base Exception class when google.api_core is
+# not installed so behaviour is unchanged.
+_GCP_EXPORT_ERRORS: tuple[type[Exception], ...] = (
+    ((_gcp_exc.GoogleAPICallError,) if _gcp_exc is not None else ())
+    + (RuntimeError, ValueError, OSError)
+)
+
 _RETRYABLE_GCP_ERROR_NAMES = {
     "TooManyRequests",
     "ServiceUnavailable",
@@ -608,7 +624,7 @@ class DataExporter:
         try:
             rows = [transform_telemetry_record(r) for r in records]
             return self._insert_rows("telemetry_events", rows)
-        except Exception:
+        except _GCP_EXPORT_ERRORS:
             logger.warning(
                 "export_telemetry_to_bigquery: insert failed — skipping", exc_info=True
             )
@@ -637,7 +653,7 @@ class DataExporter:
         try:
             rows = [transform_tool_call_record(r) for r in records]
             return self._insert_rows("tool_calls", rows)
-        except Exception:
+        except _GCP_EXPORT_ERRORS:
             logger.warning(
                 "export_tool_calls_to_bigquery: insert failed — skipping", exc_info=True
             )
@@ -679,7 +695,7 @@ class DataExporter:
             )
             inserted = self._insert_rows("health_reports", [row])
             return inserted > 0
-        except Exception:
+        except _GCP_EXPORT_ERRORS:
             logger.warning(
                 "export_report_to_bigquery: insert failed — skipping", exc_info=True
             )
@@ -714,7 +730,7 @@ class DataExporter:
             uri = f"gs://{self._config.gcs_bucket}/{blob_path}"
             logger.info("Uploaded report to %s", uri)
             return uri
-        except Exception:
+        except _GCP_EXPORT_ERRORS:
             logger.warning("export_report_to_gcs: upload failed — skipping", exc_info=True)
             return None
 
@@ -747,7 +763,7 @@ class DataExporter:
             uri = f"gs://{self._config.gcs_bucket}/{blob_path}"
             logger.info("Uploaded %d tool results to %s", len(records), uri)
             return uri
-        except Exception:
+        except _GCP_EXPORT_ERRORS:
             logger.warning("export_tool_results_to_gcs: upload failed — skipping", exc_info=True)
             return None
 
@@ -781,7 +797,7 @@ class DataExporter:
             uri = f"gs://{self._config.gcs_bucket}/{blob_path}"
             logger.info("Uploaded %d telemetry records to %s", len(records), uri)
             return uri
-        except Exception:
+        except _GCP_EXPORT_ERRORS:
             logger.warning("export_telemetry_to_gcs: upload failed — skipping", exc_info=True)
             return None
 

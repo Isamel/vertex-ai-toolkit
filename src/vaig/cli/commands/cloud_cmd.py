@@ -307,8 +307,8 @@ def push_reports(
         for report_path in report_files:
             try:
                 report = _json.loads(report_path.read_text(encoding="utf-8"))
-            except Exception:  # noqa: BLE001
-                err_console.print(f"[yellow]Skipping malformed report: {report_path}[/yellow]")
+            except (_json.JSONDecodeError, OSError) as e:
+                err_console.print(f"[yellow]Skipping malformed or unreadable report: {report_path} ({e!s})[/yellow]")
                 continue
 
             run_id = report_path.stem
