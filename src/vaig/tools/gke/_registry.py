@@ -1446,7 +1446,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 name="get_datadog_apm_services",
                 description=(
                     "Fetch live APM trace metrics for a specific service from Datadog. "
-                    "Returns throughput, error rate, and avg latency from actual trace data over the last 15 minutes. "
+                    "Returns throughput, error rate, and avg latency from actual trace data over the last 30 minutes. "
                     "Use this for real-time performance data — NOT for ownership metadata (use get_datadog_service_catalog for that). "
                     "Provide service_name when known — resolve it from Kubernetes pod labels before calling. "
                     "If service_name cannot be determined, call the tool anyway — it will return guidance on resolution. "

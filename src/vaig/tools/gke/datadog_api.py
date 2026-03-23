@@ -33,7 +33,7 @@ _APM_METRIC_FAMILIES = [
     "trace.grpc.client",   # gRPC client-side
     "trace.kafka.produce", # Kafka producers
     "trace.kafka.consume", # Kafka consumers
-    "trace",               # Generic fallback (trace.request, trace.servlet, etc.)
+    "trace",               # Generic "trace.*" fallback
 ]
 
 # ── Metric query templates ───────────────────────────────────
@@ -697,8 +697,9 @@ def get_datadog_apm_services(
     def _try_metric_family(api: Any, family: str) -> tuple[dict[str, float | None], bool]:
         """Query hits/errors/duration for one metric namespace family.
 
-        Returns (results_dict, found_any_series).  The generic "trace" family
-        uses trace.request.* metric names (no ".web." segment).
+        Returns (results_dict, found_any). ``found_any`` is True if any
+        non-empty metric series were found for this family. The generic "trace"
+        family uses trace.request.* metric names (no ".web." segment).
         """
         # Build the three query strings for this family
         if family == "trace":
@@ -742,6 +743,8 @@ def get_datadog_apm_services(
         matched_family: str | None = None
         results: dict[str, float | None] = {}
 
+        # TODO: Optimize by probing a single metric (e.g. hits) per family first,
+        # then query errors/duration only for the matched family.
         for family in _APM_METRIC_FAMILIES:
             family_results, found_any = _try_metric_family(api, family)
             if found_any:
@@ -754,7 +757,9 @@ def get_datadog_apm_services(
                 f"No APM trace data found for service '{service_name}' in env '{env}'. "
                 "Tried metric families: "
                 + ", ".join(_APM_METRIC_FAMILIES)
-                + ". Verify the service_name matches the 'service' tag in Datadog APM."
+                + ". Verify the service_name matches the '"
+                + config.labels.service
+                + "' tag in Datadog APM."
             )
             return ToolResult(output=no_data_msg, error=False)
 
