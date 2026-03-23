@@ -86,6 +86,18 @@ def _fire_agent_progress(
         return
     try:
         callback(agent_name, agent_index, total_agents, event, end_agent_index)
+    except TypeError:
+        # Backward compatibility: older callbacks only accept 4 positional args
+        # (agent_name, agent_index, total_agents, event) without end_agent_index.
+        try:
+            callback(agent_name, agent_index, total_agents, event)
+        except Exception:
+            logger.debug(
+                "on_agent_progress callback error (swallowed, 4-arg fallback): agent=%s event=%s",
+                agent_name,
+                event,
+                exc_info=True,
+            )
     except Exception:
         logger.debug(
             "on_agent_progress callback error (swallowed): agent=%s event=%s",
@@ -2313,14 +2325,18 @@ class Orchestrator:
             # loop before any thread executes, causing the spinner to jump straight
             # to [N/total] and get stuck. One collective event at idx=0 shows
             # [1/total] parallel gatherers — running... while the threads work.
-            _fire_agent_progress(
-                on_agent_progress,
-                "parallel gatherers",
-                0,
-                total_agents,
-                "start",
-                end_agent_index=total_parallel - 1,
-            )
+            # Guard: skip collective events when there are no parallel agents
+            # (total_parallel == 0) to avoid end_agent_index=-1 producing an
+            # invalid display range like [1-0/N].
+            if total_parallel > 0:
+                _fire_agent_progress(
+                    on_agent_progress,
+                    "parallel gatherers",
+                    0,
+                    total_agents,
+                    "start",
+                    end_agent_index=total_parallel - 1,
+                )
             for _idx, agent in enumerate(parallel_agents):
                 logger.info("parallel_sequential: submitting gatherer agent=%s", agent.name)
                 kw: dict[str, Any] = {"context": query}
@@ -2359,14 +2375,16 @@ class Orchestrator:
         # Matches the collective start event fired before the executor started.
         # This keeps _active_agents balanced (1 start → 1 end) so AgentProgressDisplay
         # correctly resets tool_logger counters and stops the spinner.
-        _fire_agent_progress(
-            on_agent_progress,
-            "parallel gatherers",
-            0,
-            total_agents,
-            "end",
-            end_agent_index=total_parallel - 1,
-        )
+        # Guard: only emit if there were parallel agents (mirrors the start guard above).
+        if total_parallel > 0:
+            _fire_agent_progress(
+                on_agent_progress,
+                "parallel gatherers",
+                0,
+                total_agents,
+                "end",
+                end_agent_index=total_parallel - 1,
+            )
 
         # ── Merge gatherer outputs ────────────────────────────────────────
         merged_context = self._merge_parallel_outputs(parallel_results)
@@ -2638,28 +2656,34 @@ class Orchestrator:
         # Individual start events inside _run_gatherer would all fire synchronously
         # in the coroutine creation loop before any coroutine actually executes,
         # causing the same stuck-spinner issue as the synchronous path.
-        _fire_agent_progress(
-            on_agent_progress,
-            "parallel gatherers",
-            0,
-            total_agents,
-            "start",
-            end_agent_index=total_parallel - 1,
-        )
+        # Guard: skip collective events when there are no parallel agents
+        # (total_parallel == 0) to avoid end_agent_index=-1 producing an
+        # invalid display range like [1-0/N].
+        if total_parallel > 0:
+            _fire_agent_progress(
+                on_agent_progress,
+                "parallel gatherers",
+                0,
+                total_agents,
+                "start",
+                end_agent_index=total_parallel - 1,
+            )
         coros = [_run_gatherer(agent, idx) for idx, agent in enumerate(parallel_agents)]
         parallel_results: list[AgentResult] = await gather_with_errors(*coros, return_exceptions=False)
 
         # Emit a single collective end event after ALL async gatherers finish.
         # Matches the collective start event above so AgentProgressDisplay keeps
         # _active_agents balanced and triggers tool_logger.reset() exactly once.
-        _fire_agent_progress(
-            on_agent_progress,
-            "parallel gatherers",
-            0,
-            total_agents,
-            "end",
-            end_agent_index=total_parallel - 1,
-        )
+        # Guard: only emit if there were parallel agents (mirrors the start guard above).
+        if total_parallel > 0:
+            _fire_agent_progress(
+                on_agent_progress,
+                "parallel gatherers",
+                0,
+                total_agents,
+                "end",
+                end_agent_index=total_parallel - 1,
+            )
 
         for agent_result in parallel_results:
             result.agent_results.append(agent_result)

@@ -2678,14 +2678,19 @@ class TestDatadogAPMTagResolution:
             "as Tier 1 label for APM env parameter."
         )
 
-    def test_apm_step_instructs_skip_when_no_service_found(self) -> None:
-        """_DATADOG_API_STEP must explicitly say SKIP when no service identity
-        can be determined — preventing a no-arg get_datadog_apm_services() call."""
+    def test_apm_step_instructs_always_attempt_calls(self) -> None:
+        """_DATADOG_API_STEP must instruct the LLM to ALWAYS attempt
+        get_datadog_apm_services() calls — even when service_name cannot be
+        resolved — because the tool handles empty service_name gracefully."""
         from vaig.skills.service_health.prompts import _DATADOG_API_STEP
 
-        assert "SKIP" in _DATADOG_API_STEP, (
-            "_DATADOG_API_STEP must contain 'SKIP' instruction for when no "
-            "service_name is resolvable, preventing a no-arg APM call."
+        assert "ALWAYS call" in _DATADOG_API_STEP, (
+            "_DATADOG_API_STEP must contain 'ALWAYS call' instruction so the LLM "
+            "always attempts get_datadog_apm_services() instead of skipping it."
+        )
+        assert "handles empty service_name gracefully" in _DATADOG_API_STEP, (
+            "_DATADOG_API_STEP must state that the tool handles empty service_name "
+            "gracefully, which is why the call should always be attempted."
         )
 
     def test_apm_step_does_not_contain_no_arg_example(self) -> None:

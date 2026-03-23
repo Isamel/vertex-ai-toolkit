@@ -126,8 +126,8 @@ You MUST complete calls 19–21 below. They are NOT optional — skipping them m
 investigation is incomplete and the report will be missing real-time observability data.
 Note that ``query_datadog_metrics`` is called twice with different metric arguments
 (once for CPU, once for memory). Calls 22–23 (``get_datadog_service_catalog`` and
-``get_datadog_apm_services``) are CONDITIONAL — make them only when a ``service_name``
-can be resolved (see calls 22–23 for resolution rules).
+``get_datadog_apm_services``) MUST also always be attempted — the tools accept an empty
+or absent ``service_name`` and will return guidance on how to proceed if resolution fails.
 Calls 19–21 are high priority but should not block the analysis if they fail.
 
 **LABEL-AWARE FILTERING — MANDATORY**: Before making these calls, resolve the service
@@ -157,8 +157,9 @@ For calls 22–23, the parameter name is ``service_name=`` (not ``service=``) �
     env="<dd_env>")``  [include service/env only if resolved above]
     — Monitor alerts scoped to this service when labels are present, or all cluster
     monitors when they are absent. Note any alerts in Alert or Warn state.
-22. Call ``get_datadog_service_catalog`` — but ONLY if you can determine a
-    ``service_name``. Resolve the service identity using this priority order:
+22. ALWAYS call ``get_datadog_service_catalog`` — attempt it even if ``service_name``
+    cannot be resolved. The tool handles empty service_name gracefully and returns
+    guidance on resolution. Resolve the service identity using this priority order:
 
     **Tier 1 — Datadog Unified Service Tagging labels** (check pod/deployment YAML
     output from earlier kubectl calls):
@@ -171,9 +172,9 @@ For calls 22–23, the parameter name is ``service_name=`` (not ``service=``) �
     - ``app`` label → use as ``service_name``
     - Deployment or Service name → use as ``service_name`` (last resort)
 
-    **Tier 3 — SKIP** (if NEITHER Tier 1 nor Tier 2 yields a ``service_name``):
-    - SKIP this tool entirely — do NOT call it without a ``service_name``.
-    - Record "Service catalog lookup skipped — no service identity found" in Raw Findings.
+    **Tier 3 — Call without service_name** (if NEITHER Tier 1 nor Tier 2 yields a value):
+    - Call the tool without ``service_name`` — it will return guidance on how to
+      resolve the service identity. Record the guidance in Raw Findings.
 
     When ``service_name`` IS resolved: call
     ``get_datadog_service_catalog(service_name="<resolved>", env="<resolved>")``
@@ -182,15 +183,17 @@ For calls 22–23, the parameter name is ``service_name=`` (not ``service=``) �
     latency or error-rate metrics.
     Example: ``get_datadog_service_catalog(service_name="my-api", env="production")``
 
-23. Call ``get_datadog_apm_services`` — but ONLY if the same ``service_name`` was
-    resolved in call 22. This tool queries LIVE APM trace data (throughput, error rate,
+23. ALWAYS call ``get_datadog_apm_services`` — attempt it even if ``service_name``
+    cannot be resolved. The tool handles empty service_name gracefully and returns
+    guidance. This tool queries LIVE APM trace data (throughput, error rate,
     avg latency) for the last 15 minutes, scoped to the resolved service and env.
     It complements call 22: call 22 gives ownership metadata, call 23 gives real-time
     performance signals.
 
-    **Tier 3 — SKIP** (same rule as call 22 — no ``service_name``, no call):
-    - SKIP if no service identity was found.
-    - Record "APM trace lookup skipped — no service identity found" in Raw Findings.
+    **Tier 3 — Call without service_name** (same rule as call 22 — if no service
+    identity was found, call the tool anyway without ``service_name``):
+    - The tool will return guidance on resolution.
+    - Record the guidance in Raw Findings.
 
     When ``service_name`` IS resolved: call
     ``get_datadog_apm_services(service_name="<resolved>", env="<resolved>")``
