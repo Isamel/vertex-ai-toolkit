@@ -101,7 +101,8 @@ class TestSwitchProject:
         assert result.old_value == "old-project"
         assert result.new_value == "new-project"
         assert settings.gcp.project_id == "new-project"
-        assert settings.gke.project_id == "new-project"
+        # gke.project_id is NOT synced — the fallback chain in _build_gke_config handles it
+        assert settings.gke.project_id == "old-project"
         assert result.reinitialized == []
 
     def test_successful_switch_with_client(
@@ -119,8 +120,9 @@ class TestSwitchProject:
         result = switch_project(settings, "new-project", client=mock_client)
         assert result.success is False
         assert "reinitialize" in result.message.lower()
-        # Rollback
+        # Rollback: gcp.project_id is restored
         assert settings.gcp.project_id == "old-project"
+        # gke.project_id is never touched by switch_project — stays as fixture set it
         assert settings.gke.project_id == "old-project"
 
     def test_unknown_project_warns(self, settings: Settings) -> None:
@@ -260,4 +262,5 @@ class TestGetConfigSnapshot:
         switch_project(settings, "new-project")
         snap = get_config_snapshot(settings)
         assert snap["project"] == "new-project"
-        assert snap["gke_project"] == "new-project"
+        # gke_project is NOT synced by switch_project — it stays as configured
+        assert snap["gke_project"] == "old-project"

@@ -840,14 +840,37 @@ class TestProjectFlag:
         assert "--location" in _strip_ansi(result.output)
 
     def test_project_flag_updates_settings(self, _mock_settings: Settings) -> None:
-        """--project should mutate gcp.project_id and gke.project_id BEFORE component creation."""
+        """--project should mutate gcp.project_id BEFORE component creation, but NOT gke.project_id."""
+        original_gke_project = _mock_settings.gke.project_id
 
-        # Simulate what the command body does
+        # Simulate what the command body does (only gcp.project_id is set)
         _mock_settings.gcp.project_id = "flag-project"
-        _mock_settings.gke.project_id = "flag-project"
 
         assert _mock_settings.gcp.project_id == "flag-project"
-        assert _mock_settings.gke.project_id == "flag-project"
+        # gke.project_id must NOT be touched — backward compat handled by _build_gke_config fallback
+        assert _mock_settings.gke.project_id == original_gke_project
+
+    def test_project_flag_only_sets_gcp_project(self, _mock_settings: Settings) -> None:
+        """--project sets gcp.project_id only; gke.project_id remains independent."""
+        original_gke_project = _mock_settings.gke.project_id
+
+        # Simulate what the updated command body does
+        _mock_settings.gcp.project_id = "my-gcp-project"
+
+        assert _mock_settings.gcp.project_id == "my-gcp-project"
+        # gke.project_id is untouched
+        assert _mock_settings.gke.project_id == original_gke_project
+
+    def test_gke_project_flag_sets_gke_project(self, _mock_settings: Settings) -> None:
+        """--gke-project sets gke.project_id only; gcp.project_id remains independent."""
+        original_gcp_project = _mock_settings.gcp.project_id
+
+        # Simulate what the updated command body does for --gke-project
+        _mock_settings.gke.project_id = "my-gke-project"
+
+        assert _mock_settings.gke.project_id == "my-gke-project"
+        # gcp.project_id is untouched
+        assert _mock_settings.gcp.project_id == original_gcp_project
 
     def test_project_id_backward_compat(self) -> None:
         """--project-id should still show in help for backward compat."""
@@ -869,3 +892,58 @@ class TestProjectFlag:
         project_id = "from-project-id"
         effective = project or project_id
         assert effective == "from-project-id"
+
+    @pytest.mark.parametrize(
+        "subcommand, flag",
+        [
+            ("live", "--gke-project"),
+            ("ask", "--gke-project"),
+            ("chat", "--gke-project"),
+            ("live", "--gke-location"),
+            ("ask", "--gke-location"),
+            ("chat", "--gke-location"),
+        ],
+    )
+    def test_gke_flags_show_in_help(self, subcommand: str, flag: str) -> None:
+        """Check that --gke-project and --gke-location flags appear in help output."""
+        result = runner.invoke(app, [subcommand, "--help"])
+        assert result.exit_code == 0
+        assert flag in _strip_ansi(result.output)
+
+    def test_gke_project_not_overridden_by_project_flag(self, _mock_settings: Settings) -> None:
+        """When both --project and --gke-project are provided, settings.gke.project_id
+        must use the --gke-project value and NOT be overridden by --project.
+        """
+        from vaig.cli.app import _build_gke_config
+
+        # Simulate what the command body does when both flags are provided
+        _mock_settings.gcp.project_id = "vertex-project"  # from --project
+        _mock_settings.gke.project_id = "gke-project"  # from --gke-project
+
+        assert _mock_settings.gke.project_id == "gke-project"
+        assert _mock_settings.gke.project_id != "vertex-project"
+
+        # _build_gke_config called WITHOUT explicit project_id override (the fix)
+        gke_config = _build_gke_config(_mock_settings)
+        assert gke_config.project_id == "gke-project", (
+            "_build_gke_config must use gke.project_id, not gcp.project_id"
+        )
+
+    def test_gke_location_not_overridden_by_location_flag(self, _mock_settings: Settings) -> None:
+        """When both --location and --gke-location are provided, the GKEConfig
+        must use the --gke-location value and NOT be overridden by --location.
+        """
+        from vaig.cli.app import _build_gke_config
+
+        # Simulate what the command body does when both flags are provided
+        _mock_settings.gcp.location = "us-central1"  # from --location
+        _mock_settings.gke.location = "europe-west1-b"  # from --gke-location
+
+        assert _mock_settings.gke.location == "europe-west1-b"
+        assert _mock_settings.gke.location != "us-central1"
+
+        # _build_gke_config called WITHOUT explicit location override (the fix)
+        gke_config = _build_gke_config(_mock_settings)
+        assert gke_config.location == "europe-west1-b", (
+            "_build_gke_config must use gke.location, not gcp.location"
+        )
