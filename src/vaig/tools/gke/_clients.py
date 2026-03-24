@@ -212,9 +212,24 @@ def _cache_key(gke_config: GKEConfig) -> tuple[str, str, str]:
 def clear_k8s_client_cache() -> None:
     """Clear the cached Kubernetes API clients.
 
+    Also clears ArgoCD and Argo Rollouts detection caches, which are
+    cluster-scoped and may become stale when the process switches contexts.
+
     Useful in tests or when kubeconfig/credentials change at runtime.
     """
     _CLIENT_CACHE.clear()
+    # Lazy imports to avoid circular dependencies (argocd.py imports _clients).
+    try:
+        from .argocd import _argocd_ns_cache, _crd_exists_cache  # noqa: WPS433
+        _argocd_ns_cache.clear()
+        _crd_exists_cache.clear()
+    except ImportError:
+        pass
+    try:
+        from .argo_rollouts import _rollouts_ns_cache  # noqa: WPS433
+        _rollouts_ns_cache.clear()
+    except ImportError:
+        pass
 
 
 def ensure_client_initialized(gke_config: GKEConfig) -> None:

@@ -886,7 +886,7 @@ class TestDetectArgocd:
         """Cached namespace result is returned without making any API calls."""
         from vaig.tools.gke.argocd import _argocd_ns_cache, detect_argocd
 
-        _argocd_ns_cache["production"] = True
+        _argocd_ns_cache[("production", None)] = True
 
         with patch("vaig.tools.gke.argocd._check_crd_exists") as mock_crd, \
              patch("vaig.tools.gke.argocd._scan_namespace_for_argocd_annotations") as mock_scan:
@@ -1028,7 +1028,7 @@ class TestAnnotationScanTransientNotCached:
             result = detect_argocd(namespace="transient-argocd-ns")
 
         assert result is False
-        assert "transient-argocd-ns" not in _argocd_ns_cache
+        assert ("transient-argocd-ns", None) not in _argocd_ns_cache
 
     def test_annotation_scan_transient_then_success_second_call_works(self) -> None:
         """503 on first call (not cached), second call succeeds and caches True."""
@@ -1064,12 +1064,12 @@ class TestAnnotationScanTransientNotCached:
              patch("time.sleep", return_value=None):
             result1 = detect_argocd(namespace="retry-argocd-ns")
             assert result1 is False
-            assert "retry-argocd-ns" not in _argocd_ns_cache
+            assert ("retry-argocd-ns", None) not in _argocd_ns_cache
 
             result2 = detect_argocd(namespace="retry-argocd-ns")
 
         assert result2 is True
-        assert _argocd_ns_cache.get("retry-argocd-ns") is True
+        assert _argocd_ns_cache.get(("retry-argocd-ns", None)) is True
 
 
 # ── Fix D: Retry logic (argocd) ─────────────────────────────

@@ -337,7 +337,7 @@ class TestDetectArgoRollouts:
         from vaig.tools.gke.argo_rollouts import _rollouts_ns_cache, detect_argo_rollouts
 
         # Pre-populate cache
-        _rollouts_ns_cache["staging"] = True
+        _rollouts_ns_cache[("staging", None)] = True
 
         mock_ext_api = MagicMock()
         mock_apps_api = MagicMock()
@@ -876,7 +876,7 @@ class TestTransientErrorsNotCachedRollouts:
             result = detect_argo_rollouts(namespace="transient-ns")
 
         assert result is False
-        assert "transient-ns" not in _rollouts_ns_cache
+        assert ("transient-ns", None) not in _rollouts_ns_cache
 
     def test_transient_then_success_returns_true_and_caches(self) -> None:
         """First call fails transiently (not cached), second call succeeds and caches True."""
@@ -918,12 +918,12 @@ class TestTransientErrorsNotCachedRollouts:
             result1 = detect_argo_rollouts(namespace="retry-ns")
             # First call transient — not cached
             assert result1 is False
-            assert "retry-ns" not in _rollouts_ns_cache
+            assert ("retry-ns", None) not in _rollouts_ns_cache
 
             result2 = detect_argo_rollouts(namespace="retry-ns")
 
         assert result2 is True
-        assert _rollouts_ns_cache.get("retry-ns") is True
+        assert _rollouts_ns_cache.get(("retry-ns", None)) is True
 
     def test_definitive_404_on_annotation_scan_returns_false(self) -> None:
         """404 on deployment list is definitive — returns False (no annotation scan needed)."""
@@ -952,8 +952,8 @@ class TestTransientErrorsNotCachedRollouts:
 
         assert result is False
         # 404 is definitive — result IS cached
-        assert "gone-ns" in _rollouts_ns_cache
-        assert _rollouts_ns_cache["gone-ns"] is False
+        assert ("gone-ns", None) in _rollouts_ns_cache
+        assert _rollouts_ns_cache[("gone-ns", None)] is False
 
 
 # ── Fix C: Rollout CRD query ─────────────────────────────────

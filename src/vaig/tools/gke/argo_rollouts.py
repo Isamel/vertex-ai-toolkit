@@ -43,7 +43,7 @@ _ROLLOUT_ANNOTATION_MARKERS = (
 )
 
 # ── Namespace-level detection cache ─────────────────────────
-_rollouts_ns_cache: dict[str, bool] = {}
+_rollouts_ns_cache: dict[tuple[str, Any], bool] = {}
 
 
 # ── Detection ────────────────────────────────────────────────
@@ -53,12 +53,22 @@ def detect_argo_rollouts(namespace: str = "", api_client: Any = None) -> bool:
     """Detect Argo Rollouts presence for a specific namespace.
 
     Three-phase detection:
-    1. CRD probe: checks if ``rollouts.argoproj.io`` CRD exists cluster-wide.
-       If absent, Argo Rollouts is definitely not installed → return False.
-    2. Namespace annotation scan: first queries Rollout CRDs directly; falls back
-       to checking deployment annotations if the CRD query fails.
-    3. Results are cached per-namespace to avoid redundant API calls.
-       **Transient failures are NOT cached** — the next call will retry.
+    1. CRD probe (best-effort, fast signal): checks whether the
+       ``rollouts.argoproj.io`` CRD appears to exist cluster-wide. If this
+       probe can **positively** confirm the CRD is missing (404), Argo Rollouts
+       is considered not installed and the function returns ``False`` early.
+       If the probe is unavailable, forbidden (403), or otherwise inconclusive,
+       detection still continues via the annotation scan.
+    2. Namespace annotation scan: first queries Rollout CRDs directly; falls
+       back to checking deployment annotations if the CRD query fails.
+       A CRD existing cluster-wide does **not** guarantee this namespace has
+       Argo Rollouts–managed resources, and the annotation scan is used as a
+       namespace-scoped signal even when the CRD probe could not confirm
+       presence or absence.
+    3. Results are cached per ``(namespace, api_client)`` to avoid redundant
+       API calls and to prevent stale cache hits when the process switches
+       clusters/contexts. **Transient failures are NOT cached** — the next
+       call will retry.
 
     Args:
         namespace: Target namespace to check. Empty = "default".
@@ -70,15 +80,16 @@ def detect_argo_rollouts(namespace: str = "", api_client: Any = None) -> bool:
         ``True`` if Argo Rollouts manages resources in the target namespace.
     """
     ns = namespace or "default"
+    cache_key = (ns, api_client)
 
-    # Check namespace-level cache
-    if ns in _rollouts_ns_cache:
-        return _rollouts_ns_cache[ns]
+    # Check namespace-level cache, scoped by api_client/context
+    if cache_key in _rollouts_ns_cache:
+        return _rollouts_ns_cache[cache_key]
 
     result = _detect_rollouts_for_namespace(ns, api_client)
     # Only cache definitive outcomes — None means transient failure, do NOT cache.
     if result is not None:
-        _rollouts_ns_cache[ns] = result
+        _rollouts_ns_cache[cache_key] = result
     return result or False
 
 

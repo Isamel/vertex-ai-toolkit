@@ -41,7 +41,7 @@ _ARGOCD_COMMON_NAMESPACES: tuple[str, ...] = (
 )
 _argocd_namespace_cache: dict[str, str | None] = {}
 _crd_exists_cache: dict[str, bool] = {}
-_argocd_ns_cache: dict[str, bool] = {}
+_argocd_ns_cache: dict[tuple[str, Any], bool] = {}
 
 # ── Retry configuration ──────────────────────────────────────
 _RETRY_ATTEMPTS: int = 2
@@ -168,14 +168,19 @@ def detect_argocd(namespace: str = "", api_client: Any = None) -> bool:
     """Detect ArgoCD presence for a specific namespace.
 
     Three-phase detection:
-    1. CRD probe: checks if ``applications.argoproj.io`` CRD exists cluster-wide.
-       If absent, ArgoCD is definitely not installed → return False.
+    1. CRD probe (best-effort): checks if ``applications.argoproj.io`` CRD
+       exists cluster-wide. If the probe **positively** confirms the CRD is
+       absent (404), ArgoCD is definitely not installed → return False early.
+       When the probe is unavailable or forbidden (403), detection continues
+       via the annotation scan (the CRD check is not a strict gate).
     2. Namespace annotation scan: checks if deployments in the target namespace
        have ArgoCD management annotations (``argocd.argoproj.io/tracking-id``,
        ``argocd.argoproj.io/managed-by``). CRD existing cluster-wide does NOT
        mean this namespace is managed by ArgoCD.
-    3. Results are cached per-namespace to avoid redundant API calls.
-       **Transient failures are NOT cached** — the next call will retry.
+    3. Results are cached per ``(namespace, api_client)`` to avoid redundant
+       API calls and to prevent stale cache hits when the process switches
+       clusters/contexts. **Transient failures are NOT cached** — the next
+       call will retry.
 
     Args:
         namespace: Target namespace to check. Empty = "default".
@@ -185,16 +190,17 @@ def detect_argocd(namespace: str = "", api_client: Any = None) -> bool:
         True if ArgoCD manages resources in the target namespace.
     """
     ns = namespace or "default"
+    cache_key = (ns, api_client)
 
-    # Check namespace-level cache
-    if ns in _argocd_ns_cache:
-        return _argocd_ns_cache[ns]
+    # Check namespace-level cache, scoped by api_client/context
+    if cache_key in _argocd_ns_cache:
+        return _argocd_ns_cache[cache_key]
 
     result = _detect_argocd_for_namespace(ns, api_client)
     # Only cache definitive outcomes (True or False from non-transient paths).
     # _detect_argocd_for_namespace returns None on transient failures.
     if result is not None:
-        _argocd_ns_cache[ns] = result
+        _argocd_ns_cache[cache_key] = result
     return result or False
 
 
