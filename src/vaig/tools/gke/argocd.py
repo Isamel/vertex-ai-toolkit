@@ -40,6 +40,7 @@ _ARGOCD_COMMON_NAMESPACES: tuple[str, ...] = (
 )
 _argocd_namespace_cache: dict[str, str | None] = {}
 _crd_exists_cache: dict[str, bool] = {}
+_argocd_ns_cache: dict[str, bool] = {}
 
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -115,27 +116,71 @@ _ARGOCD_ANNOTATION_MARKERS = (
 
 
 def detect_argocd(namespace: str = "", api_client: Any = None) -> bool:
-    """Detect ArgoCD presence via CRD probe + annotation fallback.
+    """Detect ArgoCD presence for a specific namespace.
 
-    Two-phase detection:
-    1. CRD probe: checks for ``applications.argoproj.io`` CRD (fast, cached).
-    2. Annotation fallback: if CRD probe fails (404 or 403 RBAC), scans
-       Deployment annotations in the target namespace for ArgoCD markers
-       like ``argocd.argoproj.io/tracking-id``.
+    Three-phase detection:
+    1. CRD probe: checks if ``applications.argoproj.io`` CRD exists cluster-wide.
+       If absent, ArgoCD is definitely not installed → return False.
+    2. Namespace annotation scan: checks if deployments in the target namespace
+       have ArgoCD management annotations (``argocd.argoproj.io/tracking-id``,
+       ``argocd.argoproj.io/managed-by``). CRD existing cluster-wide does NOT
+       mean this namespace is managed by ArgoCD.
+    3. Results are cached per-namespace to avoid redundant API calls.
 
     Args:
-        namespace: Namespace to scan for annotations. Empty = "default".
+        namespace: Target namespace to check. Empty = "default".
         api_client: Optional pre-configured kubernetes ApiClient.
 
     Returns:
-        True if ArgoCD presence is confirmed.
+        True if ArgoCD manages resources in the target namespace.
     """
-    # Phase 1: CRD probe
-    if _check_crd_exists("applications.argoproj.io", api_client=api_client):
-        logger.info("ArgoCD CRD detected — enabling ArgoCD tools.")
+    ns = namespace or "default"
+
+    # Check namespace-level cache
+    if ns in _argocd_ns_cache:
+        return _argocd_ns_cache[ns]
+
+    result = _detect_argocd_for_namespace(ns, api_client)
+    _argocd_ns_cache[ns] = result
+    return result
+
+
+def _detect_argocd_for_namespace(namespace: str, api_client: Any) -> bool:
+    """Internal: uncached namespace-scoped ArgoCD detection."""
+    # Phase 1: CRD must exist cluster-wide (necessary condition)
+    crd_present = _check_crd_exists("applications.argoproj.io", api_client=api_client)
+
+    # Phase 2: Check namespace annotations (sufficient condition)
+    # Even if CRD exists, we must verify THIS namespace has ArgoCD-managed resources.
+    # If CRD check failed due to RBAC (403), annotation scan is the only path.
+    ns_has_annotations = _scan_namespace_for_argocd_annotations(namespace, api_client)
+
+    if ns_has_annotations:
+        if crd_present:
+            logger.info(
+                "ArgoCD detected for namespace '%s' (CRD present + annotations found).",
+                namespace,
+            )
+        else:
+            logger.info(
+                "ArgoCD detected for namespace '%s' via annotations "
+                "(CRD probe unavailable/failed).",
+                namespace,
+            )
         return True
 
-    # Phase 2: Annotation fallback (handles RBAC-restricted clusters)
+    if crd_present:
+        logger.debug(
+            "ArgoCD CRD exists cluster-wide but no managed resources found "
+            "in namespace '%s' — skipping ArgoCD tools for this namespace.",
+            namespace,
+        )
+
+    return False
+
+
+def _scan_namespace_for_argocd_annotations(namespace: str, api_client: Any) -> bool:
+    """Scan deployments in a namespace for ArgoCD management annotations."""
     if not _K8S_AVAILABLE:
         return False
 
@@ -155,23 +200,21 @@ def detect_argocd(namespace: str = "", api_client: Any = None) -> bool:
         else:
             apps_api = k8s_client.AppsV1Api(api_client)
 
-        ns = namespace or "default"
         deployments = apps_api.list_namespaced_deployment(
-            namespace=ns,
+            namespace=namespace,
             limit=50,
         )
         for dep in deployments.items or []:
             annotations = dep.metadata.annotations or {}
             if any(k in annotations for k in _ARGOCD_ANNOTATION_MARKERS):
-                logger.info(
-                    "ArgoCD detected via deployment annotations in namespace '%s' "
-                    "(CRD probe unavailable) — enabling ArgoCD tools.",
-                    ns,
-                )
                 return True
 
     except Exception:  # noqa: BLE001
-        logger.debug("ArgoCD annotation fallback probe failed", exc_info=True)
+        logger.debug(
+            "ArgoCD annotation scan failed for namespace '%s'",
+            namespace,
+            exc_info=True,
+        )
 
     return False
 

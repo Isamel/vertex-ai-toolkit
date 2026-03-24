@@ -11,9 +11,11 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _clear_caches() -> None:
-    """Clear the shared CRD existence cache before each test."""
+    """Clear all detection caches before each test."""
+    from vaig.tools.gke.argo_rollouts import _rollouts_ns_cache
     from vaig.tools.gke.argocd import _crd_exists_cache
     _crd_exists_cache.clear()
+    _rollouts_ns_cache.clear()
 
 
 # ── Test data helpers ────────────────────────────────────────
@@ -152,21 +154,57 @@ def _make_analysistemplate(
 class TestDetectArgoRollouts:
     """Tests for detect_argo_rollouts."""
 
-    def test_detect_returns_true_when_crd_exists(self) -> None:
-        """Returns True when the rollouts.argoproj.io CRD is present."""
+    def test_crd_found_and_annotations_present_returns_true(self) -> None:
+        """Returns True when CRD exists AND namespace has Rollouts-managed deployments."""
         from vaig.tools.gke.argo_rollouts import detect_argo_rollouts
 
         mock_ext_api = MagicMock()
         mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
 
+        dep = MagicMock()
+        dep.metadata.annotations = {"rollout.argoproj.io/revision": "3"}
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = [dep]
+
         with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
              patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
              patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
              patch("kubernetes.config.load_kube_config", return_value=None), \
              patch("kubernetes.config.ConfigException", Exception):
-            result = detect_argo_rollouts()
+            result = detect_argo_rollouts(namespace="production")
 
         assert result is True
+
+    def test_crd_found_but_no_annotations_returns_false(self) -> None:
+        """Returns False when CRD exists but namespace has NO Rollouts-managed deployments.
+
+        This is the KEY fix: CRD existence cluster-wide is necessary but not sufficient.
+        A namespace without Rollouts annotations must return False even if the CRD is present.
+        """
+        from vaig.tools.gke.argo_rollouts import detect_argo_rollouts
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
+
+        dep_no_annotations = MagicMock()
+        dep_no_annotations.metadata.annotations = {"app": "my-app", "version": "1.0"}
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = [dep_no_annotations]
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = detect_argo_rollouts(namespace="unmanaged-ns")
+
+        assert result is False
 
     def test_detect_returns_false_when_k8s_unavailable(self) -> None:
         """Returns False when the kubernetes SDK is not available."""
@@ -293,6 +331,60 @@ class TestDetectArgoRollouts:
             namespace="default",
             limit=50,
         )
+
+    def test_namespace_cache_hit_avoids_api_calls(self) -> None:
+        """Second call for same namespace uses cache and skips all API calls."""
+        from vaig.tools.gke.argo_rollouts import _rollouts_ns_cache, detect_argo_rollouts
+
+        # Pre-populate cache
+        _rollouts_ns_cache["staging"] = True
+
+        mock_ext_api = MagicMock()
+        mock_apps_api = MagicMock()
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api):
+            result = detect_argo_rollouts(namespace="staging")
+
+        assert result is True
+        mock_ext_api.read_custom_resource_definition.assert_not_called()
+        mock_apps_api.list_namespaced_deployment.assert_not_called()
+
+    def test_different_namespaces_get_independent_results(self) -> None:
+        """Two namespaces can independently have different detection results."""
+        from vaig.tools.gke.argo_rollouts import detect_argo_rollouts
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
+
+        dep_managed = MagicMock()
+        dep_managed.metadata.annotations = {"rollout.argoproj.io/revision": "1"}
+
+        dep_plain = MagicMock()
+        dep_plain.metadata.annotations = {"app": "frontend"}
+
+        mock_apps_api = MagicMock()
+
+        def _list_by_namespace(namespace: str, limit: int) -> MagicMock:
+            result = MagicMock()
+            result.items = [dep_managed] if namespace == "rollouts-ns" else [dep_plain]
+            return result
+
+        mock_apps_api.list_namespaced_deployment.side_effect = _list_by_namespace
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result_managed = detect_argo_rollouts(namespace="rollouts-ns")
+            result_plain = detect_argo_rollouts(namespace="plain-ns")
+
+        assert result_managed is True
+        assert result_plain is False
 
 
 # ── _format_rollout ──────────────────────────────────────────

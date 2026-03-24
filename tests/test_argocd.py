@@ -13,10 +13,11 @@ import pytest
 def _clear_caches() -> None:
     """Clear caches before each test."""
     from vaig.tools.gke._cache import clear_discovery_cache
-    from vaig.tools.gke.argocd import _argocd_namespace_cache, _crd_exists_cache
+    from vaig.tools.gke.argocd import _argocd_namespace_cache, _argocd_ns_cache, _crd_exists_cache
     clear_discovery_cache()
     _argocd_namespace_cache.clear()
     _crd_exists_cache.clear()
+    _argocd_ns_cache.clear()
 
 
 # ── Test data helpers ────────────────────────────────────────
@@ -709,16 +710,50 @@ def _make_deployment_meta(annotations: dict | None = None) -> MagicMock:
 
 
 class TestDetectArgocd:
-    """Tests for detect_argocd — two-phase CRD probe + annotation fallback."""
+    """Tests for detect_argocd — three-phase namespace-scoped detection."""
 
-    def test_crd_found_returns_true(self) -> None:
-        """Returns True immediately when applications.argoproj.io CRD exists."""
+    def test_crd_found_and_annotations_present_returns_true(self) -> None:
+        """Returns True when CRD exists AND annotations found in namespace."""
         from vaig.tools.gke.argocd import detect_argocd
 
-        with patch("vaig.tools.gke.argocd._check_crd_exists", return_value=True):
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = [
+            _make_deployment_meta({"argocd.argoproj.io/tracking-id": "my-app:argocd/my-app"}),
+        ]
+
+        with patch("vaig.tools.gke.argocd._check_crd_exists", return_value=True), \
+             patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
             result = detect_argocd(namespace="production")
 
         assert result is True
+
+    def test_crd_found_but_no_annotations_returns_false(self) -> None:
+        """Returns False when CRD exists cluster-wide but namespace has no ArgoCD-managed resources.
+
+        THIS IS THE KEY FIX: previously this would return True (false positive).
+        CRD existing cluster-wide is NOT sufficient — the namespace must have ArgoCD annotations.
+        """
+        from vaig.tools.gke.argocd import detect_argocd
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = [
+            _make_deployment_meta({"app": "foo", "version": "1.0"}),
+            _make_deployment_meta({"team": "backend"}),
+        ]
+
+        with patch("vaig.tools.gke.argocd._check_crd_exists", return_value=True), \
+             patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = detect_argocd(namespace="production")
+
+        assert result is False
 
     def test_crd_not_found_no_annotations_returns_false(self) -> None:
         """Returns False when CRD absent and no matching annotations found."""
@@ -817,7 +852,7 @@ class TestDetectArgocd:
         mock_apps_api = MagicMock()
         mock_apps_api.list_namespaced_deployment.side_effect = RuntimeError("Connection refused")
 
-        with patch("vaig.tools.gke.argocd._check_crd_exists", return_value=False), \
+        with patch("vaig.tools.gke.argocd._check_crd_exists", return_value=True), \
              patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
              patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
              patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
@@ -846,3 +881,36 @@ class TestDetectArgocd:
             namespace="default",
             limit=50,
         )
+
+    def test_namespace_cache_hit_avoids_api_calls(self) -> None:
+        """Cached namespace result is returned without making any API calls."""
+        from vaig.tools.gke.argocd import _argocd_ns_cache, detect_argocd
+
+        _argocd_ns_cache["production"] = True
+
+        with patch("vaig.tools.gke.argocd._check_crd_exists") as mock_crd, \
+             patch("vaig.tools.gke.argocd._scan_namespace_for_argocd_annotations") as mock_scan:
+            result = detect_argocd(namespace="production")
+
+        assert result is True
+        mock_crd.assert_not_called()
+        mock_scan.assert_not_called()
+
+    def test_different_namespaces_get_independent_results(self) -> None:
+        """Namespace A can be managed by ArgoCD while namespace B is not."""
+        from vaig.tools.gke.argocd import detect_argocd
+
+        def annotation_scan_side_effect(namespace: str, _api_client: object) -> bool:
+            # Only 'argocd-managed' namespace has ArgoCD annotations
+            return namespace == "argocd-managed"
+
+        with patch("vaig.tools.gke.argocd._check_crd_exists", return_value=True), \
+             patch(
+                 "vaig.tools.gke.argocd._scan_namespace_for_argocd_annotations",
+                 side_effect=annotation_scan_side_effect,
+             ):
+            result_managed = detect_argocd(namespace="argocd-managed")
+            result_unmanaged = detect_argocd(namespace="no-argocd-here")
+
+        assert result_managed is True
+        assert result_unmanaged is False
