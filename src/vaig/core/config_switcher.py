@@ -88,9 +88,6 @@ def switch_project(
 
     # Phase 1: Mutate settings
     settings.gcp.project_id = new_project
-    # Keep GKE project in sync
-    old_gke_project = settings.gke.project_id
-    settings.gke.project_id = new_project
 
     # Phase 2: Reinit client if provided
     reinitialized: list[str] = []
@@ -102,7 +99,6 @@ def switch_project(
             # Rollback on failure
             logger.error("Client reinit failed for project '%s': %s", new_project, exc)
             settings.gcp.project_id = old_project
-            settings.gke.project_id = old_gke_project
             return SwitchResult(
                 success=False,
                 field="project",

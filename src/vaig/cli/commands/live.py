@@ -376,12 +376,20 @@ def register(app: typer.Typer) -> None:
         ] = None,
         project: Annotated[
             str | None,
-            typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)"),
+            typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id only)"),
         ] = None,
         project_id: Annotated[
             str | None, typer.Option("--project-id", help="GCP project ID (overrides config, alias for --project)")
         ] = None,
         location: Annotated[str | None, typer.Option("--location", help="GCP location (overrides config)")] = None,
+        gke_project: Annotated[
+            str | None,
+            typer.Option("--gke-project", help="GKE project ID (overrides gke.project_id; defaults to --project if unset)"),
+        ] = None,
+        gke_location: Annotated[
+            str | None,
+            typer.Option("--gke-location", help="GKE cluster location (overrides gke.location)"),
+        ] = None,
         watch: Annotated[
             int | None, typer.Option("--watch", "-w", help="Re-execute every N seconds (polling mode, min 10s)")
         ] = None,
@@ -450,11 +458,19 @@ def register(app: typer.Typer) -> None:
             # TelemetrySubscriber so events are forwarded to the SQLite store.
             _helpers._init_telemetry(settings)
 
-            # Apply --project / --project-id: mutate gcp.project_id AND gke.project_id
+            # Apply --project / --project-id: mutate ONLY gcp.project_id
+            # The GKE fallback chain (gke.project_id or gcp.project_id) handles single-project setups.
             effective_project = project or project_id
             if effective_project:
                 settings.gcp.project_id = effective_project
-                settings.gke.project_id = effective_project
+
+            # Apply --gke-project: mutate ONLY gke.project_id when explicitly provided
+            if gke_project:
+                settings.gke.project_id = gke_project
+
+            # Apply --gke-location: mutate ONLY gke.location when explicitly provided
+            if gke_location:
+                settings.gke.location = gke_location
 
             # Apply --location: mutate gcp.location before component creation
             if location:

@@ -50,13 +50,21 @@ def register(app: typer.Typer) -> None:
             str | None, typer.Option("--namespace", help="Default Kubernetes namespace (overrides config)", autocompletion=complete_namespace)
         ] = None,
         project: Annotated[
-            str | None, typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id and gke.project_id)")
+            str | None, typer.Option("--project", "-p", help="GCP project ID (overrides gcp.project_id only)")
         ] = None,
         project_id: Annotated[
             str | None, typer.Option("--project-id", help="GCP project ID for GKE (overrides config, alias for --project)")
         ] = None,
         location: Annotated[
             str | None, typer.Option("--location", help="GCP location (overrides config)")
+        ] = None,
+        gke_project: Annotated[
+            str | None,
+            typer.Option("--gke-project", help="GKE project ID (overrides gke.project_id; defaults to --project if unset)"),
+        ] = None,
+        gke_location: Annotated[
+            str | None,
+            typer.Option("--gke-location", help="GKE cluster location (overrides gke.location)"),
         ] = None,
         verbose: Annotated[
             bool,
@@ -90,11 +98,19 @@ def register(app: typer.Typer) -> None:
             # etc. are forwarded to the SQLite telemetry store.
             _helpers._init_telemetry(settings)
 
-            # Apply --project / --project-id: mutate gcp.project_id AND gke.project_id
+            # Apply --project / --project-id: mutate ONLY gcp.project_id
+            # The GKE fallback chain (gke.project_id or gcp.project_id) handles single-project setups.
             effective_project = project or project_id
             if effective_project:
                 settings.gcp.project_id = effective_project
-                settings.gke.project_id = effective_project
+
+            # Apply --gke-project: mutate ONLY gke.project_id when explicitly provided
+            if gke_project:
+                settings.gke.project_id = gke_project
+
+            # Apply --gke-location: mutate ONLY gke.location when explicitly provided
+            if gke_location:
+                settings.gke.location = gke_location
 
             # Apply --location: mutate gcp.location before component creation
             if location:
@@ -294,6 +310,8 @@ async def _async_ask_impl(
     namespace: str | None = None,
     project: str | None = None,
     location: str | None = None,
+    gke_project: str | None = None,
+    gke_location: str | None = None,
 ) -> None:
     """Async implementation of the ask command.
 
@@ -310,7 +328,10 @@ async def _async_ask_impl(
 
     if project:
         settings.gcp.project_id = project
-        settings.gke.project_id = project
+    if gke_project:
+        settings.gke.project_id = gke_project
+    if gke_location:
+        settings.gke.location = gke_location
     if location:
         settings.gcp.location = location
     if model:

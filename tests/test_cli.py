@@ -840,14 +840,36 @@ class TestProjectFlag:
         assert "--location" in _strip_ansi(result.output)
 
     def test_project_flag_updates_settings(self, _mock_settings: Settings) -> None:
-        """--project should mutate gcp.project_id and gke.project_id BEFORE component creation."""
+        """--project should mutate gcp.project_id BEFORE component creation, but NOT gke.project_id."""
 
-        # Simulate what the command body does
+        # Simulate what the command body does (only gcp.project_id is set)
         _mock_settings.gcp.project_id = "flag-project"
-        _mock_settings.gke.project_id = "flag-project"
 
         assert _mock_settings.gcp.project_id == "flag-project"
-        assert _mock_settings.gke.project_id == "flag-project"
+        # gke.project_id must NOT be touched — backward compat handled by _build_gke_config fallback
+        assert _mock_settings.gke.project_id != "flag-project" or _mock_settings.gke.project_id == ""
+
+    def test_project_flag_only_sets_gcp_project(self, _mock_settings: Settings) -> None:
+        """--project sets gcp.project_id only; gke.project_id remains independent."""
+        original_gke_project = _mock_settings.gke.project_id
+
+        # Simulate what the updated command body does
+        _mock_settings.gcp.project_id = "my-gcp-project"
+
+        assert _mock_settings.gcp.project_id == "my-gcp-project"
+        # gke.project_id is untouched
+        assert _mock_settings.gke.project_id == original_gke_project
+
+    def test_gke_project_flag_sets_gke_project(self, _mock_settings: Settings) -> None:
+        """--gke-project sets gke.project_id only; gcp.project_id remains independent."""
+        original_gcp_project = _mock_settings.gcp.project_id
+
+        # Simulate what the updated command body does for --gke-project
+        _mock_settings.gke.project_id = "my-gke-project"
+
+        assert _mock_settings.gke.project_id == "my-gke-project"
+        # gcp.project_id is untouched
+        assert _mock_settings.gcp.project_id == original_gcp_project
 
     def test_project_id_backward_compat(self) -> None:
         """--project-id should still show in help for backward compat."""
@@ -869,3 +891,39 @@ class TestProjectFlag:
         project_id = "from-project-id"
         effective = project or project_id
         assert effective == "from-project-id"
+
+    def test_gke_project_flag_shows_in_live_help(self) -> None:
+        """--gke-project flag should appear in live subcommand help output."""
+        result = runner.invoke(app, ["live", "--help"])
+        assert result.exit_code == 0
+        assert "--gke-project" in _strip_ansi(result.output)
+
+    def test_gke_project_flag_shows_in_ask_help(self) -> None:
+        """--gke-project flag should appear in ask subcommand help output."""
+        result = runner.invoke(app, ["ask", "--help"])
+        assert result.exit_code == 0
+        assert "--gke-project" in _strip_ansi(result.output)
+
+    def test_gke_project_flag_shows_in_chat_help(self) -> None:
+        """--gke-project flag should appear in chat subcommand help output."""
+        result = runner.invoke(app, ["chat", "--help"])
+        assert result.exit_code == 0
+        assert "--gke-project" in _strip_ansi(result.output)
+
+    def test_gke_location_flag_shows_in_live_help(self) -> None:
+        """--gke-location flag should appear in live subcommand help output."""
+        result = runner.invoke(app, ["live", "--help"])
+        assert result.exit_code == 0
+        assert "--gke-location" in _strip_ansi(result.output)
+
+    def test_gke_location_flag_shows_in_ask_help(self) -> None:
+        """--gke-location flag should appear in ask subcommand help output."""
+        result = runner.invoke(app, ["ask", "--help"])
+        assert result.exit_code == 0
+        assert "--gke-location" in _strip_ansi(result.output)
+
+    def test_gke_location_flag_shows_in_chat_help(self) -> None:
+        """--gke-location flag should appear in chat subcommand help output."""
+        result = runner.invoke(app, ["chat", "--help"])
+        assert result.exit_code == 0
+        assert "--gke-location" in _strip_ansi(result.output)

@@ -79,7 +79,7 @@ class TestCmdProject:
         assert "Usage" in output or "project" in output.lower()
 
     def test_project_switch_success(self, repl_state: MagicMock) -> None:
-        """Task 3.1: /project <id> switches project and shows result."""
+        """Task 3.1: /project <id> switches gcp.project_id and shows result."""
         from vaig.cli.repl import _cmd_project
 
         buf = StringIO()
@@ -90,7 +90,8 @@ class TestCmdProject:
         output = buf.getvalue()
         assert "new-project" in output
         assert repl_state.settings.gcp.project_id == "new-project"
-        assert repl_state.settings.gke.project_id == "new-project"
+        # gke.project_id is NOT synced — stays as configured (fallback handled by _build_gke_config)
+        assert repl_state.settings.gke.project_id == "test-project"
         repl_state.client.reinitialize.assert_called_once()
 
     def test_project_switch_empty_fails(self, repl_state: MagicMock) -> None:
