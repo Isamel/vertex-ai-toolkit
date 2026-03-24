@@ -117,6 +117,7 @@ def _format_rollout(rollout: dict[str, Any]) -> str:
         strategy_detail = ""
 
     conditions = status.get("conditions", [])
+    conditions = conditions if isinstance(conditions, list) else []
     cond_lines = []
     for cond in conditions:
         cond_type = cond.get("type", "?")
@@ -155,6 +156,7 @@ def _format_analysisrun(run: dict[str, Any]) -> str:
     message = status.get("message", "")
 
     metric_results = status.get("metricResults", [])
+    metric_results = metric_results if isinstance(metric_results, list) else []
     metric_lines = []
     for metric in metric_results:
         metric_name = metric.get("name", "?")
@@ -188,6 +190,7 @@ def _format_analysistemplate(template: dict[str, Any]) -> str:
     namespace = meta.get("namespace", "<unknown>")
 
     metrics = spec.get("metrics", [])
+    metrics = metrics if isinstance(metrics, list) else []
     metric_lines = []
     for metric in metrics:
         metric_name = metric.get("name", "?")
@@ -219,10 +222,8 @@ def kubectl_get_rollout(namespace: str = "", name: str = "") -> ToolResult:
         :class:`~vaig.tools.base.ToolResult` with formatted Rollout output,
         or an error result on API failure.
     """
-    if _clients._k8s_unavailable():
-        return ToolResult(
-            output="kubectl_get_rollout: kubernetes SDK not available", error=True
-        )
+    if not _clients._K8S_AVAILABLE:
+        return _clients._k8s_unavailable()
 
     custom_api = _get_custom_objects_api()
     if custom_api is None:
@@ -267,14 +268,18 @@ def kubectl_get_rollout(namespace: str = "", name: str = "") -> ToolResult:
 
     except k8s_exceptions.ApiException as exc:
         if exc.status == 404:
-            return ToolResult(
-                output=f"Rollout '{name}' not found in namespace '{namespace}'.", error=False
-            )
+            if name:
+                ns = namespace or "default"
+                return ToolResult(
+                    output=f"Rollout '{name}' not found in namespace '{ns}'.", error=False
+                )
+            return ToolResult(output="No Rollouts found.", error=False)
         if exc.status == 403:
             return ToolResult(
                 output=(
                     "RBAC: permission denied listing Rollouts — "
-                    "ensure the service account has 'get/list' on 'rollouts.argoproj.io'."
+                    "ensure the service account has 'get/list' on "
+                    "apiGroups: [\"argoproj.io\"], resources: [\"rollouts\"]."
                 ),
                 error=True,
             )
@@ -297,10 +302,8 @@ def kubectl_get_analysisrun(namespace: str = "", name: str = "") -> ToolResult:
         :class:`~vaig.tools.base.ToolResult` with formatted AnalysisRun output,
         or an error result on API failure.
     """
-    if _clients._k8s_unavailable():
-        return ToolResult(
-            output="kubectl_get_analysisrun: kubernetes SDK not available", error=True
-        )
+    if not _clients._K8S_AVAILABLE:
+        return _clients._k8s_unavailable()
 
     custom_api = _get_custom_objects_api()
     if custom_api is None:
@@ -345,14 +348,18 @@ def kubectl_get_analysisrun(namespace: str = "", name: str = "") -> ToolResult:
 
     except k8s_exceptions.ApiException as exc:
         if exc.status == 404:
-            return ToolResult(
-                output=f"AnalysisRun '{name}' not found in namespace '{namespace}'.", error=False
-            )
+            if name:
+                ns = namespace or "default"
+                return ToolResult(
+                    output=f"AnalysisRun '{name}' not found in namespace '{ns}'.", error=False
+                )
+            return ToolResult(output="No AnalysisRuns found.", error=False)
         if exc.status == 403:
             return ToolResult(
                 output=(
                     "RBAC: permission denied listing AnalysisRuns — "
-                    "ensure the service account has 'get/list' on 'analysisruns.argoproj.io'."
+                    "ensure the service account has 'get/list' on "
+                    "apiGroups: [\"argoproj.io\"], resources: [\"analysisruns\"]."
                 ),
                 error=True,
             )
@@ -375,10 +382,8 @@ def kubectl_get_analysistemplate(namespace: str = "", name: str = "") -> ToolRes
         :class:`~vaig.tools.base.ToolResult` with formatted AnalysisTemplate output,
         or an error result on API failure.
     """
-    if _clients._k8s_unavailable():
-        return ToolResult(
-            output="kubectl_get_analysistemplate: kubernetes SDK not available", error=True
-        )
+    if not _clients._K8S_AVAILABLE:
+        return _clients._k8s_unavailable()
 
     custom_api = _get_custom_objects_api()
     if custom_api is None:
@@ -423,14 +428,18 @@ def kubectl_get_analysistemplate(namespace: str = "", name: str = "") -> ToolRes
 
     except k8s_exceptions.ApiException as exc:
         if exc.status == 404:
-            return ToolResult(
-                output=f"AnalysisTemplate '{name}' not found in namespace '{namespace}'.", error=False
-            )
+            if name:
+                ns = namespace or "default"
+                return ToolResult(
+                    output=f"AnalysisTemplate '{name}' not found in namespace '{ns}'.", error=False
+                )
+            return ToolResult(output="No AnalysisTemplates found.", error=False)
         if exc.status == 403:
             return ToolResult(
                 output=(
                     "RBAC: permission denied listing AnalysisTemplates — "
-                    "ensure the service account has 'get/list' on 'analysistemplates.argoproj.io'."
+                    "ensure the service account has 'get/list' on "
+                    "apiGroups: [\"argoproj.io\"], resources: [\"analysistemplates\"]."
                 ),
                 error=True,
             )

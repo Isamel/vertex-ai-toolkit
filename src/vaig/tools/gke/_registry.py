@@ -1546,8 +1546,13 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
         _argo_rollouts_active = True
         logger.info("Argo Rollouts tools registered (forced via argo_rollouts_enabled=True).")
     else:
-        # None → auto-detect via CRD presence
-        _argo_rollouts_active = detect_argo_rollouts()
+        # None → auto-detect via CRD presence; derive api_client from gke_config
+        # so the probe targets the same cluster context as the configured tools.
+        _ar_api_client = None
+        _ar_clients = _clients._create_k8s_clients(gke_config)
+        if not isinstance(_ar_clients, ToolResult):
+            _ar_api_client = _ar_clients[3]  # ApiClient is the 4th element
+        _argo_rollouts_active = detect_argo_rollouts(api_client=_ar_api_client)
         if _argo_rollouts_active:
             logger.info("Argo Rollouts CRD detected — registering Rollout tools.")
         else:

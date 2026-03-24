@@ -330,8 +330,14 @@ class ServiceHealthSkill(BaseSkill):
         elif _ar_setting is True:
             argo_rollouts_active = True
         else:
+            from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415
+            from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415
             from vaig.tools.gke.argo_rollouts import detect_argo_rollouts  # noqa: PLC0415
-            argo_rollouts_active = detect_argo_rollouts()
+            _ar_api_client = None
+            _ar_clients = _gke_clients._create_k8s_clients(effective_gke)
+            if not isinstance(_ar_clients, _ToolResult):
+                _ar_api_client = _ar_clients[3]  # ApiClient is the 4th element
+            argo_rollouts_active = detect_argo_rollouts(api_client=_ar_api_client)
 
         agents: list[dict[str, Any]] = [
             # ── Parallel group: core sub-gatherers ───────────────────────

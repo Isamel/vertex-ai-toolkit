@@ -348,8 +348,8 @@ class TestKubectlGetRollout:
         }
 
         with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api), \
-             patch("vaig.tools.gke.argo_rollouts._clients._k8s_unavailable", return_value=False):
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
             result = kubectl_get_rollout(namespace="production")
 
         assert result.error is False
@@ -368,8 +368,8 @@ class TestKubectlGetRollout:
         )
 
         with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api), \
-             patch("vaig.tools.gke.argo_rollouts._clients._k8s_unavailable", return_value=False):
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
             result = kubectl_get_rollout(namespace="production", name="payment-svc")
 
         assert result.error is False
@@ -391,8 +391,8 @@ class TestKubectlGetRollout:
         mock_api.list_namespaced_custom_object.return_value = {"items": []}
 
         with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api), \
-             patch("vaig.tools.gke.argo_rollouts._clients._k8s_unavailable", return_value=False):
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
             result = kubectl_get_rollout(namespace="empty-ns")
 
         assert result.error is False
@@ -408,8 +408,8 @@ class TestKubectlGetRollout:
         }
 
         with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api), \
-             patch("vaig.tools.gke.argo_rollouts._clients._k8s_unavailable", return_value=False):
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
             result = kubectl_get_rollout(namespace="")
 
         assert result.error is False
@@ -425,8 +425,8 @@ class TestKubectlGetRollout:
         mock_api.get_namespaced_custom_object.side_effect = k8s_exc.ApiException(status=404)
 
         with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api), \
-             patch("vaig.tools.gke.argo_rollouts._clients._k8s_unavailable", return_value=False):
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
             result = kubectl_get_rollout(namespace="production", name="missing-rollout")
 
         assert result.error is False
@@ -442,8 +442,8 @@ class TestKubectlGetRollout:
         mock_api.list_namespaced_custom_object.side_effect = k8s_exc.ApiException(status=403)
 
         with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api), \
-             patch("vaig.tools.gke.argo_rollouts._clients._k8s_unavailable", return_value=False):
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
             result = kubectl_get_rollout(namespace="production")
 
         assert result.error is True
@@ -453,11 +453,11 @@ class TestKubectlGetRollout:
         """Returns error when kubernetes SDK is unavailable."""
         from vaig.tools.gke.argo_rollouts import kubectl_get_rollout
 
-        with patch("vaig.tools.gke.argo_rollouts._clients._k8s_unavailable", return_value=True):
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", False):
             result = kubectl_get_rollout(namespace="production")
 
         assert result.error is True
-        assert "kubernetes SDK not available" in result.output
+        assert "kubernetes" in result.output.lower()
 
 
 # ── kubectl_get_analysisrun ──────────────────────────────────
@@ -479,8 +479,8 @@ class TestKubectlGetAnalysisRun:
         }
 
         with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api), \
-             patch("vaig.tools.gke.argo_rollouts._clients._k8s_unavailable", return_value=False):
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
             result = kubectl_get_analysisrun(namespace="production")
 
         assert result.error is False
@@ -499,8 +499,8 @@ class TestKubectlGetAnalysisRun:
         )
 
         with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api), \
-             patch("vaig.tools.gke.argo_rollouts._clients._k8s_unavailable", return_value=False):
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
             result = kubectl_get_analysisrun(namespace="production", name="my-run")
 
         assert result.error is False
@@ -515,8 +515,8 @@ class TestKubectlGetAnalysisRun:
         mock_api.list_namespaced_custom_object.return_value = {"items": []}
 
         with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api), \
-             patch("vaig.tools.gke.argo_rollouts._clients._k8s_unavailable", return_value=False):
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
             result = kubectl_get_analysisrun(namespace="production")
 
         assert result.error is False
@@ -532,8 +532,8 @@ class TestKubectlGetAnalysisRun:
         mock_api.list_namespaced_custom_object.side_effect = k8s_exc.ApiException(status=403)
 
         with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api), \
-             patch("vaig.tools.gke.argo_rollouts._clients._k8s_unavailable", return_value=False):
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
             result = kubectl_get_analysisrun(namespace="production")
 
         assert result.error is True
@@ -559,8 +559,8 @@ class TestKubectlGetAnalysisTemplate:
         }
 
         with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api), \
-             patch("vaig.tools.gke.argo_rollouts._clients._k8s_unavailable", return_value=False):
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
             result = kubectl_get_analysistemplate(namespace="production")
 
         assert result.error is False
@@ -587,8 +587,8 @@ class TestKubectlGetAnalysisTemplate:
         )
 
         with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api), \
-             patch("vaig.tools.gke.argo_rollouts._clients._k8s_unavailable", return_value=False):
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
             result = kubectl_get_analysistemplate(namespace="production", name="success-rate")
 
         assert result.error is False
@@ -603,8 +603,8 @@ class TestKubectlGetAnalysisTemplate:
         mock_api.list_namespaced_custom_object.return_value = {"items": []}
 
         with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api), \
-             patch("vaig.tools.gke.argo_rollouts._clients._k8s_unavailable", return_value=False):
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
             result = kubectl_get_analysistemplate(namespace="production")
 
         assert result.error is False
