@@ -172,9 +172,13 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
-            execute=lambda resource_type, name, namespace="default", resource=None,
-                    _cfg=gke_config: kubectl.kubectl_describe(
-                resource_type or resource, name, gke_config=_cfg, namespace=namespace,
+            execute=lambda resource_type=None, name=None, namespace="default", resource=None,
+                    _cfg=gke_config: (
+                ToolResult(output="Error: resource_type (or resource) and name are required")
+                if not (resource_type or resource) or not name
+                else kubectl.kubectl_describe(
+                    resource_type or resource, name, gke_config=_cfg, namespace=namespace,
+                )
             ),
         ),
         ToolDef(

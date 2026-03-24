@@ -801,11 +801,10 @@ When a finding involves connectivity, DNS, or service reachability issues, sugge
 Note: exec_command requires gke.exec_enabled=true in config. If exec is disabled, note this in the Verification Gap: "Requires exec_enabled=true — manual verification needed"
 
 ### ARGOCD RESOURCES — SPECIAL RULE
-NEVER generate: `kubectl_get(resource="applications.argoproj.io", ...)` or any other ArgoCD CRD group name.
-ArgoCD Application CRDs are NOT supported by kubectl_get.
-For ArgoCD verification ONLY use: `argocd_app_status()`, `argocd_list_applications()`
-If ArgoCD tools are not listed in the available tools, mark the Verification Gap as:
-`None — ArgoCD tools unavailable, mark as UNVERIFIABLE`
+You MAY generate: `kubectl_get(resource="applications.argoproj.io", ...)` for ArgoCD Application CRDs, since this resource is supported by kubectl_get. Do NOT invent other ArgoCD CRD group names that are not supported by the available tools.
+For ArgoCD verification, PREFER using the dedicated tools when they are available: `argocd_app_status()`, `argocd_list_applications()`.
+If ArgoCD-specific tools are not listed in the available tools, you may still use `kubectl_get(resource="applications.argoproj.io", ...)` to inspect Application CRDs when appropriate.
+If neither ArgoCD tools nor kubectl_get data for ArgoCD Applications are available, clearly explain this limitation in the Verification Gap text, and choose a Verification Gap level using the standard phrases defined earlier (for example, only use `None — sufficient evidence from data collection` when you actually have sufficient evidence).
 
 ## STRICT Analysis Rules
 1. Be PRECISE about scope. A single failing pod in one namespace does NOT make the cluster "DEGRADED". Classify the issue scope correctly: cluster-level, namespace-level, or resource-level.
