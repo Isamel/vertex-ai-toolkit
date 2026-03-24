@@ -460,6 +460,9 @@ class GKEConfig(BaseModel):
     argocd_context: str = ""
     argocd_namespace: str = ""
     argocd_verify_ssl: bool = True
+    # Argo Rollouts integration — None means auto-detect via CRD presence,
+    # True forces enable, False disables entirely.
+    argo_rollouts_enabled: bool | None = None
 
 
 class MCPServerConfig(BaseModel):
