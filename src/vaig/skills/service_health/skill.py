@@ -340,6 +340,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Workload Health Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
+                "injectable_agents": ["node_gatherer"],
                 "capabilities": [
                     "pod", "pods", "deployment", "workload", "restart",
                     "crash", "crashloop", "oom", "container", "replicas",

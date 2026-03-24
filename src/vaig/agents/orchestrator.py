@@ -28,6 +28,7 @@ from vaig.core.models import PipelineState, apply_state_patch
 from vaig.core.pricing import calculate_cost
 from vaig.core.prompt_defense import ANTI_INJECTION_RULE, wrap_untrusted_content
 from vaig.skills.base import BaseSkill, SkillPhase, SkillResult
+from vaig.tools.agent_tool import agent_as_tool
 from vaig.tools.base import ToolRegistry
 
 if TYPE_CHECKING:
@@ -250,6 +251,12 @@ class Orchestrator:
         :class:`SpecialistAgent`.  This keeps the method fully backward-compatible
         — callers that omit *tool_registry* get the same behaviour as before.
 
+        When an agent config declares ``injectable_agents: [name, ...]``, the
+        orchestrator creates a **per-agent copy** of the shared ``tool_registry``
+        and registers the named sub-agents as tools (``ask_<name>`` tools) into
+        that copy before execution.  This ensures tool isolation: only the
+        declaring agent sees the sub-agent tools, not the entire pipeline.
+
         Args:
             skill: The skill whose agents to create.
             tool_registry: Optional tool registry for tool-aware agents.
@@ -265,13 +272,35 @@ class Orchestrator:
 
         configs = agent_configs if agent_configs is not None else skill.get_agents_config()
 
+        # ── Pass 1: collect injectable_agents declarations per agent name ──
+        # We need the full agent list built first so we can look up targets
+        # by name in Pass 2 (after all agents are created).
+        injectable_map: dict[str, list[str]] = {}
+        for config_dict in configs:
+            names = config_dict.get("injectable_agents")
+            if names:
+                injectable_map[config_dict["name"]] = list(names)
+
         for config_dict in configs:
             if config_dict.get("requires_tools") and tool_registry is not None:
                 model = config_dict.get("model", "gemini-2.5-pro")
+
+                # ── Per-agent registry copy for injectable_agents ──────────
+                # When this agent declares sub-agent dependencies, give it its
+                # own shallow-copied registry so the injected tools stay
+                # isolated (other agents are NOT affected).
+                agent_name = config_dict["name"]
+                if agent_name in injectable_map:
+                    agent_registry: ToolRegistry = ToolRegistry()
+                    for t in tool_registry.list_tools():
+                        agent_registry.register(t)
+                else:
+                    agent_registry = tool_registry
+
                 agent: BaseAgent = ToolAwareAgent.from_config_dict(
                     config_dict,
                     model,
-                    tool_registry,
+                    agent_registry,
                     self._client,
                 )
                 logger.info(
@@ -292,7 +321,74 @@ class Orchestrator:
             self._agents[agent.name] = agent
             agents.append(agent)
 
+        # ── Pass 2: inject sub-agent tools into per-agent registries ──────
+        # Now that ALL agents exist in self._agents, resolve target names
+        # and register wrapped ToolDef objects into each caller's registry.
+        if injectable_map and tool_registry is not None:
+            self._inject_sub_agent_tools(injectable_map)
+
         return agents
+
+    def _inject_sub_agent_tools(
+        self,
+        injectable_map: dict[str, list[str]],
+    ) -> None:
+        """Register sub-agent tools into each calling agent's registry copy.
+
+        Called by :meth:`create_agents_for_skill` after all agents have been
+        created.  For each agent in *injectable_map*, look up the target agents
+        by name from ``self._agents``, wrap them with :func:`agent_as_tool`,
+        and register the resulting :class:`~vaig.tools.base.ToolDef` into the
+        calling agent's (already-copied) :class:`~vaig.tools.base.ToolRegistry`.
+
+        Self-injection is prevented by passing ``caller_name`` to
+        :func:`agent_as_tool`; the factory returns a no-op error tool when it
+        detects the caller and target are the same agent.
+
+        Missing targets (names that don't resolve to a known agent) are logged
+        as warnings and skipped — they do NOT raise, so the pipeline continues.
+
+        Args:
+            injectable_map: Mapping of caller agent name → list of target agent
+                names to inject as tools.
+        """
+        for caller_name, target_names in injectable_map.items():
+            caller = self._agents.get(caller_name)
+            if caller is None:
+                logger.warning(
+                    "_inject_sub_agent_tools: caller agent '%s' not found in registry — skipping",
+                    caller_name,
+                )
+                continue
+
+            # Only ToolAwareAgent has a mutable tool registry
+            if not isinstance(caller, ToolAwareAgent):
+                logger.warning(
+                    "_inject_sub_agent_tools: caller '%s' is not a ToolAwareAgent "
+                    "(type=%s) — cannot inject tools, skipping",
+                    caller_name,
+                    type(caller).__name__,
+                )
+                continue
+
+            for target_name in target_names:
+                target = self._agents.get(target_name)
+                if target is None:
+                    logger.warning(
+                        "_inject_sub_agent_tools: target agent '%s' declared in "
+                        "injectable_agents of '%s' not found — skipping",
+                        target_name,
+                        caller_name,
+                    )
+                    continue
+
+                tool_def = agent_as_tool(target, caller_name=caller_name)
+                caller.tool_registry.register(tool_def)
+                logger.info(
+                    "Injected sub-agent tool '%s' into agent '%s' registry",
+                    tool_def.name,
+                    caller_name,
+                )
 
     def execute_sequential(
         self,
