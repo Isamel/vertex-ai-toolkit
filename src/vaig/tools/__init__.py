@@ -1,5 +1,6 @@
 """Tools package — tool definitions and registry for agent tool use."""
 
+from vaig.tools.agent_tool import agent_as_tool
 from vaig.tools.base import ToolDef, ToolParam, ToolRegistry, ToolResult
 from vaig.tools.file_tools import (
     create_file_tools,
@@ -39,6 +40,7 @@ __all__ = [
     "ToolParam",
     "ToolRegistry",
     "ToolResult",
+    "agent_as_tool",
     # Always-available tools
     "create_file_tools",
     "create_shell_tools",
