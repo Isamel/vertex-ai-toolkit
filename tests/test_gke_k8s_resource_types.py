@@ -153,7 +153,6 @@ class TestNewResourceAliases:
         ("pc", "priorityclasses"),
         # Runtime
         ("runtimeclass", "runtimeclasses"),
-        ("rc", "runtimeclasses"),
     ])
     def test_alias_normalises_correctly(self, alias: str, expected: str) -> None:
         """_normalise_resource() must resolve each alias to its canonical plural."""

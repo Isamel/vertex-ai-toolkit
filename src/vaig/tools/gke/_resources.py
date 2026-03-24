@@ -219,7 +219,6 @@ _RESOURCE_ALIASES: dict[str, str] = {
     "pc": "priorityclasses",
     # Runtime aliases
     "runtimeclass": "runtimeclasses",
-    "rc": "runtimeclasses",
     # External Secrets aliases
     "es": "externalsecrets",
     # ArgoCD aliases
@@ -291,6 +290,56 @@ _CLUSTER_SCOPED_RESOURCES = frozenset(
         "priorityclasses",
         # Runtime cluster-scoped
         "runtimeclasses",
+    }
+)
+
+# Resources where kubectl_describe has an actual handler in _describe_resource().
+# New API groups (rbac, storage, discovery, scheduling, node) are supported for
+# list/get but do NOT have describe handlers — they return None, which surfaces
+# as "Describe not supported".  Keep this set accurate so validation is honest.
+_DESCRIBE_SUPPORTED_RESOURCES: frozenset[str] = frozenset(
+    {
+        # Core V1
+        "pods",
+        "services",
+        "configmaps",
+        "secrets",
+        "serviceaccounts",
+        "endpoints",
+        "pvc",
+        "persistentvolumeclaims",
+        "resourcequotas",
+        "nodes",
+        "namespaces",
+        "pv",
+        "persistentvolumes",
+        # Apps V1
+        "deployments",
+        "statefulsets",
+        "daemonsets",
+        "replicasets",
+        # Batch V1
+        "jobs",
+        "cronjobs",
+        # Autoscaling
+        "hpa",
+        "horizontalpodautoscalers",
+        # Networking
+        "ingress",
+        "ingresses",
+        "networkpolicies",
+        # Policy
+        "poddisruptionbudgets",
+        # AdmissionRegistration
+        "mutatingwebhookconfigurations",
+        "validatingwebhookconfigurations",
+        # ApiExtensions
+        "customresourcedefinitions",
+        "crds",
+        # Custom resources
+        "externalsecrets",
+        "externalsecret",
+        "verticalpodautoscalers",
     }
 )
 
@@ -463,32 +512,40 @@ def _list_resource(
     # ── RBAC Authorization V1 resources ──────────────────────
     if api_group == "rbac":
         rbac_v1 = RbacAuthorizationV1Api(api_client=api_client)
-        if resource == "clusterroles":
-            return rbac_v1.list_cluster_role(**kwargs)
-        if resource == "clusterrolebindings":
-            return rbac_v1.list_cluster_role_binding(**kwargs)
-        if resource == "roles":
-            if namespace in ("", "all"):
-                return rbac_v1.list_role_for_all_namespaces(**kwargs)
-            return rbac_v1.list_namespaced_role(namespace=namespace, **kwargs)
-        if resource == "rolebindings":
-            if namespace in ("", "all"):
-                return rbac_v1.list_role_binding_for_all_namespaces(**kwargs)
-            return rbac_v1.list_namespaced_role_binding(namespace=namespace, **kwargs)
-        return ToolResult(output=f"Unsupported RBAC resource type: {resource}", error=True)
+        # Cluster-scoped RBAC resources: map to their single list method
+        rbac_cluster_map: dict[str, str] = {
+            "clusterroles": "list_cluster_role",
+            "clusterrolebindings": "list_cluster_role_binding",
+        }
+        # Namespaced RBAC resources: (all_namespaces_method, namespaced_method)
+        rbac_ns_map: dict[str, tuple[str, str]] = {
+            "roles": ("list_role_for_all_namespaces", "list_namespaced_role"),
+            "rolebindings": ("list_role_binding_for_all_namespaces", "list_namespaced_role_binding"),
+        }
+        if resource in rbac_cluster_map:
+            return getattr(rbac_v1, rbac_cluster_map[resource])(**kwargs)
+        entry_rbac = rbac_ns_map.get(resource)
+        if not entry_rbac:
+            return ToolResult(output=f"Unsupported RBAC resource type: {resource}", error=True)
+        all_ns_method, ns_method = entry_rbac
+        if namespace in ("", "all"):
+            return getattr(rbac_v1, all_ns_method)(**kwargs)
+        return getattr(rbac_v1, ns_method)(namespace=namespace, **kwargs)
 
     # ── Storage V1 resources ──────────────────────────────────
     if api_group == "storage":
         storage_v1 = StorageV1Api(api_client=api_client)
-        if resource == "storageclasses":
-            return storage_v1.list_storage_class(**kwargs)
-        if resource == "volumeattachments":
-            return storage_v1.list_volume_attachment(**kwargs)
-        if resource == "csidrivers":
-            return storage_v1.list_csi_driver(**kwargs)
-        if resource == "csinodes":
-            return storage_v1.list_csi_node(**kwargs)
-        return ToolResult(output=f"Unsupported storage resource type: {resource}", error=True)
+        # All storage resources are cluster-scoped — keys map to method name strings
+        storage_method_map: dict[str, str] = {
+            "storageclasses": "list_storage_class",
+            "volumeattachments": "list_volume_attachment",
+            "csidrivers": "list_csi_driver",
+            "csinodes": "list_csi_node",
+        }
+        method_name_s = storage_method_map.get(resource)
+        if not method_name_s:
+            return ToolResult(output=f"Unsupported storage resource type: {resource}", error=True)
+        return getattr(storage_v1, method_name_s)(**kwargs)
 
     # ── Scheduling V1 resources ───────────────────────────────
     if api_group == "scheduling":
