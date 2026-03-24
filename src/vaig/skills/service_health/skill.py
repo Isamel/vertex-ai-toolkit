@@ -380,7 +380,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Cloud Logging Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
-                "tool_categories": ["kubernetes", "logging"],
+                "tool_categories": ["logging"],
                 "capabilities": [
                     "log", "logs", "logging", "error", "errors", "warning",
                     "warnings", "stacktrace", "exception", "stderr",

@@ -113,6 +113,20 @@ class ToolRegistry:
         """Return all registered tools."""
         return list(self._tools.values())
 
+    def copy(self) -> ToolRegistry:
+        """Return a shallow copy of this registry.
+
+        The new registry contains the same :class:`ToolDef` references as the
+        original.  Mutating the copy (registering or removing tools) does not
+        affect the source registry.
+
+        Returns:
+            A new :class:`ToolRegistry` with the same tool definitions.
+        """
+        new_registry = ToolRegistry()
+        new_registry._tools = self._tools.copy()
+        return new_registry
+
     def filter_by_categories(self, categories: frozenset[str]) -> ToolRegistry:
         """Return a new registry containing only tools whose categories intersect *categories*.
 

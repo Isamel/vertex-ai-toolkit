@@ -337,9 +337,7 @@ class Orchestrator:
                 # isolated (other agents are NOT affected).
                 agent_name = config_dict["name"]
                 if agent_name in injectable_map:
-                    agent_registry: ToolRegistry = ToolRegistry()
-                    for t in effective_registry.list_tools():
-                        agent_registry.register(t)
+                    agent_registry: ToolRegistry = effective_registry.copy()
                 else:
                     agent_registry = effective_registry
 

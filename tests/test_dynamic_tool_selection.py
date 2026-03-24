@@ -8,6 +8,11 @@ Validates that:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vaig.tools.base import ToolRegistry
+
 
 class TestDynamicToolSelectionTokenSavings:
     """Token-savings contract tests for ServiceHealthSkill agent configs."""
@@ -35,7 +40,7 @@ class TestDynamicToolSelectionTokenSavings:
         with patch("vaig.core.config.get_settings", return_value=mock_settings):
             return ServiceHealthSkill().get_agents_config()
 
-    def _make_full_gke_registry(self):  # type: ignore[return]
+    def _make_full_gke_registry(self) -> ToolRegistry:
         """Build a full GKE ToolRegistry without hitting the network."""
         from unittest.mock import patch
 

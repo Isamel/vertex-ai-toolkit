@@ -10,7 +10,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
-from vaig.tools.categories import ARGOCD, DATADOG, HELM, KUBERNETES, MESH, SCALING
+from vaig.tools.categories import ARGOCD, DATADOG, HELM, KUBERNETES, LOGGING, MESH, SCALING
 
 from . import _clients, diagnostics, discovery, kubectl, mesh, mutations, security
 from .argocd import (
@@ -174,7 +174,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "container logs when current container is in CrashLoopBackOff. "
                 "Read-only — does not modify any resources."
             ),
-            categories=frozenset({KUBERNETES}),
+            categories=frozenset({KUBERNETES, LOGGING}),
             parameters=[
                 ToolParam(
                     name="pod",
