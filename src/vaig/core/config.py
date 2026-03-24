@@ -453,8 +453,9 @@ class GKEConfig(BaseModel):
     exec_enabled: bool = False
     # Helm integration — enabled by default.
     helm_enabled: bool = True
-    # ArgoCD integration — disabled by default, requires explicit opt-in.
-    argocd_enabled: bool = False
+    # ArgoCD integration — None means auto-detect via CRD + annotation fallback,
+    # True forces enable, False disables entirely.
+    argocd_enabled: bool | None = None  # None=auto-detect, True=force-enable, False=disable
     argocd_server: str = Field(default="", repr=False)
     argocd_token: str = Field(default="", repr=False)
     argocd_context: str = ""

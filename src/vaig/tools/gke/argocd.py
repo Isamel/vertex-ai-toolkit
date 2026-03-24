@@ -108,6 +108,74 @@ def _check_crd_exists(crd_name: str, api_client: Any = None) -> bool:
         return False
 
 
+_ARGOCD_ANNOTATION_MARKERS = (
+    "argocd.argoproj.io/tracking-id",
+    "argocd.argoproj.io/managed-by",
+)
+
+
+def detect_argocd(namespace: str = "", api_client: Any = None) -> bool:
+    """Detect ArgoCD presence via CRD probe + annotation fallback.
+
+    Two-phase detection:
+    1. CRD probe: checks for ``applications.argoproj.io`` CRD (fast, cached).
+    2. Annotation fallback: if CRD probe fails (404 or 403 RBAC), scans
+       Deployment annotations in the target namespace for ArgoCD markers
+       like ``argocd.argoproj.io/tracking-id``.
+
+    Args:
+        namespace: Namespace to scan for annotations. Empty = "default".
+        api_client: Optional pre-configured kubernetes ApiClient.
+
+    Returns:
+        True if ArgoCD presence is confirmed.
+    """
+    # Phase 1: CRD probe
+    if _check_crd_exists("applications.argoproj.io", api_client=api_client):
+        logger.info("ArgoCD CRD detected — enabling ArgoCD tools.")
+        return True
+
+    # Phase 2: Annotation fallback (handles RBAC-restricted clusters)
+    if not _K8S_AVAILABLE:
+        return False
+
+    try:
+        from kubernetes import client as k8s_client  # noqa: WPS433
+        from kubernetes import config as k8s_config  # noqa: WPS433
+
+        if api_client is None:
+            try:
+                k8s_config.load_incluster_config()
+            except k8s_config.ConfigException:
+                try:
+                    k8s_config.load_kube_config()
+                except k8s_config.ConfigException:
+                    return False
+            apps_api = k8s_client.AppsV1Api()
+        else:
+            apps_api = k8s_client.AppsV1Api(api_client)
+
+        ns = namespace or "default"
+        deployments = apps_api.list_namespaced_deployment(
+            namespace=ns,
+            limit=50,
+        )
+        for dep in deployments.items or []:
+            annotations = dep.metadata.annotations or {}
+            if any(k in annotations for k in _ARGOCD_ANNOTATION_MARKERS):
+                logger.info(
+                    "ArgoCD detected via deployment annotations in namespace '%s' "
+                    "(CRD probe unavailable) — enabling ArgoCD tools.",
+                    ns,
+                )
+                return True
+
+    except Exception:  # noqa: BLE001
+        logger.debug("ArgoCD annotation fallback probe failed", exc_info=True)
+
+    return False
+
+
 def _get_custom_objects_api() -> Any | None:
     """Return a CustomObjectsApi instance for same-cluster mode.
 

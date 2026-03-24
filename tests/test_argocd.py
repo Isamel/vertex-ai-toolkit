@@ -696,3 +696,153 @@ class TestDiscoverArgoCdNamespaceWithCrdPrecheck:
 
         # _check_crd_exists called only once — second call hits namespace cache
         assert mock_crd.call_count == 1
+
+
+# ── detect_argocd ────────────────────────────────────────────
+
+
+def _make_deployment_meta(annotations: dict | None = None) -> MagicMock:
+    """Create a mock deployment object with the given annotations."""
+    dep = MagicMock()
+    dep.metadata.annotations = annotations or {}
+    return dep
+
+
+class TestDetectArgocd:
+    """Tests for detect_argocd — two-phase CRD probe + annotation fallback."""
+
+    def test_crd_found_returns_true(self) -> None:
+        """Returns True immediately when applications.argoproj.io CRD exists."""
+        from vaig.tools.gke.argocd import detect_argocd
+
+        with patch("vaig.tools.gke.argocd._check_crd_exists", return_value=True):
+            result = detect_argocd(namespace="production")
+
+        assert result is True
+
+    def test_crd_not_found_no_annotations_returns_false(self) -> None:
+        """Returns False when CRD absent and no matching annotations found."""
+        from vaig.tools.gke.argocd import detect_argocd
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = [
+            _make_deployment_meta({"app": "foo", "version": "1.0"}),
+        ]
+
+        with patch("vaig.tools.gke.argocd._check_crd_exists", return_value=False), \
+             patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = detect_argocd(namespace="production")
+
+        assert result is False
+
+    def test_crd_403_rbac_but_annotations_present_returns_true(self) -> None:
+        """Returns True when CRD probe fails (RBAC 403) but annotations are found.
+
+        This is the key scenario: RBAC-restricted clusters deny CRD access but
+        deployments carry argocd.argoproj.io/tracking-id annotations that confirm
+        ArgoCD is managing resources.
+        """
+        from vaig.tools.gke.argocd import detect_argocd
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = [
+            _make_deployment_meta({"app": "foo"}),
+            _make_deployment_meta({"argocd.argoproj.io/tracking-id": "my-app:argocd/my-app"}),
+        ]
+
+        with patch("vaig.tools.gke.argocd._check_crd_exists", return_value=False), \
+             patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = detect_argocd(namespace="production")
+
+        assert result is True
+
+    def test_crd_403_rbac_managed_by_annotation_returns_true(self) -> None:
+        """Returns True when argocd.argoproj.io/managed-by annotation is found."""
+        from vaig.tools.gke.argocd import detect_argocd
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = [
+            _make_deployment_meta({"argocd.argoproj.io/managed-by": "my-argocd"}),
+        ]
+
+        with patch("vaig.tools.gke.argocd._check_crd_exists", return_value=False), \
+             patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = detect_argocd(namespace="staging")
+
+        assert result is True
+
+    def test_crd_not_found_no_annotations_returns_false_rbac_path(self) -> None:
+        """Returns False when CRD absent and no annotations after RBAC probe."""
+        from vaig.tools.gke.argocd import detect_argocd
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = []
+
+        with patch("vaig.tools.gke.argocd._check_crd_exists", return_value=False), \
+             patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = detect_argocd(namespace="default")
+
+        assert result is False
+
+    def test_k8s_unavailable_returns_false(self) -> None:
+        """Returns False when the kubernetes SDK is not available."""
+        from vaig.tools.gke.argocd import detect_argocd
+
+        with patch("vaig.tools.gke.argocd._check_crd_exists", return_value=False), \
+             patch("vaig.tools.gke.argocd._K8S_AVAILABLE", False):
+            result = detect_argocd(namespace="production")
+
+        assert result is False
+
+    def test_annotation_scan_exception_returns_false_gracefully(self) -> None:
+        """Returns False gracefully when annotation scan throws an unexpected error."""
+        from vaig.tools.gke.argocd import detect_argocd
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.side_effect = RuntimeError("Connection refused")
+
+        with patch("vaig.tools.gke.argocd._check_crd_exists", return_value=False), \
+             patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = detect_argocd(namespace="production")
+
+        assert result is False
+
+    def test_uses_default_namespace_when_empty(self) -> None:
+        """Uses 'default' namespace when namespace param is empty string."""
+        from vaig.tools.gke.argocd import detect_argocd
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = []
+
+        with patch("vaig.tools.gke.argocd._check_crd_exists", return_value=False), \
+             patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            detect_argocd(namespace="")
+
+        mock_apps_api.list_namespaced_deployment.assert_called_once_with(
+            namespace="default",
+            limit=50,
+        )

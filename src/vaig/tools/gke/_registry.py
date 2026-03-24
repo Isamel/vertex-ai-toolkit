@@ -10,7 +10,17 @@ import logging
 from typing import TYPE_CHECKING
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
-from vaig.tools.categories import ARGO_ROLLOUTS, ARGOCD, DATADOG, HELM, KUBERNETES, LOGGING, MESH, SCALING
+from vaig.tools.categories import (
+    ARGO_ROLLOUTS,
+    ARGOCD,
+    DATADOG,
+    HELM,
+    KUBERNETES,
+    KUBERNETES_WRITE,
+    LOGGING,
+    MESH,
+    SCALING,
+)
 
 from . import _clients, diagnostics, discovery, kubectl, mesh, mutations, security
 from .argo_rollouts import (
@@ -25,6 +35,7 @@ from .argocd import (
     argocd_app_managed_resources,
     argocd_app_status,
     argocd_list_applications,
+    detect_argocd,
 )
 from .datadog import get_datadog_config
 from .datadog_api import (
@@ -186,6 +197,9 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             description=(
                 "Retrieve logs from a Kubernetes pod. Automatically fetches previous "
                 "container logs when current container is in CrashLoopBackOff. "
+                "For multi-container pods, auto-detects the app container by filtering "
+                "out known sidecars (istio, datadog, linkerd, envoy, init containers); "
+                "retries automatically when a single app container is found. "
                 "Read-only — does not modify any resources."
             ),
             categories=frozenset({KUBERNETES, LOGGING}),
@@ -204,7 +218,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ToolParam(
                     name="container",
                     type="string",
-                    description="Specific container name (for multi-container pods)",
+                    description="Container name. Required for multi-container pods. Auto-detected if omitted.",
                     required=False,
                 ),
                 ToolParam(
@@ -273,7 +287,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "number of replicas (0-50). Reports the previous and new replica count. "
                 "WRITE operation — modifies the cluster."
             ),
-            categories=frozenset({KUBERNETES}),
+            categories=frozenset({KUBERNETES_WRITE}),
             parameters=[
                 ToolParam(
                     name="resource",
@@ -310,7 +324,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "Equivalent to 'kubectl rollout restart'. Causes a zero-downtime rolling update. "
                 "WRITE operation — modifies the cluster."
             ),
-            categories=frozenset({KUBERNETES}),
+            categories=frozenset({KUBERNETES_WRITE}),
             parameters=[
                 ToolParam(
                     name="resource",
@@ -343,7 +357,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "System labels (kubernetes.io/, k8s.io/) are protected. "
                 "WRITE operation — modifies the cluster."
             ),
-            categories=frozenset({KUBERNETES}),
+            categories=frozenset({KUBERNETES_WRITE}),
             parameters=[
                 ToolParam(
                     name="resource",
@@ -384,7 +398,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "System annotations (kubernetes.io/, k8s.io/) are protected. "
                 "WRITE operation — modifies the cluster."
             ),
-            categories=frozenset({KUBERNETES}),
+            categories=frozenset({KUBERNETES_WRITE}),
             parameters=[
                 ToolParam(
                     name="resource",
@@ -1187,8 +1201,31 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             ),
         ])
 
-    # ── ArgoCD tools (conditional on argocd_enabled) ─────────
-    if gke_config.argocd_enabled:
+    # ── ArgoCD tools (auto-detect or explicit toggle) ─────────
+    _acd_setting = gke_config.argocd_enabled
+    if _acd_setting is False:
+        _argocd_active = False
+        logger.debug("ArgoCD tools skipped (argocd_enabled=False).")
+    elif _acd_setting is True:
+        _argocd_active = True
+        logger.info("ArgoCD tools force-enabled (argocd_enabled=True).")
+    else:
+        # None → auto-detect via CRD + annotation fallback
+        _acd_api_client = None
+        _acd_clients = _clients._create_k8s_clients(gke_config)
+        if not isinstance(_acd_clients, ToolResult):
+            _acd_api_client = _acd_clients[3]  # api_client from tuple
+        _argocd_active = detect_argocd(
+            namespace=gke_config.default_namespace,
+            api_client=_acd_api_client,
+        )
+        if not _argocd_active:
+            logger.debug(
+                "ArgoCD not detected — skipping ArgoCD tools. "
+                "Set argocd_enabled=true to force-enable."
+            )
+
+    if _argocd_active:
         tools.extend([
             ToolDef(
                 name="argocd_list_applications",
@@ -1557,7 +1594,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
         _ar_clients = _clients._create_k8s_clients(gke_config)
         if not isinstance(_ar_clients, ToolResult):
             _ar_api_client = _ar_clients[3]  # ApiClient is the 4th element
-        _argo_rollouts_active = detect_argo_rollouts(api_client=_ar_api_client)
+        _argo_rollouts_active = detect_argo_rollouts(
+            namespace=gke_config.default_namespace,
+            api_client=_ar_api_client,
+        )
         if _argo_rollouts_active:
             logger.info("Argo Rollouts CRD detected — registering Rollout tools.")
         else:
