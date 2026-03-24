@@ -156,9 +156,9 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             categories=frozenset({KUBERNETES}),
             parameters=[
                 ToolParam(
-                    name="resource",
+                    name="resource_type",
                     type="string",
-                    description="Kubernetes resource type (e.g. 'pod', 'deployment', 'service')",
+                    description="Kubernetes resource type (e.g. 'pod', 'deployment', 'service', 'hpa')",
                 ),
                 ToolParam(
                     name="name",
@@ -172,8 +172,9 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
-            execute=lambda resource, name, namespace="default", _cfg=gke_config: kubectl.kubectl_describe(
-                resource, name, gke_config=_cfg, namespace=namespace,
+            execute=lambda resource_type, name, namespace="default", resource=None,
+                    _cfg=gke_config: kubectl.kubectl_describe(
+                resource_type or resource, name, gke_config=_cfg, namespace=namespace,
             ),
         ),
         ToolDef(

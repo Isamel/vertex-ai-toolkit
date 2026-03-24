@@ -800,6 +800,13 @@ When a finding involves connectivity, DNS, or service reachability issues, sugge
 
 Note: exec_command requires gke.exec_enabled=true in config. If exec is disabled, note this in the Verification Gap: "Requires exec_enabled=true — manual verification needed"
 
+### ARGOCD RESOURCES — SPECIAL RULE
+NEVER generate: `kubectl_get(resource="applications.argoproj.io", ...)` or any other ArgoCD CRD group name.
+ArgoCD Application CRDs are NOT supported by kubectl_get.
+For ArgoCD verification ONLY use: `argocd_app_status()`, `argocd_list_applications()`
+If ArgoCD tools are not listed in the available tools, mark the Verification Gap as:
+`None — ArgoCD tools unavailable, mark as UNVERIFIABLE`
+
 ## STRICT Analysis Rules
 1. Be PRECISE about scope. A single failing pod in one namespace does NOT make the cluster "DEGRADED". Classify the issue scope correctly: cluster-level, namespace-level, or resource-level.
 2. ONLY reference data that appears in the gathered output. If the gatherer did not return data for something, say "Data not collected" — never infer or fabricate.
