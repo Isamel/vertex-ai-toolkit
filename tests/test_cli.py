@@ -841,13 +841,14 @@ class TestProjectFlag:
 
     def test_project_flag_updates_settings(self, _mock_settings: Settings) -> None:
         """--project should mutate gcp.project_id BEFORE component creation, but NOT gke.project_id."""
+        original_gke_project = _mock_settings.gke.project_id
 
         # Simulate what the command body does (only gcp.project_id is set)
         _mock_settings.gcp.project_id = "flag-project"
 
         assert _mock_settings.gcp.project_id == "flag-project"
         # gke.project_id must NOT be touched — backward compat handled by _build_gke_config fallback
-        assert _mock_settings.gke.project_id == ""
+        assert _mock_settings.gke.project_id == original_gke_project
 
     def test_project_flag_only_sets_gcp_project(self, _mock_settings: Settings) -> None:
         """--project sets gcp.project_id only; gke.project_id remains independent."""
@@ -892,41 +893,22 @@ class TestProjectFlag:
         effective = project or project_id
         assert effective == "from-project-id"
 
-    def test_gke_project_flag_shows_in_live_help(self) -> None:
-        """--gke-project flag should appear in live subcommand help output."""
-        result = runner.invoke(app, ["live", "--help"])
+    @pytest.mark.parametrize(
+        "subcommand, flag",
+        [
+            ("live", "--gke-project"),
+            ("ask", "--gke-project"),
+            ("chat", "--gke-project"),
+            ("live", "--gke-location"),
+            ("ask", "--gke-location"),
+            ("chat", "--gke-location"),
+        ],
+    )
+    def test_gke_flags_show_in_help(self, subcommand: str, flag: str) -> None:
+        """Check that --gke-project and --gke-location flags appear in help output."""
+        result = runner.invoke(app, [subcommand, "--help"])
         assert result.exit_code == 0
-        assert "--gke-project" in _strip_ansi(result.output)
-
-    def test_gke_project_flag_shows_in_ask_help(self) -> None:
-        """--gke-project flag should appear in ask subcommand help output."""
-        result = runner.invoke(app, ["ask", "--help"])
-        assert result.exit_code == 0
-        assert "--gke-project" in _strip_ansi(result.output)
-
-    def test_gke_project_flag_shows_in_chat_help(self) -> None:
-        """--gke-project flag should appear in chat subcommand help output."""
-        result = runner.invoke(app, ["chat", "--help"])
-        assert result.exit_code == 0
-        assert "--gke-project" in _strip_ansi(result.output)
-
-    def test_gke_location_flag_shows_in_live_help(self) -> None:
-        """--gke-location flag should appear in live subcommand help output."""
-        result = runner.invoke(app, ["live", "--help"])
-        assert result.exit_code == 0
-        assert "--gke-location" in _strip_ansi(result.output)
-
-    def test_gke_location_flag_shows_in_ask_help(self) -> None:
-        """--gke-location flag should appear in ask subcommand help output."""
-        result = runner.invoke(app, ["ask", "--help"])
-        assert result.exit_code == 0
-        assert "--gke-location" in _strip_ansi(result.output)
-
-    def test_gke_location_flag_shows_in_chat_help(self) -> None:
-        """--gke-location flag should appear in chat subcommand help output."""
-        result = runner.invoke(app, ["chat", "--help"])
-        assert result.exit_code == 0
-        assert "--gke-location" in _strip_ansi(result.output)
+        assert flag in _strip_ansi(result.output)
 
     def test_gke_project_not_overridden_by_project_flag(self, _mock_settings: Settings) -> None:
         """When both --project and --gke-project are provided, settings.gke.project_id
