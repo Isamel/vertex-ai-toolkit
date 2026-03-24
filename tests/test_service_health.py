@@ -3231,8 +3231,8 @@ class TestEventGathererNoPhantomInstruction:
             "This was a copy-paste artefact that must be removed."
         )
 
-    def test_event_gatherer_does_not_reference_datadog_api(self) -> None:
-        """event_gatherer prompt must not contain Datadog API step instructions."""
+    def test_workload_gatherer_does_not_reference_datadog_api(self) -> None:
+        """event_gatherer must not contain Datadog API step instructions."""
         from vaig.skills.service_health.prompts import build_event_gatherer_prompt
 
         prompt = build_event_gatherer_prompt()
@@ -3243,3 +3243,70 @@ class TestEventGathererNoPhantomInstruction:
             "event_gatherer must not contain 'get_datadog_monitors'."
         )
 
+
+# ── Ownership chain tracing — prompt content ─────────────────
+
+
+class TestWorkloadGathererOwnershipChainInstructions:
+    """Verify that build_workload_gatherer_prompt() includes ownership chain traversal instructions.
+
+    These tests assert prompt *content* — they are intentionally coupled to
+    the prompt text so that any accidental removal is caught immediately.
+    """
+
+    def test_prompt_contains_step_4c_header(self) -> None:
+        """Prompt must include Step 4c ownership chain tracing block."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default")
+        assert "Step 4c" in prompt, (
+            "workload_gatherer prompt is missing Step 4c — ownership chain tracing block."
+        )
+
+    def test_prompt_instructs_tracing_owner_references(self) -> None:
+        """Prompt must tell agent to inspect ownerReferences to find owning ReplicaSet."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default")
+        assert "ownerReferences" in prompt, (
+            "workload_gatherer prompt must instruct the agent to inspect ownerReferences."
+        )
+        assert "ReplicaSet" in prompt, (
+            "workload_gatherer prompt must mention ReplicaSet in ownership chain instructions."
+        )
+
+    def test_prompt_instructs_get_rollout_history(self) -> None:
+        """Prompt must explicitly instruct the agent to call get_rollout_history for failing pods."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default")
+        assert "get_rollout_history" in prompt, (
+            "workload_gatherer prompt must instruct agent to call get_rollout_history "
+            "when tracing ownership for failing pods."
+        )
+
+    def test_prompt_covers_crashloopbackoff_state(self) -> None:
+        """Ownership chain instructions must apply to CrashLoopBackOff pods."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default")
+        assert "CrashLoopBackOff" in prompt, (
+            "Step 4c must explicitly mention CrashLoopBackOff as a trigger state."
+        )
+
+    def test_prompt_instructs_revision_correlation(self) -> None:
+        """Prompt must tell the agent to correlate the failing RS to a rollout revision."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default")
+        assert "revision" in prompt.lower(), (
+            "workload_gatherer prompt must mention identifying the revision that introduced the failure."
+        )
+
+    def test_ownership_chain_instructions_present_without_namespace(self) -> None:
+        """Ownership chain block is present even when no namespace is specified."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt()
+        assert "Step 4c" in prompt
+        assert "get_rollout_history" in prompt

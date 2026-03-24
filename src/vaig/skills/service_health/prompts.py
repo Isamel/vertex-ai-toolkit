@@ -1772,6 +1772,31 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
     For each ArgoCD-managed deployment, report:
     ``"Managed by: ArgoCD (app: <app-name>)"``
 
+### Step 4c — Pod Ownership Chain Tracing (MANDATORY for CrashLoopBackOff / Error pods)
+
+For **every** pod that is in ``CrashLoopBackOff``, ``Error``, ``OOMKilled``, or ``ImagePullBackOff``
+state, trace the full ownership chain before moving on:
+
+a. **Identify owning ReplicaSet** — inspect the pod's ``ownerReferences`` field from the
+   ``kubectl_describe(resource="pod", name="<pod>", namespace="<ns>")`` output already
+   collected in Step 2.  Look for ``kind: ReplicaSet`` and record its ``name``.
+
+b. **Identify owning Deployment** — inspect the ReplicaSet's ``ownerReferences`` via
+   ``kubectl_describe(resource="replicaset", name="<rs-name>", namespace="<ns>")``
+   and record the owning Deployment name.
+
+c. **Correlate with rollout revision** — call
+   ``get_rollout_history(name="<deployment>", namespace="<ns>")`` to list all revisions.
+   Match the failing ReplicaSet to its revision by comparing the ``pod-template-hash``
+   label on the ReplicaSet against the revision entries in the history.
+   Record the revision number that introduced the failure.
+
+d. **Report** in the Deployment Issues section:
+   ``"Pod <pod-name> → RS <rs-name> → Deployment <deploy-name> (revision <N>)"``
+
+If ``get_rollout_history`` is not in your available tools list, SKIP sub-step (c) and
+mark it as ``SKIPPED — tool unavailable`` in the Deployment Issues section.
+
 ### Step 5 — Service & Endpoint Connectivity
 12. ``kubectl_get(resource="services", namespace="<target>", output="wide")``
 13. ``kubectl_get(resource="endpoints", namespace="<target>")``
