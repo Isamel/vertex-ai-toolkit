@@ -714,6 +714,21 @@ class Orchestrator:
                 len(agent_configs),
             )
 
+        # ── Dynamic agent routing ────────────────────────────────────────
+        # Filter agent configs based on query relevance before creating
+        # agents.  Gatherer configs declare a ``capabilities`` list; the
+        # router keeps only those whose capabilities match the query.
+        # Sequential agents (no ``capabilities``) always pass through.
+        # When no gatherers match, ALL configs pass through unchanged
+        # (safe-all fallback).
+        agent_configs = skill.route_agents(query, agent_configs)
+        _all_names = [cfg.get("name", "?") for cfg in agent_configs]
+        logger.info(
+            "Dynamic routing: %d agent(s) activated for query — %s",
+            len(agent_configs),
+            ", ".join(_all_names),
+        )
+
         # ── Auto-detect parallel_sequential from agent configs ───────────
         # When any agent config declares a ``parallel_group`` key and the
         # caller has not explicitly requested a non-sequential strategy,
@@ -1746,6 +1761,21 @@ class Orchestrator:
                 "GKE Autopilot detected — injected Autopilot instruction into %d agent(s)",
                 len(agent_configs),
             )
+
+        # ── Dynamic agent routing ────────────────────────────────────────
+        # Filter agent configs based on query relevance before creating
+        # agents.  Gatherer configs declare a ``capabilities`` list; the
+        # router keeps only those whose capabilities match the query.
+        # Sequential agents (no ``capabilities``) always pass through.
+        # When no gatherers match, ALL configs pass through unchanged
+        # (safe-all fallback).
+        agent_configs = skill.route_agents(query, agent_configs)
+        _all_names = [cfg.get("name", "?") for cfg in agent_configs]
+        logger.info(
+            "Dynamic routing: %d agent(s) activated for query — %s",
+            len(agent_configs),
+            ", ".join(_all_names),
+        )
 
         # ── Auto-detect parallel_sequential from agent configs ───────────
         # When any agent config declares a ``parallel_group`` key and the

@@ -32,6 +32,7 @@ from vaig.core.exceptions import (
     format_error_for_user,
 )
 from vaig.core.models import PipelineState, apply_state_patch
+from vaig.core.router import route_agents
 from vaig.core.subscribers import TelemetrySubscriber
 
 __all__ = [
@@ -61,6 +62,7 @@ __all__ = [
     "K8sAuthError",
     "MaxIterationsError",
     "ResponseCache",
+    "route_agents",
     "SessionEnded",
     "SessionStarted",
     "Settings",

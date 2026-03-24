@@ -325,6 +325,11 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Cluster & Node Health Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
+                "capabilities": [
+                    "node", "nodes", "cluster", "cpu", "memory", "disk",
+                    "capacity", "allocatable", "pressure", "resource",
+                    "taint", "cordon", "drain",
+                ],
                 "system_instruction": build_node_gatherer_prompt(is_autopilot=is_autopilot),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
@@ -335,6 +340,12 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Workload Health Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
+                "capabilities": [
+                    "pod", "pods", "deployment", "workload", "restart",
+                    "crash", "crashloop", "oom", "container", "replicas",
+                    "replicaset", "statefulset", "daemonset", "hpa",
+                    "scaling", "pending", "evicted", "oomkilled",
+                ],
                 "system_instruction": build_workload_gatherer_prompt(
                     namespace=effective_namespace,
                 ),
@@ -347,6 +358,12 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Events & Infrastructure Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
+                "capabilities": [
+                    "event", "events", "network", "networking", "dns",
+                    "service", "endpoint", "ingress", "connectivity",
+                    "storage", "pvc", "volume", "argocd", "gitops",
+                    "helm", "configmap", "secret", "infrastructure",
+                ],
                 "system_instruction": build_event_gatherer_prompt(namespace=effective_namespace),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
@@ -357,6 +374,11 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Cloud Logging Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
+                "capabilities": [
+                    "log", "logs", "logging", "error", "errors", "warning",
+                    "warnings", "stacktrace", "exception", "stderr",
+                    "stdout", "cloud", "gcp", "cloudlogging",
+                ],
                 "system_instruction": build_logging_gatherer_prompt(namespace=effective_namespace),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
@@ -371,6 +393,11 @@ class ServiceHealthSkill(BaseSkill):
                     "role": "Datadog API Correlation Gatherer",
                     "requires_tools": True,
                     "parallel_group": "gather",
+                    "capabilities": [
+                        "datadog", "apm", "trace", "traces", "latency",
+                        "error-rate", "throughput", "monitoring", "metric",
+                        "metrics", "dashboard", "slo", "alert", "service-map",
+                    ],
                     "system_instruction": build_datadog_gatherer_prompt(
                         namespace=effective_namespace,
                         cluster_name=effective_gke.cluster_name,
