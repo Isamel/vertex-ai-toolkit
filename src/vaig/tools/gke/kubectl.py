@@ -623,7 +623,15 @@ def kubectl_describe(
         return _clients._k8s_unavailable()
 
     resource = _resources._normalise_resource(resource)
-    if resource not in _resources._RESOURCE_API_MAP:
+    if resource not in _resources._DESCRIBE_SUPPORTED_RESOURCES:
+        if resource in _resources._RESOURCE_API_MAP:
+            return ToolResult(
+                output=(
+                    f"Resource type '{resource}' can be listed with kubectl_get but "
+                    f"describe is not yet supported for this resource type."
+                ),
+                error=True,
+            )
         if resource in _resources._KNOWN_K8S_RESOURCES:
             return ToolResult(
                 output=(
@@ -632,7 +640,7 @@ def kubectl_describe(
                 ),
                 error=True,
             )
-        supported = sorted(_resources._RESOURCE_API_MAP.keys())
+        supported = sorted(_resources._DESCRIBE_SUPPORTED_RESOURCES)
         return ToolResult(
             output=f"Unsupported resource type: '{resource}'. Supported: {', '.join(supported)}",
             error=True,

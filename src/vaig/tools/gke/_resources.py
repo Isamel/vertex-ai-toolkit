@@ -8,6 +8,13 @@ from vaig.tools.base import ToolResult
 
 _K8S_AVAILABLE = True
 try:
+    from kubernetes.client import (
+        DiscoveryV1Api,  # noqa: WPS433
+        NodeV1Api,  # noqa: WPS433
+        RbacAuthorizationV1Api,  # noqa: WPS433
+        SchedulingV1Api,  # noqa: WPS433
+        StorageV1Api,  # noqa: WPS433
+    )
     from kubernetes.client import exceptions as k8s_exceptions  # noqa: WPS433
 except ImportError:
     _K8S_AVAILABLE = False
@@ -91,6 +98,9 @@ _RESOURCE_API_MAP: dict[str, str] = {
     "persistentvolumes": "core",
     "pvc": "core",
     "persistentvolumeclaims": "core",
+    "resourcequotas": "core",
+    # Config/Policy
+    "limitranges": "core",
     "deployments": "apps",
     "statefulsets": "apps",
     "daemonsets": "apps",
@@ -102,14 +112,29 @@ _RESOURCE_API_MAP: dict[str, str] = {
     "ingress": "networking",
     "ingresses": "networking",
     "networkpolicies": "networking",
+    # Networking — EndpointSlices (modern replacement for endpoints)
+    "endpointslices": "discovery",
     "poddisruptionbudgets": "policy",
-    "resourcequotas": "core",
     # Admission registration (webhook configurations)
     "mutatingwebhookconfigurations": "admissionregistration",
     "validatingwebhookconfigurations": "admissionregistration",
     # Custom Resource Definitions
     "customresourcedefinitions": "apiextensions",
     "crds": "apiextensions",
+    # RBAC resources
+    "roles": "rbac",
+    "clusterroles": "rbac",
+    "rolebindings": "rbac",
+    "clusterrolebindings": "rbac",
+    # Storage resources
+    "storageclasses": "storage",
+    "volumeattachments": "storage",
+    "csidrivers": "storage",
+    "csinodes": "storage",
+    # Scheduling resources
+    "priorityclasses": "scheduling",
+    # Runtime resources
+    "runtimeclasses": "node",
     # External Secrets Operator CRDs
     "externalsecrets": "custom_external_secrets",
     "externalsecret": "custom_external_secrets",
@@ -168,6 +193,32 @@ _RESOURCE_ALIASES: dict[str, str] = {
     "vwc": "validatingwebhookconfigurations",
     "customresourcedefinition": "customresourcedefinitions",
     "crd": "customresourcedefinitions",
+    # RBAC aliases
+    "role": "roles",
+    "clusterrole": "clusterroles",
+    "cr": "clusterroles",
+    "rolebinding": "rolebindings",
+    "rb": "rolebindings",
+    "clusterrolebinding": "clusterrolebindings",
+    "crb": "clusterrolebindings",
+    # Storage aliases
+    "storageclass": "storageclasses",
+    "sc": "storageclasses",
+    "volumeattachment": "volumeattachments",
+    "va": "volumeattachments",
+    "csidriver": "csidrivers",
+    "csinode": "csinodes",
+    # Config/Policy aliases
+    "limitrange": "limitranges",
+    "lr": "limitranges",
+    # Networking aliases
+    "endpointslice": "endpointslices",
+    "eps": "endpointslices",
+    # Scheduling aliases
+    "priorityclass": "priorityclasses",
+    "pc": "priorityclasses",
+    # Runtime aliases
+    "runtimeclass": "runtimeclasses",
     # External Secrets aliases
     "es": "externalsecrets",
     # ArgoCD aliases
@@ -227,6 +278,68 @@ _CLUSTER_SCOPED_RESOURCES = frozenset(
         "validatingwebhookconfigurations",
         "customresourcedefinitions",
         "crds",
+        # RBAC cluster-scoped
+        "clusterroles",
+        "clusterrolebindings",
+        # Storage cluster-scoped
+        "storageclasses",
+        "csidrivers",
+        "csinodes",
+        "volumeattachments",
+        # Scheduling cluster-scoped
+        "priorityclasses",
+        # Runtime cluster-scoped
+        "runtimeclasses",
+    }
+)
+
+# Resources where kubectl_describe has an actual handler in _describe_resource().
+# New API groups (rbac, storage, discovery, scheduling, node) are supported for
+# list/get but do NOT have describe handlers — they return None, which surfaces
+# as "Describe not supported".  Keep this set accurate so validation is honest.
+_DESCRIBE_SUPPORTED_RESOURCES: frozenset[str] = frozenset(
+    {
+        # Core V1
+        "pods",
+        "services",
+        "configmaps",
+        "secrets",
+        "serviceaccounts",
+        "endpoints",
+        "pvc",
+        "persistentvolumeclaims",
+        "resourcequotas",
+        "nodes",
+        "namespaces",
+        "pv",
+        "persistentvolumes",
+        # Apps V1
+        "deployments",
+        "statefulsets",
+        "daemonsets",
+        "replicasets",
+        # Batch V1
+        "jobs",
+        "cronjobs",
+        # Autoscaling
+        "hpa",
+        "horizontalpodautoscalers",
+        # Networking
+        "ingress",
+        "ingresses",
+        "networkpolicies",
+        # Policy
+        "poddisruptionbudgets",
+        # AdmissionRegistration
+        "mutatingwebhookconfigurations",
+        "validatingwebhookconfigurations",
+        # ApiExtensions
+        "customresourcedefinitions",
+        "crds",
+        # Custom resources
+        "externalsecrets",
+        "externalsecret",
+        "verticalpodautoscalers",
     }
 )
 
@@ -234,23 +347,12 @@ _CLUSTER_SCOPED_RESOURCES = frozenset(
 # Used to distinguish "gap in our tools" from "hallucinated resource".
 _KNOWN_K8S_RESOURCES = frozenset(
     {
-        "limitranges",
         "events",
         "componentstatuses",
         "replicationcontrollers",
         "podtemplates",
         "controllerrevisions",
         "leases",
-        "clusterroles",
-        "clusterrolebindings",
-        "roles",
-        "rolebindings",
-        "storageclasses",
-        "volumeattachments",
-        "csidrivers",
-        "csinodes",
-        "priorityclasses",
-        "runtimeclasses",
     }
 )
 
@@ -296,6 +398,7 @@ def _list_resource(
                 "list_persistent_volume_claim_for_all_namespaces",
             ),
             "resourcequotas": ("list_namespaced_resource_quota", "list_resource_quota_for_all_namespaces"),
+            "limitranges": ("list_namespaced_limit_range", "list_limit_range_for_all_namespaces"),
             "nodes": ("", "list_node"),
             "namespaces": ("", "list_namespace"),
             "pv": ("", "list_persistent_volume"),
@@ -372,6 +475,13 @@ def _list_resource(
             return getattr(net_v1, all_method_n)(**kwargs)
         return getattr(net_v1, ns_method_n)(namespace=namespace, **kwargs)
 
+    # ── Discovery V1 resources (EndpointSlices) ───────────────
+    if api_group == "discovery":
+        disc_v1 = DiscoveryV1Api(api_client=api_client)
+        if namespace in ("", "all"):
+            return disc_v1.list_endpoint_slice_for_all_namespaces(**kwargs)
+        return disc_v1.list_namespaced_endpoint_slice(namespace=namespace, **kwargs)
+
     # ── Policy V1 resources ──────────────────────────────────
     if api_group == "policy":
         from kubernetes.client import PolicyV1Api  # noqa: WPS433
@@ -398,6 +508,54 @@ def _list_resource(
 
         ext_v1 = ApiextensionsV1Api(api_client=api_client)
         return ext_v1.list_custom_resource_definition(**kwargs)
+
+    # ── RBAC Authorization V1 resources ──────────────────────
+    if api_group == "rbac":
+        rbac_v1 = RbacAuthorizationV1Api(api_client=api_client)
+        # Cluster-scoped RBAC resources: map to their single list method
+        rbac_cluster_map: dict[str, str] = {
+            "clusterroles": "list_cluster_role",
+            "clusterrolebindings": "list_cluster_role_binding",
+        }
+        # Namespaced RBAC resources: (all_namespaces_method, namespaced_method)
+        rbac_ns_map: dict[str, tuple[str, str]] = {
+            "roles": ("list_role_for_all_namespaces", "list_namespaced_role"),
+            "rolebindings": ("list_role_binding_for_all_namespaces", "list_namespaced_role_binding"),
+        }
+        if resource in rbac_cluster_map:
+            return getattr(rbac_v1, rbac_cluster_map[resource])(**kwargs)
+        entry_rbac = rbac_ns_map.get(resource)
+        if not entry_rbac:
+            return ToolResult(output=f"Unsupported RBAC resource type: {resource}", error=True)
+        all_ns_method, ns_method = entry_rbac
+        if namespace in ("", "all"):
+            return getattr(rbac_v1, all_ns_method)(**kwargs)
+        return getattr(rbac_v1, ns_method)(namespace=namespace, **kwargs)
+
+    # ── Storage V1 resources ──────────────────────────────────
+    if api_group == "storage":
+        storage_v1 = StorageV1Api(api_client=api_client)
+        # All storage resources are cluster-scoped — keys map to method name strings
+        storage_method_map: dict[str, str] = {
+            "storageclasses": "list_storage_class",
+            "volumeattachments": "list_volume_attachment",
+            "csidrivers": "list_csi_driver",
+            "csinodes": "list_csi_node",
+        }
+        method_name_s = storage_method_map.get(resource)
+        if not method_name_s:
+            return ToolResult(output=f"Unsupported storage resource type: {resource}", error=True)
+        return getattr(storage_v1, method_name_s)(**kwargs)
+
+    # ── Scheduling V1 resources ───────────────────────────────
+    if api_group == "scheduling":
+        sched_v1 = SchedulingV1Api(api_client=api_client)
+        return sched_v1.list_priority_class(**kwargs)
+
+    # ── Node V1 resources (RuntimeClasses) ───────────────────
+    if api_group == "node":
+        node_v1 = NodeV1Api(api_client=api_client)
+        return node_v1.list_runtime_class(**kwargs)
 
     # ── External Secrets Operator (custom) ───────────────────
     if api_group == "custom_external_secrets":
