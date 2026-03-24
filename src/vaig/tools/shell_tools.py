@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
+from vaig.tools.categories import SHELL
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +297,7 @@ def create_shell_tools(
                 "Run a shell command in the workspace directory. "
                 "Returns stdout and stderr."
             ),
+            categories=frozenset({SHELL}),
             parameters=[
                 ToolParam(
                     name="command",

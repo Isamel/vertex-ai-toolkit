@@ -293,17 +293,53 @@ class Orchestrator:
             if config_dict.get("requires_tools") and tool_registry is not None:
                 model = config_dict.get("model", "gemini-2.5-pro")
 
+                # ── Category filtering (optional) ──────────────────────────
+                # When the agent config declares ``tool_categories``, narrow the
+                # registry to only the tools that belong to those categories.
+                # Agents that omit ``tool_categories`` (None) receive the full
+                # registry (backward-compatible default).
+                # An empty list or a non-list type is a configuration error.
+                raw_categories = config_dict.get("tool_categories")
+                if raw_categories is not None:
+                    agent_name_for_err = config_dict.get("name", "unknown")
+                    if not isinstance(raw_categories, list):
+                        raise VAIGError(
+                            f"Agent '{agent_name_for_err}' has invalid tool_categories: "
+                            f"expected list, got {type(raw_categories).__name__!r}"
+                        )
+                    if not raw_categories:
+                        raise VAIGError(
+                            f"Agent '{agent_name_for_err}' has empty tool_categories list. "
+                            "Provide at least one category or omit the key to receive all tools."
+                        )
+                    if not all(isinstance(c, str) for c in raw_categories):
+                        bad = [c for c in raw_categories if not isinstance(c, str)]
+                        raise VAIGError(
+                            f"Agent '{agent_name_for_err}' has non-string elements in "
+                            f"tool_categories: {bad!r}"
+                        )
+                    effective_registry = tool_registry.filter_by_categories(
+                        frozenset(raw_categories)
+                    )
+                    logger.debug(
+                        "Filtered tool registry for %s: %d/%d tools (categories=%s)",
+                        config_dict.get("name", "unknown"),
+                        len(effective_registry.list_tools()),
+                        len(tool_registry.list_tools()),
+                        raw_categories,
+                    )
+                else:
+                    effective_registry = tool_registry
+
                 # ── Per-agent registry copy for injectable_agents ──────────
                 # When this agent declares sub-agent dependencies, give it its
                 # own shallow-copied registry so the injected tools stay
                 # isolated (other agents are NOT affected).
                 agent_name = config_dict["name"]
                 if agent_name in injectable_map:
-                    agent_registry: ToolRegistry = ToolRegistry()
-                    for t in tool_registry.list_tools():
-                        agent_registry.register(t)
+                    agent_registry: ToolRegistry = effective_registry.copy()
                 else:
-                    agent_registry = tool_registry
+                    agent_registry = effective_registry
 
                 agent: BaseAgent = ToolAwareAgent.from_config_dict(
                     config_dict,

@@ -216,6 +216,7 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_gatherer",
                 "role": "Health Data Gatherer",
                 "requires_tools": True,
+                "tool_categories": ["kubernetes", "helm", "argocd", "scaling", "mesh", "datadog", "logging"],
                 "system_instruction": gatherer_prompt,
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,  # Deterministic — gatherer follows a procedure, no creativity needed
@@ -235,6 +236,7 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_verifier",
                 "role": "Health Finding Verifier",
                 "requires_tools": True,
+                "tool_categories": ["kubernetes", "scaling", "mesh", "datadog"],
                 "system_instruction": HEALTH_VERIFIER_PROMPT,
                 "model": "gemini-2.5-flash",
                 "max_iterations": 15,
@@ -325,6 +327,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Cluster & Node Health Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
+                "tool_categories": ["kubernetes"],
                 "capabilities": [
                     "node", "nodes", "cluster", "cpu", "memory", "disk",
                     "capacity", "allocatable", "pressure", "resource",
@@ -341,6 +344,7 @@ class ServiceHealthSkill(BaseSkill):
                 "requires_tools": True,
                 "parallel_group": "gather",
                 "injectable_agents": ["node_gatherer"],
+                "tool_categories": ["kubernetes", "scaling"],
                 "capabilities": [
                     "pod", "pods", "deployment", "workload", "restart",
                     "crash", "crashloop", "oom", "container", "replicas",
@@ -359,6 +363,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Events & Infrastructure Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
+                "tool_categories": ["kubernetes", "helm", "argocd"],
                 "capabilities": [
                     "event", "events", "network", "networking", "dns",
                     "service", "endpoint", "ingress", "connectivity",
@@ -375,6 +380,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Cloud Logging Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
+                "tool_categories": ["logging"],
                 "capabilities": [
                     "log", "logs", "logging", "error", "errors", "warning",
                     "warnings", "stacktrace", "exception", "stderr",
@@ -394,6 +400,7 @@ class ServiceHealthSkill(BaseSkill):
                     "role": "Datadog API Correlation Gatherer",
                     "requires_tools": True,
                     "parallel_group": "gather",
+                    "tool_categories": ["datadog", "kubernetes"],
                     "capabilities": [
                         "datadog", "apm", "trace", "traces", "latency",
                         "error-rate", "throughput", "monitoring", "metric",
@@ -424,6 +431,7 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_verifier",
                 "role": "Health Finding Verifier",
                 "requires_tools": True,
+                "tool_categories": ["kubernetes", "scaling", "mesh", "datadog"],
                 "system_instruction": HEALTH_VERIFIER_PROMPT,
                 "model": "gemini-2.5-flash",
                 "max_iterations": 15,

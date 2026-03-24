@@ -1109,3 +1109,166 @@ class TestCodingConfigDeniedCommands:
 
         config = CodingConfig(denied_commands=[])
         assert config.denied_commands == []
+
+
+# ── ToolDef categories (Task 1.3 + 2.3) ─────────────────────
+
+
+class TestToolDefCategories:
+    """Unit tests for ToolDef.categories and ToolRegistry.filter_by_categories."""
+
+    # ── Task 1.3: Foundation tests ───────────────────────────
+
+    def test_categories_default_to_uncategorized(self) -> None:
+        """ToolDef without explicit categories → frozenset({"uncategorized"})."""
+        t = ToolDef(name="test", description="d")
+        assert t.categories == frozenset({"uncategorized"})
+
+    def test_categories_can_be_set(self) -> None:
+        """ToolDef with explicit categories stores them correctly."""
+        t = ToolDef(name="test", description="d", categories=frozenset({"kubernetes"}))
+        assert t.categories == frozenset({"kubernetes"})
+
+    def test_categories_multiple_values(self) -> None:
+        """ToolDef can hold multiple categories in a frozenset."""
+        cats = frozenset({"kubernetes", "mesh"})
+        t = ToolDef(name="test", description="d", categories=cats)
+        assert t.categories == cats
+
+    def test_categories_isolation(self) -> None:
+        """Each ToolDef gets its own independent categories (no shared state)."""
+        t1 = ToolDef(name="a", description="d")
+        t2 = ToolDef(name="b", description="d")
+        # Default frozensets are equal but not the same object — frozensets
+        # are immutable so there's no mutation risk; just verify equality
+        assert t1.categories == t2.categories
+
+    def test_filter_by_categories_returns_matching(self) -> None:
+        """Registry with 3 tools: filter for one category → only that tool returned."""
+        reg = ToolRegistry()
+        t_k8s = ToolDef(name="k8s_tool", description="d", categories=frozenset({"kubernetes"}))
+        t_helm = ToolDef(name="helm_tool", description="d", categories=frozenset({"helm"}))
+        t_shell = ToolDef(name="shell_tool", description="d", categories=frozenset({"shell"}))
+        reg.register(t_k8s)
+        reg.register(t_helm)
+        reg.register(t_shell)
+
+        filtered = reg.filter_by_categories(frozenset({"kubernetes"}))
+
+        assert len(filtered.list_tools()) == 1
+        assert filtered.get("k8s_tool") is t_k8s
+        assert filtered.get("helm_tool") is None
+        assert filtered.get("shell_tool") is None
+
+    def test_filter_by_categories_intersection(self) -> None:
+        """Tool with multiple categories matches when filtering for either one."""
+        reg = ToolRegistry()
+        t_multi = ToolDef(
+            name="multi",
+            description="d",
+            categories=frozenset({"kubernetes", "mesh"}),
+        )
+        t_single = ToolDef(name="single", description="d", categories=frozenset({"helm"}))
+        reg.register(t_multi)
+        reg.register(t_single)
+
+        # Filtering for "kubernetes" should include the multi-category tool
+        filtered_k8s = reg.filter_by_categories(frozenset({"kubernetes"}))
+        assert filtered_k8s.get("multi") is t_multi
+        assert filtered_k8s.get("single") is None
+
+        # Filtering for "mesh" should also include it
+        filtered_mesh = reg.filter_by_categories(frozenset({"mesh"}))
+        assert filtered_mesh.get("multi") is t_multi
+
+    def test_filter_by_categories_empty_result(self) -> None:
+        """Filtering for a category no tool belongs to → empty registry."""
+        reg = ToolRegistry()
+        reg.register(ToolDef(name="k8s", description="d", categories=frozenset({"kubernetes"})))
+        reg.register(ToolDef(name="helm", description="d", categories=frozenset({"helm"})))
+
+        filtered = reg.filter_by_categories(frozenset({"nonexistent"}))
+
+        assert len(filtered.list_tools()) == 0
+
+    def test_filter_by_categories_does_not_mutate_original(self) -> None:
+        """Original registry is unchanged after filter_by_categories."""
+        reg = ToolRegistry()
+        reg.register(ToolDef(name="a", description="d", categories=frozenset({"kubernetes"})))
+        reg.register(ToolDef(name="b", description="d", categories=frozenset({"helm"})))
+        original_count = len(reg.list_tools())
+
+        _ = reg.filter_by_categories(frozenset({"kubernetes"}))
+
+        # Original registry must still have both tools
+        assert len(reg.list_tools()) == original_count
+        assert reg.get("a") is not None
+        assert reg.get("b") is not None
+
+    def test_filter_by_categories_unknown_category(self) -> None:
+        """Filtering for a completely unknown category yields an empty registry."""
+        reg = ToolRegistry()
+        reg.register(ToolDef(name="tool", description="d", categories=frozenset({"coding"})))
+
+        filtered = reg.filter_by_categories(frozenset({"totally_unknown"}))
+
+        assert len(filtered.list_tools()) == 0
+
+    def test_filter_returns_new_registry_instance(self) -> None:
+        """filter_by_categories always returns a new ToolRegistry, never the original."""
+        reg = ToolRegistry()
+        reg.register(ToolDef(name="t", description="d", categories=frozenset({"kubernetes"})))
+
+        filtered = reg.filter_by_categories(frozenset({"kubernetes"}))
+
+        assert filtered is not reg
+
+    def test_filter_all_categories_returns_all_tools(self) -> None:
+        """Filtering with a broad set that covers all tools returns all of them."""
+        reg = ToolRegistry()
+        reg.register(ToolDef(name="a", description="d", categories=frozenset({"kubernetes"})))
+        reg.register(ToolDef(name="b", description="d", categories=frozenset({"helm"})))
+        reg.register(ToolDef(name="c", description="d", categories=frozenset({"shell"})))
+
+        filtered = reg.filter_by_categories(frozenset({"kubernetes", "helm", "shell"}))
+
+        assert len(filtered.list_tools()) == 3
+
+    # ── Task 2.3: No tool has "uncategorized" category ───────
+
+    def test_no_tool_has_uncategorized_category(self) -> None:
+        """All registered GKE, shell, and file tools must have explicit categories.
+
+        No tool should fall back to the default "uncategorized" sentinel.
+        This validates that every ToolDef in the production registries has
+        been explicitly tagged with at least one domain category.
+        """
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from vaig.core.config import GKEConfig
+        from vaig.tools.file_tools import create_file_tools
+        from vaig.tools.gke._registry import create_gke_tools
+        from vaig.tools.shell_tools import create_shell_tools
+
+        # Minimal GKEConfig — no live cluster needed, just tool definitions.
+        # Patch _query_autopilot_status to avoid network auth probes under CI.
+        gke_config = GKEConfig(
+            project_id="test-project",
+            location="us-central1",
+            cluster_name="test-cluster",
+        )
+        with patch("vaig.tools.gke._clients._query_autopilot_status", return_value=False):
+            gke_tools = create_gke_tools(gke_config)
+
+        shell_tools = create_shell_tools(Path("/tmp"))
+        file_tools = create_file_tools(Path("/tmp"))
+
+        all_tools = gke_tools + shell_tools + file_tools
+
+        uncategorized = [
+            t.name for t in all_tools if "uncategorized" in t.categories
+        ]
+        assert uncategorized == [], (
+            f"These tools still have 'uncategorized' category: {uncategorized}"
+        )

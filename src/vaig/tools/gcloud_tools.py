@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
+from vaig.tools.categories import LOGGING
 
 if TYPE_CHECKING:
     from google.auth.credentials import Credentials
@@ -615,6 +616,7 @@ def create_gcloud_tools(
                 interval_hours=interval_hours,
                 credentials=_dc,
             ),
+            categories=frozenset({LOGGING}),
         ),
         ToolDef(
             name="gcloud_monitoring_query",
@@ -694,5 +696,6 @@ def create_gcloud_tools(
                 resource_labels=resource_labels,
                 credentials=_dc,
             ),
+            categories=frozenset({LOGGING}),
         ),
     ]

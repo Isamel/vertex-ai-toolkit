@@ -3857,3 +3857,97 @@ class TestThreeAgentSequentialContext:
 
         # Outputs are separated by --- divider
         assert "---" in third_call_context
+
+
+# ===========================================================================
+# Task 3.2 — Category filtering in create_agents_for_skill
+# ===========================================================================
+
+
+class TestOrchestratorCategoryFiltering:
+    """Verify that tool_categories in agent config narrows the ToolRegistry."""
+
+    def _make_multi_category_registry(self) -> ToolRegistry:
+        """Registry with 3 tools across 3 distinct categories."""
+        from vaig.tools.base import ToolDef
+
+        reg = ToolRegistry()
+        reg.register(ToolDef(name="k8s_tool", description="k8s", categories=frozenset({"kubernetes"})))
+        reg.register(ToolDef(name="helm_tool", description="helm", categories=frozenset({"helm"})))
+        reg.register(ToolDef(name="shell_tool", description="shell", categories=frozenset({"shell"})))
+        return reg
+
+    def test_agent_receives_filtered_registry_when_tool_categories_set(self) -> None:
+        """Agent with tool_categories=['kubernetes'] gets only kubernetes tools."""
+        client = _make_mock_client()
+        registry = self._make_multi_category_registry()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        skill = StubToolSkill(
+            agents=[
+                {
+                    "name": "filtered-agent",
+                    "role": "Worker",
+                    "system_instruction": "Do work.",
+                    "model": "gemini-2.5-pro",
+                    "requires_tools": True,
+                    "tool_categories": ["kubernetes"],
+                },
+            ]
+        )
+
+        agents = orchestrator.create_agents_for_skill(skill, registry)
+
+        assert len(agents) == 1
+        assert isinstance(agents[0], ToolAwareAgent)
+        # Filtered registry must have only the kubernetes tool
+        agent_tools = agents[0].tool_registry.list_tools()
+        assert len(agent_tools) == 1
+        assert agent_tools[0].name == "k8s_tool"
+
+    def test_agent_receives_full_registry_when_tool_categories_absent(self) -> None:
+        """Agent without tool_categories receives all tools in the registry."""
+        client = _make_mock_client()
+        registry = self._make_multi_category_registry()
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        skill = StubToolSkill(
+            agents=[
+                {
+                    "name": "unfiltered-agent",
+                    "role": "Worker",
+                    "system_instruction": "Do work.",
+                    "model": "gemini-2.5-pro",
+                    "requires_tools": True,
+                    # deliberately NO tool_categories key
+                },
+            ]
+        )
+
+        agents = orchestrator.create_agents_for_skill(skill, registry)
+
+        assert isinstance(agents[0], ToolAwareAgent)
+        # Agent must see all 3 tools (full registry)
+        assert len(agents[0].tool_registry.list_tools()) == 3
+
+    def test_filter_does_not_mutate_shared_registry(self) -> None:
+        """Creating a filtered agent must not remove tools from the original registry."""
+        client = _make_mock_client()
+        registry = self._make_multi_category_registry()
+        original_count = len(registry.list_tools())
+        orchestrator = Orchestrator(client, _make_mock_settings())
+        skill = StubToolSkill(
+            agents=[
+                {
+                    "name": "filtered-agent",
+                    "role": "Worker",
+                    "system_instruction": "Do work.",
+                    "model": "gemini-2.5-pro",
+                    "requires_tools": True,
+                    "tool_categories": ["helm"],
+                },
+            ]
+        )
+
+        orchestrator.create_agents_for_skill(skill, registry)
+
+        # Original registry must still hold all tools
+        assert len(registry.list_tools()) == original_count
