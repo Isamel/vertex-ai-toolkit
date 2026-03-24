@@ -8,6 +8,13 @@ from vaig.tools.base import ToolResult
 
 _K8S_AVAILABLE = True
 try:
+    from kubernetes.client import (
+        DiscoveryV1Api,  # noqa: WPS433
+        NodeV1Api,  # noqa: WPS433
+        RbacAuthorizationV1Api,  # noqa: WPS433
+        SchedulingV1Api,  # noqa: WPS433
+        StorageV1Api,  # noqa: WPS433
+    )
     from kubernetes.client import exceptions as k8s_exceptions  # noqa: WPS433
 except ImportError:
     _K8S_AVAILABLE = False
@@ -421,8 +428,6 @@ def _list_resource(
 
     # ── Discovery V1 resources (EndpointSlices) ───────────────
     if api_group == "discovery":
-        from kubernetes.client import DiscoveryV1Api  # noqa: WPS433
-
         disc_v1 = DiscoveryV1Api(api_client=api_client)
         if namespace in ("", "all"):
             return disc_v1.list_endpoint_slice_for_all_namespaces(**kwargs)
@@ -457,8 +462,6 @@ def _list_resource(
 
     # ── RBAC Authorization V1 resources ──────────────────────
     if api_group == "rbac":
-        from kubernetes.client import RbacAuthorizationV1Api  # noqa: WPS433
-
         rbac_v1 = RbacAuthorizationV1Api(api_client=api_client)
         if resource == "clusterroles":
             return rbac_v1.list_cluster_role(**kwargs)
@@ -476,8 +479,6 @@ def _list_resource(
 
     # ── Storage V1 resources ──────────────────────────────────
     if api_group == "storage":
-        from kubernetes.client import StorageV1Api  # noqa: WPS433
-
         storage_v1 = StorageV1Api(api_client=api_client)
         if resource == "storageclasses":
             return storage_v1.list_storage_class(**kwargs)
@@ -491,15 +492,11 @@ def _list_resource(
 
     # ── Scheduling V1 resources ───────────────────────────────
     if api_group == "scheduling":
-        from kubernetes.client import SchedulingV1Api  # noqa: WPS433
-
         sched_v1 = SchedulingV1Api(api_client=api_client)
         return sched_v1.list_priority_class(**kwargs)
 
     # ── Node V1 resources (RuntimeClasses) ───────────────────
     if api_group == "node":
-        from kubernetes.client import NodeV1Api  # noqa: WPS433
-
         node_v1 = NodeV1Api(api_client=api_client)
         return node_v1.list_runtime_class(**kwargs)
 

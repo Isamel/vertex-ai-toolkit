@@ -12,7 +12,6 @@ import pytest
 
 from vaig.tools.base import ToolResult
 
-
 # ── Helpers ──────────────────────────────────────────────────
 
 
@@ -188,7 +187,7 @@ class TestRBACListDispatch:
         apps_v1 = MagicMock()
         custom_api = MagicMock()
 
-        with patch(f"vaig.tools.gke._resources.RbacAuthorizationV1Api") as mock_rbac_cls:
+        with patch("vaig.tools.gke._resources.RbacAuthorizationV1Api") as mock_rbac_cls:
             rbac_instance = MagicMock()
             mock_rbac_cls.return_value = rbac_instance
             getattr(rbac_instance, expected_method).return_value = _make_item_list()
