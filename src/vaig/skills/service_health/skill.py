@@ -216,7 +216,7 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_gatherer",
                 "role": "Health Data Gatherer",
                 "requires_tools": True,
-                "tool_categories": ["kubernetes", "helm", "argocd", "scaling", "mesh", "datadog"],
+                "tool_categories": ["kubernetes", "helm", "argocd", "scaling", "mesh", "datadog", "logging"],
                 "system_instruction": gatherer_prompt,
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,  # Deterministic — gatherer follows a procedure, no creativity needed
@@ -380,7 +380,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Cloud Logging Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
-                "tool_categories": ["kubernetes"],
+                "tool_categories": ["kubernetes", "logging"],
                 "capabilities": [
                     "log", "logs", "logging", "error", "errors", "warning",
                     "warnings", "stacktrace", "exception", "stderr",

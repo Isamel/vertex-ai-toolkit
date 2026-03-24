@@ -14,9 +14,12 @@ class TestDynamicToolSelectionTokenSavings:
 
     def _get_parallel_agents(self) -> list:
         """Return agents config from get_parallel_agents_config() without a live cluster."""
+        from unittest.mock import patch
+
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
-        return ServiceHealthSkill().get_parallel_agents_config()
+        with patch("vaig.tools.gke._clients._query_autopilot_status", return_value=False):
+            return ServiceHealthSkill().get_parallel_agents_config()
 
     def _get_sequential_agents(self) -> list:
         """Return agents config from get_agents_config() (sequential pipeline)."""
