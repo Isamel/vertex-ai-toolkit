@@ -293,6 +293,26 @@ class Orchestrator:
             if config_dict.get("requires_tools") and tool_registry is not None:
                 model = config_dict.get("model", "gemini-2.5-pro")
 
+                # ── Category filtering (optional) ──────────────────────────
+                # When the agent config declares ``tool_categories``, narrow the
+                # registry to only the tools that belong to those categories.
+                # Agents that omit ``tool_categories`` receive the full registry
+                # (backward-compatible default).
+                raw_categories = config_dict.get("tool_categories")
+                if raw_categories:
+                    effective_registry = tool_registry.filter_by_categories(
+                        frozenset(raw_categories)
+                    )
+                    logger.debug(
+                        "Filtered tool registry for %s: %d/%d tools (categories=%s)",
+                        config_dict.get("name", "unknown"),
+                        len(effective_registry.list_tools()),
+                        len(tool_registry.list_tools()),
+                        raw_categories,
+                    )
+                else:
+                    effective_registry = tool_registry
+
                 # ── Per-agent registry copy for injectable_agents ──────────
                 # When this agent declares sub-agent dependencies, give it its
                 # own shallow-copied registry so the injected tools stay
@@ -300,10 +320,10 @@ class Orchestrator:
                 agent_name = config_dict["name"]
                 if agent_name in injectable_map:
                     agent_registry: ToolRegistry = ToolRegistry()
-                    for t in tool_registry.list_tools():
+                    for t in effective_registry.list_tools():
                         agent_registry.register(t)
                 else:
-                    agent_registry = tool_registry
+                    agent_registry = effective_registry
 
                 agent: BaseAgent = ToolAwareAgent.from_config_dict(
                     config_dict,

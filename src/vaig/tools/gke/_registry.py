@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
+from vaig.tools.categories import ARGOCD, DATADOG, HELM, KUBERNETES, MESH, SCALING
 
 from . import _clients, diagnostics, discovery, kubectl, mesh, mutations, security
 from .argocd import (
@@ -84,6 +85,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "statefulsets, daemonsets, jobs, cronjobs, and hpa at once. "
                 "Read-only — does not modify any resources."
             ),
+            categories=frozenset({KUBERNETES}),
             parameters=[
                 ToolParam(
                     name="resource",
@@ -142,6 +144,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "spec, status, conditions, and recent events. "
                 "Read-only — does not modify any resources."
             ),
+            categories=frozenset({KUBERNETES}),
             parameters=[
                 ToolParam(
                     name="resource",
@@ -171,6 +174,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "container logs when current container is in CrashLoopBackOff. "
                 "Read-only — does not modify any resources."
             ),
+            categories=frozenset({KUBERNETES}),
             parameters=[
                 ToolParam(
                     name="pod",
@@ -222,6 +226,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "Requires the metrics-server to be installed in the cluster. "
                 "Read-only — does not modify any resources."
             ),
+            categories=frozenset({KUBERNETES}),
             parameters=[
                 ToolParam(
                     name="resource_type",
@@ -254,6 +259,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "number of replicas (0-50). Reports the previous and new replica count. "
                 "WRITE operation — modifies the cluster."
             ),
+            categories=frozenset({KUBERNETES}),
             parameters=[
                 ToolParam(
                     name="resource",
@@ -290,6 +296,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "Equivalent to 'kubectl rollout restart'. Causes a zero-downtime rolling update. "
                 "WRITE operation — modifies the cluster."
             ),
+            categories=frozenset({KUBERNETES}),
             parameters=[
                 ToolParam(
                     name="resource",
@@ -322,6 +329,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "System labels (kubernetes.io/, k8s.io/) are protected. "
                 "WRITE operation — modifies the cluster."
             ),
+            categories=frozenset({KUBERNETES}),
             parameters=[
                 ToolParam(
                     name="resource",
@@ -362,6 +370,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "System annotations (kubernetes.io/, k8s.io/) are protected. "
                 "WRITE operation — modifies the cluster."
             ),
+            categories=frozenset({KUBERNETES}),
             parameters=[
                 ToolParam(
                     name="resource",
@@ -403,6 +412,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "have issues, and what the scheduler is doing. Critical for SRE triage. "
                 "Read-only — does not modify any resources."
             ),
+            categories=frozenset({KUBERNETES}),
             parameters=[
                 ToolParam(
                     name="namespace",
@@ -455,6 +465,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "'kubectl rollout status deployment/<name>'. "
                 "Read-only — does not modify any resources."
             ),
+            categories=frozenset({KUBERNETES}),
             parameters=[
                 ToolParam(
                     name="name",
@@ -485,6 +496,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "Fills the gap where kubectl_get nodes hides pressure conditions. "
                 "Read-only — does not modify any resources."
             ),
+            categories=frozenset({KUBERNETES}),
             parameters=[
                 ToolParam(
                     name="name",
@@ -508,6 +520,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "secret values). Essential for multi-container pod debugging. "
                 "Read-only — does not modify any resources."
             ),
+            categories=frozenset({KUBERNETES}),
             parameters=[
                 ToolParam(
                     name="name",
@@ -538,6 +551,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "to 10000 chars. Use for inspecting config files, checking "
                 "processes, network debugging, and runtime diagnostics."
             ),
+            categories=frozenset({KUBERNETES}),
             parameters=[
                 ToolParam(
                     name="pod_name",
@@ -624,6 +638,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            categories=frozenset({KUBERNETES}),
             execute=lambda verb, resource, namespace, service_account=None, resource_name=None,
                     _cfg=gke_config: security.check_rbac(
                 verb, resource, gke_config=_cfg, namespace=namespace,
@@ -662,6 +677,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            categories=frozenset({KUBERNETES}),
             execute=lambda name, namespace, revision=None,
                     _cfg=gke_config: diagnostics.get_rollout_history(
                 name, gke_config=_cfg, namespace=namespace, revision=revision,
@@ -699,6 +715,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            categories=frozenset({KUBERNETES}),
             execute=lambda namespace="", include_jobs=False, force_refresh=False,
                     _cfg=gke_config: discovery.discover_workloads(
                 gke_config=_cfg, namespace=namespace, include_jobs=include_jobs,
@@ -732,6 +749,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            categories=frozenset({KUBERNETES}),
             execute=lambda namespace="", force_refresh=False,
                     _cfg=gke_config: discovery.discover_service_mesh(
                 gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
@@ -763,6 +781,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            categories=frozenset({KUBERNETES}),
             execute=lambda namespace="", force_refresh=False,
                     _cfg=gke_config: discovery.discover_network_topology(
                 gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
@@ -796,6 +815,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            categories=frozenset({MESH}),
             execute=lambda namespace="", force_refresh=False,
                     _cfg=gke_config: mesh.get_mesh_overview(
                 gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
@@ -828,6 +848,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            categories=frozenset({MESH}),
             execute=lambda namespace="", force_refresh=False,
                     _cfg=gke_config: mesh.get_mesh_config(
                 gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
@@ -859,6 +880,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            categories=frozenset({MESH}),
             execute=lambda namespace="", force_refresh=False,
                     _cfg=gke_config: mesh.get_mesh_security(
                 gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
@@ -891,6 +913,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            categories=frozenset({MESH}),
             execute=lambda namespace="", force_refresh=False,
                     _cfg=gke_config: mesh.get_sidecar_status(
                 gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
@@ -934,6 +957,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            categories=frozenset({KUBERNETES}),
             execute=lambda resource_type, namespace="default", name="",
                     label_filter="", annotation_filter="",
                     _cfg=gke_config: kubectl_get_labels(
@@ -972,6 +996,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            categories=frozenset({KUBERNETES}),
             execute=lambda namespace="default", deployment="",
                     _cfg=gke_config: get_datadog_config(
                 gke_config=_cfg, namespace=namespace, deployment=deployment,
@@ -999,6 +1024,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
+            categories=frozenset({SCALING}),
             execute=lambda name, namespace="default",
                     _cfg=gke_config: get_scaling_status(
                 name, gke_config=_cfg, namespace=namespace,
@@ -1031,6 +1057,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
+                categories=frozenset({HELM}),
                 execute=lambda namespace="default", force_refresh=False,
                         _cfg=gke_config: helm_list_releases(
                     gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
@@ -1062,6 +1089,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
+                categories=frozenset({HELM}),
                 execute=lambda release_name, namespace="default", force_refresh=False,
                         _cfg=gke_config: helm_release_status(
                     gke_config=_cfg, release_name=release_name, namespace=namespace,
@@ -1095,6 +1123,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
+                categories=frozenset({HELM}),
                 execute=lambda release_name, namespace="default", force_refresh=False,
                         _cfg=gke_config: helm_release_history(
                     gke_config=_cfg, release_name=release_name, namespace=namespace,
@@ -1134,6 +1163,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
+                categories=frozenset({HELM}),
                 execute=lambda release_name, namespace="default", all_values=False,
                         force_refresh=False,
                         _cfg=gke_config: helm_release_values(
@@ -1163,6 +1193,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
+                categories=frozenset({ARGOCD}),
                 execute=lambda namespace="",
                         _cfg=gke_config: argocd_list_applications(
                     namespace=namespace,
@@ -1190,6 +1221,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
+                categories=frozenset({ARGOCD}),
                 execute=lambda app_name, namespace="",
                         _cfg=gke_config: argocd_app_status(
                     app_name=app_name, namespace=namespace,
@@ -1217,6 +1249,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
+                categories=frozenset({ARGOCD}),
                 execute=lambda app_name, namespace="",
                         _cfg=gke_config: argocd_app_history(
                     app_name=app_name, namespace=namespace,
@@ -1244,6 +1277,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
+                categories=frozenset({ARGOCD}),
                 execute=lambda app_name, namespace="",
                         _cfg=gke_config: argocd_app_diff(
                     app_name=app_name, namespace=namespace,
@@ -1271,6 +1305,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
+                categories=frozenset({ARGOCD}),
                 execute=lambda app_name, namespace="",
                         _cfg=gke_config: argocd_app_managed_resources(
                     app_name=app_name, namespace=namespace,
@@ -1342,6 +1377,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
+                categories=frozenset({DATADOG}),
                 execute=lambda cluster_name, metric="cpu", from_ts=0, to_ts=0,
                         service=None, env=None,
                         _dd=_dd_config: query_datadog_metrics(
@@ -1389,6 +1425,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
+                categories=frozenset({DATADOG}),
                 execute=lambda cluster_name="", state="Alert",
                         service=None, env=None,
                         _dd=_dd_config: get_datadog_monitors(
@@ -1436,6 +1473,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
+                categories=frozenset({DATADOG}),
                 execute=lambda env="production", cluster_name="",
                         service_name=None,
                         _dd=_dd_config: get_datadog_service_catalog(
@@ -1477,6 +1515,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         required=False,
                     ),
                 ],
+                categories=frozenset({DATADOG}),
                 execute=lambda service_name="", env="production",
                         _dd=_dd_config: get_datadog_apm_services(
                     service_name=service_name, env=env, config=_dd,

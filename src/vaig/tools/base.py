@@ -77,6 +77,12 @@ class ToolDef:
         cache_ttl_seconds: Per-entry TTL in seconds.  ``0`` means no
             expiration — the entry lives for the lifetime of the cache
             instance (which is one pipeline run).
+        categories: Domain categories this tool belongs to.  Used by
+            :meth:`ToolRegistry.filter_by_categories` to select only the
+            tools relevant for a given agent.  Defaults to
+            ``frozenset({"uncategorized"})`` so untagged tools are still
+            discoverable.  Use constants from :mod:`vaig.tools.categories`
+            (e.g. ``KUBERNETES``, ``HELM``, ``DATADOG``).
     """
 
     name: str
@@ -85,6 +91,7 @@ class ToolDef:
     execute: Callable[..., ToolResult] = field(default=lambda **_: ToolResult(output=""))
     cacheable: bool = True
     cache_ttl_seconds: int = 0
+    categories: frozenset[str] = field(default_factory=lambda: frozenset({"uncategorized"}))
 
 
 class ToolRegistry:
@@ -105,6 +112,27 @@ class ToolRegistry:
     def list_tools(self) -> list[ToolDef]:
         """Return all registered tools."""
         return list(self._tools.values())
+
+    def filter_by_categories(self, categories: frozenset[str]) -> ToolRegistry:
+        """Return a new registry containing only tools whose categories intersect *categories*.
+
+        A tool is included when ``tool.categories & categories`` is non-empty —
+        i.e. the tool belongs to at least one of the requested categories.
+
+        Args:
+            categories: The set of category names to keep.  Use constants from
+                :mod:`vaig.tools.categories` (e.g.
+                ``frozenset({KUBERNETES, HELM})``).
+
+        Returns:
+            A new :class:`ToolRegistry` with the filtered subset of tools.
+            The original registry is not modified.
+        """
+        filtered = ToolRegistry()
+        for tool in self._tools.values():
+            if tool.categories & categories:
+                filtered.register(tool)
+        return filtered
 
     def to_function_declarations(self) -> list[types.FunctionDeclaration]:
         """Convert registered tools to google-genai FunctionDeclaration objects."""

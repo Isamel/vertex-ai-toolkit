@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
+from vaig.tools.categories import CODING
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +286,7 @@ def create_file_tools(workspace: Path) -> list[ToolDef]:
         ToolDef(
             name="read_file",
             description="Read the contents of a file. Returns the file content as text.",
+            categories=frozenset({CODING}),
             parameters=[
                 ToolParam(
                     name="path",
@@ -297,6 +299,7 @@ def create_file_tools(workspace: Path) -> list[ToolDef]:
         ToolDef(
             name="write_file",
             description="Write content to a file. Creates parent directories if needed.",
+            categories=frozenset({CODING}),
             parameters=[
                 ToolParam(
                     name="path",
@@ -319,6 +322,7 @@ def create_file_tools(workspace: Path) -> list[ToolDef]:
                 "Apply an exact string replacement in a file. "
                 "The old_string must appear exactly once."
             ),
+            categories=frozenset({CODING}),
             parameters=[
                 ToolParam(
                     name="path",
@@ -346,6 +350,7 @@ def create_file_tools(workspace: Path) -> list[ToolDef]:
                 "List directory contents. Returns one entry per line. "
                 "Directories end with /. Skips hidden files and common ignores."
             ),
+            categories=frozenset({CODING}),
             parameters=[
                 ToolParam(
                     name="path",
@@ -362,6 +367,7 @@ def create_file_tools(workspace: Path) -> list[ToolDef]:
                 "Search file contents using a regex pattern (recursive). "
                 "Returns matches in filepath:line:content format."
             ),
+            categories=frozenset({CODING}),
             parameters=[
                 ToolParam(
                     name="pattern",
