@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 from google.genai import types
 
 from vaig.core.async_utils import to_async
-from vaig.core.config import DEFAULT_CHARS_PER_TOKEN, DEFAULT_MAX_OUTPUT_TOKENS
-from vaig.core.exceptions import MaxIterationsError
+from vaig.core.config import DEFAULT_CHARS_PER_TOKEN, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, get_settings
+from vaig.core.exceptions import ContextWindowExceededError, MaxIterationsError
 from vaig.core.prompt_defense import wrap_untrusted_content
 from vaig.session.summarizer import SUMMARIZATION_PROMPT, estimate_history_tokens
 from vaig.tools.base import ToolCallRecord, ToolRegistry, ToolResult
@@ -100,6 +100,7 @@ class ToolLoopMixin:
         tool_result_cache: ToolResultCache | None = None,
         required_sections: list[str] | None = None,
         max_history_tokens: int = 28_000,
+        context_window: int = DEFAULT_CONTEXT_WINDOW,
     ) -> ToolLoopResult:
         """Drive a Gemini tool-use loop until text or max iterations.
 
@@ -142,6 +143,7 @@ class ToolLoopMixin:
         iteration = 0
         budget_warning_issued = False
         accumulated_llm_text = ""
+        peak_context_pct: float = 0.0
 
         logger.debug(
             "ToolLoopMixin._run_tool_loop() -- starting (max=%d)",
@@ -169,7 +171,13 @@ class ToolLoopMixin:
                     model_id=model,
                     **gen_kwargs,
                 )
-            except Exception:
+            except Exception as _api_exc:
+                from google.api_core.exceptions import InvalidArgument
+                if isinstance(_api_exc, InvalidArgument):
+                    raise ContextWindowExceededError(
+                        f"Context window exceeded (HTTP 400 InvalidArgument): {_api_exc}",
+                        context_pct=peak_context_pct,
+                    ) from _api_exc
                 logger.exception(
                     "ToolLoopMixin API call failed on iteration %d",
                     iteration,
@@ -179,6 +187,54 @@ class ToolLoopMixin:
             # -- Accumulate token usage -----------------------------------
             for key in total_usage:
                 total_usage[key] += result.usage.get(key, 0)
+
+            # -- Context window monitoring --------------------------------
+            _prompt_tokens = result.usage.get("prompt_tokens", 0)
+            _context_pct = (_prompt_tokens / context_window * 100) if context_window > 0 else 0.0
+            peak_context_pct = max(peak_context_pct, _context_pct)
+            # Read thresholds from settings, falls back to spec-defined defaults (80/95).
+            try:
+                _cw_cfg = get_settings().context_window
+                _warn_threshold = _cw_cfg.warn_threshold_pct
+                _error_threshold = _cw_cfg.error_threshold_pct
+            except Exception:  # noqa: BLE001
+                _warn_threshold = 80.0
+                _error_threshold = 95.0
+            _ctx_status = (
+                "error" if _context_pct >= _error_threshold
+                else "warning" if _context_pct >= _warn_threshold
+                else "ok"
+            )
+            if _ctx_status == "ok":
+                logger.debug(
+                    "Context window: %.1f%% (%d/%d tokens) — ok",
+                    _context_pct, _prompt_tokens, context_window,
+                )
+            elif _ctx_status == "warning":
+                logger.warning(
+                    "Context window: %.1f%% (%d/%d tokens) — approaching limit",
+                    _context_pct, _prompt_tokens, context_window,
+                )
+            else:
+                logger.error(
+                    "Context window: %.1f%% (%d/%d tokens) — critical",
+                    _context_pct, _prompt_tokens, context_window,
+                )
+            try:
+                from vaig.core.event_bus import EventBus
+                from vaig.core.events import ContextWindowChecked
+                EventBus.get().emit(
+                    ContextWindowChecked(
+                        model=result.model or (model or ""),
+                        prompt_tokens=_prompt_tokens,
+                        context_window=context_window,
+                        context_pct=_context_pct,
+                        iteration=iteration,
+                        status=_ctx_status,
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
             # -- Case 1: text response (no function calls) -- done --------
             if not result.function_calls:
@@ -194,6 +250,7 @@ class ToolLoopMixin:
                     iterations=iteration,
                     model=result.model,
                     finish_reason=result.finish_reason,
+                    peak_context_pct=peak_context_pct,
                 )
 
             # -- Case 2: function calls -- execute and continue -----------
@@ -660,6 +717,7 @@ class ToolLoopMixin:
         tool_result_cache: ToolResultCache | None = None,
         required_sections: list[str] | None = None,
         max_history_tokens: int = 28_000,
+        context_window: int = DEFAULT_CONTEXT_WINDOW,
     ) -> ToolLoopResult:
         """Async version of :meth:`_run_tool_loop`.
 
@@ -688,6 +746,7 @@ class ToolLoopMixin:
         iteration = 0
         budget_warning_issued = False
         accumulated_llm_text = ""
+        peak_context_pct: float = 0.0
 
         logger.debug(
             "ToolLoopMixin._async_run_tool_loop() -- starting (max=%d, parallel=%s, max_concurrent=%d)",
@@ -717,7 +776,13 @@ class ToolLoopMixin:
                     model_id=model,
                     **gen_kwargs,
                 )
-            except Exception:
+            except Exception as _api_exc:
+                from google.api_core.exceptions import InvalidArgument
+                if isinstance(_api_exc, InvalidArgument):
+                    raise ContextWindowExceededError(
+                        f"Context window exceeded (HTTP 400 InvalidArgument): {_api_exc}",
+                        context_pct=peak_context_pct,
+                    ) from _api_exc
                 logger.exception(
                     "ToolLoopMixin async API call failed on iteration %d",
                     iteration,
@@ -727,6 +792,54 @@ class ToolLoopMixin:
             # -- Accumulate token usage -----------------------------------
             for key in total_usage:
                 total_usage[key] += result.usage.get(key, 0)
+
+            # -- Context window monitoring --------------------------------
+            _prompt_tokens = result.usage.get("prompt_tokens", 0)
+            _context_pct = (_prompt_tokens / context_window * 100) if context_window > 0 else 0.0
+            peak_context_pct = max(peak_context_pct, _context_pct)
+            # Read thresholds from settings, falls back to spec-defined defaults (80/95).
+            try:
+                _cw_cfg = get_settings().context_window
+                _warn_threshold = _cw_cfg.warn_threshold_pct
+                _error_threshold = _cw_cfg.error_threshold_pct
+            except Exception:  # noqa: BLE001
+                _warn_threshold = 80.0
+                _error_threshold = 95.0
+            _ctx_status = (
+                "error" if _context_pct >= _error_threshold
+                else "warning" if _context_pct >= _warn_threshold
+                else "ok"
+            )
+            if _ctx_status == "ok":
+                logger.debug(
+                    "Context window: %.1f%% (%d/%d tokens) — ok",
+                    _context_pct, _prompt_tokens, context_window,
+                )
+            elif _ctx_status == "warning":
+                logger.warning(
+                    "Context window: %.1f%% (%d/%d tokens) — approaching limit",
+                    _context_pct, _prompt_tokens, context_window,
+                )
+            else:
+                logger.error(
+                    "Context window: %.1f%% (%d/%d tokens) — critical",
+                    _context_pct, _prompt_tokens, context_window,
+                )
+            try:
+                from vaig.core.event_bus import EventBus
+                from vaig.core.events import ContextWindowChecked
+                EventBus.get().emit(
+                    ContextWindowChecked(
+                        model=result.model or (model or ""),
+                        prompt_tokens=_prompt_tokens,
+                        context_window=context_window,
+                        context_pct=_context_pct,
+                        iteration=iteration,
+                        status=_ctx_status,
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
             # -- Case 1: text response (no function calls) -- done --------
             if not result.function_calls:
@@ -742,6 +855,7 @@ class ToolLoopMixin:
                     iterations=iteration,
                     model=result.model,
                     finish_reason=result.finish_reason,
+                    peak_context_pct=peak_context_pct,
                 )
 
             # -- Case 2: function calls -- execute and continue -----------
@@ -1203,8 +1317,9 @@ class ToolLoopResult:
     """Result produced by ``ToolLoopMixin._run_tool_loop``.
 
     Carries the raw text, token usage, executed tool metadata,
-    iteration count, model name, and finish reason.  The host agent
-    is responsible for wrapping this into an ``AgentResult``.
+    iteration count, model name, finish reason, and peak context
+    window usage percentage.  The host agent is responsible for
+    wrapping this into an ``AgentResult``.
     """
 
     __slots__ = (
@@ -1214,6 +1329,7 @@ class ToolLoopResult:
         "iterations",
         "model",
         "finish_reason",
+        "peak_context_pct",
     )
 
     def __init__(
@@ -1225,6 +1341,7 @@ class ToolLoopResult:
         iterations: int,
         model: str,
         finish_reason: str,
+        peak_context_pct: float = 0.0,
     ) -> None:
         self.text = text
         self.usage = usage
@@ -1232,3 +1349,4 @@ class ToolLoopResult:
         self.iterations = iterations
         self.model = model
         self.finish_reason = finish_reason
+        self.peak_context_pct = peak_context_pct

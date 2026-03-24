@@ -11,6 +11,7 @@ from vaig.core.events import (
     ApiCalled,
     BudgetChecked,
     CliCommandTracked,
+    ContextWindowChecked,
     ErrorOccurred,
     Event,
     SessionEnded,
@@ -19,6 +20,7 @@ from vaig.core.events import (
     ToolExecuted,
 )
 from vaig.core.exceptions import (
+    ContextWindowExceededError,
     GCPAuthError,
     GCPPermissionError,
     GeminiClientError,
@@ -47,6 +49,8 @@ __all__ = [
     "ChatMessage",
     "CliCommandTracked",
     "CodingConfig",
+    "ContextWindowChecked",
+    "ContextWindowExceededError",
     "CostRecord",
     "CostTracker",
     "ErrorOccurred",

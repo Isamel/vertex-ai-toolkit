@@ -135,6 +135,22 @@ class TokenBudgetError(VAIGError):
     """
 
 
+class ContextWindowExceededError(VAIGError):
+    """Raised when the API rejects a request because the context window is exceeded.
+
+    Wraps the ``google.api_core.exceptions.InvalidArgument`` (HTTP 400) that
+    Gemini returns when the prompt is too large for the model's context window.
+
+    Attributes:
+        message: Human-readable description.
+        context_pct: Estimated context window percentage at the time of failure.
+    """
+
+    def __init__(self, message: str, *, context_pct: float = 0.0) -> None:
+        super().__init__(message)
+        self.context_pct = context_pct
+
+
 def format_error_for_user(exc: Exception, *, debug: bool = False) -> str:
     """Format an exception for user display using Rich markup.
 
@@ -160,6 +176,12 @@ def format_error_for_user(exc: Exception, *, debug: bool = False) -> str:
         lines.append("[yellow]Fix:[/yellow] Check your kubeconfig: kubectl config current-context")
     elif isinstance(exc, VaigAuthError):
         lines.append(f"[red]Authentication Error:[/red] {exc}")
+    elif isinstance(exc, ContextWindowExceededError):
+        lines.append(f"[red]Context Window Exceeded:[/red] {exc}")
+        lines.append(
+            f"[yellow]Context usage:[/yellow] {exc.context_pct:.1f}% of context window was consumed. "
+            "Reduce prompt size or use a model with a larger context window."
+        )
     elif isinstance(exc, VAIGError):
         lines.append(f"[red]Error:[/red] {exc}")
     else:
