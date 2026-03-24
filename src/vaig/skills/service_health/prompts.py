@@ -1778,8 +1778,11 @@ For **every** pod that is in ``CrashLoopBackOff``, ``Error``, ``OOMKilled``, or 
 state, trace the full ownership chain before moving on:
 
 a. **Identify owning ReplicaSet** — inspect the pod's ``ownerReferences`` field from the
-   ``kubectl_describe(resource="pod", name="<pod>", namespace="<ns>")`` output already
-   collected in Step 2.  Look for ``kind: ReplicaSet`` and record its ``name``.
+   ``kubectl_describe(resource="pod", name="<pod>", namespace="<ns>")`` output.
+   For ``CrashLoopBackOff`` pods this was already collected in Step 2 (item 5).
+   For ``Error``, ``OOMKilled``, or ``ImagePullBackOff`` pods it may not yet be available —
+   **run** ``kubectl_describe(resource="pod", name="<pod>", namespace="<ns>")`` now if you
+   have not already done so.  Look for ``kind: ReplicaSet`` and record its ``name``.
 
 b. **Identify owning Deployment** — inspect the ReplicaSet's ``ownerReferences`` via
    ``kubectl_describe(resource="replicaset", name="<rs-name>", namespace="<ns>")``

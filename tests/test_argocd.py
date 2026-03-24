@@ -557,15 +557,18 @@ class TestCheckCrdExists:
 
         assert result is False
 
-    def test_crd_rbac_forbidden_returns_false(self) -> None:
-        """403 Forbidden (RBAC missing) — returns False gracefully."""
+    def test_crd_rbac_forbidden_returns_false(self, caplog: pytest.LogCaptureFixture) -> None:
+        """403 Forbidden (RBAC missing) — returns False and emits a warning log."""
+        import logging
+
         from vaig.tools.gke.argocd import _check_crd_exists
 
         exc_class = type("ApiException", (Exception,), {"status": 403, "reason": "Forbidden"})
         mock_ext_api = MagicMock()
         mock_ext_api.read_custom_resource_definition.side_effect = exc_class()
 
-        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+        with caplog.at_level(logging.WARNING, logger="vaig.tools.gke.argocd"), \
+             patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
              patch("vaig.tools.gke.argocd.k8s_exceptions") as mock_k8s_exc, \
              patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
              patch("kubernetes.config.load_incluster_config"):
@@ -573,20 +576,33 @@ class TestCheckCrdExists:
             result = _check_crd_exists("applications.argoproj.io")
 
         assert result is False
+        assert any(
+            "403" in record.message or "Forbidden" in record.message or "RBAC" in record.message
+            for record in caplog.records
+            if record.levelno == logging.WARNING
+        ), "Expected a WARNING log mentioning 403/Forbidden/RBAC when CRD check is denied"
 
-    def test_crd_unexpected_exception_returns_false(self) -> None:
-        """Any unexpected exception — returns False (never propagates)."""
+    def test_crd_unexpected_exception_returns_false(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Any unexpected exception — returns False and emits a warning log (never propagates)."""
+        import logging
+
         from vaig.tools.gke.argocd import _check_crd_exists
 
         mock_ext_api = MagicMock()
         mock_ext_api.read_custom_resource_definition.side_effect = RuntimeError("network timeout")
 
-        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+        with caplog.at_level(logging.WARNING, logger="vaig.tools.gke.argocd"), \
+             patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
              patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
              patch("kubernetes.config.load_incluster_config"):
             result = _check_crd_exists("applications.argoproj.io")
 
         assert result is False
+        assert any(
+            "network timeout" in record.message or "Unexpected" in record.message
+            for record in caplog.records
+            if record.levelno == logging.WARNING
+        ), "Expected a WARNING log for unexpected exception in CRD check"
 
     def test_crd_k8s_unavailable_returns_false(self) -> None:
         """kubernetes SDK not installed — returns False without raising."""

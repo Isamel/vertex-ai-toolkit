@@ -3231,7 +3231,7 @@ class TestEventGathererNoPhantomInstruction:
             "This was a copy-paste artefact that must be removed."
         )
 
-    def test_workload_gatherer_does_not_reference_datadog_api(self) -> None:
+    def test_event_gatherer_does_not_reference_datadog_api(self) -> None:
         """event_gatherer must not contain Datadog API step instructions."""
         from vaig.skills.service_health.prompts import build_event_gatherer_prompt
 

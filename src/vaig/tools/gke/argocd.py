@@ -187,7 +187,9 @@ def _discover_argocd_namespace(custom_api: Any) -> str | None:
         return _argocd_namespace_cache[cache_key]
 
     # Step 0: CRD existence pre-check (fast, avoids O(n) namespace probes when ArgoCD absent)
-    if not _check_crd_exists("applications.argoproj.io"):
+    # Pass the api_client from the CustomObjectsApi so both checks use the same kubeconfig context.
+    client_for_crd = getattr(custom_api, "api_client", None)
+    if not _check_crd_exists("applications.argoproj.io", api_client=client_for_crd):
         _argocd_namespace_cache[cache_key] = None
         return None
 
