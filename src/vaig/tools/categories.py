@@ -33,3 +33,6 @@ CODING: str = "coding"
 
 #: Datadog APM and monitoring tools.
 DATADOG: str = "datadog"
+
+#: Argo Rollouts progressive delivery tools.
+ARGO_ROLLOUTS: str = "argo_rollouts"

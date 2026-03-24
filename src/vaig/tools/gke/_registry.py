@@ -10,9 +10,15 @@ import logging
 from typing import TYPE_CHECKING
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
-from vaig.tools.categories import ARGOCD, DATADOG, HELM, KUBERNETES, LOGGING, MESH, SCALING
+from vaig.tools.categories import ARGO_ROLLOUTS, ARGOCD, DATADOG, HELM, KUBERNETES, LOGGING, MESH, SCALING
 
 from . import _clients, diagnostics, discovery, kubectl, mesh, mutations, security
+from .argo_rollouts import (
+    detect_argo_rollouts,
+    kubectl_get_analysisrun,
+    kubectl_get_analysistemplate,
+    kubectl_get_rollout,
+)
 from .argocd import (
     argocd_app_diff,
     argocd_app_history,
@@ -1530,5 +1536,127 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             "Datadog API tools skipped (enabled=False). "
             "Set datadog.enabled=true or provide API keys to enable."
         )
+
+    # ── Argo Rollouts tools (auto-detect or explicit toggle) ──
+    _ar_setting = gke_config.argo_rollouts_enabled
+    if _ar_setting is False:
+        _argo_rollouts_active = False
+        logger.debug("Argo Rollouts tools skipped (argo_rollouts_enabled=False).")
+    elif _ar_setting is True:
+        _argo_rollouts_active = True
+        logger.info("Argo Rollouts tools registered (forced via argo_rollouts_enabled=True).")
+    else:
+        # None → auto-detect via CRD presence
+        _argo_rollouts_active = detect_argo_rollouts()
+        if _argo_rollouts_active:
+            logger.info("Argo Rollouts CRD detected — registering Rollout tools.")
+        else:
+            logger.debug(
+                "Argo Rollouts CRD not found — skipping rollout tools. "
+                "Set argo_rollouts_enabled=true to force-enable."
+            )
+
+    if _argo_rollouts_active:
+        tools.extend([
+            ToolDef(
+                name="kubectl_get_rollout",
+                description=(
+                    "List or inspect Argo Rollout resources in the cluster using the "
+                    "Argo Rollouts CRD API (argoproj.io/v1alpha1). "
+                    "Returns phase, replica counts (desired/ready/available/updated), "
+                    "strategy (canary step index and weight, or blueGreen active/preview RS), "
+                    "and condition messages. "
+                    "Use without 'name' to list all Rollouts in a namespace; provide 'name' "
+                    "for a single Rollout. "
+                    "Use this BEFORE investigating pod failures in Rollout-managed workloads — "
+                    "Rollouts replace Deployments and are the authoritative source of rollout state. "
+                    "Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Kubernetes namespace to query (default: all namespaces)",
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="name",
+                        type="string",
+                        description="Rollout name; omit to list all Rollouts in the namespace",
+                        required=False,
+                    ),
+                ],
+                categories=frozenset({ARGO_ROLLOUTS}),
+                execute=lambda namespace="", name="",
+                        _cfg=gke_config: kubectl_get_rollout(
+                    namespace=namespace, name=name,
+                ),
+            ),
+            ToolDef(
+                name="kubectl_get_analysisrun",
+                description=(
+                    "List or inspect Argo Rollouts AnalysisRun resources "
+                    "(argoproj.io/v1alpha1). "
+                    "Returns phase (Running/Successful/Failed/Error), metric results, "
+                    "and error messages for each metric provider. "
+                    "Use to diagnose why a canary or blueGreen rollout was paused or "
+                    "aborted due to a failing analysis. "
+                    "Use without 'name' to list all AnalysisRuns in a namespace. "
+                    "Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Kubernetes namespace to query (default: all namespaces)",
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="name",
+                        type="string",
+                        description="AnalysisRun name; omit to list all AnalysisRuns in the namespace",
+                        required=False,
+                    ),
+                ],
+                categories=frozenset({ARGO_ROLLOUTS}),
+                execute=lambda namespace="", name="",
+                        _cfg=gke_config: kubectl_get_analysisrun(
+                    namespace=namespace, name=name,
+                ),
+            ),
+            ToolDef(
+                name="kubectl_get_analysistemplate",
+                description=(
+                    "List or inspect Argo Rollouts AnalysisTemplate resources "
+                    "(argoproj.io/v1alpha1). "
+                    "Returns template name, namespace, and the list of defined metrics "
+                    "with their provider types (Prometheus, Web, Job, Datadog, etc.). "
+                    "Use to understand what analysis criteria are used by rollouts in "
+                    "a namespace before investigating a failed AnalysisRun. "
+                    "Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Kubernetes namespace to query (default: all namespaces)",
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="name",
+                        type="string",
+                        description=(
+                            "AnalysisTemplate name; omit to list all templates in the namespace"
+                        ),
+                        required=False,
+                    ),
+                ],
+                categories=frozenset({ARGO_ROLLOUTS}),
+                execute=lambda namespace="", name="",
+                        _cfg=gke_config: kubectl_get_analysistemplate(
+                    namespace=namespace, name=name,
+                ),
+            ),
+        ])
 
     return tools

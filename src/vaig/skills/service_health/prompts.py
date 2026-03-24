@@ -1635,6 +1635,7 @@ Produce exactly this section at the end of your response:
 def build_workload_gatherer_prompt(
     namespace: str = "",
     datadog_api_enabled: bool = False,  # noqa: ARG001 — deprecated; Batch 2 will remove callers
+    argo_rollouts_enabled: bool = False,
 ) -> str:
     """Build the system instruction for the ``workload_gatherer`` sub-agent.
 
@@ -1666,6 +1667,11 @@ def build_workload_gatherer_prompt(
             correlation has moved to ``build_datadog_gatherer_prompt()``.
             This parameter is retained for backward-compatibility until
             all callers are updated in Batch 2.
+        argo_rollouts_enabled: When ``True``, injects additional guidance
+            for Argo Rollouts workloads — the ``Rollout → ReplicaSet → Pod``
+            ownership chain alongside standard Deployments, and instructs
+            the agent to call ``kubectl_get_rollout`` and
+            ``kubectl_get_analysisrun`` as part of Step 4.
 
     Returns:
         A formatted system-instruction string injecting
@@ -1868,6 +1874,41 @@ Report even for healthy deployments, as management context affects remediation r
 - If a namespace has no workload issues, write "No workload issues detected in <namespace>."
 - A shorter, 100% accurate report is always better than a longer report with invented data.
 """
+    if argo_rollouts_enabled:
+        argo_rollouts_section = """
+### Step 4d — Argo Rollouts Workloads (MANDATORY when Argo Rollouts is detected)
+
+Argo Rollouts replaces standard Kubernetes Deployments with ``Rollout`` CRDs that implement
+canary and blueGreen strategies.  The ownership chain is:
+
+    Rollout → ReplicaSet → Pod
+
+This is analogous to ``Deployment → ReplicaSet → Pod`` but uses the Argo Rollouts controller.
+
+For each namespace, perform:
+
+a. ``kubectl_get_rollout(namespace="<target>")`` — list all Rollouts, note phase, strategy,
+   and replica counts (desired/ready/available/updated).  A phase of ``Degraded``, ``Paused``,
+   or ``Error`` is a finding that must be reported.
+
+b. For any Rollout **not** in ``Healthy`` phase:
+   ``kubectl_get_rollout(namespace="<target>", name="<rollout-name>")`` — get full detail.
+
+c. ``kubectl_get_analysisrun(namespace="<target>")`` — list recent AnalysisRuns.  A phase of
+   ``Failed`` or ``Error`` is a root-cause signal (the rollout was aborted because analysis failed).
+
+d. For any failed AnalysisRun, report: run name, phase, and which metric(s) failed.
+
+e. For pod ownership tracing (Step 4c): when a failing pod's owning ReplicaSet is controlled
+   by a ``Rollout`` (check ``ownerReferences.kind == "Rollout"``), report:
+   ``"Pod <pod-name> → RS <rs-name> → Rollout <rollout-name> (canary|blueGreen)"``
+   instead of the standard Deployment chain.
+
+f. Add a ``### Rollout Issues`` sub-section to ``## Raw Findings (Workload)`` if any Rollouts
+   are not in Healthy phase.  Format:
+   ``"Rollout <name> in <namespace>: phase=<phase>, strategy=<canary|blueGreen>, <detail>"``
+"""
+        prompt = prompt + argo_rollouts_section
     # Replace placeholder tokens with the validated namespace so agents call the right target.
     return prompt.replace("<target>", ns).replace("<target_namespace>", ns).replace("<ns>", ns)
 

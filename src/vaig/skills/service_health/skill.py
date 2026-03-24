@@ -320,6 +320,19 @@ class ServiceHealthSkill(BaseSkill):
         is_autopilot = bool(detect_autopilot(effective_gke))
         effective_namespace = effective_gke.default_namespace
 
+        # Resolve the 3-state Argo Rollouts flag:
+        #   None  → auto-detect via CRD probe (lazy, cached per process)
+        #   True  → force-enable regardless of CRD
+        #   False → always disable (skip detection entirely)
+        _ar_setting = effective_gke.argo_rollouts_enabled
+        if _ar_setting is False:
+            argo_rollouts_active = False
+        elif _ar_setting is True:
+            argo_rollouts_active = True
+        else:
+            from vaig.tools.gke.argo_rollouts import detect_argo_rollouts  # noqa: PLC0415
+            argo_rollouts_active = detect_argo_rollouts()
+
         agents: list[dict[str, Any]] = [
             # ── Parallel group: core sub-gatherers ───────────────────────
             {
@@ -344,7 +357,11 @@ class ServiceHealthSkill(BaseSkill):
                 "requires_tools": True,
                 "parallel_group": "gather",
                 "injectable_agents": ["node_gatherer"],
-                "tool_categories": ["kubernetes", "scaling"],
+                "tool_categories": (
+                    ["kubernetes", "scaling", "argo_rollouts"]
+                    if argo_rollouts_active
+                    else ["kubernetes", "scaling"]
+                ),
                 "capabilities": [
                     "pod", "pods", "deployment", "workload", "restart",
                     "crash", "crashloop", "oom", "container", "replicas",
@@ -353,6 +370,7 @@ class ServiceHealthSkill(BaseSkill):
                 ],
                 "system_instruction": build_workload_gatherer_prompt(
                     namespace=effective_namespace,
+                    argo_rollouts_enabled=argo_rollouts_active,
                 ),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
