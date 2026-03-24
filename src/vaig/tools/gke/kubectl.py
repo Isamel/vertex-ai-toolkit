@@ -747,13 +747,11 @@ def kubectl_logs(
             match = re.search(r"\[([^\]]+)\]", str(exc.body))
             if match:
                 containers = match.group(1).split()
-                sidecar_prefixes = ("istio-", "datadog-", "linkerd-", "envoy-")
-                sidecar_exact = frozenset({"envoy", "istio-proxy", "datadog-agent", "linkerd-proxy"})
+                sidecar_prefixes = ("istio-", "datadog-", "linkerd-", "envoy-", "jaeger-")
+                sidecar_exact = frozenset({"envoy", "istio-proxy", "datadog-agent", "linkerd-proxy", "jaeger-agent", "filebeat", "fluentd"})
                 app_containers = [
                     c for c in containers
-                    if c not in sidecar_exact
-                    and not c.startswith(sidecar_prefixes)
-                    and "-init-" not in c
+                    if not c.startswith(sidecar_prefixes) and c not in sidecar_exact and "-init-" not in c
                 ]
                 target = app_containers[0] if len(app_containers) == 1 else None
                 if target:
@@ -765,8 +763,17 @@ def kubectl_logs(
                                 output=f"(no logs available for container '{target}' in pod/{pod})"
                             )
                         return ToolResult(output=f"[container: {target}]\n{logs}")
-                    except k8s_exceptions.ApiException:
-                        pass
+                    except k8s_exceptions.ApiException as retry_exc:
+                        return ToolResult(
+                            output=(
+                                f"Pod {pod} has multiple containers: {', '.join(containers)}. "
+                                f"Likely app containers: {', '.join(app_containers) if app_containers else 'unknown'}. "
+                                f"Automatically retried with container='{target}', but the Kubernetes API call "
+                                f"failed with status {retry_exc.status}: {retry_exc.reason}. "
+                                f"Retry with container= parameter."
+                            ),
+                            error=True,
+                        )
                 return ToolResult(
                     output=(
                         f"Pod {pod} has multiple containers: {', '.join(containers)}. "

@@ -3,7 +3,8 @@
 Covers:
 - Auto-detection and retry when a single non-sidecar container is found
 - Helpful error message when multiple app containers exist
-- Known sidecar prefixes are filtered out (istio-, datadog-, linkerd-, envoy-)
+- Known sidecar prefixes are filtered out (istio-, datadog-, linkerd-, envoy-, jaeger-)
+- Known sidecar exact names filtered out (envoy, istio-proxy, datadog-agent, linkerd-proxy, jaeger-agent, filebeat, fluentd)
 - Init containers (-init-) are filtered out
 - Existing CrashLoopBackOff path is unaffected
 - Non-400 exceptions are unaffected
@@ -23,9 +24,9 @@ from vaig.tools.gke import kubectl
 def _make_gke_config() -> MagicMock:
     """Return a minimal GKEConfig mock."""
     cfg = MagicMock()
-    cfg.project = "my-project"
+    cfg.project_id = "my-project"
     cfg.location = "us-central1"
-    cfg.cluster = "my-cluster"
+    cfg.cluster_name = "my-cluster"
     cfg.default_namespace = "default"
     cfg.log_limit = None
     return cfg

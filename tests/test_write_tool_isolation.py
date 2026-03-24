@@ -29,9 +29,9 @@ WRITE_TOOL_NAMES = frozenset({
 
 def _make_gke_config() -> MagicMock:
     cfg = MagicMock()
-    cfg.project = "test-project"
+    cfg.project_id = "test-project"
     cfg.location = "us-central1"
-    cfg.cluster = "test-cluster"
+    cfg.cluster_name = "test-cluster"
     cfg.default_namespace = "default"
     cfg.log_limit = None
     return cfg
@@ -42,7 +42,7 @@ def _build_registry() -> ToolRegistry:
     with (
         patch("vaig.tools.gke._clients.detect_autopilot", return_value=None),
         patch("vaig.tools.gke._clients._create_k8s_clients", return_value=_fake_clients),
-        patch("vaig.tools.gke.argo_rollouts.detect_argo_rollouts", return_value=False),
+        patch("vaig.tools.gke._registry.detect_argo_rollouts", return_value=False),
     ):
         tools = create_gke_tools(_make_gke_config())
     registry = ToolRegistry()
@@ -120,9 +120,12 @@ class TestGathererAgentCategories:
 
     def test_gatherer_tool_categories_in_skill_do_not_include_write(self) -> None:
         """Import skill.py and verify no agent config requests kubernetes_write."""
-        # All known gatherer tool_categories from skill.py (as of this change):
-        # These are the values actually used at runtime — hardcoded here to
-        # avoid coupling the test to skill internals.
+        # All known gatherer tool_categories from skill.py (as of this change).
+        # Hardcoded here intentionally: importing skill.py directly would pull in
+        # heavy runtime dependencies (ADC, GKE clients, LLM SDKs) that are not
+        # available in the unit-test environment.
+        # Reference: src/vaig/skill.py — search for `tool_categories=` in each
+        # GathererConfig / AgentConfig definition to verify this list stays in sync.
         gatherer_categories_sets = [
             ["kubernetes", "helm", "argocd", "scaling", "mesh", "datadog", "logging"],
             ["kubernetes", "scaling", "mesh", "datadog"],
