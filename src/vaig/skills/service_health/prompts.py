@@ -76,7 +76,7 @@ SYSTEM_INSTRUCTION_GATHERER: str = _SYSTEM_INSTRUCTION_UNIVERSAL
 
 _CORE_TOOLS_TABLE = """\
 | `kubectl_get` | `resource` | `name`, `namespace`, `output`, `label_selector`, `field_selector` |
-| `kubectl_describe` | `resource`, `name` | `namespace` |
+| `kubectl_describe` | `resource_type`, `name` | `namespace` |
 | `kubectl_logs` | `pod` | `namespace`, `container`, `tail_lines`, `since` |
 | `kubectl_top` | | `resource_type`, `name`, `namespace` |
 | `get_events` | | `namespace`, `event_type`, `involved_object_name`, `involved_object_kind`, `limit` |
@@ -2220,7 +2220,7 @@ agents running in parallel.
 ### Step 10 — GitOps / Helm / ArgoCD Investigation
 11. ``kubectl_get(resource="applications.argoproj.io", namespace="argocd")`` — if ArgoCD is present
 12. ``kubectl_get(resource="helmreleases.helm.toolkit.fluxcd.io", namespace="<ns>")`` — if Flux is present
-13. For out-of-sync ArgoCD apps: ``kubectl_describe(resource="application", name="<app>", namespace="argocd")``
+13. For out-of-sync ArgoCD apps: ``argocd_app_status(app_name="<app>", namespace="argocd")``
 
 **Helm Release Assessment (ANNOTATION-FIRST STRATEGY)**:
 PREREQUISITE: Check if ``helm_list_releases`` is in your available tools list. If NOT
