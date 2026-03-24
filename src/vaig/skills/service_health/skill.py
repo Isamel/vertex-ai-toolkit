@@ -205,18 +205,47 @@ class ServiceHealthSkill(BaseSkill):
         from vaig.core.config import get_settings
 
         settings = get_settings()
+        namespace = namespace or settings.gke.default_namespace
+
+        # Resolve the 3-state ArgoCD flag:
+        #   None  → auto-detect via CRD probe + annotation fallback (lazy, cached per process)
+        #   True  → force-enable regardless of CRD
+        #   False → always disable (skip detection entirely)
+        _acd_setting = settings.gke.argocd_enabled
+        if _acd_setting is False:
+            argocd_active = False
+        elif _acd_setting is True:
+            argocd_active = True
+        else:
+            from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415
+            from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415
+            from vaig.tools.gke.argocd import detect_argocd  # noqa: PLC0415
+            _effective_gke = settings.gke.model_copy(
+                update={"default_namespace": namespace}
+            )
+            _acd_api_client = None
+            _acd_clients = _gke_clients._create_k8s_clients(_effective_gke)
+            if not isinstance(_acd_clients, _ToolResult):
+                _acd_api_client = _acd_clients[3]  # ApiClient is the 4th element
+            argocd_active = detect_argocd(
+                namespace=namespace,
+                api_client=_acd_api_client,
+            )
+
         gatherer_prompt = build_gatherer_prompt(
             helm_enabled=settings.gke.helm_enabled,
-            argocd_enabled=settings.gke.argocd_enabled,
+            argocd_enabled=argocd_active,
             datadog_api_enabled=settings.datadog.enabled,
         )
-        namespace = namespace or settings.gke.default_namespace
+        gatherer_tool_categories = ["kubernetes", "helm", "scaling", "mesh", "datadog", "logging"]
+        if argocd_active:
+            gatherer_tool_categories.append("argocd")
         return [
             {
                 "name": "health_gatherer",
                 "role": "Health Data Gatherer",
                 "requires_tools": True,
-                "tool_categories": ["kubernetes", "helm", "argocd", "scaling", "mesh", "datadog", "logging"],
+                "tool_categories": gatherer_tool_categories,
                 "system_instruction": gatherer_prompt,
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,  # Deterministic — gatherer follows a procedure, no creativity needed
@@ -337,7 +366,32 @@ class ServiceHealthSkill(BaseSkill):
             _ar_clients = _gke_clients._create_k8s_clients(effective_gke)
             if not isinstance(_ar_clients, _ToolResult):
                 _ar_api_client = _ar_clients[3]  # ApiClient is the 4th element
-            argo_rollouts_active = detect_argo_rollouts(api_client=_ar_api_client)
+            argo_rollouts_active = detect_argo_rollouts(
+                namespace=effective_namespace,
+                api_client=_ar_api_client,
+            )
+
+        # Resolve the 3-state ArgoCD flag:
+        #   None  → auto-detect via CRD probe + annotation fallback (lazy, cached per process)
+        #   True  → force-enable regardless of CRD
+        #   False → always disable (skip detection entirely)
+        _acd_setting = effective_gke.argocd_enabled
+        if _acd_setting is False:
+            argocd_active = False
+        elif _acd_setting is True:
+            argocd_active = True
+        else:
+            from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415  # noqa: F811
+            from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415  # noqa: F811
+            from vaig.tools.gke.argocd import detect_argocd  # noqa: PLC0415
+            _acd_api_client = None
+            _acd_clients = _gke_clients._create_k8s_clients(effective_gke)
+            if not isinstance(_acd_clients, _ToolResult):
+                _acd_api_client = _acd_clients[3]  # ApiClient is the 4th element
+            argocd_active = detect_argocd(
+                namespace=effective_namespace,
+                api_client=_acd_api_client,
+            )
 
         agents: list[dict[str, Any]] = [
             # ── Parallel group: core sub-gatherers ───────────────────────
@@ -387,7 +441,11 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Events & Infrastructure Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
-                "tool_categories": ["kubernetes", "helm", "argocd"],
+                "tool_categories": (
+                    ["kubernetes", "helm", "argocd"]
+                    if argocd_active
+                    else ["kubernetes", "helm"]
+                ),
                 "capabilities": [
                     "event", "events", "network", "networking", "dns",
                     "service", "endpoint", "ingress", "connectivity",

@@ -31,25 +31,78 @@ _ARGO_ROLLOUTS_GROUP = "argoproj.io"
 _ARGO_ROLLOUTS_VERSION = "v1alpha1"
 _ARGO_ROLLOUTS_CRD = "rollouts.argoproj.io"
 
+_ROLLOUT_ANNOTATION_MARKERS = (
+    "rollout.argoproj.io/desired-replicas",
+    "rollout.argoproj.io/revision",
+    "rollout.argoproj.io/workload-generation",
+)
+
 
 # ── Detection ────────────────────────────────────────────────
 
 
-def detect_argo_rollouts(api_client: Any = None) -> bool:
+def detect_argo_rollouts(namespace: str = "", api_client: Any = None) -> bool:
     """Detect whether Argo Rollouts is installed in the cluster.
 
-    Checks for the ``rollouts.argoproj.io`` CRD.  Results are cached
-    per-process via :func:`~vaig.tools.gke.argocd._check_crd_exists`.
+    Two-phase detection:
+    1. CRD probe: checks for ``rollouts.argoproj.io`` CRD (fast, cached).
+    2. Annotation fallback: if CRD probe fails (404 or 403 RBAC), scans
+       Deployment annotations in the target namespace for Argo Rollouts markers
+       like ``rollout.argoproj.io/revision``.
 
     Args:
+        namespace: Namespace to scan for annotations. Empty = "default".
         api_client: Optional pre-configured ``kubernetes.client.ApiClient``.
             When ``None`` the function loads in-cluster or kube-config
             credentials automatically.
 
     Returns:
-        ``True`` if the CRD exists and is accessible, ``False`` otherwise.
+        ``True`` if Argo Rollouts presence is confirmed, ``False`` otherwise.
     """
-    return _check_crd_exists(_ARGO_ROLLOUTS_CRD, api_client)
+    # Phase 1: CRD probe
+    if _check_crd_exists(_ARGO_ROLLOUTS_CRD, api_client=api_client):
+        logger.info("Argo Rollouts CRD detected — enabling Argo Rollouts tools.")
+        return True
+
+    # Phase 2: Annotation fallback (handles RBAC-restricted clusters)
+    if not _K8S_AVAILABLE:
+        return False
+
+    try:
+        from kubernetes import client as k8s_client  # noqa: WPS433
+        from kubernetes import config as k8s_config  # noqa: WPS433
+
+        if api_client is None:
+            try:
+                k8s_config.load_incluster_config()
+            except k8s_config.ConfigException:
+                try:
+                    k8s_config.load_kube_config()
+                except k8s_config.ConfigException:
+                    return False
+            apps_api = k8s_client.AppsV1Api()
+        else:
+            apps_api = k8s_client.AppsV1Api(api_client)
+
+        ns = namespace or "default"
+        deployments = apps_api.list_namespaced_deployment(
+            namespace=ns,
+            limit=50,
+        )
+        for dep in deployments.items or []:
+            annotations = dep.metadata.annotations or {}
+            if any(k in annotations for k in _ROLLOUT_ANNOTATION_MARKERS):
+                logger.info(
+                    "Argo Rollouts detected via deployment annotations in namespace '%s' "
+                    "(CRD probe unavailable) — enabling Argo Rollouts tools.",
+                    ns,
+                )
+                return True
+
+    except Exception:  # noqa: BLE001
+        logger.debug("Argo Rollouts annotation fallback probe failed", exc_info=True)
+
+    return False
 
 
 # ── Helpers ──────────────────────────────────────────────────

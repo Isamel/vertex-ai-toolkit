@@ -178,7 +178,7 @@ class TestDetectArgoRollouts:
         assert result is False
 
     def test_detect_returns_false_when_crd_not_found(self) -> None:
-        """Returns False when the CRD returns 404."""
+        """Returns False when the CRD returns 404 and no annotations present."""
         from kubernetes.client import exceptions as k8s_exc
 
         from vaig.tools.gke.argo_rollouts import detect_argo_rollouts
@@ -187,14 +187,112 @@ class TestDetectArgoRollouts:
         api_exc = k8s_exc.ApiException(status=404)
         mock_ext_api.read_custom_resource_definition.side_effect = api_exc
 
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = []
+
         with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
              patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
              patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
              patch("kubernetes.config.load_kube_config", return_value=None), \
              patch("kubernetes.config.ConfigException", Exception):
-            result = detect_argo_rollouts()
+            result = detect_argo_rollouts(namespace="production")
 
         assert result is False
+
+    def test_crd_404_but_rollout_annotations_found_returns_true(self) -> None:
+        """Returns True when CRD absent but rollout annotations are present.
+
+        Key RBAC scenario: cluster denies CRD access but Deployment annotations
+        like rollout.argoproj.io/revision confirm Argo Rollouts is managing resources.
+        """
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argo_rollouts import detect_argo_rollouts
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.side_effect = k8s_exc.ApiException(status=403)
+
+        dep_without = MagicMock()
+        dep_without.metadata.annotations = {"app": "frontend"}
+
+        dep_with = MagicMock()
+        dep_with.metadata.annotations = {"rollout.argoproj.io/revision": "5"}
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = [dep_without, dep_with]
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = detect_argo_rollouts(namespace="production")
+
+        assert result is True
+
+    def test_crd_not_found_desired_replicas_annotation_returns_true(self) -> None:
+        """Returns True when rollout.argoproj.io/desired-replicas annotation found."""
+        from vaig.tools.gke.argo_rollouts import detect_argo_rollouts
+
+        dep = MagicMock()
+        dep.metadata.annotations = {"rollout.argoproj.io/desired-replicas": "3"}
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = [dep]
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argocd._crd_exists_cache", {"rollouts.argoproj.io": False}), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = detect_argo_rollouts(namespace="default")
+
+        assert result is True
+
+    def test_annotation_scan_exception_returns_false_gracefully(self) -> None:
+        """Returns False gracefully when annotation scan raises an exception."""
+        from vaig.tools.gke.argo_rollouts import detect_argo_rollouts
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.side_effect = RuntimeError("Network error")
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argocd._crd_exists_cache", {"rollouts.argoproj.io": False}), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = detect_argo_rollouts(namespace="production")
+
+        assert result is False
+
+    def test_annotation_fallback_uses_default_namespace_when_empty(self) -> None:
+        """Uses 'default' namespace for annotation scan when namespace param is empty."""
+        from vaig.tools.gke.argo_rollouts import detect_argo_rollouts
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = []
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argocd._crd_exists_cache", {"rollouts.argoproj.io": False}), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            detect_argo_rollouts(namespace="")
+
+        mock_apps_api.list_namespaced_deployment.assert_called_once_with(
+            namespace="default",
+            limit=50,
+        )
 
 
 # ── _format_rollout ──────────────────────────────────────────

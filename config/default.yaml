@@ -195,13 +195,29 @@ helm:
   enabled: true                   # Set to false to disable Helm tools
 
 # ArgoCD integration — introspect ArgoCD Application CRDs
+# Auto-detection is enabled by default:
+#   - Phase 1: CRD probe (checks for applications.argoproj.io CRD)
+#   - Phase 2: Annotation fallback (scans Deployment annotations for ArgoCD markers)
+#     Triggers on: argocd.argoproj.io/tracking-id, argocd.argoproj.io/managed-by
+# null/omit = auto-detect (CRD probe + annotation scan)
+# true = force-enable (requires appropriate RBAC to query ArgoCD CRDs)
+# false = disable entirely
 argocd:
-  enabled: false                  # Set to true to enable ArgoCD tools
+  # enabled: null                   # null/omit = auto-detect; true = force-enable; false = disable
   server: ""                      # ArgoCD server URL (for REST API mode — not yet implemented)
   token: ""                       # ArgoCD auth token (for REST API mode — not yet implemented)
   context: ""                     # Kubeconfig context for ArgoCD cluster (if different from GKE cluster)
   namespace: "argocd"             # Namespace where ArgoCD Applications live
   verify_ssl: true                # Verify SSL certificates for ArgoCD server
+
+# Argo Rollouts integration — introspect Argo Rollouts CRDs
+# Auto-detection is enabled by default:
+#   - Phase 1: CRD probe (checks for rollouts.argoproj.io CRD)
+#   - Phase 2: Annotation fallback (scans Deployment annotations for Rollout markers)
+#     Triggers on: rollout.argoproj.io/revision, rollout.argoproj.io/desired-replicas
+# null/omit = auto-detect; true = force-enable; false = disable entirely
+# argo_rollouts:
+#   enabled: null
 
 # Datadog API integration — real-time metrics, monitors, APM
 datadog:
