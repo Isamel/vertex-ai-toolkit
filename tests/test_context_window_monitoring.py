@@ -917,14 +917,16 @@ class TestContextWindowConfigFallbackChain:
         assert result == 2_000_000
 
     def test_config_context_window_size_is_intermediate_fallback(self) -> None:
-        """When model info has no context_window, config.context_window_size is used."""
+        """When model info has no custom context_window, config.context_window_size is used."""
         from unittest.mock import patch
 
-        from vaig.core.config import Settings
+        from vaig.core.config import ModelInfo, Settings
 
         settings = Settings()
-        # Model entry exists but has no custom context_window (uses default)
-        settings.models.available = []
+        # Model entry exists but has no custom context_window (uses DEFAULT_CONTEXT_WINDOW).
+        # After fix C1, the default-valued context_window is treated as "not set",
+        # so the fallback chain falls through to context_window_size.
+        settings.models.available = [ModelInfo(id="gemini-unknown")]
         settings.context_window.context_window_size = 600_000
 
         _, client = _make_agent()
@@ -982,42 +984,13 @@ class TestUsagePropagation:
 
     def test_usage_carried_through_context_window_exceeded_error(self) -> None:
         """Usage accumulated before a context-window error is preserved in result."""
-        mixin = _ConcreteLoopMixin()
-        client = _make_mock_client()
+        agent, _ = _make_agent()
         registry = ToolRegistry()
 
-        # First call succeeds and returns tokens, second call raises context error.
-        first_result = _make_text_result(prompt_tokens=500_000)
-        first_result.function_calls = [{"name": "some_tool", "args": {}}]
-        first_result.text = ""
-
-        # Patch the tool execution to return something valid
-        def _make_fn_result(fcs: list) -> MagicMock:
-            r = MagicMock()
-            r.function_calls = fcs
-            r.text = ""
-            r.model = "gemini-2.5-pro"
-            r.finish_reason = "TOOL_CALL"
-            r.usage = {"prompt_tokens": 500_000, "completion_tokens": 10, "total_tokens": 500_010}
-            return r
-
-        # Sequence: first call returns a tool call, second raises InvalidArgument
-        client.generate_with_tools.side_effect = [
-            _make_fn_result([]),  # no tools → ends the loop
-        ]
-        # Use direct exception propagation test instead
         exc = ContextWindowExceededError(
             "context window exceeded",
             context_pct=50.0,
             usage={"prompt_tokens": 500_000, "completion_tokens": 10, "total_tokens": 500_010},
-        )
-        _, client2 = _make_agent()
-        agent = ToolAwareAgent(
-            system_instruction="test",
-            tool_registry=registry,
-            model="gemini-2.5-pro",
-            name="usage-agent",
-            client=client2,
         )
         result = agent._handle_context_window_exceeded(exc)
 

@@ -166,7 +166,9 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         """Resolve the effective context window for the agent's model.
 
         Resolution order (C1/C6):
-        1. Model-specific ``context_window`` from ``settings.models.available``.
+        1. Model-specific ``context_window`` from ``settings.models.available``,
+           only when it differs from ``DEFAULT_CONTEXT_WINDOW`` (i.e. was
+           explicitly set for that model).
         2. ``settings.context_window.context_window_size`` (global config fallback).
         3. ``DEFAULT_CONTEXT_WINDOW`` (hard-coded constant, last resort).
 
@@ -176,10 +178,13 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         try:
             _settings = get_settings()
             _model_info = _settings.get_model_info(self._config.model)
-            if _model_info is not None and _model_info.context_window:
+            if _model_info is not None and _model_info.context_window and _model_info.context_window != DEFAULT_CONTEXT_WINDOW:
                 return _model_info.context_window
             # Intermediate fallback: use configured default before the constant.
-            return _settings.context_window.context_window_size
+            global_cw = getattr(_settings.context_window, "context_window_size", None)
+            if isinstance(global_cw, int) and global_cw:
+                return global_cw
+            return DEFAULT_CONTEXT_WINDOW
         except Exception:  # noqa: BLE001
             return DEFAULT_CONTEXT_WINDOW
 

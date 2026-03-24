@@ -32,6 +32,18 @@ logger = logging.getLogger(__name__)
 
 BUDGET_WARNING_THRESHOLD = 0.8
 
+# Keywords (case-insensitive) that identify a context/token-limit error from the API.
+# Defined at module level to avoid duplication between sync and async tool loops.
+_CONTEXT_ERROR_KEYWORDS: tuple[str, ...] = (
+    "context window",
+    "token limit",
+    "max tokens",
+    "maximum tokens",
+    "prompt is too long",
+    "too many tokens",
+    "exceeds the maximum allowed size",
+)
+
 
 class OnToolCall(Protocol):
     """Callback protocol invoked after each tool execution.
@@ -83,6 +95,23 @@ class ToolLoopMixin:
     """
 
     # ── Public loop entry-point ──────────────────────────────
+
+    @staticmethod
+    def _load_cw_thresholds() -> tuple[float, float]:
+        """Load context window warn/error thresholds from settings.
+
+        Returns a ``(warn_threshold, error_threshold)`` tuple.  Falls back
+        to safe hardcoded defaults when settings are unavailable so the tool
+        loop never fails due to a configuration error.
+
+        Returns:
+            Tuple of ``(warn_threshold_pct, error_threshold_pct)``.
+        """
+        try:
+            _cw_cfg = get_settings().context_window
+            return _cw_cfg.warn_threshold_pct, _cw_cfg.error_threshold_pct
+        except Exception:  # noqa: BLE001
+            return 80.0, 95.0
 
     def _run_tool_loop(
         self,
@@ -163,24 +192,7 @@ class ToolLoopMixin:
         # -- Hoist settings and event infrastructure before the loop --------
         # Resolving settings and importing event types once avoids repeated
         # per-iteration overhead (C5).
-        try:
-            _cw_cfg = get_settings().context_window
-            _warn_threshold = _cw_cfg.warn_threshold_pct
-            _error_threshold = _cw_cfg.error_threshold_pct
-        except Exception:  # noqa: BLE001
-            _warn_threshold = 80.0
-            _error_threshold = 95.0
-
-        # Keywords (case-insensitive) that identify a context/token-limit error (C4).
-        _CONTEXT_ERROR_KEYWORDS = (
-            "context window",
-            "token limit",
-            "max tokens",
-            "maximum tokens",
-            "prompt is too long",
-            "too many tokens",
-            "exceeds the maximum allowed size",
-        )
+        _warn_threshold, _error_threshold = self._load_cw_thresholds()
 
         while iteration < max_iterations:
             iteration += 1
@@ -210,6 +222,7 @@ class ToolLoopMixin:
                         iteration,
                         _api_exc,
                     )
+                    raise
                 logger.exception(
                     "ToolLoopMixin API call failed on iteration %d",
                     iteration,
@@ -832,24 +845,7 @@ class ToolLoopMixin:
         # -- Hoist settings and event infrastructure before the loop --------
         # Resolving settings and importing event types once avoids repeated
         # per-iteration overhead (C5).
-        try:
-            _cw_cfg = get_settings().context_window
-            _warn_threshold = _cw_cfg.warn_threshold_pct
-            _error_threshold = _cw_cfg.error_threshold_pct
-        except Exception:  # noqa: BLE001
-            _warn_threshold = 80.0
-            _error_threshold = 95.0
-
-        # Keywords (case-insensitive) that identify a context/token-limit error (C4).
-        _CONTEXT_ERROR_KEYWORDS = (
-            "context window",
-            "token limit",
-            "max tokens",
-            "maximum tokens",
-            "prompt is too long",
-            "too many tokens",
-            "exceeds the maximum allowed size",
-        )
+        _warn_threshold, _error_threshold = self._load_cw_thresholds()
 
         while iteration < max_iterations:
             iteration += 1
@@ -879,6 +875,7 @@ class ToolLoopMixin:
                         iteration,
                         _api_exc,
                     )
+                    raise
                 logger.exception(
                     "ToolLoopMixin async API call failed on iteration %d",
                     iteration,
