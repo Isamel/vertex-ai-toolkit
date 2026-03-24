@@ -298,3 +298,8 @@ safety:
   #   threshold: "BLOCK_MEDIUM_AND_ABOVE"
   # - category: "HARM_CATEGORY_DANGEROUS_CONTENT"
   #   threshold: "BLOCK_MEDIUM_AND_ABOVE"
+
+context_window:
+  warn_threshold_pct: 80.0          # Percentage at which a WARNING is logged (default: 80%)
+  error_threshold_pct: 95.0         # Percentage at which an ERROR is logged (default: 95%)
+  context_window_size: 1048576      # Default context window size in tokens

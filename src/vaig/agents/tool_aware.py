@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Any
 
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import OnToolCall, ToolLoopMixin
-from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
-from vaig.core.exceptions import MaxIterationsError
+from vaig.core.config import DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, get_settings
+from vaig.core.exceptions import ContextWindowExceededError, MaxIterationsError
 from vaig.core.models import PipelineState
 from vaig.tools.base import ToolRegistry
 
@@ -212,6 +212,15 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             self._max_iterations,
         )
 
+        # Resolve the model-specific context window from settings, with fallback
+        # to the global default. This ensures monitoring uses the actual model
+        # limit rather than a hardcoded value.
+        try:
+            _model_info = get_settings().get_model_info(self._config.model)
+            _context_window = _model_info.context_window if _model_info is not None else DEFAULT_CONTEXT_WINDOW
+        except Exception:  # noqa: BLE001
+            _context_window = DEFAULT_CONTEXT_WINDOW
+
         try:
             # Build optional kwargs — only pass frequency_penalty when
             # explicitly configured to avoid overriding the mixin default.
@@ -234,10 +243,28 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 tool_call_store=tool_call_store,
                 tool_result_cache=tool_result_cache,
                 required_sections=required_sections,
+                context_window=_context_window,
                 **loop_kwargs,
             )
         except MaxIterationsError:
             raise
+        except ContextWindowExceededError as exc:
+            logger.error(
+                "ToolAwareAgent '%s' context window exceeded (%.1f%%)",
+                self.name,
+                exc.context_pct,
+            )
+            return AgentResult(
+                agent_name=self.name,
+                content=f"Context window exceeded: {exc}",
+                success=False,
+                usage={
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                },
+                metadata={"error": str(exc), "context_window_pct": exc.context_pct},
+            )
         except Exception as exc:
             logger.exception("ToolAwareAgent '%s' API call failed", self.name)
             return AgentResult(
@@ -272,6 +299,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 "finish_reason": loop_result.finish_reason,
                 "iterations": loop_result.iterations,
                 "tools_executed": loop_result.tools_executed,
+                "context_window_pct": loop_result.peak_context_pct,
             },
         )
 
@@ -337,6 +365,15 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             self._max_iterations,
         )
 
+        # Resolve the model-specific context window from settings, with fallback
+        # to the global default. This ensures monitoring uses the actual model
+        # limit rather than a hardcoded value.
+        try:
+            _model_info = get_settings().get_model_info(self._config.model)
+            _context_window = _model_info.context_window if _model_info is not None else DEFAULT_CONTEXT_WINDOW
+        except Exception:  # noqa: BLE001
+            _context_window = DEFAULT_CONTEXT_WINDOW
+
         try:
             # Build optional kwargs — only pass frequency_penalty when
             # explicitly configured to avoid overriding the mixin default.
@@ -359,10 +396,28 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 tool_call_store=tool_call_store,
                 tool_result_cache=tool_result_cache,
                 required_sections=required_sections,
+                context_window=_context_window,
                 **loop_kwargs,
             )
         except MaxIterationsError:
             raise
+        except ContextWindowExceededError as exc:
+            logger.error(
+                "ToolAwareAgent '%s' context window exceeded (%.1f%%)",
+                self.name,
+                exc.context_pct,
+            )
+            return AgentResult(
+                agent_name=self.name,
+                content=f"Context window exceeded: {exc}",
+                success=False,
+                usage={
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                },
+                metadata={"error": str(exc), "context_window_pct": exc.context_pct},
+            )
         except Exception as exc:
             logger.exception("ToolAwareAgent '%s' async API call failed", self.name)
             return AgentResult(
@@ -397,6 +452,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 "finish_reason": loop_result.finish_reason,
                 "iterations": loop_result.iterations,
                 "tools_executed": loop_result.tools_executed,
+                "context_window_pct": loop_result.peak_context_pct,
             },
         )
 

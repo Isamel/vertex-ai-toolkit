@@ -17,6 +17,7 @@ __all__ = [
     "ApiCalled",
     "BudgetChecked",
     "CliCommandTracked",
+    "ContextWindowChecked",
     "ErrorOccurred",
     "Event",
     "OrchestratorPhaseCompleted",
@@ -244,3 +245,25 @@ class OrchestratorToolsCompleted(Event):
     success: bool = True
     duration_ms: float = 0.0
     is_async: bool = False
+
+
+@dataclass(frozen=True)
+class ContextWindowChecked(Event):
+    """Emitted after each API call to report context window usage.
+
+    Attributes:
+        model: Model identifier (e.g. ``"gemini-2.5-pro"``).
+        prompt_tokens: Number of prompt tokens used in this call.
+        context_window: Total context window size in tokens.
+        context_pct: Percentage of context window consumed (0–100).
+        iteration: Current tool-loop iteration number (1-based).
+        status: Usage severity — ``"ok"``, ``"warning"``, or ``"error"``.
+    """
+
+    event_type: str = field(default="context.checked", init=False)
+    model: str = ""
+    prompt_tokens: int = 0
+    context_window: int = 0
+    context_pct: float = 0.0
+    iteration: int = 0
+    status: str = ""

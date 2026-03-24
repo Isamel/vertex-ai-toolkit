@@ -514,6 +514,21 @@ class SafetyConfig(BaseModel):
     settings: list[SafetySettingConfig] = Field(default_factory=list)
 
 
+class ContextWindowConfig(BaseModel):
+    """Context window monitoring configuration.
+
+    Controls thresholds for warning and error states when the model's
+    prompt token usage approaches the context window limit.
+    """
+
+    warn_threshold_pct: float = 80.0
+    """Percentage of context window usage that triggers a WARNING log."""
+    error_threshold_pct: float = 95.0
+    """Percentage of context window usage that triggers an ERROR log."""
+    context_window_size: int = DEFAULT_CONTEXT_WINDOW
+    """Default context window size in tokens (overridden per model via models.available)."""
+
+
 class BudgetConfig(BaseModel):
     """Token budget tracking configuration.
 
@@ -705,6 +720,7 @@ class Settings(BaseSettings):
     plugins: PluginConfig = Field(default_factory=PluginConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
+    context_window: ContextWindowConfig = Field(default_factory=ContextWindowConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)
