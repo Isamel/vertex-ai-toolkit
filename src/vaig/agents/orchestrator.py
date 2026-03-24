@@ -32,6 +32,8 @@ from vaig.tools.agent_tool import agent_as_tool
 from vaig.tools.base import ToolRegistry
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from vaig.core.config import Settings
     from vaig.core.protocols import GeminiClientProtocol
     from vaig.core.tool_call_store import ToolCallStore
@@ -218,6 +220,12 @@ class Orchestrator:
         self._client = client
         self._settings = settings
         self._agents: dict[str, BaseAgent] = {}
+        # ── Lazy state binding for sub-agent tools ────────────────────────
+        # Holds the most-recent PipelineState seen by the orchestrator's
+        # execution path.  Sub-agent ToolDefs capture a reference to this
+        # cell via a state_getter closure, so they always forward the
+        # current (not creation-time) state when invoking nested agents.
+        self._current_pipeline_state: PipelineState | None = None
 
     def _build_previous_agent_summary(
         self,
@@ -332,6 +340,9 @@ class Orchestrator:
     def _inject_sub_agent_tools(
         self,
         injectable_map: dict[str, list[str]],
+        *,
+        current_depth: int = 0,
+        max_depth: int = 2,
     ) -> None:
         """Register sub-agent tools into each calling agent's registry copy.
 
@@ -340,6 +351,15 @@ class Orchestrator:
         by name from ``self._agents``, wrap them with :func:`agent_as_tool`,
         and register the resulting :class:`~vaig.tools.base.ToolDef` into the
         calling agent's (already-copied) :class:`~vaig.tools.base.ToolRegistry`.
+
+        Uses **lazy state binding** — a ``state_getter`` closure captures a
+        reference to ``self._current_pipeline_state`` so that sub-agents always
+        receive the most-recent pipeline state at invocation time, not the
+        ``None`` that exists at creation time.
+
+        Uses **dynamic depth propagation** — each injected tool is created with
+        ``current_depth + 1`` so that nested agent chains correctly respect the
+        recursion guard.
 
         Self-injection is prevented by passing ``caller_name`` to
         :func:`agent_as_tool`; the factory returns a no-op error tool when it
@@ -351,7 +371,21 @@ class Orchestrator:
         Args:
             injectable_map: Mapping of caller agent name → list of target agent
                 names to inject as tools.
+            current_depth: Current recursion depth at the orchestrator level.
+                Sub-agent tools are created at ``current_depth + 1`` to ensure
+                the depth guard is applied correctly for nested chains.
+            max_depth: Maximum recursion depth allowed.  Forwarded to
+                :func:`agent_as_tool` so the guard is enforced consistently.
         """
+        # Build a state_getter that always reads the orchestrator's current
+        # pipeline state.  This closure is captured by each ToolDef's execute
+        # function, ensuring late/dynamic binding rather than the creation-time
+        # None that would result from a static capture.
+        def _state_getter() -> PipelineState | None:
+            return self._current_pipeline_state
+
+        sub_agent_depth = current_depth + 1
+
         for caller_name, target_names in injectable_map.items():
             caller = self._agents.get(caller_name)
             if caller is None:
@@ -382,12 +416,59 @@ class Orchestrator:
                     )
                     continue
 
-                tool_def = agent_as_tool(target, caller_name=caller_name)
+                # ── Factory pattern for thread safety ─────────────────────
+                # Capture target config so each invocation creates a fresh
+                # ToolAwareAgent instance (avoids shared-state corruption in
+                # parallel execution strategies like fanout/parallel_sequential).
+                # For non-ToolAwareAgent targets (SpecialistAgent), fall back
+                # to the legacy shared-instance pattern — they are stateless.
+                if isinstance(target, ToolAwareAgent):
+                    _target_config = target
+                    _target_client = target._client
+                    _target_registry = target.tool_registry
+
+                    def _make_factory(
+                        t: ToolAwareAgent,
+                    ) -> Callable[[], BaseAgent]:
+                        def _factory() -> BaseAgent:
+                            return ToolAwareAgent(
+                                system_instruction=t.config.system_instruction,
+                                tool_registry=t.tool_registry,
+                                model=t.config.model,
+                                name=t.config.name,
+                                client=t._client,
+                                max_iterations=t._max_iterations,
+                                temperature=t.config.temperature,
+                                max_output_tokens=t.config.max_output_tokens,
+                                frequency_penalty=t.config.frequency_penalty,
+                            )
+                        return _factory
+
+                    tool_def = agent_as_tool(
+                        agent_factory=_make_factory(_target_config),
+                        agent_name=target_name,
+                        state_getter=_state_getter,
+                        current_depth=sub_agent_depth,
+                        max_depth=max_depth,
+                        caller_name=caller_name,
+                    )
+                else:
+                    # SpecialistAgent: use legacy pattern (stateless, safe to share)
+                    tool_def = agent_as_tool(
+                        target,
+                        state_getter=_state_getter,
+                        current_depth=sub_agent_depth,
+                        max_depth=max_depth,
+                        caller_name=caller_name,
+                    )
+
                 caller.tool_registry.register(tool_def)
                 logger.info(
-                    "Injected sub-agent tool '%s' into agent '%s' registry",
+                    "Injected sub-agent tool '%s' into agent '%s' registry (depth=%d/%d)",
                     tool_def.name,
                     caller_name,
+                    sub_agent_depth,
+                    max_depth,
                 )
 
     def execute_sequential(
@@ -413,6 +494,7 @@ class Orchestrator:
         context_chain: list[str] = []
 
         current_state = skill.get_initial_state()
+        self._current_pipeline_state = current_state
 
         run_cost_usd: float = 0.0
         max_cost_per_run: float = self._settings.budget.max_cost_per_run
@@ -445,6 +527,7 @@ class Orchestrator:
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+            self._current_pipeline_state = current_state
 
             # ── Cost circuit breaker ──────────────────────────────────────
             run_cost_usd += _compute_step_cost(agent_result, agent.model)
@@ -546,6 +629,7 @@ class Orchestrator:
 
         prompt = skill.get_phase_prompt(phase, context, user_input)
         current_state = skill.get_initial_state()
+        self._current_pipeline_state = current_state
 
         # Submit all agents concurrently, collect in submission order
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(agents)) as executor:
@@ -578,6 +662,7 @@ class Orchestrator:
         # Apply state patches sequentially (fanout order)
         for agent_result in result.agent_results:
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+        self._current_pipeline_state = current_state
 
         # Merge all agent outputs
         result.success = any(r.success for r in result.agent_results)
@@ -873,6 +958,7 @@ class Orchestrator:
             )
 
         current_state = skill.get_initial_state()
+        self._current_pipeline_state = current_state
 
         if strategy == "parallel_sequential":
             result = self._execute_parallel_then_sequential(
@@ -949,12 +1035,14 @@ class Orchestrator:
                     kw_single["tool_result_cache"] = tool_result_cache
                 _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "start")
                 try:
+                    self._current_pipeline_state = current_state
                     agent_result = agents[0].execute(query, **kw_single)
                 finally:
                     _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
                 current_state = apply_state_patch(current_state, agent_result.state_patch)
+                self._current_pipeline_state = current_state
                 result.success = agent_result.success
                 result.synthesized_output = agent_result.content
                 result.final_state = current_state
@@ -1006,12 +1094,14 @@ class Orchestrator:
 
                 _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "start")
                 try:
+                    self._current_pipeline_state = current_state
                     agent_result = agent.execute(query, **kw_seq)
                 finally:
                     _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
                 current_state = apply_state_patch(current_state, agent_result.state_patch)
+                self._current_pipeline_state = current_state
                 # ── Cost circuit breaker ──────────────────────────────────
                 run_cost_usd += _compute_step_cost(agent_result, agent.model)
                 result.run_cost_usd = run_cost_usd
@@ -1571,6 +1661,7 @@ class Orchestrator:
         # Apply state patches sequentially (fanout order)
         for agent_result in result.agent_results:
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+        self._current_pipeline_state = current_state
 
         result.success = any(r.success for r in result.agent_results)
         result.synthesized_output = self._merge_agent_outputs(result.agent_results)
@@ -1601,6 +1692,7 @@ class Orchestrator:
         context_chain: list[str] = []
 
         current_state = skill.get_initial_state()
+        self._current_pipeline_state = current_state
 
         run_cost_usd: float = 0.0
         max_cost_per_run: float = self._settings.budget.max_cost_per_run
@@ -1638,6 +1730,7 @@ class Orchestrator:
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+            self._current_pipeline_state = current_state
 
             # ── Cost circuit breaker ──────────────────────────────────────
             run_cost_usd += _compute_step_cost(agent_result, agent.model)
@@ -1923,6 +2016,7 @@ class Orchestrator:
             )
 
         current_state = skill.get_initial_state()
+        self._current_pipeline_state = current_state
 
         if strategy == "parallel_sequential":
             result = await self._async_execute_parallel_then_sequential(
@@ -1985,6 +2079,7 @@ class Orchestrator:
             # Apply state patches sequentially (fanout order)
             for agent_result in result.agent_results:
                 current_state = apply_state_patch(current_state, agent_result.state_patch)
+            self._current_pipeline_state = current_state
 
             result.success = any(r.success for r in result.agent_results)
             result.synthesized_output = self._merge_agent_outputs(result.agent_results)
@@ -2007,6 +2102,7 @@ class Orchestrator:
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
                 current_state = apply_state_patch(current_state, agent_result.state_patch)
+                self._current_pipeline_state = current_state
                 result.success = agent_result.success
                 result.synthesized_output = agent_result.content
                 result.final_state = current_state
@@ -2060,6 +2156,7 @@ class Orchestrator:
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
                 current_state = apply_state_patch(current_state, agent_result.state_patch)
+                self._current_pipeline_state = current_state
 
                 # ── Cost circuit breaker ──────────────────────────────────
                 run_cost_usd += _compute_step_cost(agent_result, agent.model)
@@ -2620,6 +2717,7 @@ class Orchestrator:
         # Apply state patches from parallel gatherers sequentially
         for agent_result in parallel_results:
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+        self._current_pipeline_state = current_state
 
         # ── Validate gatherer outputs (task 1.4) ─────────────────────────
         required_sections = skill.get_required_output_sections()
@@ -2695,6 +2793,7 @@ class Orchestrator:
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+            self._current_pipeline_state = current_state
 
             # ── Cost circuit breaker ──────────────────────────────────────
             run_cost_usd += _compute_step_cost(agent_result, agent.model)
@@ -2939,6 +3038,7 @@ class Orchestrator:
         # Apply state patches from parallel gatherers sequentially
         for agent_result in parallel_results:
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+        self._current_pipeline_state = current_state
 
         # ── Validate gatherer outputs (task 1.4) ─────────────────────────
         required_sections = skill.get_required_output_sections()
@@ -3014,6 +3114,7 @@ class Orchestrator:
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+            self._current_pipeline_state = current_state
 
             # ── Cost circuit breaker ──────────────────────────────────────
             run_cost_usd += _compute_step_cost(agent_result, agent.model)

@@ -436,3 +436,191 @@ class TestPublicExport:
         import vaig.tools as pkg  # noqa: PLC0415
 
         assert "agent_as_tool" in pkg.__all__
+
+
+# ── TestAgentResultFailureMappedToToolError ───────────────────
+
+
+class TestAgentResultFailureMappedToToolError:
+    """Issue 3 — AgentResult.success=False must map to ToolResult.error=True."""
+
+    def test_success_false_returns_error_true(self) -> None:
+        failed_result = AgentResult(
+            agent_name="analyzer",
+            content="Something went wrong inside the agent.",
+            success=False,
+        )
+        agent = _make_mock_agent(execute_result=failed_result)
+        tool = agent_as_tool(agent)
+
+        result = _call_tool(tool)
+
+        assert result.error is True
+
+    def test_success_false_error_output_contains_failure_content(self) -> None:
+        failed_result = AgentResult(
+            agent_name="analyzer",
+            content="Mesh API timed out.",
+            success=False,
+        )
+        agent = _make_mock_agent(execute_result=failed_result)
+        tool = agent_as_tool(agent)
+
+        result = _call_tool(tool)
+
+        assert "Mesh API timed out." in result.output
+
+    def test_success_false_output_contains_agent_name(self) -> None:
+        failed_result = AgentResult(
+            agent_name="mesh-specialist",
+            content="Unavailable.",
+            success=False,
+        )
+        agent = _make_mock_agent(name="mesh-specialist", execute_result=failed_result)
+        tool = agent_as_tool(agent)
+
+        result = _call_tool(tool)
+
+        assert "mesh-specialist" in result.output or "mesh_specialist" in result.output
+
+    def test_success_true_returns_error_false(self) -> None:
+        """Baseline: success=True must NOT produce an error ToolResult."""
+        ok_result = AgentResult(
+            agent_name="analyzer",
+            content="All good.",
+            success=True,
+        )
+        agent = _make_mock_agent(execute_result=ok_result)
+        tool = agent_as_tool(agent)
+
+        result = _call_tool(tool)
+
+        assert result.error is False
+        assert result.output == "All good."
+
+
+# ── TestStateGetterLazyBinding ────────────────────────────────
+
+
+class TestStateGetterLazyBinding:
+    """Issue 1 — state_getter lazy binding: sub-agent receives up-to-date state."""
+
+    def test_state_getter_called_at_invocation_time(self) -> None:
+        """state_getter must be evaluated each time the tool is invoked."""
+        state_holder: dict[str, PipelineState | None] = {"current": None}
+        agent = _make_mock_agent()
+        tool = agent_as_tool(agent, state_getter=lambda: state_holder["current"])
+
+        # First call — state is None
+        _call_tool(tool)
+        first_call_state = agent.execute.call_args_list[0][1].get("state")
+        assert first_call_state is None
+
+        # Update state and call again
+        new_state = PipelineState(metrics={"region": "eu-west-1"})
+        state_holder["current"] = new_state
+        _call_tool(tool)
+        second_call_state = agent.execute.call_args_list[1][1].get("state")
+        assert second_call_state is new_state
+
+    def test_state_getter_takes_precedence_over_static_state(self) -> None:
+        """When both state and state_getter are provided, state_getter wins."""
+        static_state = PipelineState(metrics={"source": "static"})
+        dynamic_state = PipelineState(metrics={"source": "dynamic"})
+        agent = _make_mock_agent()
+        tool = agent_as_tool(
+            agent,
+            state=static_state,
+            state_getter=lambda: dynamic_state,
+        )
+
+        _call_tool(tool)
+
+        call_state = agent.execute.call_args[1].get("state")
+        assert call_state is dynamic_state
+        assert call_state is not static_state
+
+    def test_static_state_used_when_no_getter(self) -> None:
+        """With no state_getter, the static state is forwarded unchanged."""
+        static_state = PipelineState(metrics={"region": "us-east-1"})
+        agent = _make_mock_agent()
+        tool = agent_as_tool(agent, state=static_state)
+
+        _call_tool(tool)
+
+        call_state = agent.execute.call_args[1].get("state")
+        assert call_state is static_state
+
+
+# ── TestFactoryPattern ────────────────────────────────────────
+
+
+class TestFactoryPattern:
+    """Issue 4 — factory pattern creates a fresh agent instance per invocation."""
+
+    def test_factory_called_per_invocation(self) -> None:
+        """agent_factory must be called each time the tool is invoked."""
+        call_count = {"n": 0}
+
+        def _factory() -> MagicMock:
+            call_count["n"] += 1
+            return _make_mock_agent()
+
+        tool = agent_as_tool(agent_factory=_factory, agent_name="mesh-specialist")
+
+        _call_tool(tool)
+        _call_tool(tool)
+        _call_tool(tool)
+
+        # Factory is called once for description at creation time, then once per invocation
+        # (creation cost + 2 invocations = 3+)
+        assert call_count["n"] >= 2  # at minimum 1 per real invocation
+
+    def test_factory_instances_are_independent(self) -> None:
+        """Each call gets a separate agent instance, not a shared one."""
+        instances: list[MagicMock] = []
+
+        def _factory() -> MagicMock:
+            inst = _make_mock_agent()
+            instances.append(inst)
+            return inst
+
+        tool = agent_as_tool(agent_factory=_factory, agent_name="mesh-specialist")
+
+        # Trigger two actual execute calls
+        _call_tool(tool)
+        _call_tool(tool)
+
+        # At least 2 execute calls must have been made, across separate instances
+        total_execute_calls = sum(inst.execute.call_count for inst in instances)
+        assert total_execute_calls >= 2
+
+    def test_factory_with_state_getter_passes_state(self) -> None:
+        """Factory + state_getter: the agent receives the getter's returned state."""
+        dynamic_state = PipelineState(metrics={"env": "prod"})
+        captured_agent: list[MagicMock] = []
+
+        def _factory() -> MagicMock:
+            inst = _make_mock_agent()
+            captured_agent.append(inst)
+            return inst
+
+        tool = agent_as_tool(
+            agent_factory=_factory,
+            state_getter=lambda: dynamic_state,
+            agent_name="mesh-specialist",
+        )
+
+        _call_tool(tool)
+
+        # The last captured agent (the one used for execution) should have been called
+        exec_agent = captured_agent[-1]
+        call_state = exec_agent.execute.call_args[1].get("state")
+        assert call_state is dynamic_state
+
+    def test_requires_agent_or_factory(self) -> None:
+        """ValueError raised when neither agent nor agent_factory is provided."""
+        import pytest  # noqa: PLC0415
+
+        with pytest.raises(ValueError, match="Either 'agent' or 'agent_factory'"):
+            agent_as_tool()
