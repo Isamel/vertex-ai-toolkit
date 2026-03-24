@@ -521,12 +521,22 @@ class ContextWindowConfig(BaseModel):
     prompt token usage approaches the context window limit.
     """
 
-    warn_threshold_pct: float = 80.0
+    warn_threshold_pct: float = Field(default=80.0, ge=0.0, le=100.0)
     """Percentage of context window usage that triggers a WARNING log."""
-    error_threshold_pct: float = 95.0
+    error_threshold_pct: float = Field(default=95.0, ge=0.0, le=100.0)
     """Percentage of context window usage that triggers an ERROR log."""
     context_window_size: int = DEFAULT_CONTEXT_WINDOW
     """Default context window size in tokens (overridden per model via models.available)."""
+
+    @model_validator(mode="after")
+    def _validate_threshold_ordering(self) -> ContextWindowConfig:
+        """Ensure warn_threshold_pct <= error_threshold_pct."""
+        if self.warn_threshold_pct > self.error_threshold_pct:
+            raise ValueError(
+                f"warn_threshold_pct ({self.warn_threshold_pct}) must be <= "
+                f"error_threshold_pct ({self.error_threshold_pct})"
+            )
+        return self
 
 
 class BudgetConfig(BaseModel):

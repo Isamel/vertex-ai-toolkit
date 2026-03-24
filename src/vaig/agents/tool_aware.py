@@ -160,6 +160,62 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         """Maximum tool-use loop iterations."""
         return self._max_iterations
 
+    # ── Private helpers ──────────────────────────────────────
+
+    def _resolve_context_window(self) -> int:
+        """Resolve the effective context window for the agent's model.
+
+        Resolution order (C1/C6):
+        1. Model-specific ``context_window`` from ``settings.models.available``,
+           only when it differs from ``DEFAULT_CONTEXT_WINDOW`` (i.e. was
+           explicitly set for that model).
+        2. ``settings.context_window.context_window_size`` (global config fallback).
+        3. ``DEFAULT_CONTEXT_WINDOW`` (hard-coded constant, last resort).
+
+        Returns:
+            Context window size in tokens.
+        """
+        try:
+            _settings = get_settings()
+            _model_info = _settings.get_model_info(self._config.model)
+            if _model_info is not None and _model_info.context_window and _model_info.context_window != DEFAULT_CONTEXT_WINDOW:
+                return _model_info.context_window
+            # Intermediate fallback: use configured default before the constant.
+            global_cw = getattr(_settings.context_window, "context_window_size", None)
+            if isinstance(global_cw, int) and global_cw:
+                return global_cw
+            return DEFAULT_CONTEXT_WINDOW
+        except Exception:  # noqa: BLE001
+            return DEFAULT_CONTEXT_WINDOW
+
+    def _handle_context_window_exceeded(
+        self,
+        exc: ContextWindowExceededError,
+    ) -> AgentResult:
+        """Convert a :class:`ContextWindowExceededError` into a failed AgentResult.
+
+        Propagates any accumulated ``usage`` attached to the exception (C7)
+        so callers have real token counts rather than zeros.
+
+        Args:
+            exc: The context-window exception raised by the tool loop.
+
+        Returns:
+            Failed ``AgentResult`` with error content and usage from the exception.
+        """
+        logger.error(
+            "ToolAwareAgent '%s' context window exceeded (%.1f%%)",
+            self.name,
+            exc.context_pct,
+        )
+        return AgentResult(
+            agent_name=self.name,
+            content=f"Context window exceeded: {exc}",
+            success=False,
+            usage=exc.usage,
+            metadata={"error": str(exc), "context_window_pct": exc.context_pct},
+        )
+
     # ── Execute ──────────────────────────────────────────────
 
     def execute(
@@ -215,11 +271,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         # Resolve the model-specific context window from settings, with fallback
         # to the global default. This ensures monitoring uses the actual model
         # limit rather than a hardcoded value.
-        try:
-            _model_info = get_settings().get_model_info(self._config.model)
-            _context_window = _model_info.context_window if _model_info is not None else DEFAULT_CONTEXT_WINDOW
-        except Exception:  # noqa: BLE001
-            _context_window = DEFAULT_CONTEXT_WINDOW
+        _context_window = self._resolve_context_window()
 
         try:
             # Build optional kwargs — only pass frequency_penalty when
@@ -249,22 +301,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         except MaxIterationsError:
             raise
         except ContextWindowExceededError as exc:
-            logger.error(
-                "ToolAwareAgent '%s' context window exceeded (%.1f%%)",
-                self.name,
-                exc.context_pct,
-            )
-            return AgentResult(
-                agent_name=self.name,
-                content=f"Context window exceeded: {exc}",
-                success=False,
-                usage={
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "total_tokens": 0,
-                },
-                metadata={"error": str(exc), "context_window_pct": exc.context_pct},
-            )
+            return self._handle_context_window_exceeded(exc)
         except Exception as exc:
             logger.exception("ToolAwareAgent '%s' API call failed", self.name)
             return AgentResult(
@@ -368,11 +405,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         # Resolve the model-specific context window from settings, with fallback
         # to the global default. This ensures monitoring uses the actual model
         # limit rather than a hardcoded value.
-        try:
-            _model_info = get_settings().get_model_info(self._config.model)
-            _context_window = _model_info.context_window if _model_info is not None else DEFAULT_CONTEXT_WINDOW
-        except Exception:  # noqa: BLE001
-            _context_window = DEFAULT_CONTEXT_WINDOW
+        _context_window = self._resolve_context_window()
 
         try:
             # Build optional kwargs — only pass frequency_penalty when
@@ -402,22 +435,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         except MaxIterationsError:
             raise
         except ContextWindowExceededError as exc:
-            logger.error(
-                "ToolAwareAgent '%s' context window exceeded (%.1f%%)",
-                self.name,
-                exc.context_pct,
-            )
-            return AgentResult(
-                agent_name=self.name,
-                content=f"Context window exceeded: {exc}",
-                success=False,
-                usage={
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "total_tokens": 0,
-                },
-                metadata={"error": str(exc), "context_window_pct": exc.context_pct},
-            )
+            return self._handle_context_window_exceeded(exc)
         except Exception as exc:
             logger.exception("ToolAwareAgent '%s' async API call failed", self.name)
             return AgentResult(

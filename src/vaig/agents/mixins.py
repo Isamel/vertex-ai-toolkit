@@ -10,10 +10,13 @@ import time
 from datetime import UTC
 from typing import TYPE_CHECKING, Any, Protocol
 
+from google.api_core.exceptions import InvalidArgument
 from google.genai import types
 
 from vaig.core.async_utils import to_async
 from vaig.core.config import DEFAULT_CHARS_PER_TOKEN, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, get_settings
+from vaig.core.event_bus import EventBus
+from vaig.core.events import ContextWindowChecked
 from vaig.core.exceptions import ContextWindowExceededError, MaxIterationsError
 from vaig.core.prompt_defense import wrap_untrusted_content
 from vaig.session.summarizer import SUMMARIZATION_PROMPT, estimate_history_tokens
@@ -28,6 +31,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 BUDGET_WARNING_THRESHOLD = 0.8
+
+# Keywords (case-insensitive) that identify a context/token-limit error from the API.
+# Defined at module level to avoid duplication between sync and async tool loops.
+_CONTEXT_ERROR_KEYWORDS: tuple[str, ...] = (
+    "context window",
+    "token limit",
+    "max tokens",
+    "maximum tokens",
+    "prompt is too long",
+    "too many tokens",
+    "exceeds the maximum allowed size",
+)
 
 
 class OnToolCall(Protocol):
@@ -80,6 +95,23 @@ class ToolLoopMixin:
     """
 
     # ── Public loop entry-point ──────────────────────────────
+
+    @staticmethod
+    def _load_cw_thresholds() -> tuple[float, float]:
+        """Load context window warn/error thresholds from settings.
+
+        Returns a ``(warn_threshold, error_threshold)`` tuple.  Falls back
+        to safe hardcoded defaults when settings are unavailable so the tool
+        loop never fails due to a configuration error.
+
+        Returns:
+            Tuple of ``(warn_threshold_pct, error_threshold_pct)``.
+        """
+        try:
+            _cw_cfg = get_settings().context_window
+            return _cw_cfg.warn_threshold_pct, _cw_cfg.error_threshold_pct
+        except Exception:  # noqa: BLE001
+            return 80.0, 95.0
 
     def _run_tool_loop(
         self,
@@ -157,6 +189,11 @@ class ToolLoopMixin:
         if frequency_penalty is not None:
             gen_kwargs["frequency_penalty"] = frequency_penalty
 
+        # -- Hoist settings and event infrastructure before the loop --------
+        # Resolving settings and importing event types once avoids repeated
+        # per-iteration overhead (C5).
+        _warn_threshold, _error_threshold = self._load_cw_thresholds()
+
         while iteration < max_iterations:
             iteration += 1
             logger.debug("Tool loop iteration %d/%d", iteration, max_iterations)
@@ -172,12 +209,20 @@ class ToolLoopMixin:
                     **gen_kwargs,
                 )
             except Exception as _api_exc:
-                from google.api_core.exceptions import InvalidArgument
                 if isinstance(_api_exc, InvalidArgument):
-                    raise ContextWindowExceededError(
-                        f"Context window exceeded (HTTP 400 InvalidArgument): {_api_exc}",
-                        context_pct=peak_context_pct,
-                    ) from _api_exc
+                    _msg_lower = str(_api_exc).lower()
+                    if any(kw in _msg_lower for kw in _CONTEXT_ERROR_KEYWORDS):
+                        raise ContextWindowExceededError(
+                            f"Context window exceeded (HTTP 400 InvalidArgument): {_api_exc}",
+                            context_pct=peak_context_pct,
+                            usage=dict(total_usage),
+                        ) from _api_exc
+                    logger.warning(
+                        "ToolLoopMixin received InvalidArgument without context-window keywords on iteration %d: %s",
+                        iteration,
+                        _api_exc,
+                    )
+                    raise
                 logger.exception(
                     "ToolLoopMixin API call failed on iteration %d",
                     iteration,
@@ -188,53 +233,16 @@ class ToolLoopMixin:
             for key in total_usage:
                 total_usage[key] += result.usage.get(key, 0)
 
-            # -- Context window monitoring --------------------------------
-            _prompt_tokens = result.usage.get("prompt_tokens", 0)
-            _context_pct = (_prompt_tokens / context_window * 100) if context_window > 0 else 0.0
-            peak_context_pct = max(peak_context_pct, _context_pct)
-            # Read thresholds from settings, falls back to spec-defined defaults (80/95).
-            try:
-                _cw_cfg = get_settings().context_window
-                _warn_threshold = _cw_cfg.warn_threshold_pct
-                _error_threshold = _cw_cfg.error_threshold_pct
-            except Exception:  # noqa: BLE001
-                _warn_threshold = 80.0
-                _error_threshold = 95.0
-            _ctx_status = (
-                "error" if _context_pct >= _error_threshold
-                else "warning" if _context_pct >= _warn_threshold
-                else "ok"
+            # -- Context window monitoring (G1) ---------------------------
+            peak_context_pct = self._monitor_context_window(
+                result=result,
+                context_window=context_window,
+                peak_context_pct=peak_context_pct,
+                iteration=iteration,
+                model=model,
+                warn_threshold=_warn_threshold,
+                error_threshold=_error_threshold,
             )
-            if _ctx_status == "ok":
-                logger.debug(
-                    "Context window: %.1f%% (%d/%d tokens) — ok",
-                    _context_pct, _prompt_tokens, context_window,
-                )
-            elif _ctx_status == "warning":
-                logger.warning(
-                    "Context window: %.1f%% (%d/%d tokens) — approaching limit",
-                    _context_pct, _prompt_tokens, context_window,
-                )
-            else:
-                logger.error(
-                    "Context window: %.1f%% (%d/%d tokens) — critical",
-                    _context_pct, _prompt_tokens, context_window,
-                )
-            try:
-                from vaig.core.event_bus import EventBus
-                from vaig.core.events import ContextWindowChecked
-                EventBus.get().emit(
-                    ContextWindowChecked(
-                        model=result.model or (model or ""),
-                        prompt_tokens=_prompt_tokens,
-                        context_window=context_window,
-                        context_pct=_context_pct,
-                        iteration=iteration,
-                        status=_ctx_status,
-                    )
-                )
-            except Exception:  # noqa: BLE001
-                pass
 
             # -- Case 1: text response (no function calls) -- done --------
             if not result.function_calls:
@@ -379,6 +387,78 @@ class ToolLoopMixin:
         )
         logger.warning(msg)
         raise MaxIterationsError(msg, iterations=max_iterations)
+
+    # ── Budget warning helper ────────────────────────────────
+
+    def _monitor_context_window(
+        self,
+        *,
+        result: Any,
+        context_window: int,
+        peak_context_pct: float,
+        iteration: int,
+        model: str | None,
+        warn_threshold: float,
+        error_threshold: float,
+    ) -> float:
+        """Check context window usage for one iteration and emit the event.
+
+        Computes the current context percentage, updates *peak_context_pct*,
+        logs at the appropriate level, and fires a :class:`ContextWindowChecked`
+        event via :class:`EventBus`.  Bus failures are silently swallowed so
+        they never interrupt the tool loop.
+
+        Args:
+            result: The ``ToolCallResult`` from this iteration.
+            context_window: Total context window size in tokens.
+            peak_context_pct: Running peak percentage from prior iterations.
+            iteration: Current 1-based loop iteration index.
+            model: Model ID string (used in the event payload).
+            warn_threshold: Percentage threshold for WARNING log level.
+            error_threshold: Percentage threshold for ERROR log level.
+
+        Returns:
+            Updated *peak_context_pct* (max of prior value and current).
+        """
+        _prompt_tokens = result.usage.get("prompt_tokens", 0)
+        _context_pct = (_prompt_tokens / context_window * 100) if context_window > 0 else 0.0
+        peak_context_pct = max(peak_context_pct, _context_pct)
+
+        _ctx_status = (
+            "error" if _context_pct >= error_threshold
+            else "warning" if _context_pct >= warn_threshold
+            else "ok"
+        )
+        if _ctx_status == "ok":
+            logger.debug(
+                "Context window: %.1f%% (%d/%d tokens) — ok",
+                _context_pct, _prompt_tokens, context_window,
+            )
+        elif _ctx_status == "warning":
+            logger.warning(
+                "Context window: %.1f%% (%d/%d tokens) — approaching limit",
+                _context_pct, _prompt_tokens, context_window,
+            )
+        else:
+            logger.error(
+                "Context window: %.1f%% (%d/%d tokens) — critical",
+                _context_pct, _prompt_tokens, context_window,
+            )
+        try:
+            EventBus.get().emit(
+                ContextWindowChecked(
+                    model=result.model or (model or ""),
+                    prompt_tokens=_prompt_tokens,
+                    context_window=context_window,
+                    context_pct=_context_pct,
+                    iteration=iteration,
+                    status=_ctx_status,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        return peak_context_pct
 
     # ── Budget warning helper ────────────────────────────────
 
@@ -762,6 +842,11 @@ class ToolLoopMixin:
         if frequency_penalty is not None:
             gen_kwargs["frequency_penalty"] = frequency_penalty
 
+        # -- Hoist settings and event infrastructure before the loop --------
+        # Resolving settings and importing event types once avoids repeated
+        # per-iteration overhead (C5).
+        _warn_threshold, _error_threshold = self._load_cw_thresholds()
+
         while iteration < max_iterations:
             iteration += 1
             logger.debug("Async tool loop iteration %d/%d", iteration, max_iterations)
@@ -777,12 +862,20 @@ class ToolLoopMixin:
                     **gen_kwargs,
                 )
             except Exception as _api_exc:
-                from google.api_core.exceptions import InvalidArgument
                 if isinstance(_api_exc, InvalidArgument):
-                    raise ContextWindowExceededError(
-                        f"Context window exceeded (HTTP 400 InvalidArgument): {_api_exc}",
-                        context_pct=peak_context_pct,
-                    ) from _api_exc
+                    _msg_lower = str(_api_exc).lower()
+                    if any(kw in _msg_lower for kw in _CONTEXT_ERROR_KEYWORDS):
+                        raise ContextWindowExceededError(
+                            f"Context window exceeded (HTTP 400 InvalidArgument): {_api_exc}",
+                            context_pct=peak_context_pct,
+                            usage=dict(total_usage),
+                        ) from _api_exc
+                    logger.warning(
+                        "ToolLoopMixin received InvalidArgument without context-window keywords on iteration %d: %s",
+                        iteration,
+                        _api_exc,
+                    )
+                    raise
                 logger.exception(
                     "ToolLoopMixin async API call failed on iteration %d",
                     iteration,
@@ -793,53 +886,16 @@ class ToolLoopMixin:
             for key in total_usage:
                 total_usage[key] += result.usage.get(key, 0)
 
-            # -- Context window monitoring --------------------------------
-            _prompt_tokens = result.usage.get("prompt_tokens", 0)
-            _context_pct = (_prompt_tokens / context_window * 100) if context_window > 0 else 0.0
-            peak_context_pct = max(peak_context_pct, _context_pct)
-            # Read thresholds from settings, falls back to spec-defined defaults (80/95).
-            try:
-                _cw_cfg = get_settings().context_window
-                _warn_threshold = _cw_cfg.warn_threshold_pct
-                _error_threshold = _cw_cfg.error_threshold_pct
-            except Exception:  # noqa: BLE001
-                _warn_threshold = 80.0
-                _error_threshold = 95.0
-            _ctx_status = (
-                "error" if _context_pct >= _error_threshold
-                else "warning" if _context_pct >= _warn_threshold
-                else "ok"
+            # -- Context window monitoring (G1) ---------------------------
+            peak_context_pct = self._monitor_context_window(
+                result=result,
+                context_window=context_window,
+                peak_context_pct=peak_context_pct,
+                iteration=iteration,
+                model=model,
+                warn_threshold=_warn_threshold,
+                error_threshold=_error_threshold,
             )
-            if _ctx_status == "ok":
-                logger.debug(
-                    "Context window: %.1f%% (%d/%d tokens) — ok",
-                    _context_pct, _prompt_tokens, context_window,
-                )
-            elif _ctx_status == "warning":
-                logger.warning(
-                    "Context window: %.1f%% (%d/%d tokens) — approaching limit",
-                    _context_pct, _prompt_tokens, context_window,
-                )
-            else:
-                logger.error(
-                    "Context window: %.1f%% (%d/%d tokens) — critical",
-                    _context_pct, _prompt_tokens, context_window,
-                )
-            try:
-                from vaig.core.event_bus import EventBus
-                from vaig.core.events import ContextWindowChecked
-                EventBus.get().emit(
-                    ContextWindowChecked(
-                        model=result.model or (model or ""),
-                        prompt_tokens=_prompt_tokens,
-                        context_window=context_window,
-                        context_pct=_context_pct,
-                        iteration=iteration,
-                        status=_ctx_status,
-                    )
-                )
-            except Exception:  # noqa: BLE001
-                pass
 
             # -- Case 1: text response (no function calls) -- done --------
             if not result.function_calls:

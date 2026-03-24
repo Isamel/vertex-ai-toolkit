@@ -146,9 +146,20 @@ class ContextWindowExceededError(VAIGError):
         context_pct: Estimated context window percentage at the time of failure.
     """
 
-    def __init__(self, message: str, *, context_pct: float = 0.0) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        context_pct: float = 0.0,
+        usage: dict[str, int] | None = None,
+    ) -> None:
         super().__init__(message)
         self.context_pct = context_pct
+        self.usage: dict[str, int] = usage or {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
 
 
 def format_error_for_user(exc: Exception, *, debug: bool = False) -> str:

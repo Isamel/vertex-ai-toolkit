@@ -252,7 +252,7 @@ class TestContextWindowExceededError:
 
         mixin = _ConcreteLoopMixin()
         client = _make_mock_client()
-        client.generate_with_tools.side_effect = InvalidArgument("Request too large")
+        client.generate_with_tools.side_effect = InvalidArgument("context window exceeded")
         registry = ToolRegistry()
 
         with pytest.raises(ContextWindowExceededError):
@@ -270,7 +270,7 @@ class TestContextWindowExceededError:
 
         mixin = _ConcreteLoopMixin()
         client = _make_mock_client()
-        client.generate_with_tools.side_effect = InvalidArgument("Request too large")
+        client.generate_with_tools.side_effect = InvalidArgument("context window exceeded")
         registry = ToolRegistry()
 
         with pytest.raises(ContextWindowExceededError) as exc_info:
@@ -342,7 +342,7 @@ class TestAsyncContextWindowMonitoring:
 
         mixin = _ConcreteLoopMixin()
         client = _make_async_mock_client()
-        client.async_generate_with_tools.side_effect = InvalidArgument("Request too large")
+        client.async_generate_with_tools.side_effect = InvalidArgument("context window exceeded")
         registry = ToolRegistry()
 
         with pytest.raises(ContextWindowExceededError):
@@ -396,7 +396,7 @@ class TestToolAwareAgentIntegration:
         from google.api_core.exceptions import InvalidArgument
 
         agent, client = _make_agent()
-        client.generate_with_tools.side_effect = InvalidArgument("Request too large")
+        client.generate_with_tools.side_effect = InvalidArgument("context window exceeded")
 
         result = agent.execute("huge prompt")
 
@@ -409,7 +409,7 @@ class TestToolAwareAgentIntegration:
         from google.api_core.exceptions import InvalidArgument
 
         agent, client = _make_agent()
-        client.generate_with_tools.side_effect = InvalidArgument("too large")
+        client.generate_with_tools.side_effect = InvalidArgument("prompt is too long")
 
         result = agent.execute("huge prompt")
 
@@ -440,7 +440,7 @@ class TestToolAwareAgentIntegration:
         from google.api_core.exceptions import InvalidArgument
 
         client = _make_async_mock_client()
-        client.async_generate_with_tools.side_effect = InvalidArgument("too large")
+        client.async_generate_with_tools.side_effect = InvalidArgument("token limit exceeded")
         registry = ToolRegistry()
         agent = ToolAwareAgent(
             system_instruction="test",
@@ -768,3 +768,233 @@ class TestConfigThresholds:
         assert len(emitted) == 1
         # With custom 60% threshold, 70% should be "warning"
         assert emitted[0].status == "warning"
+
+
+# ── TestContextWindowConfigValidation ────────────────────────
+
+
+class TestContextWindowConfigValidation:
+    """ContextWindowConfig validates threshold ordering and field ranges (C2)."""
+
+    def test_warn_greater_than_error_raises(self) -> None:
+        """warn_threshold_pct > error_threshold_pct must raise ValueError."""
+        from pydantic import ValidationError
+
+        from vaig.core.config import ContextWindowConfig
+
+        with pytest.raises(ValidationError, match="warn_threshold_pct"):
+            ContextWindowConfig(warn_threshold_pct=90.0, error_threshold_pct=80.0)
+
+    def test_warn_equal_to_error_is_valid(self) -> None:
+        """warn_threshold_pct == error_threshold_pct is allowed (boundary is inclusive)."""
+        from vaig.core.config import ContextWindowConfig
+
+        cfg = ContextWindowConfig(warn_threshold_pct=85.0, error_threshold_pct=85.0)
+        assert cfg.warn_threshold_pct == 85.0
+        assert cfg.error_threshold_pct == 85.0
+
+    def test_threshold_below_zero_raises(self) -> None:
+        """Threshold values must be >= 0.0."""
+        from pydantic import ValidationError
+
+        from vaig.core.config import ContextWindowConfig
+
+        with pytest.raises(ValidationError):
+            ContextWindowConfig(warn_threshold_pct=-1.0, error_threshold_pct=95.0)
+
+    def test_threshold_above_100_raises(self) -> None:
+        """Threshold values must be <= 100.0."""
+        from pydantic import ValidationError
+
+        from vaig.core.config import ContextWindowConfig
+
+        with pytest.raises(ValidationError):
+            ContextWindowConfig(warn_threshold_pct=80.0, error_threshold_pct=101.0)
+
+
+# ── TestNarrowInvalidArgument ─────────────────────────────────
+
+
+class TestNarrowInvalidArgument:
+    """Non-context InvalidArgument errors propagate unchanged (C4)."""
+
+    def test_non_context_invalid_argument_reraises_sync(self) -> None:
+        """Sync loop re-raises InvalidArgument with non-context-window message."""
+        from google.api_core.exceptions import InvalidArgument
+
+        mixin = _ConcreteLoopMixin()
+        client = _make_mock_client()
+        # A generic auth/permission error — not a context-window failure.
+        client.generate_with_tools.side_effect = InvalidArgument("API key not valid")
+        registry = ToolRegistry()
+
+        with pytest.raises(InvalidArgument, match="API key not valid"):
+            mixin._run_tool_loop(
+                client=client,
+                prompt="hello",
+                tool_registry=registry,
+                system_instruction="test",
+                history=[],
+            )
+
+    @pytest.mark.asyncio
+    async def test_non_context_invalid_argument_reraises_async(self) -> None:
+        """Async loop re-raises InvalidArgument with non-context-window message."""
+        from google.api_core.exceptions import InvalidArgument
+
+        mixin = _ConcreteLoopMixin()
+        client = _make_async_mock_client()
+        client.async_generate_with_tools.side_effect = InvalidArgument("API key not valid")
+        registry = ToolRegistry()
+
+        with pytest.raises(InvalidArgument, match="API key not valid"):
+            await mixin._async_run_tool_loop(
+                client=client,
+                prompt="hello",
+                tool_registry=registry,
+                system_instruction="test",
+                history=[],
+            )
+
+    def test_context_keyword_in_message_wraps_to_context_window_error(self) -> None:
+        """All known context-window keyword variants are wrapped correctly."""
+        from google.api_core.exceptions import InvalidArgument
+
+        keywords = [
+            "context window exceeded",
+            "token limit reached",
+            "max tokens exceeded",
+            "maximum tokens reached",
+            "prompt is too long",
+            "too many tokens in request",
+            "exceeds the maximum allowed size",
+        ]
+        for kw in keywords:
+            mixin = _ConcreteLoopMixin()
+            client = _make_mock_client()
+            client.generate_with_tools.side_effect = InvalidArgument(kw)
+            registry = ToolRegistry()
+
+            with pytest.raises(ContextWindowExceededError):
+                mixin._run_tool_loop(
+                    client=client,
+                    prompt="hello",
+                    tool_registry=registry,
+                    system_instruction="test",
+                    history=[],
+                )
+
+
+# ── TestContextWindowConfigFallbackChain ─────────────────────
+
+
+class TestContextWindowConfigFallbackChain:
+    """_resolve_context_window uses the correct 3-level fallback (C1/C6)."""
+
+    def test_model_specific_context_window_takes_priority(self) -> None:
+        """Model's context_window in settings is used when available."""
+        from unittest.mock import patch
+
+        from vaig.core.config import ModelInfo, Settings
+
+        settings = Settings()
+        settings.models.available = [ModelInfo(id="gemini-big", context_window=2_000_000)]
+        settings.context_window.context_window_size = 500_000
+
+        _, client = _make_agent()
+        registry = ToolRegistry()
+        agent = ToolAwareAgent(
+            system_instruction="test",
+            tool_registry=registry,
+            model="gemini-big",
+            name="priority-agent",
+            client=client,
+        )
+
+        with patch("vaig.agents.tool_aware.get_settings", return_value=settings):
+            result = agent._resolve_context_window()
+
+        assert result == 2_000_000
+
+    def test_config_context_window_size_is_intermediate_fallback(self) -> None:
+        """When model info has no custom context_window, config.context_window_size is used."""
+        from unittest.mock import patch
+
+        from vaig.core.config import ModelInfo, Settings
+
+        settings = Settings()
+        # Model entry exists but has no custom context_window (uses DEFAULT_CONTEXT_WINDOW).
+        # After fix C1, the default-valued context_window is treated as "not set",
+        # so the fallback chain falls through to context_window_size.
+        settings.models.available = [ModelInfo(id="gemini-unknown")]
+        settings.context_window.context_window_size = 600_000
+
+        _, client = _make_agent()
+        registry = ToolRegistry()
+        agent = ToolAwareAgent(
+            system_instruction="test",
+            tool_registry=registry,
+            model="gemini-unknown",
+            name="fallback-agent",
+            client=client,
+        )
+
+        with patch("vaig.agents.tool_aware.get_settings", return_value=settings):
+            result = agent._resolve_context_window()
+
+        assert result == 600_000
+
+    def test_default_context_window_is_last_resort(self) -> None:
+        """When get_settings() raises, DEFAULT_CONTEXT_WINDOW is returned."""
+        from unittest.mock import patch
+
+        _, client = _make_agent()
+        registry = ToolRegistry()
+        agent = ToolAwareAgent(
+            system_instruction="test",
+            tool_registry=registry,
+            model="gemini-broken",
+            name="broken-settings-agent",
+            client=client,
+        )
+
+        with patch("vaig.agents.tool_aware.get_settings", side_effect=RuntimeError("settings broken")):
+            result = agent._resolve_context_window()
+
+        assert result == DEFAULT_CONTEXT_WINDOW
+
+
+# ── TestUsagePropagation ──────────────────────────────────────
+
+
+class TestUsagePropagation:
+    """Accumulated usage is propagated through ContextWindowExceededError (C7)."""
+
+    def test_usage_is_zeroed_when_error_on_first_iteration(self) -> None:
+        """On first-iteration failure no tokens are accumulated — usage is zeros."""
+        from google.api_core.exceptions import InvalidArgument
+
+        agent, client = _make_agent()
+        client.generate_with_tools.side_effect = InvalidArgument("context window exceeded")
+
+        result = agent.execute("huge prompt")
+
+        assert result.success is False
+        assert result.usage["total_tokens"] == 0
+
+    def test_usage_carried_through_context_window_exceeded_error(self) -> None:
+        """Usage accumulated before a context-window error is preserved in result."""
+        agent, _ = _make_agent()
+        registry = ToolRegistry()
+
+        exc = ContextWindowExceededError(
+            "context window exceeded",
+            context_pct=50.0,
+            usage={"prompt_tokens": 500_000, "completion_tokens": 10, "total_tokens": 500_010},
+        )
+        result = agent._handle_context_window_exceeded(exc)
+
+        assert result.success is False
+        assert result.usage["prompt_tokens"] == 500_000
+        assert result.usage["total_tokens"] == 500_010
+
