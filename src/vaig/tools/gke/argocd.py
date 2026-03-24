@@ -39,9 +39,73 @@ _ARGOCD_COMMON_NAMESPACES: tuple[str, ...] = (
     "argo",
 )
 _argocd_namespace_cache: dict[str, str | None] = {}
+_crd_exists_cache: dict[str, bool] = {}
 
 
 # ── Helpers ──────────────────────────────────────────────────
+
+
+def _check_crd_exists(crd_name: str, api_client: Any = None) -> bool:
+    """Check whether a CustomResourceDefinition exists in the cluster.
+
+    Uses ``ApiextensionsV1Api.read_custom_resource_definition`` which requires
+    the ``apiextensions.k8s.io/v1`` endpoint.  Results are cached per-process
+    to avoid repeated API round-trips within the same invocation.
+
+    Args:
+        crd_name: Fully-qualified CRD name, e.g. ``"applications.argoproj.io"``.
+        api_client: Optional pre-configured ``kubernetes.client.ApiClient``.
+            When ``None`` the function loads the in-cluster or kube-config
+            credentials automatically.
+
+    Returns:
+        ``True`` if the CRD exists and is accessible, ``False`` otherwise.
+        Returns ``False`` on any error (404, 403, SDK unavailable, network
+        failure) to keep the caller logic simple.
+    """
+    if not _K8S_AVAILABLE:
+        return False
+
+    if crd_name in _crd_exists_cache:
+        return _crd_exists_cache[crd_name]
+
+    try:
+        from kubernetes import client as k8s_client  # noqa: WPS433
+        from kubernetes import config as k8s_config  # noqa: WPS433
+
+        if api_client is None:
+            try:
+                k8s_config.load_incluster_config()
+            except k8s_config.ConfigException:
+                try:
+                    k8s_config.load_kube_config()
+                except k8s_config.ConfigException:
+                    _crd_exists_cache[crd_name] = False
+                    return False
+            ext_api = k8s_client.ApiextensionsV1Api()
+        else:
+            ext_api = k8s_client.ApiextensionsV1Api(api_client)
+
+        ext_api.read_custom_resource_definition(crd_name)
+        _crd_exists_cache[crd_name] = True
+        return True
+
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            logger.debug("CRD '%s' not found (404)", crd_name)
+        elif exc.status == 403:
+            logger.warning(
+                "RBAC: cannot check CRD '%s' (403 Forbidden) — assuming absent", crd_name
+            )
+        else:
+            logger.warning("K8s API error checking CRD '%s': %s", crd_name, exc)
+        _crd_exists_cache[crd_name] = False
+        return False
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Unexpected error checking CRD '%s': %s", crd_name, exc)
+        _crd_exists_cache[crd_name] = False
+        return False
 
 
 def _get_custom_objects_api() -> Any | None:
@@ -99,6 +163,11 @@ def _discover_argocd_namespace(custom_api: Any) -> str | None:
     """Auto-discover the ArgoCD namespace by probing common namespace names.
 
     Strategy:
+    0. (NEW) Check whether the ``applications.argoproj.io`` CRD exists in the
+       cluster at all.  If it does not, ArgoCD is definitely not installed —
+       return ``None`` immediately without probing any namespaces.  This handles
+       hub-spoke architectures where the CRD is registered locally even though
+       the ArgoCD control-plane lives in a separate cluster.
     1. Probe each well-known namespace for the ``argoproj.io/applications`` CRD.
        The first namespace that responds with at least one Application object is used.
     2. If no known namespace matches, fall back to a cluster-wide scan and extract
@@ -116,6 +185,13 @@ def _discover_argocd_namespace(custom_api: Any) -> str | None:
     cache_key = "default"
     if cache_key in _argocd_namespace_cache:
         return _argocd_namespace_cache[cache_key]
+
+    # Step 0: CRD existence pre-check (fast, avoids O(n) namespace probes when ArgoCD absent)
+    # Pass the api_client from the CustomObjectsApi so both checks use the same kubeconfig context.
+    client_for_crd = getattr(custom_api, "api_client", None)
+    if not _check_crd_exists("applications.argoproj.io", api_client=client_for_crd):
+        _argocd_namespace_cache[cache_key] = None
+        return None
 
     # Try each common namespace first (faster than cluster-wide scan)
     for ns in _ARGOCD_COMMON_NAMESPACES:

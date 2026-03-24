@@ -13,7 +13,10 @@ import pytest
 def _clear_caches() -> None:
     """Clear caches before each test."""
     from vaig.tools.gke._cache import clear_discovery_cache
+    from vaig.tools.gke.argocd import _argocd_namespace_cache, _crd_exists_cache
     clear_discovery_cache()
+    _argocd_namespace_cache.clear()
+    _crd_exists_cache.clear()
 
 
 # ── Test data helpers ────────────────────────────────────────
@@ -514,3 +517,182 @@ class TestCacheBehavior:
 
             # Should have been called twice (different cache keys)
             assert mock_custom_api.list_namespaced_custom_object.call_count == 2
+
+
+# ── _check_crd_exists ────────────────────────────────────────
+
+
+class TestCheckCrdExists:
+    """Tests for _check_crd_exists helper."""
+
+    def test_crd_found_returns_true(self) -> None:
+        """CRD exists in cluster — returns True."""
+        from vaig.tools.gke.argocd import _check_crd_exists
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.config.load_incluster_config"):
+            result = _check_crd_exists("applications.argoproj.io")
+
+        assert result is True
+        mock_ext_api.read_custom_resource_definition.assert_called_once_with("applications.argoproj.io")
+
+    def test_crd_not_found_returns_false(self) -> None:
+        """CRD doesn't exist (404) — returns False."""
+        from vaig.tools.gke.argocd import _check_crd_exists
+
+        exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.side_effect = exc_class()
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argocd.k8s_exceptions") as mock_k8s_exc, \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.config.load_incluster_config"):
+            mock_k8s_exc.ApiException = exc_class
+            result = _check_crd_exists("applications.argoproj.io")
+
+        assert result is False
+
+    def test_crd_rbac_forbidden_returns_false(self, caplog: pytest.LogCaptureFixture) -> None:
+        """403 Forbidden (RBAC missing) — returns False and emits a warning log."""
+        import logging
+
+        from vaig.tools.gke.argocd import _check_crd_exists
+
+        exc_class = type("ApiException", (Exception,), {"status": 403, "reason": "Forbidden"})
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.side_effect = exc_class()
+
+        with caplog.at_level(logging.WARNING, logger="vaig.tools.gke.argocd"), \
+             patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argocd.k8s_exceptions") as mock_k8s_exc, \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.config.load_incluster_config"):
+            mock_k8s_exc.ApiException = exc_class
+            result = _check_crd_exists("applications.argoproj.io")
+
+        assert result is False
+        assert any(
+            "403" in record.message or "Forbidden" in record.message or "RBAC" in record.message
+            for record in caplog.records
+            if record.levelno == logging.WARNING
+        ), "Expected a WARNING log mentioning 403/Forbidden/RBAC when CRD check is denied"
+
+    def test_crd_unexpected_exception_returns_false(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Any unexpected exception — returns False and emits a warning log (never propagates)."""
+        import logging
+
+        from vaig.tools.gke.argocd import _check_crd_exists
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.side_effect = RuntimeError("network timeout")
+
+        with caplog.at_level(logging.WARNING, logger="vaig.tools.gke.argocd"), \
+             patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.config.load_incluster_config"):
+            result = _check_crd_exists("applications.argoproj.io")
+
+        assert result is False
+        assert any(
+            "network timeout" in record.message or "Unexpected" in record.message
+            for record in caplog.records
+            if record.levelno == logging.WARNING
+        ), "Expected a WARNING log for unexpected exception in CRD check"
+
+    def test_crd_k8s_unavailable_returns_false(self) -> None:
+        """kubernetes SDK not installed — returns False without raising."""
+        from vaig.tools.gke.argocd import _check_crd_exists
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", False):
+            result = _check_crd_exists("applications.argoproj.io")
+
+        assert result is False
+
+    def test_crd_caching_avoids_repeated_api_calls(self) -> None:
+        """Second call uses cache — API is called exactly once."""
+        from vaig.tools.gke.argocd import _check_crd_exists
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.config.load_incluster_config"):
+            result1 = _check_crd_exists("applications.argoproj.io")
+            result2 = _check_crd_exists("applications.argoproj.io")
+
+        assert result1 is True
+        assert result2 is True
+        assert mock_ext_api.read_custom_resource_definition.call_count == 1
+
+
+# ── _discover_argocd_namespace with CRD pre-check ─────────────
+
+
+class TestDiscoverArgoCdNamespaceWithCrdPrecheck:
+    """Tests for _discover_argocd_namespace() CRD pre-check behaviour."""
+
+    def test_crd_absent_skips_namespace_scanning(self) -> None:
+        """When CRD check returns False, namespace probing is never attempted."""
+        from vaig.tools.gke.argocd import _discover_argocd_namespace
+
+        mock_custom_api = MagicMock()
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argocd._check_crd_exists", return_value=False):
+            result = _discover_argocd_namespace(mock_custom_api)
+
+        assert result is None
+        mock_custom_api.list_namespaced_custom_object.assert_not_called()
+        mock_custom_api.list_cluster_custom_object.assert_not_called()
+
+    def test_crd_present_proceeds_to_namespace_scan(self) -> None:
+        """When CRD check returns True, namespace probing runs and finds the namespace."""
+        from vaig.tools.gke.argocd import _discover_argocd_namespace
+
+        mock_custom_api = MagicMock()
+        mock_custom_api.list_namespaced_custom_object.return_value = {
+            "items": [_make_argocd_app(name="my-app")]
+        }
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argocd._check_crd_exists", return_value=True):
+            result = _discover_argocd_namespace(mock_custom_api)
+
+        assert result == "argocd"  # first common namespace checked
+
+    def test_hub_spoke_crd_present_namespace_not_found(self) -> None:
+        """Hub-spoke: CRD exists but no ArgoCD namespace found → returns None."""
+        from vaig.tools.gke.argocd import _discover_argocd_namespace
+
+        exc_class = type("ApiException", (Exception,), {"status": 404, "reason": "Not Found"})
+        mock_custom_api = MagicMock()
+        mock_custom_api.list_namespaced_custom_object.side_effect = exc_class()
+        mock_custom_api.list_cluster_custom_object.return_value = {"items": []}
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argocd._check_crd_exists", return_value=True), \
+             patch("vaig.tools.gke.argocd.k8s_exceptions") as mock_k8s_exc:
+            mock_k8s_exc.ApiException = exc_class
+            result = _discover_argocd_namespace(mock_custom_api)
+
+        assert result is None
+
+    def test_crd_absent_result_is_cached(self) -> None:
+        """When CRD absent, None is cached so second call skips the CRD check too."""
+        from vaig.tools.gke.argocd import _discover_argocd_namespace
+
+        mock_custom_api = MagicMock()
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argocd._check_crd_exists", return_value=False) as mock_crd:
+            _discover_argocd_namespace(mock_custom_api)
+            _discover_argocd_namespace(mock_custom_api)  # second call
+
+        # _check_crd_exists called only once — second call hits namespace cache
+        assert mock_crd.call_count == 1
