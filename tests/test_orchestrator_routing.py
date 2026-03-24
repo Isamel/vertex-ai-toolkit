@@ -245,19 +245,20 @@ class TestExecuteWithToolsRouting:
         skill = _GathererSkill()
         registry = _make_mock_registry()
 
-        orch_logger = _logging.getLogger("vaig.agents.orchestrator")
-        captured: list[str] = []
+        # Use a direct in-memory handler — immune to caplog propagation issues
+        # that occur when other tests modify logger state before this one runs.
+        records: list[_logging.LogRecord] = []
 
-        class _Handler(_logging.Handler):
+        class _CapturingHandler(_logging.Handler):
             def emit(self, record: _logging.LogRecord) -> None:
-                captured.append(record.getMessage())
+                records.append(record)
 
-        handler = _Handler(level=_logging.INFO)
+        orch_logger = _logging.getLogger("vaig.agents.orchestrator")
+        handler = _CapturingHandler()
+        handler.setLevel(_logging.INFO)
         old_level = orch_logger.level
-        old_propagate = orch_logger.propagate
-        orch_logger.addHandler(handler)
         orch_logger.setLevel(_logging.INFO)
-        orch_logger.propagate = True
+        orch_logger.addHandler(handler)
         try:
             routed = [_GathererSkill.NODE_CFG, _GathererSkill.REPORTER_CFG]
             with patch.object(skill, "route_agents", return_value=routed):
@@ -265,13 +266,15 @@ class TestExecuteWithToolsRouting:
         finally:
             orch_logger.removeHandler(handler)
             orch_logger.setLevel(old_level)
-            orch_logger.propagate = old_propagate
 
-        routing_lines = [m for m in captured if "Dynamic routing" in m]
+        messages = [r.getMessage() for r in records]
+        routing_lines = [m for m in messages if "Dynamic routing" in m]
         assert routing_lines, "Expected 'Dynamic routing' log message not found"
         routing_msg = routing_lines[0]
         assert "node_gatherer" in routing_msg
         assert "reporter" in routing_msg
+        # New format: X/Y pattern — routed count out of original count
+        assert "/" in routing_msg
 
     def test_routing_with_no_capabilities_agents_passes_all(self) -> None:
         """When no agent has capabilities, all configs pass through unchanged."""
@@ -352,19 +355,20 @@ class TestAsyncExecuteWithToolsRouting:
         skill = _GathererSkill()
         registry = _make_mock_registry()
 
-        orch_logger = _logging.getLogger("vaig.agents.orchestrator")
-        captured: list[str] = []
+        # Use a direct in-memory handler — immune to caplog propagation issues
+        # that occur when other tests modify logger state before this one runs.
+        records: list[_logging.LogRecord] = []
 
-        class _Handler(_logging.Handler):
+        class _CapturingHandler(_logging.Handler):
             def emit(self, record: _logging.LogRecord) -> None:
-                captured.append(record.getMessage())
+                records.append(record)
 
-        handler = _Handler(level=_logging.INFO)
+        orch_logger = _logging.getLogger("vaig.agents.orchestrator")
+        handler = _CapturingHandler()
+        handler.setLevel(_logging.INFO)
         old_level = orch_logger.level
-        old_propagate = orch_logger.propagate
-        orch_logger.addHandler(handler)
         orch_logger.setLevel(_logging.INFO)
-        orch_logger.propagate = True
+        orch_logger.addHandler(handler)
         try:
             routed = [_GathererSkill.LOG_CFG, _GathererSkill.REPORTER_CFG]
             with patch.object(skill, "route_agents", return_value=routed):
@@ -376,13 +380,15 @@ class TestAsyncExecuteWithToolsRouting:
         finally:
             orch_logger.removeHandler(handler)
             orch_logger.setLevel(old_level)
-            orch_logger.propagate = old_propagate
 
-        routing_lines = [m for m in captured if "Dynamic routing" in m]
+        messages = [r.getMessage() for r in records]
+        routing_lines = [m for m in messages if "Dynamic routing" in m]
         assert routing_lines, "Expected 'Dynamic routing' log message not found in async path"
         routing_msg = routing_lines[0]
         assert "logging_gatherer" in routing_msg
         assert "reporter" in routing_msg
+        # New format: X/Y pattern — routed count out of original count
+        assert "/" in routing_msg
 
 
 # ===========================================================================

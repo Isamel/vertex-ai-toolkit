@@ -54,12 +54,18 @@ def _is_gatherer(config: dict[str, Any]) -> bool:
     """Return True if *config* is a parallel gatherer with declared capabilities.
 
     A config is considered a *filterable gatherer* when it has BOTH:
-    * ``parallel_group`` key present (marks it as a parallel agent), AND
-    * ``capabilities`` key present (has a declared keyword list).
+    * ``parallel_group`` key present AND truthy (marks it as a parallel agent), AND
+    * ``capabilities`` key present AND is a non-empty list of at least one string.
 
-    Configs missing either key are treated as pass-through (not filtered).
+    Configs missing either key, or with an empty/non-list capabilities value,
+    are treated as pass-through (not filtered).
     """
-    return "parallel_group" in config and "capabilities" in config
+    if not config.get("parallel_group"):
+        return False
+    caps = config.get("capabilities")
+    if not isinstance(caps, list):
+        return False
+    return any(isinstance(c, str) and c for c in caps)
 
 
 def _gatherer_matches(config: dict[str, Any], tokens: list[str]) -> bool:
@@ -75,6 +81,8 @@ def _gatherer_matches(config: dict[str, Any], tokens: list[str]) -> bool:
     * "pods" matches capability "pod" (token contains capability)
     * "pod" matches capability "pods" (capability contains token)
 
+    Non-string items in capabilities are skipped (coerced out).
+
     Args:
         config: An agent config dict.
         tokens:  Lowercase query tokens from :func:`_tokenize`.
@@ -82,12 +90,8 @@ def _gatherer_matches(config: dict[str, Any], tokens: list[str]) -> bool:
     Returns:
         True if at least one token ↔ capability pair matches.
     """
-    capabilities: list[str] = [c.lower() for c in config.get("capabilities", [])]
-    for token in tokens:
-        for cap in capabilities:
-            if cap in token or token in cap:
-                return True
-    return False
+    capabilities: list[str] = [c.lower() for c in config.get("capabilities", []) if isinstance(c, str)]
+    return any(cap in token or token in cap for token in tokens for cap in capabilities)
 
 
 def route_agents(query: str, configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -141,5 +145,6 @@ def route_agents(query: str, configs: list[dict[str, Any]]) -> list[dict[str, An
         return configs
 
     # Return matched gatherers + all pass-through configs (preserve original order).
-    matched_set = {id(g) for g in matched_gatherers}
-    return [c for c in configs if id(c) in matched_set or c in pass_through]
+    # Use id() for both sets to avoid O(N²) equality checks.
+    matched_set = {id(g) for g in matched_gatherers} | {id(c) for c in pass_through}
+    return [c for c in configs if id(c) in matched_set]

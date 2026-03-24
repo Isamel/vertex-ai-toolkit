@@ -721,11 +721,13 @@ class Orchestrator:
         # Sequential agents (no ``capabilities``) always pass through.
         # When no gatherers match, ALL configs pass through unchanged
         # (safe-all fallback).
+        original_agent_count = len(agent_configs)
         agent_configs = skill.route_agents(query, agent_configs)
         _all_names = [cfg.get("name", "?") for cfg in agent_configs]
         logger.info(
-            "Dynamic routing: %d agent(s) activated for query — %s",
+            "Dynamic routing: %d/%d agent(s) activated for query — %s",
             len(agent_configs),
+            original_agent_count,
             ", ".join(_all_names),
         )
 
@@ -1769,11 +1771,13 @@ class Orchestrator:
         # Sequential agents (no ``capabilities``) always pass through.
         # When no gatherers match, ALL configs pass through unchanged
         # (safe-all fallback).
+        original_agent_count = len(agent_configs)
         agent_configs = skill.route_agents(query, agent_configs)
         _all_names = [cfg.get("name", "?") for cfg in agent_configs]
         logger.info(
-            "Dynamic routing: %d agent(s) activated for query — %s",
+            "Dynamic routing: %d/%d agent(s) activated for query — %s",
             len(agent_configs),
+            original_agent_count,
             ", ".join(_all_names),
         )
 
