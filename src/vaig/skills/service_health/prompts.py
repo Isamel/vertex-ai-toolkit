@@ -76,7 +76,7 @@ SYSTEM_INSTRUCTION_GATHERER: str = _SYSTEM_INSTRUCTION_UNIVERSAL
 
 _CORE_TOOLS_TABLE = """\
 | `kubectl_get` | `resource` | `name`, `namespace`, `output`, `label_selector`, `field_selector` |
-| `kubectl_describe` | `resource`, `name` | `namespace` |
+| `kubectl_describe` | `resource_type`, `name` | `namespace` |
 | `kubectl_logs` | `pod` | `namespace`, `container`, `tail_lines`, `since` |
 | `kubectl_top` | | `resource_type`, `name`, `namespace` |
 | `get_events` | | `namespace`, `event_type`, `involved_object_name`, `involved_object_kind`, `limit` |
@@ -799,6 +799,12 @@ When a finding involves connectivity, DNS, or service reachability issues, sugge
 - Process check: `Tool: exec_command(pod_name="POD", namespace="NS", command="ps aux") — Expected: missing process confirms crash`
 
 Note: exec_command requires gke.exec_enabled=true in config. If exec is disabled, note this in the Verification Gap: "Requires exec_enabled=true — manual verification needed"
+
+### ARGOCD RESOURCES — SPECIAL RULE
+You MAY generate: `kubectl_get(resource="applications.argoproj.io", ...)` for ArgoCD Application CRDs, since this resource is supported by kubectl_get. Do NOT invent other ArgoCD CRD group names that are not supported by the available tools.
+For ArgoCD verification, PREFER using the dedicated tools when they are available: `argocd_app_status()`, `argocd_list_applications()`.
+If ArgoCD-specific tools are not listed in the available tools, you may still use `kubectl_get(resource="applications.argoproj.io", ...)` to inspect Application CRDs when appropriate.
+If neither ArgoCD tools nor kubectl_get data for ArgoCD Applications are available, clearly explain this limitation in the Verification Gap text, and choose a Verification Gap level using the standard phrases defined earlier (for example, only use `None — sufficient evidence from data collection` when you actually have sufficient evidence).
 
 ## STRICT Analysis Rules
 1. Be PRECISE about scope. A single failing pod in one namespace does NOT make the cluster "DEGRADED". Classify the issue scope correctly: cluster-level, namespace-level, or resource-level.
@@ -2214,7 +2220,7 @@ agents running in parallel.
 ### Step 10 — GitOps / Helm / ArgoCD Investigation
 11. ``kubectl_get(resource="applications.argoproj.io", namespace="argocd")`` — if ArgoCD is present
 12. ``kubectl_get(resource="helmreleases.helm.toolkit.fluxcd.io", namespace="<ns>")`` — if Flux is present
-13. For out-of-sync ArgoCD apps: ``kubectl_describe(resource="application", name="<app>", namespace="argocd")``
+13. For out-of-sync ArgoCD apps: ``argocd_app_status(app_name="<app>", namespace="argocd")``
 
 **Helm Release Assessment (ANNOTATION-FIRST STRATEGY)**:
 PREREQUISITE: Check if ``helm_list_releases`` is in your available tools list. If NOT
