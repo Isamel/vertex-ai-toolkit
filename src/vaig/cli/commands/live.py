@@ -483,12 +483,14 @@ def register(app: typer.Typer) -> None:
 
             container = build_container(settings)
             client = container.gemini_client
+            # Do NOT pass project_id/location here — gke_project/gke_location are
+            # already written to settings.gke.* above, and _build_gke_config reads
+            # them via its fallback chain (gke.project_id or gcp.project_id).
+            # Passing effective_project/location would override gke-specific flags.
             gke_config = _build_gke_config(
                 settings,
                 cluster=cluster,
                 namespace=namespace,
-                project_id=effective_project,
-                location=location,
             )
 
             # Auto-detect skill if requested (or enabled in config) and no explicit skill specified

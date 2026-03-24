@@ -155,8 +155,12 @@ def register(app: typer.Typer) -> None:
 
             # Live infrastructure mode — use InfraAgent
             if live:
+                # Do NOT pass project_id/location here — gke_project/gke_location are
+                # already written to settings.gke.* above, and _build_gke_config reads
+                # them via its fallback chain (gke.project_id or gcp.project_id).
+                # Passing effective_project/location would override gke-specific flags.
                 gke_config = _build_gke_config(
-                    settings, cluster=cluster, namespace=namespace, project_id=effective_project, location=location,
+                    settings, cluster=cluster, namespace=namespace,
                 )
                 _execute_live_mode(
                     client,
@@ -378,8 +382,12 @@ async def _async_ask_impl(
     if live:
         from vaig.cli.commands.live import _async_execute_live_mode
 
+        # Do NOT pass project_id/location here — gke_project/gke_location are
+        # already written to settings.gke.* above, and _build_gke_config reads
+        # them via its fallback chain (gke.project_id or gcp.project_id).
+        # Passing project/location would override gke-specific flags.
         gke_config = _build_gke_config(
-            settings, cluster=cluster, namespace=namespace, project_id=project, location=location,
+            settings, cluster=cluster, namespace=namespace,
         )
         await _async_execute_live_mode(
             client,
