@@ -8,6 +8,7 @@ from enum import StrEnum
 from typing import Any
 
 from vaig.core.models import PipelineState
+from vaig.core.router import route_agents as _core_route_agents
 
 
 class SkillPhase(StrEnum):
@@ -168,6 +169,29 @@ class BaseSkill(ABC):
         Args:
             query: The user query string passed to the skill execution.
         """
+
+    def route_agents(self, query: str, configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Filter agent configs to those relevant to the given query.
+
+        Called by the orchestrator before executing parallel agents.  The
+        default implementation delegates to :func:`vaig.core.router.route_agents`,
+        which applies bidirectional substring keyword matching against each
+        gatherer's ``capabilities`` list.
+
+        Skills can override this method to implement custom routing logic —
+        e.g. ML-based ranking, A/B routing, or hardcoded domain heuristics.
+
+        Args:
+            query:   The user's input query string.
+            configs: List of agent configuration dicts as returned by
+                     :meth:`get_agents_config`.
+
+        Returns:
+            A filtered (or reordered) subset of *configs*.  The default
+            implementation guarantees a safe-all fallback: if no gatherers
+            match, ALL original configs are returned unchanged.
+        """
+        return _core_route_agents(query, configs)
 
     def format_output(self, result: SkillResult) -> str:
         """Format the skill result for display. Override for custom formatting."""
