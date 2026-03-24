@@ -742,6 +742,40 @@ def kubectl_logs(
         return ToolResult(output=logs)
 
     except k8s_exceptions.ApiException as exc:
+        # If the pod has multiple containers, auto-detect the app container and retry
+        if exc.status == 400 and "container name must be specified" in str(exc.body):
+            match = re.search(r"\[([^\]]+)\]", str(exc.body))
+            if match:
+                containers = match.group(1).split()
+                sidecar_prefixes = ("istio-", "datadog-", "linkerd-", "envoy-")
+                sidecar_exact = frozenset({"envoy", "istio-proxy", "datadog-agent", "linkerd-proxy"})
+                app_containers = [
+                    c for c in containers
+                    if c not in sidecar_exact
+                    and not c.startswith(sidecar_prefixes)
+                    and "-init-" not in c
+                ]
+                target = app_containers[0] if len(app_containers) == 1 else None
+                if target:
+                    kwargs["container"] = target
+                    try:
+                        logs = core_v1.read_namespaced_pod_log(**kwargs)
+                        if not logs:
+                            return ToolResult(
+                                output=f"(no logs available for container '{target}' in pod/{pod})"
+                            )
+                        return ToolResult(output=f"[container: {target}]\n{logs}")
+                    except k8s_exceptions.ApiException:
+                        pass
+                return ToolResult(
+                    output=(
+                        f"Pod {pod} has multiple containers: {', '.join(containers)}. "
+                        f"Likely app containers: {', '.join(app_containers) if app_containers else 'unknown'}. "
+                        f"Retry with container= parameter."
+                    ),
+                    error=True,
+                )
+
         # If the pod is in CrashLoopBackOff, try previous logs
         if exc.status == 400 and "previous" not in kwargs:
             try:

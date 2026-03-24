@@ -10,7 +10,17 @@ import logging
 from typing import TYPE_CHECKING
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
-from vaig.tools.categories import ARGO_ROLLOUTS, ARGOCD, DATADOG, HELM, KUBERNETES, LOGGING, MESH, SCALING
+from vaig.tools.categories import (
+    ARGO_ROLLOUTS,
+    ARGOCD,
+    DATADOG,
+    HELM,
+    KUBERNETES,
+    KUBERNETES_WRITE,
+    LOGGING,
+    MESH,
+    SCALING,
+)
 
 from . import _clients, diagnostics, discovery, kubectl, mesh, mutations, security
 from .argo_rollouts import (
@@ -186,6 +196,9 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             description=(
                 "Retrieve logs from a Kubernetes pod. Automatically fetches previous "
                 "container logs when current container is in CrashLoopBackOff. "
+                "For multi-container pods, auto-detects the app container by filtering "
+                "out known sidecars (istio, datadog, linkerd, envoy, init containers); "
+                "retries automatically when a single app container is found. "
                 "Read-only — does not modify any resources."
             ),
             categories=frozenset({KUBERNETES, LOGGING}),
@@ -204,7 +217,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ToolParam(
                     name="container",
                     type="string",
-                    description="Specific container name (for multi-container pods)",
+                    description="Container name. Required for multi-container pods. Auto-detected if omitted.",
                     required=False,
                 ),
                 ToolParam(
@@ -273,7 +286,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "number of replicas (0-50). Reports the previous and new replica count. "
                 "WRITE operation — modifies the cluster."
             ),
-            categories=frozenset({KUBERNETES}),
+            categories=frozenset({KUBERNETES_WRITE}),
             parameters=[
                 ToolParam(
                     name="resource",
@@ -310,7 +323,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "Equivalent to 'kubectl rollout restart'. Causes a zero-downtime rolling update. "
                 "WRITE operation — modifies the cluster."
             ),
-            categories=frozenset({KUBERNETES}),
+            categories=frozenset({KUBERNETES_WRITE}),
             parameters=[
                 ToolParam(
                     name="resource",
@@ -343,7 +356,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "System labels (kubernetes.io/, k8s.io/) are protected. "
                 "WRITE operation — modifies the cluster."
             ),
-            categories=frozenset({KUBERNETES}),
+            categories=frozenset({KUBERNETES_WRITE}),
             parameters=[
                 ToolParam(
                     name="resource",
@@ -384,7 +397,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 "System annotations (kubernetes.io/, k8s.io/) are protected. "
                 "WRITE operation — modifies the cluster."
             ),
-            categories=frozenset({KUBERNETES}),
+            categories=frozenset({KUBERNETES_WRITE}),
             parameters=[
                 ToolParam(
                     name="resource",
