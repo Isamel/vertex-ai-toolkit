@@ -839,3 +839,291 @@ class TestBuildWorkloadGathererPrompt:
 
         assert "<target>" not in prompt
         assert "my-namespace" in prompt
+
+
+# ── Fix B+D: Transient failures not cached (argo_rollouts) ──
+
+
+class TestTransientErrorsNotCachedRollouts:
+    """Transient K8s API errors must NOT be written to _rollouts_ns_cache."""
+
+    def test_transient_scan_503_not_cached(self) -> None:
+        """503 on both primary and fallback paths → result not cached, returns False."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argo_rollouts import _rollouts_ns_cache, detect_argo_rollouts
+
+        api_exc_503 = k8s_exc.ApiException(status=503)
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
+
+        mock_custom_api = MagicMock()
+        mock_custom_api.list_namespaced_custom_object.side_effect = api_exc_503
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.side_effect = api_exc_503
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.CustomObjectsApi", return_value=mock_custom_api), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception), \
+             patch("time.sleep", return_value=None):
+            result = detect_argo_rollouts(namespace="transient-ns")
+
+        assert result is False
+        assert "transient-ns" not in _rollouts_ns_cache
+
+    def test_transient_then_success_returns_true_and_caches(self) -> None:
+        """First call fails transiently (not cached), second call succeeds and caches True."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argo_rollouts import _rollouts_ns_cache, detect_argo_rollouts
+
+        api_exc_503 = k8s_exc.ApiException(status=503)
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
+
+        mock_custom_api = MagicMock()
+        mock_apps_api = MagicMock()
+
+        # First scan: both retry attempts fail with 503, annotation fallback also 503 → not cached
+        # Second scan: CRD query succeeds with one Rollout item → cached True
+        # _RETRY_ATTEMPTS=2 means the first detect_argo_rollouts call exhausts 2 CRD attempts.
+        call_count = {"n": 0}
+
+        def _crd_side_effect(**kwargs: object) -> dict:
+            call_count["n"] += 1
+            if call_count["n"] <= 2:  # First 2 calls = both retry attempts of first invocation
+                raise api_exc_503
+            return {"items": [{"kind": "Rollout"}]}
+
+        mock_custom_api.list_namespaced_custom_object.side_effect = _crd_side_effect
+        mock_apps_api.list_namespaced_deployment.side_effect = api_exc_503
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.CustomObjectsApi", return_value=mock_custom_api), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception), \
+             patch("time.sleep", return_value=None):
+            result1 = detect_argo_rollouts(namespace="retry-ns")
+            # First call transient — not cached
+            assert result1 is False
+            assert "retry-ns" not in _rollouts_ns_cache
+
+            result2 = detect_argo_rollouts(namespace="retry-ns")
+
+        assert result2 is True
+        assert _rollouts_ns_cache.get("retry-ns") is True
+
+    def test_definitive_404_on_annotation_scan_returns_false(self) -> None:
+        """404 on deployment list is definitive — returns False (no annotation scan needed)."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argo_rollouts import _rollouts_ns_cache, detect_argo_rollouts
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
+
+        mock_custom_api = MagicMock()
+        mock_custom_api.list_namespaced_custom_object.side_effect = k8s_exc.ApiException(status=404)
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.side_effect = k8s_exc.ApiException(status=404)
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.CustomObjectsApi", return_value=mock_custom_api), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = detect_argo_rollouts(namespace="gone-ns")
+
+        assert result is False
+        # 404 is definitive — result IS cached
+        assert "gone-ns" in _rollouts_ns_cache
+        assert _rollouts_ns_cache["gone-ns"] is False
+
+
+# ── Fix C: Rollout CRD query ─────────────────────────────────
+
+
+class TestRolloutCRDQuery:
+    """Primary detection path should query Rollout CRDs, not just deployment annotations."""
+
+    def test_rollout_crd_found_returns_true(self) -> None:
+        """list_namespaced_custom_object returning Rollout items → True."""
+        from vaig.tools.gke.argo_rollouts import detect_argo_rollouts
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
+
+        mock_custom_api = MagicMock()
+        mock_custom_api.list_namespaced_custom_object.return_value = {
+            "items": [{"kind": "Rollout", "metadata": {"name": "my-rollout"}}]
+        }
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.CustomObjectsApi", return_value=mock_custom_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = detect_argo_rollouts(namespace="rollouts-ns")
+
+        assert result is True
+        mock_custom_api.list_namespaced_custom_object.assert_called_once_with(
+            group="argoproj.io",
+            version="v1alpha1",
+            namespace="rollouts-ns",
+            plural="rollouts",
+            limit=1,
+        )
+
+    def test_no_rollout_objects_falls_back_to_annotations(self) -> None:
+        """Empty Rollout CRD list falls back to annotation scan."""
+        from vaig.tools.gke.argo_rollouts import detect_argo_rollouts
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
+
+        mock_custom_api = MagicMock()
+        mock_custom_api.list_namespaced_custom_object.return_value = {"items": []}
+
+        dep = MagicMock()
+        dep.metadata.annotations = {"rollout.argoproj.io/revision": "2"}
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = [dep]
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.CustomObjectsApi", return_value=mock_custom_api), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = detect_argo_rollouts(namespace="annotation-fallback-ns")
+
+        assert result is True
+        mock_apps_api.list_namespaced_deployment.assert_called_once()
+
+    def test_crd_query_404_falls_back_to_annotations(self) -> None:
+        """404 on Rollout CRD query falls back to annotation scan."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argo_rollouts import detect_argo_rollouts
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
+
+        mock_custom_api = MagicMock()
+        mock_custom_api.list_namespaced_custom_object.side_effect = k8s_exc.ApiException(status=404)
+
+        dep = MagicMock()
+        dep.metadata.annotations = {"rollout.argoproj.io/desired-replicas": "3"}
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.return_value.items = [dep]
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.CustomObjectsApi", return_value=mock_custom_api), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = detect_argo_rollouts(namespace="fallback-ns")
+
+        assert result is True
+        mock_apps_api.list_namespaced_deployment.assert_called_once()
+
+
+# ── Fix D: Retry logic (argo_rollouts) ──────────────────────
+
+
+class TestRetryLogicRollouts:
+    """Retry helper must attempt up to _RETRY_ATTEMPTS before giving up."""
+
+    def test_crd_query_fails_once_then_succeeds(self) -> None:
+        """503 on first CRD query attempt, success on second → returns True."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argo_rollouts import detect_argo_rollouts
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
+
+        mock_custom_api = MagicMock()
+        mock_custom_api.list_namespaced_custom_object.side_effect = [
+            k8s_exc.ApiException(status=503),
+            {"items": [{"kind": "Rollout"}]},
+        ]
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.CustomObjectsApi", return_value=mock_custom_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception), \
+             patch("time.sleep", return_value=None) as mock_sleep:
+            result = detect_argo_rollouts(namespace="retry-crd-ns")
+
+        assert result is True
+        assert mock_custom_api.list_namespaced_custom_object.call_count == 2
+        mock_sleep.assert_called_once()
+
+    def test_annotation_fallback_retries_once_on_transient(self) -> None:
+        """503 on first annotation scan attempt, success on second → returns True."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argo_rollouts import detect_argo_rollouts
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
+
+        # CRD query returns empty (no Rollout objects), triggering annotation fallback.
+        mock_custom_api = MagicMock()
+        mock_custom_api.list_namespaced_custom_object.return_value = {"items": []}
+
+        dep = MagicMock()
+        dep.metadata.annotations = {"rollout.argoproj.io/revision": "1"}
+
+        success_result = MagicMock()
+        success_result.items = [dep]
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.side_effect = [
+            k8s_exc.ApiException(status=503),
+            success_result,
+        ]
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.CustomObjectsApi", return_value=mock_custom_api), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception), \
+             patch("time.sleep", return_value=None) as mock_sleep:
+            result = detect_argo_rollouts(namespace="retry-annot-ns")
+
+        assert result is True
+        assert mock_apps_api.list_namespaced_deployment.call_count == 2
+        mock_sleep.assert_called_once()

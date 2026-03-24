@@ -914,3 +914,196 @@ class TestDetectArgocd:
 
         assert result_managed is True
         assert result_unmanaged is False
+
+
+# ── Fix A: CRD transient errors not cached ───────────────────
+
+
+class TestCRDTransientNotCached:
+    """Transient CRD check errors must NOT be written to _crd_exists_cache."""
+
+    def test_503_crd_check_not_cached(self) -> None:
+        """503 on CRD check → result not in cache, returns False."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argocd import _check_crd_exists, _crd_exists_cache
+
+        api_exc_503 = k8s_exc.ApiException(status=503)
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.side_effect = api_exc_503
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception), \
+             patch("time.sleep", return_value=None):
+            result = _check_crd_exists("applications.argoproj.io")
+
+        assert result is False
+        assert "applications.argoproj.io" not in _crd_exists_cache
+
+    def test_404_crd_check_is_cached_false(self) -> None:
+        """404 on CRD check is DEFINITIVE → cached as False, second call skips API."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argocd import _check_crd_exists, _crd_exists_cache
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.side_effect = k8s_exc.ApiException(status=404)
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception):
+            result = _check_crd_exists("missing.argoproj.io")
+
+        assert result is False
+        assert _crd_exists_cache.get("missing.argoproj.io") is False
+
+        # Second call — must NOT hit the API again (cache hit)
+        mock_ext_api.read_custom_resource_definition.reset_mock()
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api):
+            result2 = _check_crd_exists("missing.argoproj.io")
+
+        assert result2 is False
+        mock_ext_api.read_custom_resource_definition.assert_not_called()
+
+    def test_transient_then_success_returns_true(self) -> None:
+        """503 on first attempt, success on second → returns True (retry works)."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argocd import _check_crd_exists, _crd_exists_cache
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.side_effect = [
+            k8s_exc.ApiException(status=503),
+            MagicMock(),  # success on retry
+        ]
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception), \
+             patch("time.sleep", return_value=None) as mock_sleep:
+            result = _check_crd_exists("applications.argoproj.io")
+
+        assert result is True
+        assert _crd_exists_cache.get("applications.argoproj.io") is True
+        assert mock_ext_api.read_custom_resource_definition.call_count == 2
+        mock_sleep.assert_called_once()
+
+
+# ── Fix B: Annotation scan transient not cached ──────────────
+
+
+class TestAnnotationScanTransientNotCached:
+    """Transient annotation scan errors must NOT write to _argocd_ns_cache."""
+
+    def test_503_annotation_scan_not_cached(self) -> None:
+        """503 on annotation scan → namespace not in cache, detect_argocd returns False."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argocd import _argocd_ns_cache, detect_argocd
+
+        api_exc_503 = k8s_exc.ApiException(status=503)
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.side_effect = api_exc_503
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception), \
+             patch("time.sleep", return_value=None):
+            result = detect_argocd(namespace="transient-argocd-ns")
+
+        assert result is False
+        assert "transient-argocd-ns" not in _argocd_ns_cache
+
+    def test_annotation_scan_transient_then_success_second_call_works(self) -> None:
+        """503 on first call (not cached), second call succeeds and caches True."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argocd import _argocd_ns_cache, detect_argocd
+
+        api_exc_503 = k8s_exc.ApiException(status=503)
+
+        mock_ext_api = MagicMock()
+        mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
+
+        dep = MagicMock()
+        dep.metadata.annotations = {"argocd.argoproj.io/tracking-id": "my-app:apps/Deployment:production/my-deploy"}
+
+        success_result = MagicMock()
+        success_result.items = [dep]
+
+        mock_apps_api = MagicMock()
+        # Both attempts fail on first detect_argocd call (RETRY_ATTEMPTS=2)
+        mock_apps_api.list_namespaced_deployment.side_effect = [
+            api_exc_503,  # first call, attempt 1
+            api_exc_503,  # first call, attempt 2 (exhausted)
+            success_result,  # second call
+        ]
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception), \
+             patch("time.sleep", return_value=None):
+            result1 = detect_argocd(namespace="retry-argocd-ns")
+            assert result1 is False
+            assert "retry-argocd-ns" not in _argocd_ns_cache
+
+            result2 = detect_argocd(namespace="retry-argocd-ns")
+
+        assert result2 is True
+        assert _argocd_ns_cache.get("retry-argocd-ns") is True
+
+
+# ── Fix D: Retry logic (argocd) ─────────────────────────────
+
+
+class TestRetryLogicArgoCD:
+    """Retry helper must sleep and retry on transient errors."""
+
+    def test_annotation_scan_retries_on_429(self) -> None:
+        """429 on first attempt triggers retry and sleep; second attempt succeeds."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argocd import _scan_namespace_for_argocd_annotations
+
+        dep = MagicMock()
+        dep.metadata.annotations = {"argocd.argoproj.io/managed-by": "my-app"}
+
+        success_result = MagicMock()
+        success_result.items = [dep]
+
+        mock_apps_api = MagicMock()
+        mock_apps_api.list_namespaced_deployment.side_effect = [
+            k8s_exc.ApiException(status=429),
+            success_result,
+        ]
+
+        with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
+             patch("kubernetes.config.load_kube_config", return_value=None), \
+             patch("kubernetes.config.ConfigException", Exception), \
+             patch("time.sleep", return_value=None) as mock_sleep:
+            result = _scan_namespace_for_argocd_annotations("production", None)
+
+        assert result is True
+        assert mock_apps_api.list_namespaced_deployment.call_count == 2
+        mock_sleep.assert_called_once()
