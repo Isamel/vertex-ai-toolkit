@@ -1,9 +1,10 @@
-"""Auto-discovery tools — workloads, service mesh, network topology."""
+"""Auto-discovery tools — workloads, service mesh, network topology, dependencies."""
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from vaig.tools.base import ToolResult
 
@@ -647,6 +648,425 @@ def discover_network_topology(
     return ToolResult(output=output, error=bool(errors and svc_count == 0 and ep_count == 0))
 
 
+# ── discover_dependencies ────────────────────────────────────
+
+# Phase 1: Security & Parsing Helpers
+
+_SENSITIVE_ENV_SUFFIXES: frozenset[str] = frozenset({
+    "_PASSWORD",
+    "_SECRET",
+    "_TOKEN",
+    "_KEY",
+    "_CREDENTIALS",
+    "_PRIVATE_KEY",
+    "_ACCESS_KEY",
+    "_AUTH",
+    "_APIKEY",
+    "_API_KEY",
+    "_PASSPHRASE",
+    "_PASSWD",
+    "_PWD",
+})
+
+_DEP_ENV_SUFFIXES: tuple[str, ...] = (
+    "_HOST",
+    "_ADDR",
+    "_ADDRESS",
+    "_ENDPOINT",
+    "_URL",
+    "_URI",
+    "_SERVER",
+    "_SERVICE",
+    "_SVC",
+)
+
+
+def _is_safe_env_var_name(name: str) -> bool:
+    """Return True if the env var name is safe to include in dependency output.
+
+    Filters out variables whose names end with a sensitive suffix (case-insensitive).
+    """
+    upper = name.upper()
+    return not any(upper.endswith(suffix) for suffix in _SENSITIVE_ENV_SUFFIXES)
+
+
+def _parse_hostname_from_value(value: str) -> str:
+    """Extract hostname (and port) from an env var value.
+
+    For URL-format values (contain a scheme like http://, grpc://, postgres://),
+    uses ``urlparse`` to extract netloc (host:port). For plain hostnames, returns
+    the value stripped of whitespace. Returns empty string if the value is empty.
+    """
+    value = value.strip()
+    if not value:
+        return ""
+
+    # If value looks like a URL (has scheme), parse it
+    if "://" in value:
+        try:
+            parsed = urlparse(value)
+            netloc = parsed.netloc
+            # netloc may include userinfo (user:pass@host:port) — strip credentials
+            if "@" in netloc:
+                netloc = netloc.split("@", 1)[1]
+            return netloc if netloc else ""
+        except Exception:  # noqa: BLE001
+            return ""
+
+    # Plain hostname or host:port — normalise to strip any embedded credentials
+    stripped = value.lstrip("/")
+    # If the value looks like user:pass@host/path or host/path, normalize via urlparse
+    # to safely discard userinfo, path, query, and fragment.
+    if "@" in stripped or "/" in stripped:
+        try:
+            parsed = urlparse("//" + stripped)
+            netloc = parsed.netloc or ""
+            if "@" in netloc:
+                netloc = netloc.split("@", 1)[1]
+            return netloc if netloc else ""
+        except Exception:  # noqa: BLE001
+            return ""
+    return stripped
+
+
+def _classify_confidence(hostname: str, env_name: str, original_value: str) -> str:
+    """Classify the confidence level of a dependency detection.
+
+    HIGH  — hostname ends with ``.svc.cluster.local``
+    MEDIUM — hostname was extracted from a URL value (original value contains ``://``),
+             or env var name ends with a host-type suffix
+    LOW   — heuristic / everything else
+    """
+    # Strip port before checking (e.g. "host.svc.cluster.local:5432" → "host.svc.cluster.local")
+    hostname_no_port = hostname.rsplit(":", 1)[0] if ":" in hostname else hostname
+    if hostname_no_port.endswith(".svc.cluster.local"):
+        return "HIGH"
+    upper = env_name.upper()
+    # URL-extracted (original value has a scheme) or known host-type suffixes
+    if "://" in original_value or any(
+        upper.endswith(s)
+        for s in (
+            "_HOST",
+            "_ADDR",
+            "_ADDRESS",
+            "_ENDPOINT",
+            "_SERVER",
+            "_URL",
+            "_URI",
+            "_SERVICE",
+            "_SVC",
+        )
+    ):
+        return "MEDIUM"
+    return "LOW"
+
+
+# Phase 2: Env Var Scanning
+
+
+def _find_pods_for_service(
+    service_name: str,
+    namespace: str,
+    core_v1_api: object,
+) -> list[object]:
+    """Find pods backing a K8s Service via spec.selector labels.
+
+    Args:
+        service_name: Name of the Kubernetes Service.
+        namespace: Namespace where the service lives.
+        core_v1_api: kubernetes CoreV1Api instance.
+
+    Returns a list of Pod objects. Returns empty list on any error.
+    """
+    try:
+        svc = core_v1_api.read_namespaced_service(name=service_name, namespace=namespace)  # type: ignore[attr-defined]
+        selector = svc.spec.selector if svc.spec and svc.spec.selector else {}
+        if not selector:
+            return []
+        label_selector = ",".join(f"{k}={v}" for k, v in selector.items())
+        pod_list = core_v1_api.list_namespaced_pod(  # type: ignore[attr-defined]
+            namespace=namespace,
+            label_selector=label_selector,
+        )
+        return pod_list.items or []
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("_find_pods_for_service(%s/%s) failed: %s", namespace, service_name, exc)
+        return []
+
+
+def _extract_env_dependencies(pods: list[object]) -> list[dict[str, str]]:
+    """Scan pod containers' env vars for service references.
+
+    Args:
+        pods: List of Pod objects from the K8s API.
+
+    Returns a deduplicated list of dicts with keys:
+        ``hostname``, ``confidence``, ``source_env``.
+    """
+    seen: dict[str, dict[str, str]] = {}  # hostname → best entry
+
+    _CONFIDENCE_RANK = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
+
+    for pod in pods:
+        spec = getattr(pod, "spec", None)
+        if not spec:
+            continue
+        containers = getattr(spec, "containers", []) or []
+        for container in containers:
+            env_vars = getattr(container, "env", []) or []
+            for env_var in env_vars:
+                name = getattr(env_var, "name", "") or ""
+                value = getattr(env_var, "value", "") or ""
+
+                if not name or not value:
+                    continue
+
+                # Security filter — skip sensitive vars
+                if not _is_safe_env_var_name(name):
+                    continue
+
+                # Only process env vars that look like service references
+                upper = name.upper()
+                is_dep_var = (
+                    any(upper.endswith(s) for s in _DEP_ENV_SUFFIXES)
+                    or ".svc.cluster.local" in value
+                )
+                if not is_dep_var:
+                    continue
+
+                hostname = _parse_hostname_from_value(value)
+                if not hostname:
+                    continue
+
+                # Skip obviously non-service values (IPs-only, localhost)
+                if hostname in ("localhost", "127.0.0.1", "0.0.0.0"):  # noqa: S104
+                    continue
+
+                confidence = _classify_confidence(hostname, name, value)
+
+                # Dedup: keep highest confidence entry per hostname
+                existing = seen.get(hostname)
+                if existing is None or _CONFIDENCE_RANK[confidence] > _CONFIDENCE_RANK[existing["confidence"]]:
+                    seen[hostname] = {
+                        "hostname": hostname,
+                        "confidence": confidence,
+                        "source_env": name,
+                    }
+
+    return list(seen.values())
+
+
+# Phase 3: Istio Scanning
+
+
+def _discover_istio_dependencies(
+    service_name: str,
+    namespace: str,
+    custom_api: object,
+) -> tuple[list[str], list[str]]:
+    """Extract upstream/downstream dependencies from Istio VirtualServices.
+
+    Reads all VirtualServices and looks for:
+    - VirtualServices that route TO ``service_name`` (it is a destination → service_name is downstream from callers)
+    - VirtualServices hosted ON ``service_name`` that route to other services (outgoing → service_name calls them)
+
+    Args:
+        service_name: Name of the service being analysed.
+        namespace: Namespace to scope the search.
+        custom_api: kubernetes CustomObjectsApi instance.
+
+    Returns:
+        A tuple ``(upstreams, downstreams)`` where each is a list of service name strings.
+        - upstreams: services that call service_name (i.e., service_name is a destination in their VS)
+        - downstreams: services that service_name calls (i.e., destinations in service_name's VS)
+
+    Returns ([], []) gracefully if Istio CRDs are absent or RBAC forbids access.
+    """
+    from . import mesh  # noqa: PLC0415 — local import to avoid circular dependency
+
+    _ISTIO_GROUP = "networking.istio.io"
+    _VS_KIND = "VirtualService"
+
+    version = mesh._resolve_crd_version(custom_api, _ISTIO_GROUP, _VS_KIND)
+    if version is None:
+        logger.debug("Istio VirtualService CRD not found — skipping Istio dependency scan")
+        return [], []
+
+    resources = mesh._read_custom_resources(custom_api, _ISTIO_GROUP, version, _VS_KIND, namespace=namespace)
+
+    upstreams: list[str] = []
+    downstreams: list[str] = []
+
+    for vs in resources:
+        spec = vs.get("spec", {})
+
+        # VirtualService hosts — what this VS is "for"
+        hosts = spec.get("hosts", [])
+        is_for_this_service = any(
+            h == service_name or h.startswith(f"{service_name}.") or h.startswith(f"{service_name}/")
+            for h in hosts
+        )
+
+        # Extract all destination hosts from route rules
+        destination_hosts: list[str] = []
+        for http_route in spec.get("http", []):
+            for route_item in http_route.get("route", []):
+                dest = route_item.get("destination", {})
+                dest_host = dest.get("host", "")
+                if dest_host:
+                    destination_hosts.append(dest_host)
+        # Also check tcp and tls routes
+        for protocol_key in ("tcp", "tls"):
+            for route_block in spec.get(protocol_key, []):
+                for route_item in route_block.get("route", []):
+                    dest = route_item.get("destination", {})
+                    dest_host = dest.get("host", "")
+                    if dest_host:
+                        destination_hosts.append(dest_host)
+
+        if is_for_this_service:
+            # This VS routes requests to service_name as a destination — it's a downstream route
+            # The route destinations (other than service_name itself) are services this VS fans out to
+            for dest_host in destination_hosts:
+                short = dest_host.split(".")[0]
+                if short and short != service_name and short not in downstreams:
+                    downstreams.append(short)
+        else:
+            # Check if service_name is a destination in this VS → it's an upstream caller
+            for dest_host in destination_hosts:
+                short = dest_host.split(".")[0]
+                if short == service_name:
+                    # Use the VS host as a better caller identifier
+                    caller_hosts = [h.split(".")[0] for h in hosts if h != service_name and not h.startswith("*")]
+                    for ch in caller_hosts:
+                        if ch and ch not in upstreams:
+                            upstreams.append(ch)
+
+    return upstreams, downstreams
+
+
+# Phase 4: Main Tool
+
+
+def _format_dependency_report(
+    service_name: str,
+    namespace: str,
+    env_deps: list[dict[str, str]],
+    upstreams: list[str],
+    downstreams: list[str],
+) -> str:
+    """Format the dependency discovery results into a plain-text report."""
+    sections: list[str] = [
+        f"=== Dependency Map: {service_name} (namespace: {namespace}) ===",
+        "",
+    ]
+
+    # Env-var dependencies
+    sections.append("--- ENV VAR DEPENDENCIES ---")
+    if env_deps:
+        # Sort by confidence descending, then hostname
+        _RANK = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
+        sorted_deps = sorted(env_deps, key=lambda d: (-_RANK.get(d["confidence"], 0), d["hostname"]))
+        sections.append(f"  {'CONFIDENCE':<10} {'HOSTNAME':<50} SOURCE ENV VAR")
+        sections.append("  " + "-" * 80)
+        for dep in sorted_deps:
+            sections.append(
+                f"  {dep['confidence']:<10} {dep['hostname']:<50} {dep['source_env']}"
+            )
+    else:
+        sections.append("  (none found)")
+    sections.append("")
+
+    # Istio upstreams
+    sections.append("--- ISTIO UPSTREAMS (services that call this service) ---")
+    if upstreams:
+        for svc in upstreams:
+            sections.append(f"  {svc}")
+    else:
+        sections.append("  (none detected or Istio not installed)")
+    sections.append("")
+
+    # Istio downstreams
+    sections.append("--- ISTIO DOWNSTREAMS (services this service calls) ---")
+    if downstreams:
+        for svc in downstreams:
+            sections.append(f"  {svc}")
+    else:
+        sections.append("  (none detected or Istio not installed)")
+    sections.append("")
+
+    sections.append(
+        f"(total: {len(env_deps)} env-var dependencies, "
+        f"{len(upstreams)} Istio upstreams, {len(downstreams)} Istio downstreams)"
+    )
+
+    return "\n".join(sections)
+
+
+def discover_dependencies(
+    namespace: str,
+    *,
+    service_name: str = "",
+    gke_config: GKEConfig,
+    force_refresh: bool = False,
+) -> ToolResult:
+    """Map service-to-service dependencies for a given Kubernetes namespace or Service.
+
+    When *service_name* is provided, scans only the pods backing that Service.
+    When omitted, performs a namespace-wide scan of all pods.
+
+    Scans backing pod environment variables for service references, then reads
+    Istio VirtualServices (if installed) to extract upstream/downstream topology.
+    Results are cached for ``_DISCOVERY_TTL`` seconds unless *force_refresh* is ``True``.
+
+    Security: environment variables with names ending in ``_PASSWORD``, ``_SECRET``,
+    ``_TOKEN``, ``_KEY``, ``_CREDENTIALS`` etc. are NEVER included in the output —
+    only hostnames extracted from safe env vars are reported.
+    """
+    if not _K8S_AVAILABLE:
+        return _clients._k8s_unavailable()
+
+    # ── Cache check ───────────────────────────────────────────
+    cache_key = _cache._cache_key_discovery("dependencies", service_name or "__all__", namespace)
+    if not force_refresh:
+        cached = _cache._get_cached(cache_key)
+        if cached is not None:
+            return ToolResult(output=cached, error=False)
+
+    # ── Create clients ────────────────────────────────────────
+    result = _clients._create_k8s_clients(gke_config)
+    if isinstance(result, ToolResult):
+        return result
+    core_v1, apps_v1, custom_api, api_client = result
+
+    # ── Phase 2: Find pods and extract env-var dependencies ───
+    if service_name:
+        pods = _find_pods_for_service(service_name, namespace, core_v1)
+    else:
+        # Namespace-wide: list all pods directly
+        try:
+            pod_list = core_v1.list_namespaced_pod(namespace=namespace)
+            pods = pod_list.items or []
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("list_namespaced_pod(%s) failed: %s", namespace, exc)
+            pods = []
+    env_deps = _extract_env_dependencies(pods)
+
+    # ── Phase 3: Istio VirtualService scan ────────────────────
+    upstreams: list[str] = []
+    downstreams: list[str] = []
+    if service_name:
+        try:
+            upstreams, downstreams = _discover_istio_dependencies(service_name, namespace, custom_api)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Istio dependency scan failed: %s", exc)
+
+    # ── Format and cache ──────────────────────────────────────
+    output = _format_dependency_report(service_name or namespace, namespace, env_deps, upstreams, downstreams)
+    _cache._set_cache(cache_key, output)
+    return ToolResult(output=output, error=False)
+
+
 # ── Task 3.4 — async wrappers ───────────────────────────────
 # Offload blocking kubernetes-client calls to a thread pool via to_async.
 
@@ -655,3 +1075,4 @@ from vaig.core.async_utils import to_async  # noqa: E402
 async_discover_workloads = to_async(discover_workloads)
 async_discover_service_mesh = to_async(discover_service_mesh)
 async_discover_network_topology = to_async(discover_network_topology)
+async_discover_dependencies = to_async(discover_dependencies)
