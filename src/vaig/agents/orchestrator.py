@@ -2595,6 +2595,30 @@ class Orchestrator:
 
     # ── parallel_sequential helpers ────────────────────────────────────────
 
+    def _handle_max_iterations_error(
+        self,
+        agent_name: str,
+        exc: MaxIterationsError,
+    ) -> AgentResult:
+        """Handle a MaxIterationsError by logging and returning a degraded AgentResult.
+
+        Centralises the warning log + fallback AgentResult construction so that
+        both the sync (_execute_parallel_then_sequential) and async (_run_gatherer)
+        code paths stay DRY.
+        """
+        partial_output = exc.partial_output or ""
+        logger.warning(
+            "Gatherer agent %s hit max iterations (%d); using partial output (%d chars)",
+            agent_name,
+            exc.iterations,
+            len(partial_output),
+        )
+        return AgentResult(
+            agent_name=agent_name,
+            content=partial_output or f"Agent '{agent_name}' hit iteration limit with no output.",
+            success=False,
+        )
+
     def _execute_parallel_then_sequential(
         self,
         *,
@@ -2713,17 +2737,7 @@ class Orchestrator:
                 try:
                     agent_result = future.result()
                 except MaxIterationsError as exc:
-                    logger.warning(
-                        "Gatherer agent %s hit max iterations (%d); using partial output (%d chars)",
-                        agent.name,
-                        exc.iterations,
-                        len(exc.partial_output),
-                    )
-                    agent_result = AgentResult(
-                        agent_name=agent.name,
-                        content=exc.partial_output or f"Agent '{agent.name}' hit iteration limit with no output.",
-                        success=False,
-                    )
+                    agent_result = self._handle_max_iterations_error(agent.name, exc)
                 except Exception:
                     logger.exception(
                         "Gatherer agent %s raised an exception during parallel execution",
@@ -3026,17 +3040,7 @@ class Orchestrator:
                     kw["tool_result_cache"] = tool_result_cache
                 agent_result = await asyncio.to_thread(agent.execute, query, **kw)
             except MaxIterationsError as exc:
-                logger.warning(
-                    "Gatherer agent %s hit max iterations (%d); using partial output (%d chars)",
-                    agent.name,
-                    exc.iterations,
-                    len(exc.partial_output),
-                )
-                agent_result = AgentResult(
-                    agent_name=agent.name,
-                    content=exc.partial_output or f"Agent '{agent.name}' hit iteration limit with no output.",
-                    success=False,
-                )
+                agent_result = self._handle_max_iterations_error(agent.name, exc)
             except Exception:
                 logger.exception(
                     "Gatherer agent %s raised an exception during async parallel execution",

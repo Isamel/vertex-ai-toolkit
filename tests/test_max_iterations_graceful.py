@@ -200,6 +200,18 @@ class TestAsyncToolLoopPartialOutput:
 
 
 class TestOrchestratorSyncGracefulDegradation:
+    """Verify sync orchestrator path degrades gracefully on MaxIterationsError.
+
+    Design note — intentional logic duplication:
+    These tests inline the expected behaviour (log warning + return AgentResult
+    with success=False) rather than calling through the full Orchestrator stack.
+    Setting up a real Orchestrator end-to-end requires heavy fixture scaffolding
+    that would obscure what is actually being verified.
+
+    The canonical implementation lives in
+    ``Orchestrator._handle_max_iterations_error``. If that contract changes,
+    these tests should be updated in lockstep.
+    """
     """Orchestrator parallel gather: MaxIterationsError produces partial-content AgentResult."""
 
     def test_sync_path_uses_partial_output(self) -> None:
@@ -267,6 +279,18 @@ class TestOrchestratorSyncGracefulDegradation:
 
 
 class TestOrchestratorAsyncGracefulDegradation:
+    """Verify async orchestrator path degrades gracefully on MaxIterationsError.
+
+    Design note — intentional logic duplication:
+    These tests inline the expected behaviour (log warning + return AgentResult
+    with success=False) rather than calling through the full Orchestrator stack.
+    Setting up a real Orchestrator end-to-end requires heavy fixture scaffolding
+    that would obscure what is actually being verified.
+
+    The canonical implementation lives in
+    ``Orchestrator._handle_max_iterations_error``. If that contract changes,
+    these tests should be updated in lockstep.
+    """
     """Orchestrator async _run_gatherer: MaxIterationsError produces partial-content AgentResult."""
 
     @pytest.mark.asyncio
