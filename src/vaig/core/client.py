@@ -217,6 +217,14 @@ class ToolCallResult:
     finish_reason: str = ""
     thinking_text: str | None = None
     """Thinking content from the model, if thinking mode was enabled."""
+    raw_parts: list[types.Part] | None = None
+    """Raw ``types.Part`` objects from the API response (non-thought parts only).
+
+    Preserved for Gemini 2.5+ ``thought_signature`` replay — the raw Part
+    objects carry ``thought_signature`` bytes that are lost if we reconstruct
+    Parts from the extracted function_calls dicts.  ``None`` when not captured
+    (e.g. backward-compat paths).
+    """
 
 
 class GeminiClient:
@@ -1066,6 +1074,7 @@ class GeminiClient:
             function_calls: list[dict[str, Any]] = []
             text_parts: list[str] = []
             thinking_parts: list[str] = []
+            raw_fc_parts: list[types.Part] = []
 
             for part in content.parts:
                 # Skip thinking parts — extract them separately.
@@ -1082,6 +1091,7 @@ class GeminiClient:
                             "args": dict(fc.args) if fc.args else {},
                         }
                     )
+                    raw_fc_parts.append(part)
                 elif part.text:
                     text_parts.append(part.text)
 
@@ -1100,6 +1110,7 @@ class GeminiClient:
                 usage=usage,
                 finish_reason=str(response.candidates[0].finish_reason),  # type: ignore[index]
                 thinking_text=thinking_text,
+                raw_parts=raw_fc_parts if raw_fc_parts else None,
             )
 
         return self._retry_with_backoff(_call, timeout=timeout)
@@ -1396,6 +1407,7 @@ class GeminiClient:
             function_calls: list[dict[str, Any]] = []
             text_parts: list[str] = []
             thinking_parts: list[str] = []
+            raw_fc_parts: list[types.Part] = []
 
             for part in content.parts:
                 # Skip thinking parts — extract them separately.
@@ -1412,6 +1424,7 @@ class GeminiClient:
                             "args": dict(fc.args) if fc.args else {},
                         }
                     )
+                    raw_fc_parts.append(part)
                 elif part.text:
                     text_parts.append(part.text)
 
@@ -1430,6 +1443,7 @@ class GeminiClient:
                 usage=usage,
                 finish_reason=str(response.candidates[0].finish_reason),  # type: ignore[index]
                 thinking_text=thinking_text,
+                raw_parts=raw_fc_parts if raw_fc_parts else None,
             )
 
         return await self._async_retry_with_backoff(_call, timeout=timeout)
