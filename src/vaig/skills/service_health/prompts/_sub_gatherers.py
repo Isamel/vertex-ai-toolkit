@@ -236,11 +236,11 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
 ## Your Scope
 
 ### Step 2 — Pod Status Analysis
-1. ``kubectl_get(resource="pods", namespace="<target>", output="wide")`` — all pods
-2. ``kubectl_top(resource_type="pods", namespace="<target>")`` — real-time CPU/memory usage per pod
+1. ``kubectl_get(resource="pods", namespace="{ns}", output="wide")`` — all pods
+2. ``kubectl_top(resource_type="pods", namespace="{ns}")`` — real-time CPU/memory usage per pod
     This is MANDATORY — the reporter needs real CPU and memory values for the Service Status table.
     If this call fails, record the error and note "kubectl_top unavailable" — do NOT fabricate values.
-    For **historical trends** (past 1h by default), also call ``get_pod_metrics(namespace="<target>", pod_name_prefix="<workload-prefix>")``
+    For **historical trends** (past 1h by default), also call ``get_pod_metrics(namespace="{ns}", pod_name_prefix="<workload-prefix>")``
     to retrieve Cloud Monitoring time-series data (Avg/Max/Latest/Trend per pod). Use ``kubectl_top``
     for current-state values in the Service Status table and ``get_pod_metrics`` for trend context.
     When populating the **Service Status** table (one row per workload: Deployment, StatefulSet,
@@ -261,22 +261,22 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
     - CPU values are always expressed as decimal cores (e.g. "0.563 cores") — NEVER millicore "m" notation.
     - Memory uses decimal Gi notation (e.g. "42.7Gi", "0.5Gi") if ≥ 1 GiB, or Mi notation (e.g. "105Mi", "512Mi") if < 1 GiB.
     - Per-container breakdown goes in Raw Findings for detailed analysis.
-3. For any pod NOT in Running/Succeeded state: ``get_container_status(name="<pod>", namespace="<ns>")``
-4. For pods with restart count > 3: ``kubectl_logs(pod="<pod>", namespace="<ns>")``
-5. For CrashLoopBackOff pods: ``kubectl_describe(resource_type="pod", name="<pod>", namespace="<ns>")``
+3. For any pod NOT in Running/Succeeded state: ``get_container_status(name="<pod>", namespace="{ns}")``
+4. For pods with restart count > 3: ``kubectl_logs(pod="<pod>", namespace="{ns}")``
+5. For CrashLoopBackOff pods: ``kubectl_describe(resource_type="pod", name="<pod>", namespace="{ns}")``
 
 ### Step 4 — Deployment Deep-Dive
-6. ``kubectl_get(resource="deployments", namespace="<target>", output="wide")`` — all deployments
-7. ``get_rollout_status(name="<name>", namespace="<ns>")`` for each deployment
-8. For unhealthy deployments: ``kubectl_describe(resource_type="deployment", name="<name>", namespace="<ns>")``
-9. ``get_rollout_history(name="<name>", namespace="<ns>")`` for recently changed deployments
+6. ``kubectl_get(resource="deployments", namespace="{ns}", output="wide")`` — all deployments
+7. ``get_rollout_status(name="<name>", namespace="{ns}")`` for each deployment
+8. For unhealthy deployments: ``kubectl_describe(resource_type="deployment", name="<name>", namespace="{ns}")``
+9. ``get_rollout_history(name="<name>", namespace="{ns}")`` for recently changed deployments
 10. Check ``kubectl_get_labels`` equivalent via ``kubectl_describe`` to detect management annotations
    (ArgoCD: ``argocd.argoproj.io/``, Flux: ``fluxcd.io/``, Helm: ``app.kubernetes.io/managed-by: Helm``,
    OwnerReferences for operator-managed resources, ``.spec.template.metadata.annotations`` for
    webhook injection annotations) — report these management indicators for the reporter
 
 ### Step 4b — Management Context Detection (extends Step 4; MANDATORY for ALL deployments)
-11. ``kubectl_get_labels(resource_type="deployments", namespace="<target>")`` —
+11. ``kubectl_get_labels(resource_type="deployments", namespace="{ns}")`` —
     Get labels and annotations for ALL deployments. This is MANDATORY for detecting
     management context (Helm, ArgoCD, operators). Do NOT skip this step even if all
     deployments appear healthy — management context affects remediation recommendations.
@@ -320,18 +320,18 @@ For **every** pod that is in ``CrashLoopBackOff``, ``Error``, ``OOMKilled``, or 
 state, trace the full ownership chain before moving on:
 
 a. **Identify owning ReplicaSet** — inspect the pod's ``ownerReferences`` field from the
-   ``kubectl_describe(resource_type="pod", name="<pod>", namespace="<ns>")`` output.
+   ``kubectl_describe(resource_type="pod", name="<pod>", namespace="{ns}")`` output.
     For ``CrashLoopBackOff`` pods this was already collected in Step 2 (item 5).
     For ``Error``, ``OOMKilled``, or ``ImagePullBackOff`` pods it may not yet be available —
-    **run** ``kubectl_describe(resource_type="pod", name="<pod>", namespace="<ns>")`` now if you
+    **run** ``kubectl_describe(resource_type="pod", name="<pod>", namespace="{ns}")`` now if you
    have not already done so.  Look for ``kind: ReplicaSet`` and record its ``name``.
 
 b. **Identify owning Deployment** — inspect the ReplicaSet's ``ownerReferences`` via
-   ``kubectl_describe(resource_type="replicaset", name="<rs-name>", namespace="<ns>")``
+   ``kubectl_describe(resource_type="replicaset", name="<rs-name>", namespace="{ns}")``
    and record the owning Deployment name.
 
 c. **Correlate with rollout revision** — call
-   ``get_rollout_history(name="<deployment>", namespace="<ns>")`` to list all revisions.
+   ``get_rollout_history(name="<deployment>", namespace="{ns}")`` to list all revisions.
    Match the failing ReplicaSet to its revision by comparing the ``pod-template-hash``
    label on the ReplicaSet against the revision entries in the history.
    Record the revision number that introduced the failure.
@@ -343,18 +343,18 @@ If ``get_rollout_history`` is not in your available tools list, SKIP sub-step (c
 mark it as ``SKIPPED — tool unavailable`` in the Deployment Issues section.
 
 ### Step 5 — Service & Endpoint Connectivity
-12. ``kubectl_get(resource="services", namespace="<target>", output="wide")``
-13. ``kubectl_get(resource="endpoints", namespace="<target>")``
-14. For services with 0 endpoints: ``kubectl_describe(resource_type="service", name="<svc>", namespace="<ns>")``
+12. ``kubectl_get(resource="services", namespace="{ns}", output="wide")``
+13. ``kubectl_get(resource="endpoints", namespace="{ns}")``
+14. For services with 0 endpoints: ``kubectl_describe(resource_type="service", name="<svc>", namespace="{ns}")``
 
 ### Step 6 — HPA & Scaling Status
-15. ``kubectl_get(resource="hpa", namespace="<target>", output="wide")``
-16. For HPA at maxReplicas: ``kubectl_describe(resource_type="hpa", name="<hpa>", namespace="<ns>")``
+15. ``kubectl_get(resource="hpa", namespace="{ns}", output="wide")``
+16. For HPA at maxReplicas: ``kubectl_describe(resource_type="hpa", name="<hpa>", namespace="{ns}")``
 17. ``gcloud_monitoring_query(...)`` if HPA uses custom metrics and metric fetch is failing
 
 ### Step 6b — Scaling Deep-Dive (HPA + VPA)
 For each deployment that has an HPA or that has a ``VerticalPodAutoscaler`` resource:
-18. Call ``get_scaling_status(name="<deployment_name>", namespace="<target_namespace>")``
+18. Call ``get_scaling_status(name="<deployment_name>", namespace="{ns}")``
     - Note: **ceiling-hit** — when ``current_replicas == max_replicas`` and the workload is
       still under load.  This means the HPA cannot scale further and the service is at risk.
     - Note: **VPA-vs-HPA conflicts** — if both VPA and HPA are present and VPA is in ``Auto``
@@ -407,7 +407,7 @@ Report even for healthy deployments, as management context affects remediation r
 - A shorter, 100% accurate report is always better than a longer report with invented data.
 """
     if argo_rollouts_enabled:
-        argo_rollouts_section = """
+        argo_rollouts_section = f"""
 ### Step 4d — Argo Rollouts Workloads (MANDATORY when Argo Rollouts is detected)
 
 Argo Rollouts replaces standard Kubernetes Deployments with ``Rollout`` CRDs that implement
@@ -426,14 +426,14 @@ The actual replica counts and health information live in the Rollout object, not
 
 For each namespace, perform:
 
-a. ``kubectl_get_rollout(namespace="<target>")`` — list all Rollouts, note phase, strategy,
+a. ``kubectl_get_rollout(namespace="{ns}")`` — list all Rollouts, note phase, strategy,
    and replica counts (desired/ready/available/updated).  A phase of ``Degraded``, ``Paused``,
    or ``Error`` is a finding that must be reported.
 
 b. For any Rollout **not** in ``Healthy`` phase:
-   ``kubectl_get_rollout(namespace="<target>", name="<rollout-name>")`` — get full detail.
+   ``kubectl_get_rollout(namespace="{ns}", name="<rollout-name>")`` — get full detail.
 
-c. ``kubectl_get_analysisrun(namespace="<target>")`` — list recent AnalysisRuns.  A phase of
+c. ``kubectl_get_analysisrun(namespace="{ns}")`` — list recent AnalysisRuns.  A phase of
    ``Failed`` or ``Error`` is a root-cause signal (the rollout was aborted because analysis failed).
 
 d. For any failed AnalysisRun, report: run name, phase, and which metric(s) failed.
@@ -448,8 +448,7 @@ f. Add a ``### Rollout Issues`` sub-section to ``## Raw Findings (Workload)`` if
    ``"Rollout <name> in <namespace>: phase=<phase>, strategy=<canary|blueGreen>, <detail>"``
 """
         prompt = prompt + argo_rollouts_section
-    # Replace placeholder tokens with the validated namespace so agents call the right target.
-    return prompt.replace("<target>", ns).replace("<target_namespace>", ns).replace("<ns>", ns)
+    return prompt
 
 
 def build_datadog_gatherer_prompt(
@@ -625,8 +624,7 @@ When ``service_name`` IS resolved:
 ``get_datadog_apm_services(service_name="<resolved>", env="<resolved>")``
 — fetch live throughput (req/s), error rate (%), and avg latency (ms).
 
-**Tier 3 rule** — same as Call 4: if no service identity was found, call the
-tool anyway without ``service_name`` and record the guidance.
+**Tier 3 rule**: if no service identity was found, call the tool anyway without ``service_name`` and record the guidance.
 
 ## MANDATORY OUTPUT FORMAT
 
@@ -675,7 +673,7 @@ If no issues: "No active Datadog monitors or APM anomalies detected.")
 - Empty Datadog results mean "monitoring not configured" — NEVER conclude a service
   is unhealthy or non-existent based on missing Datadog data.
 """
-    return prompt.replace("<target>", ns).replace("<target_namespace>", ns).replace("<ns>", ns)
+    return prompt
 
 
 def build_event_gatherer_prompt(namespace: str = "") -> str:
@@ -737,25 +735,25 @@ agents running in parallel.
 ## Your Scope
 
 ### Step 3 — Event Timeline
-1. ``get_events(namespace="<target>")`` — all recent events in the target namespace
+1. ``get_events(namespace="{ns}")`` — all recent events in the target namespace
 2. ``get_events(namespace="kube-system")`` — system-level events
 3. For any Warning events referencing specific resources: note the resource name,
    reason, message, and count
 
 ### Step 8 — Networking & DNS
-4. ``kubectl_get(resource="networkpolicies", namespace="<target>")`` — network policies
-5. ``kubectl_get(resource="ingresses", namespace="<target>")`` — ingress objects
-6. ``exec_command(pod_name="<a running pod>", namespace="<ns>", command="nslookup kubernetes")`` — DNS check
-7. ``check_rbac(resource="pods", verb="get", namespace="<ns>")`` — RBAC sanity check
+4. ``kubectl_get(resource="networkpolicies", namespace="{ns}")`` — network policies
+5. ``kubectl_get(resource="ingresses", namespace="{ns}")`` — ingress objects
+6. ``exec_command(pod_name="<a running pod>", namespace="{ns}", command="nslookup kubernetes")`` — DNS check
+7. ``check_rbac(resource="pods", verb="get", namespace="{ns}")`` — RBAC sanity check
 
 ### Step 9 — Storage & PVC Health
-8. ``kubectl_get(resource="pvc", namespace="<target>", output="wide")`` — PVC status
-9. For any PVC in Pending/Lost state: ``kubectl_describe(resource_type="pvc", name="<pvc>", namespace="<ns>")``
+8. ``kubectl_get(resource="pvc", namespace="{ns}", output="wide")`` — PVC status
+9. For any PVC in Pending/Lost state: ``kubectl_describe(resource_type="pvc", name="<pvc>", namespace="{ns}")``
 10. ``kubectl_get(resource="pv", output="wide")`` — PersistentVolume status
 
 ### Step 10 — GitOps / Helm / ArgoCD Investigation
 11. ``kubectl_get(resource="applications.argoproj.io", namespace="argocd")`` — if ArgoCD is present
-12. ``kubectl_get(resource="helmreleases.helm.toolkit.fluxcd.io", namespace="<ns>")`` — if Flux is present
+12. ``kubectl_get(resource="helmreleases.helm.toolkit.fluxcd.io", namespace="{ns}")`` — if Flux is present
 13. For out-of-sync ArgoCD apps: ``argocd_app_status(app_name="<app>", namespace="argocd")``
 
 **Helm Release Assessment (ANNOTATION-FIRST STRATEGY)**:
@@ -764,18 +762,18 @@ available, SKIP Helm tool calls entirely and mark as SKIPPED.
 
 If Helm tools are available, look for ``<helm_release_name>`` values from
 ``meta.helm.sh/release-name`` annotations by calling
-``kubectl_get_labels(resource_type="deployments", namespace="<ns>")`` to inspect
+``kubectl_get_labels(resource_type="deployments", namespace="{ns}")`` to inspect
 deployment labels and annotations:
 - If ``<helm_release_name>`` IS found in annotations: You MUST call
-  ``helm_release_status(release_name="<helm_release_name>", namespace="<ns>")`` directly.
+  ``helm_release_status(release_name="<helm_release_name>", namespace="{ns}")`` directly.
   Do NOT call ``helm_list_releases()`` first — the annotation already provides the
   release name. Skipping the list call reduces unnecessary API overhead.
   Example: ``helm_release_status(release_name="my-chart", namespace="production")``
 - If ``<helm_release_name>`` is NOT found (annotation absent): Fall back to
-  ``helm_list_releases(namespace="<ns>")`` to discover release names, then call
+  ``helm_list_releases(namespace="{ns}")`` to discover release names, then call
   ``helm_release_status`` for each relevant release found.
 - For each release (found via annotation or list): also call
-  ``helm_release_history(release_name="<release>", namespace="<ns>")`` to check for
+  ``helm_release_history(release_name="<release>", namespace="{ns}")`` to check for
   recent changes that may correlate with issues.
 
 ### Data collection rules:
@@ -824,8 +822,7 @@ Produce exactly these sections at the end of your response:
 - Preserve event messages verbatim — do not paraphrase them.
 - If the target namespace is unclear, query all non-system namespaces.
 """
-    # Replace placeholder tokens with the validated namespace so agents call the right target.
-    return prompt.replace("<target>", ns).replace("<target_namespace>", ns).replace("<ns>", ns)
+    return prompt
 
 
 def build_logging_gatherer_prompt(namespace: str = "") -> str:
