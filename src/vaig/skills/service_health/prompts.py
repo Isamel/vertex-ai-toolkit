@@ -122,16 +122,20 @@ _DATADOG_API_TOOLS_TABLE = """\
 | `get_datadog_service_catalog` | | `env`, `cluster_name`, `service_name` |
 | `get_datadog_apm_services` | | `service_name` (optional — returns guidance if omitted), `env` — auto-tries web/gRPC/Kafka metric families |"""
 
+_PRIORITY_HIERARCHY = """\
+**PRIORITY HIERARCHY (most authoritative → least):**
+1. Kubernetes cluster data is the ABSOLUTE source of truth for deployment status.
+2. If K8s shows a service/deployment exists and is running, it IS deployed — regardless of Datadog results.
+3. Datadog monitoring data is SUPPLEMENTARY — it enriches the analysis but NEVER determines deployment status.
+4. Empty Datadog results mean "monitoring not configured" NOT "service not deployed".
+5. NEVER conclude a service is "not deployed" or "doesn't exist" based on Datadog tool results."""
+
 _DATADOG_API_STEP = """\
 
 ### Step 12 — Datadog API Correlation (real-time metrics & monitors) — MANDATORY
 
 **PRIORITY HIERARCHY — READ THIS FIRST:**
-1. Kubernetes cluster data is the ABSOLUTE source of truth for deployment status.
-2. If K8s shows a service/deployment exists and is running, it IS deployed — regardless of Datadog results.
-3. Datadog monitoring data is SUPPLEMENTARY — it enriches the analysis but NEVER determines deployment status.
-4. Empty Datadog results mean "monitoring not configured" NOT "service not deployed".
-5. NEVER conclude a service is "not deployed" or "doesn't exist" based on Datadog tool results.
+""" + _PRIORITY_HIERARCHY + """
 
 You MUST complete calls 19–21 below. They are NOT optional — skipping them means the
 investigation is incomplete and the report will be missing real-time observability data.
@@ -277,11 +281,7 @@ After Step 3 (events), evaluate: Are there FailedCreate, CrashLoopBackOff, or un
 IMPORTANT: Do NOT produce your final output until you have completed Steps 7a and 7b. These are the last mandatory logging steps. Steps 8-12 are conditional and run based on findings and enabled integrations.
 
 ## PRIORITY HIERARCHY — Kubernetes vs Datadog
-1. Kubernetes cluster data is the ABSOLUTE source of truth for deployment status.
-2. If K8s shows a service/deployment exists and is running, it IS deployed — regardless of Datadog results.
-3. Datadog monitoring data is SUPPLEMENTARY — it enriches the analysis but NEVER determines deployment status.
-4. Empty Datadog results mean "monitoring not configured" NOT "service not deployed".
-5. NEVER conclude a service is "not deployed" or "doesn't exist" based on Datadog tool results.
+{priority_hierarchy}
 
 ## Data Collection Procedure
 
@@ -603,6 +603,7 @@ def build_gatherer_prompt(
     return _GATHERER_PROMPT_TEMPLATE.format(
         tool_reference_table=table,
         datadog_api_step=datadog_step,
+        priority_hierarchy=_PRIORITY_HIERARCHY,
     )
 
 
@@ -731,6 +732,8 @@ This summary MUST be present in every analysis, even if there are zero findings 
 
 {COT_INSTRUCTION}
 
+The output format below defines the EXACT structure your response MUST follow:
+
 ## MANDATORY Output Format — Every Finding MUST Follow This Structure
 
 ```
@@ -841,13 +844,12 @@ If ArgoCD-specific tools are not listed in the available tools, you may still us
 If neither ArgoCD tools nor kubectl_get data for ArgoCD Applications are available, clearly explain this limitation in the Verification Gap text, and choose a Verification Gap level using the standard phrases defined earlier (for example, only use `None — sufficient evidence from data collection` when you actually have sufficient evidence).
 
 ## STRICT Analysis Rules
+# (Anti-hallucination rules from system instruction apply here — see ANTI_HALLUCINATION_RULES)
 1. Be PRECISE about scope. A single failing pod in one namespace does NOT make the cluster "DEGRADED". Classify the issue scope correctly: cluster-level, namespace-level, or resource-level.
-2. ONLY reference data that appears in the gathered output. If the gatherer did not return data for something, say "Data not collected" — never infer or fabricate.
-3. Every finding MUST have all fields (What, Evidence, Impact, Affected Resources, Verification Gap). If you cannot fill Evidence with real data, do NOT create the finding.
-4. Never speculate without evidence. State what the data shows, not what you assume.
-5. In the Structured Summary and Findings Overview, counts and statistics MUST be derived by counting actual findings — NEVER estimate or invent numbers. If you identified 2 findings, write "Total findings: 2" — not a round number you made up.
-6. In the Service Status Summary, the Status column MUST reflect ONLY what the gathered data shows. If no data was collected for a service, write "Unknown — data not collected" instead of guessing its health.
-7. NEVER create a finding to "fill in" a severity category. If there are no CRITICAL findings, the CRITICAL section should be empty — do NOT manufacture one to make the report look complete.
+2. Every finding MUST have all fields (What, Evidence, Impact, Affected Resources, Verification Gap). If you cannot fill Evidence with real data, do NOT create the finding.
+3. In the Structured Summary and Findings Overview, counts and statistics MUST be derived by counting actual findings — NEVER estimate or invent numbers. If you identified 2 findings, write "Total findings: 2" — not a round number you made up.
+4. In the Service Status Summary, the Status column MUST reflect ONLY what the gathered data shows. If no data was collected for a service, write "Unknown — data not collected" instead of guessing its health.
+5. NEVER create a finding to "fill in" a severity category. If there are no CRITICAL findings, the CRITICAL section should be empty — do NOT manufacture one to make the report look complete.
 
 ### Autopilot Cluster Rules (when Autopilot instruction is present)
 - NEVER create CRITICAL or HIGH findings for node-level issues on Autopilot
@@ -1446,6 +1448,7 @@ Do NOT invent or infer any metadata values.
 ### Anti-Hallucination (Problem 1)
 - NEVER invent data. In ``cluster_overview`` and ``service_statuses`` fields, if the upstream analysis did not provide a specific number (pod count, CPU %, memory %), use "N/A" as the value — NEVER estimate, calculate, or invent percentages or counts that were not in the input data.
 - NEVER fill fields with plausible-looking numbers that you generated. If the upstream data says "3 pods running" but does not give CPU usage, the value MUST be "N/A", not "45%" or any other invented value.
+- Every claim in the report MUST be traceable to evidence from the analyzer/verifier output. If a finding was not present in the verified findings input, do NOT include it in the report.
 - If the upstream data is sparse or incomplete, produce a shorter report that is 100% accurate rather than a longer report with fabricated details.
 
 ### Actionability (Problem 2)
