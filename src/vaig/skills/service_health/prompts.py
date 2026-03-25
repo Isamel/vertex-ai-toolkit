@@ -1296,12 +1296,14 @@ upstream data, populate ``ServiceStatus`` fields as follows:
   ``issues`` for brief notes and ``findings`` with ``category="scaling"`` for details.
 
 **CPU and memory usage fields** — for ``service_statuses[].cpu_usage`` and ``memory_usage``:
-- Use PER-POD AVERAGE, not total across all pods
-- If only per-container data is available, sum containers within one pod first
-- **From kubectl_top data**: use absolute units — "18m" for CPU (millicores), "105Mi" for memory
+- Use TOTAL across all pods for the service (sum all pods, do NOT average)
+- If only per-container data is available, first sum containers within each pod, then sum across all pods
+- **From kubectl_top data**: use absolute units in cores/GiB notation — "0.563 cores" for CPU, "42.7Gi" for memory
+  - CPU is always expressed as decimal cores (e.g. "0.018 cores", "0.500 cores", "2.000 cores") — NEVER millicores ("m")
+  - Memory is always expressed as "X.XGi" (if ≥1 GiB) or "XXXMi" (if <1 GiB)
 - **From get_scaling_status HPA data**: percentages are acceptable (e.g., "45% of request")
 - Prefer kubectl_top absolute values when both are available
-- Optionally add context: "18m/pod (450m total across 25 pods)"
+- Optionally add context: "0.563 cores total (10 pods)"
 
 **Management context** — when the workload gatherer detected management context
 via ``kubectl_get_labels``, include it in the ``findings`` entry for that service
@@ -1735,17 +1737,19 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
     DaemonSet, Job, or CronJob), aggregate these per-pod metrics at the workload level:
     - Associate each pod with its owning workload using ownerReferences or standard labels
       (app, app.kubernetes.io/name, or controller-specific labels).
-    - For each workload: use the **per-pod average** (CPU avg across all pods, memory avg across all pods).
-      Optionally mention totals for context (e.g., "18m/pod avg, 450m total across 25 pods").
+    - For each workload: use the **TOTAL across all pods** (CPU total, memory total across all pods).
+      Optionally mention per-pod average for context (e.g., "0.563 cores total, 0.056 cores/pod avg across 10 pods").
     - Include a pod count per workload (ready/total pods).
     - Never report raw per-pod values in the Service Status table — always use aggregated per-workload values.
 
     After collecting per-container metrics from kubectl_top:
-    - Calculate per-POD totals by summing all containers in each pod
-    - Calculate per-DEPLOYMENT averages: CPU/Pod (avg) and Memory/Pod (avg)
+    - Step 1: Calculate per-POD totals by summing all containers in each pod
+    - Step 2: Calculate per-DEPLOYMENT TOTALS by summing across all pods (do NOT average)
     - Present a summary like:
-      Deployment: payment-svc | Pods: 25 | CPU/Pod avg: 18m | Mem/Pod avg: 105Mi | CPU Total: 450m | Mem Total: 2625Mi
-    - The per-POD AVERAGE is what the reporter needs for cpu_usage/memory_usage fields.
+      Deployment: payment-svc | Pods: 10 | CPU Total: 0.563 cores | Mem Total: 42.7Gi | CPU/Pod avg: 0.056 cores | Mem/Pod avg: 4.3Gi
+    - The per-DEPLOYMENT TOTAL is what the reporter needs for cpu_usage/memory_usage fields.
+    - CPU values are always expressed as decimal cores (e.g. "0.563 cores") — NEVER millicore "m" notation.
+    - Memory values are always "X.XGi" (if ≥1 GiB) or "XXXMi" (if <1 GiB).
     - Per-container breakdown goes in Raw Findings for detailed analysis.
 3. For any pod NOT in Running/Succeeded state: ``get_container_status(name="<pod>", namespace="<ns>")``
 4. For pods with restart count > 3: ``kubectl_logs(pod="<pod>", namespace="<ns>")``
