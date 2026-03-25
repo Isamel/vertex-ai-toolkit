@@ -287,6 +287,11 @@ Execute the following steps to build a comprehensive health snapshot. Collect da
 
 ### Step 2: Namespace Resource Inventory
 - Use `kubectl_get("pods", namespace=<ns>)` — check for non-Running pods, restarts, pending
+  - **Terminating pod classification**: pods show either `Terminating rollout` (terminating < 10 min) or `Terminating stuck` (terminating >= 10 min).
+    - `Terminating rollout` is NORMAL during deployments — do NOT flag these pods as unhealthy.
+    - Only `Terminating stuck` pods require investigation.
+  - **Sidecar-aware ready count**: when a pod has sidecar containers (e.g. istio-proxy), the READY column may show `2/3 [app: 1/2]`. The `[app: X/Y]` annotation reflects only app containers. Use the app-only count to assess pod health — a ready sidecar with an unready app container is still unhealthy, but an unready sidecar with all app containers ready is normal mesh behavior.
+  - **Pod label selector**: when investigating pods for a specific service or deployment, always filter by label selector to avoid pulling unrelated pods. First call `kubectl_get("deployment", namespace=<ns>, name=<deploy>, output="yaml")` to read `.spec.selector.matchLabels`, then pass that as `label_selector=` to `kubectl_get("pods", ...)`. Example: `kubectl_get("pods", namespace=<ns>, label_selector="app=my-service,version=v2")`.
 - Use `kubectl_get("deployments", namespace=<ns>)` — check desired vs ready replicas
 - Use `kubectl_get("services", namespace=<ns>)` — check endpoints
 - Use `kubectl_get("hpa", namespace=<ns>)` — check autoscaler targets vs current

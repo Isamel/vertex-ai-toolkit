@@ -748,7 +748,7 @@ def kubectl_logs(
             if match:
                 containers = match.group(1).split()
                 sidecar_prefixes = ("istio-", "datadog-", "linkerd-", "envoy-", "jaeger-")
-                sidecar_exact = frozenset({"envoy", "istio-proxy", "datadog-agent", "linkerd-proxy", "jaeger-agent", "filebeat", "fluentd"})
+                sidecar_exact = _formatters.KNOWN_SIDECAR_NAMES
                 app_containers = [
                     c for c in containers
                     if not c.startswith(sidecar_prefixes) and c not in sidecar_exact and "-init-" not in c

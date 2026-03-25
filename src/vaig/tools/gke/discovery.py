@@ -215,8 +215,6 @@ def discover_service_mesh(
         ("Linkerd", "linkerd", "linkerd.io", "linkerd-proxy"),
         ("Consul", "consul", "consul.hashicorp.com", "consul-dataplane"),
     ]
-    # Extra sidecar name not tied to a specific mesh above
-    _EXTRA_SIDECARS = {"envoy-sidecar"}
 
     # ── 1. Detect control-plane namespaces ────────────────────
     existing_namespaces: set[str] = set()
@@ -244,7 +242,7 @@ def discover_service_mesh(
         warnings.append(f"CRD check skipped (RBAC or API error): {exc}")
 
     # ── 3. Sidecar detection on pods ─────────────────────────
-    sidecar_names = {sc for _, _, _, sc in _MESHES} | _EXTRA_SIDECARS
+    sidecar_names = _formatters.KNOWN_SIDECAR_NAMES
     pods_with_sidecar: dict[str, int] = {}  # sidecar_container → count
     total_pods = 0
     try:
