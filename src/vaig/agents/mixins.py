@@ -267,7 +267,10 @@ class ToolLoopMixin:
 
             # Sync path: sequential execution. Use async path for parallel tool calls.
             history.append(
-                self._build_function_call_content(result.function_calls),
+                self._build_function_call_content(
+                    result.function_calls,
+                    raw_parts=result.raw_parts,
+                ),
             )
 
             function_responses: list[dict[str, Any]] = []
@@ -919,7 +922,10 @@ class ToolLoopMixin:
             accumulated_llm_text += result.text or ""
 
             history.append(
-                self._build_function_call_content(result.function_calls),
+                self._build_function_call_content(
+                    result.function_calls,
+                    raw_parts=result.raw_parts,
+                ),
             )
 
             function_responses: list[dict[str, Any]] = []
@@ -1351,13 +1357,27 @@ class ToolLoopMixin:
     @staticmethod
     def _build_function_call_content(
         function_calls: list[dict[str, Any]],
+        *,
+        raw_parts: list[Any] | None = None,
     ) -> types.Content:
         """Build a ``types.Content`` from a list of function call dicts.
 
         Each dict must have ``"name"`` (str) and ``"args"`` (dict).
         Returns a ``Content(role="model", parts=[...])`` suitable for
         appending to the conversation history.
+
+        When *raw_parts* is provided (non-empty), the original ``types.Part``
+        objects are replayed verbatim.  This preserves Gemini 2.5+
+        ``thought_signature`` bytes that would otherwise be lost when
+        reconstructing Parts from the extracted function_calls dicts.
+
+        Args:
+            function_calls: Extracted function call dicts (fallback path).
+            raw_parts: Raw ``types.Part`` objects from the API response.
+                When truthy, used directly instead of reconstructing from dicts.
         """
+        if raw_parts:
+            return types.Content(role="model", parts=raw_parts)
         fc_parts: list[types.Part] = []
         for fc in function_calls:
             fc_parts.append(
