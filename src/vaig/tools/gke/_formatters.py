@@ -8,6 +8,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Sidecar container names injected by service meshes and observability agents.
+# Keep in sync with the equivalent set in kubectl.py.
+_SIDECAR_NAMES: frozenset[str] = frozenset(
+    {"envoy", "istio-proxy", "datadog-agent", "linkerd-proxy", "jaeger-agent", "filebeat", "fluentd"}
+)
+
 
 def _age(creation_timestamp: datetime | None) -> str:
     """Return a human-readable age string from a creation timestamp."""
@@ -29,10 +35,20 @@ def _age(creation_timestamp: datetime | None) -> str:
     return f"{total_seconds // 86400}d"
 
 
+_TERMINATING_STUCK_THRESHOLD_SECONDS = 600  # 10 minutes
+
+
 def _pod_status(pod: Any) -> str:
     """Derive a human-readable status string for a pod (mirrors kubectl)."""
     if pod.metadata.deletion_timestamp:
-        return "Terminating"
+        now = datetime.now(UTC)
+        deletion_ts = pod.metadata.deletion_timestamp
+        if deletion_ts.tzinfo is None:
+            deletion_ts = deletion_ts.replace(tzinfo=UTC)
+        terminating_seconds = int((now - deletion_ts).total_seconds())
+        if terminating_seconds < _TERMINATING_STUCK_THRESHOLD_SECONDS:
+            return "Terminating (rollout)"
+        return "Terminating (stuck)"
     if pod.status is None:
         return "Unknown"
     if pod.status.phase in ("Succeeded", "Failed"):
@@ -55,13 +71,39 @@ def _pod_restarts(pod: Any) -> int:
 
 
 def _pod_ready_count(pod: Any) -> str:
-    """Return READY column value like '1/1' or '0/2'."""
+    """Return READY column value like '1/1' or '2/3 [app: 1/2]'.
+
+    When sidecar containers are present (e.g. istio-proxy), the total container
+    count includes them. To avoid false positives, we also report the app-only
+    ready count in brackets whenever the combined ready/total ratio tells a
+    different story from the app-only ratio. This lets the LLM distinguish a
+    healthy app with an unready sidecar from a genuinely unhealthy app container.
+    When both ratios are equivalent (e.g. all containers ready), no annotation
+    is added.
+    """
     containers = pod.spec.containers or []
     total = len(containers)
     ready = 0
     for cs in (pod.status.container_statuses or []) if pod.status else []:
         if cs.ready:
             ready += 1
+
+    # Check if any sidecars are present in the pod spec
+    container_names = {c.name for c in containers}
+    sidecar_names_in_pod = container_names & _SIDECAR_NAMES
+    if sidecar_names_in_pod:
+        app_container_names = container_names - _SIDECAR_NAMES
+        app_total = len(app_container_names)
+        app_ready = 0
+        for cs in (pod.status.container_statuses or []) if pod.status else []:
+            if cs.name in app_container_names and cs.ready:
+                app_ready += 1
+        # Annotate when the combined ratio differs from the app-only ratio,
+        # meaning the sidecar presence makes the combined count misleading.
+        # Use cross-multiplication to avoid floats: a/b != c/d ↔ a*d != c*b
+        if app_total > 0 and (ready * app_total != app_ready * total):
+            return f"{ready}/{total} [app: {app_ready}/{app_total}]"
+
     return f"{ready}/{total}"
 
 
