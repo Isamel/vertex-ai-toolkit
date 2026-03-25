@@ -34,12 +34,18 @@ def _make_gke_config(**kwargs: object) -> GKEConfig:
 
 
 def _make_time_series(pod_name: str, double_values: list[float]) -> MagicMock:
-    """Build a mock TimeSeries object with the given pod name and values."""
+    """Build a mock TimeSeries object with the given pod name and values.
+
+    Values should be passed in chronological order (oldest first), matching
+    test intent. This helper stores them in reverse order (newest first) to
+    mimic the real Cloud Monitoring API, which returns points in reverse
+    chronological order.
+    """
     ts = MagicMock()
     ts.resource.labels = {"pod_name": pod_name, "namespace_name": "default"}
 
     points = []
-    for v in double_values:
+    for v in reversed(double_values):
         point = MagicMock()
         point.value.double_value = v
         point.value.int64_value = 0
@@ -99,7 +105,8 @@ class TestBuildMetricFilter:
 
         result = _build_metric_filter(_CPU_METRIC, "cluster", "ns", "frontend-")
 
-        assert 'monitoring.regex.full_match("^frontend-.*")' in result
+        # re.escape("frontend-") → "frontend\-" in the filter
+        assert 'monitoring.regex.full_match("^frontend\\-.*")' in result
 
     def test_memory_filter_contains_memory_metric_type(self) -> None:
         from vaig.tools.gke.monitoring import _MEMORY_METRIC, _build_metric_filter
@@ -107,7 +114,7 @@ class TestBuildMetricFilter:
         result = _build_metric_filter(_MEMORY_METRIC, "cluster", "ns", "backend-")
 
         assert f'metric.type = "{_MEMORY_METRIC}"' in result
-        assert 'monitoring.regex.full_match("^backend-.*")' in result
+        assert 'monitoring.regex.full_match("^backend\\-.*")' in result
 
     def test_filter_all_parts_present(self) -> None:
         from vaig.tools.gke.monitoring import _CPU_METRIC, _build_metric_filter
@@ -126,7 +133,7 @@ class TestBuildMetricFilter:
 
         result = _build_metric_filter(_CPU_METRIC, "cluster", "ns", "")
 
-        # Empty prefix should produce a "match all pods" pattern
+        # Empty prefix: re.escape("") == "" → matches all pods
         assert 'monitoring.regex.full_match("^.*")' in result
 
 
@@ -609,3 +616,234 @@ class TestToolRegistration:
         optional_params = {p.name for p in tool.parameters if not p.required}
         assert "window_minutes" in optional_params
         assert "metric_type" in optional_params
+
+
+# ── Tests for _extract_points_values reverse-chronological order ──
+
+
+class TestExtractPointsValuesOrder:
+    """Verify _extract_points_values handles API reverse-chronological order."""
+
+    def test_points_in_api_order_reversed_to_chronological(self) -> None:
+        """API returns newest-first; extraction must return oldest-first."""
+        from vaig.tools.gke.monitoring import _extract_points_values
+
+        # Simulate API returning 3 points: newest (3.0) → oldest (1.0)
+        ts = MagicMock()
+        points = []
+        for v in [3.0, 2.0, 1.0]:  # newest-first, as the real API does
+            point = MagicMock()
+            point.value.double_value = v
+            point.value.int64_value = 0
+            points.append(point)
+        ts.points = points
+
+        result = _extract_points_values(ts)
+
+        # After reversal: oldest-first → [1.0, 2.0, 3.0]
+        assert result == [1.0, 2.0, 3.0]
+
+    def test_zero_double_value_included(self) -> None:
+        """A point with double_value == 0.0 is valid and must not be skipped."""
+        from vaig.tools.gke.monitoring import _extract_points_values
+
+        ts = MagicMock()
+        points = []
+        for v in [0.0, 1.0, 2.0]:
+            point = MagicMock()
+            point.value.double_value = v
+            point.value.int64_value = 0
+            points.append(point)
+        ts.points = points
+
+        result = _extract_points_values(ts)
+
+        assert 0.0 in result
+        assert len(result) == 3
+
+    def test_zero_int64_value_included(self) -> None:
+        """A point with int64_value == 0 is valid and must not be skipped."""
+        from vaig.tools.gke.monitoring import _extract_points_values
+
+        ts = MagicMock()
+        # Mock only int64_value (no double_value attribute)
+        ts.points = []
+        for v in [0, 5, 10]:
+            point = MagicMock(spec=[])
+            point.value = MagicMock(spec=["int64_value"])
+            point.value.int64_value = v
+            ts.points.append(point)
+
+        result = _extract_points_values(ts)
+
+        assert 0.0 in result
+        assert len(result) == 3
+
+
+# ── Tests for _format_metrics_response truncation ────────────
+
+
+class TestFormatMetricsResponseTruncation:
+    """Verify table output is truncated beyond 20 pods."""
+
+    def test_21_pods_shows_truncation_line(self) -> None:
+        from vaig.tools.gke.monitoring import _CPU_METRIC, _format_metrics_response
+
+        ts_list = [
+            _make_time_series(f"pod-{i:03d}", [0.1, 0.2, 0.3, 0.4])
+            for i in range(21)
+        ]
+        result = _format_metrics_response(
+            ts_list, metric_type=_CPU_METRIC, namespace="default",
+            pod_name_prefix="pod-", window_minutes=60,
+        )
+
+        assert "more pods (truncated)" in result
+        assert "1 more" in result
+
+    def test_20_pods_does_not_truncate(self) -> None:
+        from vaig.tools.gke.monitoring import _CPU_METRIC, _format_metrics_response
+
+        ts_list = [
+            _make_time_series(f"pod-{i:03d}", [0.1, 0.2, 0.3, 0.4])
+            for i in range(20)
+        ]
+        result = _format_metrics_response(
+            ts_list, metric_type=_CPU_METRIC, namespace="default",
+            pod_name_prefix="pod-", window_minutes=60,
+        )
+
+        assert "truncated" not in result
+
+    def test_summary_line_shows_total_pod_count_not_displayed_count(self) -> None:
+        from vaig.tools.gke.monitoring import _CPU_METRIC, _format_metrics_response
+
+        ts_list = [
+            _make_time_series(f"pod-{i:03d}", [0.1, 0.2, 0.3, 0.4])
+            for i in range(25)
+        ]
+        result = _format_metrics_response(
+            ts_list, metric_type=_CPU_METRIC, namespace="default",
+            pod_name_prefix="pod-", window_minutes=60,
+        )
+
+        # Summary must reflect total (25), not just displayed (20)
+        assert "25 pod(s)" in result
+
+
+# ── Tests for window_minutes validation ──────────────────────
+
+
+class TestWindowMinutesValidation:
+    """Verify get_pod_metrics validates window_minutes before querying."""
+
+    def test_zero_window_minutes_returns_error(self) -> None:
+        from vaig.tools.gke.monitoring import get_pod_metrics
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke.monitoring.MetricServiceClient"):
+            result = get_pod_metrics(
+                namespace="default",
+                pod_name_prefix="api-",
+                gke_config=cfg,
+                window_minutes=0,
+            )
+
+        assert result.error
+        assert "window_minutes" in result.output.lower() or "Invalid" in result.output
+
+    def test_negative_window_minutes_returns_error(self) -> None:
+        from vaig.tools.gke.monitoring import get_pod_metrics
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke.monitoring.MetricServiceClient"):
+            result = get_pod_metrics(
+                namespace="default",
+                pod_name_prefix="api-",
+                gke_config=cfg,
+                window_minutes=-10,
+            )
+
+        assert result.error
+
+    def test_over_1440_window_minutes_returns_error(self) -> None:
+        from vaig.tools.gke.monitoring import get_pod_metrics
+
+        cfg = _make_gke_config()
+
+        with patch("vaig.tools.gke.monitoring.MetricServiceClient"):
+            result = get_pod_metrics(
+                namespace="default",
+                pod_name_prefix="api-",
+                gke_config=cfg,
+                window_minutes=1441,
+            )
+
+        assert result.error
+        assert "1440" in result.output
+
+    def test_1_window_minutes_is_valid(self) -> None:
+        from vaig.tools.gke.monitoring import get_pod_metrics
+
+        cfg = _make_gke_config()
+        mock_client = MagicMock()
+        mock_client.list_time_series.return_value = []
+
+        with patch("vaig.tools.gke.monitoring.MetricServiceClient", return_value=mock_client):
+            result = get_pod_metrics(
+                namespace="default",
+                pod_name_prefix="api-",
+                gke_config=cfg,
+                window_minutes=1,
+                metric_type="cpu",
+            )
+
+        assert not result.error
+
+    def test_1440_window_minutes_is_valid(self) -> None:
+        from vaig.tools.gke.monitoring import get_pod_metrics
+
+        cfg = _make_gke_config()
+        mock_client = MagicMock()
+        mock_client.list_time_series.return_value = []
+
+        with patch("vaig.tools.gke.monitoring.MetricServiceClient", return_value=mock_client):
+            result = get_pod_metrics(
+                namespace="default",
+                pod_name_prefix="api-",
+                gke_config=cfg,
+                window_minutes=1440,
+                metric_type="cpu",
+            )
+
+        assert not result.error
+
+
+# ── Tests for regex injection protection ─────────────────────
+
+
+class TestRegexInjectionProtection:
+    """Verify pod_name_prefix is safely escaped before regex interpolation."""
+
+    def test_prefix_with_dot_is_escaped(self) -> None:
+        import re as re_module
+
+        from vaig.tools.gke.monitoring import _CPU_METRIC, _build_metric_filter
+
+        result = _build_metric_filter(_CPU_METRIC, "cluster", "ns", "app.v2-")
+
+        # re.escape("app.v2-") should produce "app\\.v2\\-"
+        expected_escaped = re_module.escape("app.v2-")
+        assert expected_escaped in result
+
+    def test_prefix_with_brackets_is_escaped(self) -> None:
+        import re as re_module
+
+        from vaig.tools.gke.monitoring import _CPU_METRIC, _build_metric_filter
+
+        result = _build_metric_filter(_CPU_METRIC, "cluster", "ns", "pod[0]-")
+
+        expected_escaped = re_module.escape("pod[0]-")
+        assert expected_escaped in result

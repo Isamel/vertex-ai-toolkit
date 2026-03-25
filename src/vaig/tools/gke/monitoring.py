@@ -9,6 +9,7 @@ concise LLM-friendly summary table with trend indicators.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -24,16 +25,16 @@ logger = logging.getLogger(__name__)
 _MONITORING_AVAILABLE = True
 try:
     from google.api_core import exceptions as gcp_exceptions  # noqa: WPS433
+    from google.api_core.exceptions import PermissionDenied  # noqa: WPS433
     from google.cloud import monitoring_v3  # noqa: WPS433
-    from google.cloud.monitoring_v3 import types as monitoring_types  # noqa: WPS433
     from google.cloud.monitoring_v3.services.metric_service import (  # noqa: WPS433
         MetricServiceClient,
     )
 except ImportError:
     _MONITORING_AVAILABLE = False
     gcp_exceptions = None  # type: ignore[assignment]
+    PermissionDenied = None  # type: ignore[assignment,misc]
     monitoring_v3 = None  # type: ignore[assignment]
-    monitoring_types = None  # type: ignore[assignment]
     MetricServiceClient = None  # type: ignore[assignment,misc]
 
 
@@ -73,8 +74,8 @@ def _build_metric_filter(
     Returns:
         A Cloud Monitoring filter string suitable for ``list_time_series()``.
     """
-    # Escape any special chars in prefix for the regex
-    escaped_prefix = pod_name_prefix.replace("\\", "\\\\").replace('"', '\\"')
+    # Escape any regex metacharacters in prefix so they match literally
+    escaped_prefix = re.escape(pod_name_prefix)
     return (
         f'metric.type = "{metric_type}"'
         f' AND resource.type = "k8s_container"'
@@ -151,18 +152,21 @@ def _extract_points_values(time_series: Any) -> list[float]:
     """Extract float values from a TimeSeries object's data points.
 
     Handles both double and int64 typed point values.
+
+    Cloud Monitoring returns points in reverse chronological order (newest
+    first). This function reverses them so callers receive values in
+    chronological order (oldest first), which is required for correct
+    trend calculation.
     """
     values: list[float] = []
     for point in time_series.points:
         val = point.value
-        if hasattr(val, "double_value") and val.double_value != 0.0:
+        if hasattr(val, "double_value"):
             values.append(val.double_value)
-        elif hasattr(val, "int64_value") and val.int64_value != 0:
+        elif hasattr(val, "int64_value"):
             values.append(float(val.int64_value))
-        elif hasattr(val, "double_value"):
-            # double_value == 0 is a valid data point — include it
-            values.append(val.double_value)
-    return values
+    # Reverse: API gives newest-first; callers expect oldest-first
+    return list(reversed(values))
 
 
 def _calculate_trend(values: list[float]) -> str:
@@ -280,6 +284,12 @@ def _format_metrics_response(
             "Data returned but no numeric values could be extracted from time series points.\n"
         )
 
+    # Truncate to top 20 pods to keep output within ~2000 chars
+    _MAX_PODS = 20
+    total_pods = len(rows)
+    truncated = total_pods > _MAX_PODS
+    display_rows = rows[:_MAX_PODS]
+
     # Build Markdown table
     lines: list[str] = [
         f"**{metric_label} Metrics** {unit_label} — namespace: `{namespace}`, "
@@ -288,13 +298,16 @@ def _format_metrics_response(
         f"|{'-'*52}|{'-'*12}|{'-'*12}|{'-'*12}|-------|",
     ]
 
-    for row in rows:
+    for row in display_rows:
         lines.append(
             f"| {row['pod']:<50} | {row['avg']:>10} | {row['max']:>10} | {row['latest']:>10} | {row['trend']:^5} |"
         )
 
+    if truncated:
+        lines.append(f"| _... and {total_pods - _MAX_PODS} more pods (truncated)_ |")
+
     lines.append(
-        f"\n_Summary: {len(rows)} pod(s) matched prefix `{pod_name_prefix}` "
+        f"\n_Summary: {total_pods} pod(s) matched prefix `{pod_name_prefix}` "
         f"in namespace `{namespace}` over the last {window_minutes} minutes._"
     )
 
@@ -345,6 +358,16 @@ def get_pod_metrics(
             error=True,
         )
 
+    # Validate window_minutes: must be a positive integer, max 1440 (24h)
+    if window_minutes <= 0 or window_minutes > 1440:
+        return ToolResult(
+            output=(
+                f"Invalid window_minutes '{window_minutes}'. "
+                "Must be a positive integer between 1 and 1440 (24 hours)."
+            ),
+            error=True,
+        )
+
     project_id = gke_config.project_id
     cluster_name = gke_config.cluster_name
 
@@ -381,9 +404,14 @@ def get_pod_metrics(
                 window_minutes=window_minutes,
             )
         except Exception as exc:  # noqa: BLE001
-            # Check for PermissionDenied by exception type name (avoids hard import)
-            exc_type = type(exc).__name__
-            if exc_type == "PermissionDenied" or "403" in str(exc):
+            # Check for PermissionDenied — use the imported class when available,
+            # fall back to string/code check when the library is unavailable.
+            is_permission_denied = (
+                (PermissionDenied is not None and isinstance(exc, PermissionDenied))
+                or "403" in str(exc)
+                or type(exc).__name__ == "PermissionDenied"
+            )
+            if is_permission_denied:
                 sections.append(
                     f"**{'CPU' if mtype == _CPU_METRIC else 'Memory'} Metrics** — "
                     f"Access denied (HTTP 403). "
