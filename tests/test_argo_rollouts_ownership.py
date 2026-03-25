@@ -142,6 +142,36 @@ class TestGetRolloutStatusArgoAwareness:
         # _format_rollout output should include phase
         assert "Healthy" in result.output
 
+    def test_argo_annotations_rollout_crossref_with_none_default(self) -> None:
+        """argo_rollouts_enabled=None (default/auto-detect) still triggers Rollout cross-reference."""
+        dep = _make_deployment(
+            spec_replicas=0,
+            ready_replicas=0,
+            annotations={"rollout.argoproj.io/desired-replicas": "3"},
+        )
+        gke_config = _make_gke_config(argo_rollouts_enabled=None)
+        rollout_obj = _make_rollout_obj()
+
+        with (
+            patch("vaig.tools.gke.diagnostics._clients._K8S_AVAILABLE", True),
+            patch("vaig.tools.gke.diagnostics._clients._create_k8s_clients") as mock_clients,
+        ):
+            mock_apps = MagicMock()
+            mock_apps.read_namespaced_deployment.return_value = dep
+            mock_custom = MagicMock()
+            mock_custom.get_namespaced_custom_object.return_value = rollout_obj
+            mock_clients.return_value = (MagicMock(), mock_apps, mock_custom, MagicMock())
+
+            from vaig.tools.gke.diagnostics import get_rollout_status
+
+            result = get_rollout_status("my-svc", gke_config=gke_config, namespace="production")
+
+        assert not result.error
+        assert "Managed by Argo Rollout" in result.output
+        # Cross-reference section should be present even when argo_rollouts_enabled=None
+        assert "Argo Rollout details" in result.output
+        assert "Healthy" in result.output
+
     def test_argo_annotations_rollout_fetch_fails_graceful_degrade(self) -> None:
         """Argo-managed deployment + Rollout fetch fails → still returns 'Managed by Argo Rollout'."""
         from kubernetes.client.exceptions import ApiException  # type: ignore[import-untyped]
@@ -170,7 +200,8 @@ class TestGetRolloutStatusArgoAwareness:
         assert not result.error
         assert "Managed by Argo Rollout" in result.output
         # Should NOT have error or crash
-        assert "Error" not in result.output or "Argo Rollout details" not in result.output
+        assert "Error" not in result.output
+        assert "Argo Rollout details" not in result.output
 
     def test_managed_by_rollouts_annotation_triggers_argo_state(self) -> None:
         """argo-rollouts.argoproj.io/managed-by-rollouts annotation also triggers Argo state."""

@@ -270,7 +270,8 @@ def get_rollout_status(
         # When the Deployment is an Argo-managed stub AND the config enables
         # Argo Rollouts, attempt to fetch the actual Rollout object to provide
         # full replica / phase context.  Degrade gracefully on any error.
-        if overall_state == "Managed by Argo Rollout" and gke_config.argo_rollouts_enabled:
+        # argo_rollouts_enabled is tri-state (None=auto-detect). Only explicit False disables this.
+        if overall_state == "Managed by Argo Rollout" and gke_config.argo_rollouts_enabled is not False:
             try:
                 rollout_obj = custom_objects_api.get_namespaced_custom_object(
                     group=_ARGO_ROLLOUTS_GROUP,
@@ -283,14 +284,23 @@ def get_rollout_status(
                 lines.append("Argo Rollout details:")
                 for detail_line in _format_rollout(rollout_obj).splitlines():
                     lines.append(f"  {detail_line}")
-            except Exception:  # noqa: BLE001
-                # Rollout object may not exist (different name) or RBAC may block it.
-                # Silently degrade — the "Managed by Argo Rollout" status is still correct.
+            except k8s_exceptions.ApiException:
                 logger.debug(
                     "Could not fetch Rollout object for deployment/%s in namespace %s"
                     " — skipping cross-reference",
                     name,
                     ns,
+                    exc_info=True,
+                )
+            except Exception:  # noqa: BLE001
+                # Rollout object may not exist (different name) or RBAC may block it.
+                # Silently degrade — the "Managed by Argo Rollout" status is still correct.
+                logger.debug(
+                    "Unexpected error fetching Rollout object for deployment/%s in namespace %s"
+                    " — skipping cross-reference",
+                    name,
+                    ns,
+                    exc_info=True,
                 )
 
         return ToolResult(output="\n".join(lines))
