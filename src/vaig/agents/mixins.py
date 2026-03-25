@@ -1358,7 +1358,7 @@ class ToolLoopMixin:
     def _build_function_call_content(
         function_calls: list[dict[str, Any]],
         *,
-        raw_parts: list[Any] | None = None,
+        raw_parts: list[types.Part] | None = None,
     ) -> types.Content:
         """Build a ``types.Content`` from a list of function call dicts.
 

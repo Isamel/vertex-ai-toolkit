@@ -217,7 +217,7 @@ class ToolCallResult:
     finish_reason: str = ""
     thinking_text: str | None = None
     """Thinking content from the model, if thinking mode was enabled."""
-    raw_parts: list[Any] | None = None
+    raw_parts: list[types.Part] | None = None
     """Raw ``types.Part`` objects from the API response (non-thought parts only).
 
     Preserved for Gemini 2.5+ ``thought_signature`` replay — the raw Part
@@ -1074,7 +1074,7 @@ class GeminiClient:
             function_calls: list[dict[str, Any]] = []
             text_parts: list[str] = []
             thinking_parts: list[str] = []
-            raw_fc_parts: list[Any] = []
+            raw_fc_parts: list[types.Part] = []
 
             for part in content.parts:
                 # Skip thinking parts — extract them separately.
@@ -1407,7 +1407,7 @@ class GeminiClient:
             function_calls: list[dict[str, Any]] = []
             text_parts: list[str] = []
             thinking_parts: list[str] = []
-            raw_fc_parts: list[Any] = []
+            raw_fc_parts: list[types.Part] = []
 
             for part in content.parts:
                 # Skip thinking parts — extract them separately.
