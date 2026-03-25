@@ -9,10 +9,21 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Sidecar container names injected by service meshes and observability agents.
-# Keep in sync with the equivalent set in kubectl.py.
-_SIDECAR_NAMES: frozenset[str] = frozenset(
-    {"envoy", "istio-proxy", "datadog-agent", "linkerd-proxy", "jaeger-agent", "filebeat", "fluentd"}
-)
+# This is the canonical set — imported by kubectl.py and discovery.py.
+KNOWN_SIDECAR_NAMES: frozenset[str] = frozenset({
+    "istio-proxy",
+    "envoy",
+    "envoy-sidecar",
+    "linkerd-proxy",
+    "datadog-agent",
+    "jaeger-agent",
+    "filebeat",
+    "fluentd",
+    "consul-dataplane",
+})
+
+# Internal alias kept for backward compatibility within this module.
+_SIDECAR_NAMES = KNOWN_SIDECAR_NAMES
 
 
 def _age(creation_timestamp: datetime | None) -> str:
@@ -47,8 +58,8 @@ def _pod_status(pod: Any) -> str:
             deletion_ts = deletion_ts.replace(tzinfo=UTC)
         terminating_seconds = int((now - deletion_ts).total_seconds())
         if terminating_seconds < _TERMINATING_STUCK_THRESHOLD_SECONDS:
-            return "Terminating (rollout)"
-        return "Terminating (stuck)"
+            return "Terminating rollout"
+        return "Terminating stuck"
     if pod.status is None:
         return "Unknown"
     if pod.status.phase in ("Succeeded", "Failed"):
@@ -83,21 +94,22 @@ def _pod_ready_count(pod: Any) -> str:
     """
     containers = pod.spec.containers or []
     total = len(containers)
-    ready = 0
-    for cs in (pod.status.container_statuses or []) if pod.status else []:
-        if cs.ready:
-            ready += 1
 
     # Check if any sidecars are present in the pod spec
     container_names = {c.name for c in containers}
     sidecar_names_in_pod = container_names & _SIDECAR_NAMES
-    if sidecar_names_in_pod:
-        app_container_names = container_names - _SIDECAR_NAMES
-        app_total = len(app_container_names)
-        app_ready = 0
-        for cs in (pod.status.container_statuses or []) if pod.status else []:
-            if cs.name in app_container_names and cs.ready:
+    app_container_names = container_names - _SIDECAR_NAMES if sidecar_names_in_pod else None
+
+    ready = 0
+    app_ready = 0
+    for cs in (pod.status.container_statuses or []) if pod.status else []:
+        if cs.ready:
+            ready += 1
+            if app_container_names is not None and cs.name in app_container_names:
                 app_ready += 1
+
+    if app_container_names is not None:
+        app_total = len(app_container_names)
         # Annotate when the combined ratio differs from the app-only ratio,
         # meaning the sidecar presence makes the combined count misleading.
         # Use cross-multiplication to avoid floats: a/b != c/d ↔ a*d != c*b

@@ -1,21 +1,23 @@
 """Tests for pod status noise reduction bugs.
 
 Bug 4: Orphaned Terminating pods from old ReplicaSets trigger false positives.
-       _pod_status() should return 'Terminating (rollout)' for pods terminating
-       less than 10 minutes, and 'Terminating (stuck)' for pods terminating
-       more than 10 minutes.
+       _pod_status() should return 'Terminating rollout' for pods terminating
+       less than 10 minutes, and 'Terminating stuck' for pods terminating
+       10 minutes or more.
 
 Bug 5: Istio sidecar containers inflate the total container count, making a
        fully-ready pod appear as '1/2' instead of '1/1'.
        _pod_ready_count() should annotate with '[app: X/Y]' when sidecars are
        present and not all app containers are ready, allowing the LLM to
        distinguish between an unhealthy app and a normal unready sidecar.
+       When both ratios are equivalent (e.g. all containers ready), no annotation
+       is added.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from vaig.tools.gke._formatters import _pod_ready_count, _pod_status
 
@@ -75,39 +77,49 @@ class TestTerminatingPodClassification:
     """_pod_status() classifies terminating pods as rollout vs stuck."""
 
     def test_recently_terminating_pod_is_rollout(self) -> None:
-        """Pod terminating for less than 10 minutes → 'Terminating (rollout)'."""
+        """Pod terminating for less than 10 minutes → 'Terminating rollout'."""
         deletion_ts = datetime.now(UTC) - timedelta(minutes=3)
         pod = _make_pod(deletion_timestamp=deletion_ts)
         status = _pod_status(pod)
-        assert status == "Terminating (rollout)"
+        assert status == "Terminating rollout"
 
     def test_just_started_terminating_pod_is_rollout(self) -> None:
-        """Pod terminating for under 1 minute → 'Terminating (rollout)'."""
+        """Pod terminating for under 1 minute → 'Terminating rollout'."""
         deletion_ts = datetime.now(UTC) - timedelta(seconds=30)
         pod = _make_pod(deletion_timestamp=deletion_ts)
         status = _pod_status(pod)
-        assert status == "Terminating (rollout)"
+        assert status == "Terminating rollout"
 
-    def test_exactly_at_threshold_is_rollout(self) -> None:
-        """Pod terminating for exactly 9 min 59 s → 'Terminating (rollout)'."""
-        deletion_ts = datetime.now(UTC) - timedelta(seconds=599)
+    def test_near_boundary_is_rollout(self) -> None:
+        """Pod terminating for 590 s (clearly < 10 min) → 'Terminating rollout'."""
+        deletion_ts = datetime.now(UTC) - timedelta(seconds=590)
         pod = _make_pod(deletion_timestamp=deletion_ts)
         status = _pod_status(pod)
-        assert status == "Terminating (rollout)"
+        assert status == "Terminating rollout"
+
+    def test_exactly_at_threshold_is_stuck(self) -> None:
+        """Pod terminating for exactly 600 s → 'Terminating stuck' (>= threshold)."""
+        frozen_now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+        deletion_ts = frozen_now - timedelta(seconds=600)
+        pod = _make_pod(deletion_timestamp=deletion_ts)
+        with patch("vaig.tools.gke._formatters.datetime") as mock_dt:
+            mock_dt.now.return_value = frozen_now
+            status = _pod_status(pod)
+        assert status == "Terminating stuck"
 
     def test_long_terminating_pod_is_stuck(self) -> None:
-        """Pod terminating for more than 10 minutes → 'Terminating (stuck)'."""
+        """Pod terminating for more than 10 minutes → 'Terminating stuck'."""
         deletion_ts = datetime.now(UTC) - timedelta(minutes=15)
         pod = _make_pod(deletion_timestamp=deletion_ts)
         status = _pod_status(pod)
-        assert status == "Terminating (stuck)"
+        assert status == "Terminating stuck"
 
     def test_very_long_terminating_pod_is_stuck(self) -> None:
-        """Pod terminating for hours → 'Terminating (stuck)'."""
+        """Pod terminating for hours → 'Terminating stuck'."""
         deletion_ts = datetime.now(UTC) - timedelta(hours=2)
         pod = _make_pod(deletion_timestamp=deletion_ts)
         status = _pod_status(pod)
-        assert status == "Terminating (stuck)"
+        assert status == "Terminating stuck"
 
     def test_terminating_pod_with_naive_timestamp(self) -> None:
         """Pod with timezone-naive deletion_timestamp → still classified correctly."""
@@ -115,7 +127,7 @@ class TestTerminatingPodClassification:
         deletion_ts = datetime.utcnow() - timedelta(minutes=20)  # naive, > 10 min
         pod = _make_pod(deletion_timestamp=deletion_ts)
         status = _pod_status(pod)
-        assert status == "Terminating (stuck)"
+        assert status == "Terminating stuck"
 
     def test_running_pod_not_affected(self) -> None:
         """Pod without deletion_timestamp → normal phase-based status."""
