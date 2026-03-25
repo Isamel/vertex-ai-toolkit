@@ -713,15 +713,28 @@ def _parse_hostname_from_value(value: str) -> str:
         except Exception:  # noqa: BLE001
             return ""
 
-    # Plain hostname or host:port — return as-is (strip leading slashes)
-    return value.lstrip("/")
+    # Plain hostname or host:port — normalise to strip any embedded credentials
+    stripped = value.lstrip("/")
+    # If the value looks like user:pass@host/path or host/path, normalize via urlparse
+    # to safely discard userinfo, path, query, and fragment.
+    if "@" in stripped or "/" in stripped:
+        try:
+            parsed = urlparse("//" + stripped)
+            netloc = parsed.netloc or ""
+            if "@" in netloc:
+                netloc = netloc.split("@", 1)[1]
+            return netloc if netloc else ""
+        except Exception:  # noqa: BLE001
+            return ""
+    return stripped
 
 
-def _classify_confidence(hostname: str, env_name: str) -> str:
+def _classify_confidence(hostname: str, env_name: str, original_value: str) -> str:
     """Classify the confidence level of a dependency detection.
 
     HIGH  — hostname ends with ``.svc.cluster.local``
-    MEDIUM — hostname was extracted from a URL value, or env var name ends with _HOST/_ADDR/_ENDPOINT/_SERVER
+    MEDIUM — hostname was extracted from a URL value (original value contains ``://``),
+             or env var name ends with a host-type suffix
     LOW   — heuristic / everything else
     """
     # Strip port before checking (e.g. "host.svc.cluster.local:5432" → "host.svc.cluster.local")
@@ -729,9 +742,20 @@ def _classify_confidence(hostname: str, env_name: str) -> str:
     if hostname_no_port.endswith(".svc.cluster.local"):
         return "HIGH"
     upper = env_name.upper()
-    # URL-extracted (contains port separator) or known host-type suffixes
-    if "://" in env_name or any(
-        upper.endswith(s) for s in ("_HOST", "_ADDR", "_ADDRESS", "_ENDPOINT", "_SERVER")
+    # URL-extracted (original value has a scheme) or known host-type suffixes
+    if "://" in original_value or any(
+        upper.endswith(s)
+        for s in (
+            "_HOST",
+            "_ADDR",
+            "_ADDRESS",
+            "_ENDPOINT",
+            "_SERVER",
+            "_URL",
+            "_URI",
+            "_SERVICE",
+            "_SVC",
+        )
     ):
         return "MEDIUM"
     return "LOW"
@@ -818,7 +842,7 @@ def _extract_env_dependencies(pods: list[object]) -> list[dict[str, str]]:
                 if hostname in ("localhost", "127.0.0.1", "0.0.0.0"):  # noqa: S104
                     continue
 
-                confidence = _classify_confidence(hostname, name)
+                confidence = _classify_confidence(hostname, name, value)
 
                 # Dedup: keep highest confidence entry per hostname
                 existing = seen.get(hostname)
@@ -980,13 +1004,16 @@ def _format_dependency_report(
 
 
 def discover_dependencies(
-    service_name: str,
     namespace: str,
     *,
+    service_name: str = "",
     gke_config: GKEConfig,
     force_refresh: bool = False,
 ) -> ToolResult:
-    """Map service-to-service dependencies for a given K8s Service.
+    """Map service-to-service dependencies for a given Kubernetes namespace or Service.
+
+    When *service_name* is provided, scans only the pods backing that Service.
+    When omitted, performs a namespace-wide scan of all pods.
 
     Scans backing pod environment variables for service references, then reads
     Istio VirtualServices (if installed) to extract upstream/downstream topology.
@@ -1000,7 +1027,7 @@ def discover_dependencies(
         return _clients._k8s_unavailable()
 
     # ── Cache check ───────────────────────────────────────────
-    cache_key = _cache._cache_key_discovery("dependencies", service_name, namespace)
+    cache_key = _cache._cache_key_discovery("dependencies", service_name or "__all__", namespace)
     if not force_refresh:
         cached = _cache._get_cached(cache_key)
         if cached is not None:
@@ -1013,19 +1040,29 @@ def discover_dependencies(
     core_v1, apps_v1, custom_api, api_client = result
 
     # ── Phase 2: Find pods and extract env-var dependencies ───
-    pods = _find_pods_for_service(service_name, namespace, core_v1)
+    if service_name:
+        pods = _find_pods_for_service(service_name, namespace, core_v1)
+    else:
+        # Namespace-wide: list all pods directly
+        try:
+            pod_list = core_v1.list_namespaced_pod(namespace=namespace)
+            pods = pod_list.items or []
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("list_namespaced_pod(%s) failed: %s", namespace, exc)
+            pods = []
     env_deps = _extract_env_dependencies(pods)
 
     # ── Phase 3: Istio VirtualService scan ────────────────────
     upstreams: list[str] = []
     downstreams: list[str] = []
-    try:
-        upstreams, downstreams = _discover_istio_dependencies(service_name, namespace, custom_api)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("Istio dependency scan failed: %s", exc)
+    if service_name:
+        try:
+            upstreams, downstreams = _discover_istio_dependencies(service_name, namespace, custom_api)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Istio dependency scan failed: %s", exc)
 
     # ── Format and cache ──────────────────────────────────────
-    output = _format_dependency_report(service_name, namespace, env_deps, upstreams, downstreams)
+    output = _format_dependency_report(service_name or namespace, namespace, env_deps, upstreams, downstreams)
     _cache._set_cache(cache_key, output)
     return ToolResult(output=output, error=False)
 

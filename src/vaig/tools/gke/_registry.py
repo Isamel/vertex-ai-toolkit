@@ -832,14 +832,14 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             ),
             parameters=[
                 ToolParam(
-                    name="service_name",
-                    type="string",
-                    description="Name of the Kubernetes Service to analyse.",
-                ),
-                ToolParam(
                     name="namespace",
                     type="string",
-                    description="Kubernetes namespace where the service lives (default: 'default').",
+                    description="Kubernetes namespace to scan for service dependencies.",
+                ),
+                ToolParam(
+                    name="service_name",
+                    type="string",
+                    description="Name of a specific Kubernetes Service to analyse. Omit to scan all pods in the namespace.",
                     required=False,
                 ),
                 ToolParam(
@@ -850,9 +850,9 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({KUBERNETES}),
-            execute=lambda service_name, namespace="default", force_refresh=False,
+            execute=lambda namespace, service_name="", force_refresh=False,
                     _cfg=gke_config: discovery.discover_dependencies(
-                service_name, namespace, gke_config=_cfg, force_refresh=force_refresh,
+                namespace, service_name=service_name, gke_config=_cfg, force_refresh=force_refresh,
             ),
         ),
         # ── Mesh introspection tools ─────────────────────────

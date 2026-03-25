@@ -171,32 +171,48 @@ class TestClassifyConfidence:
     """_classify_confidence must return HIGH/MEDIUM/LOW correctly."""
 
     def test_svc_cluster_local_is_high(self) -> None:
-        assert _classify_confidence("redis.default.svc.cluster.local", "REDIS_HOST") == "HIGH"
+        assert _classify_confidence("redis.default.svc.cluster.local", "REDIS_HOST", "redis.default.svc.cluster.local") == "HIGH"
 
     def test_svc_cluster_local_with_port_is_high(self) -> None:
-        assert _classify_confidence("db.default.svc.cluster.local:5432", "DB_URL") == "HIGH"
+        assert _classify_confidence("db.default.svc.cluster.local:5432", "DB_URL", "postgres://db.default.svc.cluster.local:5432/mydb") == "HIGH"
 
     def test_host_suffix_is_medium(self) -> None:
-        assert _classify_confidence("redis-server", "REDIS_HOST") == "MEDIUM"
+        assert _classify_confidence("redis-server", "REDIS_HOST", "redis-server") == "MEDIUM"
 
     def test_addr_suffix_is_medium(self) -> None:
-        assert _classify_confidence("cache-service", "CACHE_ADDR") == "MEDIUM"
+        assert _classify_confidence("cache-service", "CACHE_ADDR", "cache-service") == "MEDIUM"
 
     def test_endpoint_suffix_is_medium(self) -> None:
-        assert _classify_confidence("api.example.com", "API_ENDPOINT") == "MEDIUM"
+        assert _classify_confidence("api.example.com", "API_ENDPOINT", "api.example.com") == "MEDIUM"
 
     def test_server_suffix_is_medium(self) -> None:
-        assert _classify_confidence("db-host", "DATABASE_SERVER") == "MEDIUM"
+        assert _classify_confidence("db-host", "DATABASE_SERVER", "db-host") == "MEDIUM"
 
     def test_address_suffix_is_medium(self) -> None:
-        assert _classify_confidence("grpc-svc:9090", "GRPC_ADDRESS") == "MEDIUM"
+        assert _classify_confidence("grpc-svc:9090", "GRPC_ADDRESS", "grpc-svc:9090") == "MEDIUM"
+
+    def test_url_suffix_is_medium(self) -> None:
+        assert _classify_confidence("external-svc", "PAYMENT_URL", "external-svc") == "MEDIUM"
+
+    def test_uri_suffix_is_medium(self) -> None:
+        assert _classify_confidence("auth-svc", "AUTH_URI", "auth-svc") == "MEDIUM"
+
+    def test_service_suffix_is_medium(self) -> None:
+        assert _classify_confidence("order-svc", "ORDER_SERVICE", "order-svc") == "MEDIUM"
+
+    def test_svc_suffix_is_medium(self) -> None:
+        assert _classify_confidence("cache-svc", "CACHE_SVC", "cache-svc") == "MEDIUM"
+
+    def test_url_scheme_in_value_is_medium(self) -> None:
+        """original_value containing :// must classify MEDIUM even for generic env name."""
+        assert _classify_confidence("external-host", "SOME_VAR", "http://external-host/path") == "MEDIUM"
 
     def test_generic_env_name_is_low(self) -> None:
-        assert _classify_confidence("some-hostname", "RANDOM_VAR") == "LOW"
+        assert _classify_confidence("some-hostname", "RANDOM_VAR", "some-hostname") == "LOW"
 
     def test_svc_cluster_local_takes_precedence_over_suffix(self) -> None:
         """HIGH must win even if env name ends with _HOST too."""
-        assert _classify_confidence("svc.default.svc.cluster.local", "SERVICE_HOST") == "HIGH"
+        assert _classify_confidence("svc.default.svc.cluster.local", "SERVICE_HOST", "svc.default.svc.cluster.local") == "HIGH"
 
 
 # ════════════════════════════════════════════════════════════
@@ -354,14 +370,18 @@ class TestExtractEnvDependencies:
         assert len(exact_matches) == 1
 
     def test_keeps_highest_confidence_on_dedup(self) -> None:
-        """When deduplicating, keep the entry with highest confidence."""
-        # pod1 sees it as MEDIUM (URL suffix, external hostname), pod2 as HIGH (svc.cluster.local)
-        pod1 = _make_mock_pod([("CACHE_URL", "http://redis-master.default.svc.cluster.local")])
-        pod2 = _make_mock_pod([("REDIS_HOST", "redis-master.default.svc.cluster.local")])
+        """When deduplicating, keep the entry with highest confidence.
+
+        Uses a plain hostname (not .svc.cluster.local) so pods produce
+        different confidence levels: MEDIUM (suffix _HOST) vs LOW (generic name).
+        """
+        pod1 = _make_mock_pod([("SOME_VAR", "redis-master")])   # LOW — no special suffix or scheme
+        pod2 = _make_mock_pod([("REDIS_HOST", "redis-master")])  # MEDIUM — _HOST suffix
         result = _extract_env_dependencies([pod1, pod2])
 
-        redis_entry = next(d for d in result if "redis-master.default.svc.cluster.local" in d["hostname"])
-        assert redis_entry["confidence"] == "HIGH"
+        assert len(result) == 1
+        assert result[0]["hostname"] == "redis-master"
+        assert result[0]["confidence"] == "MEDIUM"  # highest confidence kept
 
     def test_skips_localhost_values(self) -> None:
         pod = _make_mock_pod([
@@ -512,7 +532,7 @@ class TestDiscoverIstioDependencies:
              patch("vaig.tools.gke._clients._create_k8s_clients",
                    return_value=(core_v1, apps_v1, custom_api, MagicMock())), \
              patch("vaig.tools.gke.mesh._resolve_crd_version", side_effect=Exception("RBAC denied")):
-            result = discover_dependencies("svc", "default", gke_config=cfg)
+            result = discover_dependencies("default", service_name="svc", gke_config=cfg)
 
         # Must not raise — error is suppressed, result is a valid ToolResult
         assert isinstance(result, ToolResult)
@@ -606,7 +626,7 @@ class TestDiscoverDependencies:
                    return_value=(core_v1, apps_v1, custom_api, MagicMock())), \
              patch("vaig.tools.gke.mesh._resolve_crd_version", return_value=None):
 
-            result = discover_dependencies("test-service", "default", gke_config=cfg)
+            result = discover_dependencies("default", service_name="test-service", gke_config=cfg)
 
         assert isinstance(result, ToolResult)
         assert result.error is False
@@ -620,7 +640,7 @@ class TestDiscoverDependencies:
                    return_value=(core_v1, apps_v1, custom_api, MagicMock())), \
              patch("vaig.tools.gke.mesh._resolve_crd_version", return_value=None):
 
-            result = discover_dependencies("my-app", "production", gke_config=cfg)
+            result = discover_dependencies("production", service_name="my-app", gke_config=cfg)
 
         assert "my-app" in result.output
         assert "production" in result.output
@@ -635,7 +655,7 @@ class TestDiscoverDependencies:
                    return_value=(core_v1, apps_v1, custom_api, MagicMock())), \
              patch("vaig.tools.gke.mesh._resolve_crd_version", return_value=None):
 
-            result = discover_dependencies("empty-svc", "default", gke_config=cfg)
+            result = discover_dependencies("default", service_name="empty-svc", gke_config=cfg)
 
         assert result.error is False
         assert "(none found)" in result.output
@@ -650,7 +670,7 @@ class TestDiscoverDependencies:
                    return_value=(core_v1, apps_v1, custom_api, MagicMock())), \
              patch("vaig.tools.gke.mesh._resolve_crd_version", return_value=None):
 
-            result = discover_dependencies("svc", "default", gke_config=cfg)
+            result = discover_dependencies("default", service_name="svc", gke_config=cfg)
 
         assert result.error is False
         assert "none detected or Istio not installed" in result.output
@@ -669,7 +689,7 @@ class TestDiscoverDependencies:
                    return_value=(core_v1, apps_v1, custom_api, MagicMock())), \
              patch("vaig.tools.gke.mesh._resolve_crd_version", return_value=None):
 
-            result = discover_dependencies("my-svc", "default", gke_config=cfg)
+            result = discover_dependencies("default", service_name="my-svc", gke_config=cfg)
 
         assert "redis-master.default.svc.cluster.local" in result.output
         assert "postgres.default.svc.cluster.local:5432" in result.output
@@ -689,7 +709,7 @@ class TestDiscoverDependencies:
                    return_value=(core_v1, apps_v1, custom_api, MagicMock())), \
              patch("vaig.tools.gke.mesh._resolve_crd_version", return_value=None):
 
-            result = discover_dependencies("secure-svc", "default", gke_config=cfg)
+            result = discover_dependencies("default", service_name="secure-svc", gke_config=cfg)
 
         assert "hunter2" not in result.output
         assert "tok_secret_xyz" not in result.output
@@ -700,7 +720,7 @@ class TestDiscoverDependencies:
 
         with patch("vaig.tools.gke._clients._K8S_AVAILABLE", False), \
              patch("vaig.tools.gke.discovery._K8S_AVAILABLE", False):
-            result = discover_dependencies("svc", "default", gke_config=cfg)
+            result = discover_dependencies("default", service_name="svc", gke_config=cfg)
 
         assert isinstance(result, ToolResult)
 
@@ -708,21 +728,20 @@ class TestDiscoverDependencies:
         """Second call with same args must return cached output (no K8s calls)."""
         core_v1, apps_v1, custom_api = self._make_clients_patch()
         cfg = _make_gke_config()
+        mock_create_clients = MagicMock(return_value=(core_v1, apps_v1, custom_api, MagicMock()))
 
         with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke._clients._create_k8s_clients",
-                   return_value=(core_v1, apps_v1, custom_api, MagicMock())), \
+             patch("vaig.tools.gke._clients._create_k8s_clients", mock_create_clients), \
              patch("vaig.tools.gke.mesh._resolve_crd_version", return_value=None):
 
-            result1 = discover_dependencies("cached-svc", "default", gke_config=cfg)
-            result2 = discover_dependencies("cached-svc", "default", gke_config=cfg)
+            result1 = discover_dependencies("default", service_name="cached-svc", gke_config=cfg)
+            result2 = discover_dependencies("default", service_name="cached-svc", gke_config=cfg)
 
         # Both should return without error
         assert result1.error is False
         assert result2.error is False
         # Second call should use cache — create_k8s_clients only called once
-        from vaig.tools.gke._clients import _create_k8s_clients  # noqa: F401
-        # (the patch mock tracks this)
+        mock_create_clients.assert_called_once()
 
     def test_force_refresh_bypasses_cache(self) -> None:
         """force_refresh=True must bypass cache and make fresh K8s calls."""
@@ -734,8 +753,8 @@ class TestDiscoverDependencies:
              patch("vaig.tools.gke._clients._create_k8s_clients", mock_create_clients), \
              patch("vaig.tools.gke.mesh._resolve_crd_version", return_value=None):
 
-            discover_dependencies("fresh-svc", "default", gke_config=cfg, force_refresh=True)
-            discover_dependencies("fresh-svc", "default", gke_config=cfg, force_refresh=True)
+            discover_dependencies("default", service_name="fresh-svc", gke_config=cfg, force_refresh=True)
+            discover_dependencies("default", service_name="fresh-svc", gke_config=cfg, force_refresh=True)
 
         assert mock_create_clients.call_count == 2
 
@@ -804,6 +823,4 @@ class TestDependencyMappingPrompts:
         """_GATHERER_PROMPT_TEMPLATE must include a Step for dependency mapping."""
         from vaig.skills.service_health.prompts import _GATHERER_PROMPT_TEMPLATE
 
-        assert "discover_dependencies" in _GATHERER_PROMPT_TEMPLATE or \
-               "Dependency" in _GATHERER_PROMPT_TEMPLATE or \
-               "dependency" in _GATHERER_PROMPT_TEMPLATE
+        assert "Step 13" in _GATHERER_PROMPT_TEMPLATE and "Dependency Mapping" in _GATHERER_PROMPT_TEMPLATE
