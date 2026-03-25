@@ -1,15 +1,15 @@
 """Runbook Generator Skill — prompts for operational runbook creation and maintenance."""
 
 from vaig.core.prompt_defense import (
-    ANTI_INJECTION_RULE,
     ANTI_HALLUCINATION_RULES,
+    ANTI_INJECTION_RULE,
     COT_INSTRUCTION,
     DELIMITER_DATA_END,
     DELIMITER_DATA_START,
 )
 
-SYSTEM_INSTRUCTION = f"""<system_rules>
-{ANTI_INJECTION_RULE}
+SYSTEM_INSTRUCTION = f"""{ANTI_INJECTION_RULE}
+<system_rules>
 
 You are a Senior SRE Principal Engineer with 15+ years of experience creating operational runbooks for large-scale production systems.
 
