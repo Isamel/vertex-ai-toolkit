@@ -152,7 +152,8 @@ def _format_hpa_section(hpa: Any) -> str:
     hpa_name = meta.name if meta else "<unknown>"
     lines.append(f"\n### Horizontal Pod Autoscaler: {hpa_name}")
 
-    current_replicas = (status.current_replicas or 0) if status else 0
+    current_replicas_raw = status.current_replicas if status else None
+    current_replicas: int | str = current_replicas_raw if current_replicas_raw is not None else "unknown"
     desired_replicas = (status.desired_replicas or 0) if status else 0
     min_replicas = spec.min_replicas if spec else None
     max_replicas = spec.max_replicas if spec else "?"

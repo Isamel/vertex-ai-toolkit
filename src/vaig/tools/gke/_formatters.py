@@ -353,6 +353,85 @@ def _serialise_item(item: Any, api: Any) -> Any:
     return api.sanitize_for_serialization(item)
 
 
+def _format_hpa_table(items: list[Any], wide: bool = False) -> str:
+    """Format HorizontalPodAutoscaler list as a kubectl-style table."""
+    _ = wide  # wide output not yet implemented for HPA
+    if not items:
+        return "No resources found."
+    lines: list[str] = []
+    header = "NAME                                     REFERENCE                         TARGETS     MINPODS   MAXPODS   REPLICAS   AGE"
+    lines.append(header)
+    for hpa in items:
+        name = hpa.metadata.name or ""
+        # Reference: Kind/Name from spec.scaleTargetRef
+        spec = hpa.spec
+        if spec and spec.scale_target_ref:
+            ref_kind = spec.scale_target_ref.kind or ""
+            ref_name = spec.scale_target_ref.name or ""
+            reference = f"{ref_kind}/{ref_name}"
+        else:
+            reference = "<unknown>"
+        # TARGETS: currentMetrics/metrics — show first metric as current/target
+        targets = "<unknown>"
+        if spec and spec.metrics:
+            # Use the first spec metric as the representative target
+            first_metric = spec.metrics[0]
+            if hasattr(first_metric, "to_dict"):
+                metric_dict = first_metric.to_dict()
+            elif hasattr(first_metric, "__dict__"):
+                metric_dict = first_metric.__dict__
+            else:
+                metric_dict = {}
+            mtype = metric_dict.get("type", "")
+            target_val = "?"
+            if mtype == "Resource":
+                resource = metric_dict.get("resource", {})
+                target = resource.get("target", {})
+                if target.get("type") == "Utilization":
+                    target_val = f"{target.get('averageUtilization', '?')}%"
+                elif target.get("type") == "AverageValue":
+                    target_val = str(target.get("averageValue", "?"))
+                else:
+                    target_val = str(target.get("value", "?"))
+            # Current from status.currentMetrics
+            status = hpa.status
+            current_val = "<unknown>"
+            if status and status.current_metrics:
+                first_cm = status.current_metrics[0]
+                if hasattr(first_cm, "to_dict"):
+                    cm_dict = first_cm.to_dict()
+                elif hasattr(first_cm, "__dict__"):
+                    cm_dict = first_cm.__dict__
+                else:
+                    cm_dict = {}
+                cm_type = cm_dict.get("type", "")
+                if cm_type == "Resource":
+                    r = cm_dict.get("resource", {})
+                    current = r.get("current", {})
+                    avg_util = current.get("averageUtilization")
+                    avg_val = current.get("averageValue")
+                    if avg_util is not None:
+                        current_val = f"{avg_util}%"
+                    elif avg_val is not None:
+                        current_val = str(avg_val)
+                    else:
+                        current_val = "<unknown>"
+            targets = f"{current_val}/{target_val}"
+        elif hpa.status and hpa.status.current_metrics:
+            targets = "<unknown>/?"
+        # MINPODS
+        min_pods = str(spec.min_replicas) if spec and spec.min_replicas is not None else "1"
+        # MAXPODS
+        max_pods = str(spec.max_replicas) if spec else "?"
+        # REPLICAS from status
+        status = hpa.status
+        replicas = str(status.current_replicas) if status and status.current_replicas is not None else "<unknown>"
+        age = _age(hpa.metadata.creation_timestamp)
+        line = f"{name:<41}{reference:<34}{targets:<12}{min_pods:<10}{max_pods:<10}{replicas:<11}{age}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _format_vpa_table(items: list[Any], wide: bool = False) -> str:
     """Format VerticalPodAutoscaler list as a kubectl-style table."""
     _ = wide  # wide output not yet implemented for VPA
@@ -441,6 +520,8 @@ def _format_items(resource: str, items: list[Any], output_format: str) -> str:
         "externalsecret": _format_external_secrets_table,
         "verticalpodautoscalers": _format_vpa_table,
         "verticalpodautoscaler": _format_vpa_table,
+        "horizontalpodautoscalers": _format_hpa_table,
+        "hpa": _format_hpa_table,
     }.get(resource)
 
     if formatter:
