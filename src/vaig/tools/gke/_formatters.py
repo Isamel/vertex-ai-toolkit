@@ -6,6 +6,17 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+# Annotation keys that identify a Deployment managed by Argo Rollouts.
+# Argo Rollouts deliberately sets spec.replicas=0 on the backing Kubernetes
+# Deployment (making it a passive stub) and manages pods itself via Rollout
+# objects.  Reading spec.replicas blindly on these gives a false "0/0" count.
+_ARGO_MANAGED_ANNOTATIONS: frozenset[str] = frozenset({
+    "rollout.argoproj.io/desired-replicas",
+    "rollout.argoproj.io/revision",
+    "rollout.argoproj.io/workload-generation",
+    "argo-rollouts.argoproj.io/managed-by-rollouts",
+})
+
 logger = logging.getLogger(__name__)
 
 # Sidecar container names injected by service meshes and observability agents.
@@ -156,12 +167,40 @@ def _format_deployments_table(items: list[Any], wide: bool = False) -> str:
     lines.append(header)
     for dep in items:
         name = dep.metadata.name or ""
-        desired = dep.spec.replicas if dep.spec and dep.spec.replicas is not None else 0
+        age = _age(dep.metadata.creation_timestamp)
         ready = dep.status.ready_replicas or 0 if dep.status else 0
         up_to_date = dep.status.updated_replicas or 0 if dep.status else 0
         available = dep.status.available_replicas or 0 if dep.status else 0
-        age = _age(dep.metadata.creation_timestamp)
-        line = f"{name:<41}{ready}/{desired:<6}{up_to_date:<13}{available:<12}{age}"
+
+        # Check if this Deployment is a stub managed by Argo Rollouts.
+        # Argo sets spec.replicas=0 on the backing Deployment — reading it
+        # directly would show a false "0/0".  Instead, use the actual desired
+        # count stored in the `rollout.argoproj.io/desired-replicas` annotation,
+        # or fall back to an "Argo" indicator when that annotation is absent.
+        spec_replicas = dep.spec.replicas if dep.spec and dep.spec.replicas is not None else 0
+        annotations: dict[str, str] = (dep.metadata.annotations or {}) if dep.metadata else {}
+        is_argo_managed = bool(annotations) and bool(annotations.keys() & _ARGO_MANAGED_ANNOTATIONS)
+
+        if is_argo_managed and spec_replicas == 0:
+            desired_str = annotations.get("rollout.argoproj.io/desired-replicas")
+            if desired_str is not None:
+                try:
+                    desired = int(desired_str)
+                except ValueError:
+                    desired = None
+            else:
+                desired = None
+
+            if desired is not None:
+                ready_col = f"{ready}/{desired}"
+            else:
+                # No desired-replicas annotation — show a clear Argo indicator
+                ready_col = "Argo"
+        else:
+            desired = spec_replicas
+            ready_col = f"{ready}/{desired}"
+
+        line = f"{name:<41}{ready_col:<8}{up_to_date:<13}{available:<12}{age}"
         if wide and dep.spec and dep.spec.template and dep.spec.template.spec:
             containers = [c.name for c in dep.spec.template.spec.containers or []]
             images = [c.image for c in dep.spec.template.spec.containers or []]

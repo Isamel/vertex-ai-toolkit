@@ -287,3 +287,121 @@ class TestHealthAnalyzerPromptArgoPart:
 
         assert "orphaned" in HEALTH_ANALYZER_PROMPT.lower()
         assert "NEVER flag these pods" in HEALTH_ANALYZER_PROMPT
+
+
+# ── Tests: _format_deployments_table() ───────────────────────
+
+
+def _make_dep_for_formatter(
+    name: str = "my-svc",
+    spec_replicas: int | None = 0,
+    ready_replicas: int = 0,
+    updated_replicas: int = 0,
+    available_replicas: int = 0,
+    annotations: dict | None = None,
+) -> MagicMock:
+    """Build a minimal mock Deployment for formatter tests."""
+    dep = MagicMock()
+    dep.metadata.name = name
+    dep.metadata.creation_timestamp = None
+    dep.metadata.annotations = annotations if annotations is not None else {}
+    dep.spec.replicas = spec_replicas
+    dep.spec.template = None  # wide mode not tested here
+    dep.status.ready_replicas = ready_replicas
+    dep.status.updated_replicas = updated_replicas
+    dep.status.available_replicas = available_replicas
+    return dep
+
+
+class TestFormatDeploymentsTableArgoAwareness:
+    """_format_deployments_table() must show correct replica counts for Argo-managed deployments."""
+
+    def test_argo_annotations_spec_zero_shows_actual_replicas_from_annotation(self) -> None:
+        """Deployment with Argo annotations + spec.replicas==0 → show actual replicas from annotation."""
+        dep = _make_dep_for_formatter(
+            spec_replicas=0,
+            annotations={"rollout.argoproj.io/desired-replicas": "3"},
+        )
+
+        from vaig.tools.gke._formatters import _format_deployments_table
+
+        result = _format_deployments_table([dep])
+
+        # Should show 0/3 (0 ready, 3 desired from annotation) — NOT 0/0
+        assert "0/3" in result
+        assert "0/0" not in result
+
+    def test_no_argo_annotations_spec_zero_shows_zero_zero(self) -> None:
+        """Normal deployment with spec.replicas==0 and no Argo annotations → 0/0 (unchanged behavior)."""
+        dep = _make_dep_for_formatter(
+            spec_replicas=0,
+            annotations={},
+        )
+
+        from vaig.tools.gke._formatters import _format_deployments_table
+
+        result = _format_deployments_table([dep])
+
+        assert "0/0" in result
+
+    def test_argo_annotations_no_desired_replicas_shows_argo_indicator(self) -> None:
+        """Argo-managed deployment but no desired-replicas annotation → show 'Argo' indicator instead of 0/0."""
+        dep = _make_dep_for_formatter(
+            spec_replicas=0,
+            annotations={"rollout.argoproj.io/revision": "5"},
+        )
+
+        from vaig.tools.gke._formatters import _format_deployments_table
+
+        result = _format_deployments_table([dep])
+
+        # Must NOT show 0/0 — should indicate Argo management
+        assert "0/0" not in result
+        assert "Argo" in result
+
+    def test_normal_deployment_spec_three_shows_three(self) -> None:
+        """Normal deployment with spec.replicas==3 → shows 3/3 (no regression)."""
+        dep = _make_dep_for_formatter(
+            spec_replicas=3,
+            ready_replicas=3,
+            updated_replicas=3,
+            available_replicas=3,
+            annotations={},
+        )
+
+        from vaig.tools.gke._formatters import _format_deployments_table
+
+        result = _format_deployments_table([dep])
+
+        assert "3/3" in result
+
+    def test_managed_by_rollouts_annotation_shows_argo_indicator(self) -> None:
+        """argo-rollouts.argoproj.io/managed-by-rollouts annotation also triggers indicator."""
+        dep = _make_dep_for_formatter(
+            spec_replicas=0,
+            annotations={"argo-rollouts.argoproj.io/managed-by-rollouts": "true"},
+        )
+
+        from vaig.tools.gke._formatters import _format_deployments_table
+
+        result = _format_deployments_table([dep])
+
+        assert "0/0" not in result
+        assert "Argo" in result
+
+    def test_argo_annotations_none_metadata_annotations_handled_gracefully(self) -> None:
+        """If metadata.annotations is None, formatter does not crash and falls back to spec.replicas."""
+        dep = _make_dep_for_formatter(
+            spec_replicas=2,
+            ready_replicas=2,
+            annotations=None,
+        )
+        # Simulate annotations being None at the object level
+        dep.metadata.annotations = None
+
+        from vaig.tools.gke._formatters import _format_deployments_table
+
+        result = _format_deployments_table([dep])
+
+        # No crash — shows normal replica count
+        assert "2/2" in result
