@@ -827,6 +827,17 @@ If neither ArgoCD tools nor kubectl_get data for ArgoCD Applications are availab
   with note: "Google-managed node — no action required"
 - Focus severity assessment EXCLUSIVELY on workload-level issues:
   pod health, deployment rollouts, HPA, service connectivity, application logs
+
+### Argo Rollouts Ownership Rules
+When gathered data includes deployments managed by Argo Rollouts:
+- A Deployment with ``Overall Status: Managed by Argo Rollout`` is a **stub** — Argo Rollouts
+  deliberately sets its ``spec.replicas=0``.  This is EXPECTED and CORRECT.
+  NEVER flag it as "scaled to zero", "unavailable", "degraded", or any health issue.
+- Pods owned by ReplicaSets that are controlled by a Rollout are NOT orphaned.
+  The ownership chain ``Rollout → ReplicaSet → Pod`` is valid.
+  NEVER flag these pods as "orphaned" or "without a parent Deployment".
+- The authoritative health source for Argo-managed workloads is the Rollout object
+  (phase, replica counts, strategy status), NOT the stub Deployment.
 """
 
 HEALTH_VERIFIER_PROMPT = f"""You are a Kubernetes verification agent. Your job is to VERIFY findings from the analyzer by making targeted tool calls specified in each finding's Verification Gap field.
@@ -1895,6 +1906,13 @@ canary and blueGreen strategies.  The ownership chain is:
     Rollout → ReplicaSet → Pod
 
 This is analogous to ``Deployment → ReplicaSet → Pod`` but uses the Argo Rollouts controller.
+
+**IMPORTANT — Deployment stubs**: When Argo Rollouts manages a workload, it deliberately sets
+``spec.replicas=0`` on the corresponding Kubernetes Deployment (making it a passive stub).
+The ``get_rollout_status`` tool will return ``Overall Status: Managed by Argo Rollout`` for
+these Deployments.  A ``Managed by Argo Rollout`` status MUST NOT be reported as "scaled to
+zero", "unavailable", or any other health issue.  It is the expected and correct state.
+The actual replica counts and health information live in the Rollout object, not the Deployment.
 
 For each namespace, perform:
 
