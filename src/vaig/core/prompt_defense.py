@@ -45,7 +45,13 @@ ANTI_HALLUCINATION_RULES = """1. NEVER invent, fabricate, or assume data points,
 5. Every claim MUST be backed by evidence from the provided data — cite specific values, lines, timestamps, or records.
 6. When referencing metrics, always use the EXACT values from the provided data — never round, estimate, or approximate unless explicitly stated as an approximation."""
 
-COT_INSTRUCTION = """Before generating your final structured response, you MUST think through the problem and analyze the evidence step-by-step. Document your reasoning process inside a <thinking>...</thinking> block. Only after this block is closed, output the final required format."""
+COT_INSTRUCTION = (
+    "Before generating your final structured response, carefully think through "
+    "the problem and analyze the evidence step-by-step internally. Do not "
+    "expose your full internal reasoning or any <thinking> blocks in the output. "
+    "Provide only the final required format, optionally including a brief, high-"
+    "level rationale section if helpful."
+)
 
 
 def wrap_untrusted_content(content: str) -> str:
