@@ -1285,9 +1285,10 @@ available, use the best data available from the analyzer summary.
 
 **Scaling data mapping** — when ``get_scaling_status`` output is present in the
 upstream data, populate ``ServiceStatus`` fields as follows:
-- ``cpu_usage`` / ``memory_usage``: If the scaling tool reports current utilisation
-  percentages relative to HPA targets, prefer those values over the raw ``kubectl_top``
-  aggregates when they are more precise.
+- ``cpu_usage`` / ``memory_usage``: Always use ``kubectl_top`` absolute values for these
+  fields — they represent real-time actual resource consumption.  ``get_scaling_status``
+  HPA percentages describe utilisation *relative to HPA targets* and serve a different
+  purpose (scaling health assessment); do NOT substitute them for absolute usage figures.
 - ``issues``: Append a brief scaling note when a ceiling-hit or VPA conflict is detected,
   e.g. ``"HPA ceiling hit (5/5 replicas)"`` or ``"VPA-HPA conflict: VPA Auto mode with
   CPU-based HPA"``.  Keep this field to a single sentence — detailed analysis goes into
@@ -1298,11 +1299,13 @@ upstream data, populate ``ServiceStatus`` fields as follows:
 **CPU and memory usage fields** — for ``service_statuses[].cpu_usage`` and ``memory_usage``:
 - Use TOTAL across all pods for the service (sum all pods, do NOT average)
 - If only per-container data is available, first sum containers within each pod, then sum across all pods
-- **From kubectl_top data**: use absolute units in cores/GiB notation — "0.563 cores" for CPU, "42.7Gi" for memory
+- **From kubectl_top data** (preferred for cpu_usage/memory_usage — real-time actual usage):
+  use absolute units — "0.563 cores" for CPU, "42.7Gi" for memory
   - CPU is always expressed as decimal cores (e.g. "0.018 cores", "0.500 cores", "2.000 cores") — NEVER millicores ("m")
-  - Memory is always expressed as "X.XGi" (if ≥1 GiB) or "XXXMi" (if <1 GiB)
-- **From get_scaling_status HPA data**: percentages are acceptable (e.g., "45% of request")
-- Prefer kubectl_top absolute values when both are available
+  - Memory uses decimal Gi notation (e.g. "42.7Gi", "0.5Gi") if ≥ 1 GiB, or Mi notation (e.g. "105Mi", "512Mi") if < 1 GiB
+- **From get_scaling_status HPA data** (use for scaling health only, NOT for cpu_usage/memory_usage):
+  HPA percentages (e.g. "45% of request") belong in ``findings`` with ``category="scaling"``,
+  not in the ``cpu_usage`` / ``memory_usage`` fields
 - Optionally add context: "0.563 cores total (10 pods)"
 
 **Management context** — when the workload gatherer detected management context
@@ -1749,7 +1752,7 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
       Deployment: payment-svc | Pods: 10 | CPU Total: 0.563 cores | Mem Total: 42.7Gi | CPU/Pod avg: 0.056 cores | Mem/Pod avg: 4.3Gi
     - The per-DEPLOYMENT TOTAL is what the reporter needs for cpu_usage/memory_usage fields.
     - CPU values are always expressed as decimal cores (e.g. "0.563 cores") — NEVER millicore "m" notation.
-    - Memory values are always "X.XGi" (if ≥1 GiB) or "XXXMi" (if <1 GiB).
+    - Memory uses decimal Gi notation (e.g. "42.7Gi", "0.5Gi") if ≥ 1 GiB, or Mi notation (e.g. "105Mi", "512Mi") if < 1 GiB.
     - Per-container breakdown goes in Raw Findings for detailed analysis.
 3. For any pod NOT in Running/Succeeded state: ``get_container_status(name="<pod>", namespace="<ns>")``
 4. For pods with restart count > 3: ``kubectl_logs(pod="<pod>", namespace="<ns>")``
