@@ -353,6 +353,66 @@ def _serialise_item(item: Any, api: Any) -> Any:
     return api.sanitize_for_serialization(item)
 
 
+def _k8s_object_to_dict(obj: Any) -> dict[str, Any]:
+    """Safely convert a K8s API object to a dictionary."""
+    if hasattr(obj, "to_dict"):
+        result: dict[str, Any] = obj.to_dict()
+        return result
+    if hasattr(obj, "__dict__"):
+        return dict(obj.__dict__)
+    return {}
+
+
+def _format_hpa_table(items: list[Any], wide: bool = False) -> str:
+    """Format HorizontalPodAutoscaler list as a kubectl-style table."""
+    from vaig.tools.gke.scaling import _metric_current_value, _metric_target_value  # noqa: WPS433
+
+    _ = wide  # wide output not yet implemented for HPA
+    if not items:
+        return "No resources found."
+    lines: list[str] = []
+    header = "NAME                                     REFERENCE                         TARGETS     MINPODS   MAXPODS   REPLICAS   AGE"
+    lines.append(header)
+    for hpa in items:
+        name = hpa.metadata.name or ""
+        # Reference: Kind/Name from spec.scaleTargetRef
+        spec = hpa.spec
+        if spec and spec.scale_target_ref:
+            ref_kind = spec.scale_target_ref.kind or ""
+            ref_name = spec.scale_target_ref.name or ""
+            reference = f"{ref_kind}/{ref_name}"
+        else:
+            reference = "<unknown>"
+        # TARGETS: currentMetrics/metrics — show first metric as current/target
+        targets = "<unknown>"
+        if spec and spec.metrics:
+            # Use the first spec metric as the representative target
+            first_metric = spec.metrics[0]
+            metric_dict = _k8s_object_to_dict(first_metric)
+            _mtype, _mname, target_val = _metric_target_value(metric_dict)
+            # Current from status.currentMetrics
+            status = hpa.status
+            current_val = "<unknown>"
+            if status and status.current_metrics:
+                first_cm = status.current_metrics[0]
+                cm_dict = _k8s_object_to_dict(first_cm)
+                current_val = _metric_current_value(cm_dict)
+            targets = f"{current_val}/{target_val}"
+        elif hpa.status and hpa.status.current_metrics:
+            targets = "<unknown>/?"
+        # MINPODS
+        min_pods = str(spec.min_replicas) if spec and spec.min_replicas is not None else "1"
+        # MAXPODS
+        max_pods = str(spec.max_replicas) if spec else "?"
+        # REPLICAS from status
+        status = hpa.status
+        replicas = str(status.current_replicas) if status and status.current_replicas is not None else "<unknown>"
+        age = _age(hpa.metadata.creation_timestamp)
+        line = f"{name:<41}{reference:<34}{targets:<12}{min_pods:<10}{max_pods:<10}{replicas:<11}{age}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _format_vpa_table(items: list[Any], wide: bool = False) -> str:
     """Format VerticalPodAutoscaler list as a kubectl-style table."""
     _ = wide  # wide output not yet implemented for VPA
@@ -441,6 +501,8 @@ def _format_items(resource: str, items: list[Any], output_format: str) -> str:
         "externalsecret": _format_external_secrets_table,
         "verticalpodautoscalers": _format_vpa_table,
         "verticalpodautoscaler": _format_vpa_table,
+        "horizontalpodautoscalers": _format_hpa_table,
+        "hpa": _format_hpa_table,
     }.get(resource)
 
     if formatter:

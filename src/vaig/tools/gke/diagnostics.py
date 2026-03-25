@@ -168,9 +168,15 @@ def get_rollout_status(
         lines.append(f"Namespace:  {ns}")
 
         # ── Replica counts ────────────────────────────────────
-        desired = dep.spec.replicas if dep.spec and dep.spec.replicas is not None else 0
+        # When HPA manages the deployment, K8s sets spec.replicas=None.
+        # In that case use status.replicas as the effective desired count so
+        # we do NOT wrongly report the deployment as "Scaled to zero".
+        # Only spec.replicas == 0 (explicit) means intentionally scaled down.
+        spec_replicas = dep.spec.replicas if dep.spec else None
         status = dep.status
         current = status.replicas or 0 if status else 0
+        # HPA-managed: fall back to current running count when spec.replicas is None
+        desired = spec_replicas if spec_replicas is not None else current
         ready = status.ready_replicas or 0 if status else 0
         updated = status.updated_replicas or 0 if status else 0
         available = status.available_replicas or 0 if status else 0
@@ -232,7 +238,7 @@ def get_rollout_status(
             overall_state = "Complete"
         elif progressing_cond and progressing_cond.status == "True":
             overall_state = "Progressing"
-        elif desired == 0 and ready == 0:
+        elif spec_replicas == 0 and ready == 0:
             overall_state = "Scaled to zero"
 
         lines.append("")
