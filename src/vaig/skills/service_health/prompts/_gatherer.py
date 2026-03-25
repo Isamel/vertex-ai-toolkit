@@ -21,7 +21,7 @@ Use ONLY these parameter names when calling tools. Using wrong names (e.g. `pod_
 IMPORTANT:
 - `kubectl_logs` uses `pod` (NOT `pod_name`)
 - `get_container_status` uses `name` (NOT `pod_name`)
-- `kubectl_describe` uses `resource` (NOT `kind`)
+- `kubectl_describe` uses `resource_type` (NOT `kind`)
 - `kubectl_logs` does NOT have a `previous` parameter — it automatically fetches previous logs for CrashLoopBackOff pods
 
 ## EXECUTION ORDER — FOLLOW THIS EXACT SEQUENCE
@@ -70,7 +70,7 @@ Execute the following steps to build a comprehensive health snapshot. Collect da
   a. `get_rollout_status(name=<deploy>, namespace=<ns>)` — Is rollout Progressing, Complete, Stalled, or Failed?
   b. `get_rollout_history(name=<deploy>, namespace=<ns>)` — What revisions exist? Which is active?
   c. `kubectl_get("replicasets", namespace=<ns>)` — Find ReplicaSets owned by this deployment
-  d. `kubectl_describe("replicaset", name=<rs>, namespace=<ns>)` — See FailedCreate events on the RS
+  d. `kubectl_describe(resource_type="replicaset", name=<rs>, namespace=<ns>)` — See FailedCreate events on the RS
   e. `kubectl_get("deployment", namespace=<ns>, name=<deploy>, output="yaml")` — Get FULL deployment spec for inspection (volumes, mounts, containers, etc.)
   f. When a deployment shows spec errors (duplicate volumes, unexpected sidecars/init-containers):
      - `kubectl_get("mutatingwebhookconfigurations")` — List ALL mutating webhooks
@@ -104,11 +104,11 @@ Execute the following steps to build a comprehensive health snapshot. Collect da
 - For any pod showing CrashLoopBackOff, Error, Pending, or high restart counts:
   a. `get_container_status(name=<pod>, namespace=<ns>)` — See ALL container states, init containers, sidecar status, volume mounts, env sources
   b. `kubectl_logs(pod=<pod>, namespace=<ns>)` — Container logs (automatically fetches previous logs for CrashLoopBackOff pods)
-  c. `kubectl_describe("pod", name=<pod>, namespace=<ns>)` — Pod events and conditions
+  c. `kubectl_describe(resource_type="pod", name=<pod>, namespace=<ns>)` — Pod events and conditions
 
 ### Step 6: HPA & Autoscaling Investigation
 - For any HPA not meeting targets or showing unknown/failed metrics:
-  a. `kubectl_describe("hpa", name=<hpa>, namespace=<ns>)` — Shows conditions, FailedGetExternalMetric events, metric status
+  a. `kubectl_describe(resource_type="hpa", name=<hpa>, namespace=<ns>)` — Shows conditions, FailedGetExternalMetric events, metric status
   b. If external metrics are failing, use `gcloud_monitoring_query(metric_type="<metric>", interval_minutes=30)` to verify the metric exists and has data
   c. Check if the HPA target deployment is healthy (cross-reference with Step 4)
 
@@ -254,7 +254,7 @@ You MUST make at least the following tool calls before producing your final outp
 
 If ANY deployment shows unavailable replicas, you MUST ALSO call:
 6. `kubectl_get("replicasets", namespace=<ns>)`
-7. `kubectl_describe("replicaset", name=<rs>)` for the ACTIVE ReplicaSet
+7. `kubectl_describe(resource_type="replicaset", name=<rs>)` for the ACTIVE ReplicaSet
 8. `get_rollout_status(name=<deploy>)`
 
 If you produce output without making calls 1-5, the output will be REJECTED and you will be asked to redo the investigation.

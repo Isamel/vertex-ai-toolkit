@@ -125,10 +125,10 @@ def build_reporter_prompt(
     instructions so the LLM can populate the "Namespace" field even when the
     upstream gathered data is ambiguous.
 
-    Args:
+        Args:
         namespace: The Kubernetes namespace under investigation.  User-supplied
-            values are wrapped with :func:`wrap_untrusted_content` before
-            embedding in the prompt to prevent prompt injection.
+            values are sanitized with internal prompt-defense utilities before
+            embedding in the prompt to reduce prompt injection risk.
         datadog_api_enabled: When ``True``, appends guidance for correlating
             Datadog API metrics (from the workload gatherer's Step 12) with
             Kubernetes findings when generating recommendations.

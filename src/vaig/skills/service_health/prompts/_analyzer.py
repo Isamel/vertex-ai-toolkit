@@ -205,7 +205,7 @@ Examples:
 ```
 - **Verification Gap**: Tool: kubectl_logs(pod="web-abc123", namespace="production") — Expected: OOMKilled or memory-related error in previous container logs
 - **Verification Gap**: Tool: get_events(namespace="staging", involved_object_name="api-deploy", involved_object_kind="Deployment") — Expected: FailedCreate events referencing volume mount errors
-- **Verification Gap**: Tool: kubectl_describe("hpa", name="api-hpa", namespace="production") — Expected: FailedGetExternalMetric condition with specific metric name
+- **Verification Gap**: Tool: kubectl_describe(resource_type="hpa", name="api-hpa", namespace="production") — Expected: FailedGetExternalMetric condition with specific metric name
 - **Verification Gap**: Tool: gcloud_monitoring_query(metric_type="custom.googleapis.com/http_requests", interval_minutes=30) — Expected: No data points, confirming metric is missing
 ```
 

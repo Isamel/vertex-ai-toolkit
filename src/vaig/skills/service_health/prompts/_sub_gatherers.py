@@ -263,12 +263,12 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
     - Per-container breakdown goes in Raw Findings for detailed analysis.
 3. For any pod NOT in Running/Succeeded state: ``get_container_status(name="<pod>", namespace="<ns>")``
 4. For pods with restart count > 3: ``kubectl_logs(pod="<pod>", namespace="<ns>")``
-5. For CrashLoopBackOff pods: ``kubectl_describe(resource="pod", name="<pod>", namespace="<ns>")``
+5. For CrashLoopBackOff pods: ``kubectl_describe(resource_type="pod", name="<pod>", namespace="<ns>")``
 
 ### Step 4 — Deployment Deep-Dive
 6. ``kubectl_get(resource="deployments", namespace="<target>", output="wide")`` — all deployments
 7. ``get_rollout_status(name="<name>", namespace="<ns>")`` for each deployment
-8. For unhealthy deployments: ``kubectl_describe(resource="deployment", name="<name>", namespace="<ns>")``
+8. For unhealthy deployments: ``kubectl_describe(resource_type="deployment", name="<name>", namespace="<ns>")``
 9. ``get_rollout_history(name="<name>", namespace="<ns>")`` for recently changed deployments
 10. Check ``kubectl_get_labels`` equivalent via ``kubectl_describe`` to detect management annotations
    (ArgoCD: ``argocd.argoproj.io/``, Flux: ``fluxcd.io/``, Helm: ``app.kubernetes.io/managed-by: Helm``,
@@ -320,14 +320,14 @@ For **every** pod that is in ``CrashLoopBackOff``, ``Error``, ``OOMKilled``, or 
 state, trace the full ownership chain before moving on:
 
 a. **Identify owning ReplicaSet** — inspect the pod's ``ownerReferences`` field from the
-   ``kubectl_describe(resource="pod", name="<pod>", namespace="<ns>")`` output.
-   For ``CrashLoopBackOff`` pods this was already collected in Step 2 (item 5).
-   For ``Error``, ``OOMKilled``, or ``ImagePullBackOff`` pods it may not yet be available —
-   **run** ``kubectl_describe(resource="pod", name="<pod>", namespace="<ns>")`` now if you
+   ``kubectl_describe(resource_type="pod", name="<pod>", namespace="<ns>")`` output.
+    For ``CrashLoopBackOff`` pods this was already collected in Step 2 (item 5).
+    For ``Error``, ``OOMKilled``, or ``ImagePullBackOff`` pods it may not yet be available —
+    **run** ``kubectl_describe(resource_type="pod", name="<pod>", namespace="<ns>")`` now if you
    have not already done so.  Look for ``kind: ReplicaSet`` and record its ``name``.
 
 b. **Identify owning Deployment** — inspect the ReplicaSet's ``ownerReferences`` via
-   ``kubectl_describe(resource="replicaset", name="<rs-name>", namespace="<ns>")``
+   ``kubectl_describe(resource_type="replicaset", name="<rs-name>", namespace="<ns>")``
    and record the owning Deployment name.
 
 c. **Correlate with rollout revision** — call
@@ -345,11 +345,11 @@ mark it as ``SKIPPED — tool unavailable`` in the Deployment Issues section.
 ### Step 5 — Service & Endpoint Connectivity
 12. ``kubectl_get(resource="services", namespace="<target>", output="wide")``
 13. ``kubectl_get(resource="endpoints", namespace="<target>")``
-14. For services with 0 endpoints: ``kubectl_describe(resource="service", name="<svc>", namespace="<ns>")``
+14. For services with 0 endpoints: ``kubectl_describe(resource_type="service", name="<svc>", namespace="<ns>")``
 
 ### Step 6 — HPA & Scaling Status
 15. ``kubectl_get(resource="hpa", namespace="<target>", output="wide")``
-16. For HPA at maxReplicas: ``kubectl_describe(resource="hpa", name="<hpa>", namespace="<ns>")``
+16. For HPA at maxReplicas: ``kubectl_describe(resource_type="hpa", name="<hpa>", namespace="<ns>")``
 17. ``gcloud_monitoring_query(...)`` if HPA uses custom metrics and metric fetch is failing
 
 ### Step 6b — Scaling Deep-Dive (HPA + VPA)
@@ -750,7 +750,7 @@ agents running in parallel.
 
 ### Step 9 — Storage & PVC Health
 8. ``kubectl_get(resource="pvc", namespace="<target>", output="wide")`` — PVC status
-9. For any PVC in Pending/Lost state: ``kubectl_describe(resource="pvc", name="<pvc>", namespace="<ns>")``
+9. For any PVC in Pending/Lost state: ``kubectl_describe(resource_type="pvc", name="<pvc>", namespace="<ns>")``
 10. ``kubectl_get(resource="pv", output="wide")`` — PersistentVolume status
 
 ### Step 10 — GitOps / Helm / ArgoCD Investigation
