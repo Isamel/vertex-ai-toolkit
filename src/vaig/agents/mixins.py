@@ -389,7 +389,7 @@ class ToolLoopMixin:
             f"Tool-use loop exceeded maximum iterations ({max_iterations}). Executed {len(tools_executed)} tool calls."
         )
         logger.warning(msg)
-        raise MaxIterationsError(msg, iterations=max_iterations)
+        raise MaxIterationsError(msg, iterations=max_iterations, partial_output=accumulated_llm_text)
 
     # ── Budget warning helper ────────────────────────────────
 
@@ -1177,7 +1177,7 @@ class ToolLoopMixin:
             f"Tool-use loop exceeded maximum iterations ({max_iterations}). Executed {len(tools_executed)} tool calls."
         )
         logger.warning(msg)
-        raise MaxIterationsError(msg, iterations=max_iterations)
+        raise MaxIterationsError(msg, iterations=max_iterations, partial_output=accumulated_llm_text)
 
     # ── Async tool execution (overridable) ────────────────────
 

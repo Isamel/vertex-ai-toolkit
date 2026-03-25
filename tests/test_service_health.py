@@ -2199,19 +2199,19 @@ class TestParallelAgentsConfig:
             )
 
     def test_gatherer_max_iterations_within_range(self) -> None:
-        """All gatherers must have max_iterations between 8 and 15 (inclusive).
+        """All gatherers must have max_iterations between 8 and 20 (inclusive).
 
-        Upper bound is 15 to cover clusters up to 10 nodes
-        (5 base calls + 10 per-node calls). Dynamic calculation is planned
-        for Phase 2 item 3.5 (split workload_gatherer).
+        Upper bound is 20 to accommodate workload_gatherer's 11 minimum mandatory
+        tool calls for Argo Rollouts clusters plus a 9-iteration buffer for
+        degraded pods with ownership chain tracing (Pod → ReplicaSet → Deployment).
         """
         agents = self._get_agents()
         parallel = [a for a in agents if a.get("parallel_group") == "gather"]
         for agent in parallel:
             iters = agent.get("max_iterations", 0)
-            assert 8 <= iters <= 15, (
+            assert 8 <= iters <= 20, (
                 f"Gatherer '{agent['name']}' has max_iterations={iters}, "
-                "expected 8–15"
+                "expected 8–20"
             )
 
     def test_gatherer_temperature_is_zero(self) -> None:
@@ -3196,14 +3196,18 @@ class TestWorkloadGathererSplit:
         assert isinstance(result, str)
         assert len(result) > 200
 
-    def test_workload_gatherer_max_iterations_is_twelve_in_pipeline(self) -> None:
-        """workload_gatherer must have max_iterations=12 (static) in get_parallel_agents_config()."""
+    def test_workload_gatherer_max_iterations_is_twenty_in_pipeline(self) -> None:
+        """workload_gatherer must have max_iterations=20 (static) in get_parallel_agents_config().
+
+        Bumped from 12 to 20: 11 minimum mandatory tool calls for Argo Rollouts clusters
+        plus 9 buffer iterations for degraded pods with ownership chain tracing.
+        """
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         agents = ServiceHealthSkill().get_parallel_agents_config()
         workload = next(a for a in agents if a["name"] == "workload_gatherer")
-        assert workload["max_iterations"] == 12, (
-            f"workload_gatherer has max_iterations={workload['max_iterations']}, expected 12."
+        assert workload["max_iterations"] == 20, (
+            f"workload_gatherer has max_iterations={workload['max_iterations']}, expected 20."
         )
 
     def test_workload_gatherer_no_datadog_step_block(self) -> None:
