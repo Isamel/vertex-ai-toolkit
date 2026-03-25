@@ -19,6 +19,7 @@ from vaig.tools.categories import (
     KUBERNETES_WRITE,
     LOGGING,
     MESH,
+    MONITORING,
     SCALING,
 )
 
@@ -51,6 +52,7 @@ from .helm import (
     helm_release_values,
 )
 from .kubectl import kubectl_get_labels
+from .monitoring import get_pod_metrics
 from .scaling import get_scaling_status
 
 if TYPE_CHECKING:
@@ -1056,6 +1058,60 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             execute=lambda name, namespace="default",
                     _cfg=gke_config: get_scaling_status(
                 name, gke_config=_cfg, namespace=namespace,
+            ),
+        ),
+        # ── Cloud Monitoring metrics tools ────────────────────
+        ToolDef(
+            name="get_pod_metrics",
+            description=(
+                "Fetch historical CPU and memory metrics from Google Cloud Monitoring "
+                "for GKE pods matching a namespace and pod-name prefix. "
+                "Returns a Markdown summary table with per-pod average, max, latest "
+                "value, and trend direction (↑ rising, ↓ falling, → stable) over "
+                "the requested time window. "
+                "Use this for HISTORICAL trends (default: last 60 minutes). "
+                "For real-time current usage, use ``kubectl_top`` instead. "
+                "Requires ``roles/monitoring.viewer`` on the GCP project. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace to query (e.g. 'default', 'production').",
+                ),
+                ToolParam(
+                    name="pod_name_prefix",
+                    type="string",
+                    description=(
+                        "Pod name prefix to match (e.g. 'frontend-' matches "
+                        "'frontend-abc-123', 'frontend-xyz-456')."
+                    ),
+                ),
+                ToolParam(
+                    name="window_minutes",
+                    type="integer",
+                    description="Time window in minutes to query (default: 60). Max recommended: 1440 (24h).",
+                    required=False,
+                ),
+                ToolParam(
+                    name="metric_type",
+                    type="string",
+                    description=(
+                        "Which metrics to fetch: 'cpu', 'memory', or 'all' (default: 'all'). "
+                        "Use 'cpu' or 'memory' to reduce API calls when only one metric is needed."
+                    ),
+                    required=False,
+                ),
+            ],
+            categories=frozenset({MONITORING, KUBERNETES}),
+            execute=lambda namespace, pod_name_prefix, window_minutes=60,
+                    metric_type="all", _cfg=gke_config: get_pod_metrics(
+                namespace=namespace,
+                pod_name_prefix=pod_name_prefix,
+                gke_config=_cfg,
+                window_minutes=window_minutes,
+                metric_type=metric_type,
             ),
         ),
     ]

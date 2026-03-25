@@ -90,7 +90,8 @@ _CORE_TOOLS_TABLE = """\
 | `gcloud_monitoring_query` | `metric_type` | `project`, `interval_minutes`, `aggregation`, `filter_str` |
 | `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |
 | `get_scaling_status` | `name` | `namespace` |
-| `get_datadog_config` | | `namespace`, `deployment` |"""
+| `get_datadog_config` | | `namespace`, `deployment` |
+| `get_pod_metrics` | `namespace`, `pod_name_prefix` | `window_minutes`, `metric_type` |"""
 
 _HELM_TOOLS_TABLE = """\
 | `helm_list_releases` | | `namespace`, `force_refresh` |
@@ -1733,9 +1734,12 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
 
 ### Step 2 — Pod Status Analysis
 1. ``kubectl_get(resource="pods", namespace="<target>", output="wide")`` — all pods
-2. ``kubectl_top(resource_type="pods", namespace="<target>")`` — CPU/memory usage per pod
+2. ``kubectl_top(resource_type="pods", namespace="<target>")`` — real-time CPU/memory usage per pod
     This is MANDATORY — the reporter needs real CPU and memory values for the Service Status table.
     If this call fails, record the error and note "kubectl_top unavailable" — do NOT fabricate values.
+    For **historical trends** (past 1h by default), also call ``get_pod_metrics(namespace="<target>", pod_name_prefix="<workload-prefix>")``
+    to retrieve Cloud Monitoring time-series data (Avg/Max/Latest/Trend per pod). Use ``kubectl_top``
+    for current-state values in the Service Status table and ``get_pod_metrics`` for trend context.
     When populating the **Service Status** table (one row per workload: Deployment, StatefulSet,
     DaemonSet, Job, or CronJob), aggregate these per-pod metrics at the workload level:
     - Associate each pod with its owning workload using ownerReferences or standard labels
