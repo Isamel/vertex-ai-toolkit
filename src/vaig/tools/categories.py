@@ -40,3 +40,6 @@ ARGO_ROLLOUTS: str = "argo_rollouts"
 #: Kubernetes write/mutation operations (scale, restart, label, annotate).
 #: Excluded from read-only gatherer agents — only remediation agents should include this.
 KUBERNETES_WRITE: str = "kubernetes_write"
+
+#: Cloud Monitoring metrics tools (historical CPU/memory time series from Cloud Monitoring).
+MONITORING: str = "monitoring"

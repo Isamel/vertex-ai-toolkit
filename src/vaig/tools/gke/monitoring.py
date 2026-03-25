@@ -1,0 +1,440 @@
+"""GKE Cloud Monitoring metrics — historical CPU and memory pod metrics.
+
+Wraps the Google Cloud Monitoring ``list_time_series()`` API to fetch
+historical pod-level CPU and memory metrics for pods matching a namespace
+and pod-name prefix. Designed for the service-health pipeline: produces a
+concise LLM-friendly summary table with trend indicators.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
+
+from vaig.tools.base import ToolResult
+
+if TYPE_CHECKING:
+    from vaig.core.config import GKEConfig
+
+logger = logging.getLogger(__name__)
+
+# ── Lazy import guards ────────────────────────────────────────
+
+_MONITORING_AVAILABLE = True
+try:
+    from google.api_core import exceptions as gcp_exceptions  # noqa: WPS433
+    from google.api_core.exceptions import PermissionDenied  # noqa: WPS433
+    from google.cloud import monitoring_v3  # noqa: WPS433
+    from google.cloud.monitoring_v3.services.metric_service import (  # noqa: WPS433
+        MetricServiceClient,
+    )
+except ImportError:
+    _MONITORING_AVAILABLE = False
+    gcp_exceptions = None  # type: ignore[assignment]
+    PermissionDenied = None  # type: ignore[assignment,misc]
+    monitoring_v3 = None  # type: ignore[assignment]
+    MetricServiceClient = None  # type: ignore[assignment,misc]
+
+
+def _monitoring_unavailable() -> ToolResult:
+    return ToolResult(
+        output=(
+            "Google Cloud Monitoring client library is not available. "
+            "Install it with: pip install google-cloud-monitoring"
+        ),
+        error=True,
+    )
+
+
+# ── Metric type constants ─────────────────────────────────────
+
+_CPU_METRIC = "kubernetes.io/container/cpu/core_usage_time"
+_MEMORY_METRIC = "kubernetes.io/container/memory/used_bytes"
+
+
+# ── Core helpers ──────────────────────────────────────────────
+
+
+def _build_metric_filter(
+    metric_type: str,
+    cluster_name: str,
+    namespace: str,
+    pod_name_prefix: str,
+) -> str:
+    """Build a Cloud Monitoring filter string for a GKE container metric.
+
+    Args:
+        metric_type: Full metric type string (e.g. ``kubernetes.io/container/cpu/core_usage_time``).
+        cluster_name: GKE cluster name.
+        namespace: Kubernetes namespace.
+        pod_name_prefix: Pod name prefix for regex matching.
+
+    Returns:
+        A Cloud Monitoring filter string suitable for ``list_time_series()``.
+    """
+    # Escape any regex metacharacters in prefix so they match literally
+    escaped_prefix = re.escape(pod_name_prefix)
+    return (
+        f'metric.type = "{metric_type}"'
+        f' AND resource.type = "k8s_container"'
+        f' AND resource.labels.cluster_name = "{cluster_name}"'
+        f' AND resource.labels.namespace_name = "{namespace}"'
+        f' AND resource.labels.pod_name = monitoring.regex.full_match("^{escaped_prefix}.*")'
+    )
+
+
+def _query_time_series(
+    client: Any,
+    project_id: str,
+    metric_filter: str,
+    metric_type: str,
+    window_minutes: int,
+) -> list[Any]:
+    """Query Cloud Monitoring time series for the given filter and window.
+
+    Args:
+        client: A ``MetricServiceClient`` instance.
+        project_id: GCP project ID.
+        metric_filter: The Cloud Monitoring filter string.
+        metric_type: One of ``_CPU_METRIC`` or ``_MEMORY_METRIC``.
+        window_minutes: How many minutes back from now to query.
+
+    Returns:
+        A list of ``TimeSeries`` objects (may be empty).
+    """
+    now = datetime.now(tz=UTC)
+    start = now - timedelta(minutes=window_minutes)
+
+    interval = monitoring_v3.TimeInterval(
+        {
+            "end_time": {"seconds": int(now.timestamp())},
+            "start_time": {"seconds": int(start.timestamp())},
+        }
+    )
+
+    # Choose aligner per metric type:
+    # CPU is a cumulative counter — use ALIGN_RATE to get cores/s then scale.
+    # Memory is a gauge — use ALIGN_MEAN.
+    is_cpu = metric_type == _CPU_METRIC
+    aligner = (
+        monitoring_v3.Aggregation.Aligner.ALIGN_RATE
+        if is_cpu
+        else monitoring_v3.Aggregation.Aligner.ALIGN_MEAN
+    )
+
+    aggregation = monitoring_v3.Aggregation(
+        {
+            "alignment_period": {"seconds": 60},
+            "per_series_aligner": aligner,
+            "cross_series_reducer": monitoring_v3.Aggregation.Reducer.REDUCE_SUM,
+            "group_by_fields": [
+                "resource.labels.pod_name",
+                "resource.labels.namespace_name",
+            ],
+        }
+    )
+
+    request = monitoring_v3.ListTimeSeriesRequest(
+        name=f"projects/{project_id}",
+        filter=metric_filter,
+        interval=interval,
+        view=monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
+        aggregation=aggregation,
+    )
+
+    results = list(client.list_time_series(request=request))
+    return results
+
+
+def _extract_points_values(time_series: Any) -> list[float]:
+    """Extract float values from a TimeSeries object's data points.
+
+    Handles both double and int64 typed point values.
+
+    Cloud Monitoring returns points in reverse chronological order (newest
+    first). This function reverses them so callers receive values in
+    chronological order (oldest first), which is required for correct
+    trend calculation.
+    """
+    values: list[float] = []
+    for point in time_series.points:
+        val = point.value
+        if hasattr(val, "double_value"):
+            values.append(val.double_value)
+        elif hasattr(val, "int64_value"):
+            values.append(float(val.int64_value))
+    # Reverse: API gives newest-first; callers expect oldest-first
+    return list(reversed(values))
+
+
+def _calculate_trend(values: list[float]) -> str:
+    """Calculate trend direction from a list of float data points.
+
+    Compares the last 25% of values to the first 25%. Returns:
+    - ``↑`` if the tail average is > 10% higher than the head average
+    - ``↓`` if the tail average is > 10% lower than the head average
+    - ``→`` otherwise (stable)
+
+    Args:
+        values: Chronologically ordered float data points.
+
+    Returns:
+        One of ``"↑"``, ``"↓"``, or ``"→"``.
+    """
+    if len(values) < 4:
+        return "→"
+
+    quarter = max(1, len(values) // 4)
+    head_avg = sum(values[:quarter]) / quarter
+    tail_avg = sum(values[-quarter:]) / quarter
+
+    if head_avg == 0:
+        return "→"
+
+    change_pct = round((tail_avg - head_avg) / head_avg, 10)
+    if change_pct > 0.10:
+        return "↑"
+    if change_pct < -0.10:
+        return "↓"
+    return "→"
+
+
+def _format_metric_value(value: float, metric_type: str) -> str:
+    """Format a float metric value for human-readable display.
+
+    CPU (rate): expressed in millicores (m), e.g. 125m.
+    Memory (bytes): expressed in MiB or GiB.
+    """
+    if metric_type == _CPU_METRIC:
+        # ALIGN_RATE gives cores/s — multiply by 1000 for millicores
+        millicores = value * 1000
+        return f"{millicores:.0f}m"
+    else:
+        # Memory in bytes → MiB or GiB
+        mib = value / (1024 * 1024)
+        if mib >= 1024:
+            return f"{mib / 1024:.2f}Gi"
+        return f"{mib:.1f}Mi"
+
+
+def _format_metrics_response(
+    time_series_list: list[Any],
+    metric_type: str,
+    namespace: str,
+    pod_name_prefix: str,
+    window_minutes: int,
+) -> str:
+    """Format a list of TimeSeries objects into an LLM-friendly Markdown table.
+
+    Args:
+        time_series_list: List of TimeSeries from Cloud Monitoring.
+        metric_type: ``_CPU_METRIC`` or ``_MEMORY_METRIC``.
+        namespace: Kubernetes namespace queried.
+        pod_name_prefix: Pod name prefix used for filtering.
+        window_minutes: Query window in minutes.
+
+    Returns:
+        A Markdown-formatted string with a summary table and totals line.
+    """
+    metric_label = "CPU" if metric_type == _CPU_METRIC else "Memory"
+    unit_label = "(millicores)" if metric_type == _CPU_METRIC else "(MiB/GiB)"
+
+    if not time_series_list:
+        return (
+            f"**{metric_label} Metrics** — namespace: `{namespace}`, "
+            f"prefix: `{pod_name_prefix}`, window: {window_minutes}m\n\n"
+            "No data returned. Possible reasons:\n"
+            "- No pods match the specified prefix\n"
+            "- Cloud Monitoring agent not deployed\n"
+            "- Insufficient IAM permissions (roles/monitoring.viewer required)\n"
+        )
+
+    rows: list[dict[str, str]] = []
+
+    for ts in time_series_list:
+        # Extract pod name from resource labels
+        labels = ts.resource.labels if hasattr(ts, "resource") else {}
+        pod_name = labels.get("pod_name", "<unknown>") if hasattr(labels, "get") else "<unknown>"
+
+        raw_values = _extract_points_values(ts)
+        if not raw_values:
+            continue
+
+        avg_val = sum(raw_values) / len(raw_values)
+        max_val = max(raw_values)
+        latest_val = raw_values[-1] if raw_values else 0.0
+        trend = _calculate_trend(raw_values)
+
+        rows.append(
+            {
+                "pod": pod_name,
+                "avg": _format_metric_value(avg_val, metric_type),
+                "max": _format_metric_value(max_val, metric_type),
+                "latest": _format_metric_value(latest_val, metric_type),
+                "trend": trend,
+            }
+        )
+
+    if not rows:
+        return (
+            f"**{metric_label} Metrics** — namespace: `{namespace}`, "
+            f"prefix: `{pod_name_prefix}`, window: {window_minutes}m\n\n"
+            "Data returned but no numeric values could be extracted from time series points.\n"
+        )
+
+    # Truncate to top 20 pods to keep output within ~2000 chars
+    _MAX_PODS = 20
+    total_pods = len(rows)
+    truncated = total_pods > _MAX_PODS
+    display_rows = rows[:_MAX_PODS]
+
+    # Build Markdown table
+    lines: list[str] = [
+        f"**{metric_label} Metrics** {unit_label} — namespace: `{namespace}`, "
+        f"prefix: `{pod_name_prefix}`, window: {window_minutes}m\n",
+        f"| {'Pod':<50} | {'Avg':>10} | {'Max':>10} | {'Latest':>10} | Trend |",
+        f"|{'-'*52}|{'-'*12}|{'-'*12}|{'-'*12}|-------|",
+    ]
+
+    for row in display_rows:
+        lines.append(
+            f"| {row['pod']:<50} | {row['avg']:>10} | {row['max']:>10} | {row['latest']:>10} | {row['trend']:^5} |"
+        )
+
+    if truncated:
+        lines.append(f"| _... and {total_pods - _MAX_PODS} more pods (truncated)_ |")
+
+    lines.append(
+        f"\n_Summary: {total_pods} pod(s) matched prefix `{pod_name_prefix}` "
+        f"in namespace `{namespace}` over the last {window_minutes} minutes._"
+    )
+
+    return "\n".join(lines)
+
+
+# ── Public tool function ──────────────────────────────────────
+
+
+def get_pod_metrics(
+    namespace: str,
+    pod_name_prefix: str,
+    *,
+    gke_config: GKEConfig,
+    window_minutes: int = 60,
+    metric_type: str = "all",
+) -> ToolResult:
+    """Fetch historical CPU and/or memory metrics from Cloud Monitoring for GKE pods.
+
+    Queries ``kubernetes.io/container/cpu/core_usage_time`` and/or
+    ``kubernetes.io/container/memory/used_bytes`` for pods matching
+    ``pod_name_prefix`` in ``namespace``.
+
+    Args:
+        namespace: Kubernetes namespace to query.
+        pod_name_prefix: Pod name prefix for matching (e.g. ``"frontend-"``
+            matches ``frontend-abc-123``).
+        gke_config: GKE cluster configuration (provides project_id, cluster_name).
+        window_minutes: Query window in minutes (default: 60).
+        metric_type: Which metrics to fetch: ``"cpu"``, ``"memory"``, or
+            ``"all"`` (default: ``"all"``).
+
+    Returns:
+        A :class:`~vaig.tools.base.ToolResult` with a Markdown-formatted
+        summary table.
+    """
+    if not _MONITORING_AVAILABLE:
+        return _monitoring_unavailable()
+
+    # Validate metric_type
+    valid_types = {"cpu", "memory", "all"}
+    if metric_type not in valid_types:
+        return ToolResult(
+            output=(
+                f"Invalid metric_type '{metric_type}'. "
+                f"Must be one of: {', '.join(sorted(valid_types))}"
+            ),
+            error=True,
+        )
+
+    # Validate window_minutes: must be a positive integer, max 1440 (24h)
+    if window_minutes <= 0 or window_minutes > 1440:
+        return ToolResult(
+            output=(
+                f"Invalid window_minutes '{window_minutes}'. "
+                "Must be a positive integer between 1 and 1440 (24 hours)."
+            ),
+            error=True,
+        )
+
+    project_id = gke_config.project_id
+    cluster_name = gke_config.cluster_name
+
+    try:
+        client = MetricServiceClient()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to create MetricServiceClient: %s", exc)
+        return ToolResult(
+            output=f"Failed to initialize Cloud Monitoring client: {exc}",
+            error=True,
+        )
+
+    sections: list[str] = [
+        f"## Pod Metrics — {namespace}/{pod_name_prefix}* (last {window_minutes}m)\n"
+    ]
+
+    fetch_cpu = metric_type in {"cpu", "all"}
+    fetch_memory = metric_type in {"memory", "all"}
+
+    for do_fetch, mtype in [(fetch_cpu, _CPU_METRIC), (fetch_memory, _MEMORY_METRIC)]:
+        if not do_fetch:
+            continue
+
+        metric_filter = _build_metric_filter(
+            mtype, cluster_name, namespace, pod_name_prefix
+        )
+
+        try:
+            ts_list = _query_time_series(
+                client=client,
+                project_id=project_id,
+                metric_filter=metric_filter,
+                metric_type=mtype,
+                window_minutes=window_minutes,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Check for PermissionDenied — use the imported class when available,
+            # fall back to string/code check when the library is unavailable.
+            is_permission_denied = (
+                (PermissionDenied is not None and isinstance(exc, PermissionDenied))
+                or "403" in str(exc)
+                or type(exc).__name__ == "PermissionDenied"
+            )
+            if is_permission_denied:
+                sections.append(
+                    f"**{'CPU' if mtype == _CPU_METRIC else 'Memory'} Metrics** — "
+                    f"Access denied (HTTP 403). "
+                    f"Grant the service account ``roles/monitoring.viewer`` on project "
+                    f"``{project_id}``.\n"
+                )
+            else:
+                logger.warning(
+                    "Cloud Monitoring query failed for %s: %s", mtype, exc
+                )
+                sections.append(
+                    f"**{'CPU' if mtype == _CPU_METRIC else 'Memory'} Metrics** — "
+                    f"Query error: {exc}\n"
+                )
+            continue
+
+        section = _format_metrics_response(
+            ts_list,
+            metric_type=mtype,
+            namespace=namespace,
+            pod_name_prefix=pod_name_prefix,
+            window_minutes=window_minutes,
+        )
+        sections.append(section)
+
+    return ToolResult(output="\n\n".join(sections))
