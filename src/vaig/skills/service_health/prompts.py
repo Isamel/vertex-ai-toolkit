@@ -123,7 +123,6 @@ _DATADOG_API_TOOLS_TABLE = """\
 | `get_datadog_apm_services` | | `service_name` (optional — returns guidance if omitted), `env` — auto-tries web/gRPC/Kafka metric families |"""
 
 _PRIORITY_HIERARCHY = """\
-**PRIORITY HIERARCHY (most authoritative → least):**
 1. Kubernetes cluster data is the ABSOLUTE source of truth for deployment status.
 2. If K8s shows a service/deployment exists and is running, it IS deployed — regardless of Datadog results.
 3. Datadog monitoring data is SUPPLEMENTARY — it enriches the analysis but NEVER determines deployment status.
@@ -844,7 +843,7 @@ If ArgoCD-specific tools are not listed in the available tools, you may still us
 If neither ArgoCD tools nor kubectl_get data for ArgoCD Applications are available, clearly explain this limitation in the Verification Gap text, and choose a Verification Gap level using the standard phrases defined earlier (for example, only use `None — sufficient evidence from data collection` when you actually have sufficient evidence).
 
 ## STRICT Analysis Rules
-# (Anti-hallucination rules from system instruction apply here — see ANTI_HALLUCINATION_RULES)
+NOTE: Anti-hallucination rules from system instruction apply here — see ANTI_HALLUCINATION_RULES.
 1. Be PRECISE about scope. A single failing pod in one namespace does NOT make the cluster "DEGRADED". Classify the issue scope correctly: cluster-level, namespace-level, or resource-level.
 2. Every finding MUST have all fields (What, Evidence, Impact, Affected Resources, Verification Gap). If you cannot fill Evidence with real data, do NOT create the finding.
 3. In the Structured Summary and Findings Overview, counts and statistics MUST be derived by counting actual findings — NEVER estimate or invent numbers. If you identified 2 findings, write "Total findings: 2" — not a round number you made up.
