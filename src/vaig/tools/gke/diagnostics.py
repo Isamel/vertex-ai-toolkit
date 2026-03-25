@@ -9,6 +9,12 @@ from typing import TYPE_CHECKING, Any
 from vaig.tools.base import ToolResult
 
 from . import _clients, _formatters
+from .argo_rollouts import (
+    _ARGO_ROLLOUTS_GROUP,
+    _ARGO_ROLLOUTS_VERSION,
+    _ROLLOUT_ANNOTATION_MARKERS,
+    _format_rollout,
+)
 
 if TYPE_CHECKING:
     from vaig.core.config import GKEConfig
@@ -158,7 +164,7 @@ def get_rollout_status(
     result = _clients._create_k8s_clients(gke_config)
     if isinstance(result, ToolResult):
         return result
-    _, apps_v1, _, _ = result
+    _, apps_v1, custom_objects_api, _ = result
 
     try:
         dep = apps_v1.read_namespaced_deployment(name=name, namespace=ns)
@@ -239,7 +245,18 @@ def get_rollout_status(
         elif progressing_cond and progressing_cond.status == "True":
             overall_state = "Progressing"
         elif spec_replicas == 0 and ready == 0:
-            overall_state = "Scaled to zero"
+            # Check whether this Deployment is a stub managed by Argo Rollouts.
+            # When Argo Rollouts controls a workload it sets spec.replicas=0 on the
+            # Deployment (making it a passive stub) and manages pods itself via its
+            # own ReplicaSets.  Reporting "Scaled to zero" would be a false alarm.
+            annotations: dict[str, str] = (dep.metadata.annotations or {}) if dep.metadata else {}
+            is_argo_managed = any(k in annotations for k in _ROLLOUT_ANNOTATION_MARKERS) or (
+                "argo-rollouts.argoproj.io/managed-by-rollouts" in annotations
+            )
+            if is_argo_managed:
+                overall_state = "Managed by Argo Rollout"
+            else:
+                overall_state = "Scaled to zero"
 
         lines.append("")
         lines.append(f"Overall Status: {overall_state}")
@@ -248,6 +265,33 @@ def get_rollout_status(
             lines.append("")
             lines.append("Conditions:")
             lines.extend(condition_details)
+
+        # ── Argo Rollout cross-reference ──────────────────────
+        # When the Deployment is an Argo-managed stub AND the config enables
+        # Argo Rollouts, attempt to fetch the actual Rollout object to provide
+        # full replica / phase context.  Degrade gracefully on any error.
+        if overall_state == "Managed by Argo Rollout" and gke_config.argo_rollouts_enabled:
+            try:
+                rollout_obj = custom_objects_api.get_namespaced_custom_object(
+                    group=_ARGO_ROLLOUTS_GROUP,
+                    version=_ARGO_ROLLOUTS_VERSION,
+                    namespace=ns,
+                    plural="rollouts",
+                    name=name,
+                )
+                lines.append("")
+                lines.append("Argo Rollout details:")
+                for detail_line in _format_rollout(rollout_obj).splitlines():
+                    lines.append(f"  {detail_line}")
+            except Exception:  # noqa: BLE001
+                # Rollout object may not exist (different name) or RBAC may block it.
+                # Silently degrade — the "Managed by Argo Rollout" status is still correct.
+                logger.debug(
+                    "Could not fetch Rollout object for deployment/%s in namespace %s"
+                    " — skipping cross-reference",
+                    name,
+                    ns,
+                )
 
         return ToolResult(output="\n".join(lines))
 
