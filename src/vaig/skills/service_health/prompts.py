@@ -91,7 +91,8 @@ _CORE_TOOLS_TABLE = """\
 | `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |
 | `get_scaling_status` | `name` | `namespace` |
 | `get_datadog_config` | | `namespace`, `deployment` |
-| `get_pod_metrics` | `namespace`, `pod_name_prefix` | `window_minutes`, `metric_type` |"""
+| `get_pod_metrics` | `namespace`, `pod_name_prefix` | `window_minutes`, `metric_type` |
+| `discover_dependencies` | `service_name` | `namespace`, `force_refresh` |"""
 
 _HELM_TOOLS_TABLE = """\
 | `helm_list_releases` | | `namespace`, `force_refresh` |
@@ -465,6 +466,25 @@ If Datadog is NOT detected in Steps 4/5 output AND no relevant FailedCreate even
 - SKIP this step entirely and mark as SKIPPED in the Investigation Checklist
 
 {datadog_api_step}
+### Step 13 — Dependency Mapping (CONDITIONAL — when cascading failures are suspected)
+
+PREREQUISITE: Check if `discover_dependencies` is in your available tools list. If it is NOT available, SKIP this step.
+
+If the tool IS available, run this step when ANY of the following is true:
+- Step 3 (warning events) shows connection refused, timeout, or upstream errors
+- Step 7 (Cloud Logging) shows dependency failures or DNS resolution errors
+- The service under investigation is suspected to be calling a failing upstream
+
+Call `discover_dependencies(service_name=<name>, namespace=<ns>)` to map the call graph.
+This reveals:
+- Other services that this service calls (via env-var hostname extraction)
+- Upstream/downstream topology from Istio VirtualServices (if mesh is installed)
+
+Use the dependency map to:
+- Identify if a failing downstream service is the root cause of this service's degradation
+- Recommend cascading failure analysis of the listed dependency hostnames
+- Cross-reference with Step 2 (kubectl_get services) and Step 7 error patterns
+
 ## MINIMUM INVESTIGATION DEPTH
 You MUST make at least the following tool calls before producing your final output:
 1. `get_node_conditions()` — ALWAYS (Step 1)

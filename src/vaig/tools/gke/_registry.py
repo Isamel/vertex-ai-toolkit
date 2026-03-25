@@ -817,6 +817,44 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 gke_config=_cfg, namespace=namespace, force_refresh=force_refresh,
             ),
         ),
+        ToolDef(
+            name="discover_dependencies",
+            description=(
+                "Map service-to-service dependencies for a given Kubernetes Service. "
+                "Resolves the service to its backing pods, scans container environment "
+                "variables for service references (hostnames, URLs, endpoints), and "
+                "reads Istio VirtualServices (if installed) to extract upstream/downstream "
+                "call topology. Sensitive environment variables (passwords, secrets, tokens, "
+                "API keys) are NEVER included — only safe hostnames are reported. "
+                "Use for cascading failure analysis, dependency graph construction, and "
+                "understanding service call chains. Results are cached for 60 seconds. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="service_name",
+                    type="string",
+                    description="Name of the Kubernetes Service to analyse.",
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace where the service lives (default: 'default').",
+                    required=False,
+                ),
+                ToolParam(
+                    name="force_refresh",
+                    type="boolean",
+                    description="Bypass cache and re-scan (default: false).",
+                    required=False,
+                ),
+            ],
+            categories=frozenset({KUBERNETES}),
+            execute=lambda service_name, namespace="default", force_refresh=False,
+                    _cfg=gke_config: discovery.discover_dependencies(
+                service_name, namespace, gke_config=_cfg, force_refresh=force_refresh,
+            ),
+        ),
         # ── Mesh introspection tools ─────────────────────────
         ToolDef(
             name="get_mesh_overview",
