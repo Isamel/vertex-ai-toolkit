@@ -40,6 +40,7 @@ _ROLLOUT_ANNOTATION_MARKERS = (
     "rollout.argoproj.io/desired-replicas",
     "rollout.argoproj.io/revision",
     "rollout.argoproj.io/workload-generation",
+    "argo-rollouts.argoproj.io/managed-by-rollouts",
 )
 
 # ── Namespace-level detection cache ─────────────────────────

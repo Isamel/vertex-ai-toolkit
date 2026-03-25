@@ -6,16 +6,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-# Annotation keys that identify a Deployment managed by Argo Rollouts.
-# Argo Rollouts deliberately sets spec.replicas=0 on the backing Kubernetes
-# Deployment (making it a passive stub) and manages pods itself via Rollout
-# objects.  Reading spec.replicas blindly on these gives a false "0/0" count.
-_ARGO_MANAGED_ANNOTATIONS: frozenset[str] = frozenset({
-    "rollout.argoproj.io/desired-replicas",
-    "rollout.argoproj.io/revision",
-    "rollout.argoproj.io/workload-generation",
-    "argo-rollouts.argoproj.io/managed-by-rollouts",
-})
+from vaig.tools.gke.argo_rollouts import _ROLLOUT_ANNOTATION_MARKERS
 
 logger = logging.getLogger(__name__)
 
@@ -179,22 +170,14 @@ def _format_deployments_table(items: list[Any], wide: bool = False) -> str:
         # or fall back to an "Argo" indicator when that annotation is absent.
         spec_replicas = dep.spec.replicas if dep.spec and dep.spec.replicas is not None else 0
         annotations: dict[str, str] = (dep.metadata.annotations or {}) if dep.metadata else {}
-        is_argo_managed = bool(annotations) and bool(annotations.keys() & _ARGO_MANAGED_ANNOTATIONS)
+        is_argo_managed = any(k in annotations for k in _ROLLOUT_ANNOTATION_MARKERS)
 
         if is_argo_managed and spec_replicas == 0:
-            desired_str = annotations.get("rollout.argoproj.io/desired-replicas")
-            if desired_str is not None:
-                try:
-                    desired = int(desired_str)
-                except ValueError:
-                    desired = None
-            else:
-                desired = None
-
-            if desired is not None:
+            try:
+                desired = int(annotations["rollout.argoproj.io/desired-replicas"])
                 ready_col = f"{ready}/{desired}"
-            else:
-                # No desired-replicas annotation — show a clear Argo indicator
+            except (KeyError, ValueError):
+                # No desired-replicas annotation (or unparseable) — show a clear Argo indicator
                 ready_col = "Argo"
         else:
             desired = spec_replicas
