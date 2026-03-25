@@ -2712,6 +2712,18 @@ class Orchestrator:
             for _idx, (agent, future) in enumerate(futures_map):
                 try:
                     agent_result = future.result()
+                except MaxIterationsError as exc:
+                    logger.warning(
+                        "Gatherer agent %s hit max iterations (%d); using partial output (%d chars)",
+                        agent.name,
+                        exc.iterations,
+                        len(exc.partial_output),
+                    )
+                    agent_result = AgentResult(
+                        agent_name=agent.name,
+                        content=exc.partial_output or f"Agent '{agent.name}' hit iteration limit with no output.",
+                        success=False,
+                    )
                 except Exception:
                     logger.exception(
                         "Gatherer agent %s raised an exception during parallel execution",
@@ -3013,6 +3025,18 @@ class Orchestrator:
                         kw["tool_call_store"] = tool_call_store
                     kw["tool_result_cache"] = tool_result_cache
                 agent_result = await asyncio.to_thread(agent.execute, query, **kw)
+            except MaxIterationsError as exc:
+                logger.warning(
+                    "Gatherer agent %s hit max iterations (%d); using partial output (%d chars)",
+                    agent.name,
+                    exc.iterations,
+                    len(exc.partial_output),
+                )
+                agent_result = AgentResult(
+                    agent_name=agent.name,
+                    content=exc.partial_output or f"Agent '{agent.name}' hit iteration limit with no output.",
+                    success=False,
+                )
             except Exception:
                 logger.exception(
                     "Gatherer agent %s raised an exception during async parallel execution",

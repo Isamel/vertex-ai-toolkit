@@ -69,11 +69,18 @@ class ArgoCDError(ToolExecutionError):
 
 
 class MaxIterationsError(VAIGError):
-    """Raised when the tool-use loop exceeds the configured maximum iterations."""
+    """Raised when the tool-use loop exceeds the configured maximum iterations.
 
-    def __init__(self, message: str, *, iterations: int) -> None:
+    Attributes:
+        iterations: The iteration count at which the limit was hit.
+        partial_output: Any LLM text accumulated before the limit was hit.
+            Defaults to empty string for backward compatibility.
+    """
+
+    def __init__(self, message: str, *, iterations: int, partial_output: str = "") -> None:
         super().__init__(message)
         self.iterations = iterations
+        self.partial_output = partial_output
 
 
 class ChunkedProcessingError(VAIGError):

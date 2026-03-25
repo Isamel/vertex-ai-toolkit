@@ -434,7 +434,7 @@ class ServiceHealthSkill(BaseSkill):
                 ),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
-                "max_iterations": 12,
+                "max_iterations": 20,
             },
             {
                 "name": "event_gatherer",
