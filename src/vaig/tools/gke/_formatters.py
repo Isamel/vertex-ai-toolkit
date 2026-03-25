@@ -353,8 +353,20 @@ def _serialise_item(item: Any, api: Any) -> Any:
     return api.sanitize_for_serialization(item)
 
 
+def _k8s_object_to_dict(obj: Any) -> dict[str, Any]:
+    """Safely convert a K8s API object to a dictionary."""
+    if hasattr(obj, "to_dict"):
+        result: dict[str, Any] = obj.to_dict()
+        return result
+    if hasattr(obj, "__dict__"):
+        return dict(obj.__dict__)
+    return {}
+
+
 def _format_hpa_table(items: list[Any], wide: bool = False) -> str:
     """Format HorizontalPodAutoscaler list as a kubectl-style table."""
+    from vaig.tools.gke.scaling import _metric_current_value, _metric_target_value  # noqa: WPS433
+
     _ = wide  # wide output not yet implemented for HPA
     if not items:
         return "No resources found."
@@ -376,46 +388,15 @@ def _format_hpa_table(items: list[Any], wide: bool = False) -> str:
         if spec and spec.metrics:
             # Use the first spec metric as the representative target
             first_metric = spec.metrics[0]
-            if hasattr(first_metric, "to_dict"):
-                metric_dict = first_metric.to_dict()
-            elif hasattr(first_metric, "__dict__"):
-                metric_dict = first_metric.__dict__
-            else:
-                metric_dict = {}
-            mtype = metric_dict.get("type", "")
-            target_val = "?"
-            if mtype == "Resource":
-                resource = metric_dict.get("resource", {})
-                target = resource.get("target", {})
-                if target.get("type") == "Utilization":
-                    target_val = f"{target.get('averageUtilization', '?')}%"
-                elif target.get("type") == "AverageValue":
-                    target_val = str(target.get("averageValue", "?"))
-                else:
-                    target_val = str(target.get("value", "?"))
+            metric_dict = _k8s_object_to_dict(first_metric)
+            _mtype, _mname, target_val = _metric_target_value(metric_dict)
             # Current from status.currentMetrics
             status = hpa.status
             current_val = "<unknown>"
             if status and status.current_metrics:
                 first_cm = status.current_metrics[0]
-                if hasattr(first_cm, "to_dict"):
-                    cm_dict = first_cm.to_dict()
-                elif hasattr(first_cm, "__dict__"):
-                    cm_dict = first_cm.__dict__
-                else:
-                    cm_dict = {}
-                cm_type = cm_dict.get("type", "")
-                if cm_type == "Resource":
-                    r = cm_dict.get("resource", {})
-                    current = r.get("current", {})
-                    avg_util = current.get("averageUtilization")
-                    avg_val = current.get("averageValue")
-                    if avg_util is not None:
-                        current_val = f"{avg_util}%"
-                    elif avg_val is not None:
-                        current_val = str(avg_val)
-                    else:
-                        current_val = "<unknown>"
+                cm_dict = _k8s_object_to_dict(first_cm)
+                current_val = _metric_current_value(cm_dict)
             targets = f"{current_val}/{target_val}"
         elif hpa.status and hpa.status.current_metrics:
             targets = "<unknown>/?"

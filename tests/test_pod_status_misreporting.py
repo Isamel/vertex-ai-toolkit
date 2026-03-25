@@ -14,6 +14,8 @@ Bug 3: `currentReplicas=None` silently becomes 0 via `or 0` in
 
 from __future__ import annotations
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
@@ -248,6 +250,22 @@ class TestRolloutStatusHpaManaged:
         cond.message = ""
         return cond
 
+    @contextmanager
+    def _patch_k8s_clients(self, deployment: MagicMock) -> Generator[None, None, None]:
+        """Patch K8s client stack and wire the given deployment mock as the API response."""
+        with (
+            patch("vaig.tools.gke._clients.detect_autopilot", return_value=None),
+            patch("vaig.tools.gke._clients._K8S_AVAILABLE", True),
+            patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients,
+        ):
+            core_v1 = MagicMock()
+            apps_v1 = MagicMock()
+            custom_api = MagicMock()
+            batch_v1 = MagicMock()
+            mock_clients.return_value = (core_v1, apps_v1, custom_api, batch_v1)
+            apps_v1.read_namespaced_deployment.return_value = deployment
+            yield
+
     def test_hpa_managed_110_pods_not_scaled_to_zero(self) -> None:
         """Deployment with spec.replicas=None and 110 ready pods must NOT be 'Scaled to zero'."""
         from vaig.tools.gke.diagnostics import get_rollout_status
@@ -263,16 +281,7 @@ class TestRolloutStatusHpaManaged:
         )
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke._clients.detect_autopilot", return_value=None), \
-             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
-            core_v1 = MagicMock()
-            apps_v1 = MagicMock()
-            custom_api = MagicMock()
-            batch_v1 = MagicMock()
-            mock_clients.return_value = (core_v1, apps_v1, custom_api, batch_v1)
-            apps_v1.read_namespaced_deployment.return_value = dep
-
+        with self._patch_k8s_clients(dep):
             result = get_rollout_status("my-app", gke_config=cfg, namespace="production")
 
         assert isinstance(result, ToolResult)
@@ -292,16 +301,7 @@ class TestRolloutStatusHpaManaged:
         )
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke._clients.detect_autopilot", return_value=None), \
-             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
-            core_v1 = MagicMock()
-            apps_v1 = MagicMock()
-            custom_api = MagicMock()
-            batch_v1 = MagicMock()
-            mock_clients.return_value = (core_v1, apps_v1, custom_api, batch_v1)
-            apps_v1.read_namespaced_deployment.return_value = dep
-
+        with self._patch_k8s_clients(dep):
             result = get_rollout_status("my-app", gke_config=cfg, namespace="default")
 
         assert result.error is False
@@ -323,16 +323,7 @@ class TestRolloutStatusHpaManaged:
         )
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke._clients.detect_autopilot", return_value=None), \
-             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
-            core_v1 = MagicMock()
-            apps_v1 = MagicMock()
-            custom_api = MagicMock()
-            batch_v1 = MagicMock()
-            mock_clients.return_value = (core_v1, apps_v1, custom_api, batch_v1)
-            apps_v1.read_namespaced_deployment.return_value = dep
-
+        with self._patch_k8s_clients(dep):
             result = get_rollout_status("my-app", gke_config=cfg, namespace="default")
 
         assert result.error is False
@@ -357,16 +348,7 @@ class TestRolloutStatusHpaManaged:
         )
 
         cfg = _make_gke_config()
-        with patch("vaig.tools.gke._clients.detect_autopilot", return_value=None), \
-             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
-             patch("vaig.tools.gke._clients._create_k8s_clients") as mock_clients:
-            core_v1 = MagicMock()
-            apps_v1 = MagicMock()
-            custom_api = MagicMock()
-            batch_v1 = MagicMock()
-            mock_clients.return_value = (core_v1, apps_v1, custom_api, batch_v1)
-            apps_v1.read_namespaced_deployment.return_value = dep
-
+        with self._patch_k8s_clients(dep):
             result = get_rollout_status("my-app", gke_config=cfg, namespace="default")
 
         assert result.error is False

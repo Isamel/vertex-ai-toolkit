@@ -175,11 +175,8 @@ def get_rollout_status(
         spec_replicas = dep.spec.replicas if dep.spec else None
         status = dep.status
         current = status.replicas or 0 if status else 0
-        if spec_replicas is not None:
-            desired = spec_replicas
-        else:
-            # HPA-managed: fall back to current running count
-            desired = current
+        # HPA-managed: fall back to current running count when spec.replicas is None
+        desired = spec_replicas if spec_replicas is not None else current
         ready = status.ready_replicas or 0 if status else 0
         updated = status.updated_replicas or 0 if status else 0
         available = status.available_replicas or 0 if status else 0
