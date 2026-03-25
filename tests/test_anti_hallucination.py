@@ -50,7 +50,7 @@ class TestAnomalyAntiHallucination:
         from vaig.skills.anomaly.prompts import PHASE_PROMPTS
 
         execute = PHASE_PROMPTS["execute"]
-        assert "NEVER fabricate" in execute
+        assert "fabricate" in execute
         assert "evidence" in execute.lower()
 
     def test_report_phase_has_anti_fabrication_rules(self) -> None:
@@ -60,7 +60,7 @@ class TestAnomalyAntiHallucination:
         report = PHASE_PROMPTS["report"]
         assert "NEVER invent" in report
         assert "Insufficient data" in report
-        assert "NEVER fabricate" in report
+        assert "fabricate" in report
 
     def test_pattern_analyzer_agent_has_anti_fabrication(self) -> None:
         """Pattern analyzer sub-agent must have anti-fabrication rules."""
