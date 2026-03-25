@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from vaig.tools.base import ToolResult
 
 from . import _clients
-from .argocd import _check_crd_exists
+from .argocd import (
+    _RETRY_ATTEMPTS,
+    _RETRY_BACKOFF_SECONDS,
+    _check_crd_exists,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,34 +42,122 @@ _ROLLOUT_ANNOTATION_MARKERS = (
     "rollout.argoproj.io/workload-generation",
 )
 
+# ── Namespace-level detection cache ─────────────────────────
+_rollouts_ns_cache: dict[tuple[str, Any], bool] = {}
+
 
 # ── Detection ────────────────────────────────────────────────
 
 
 def detect_argo_rollouts(namespace: str = "", api_client: Any = None) -> bool:
-    """Detect whether Argo Rollouts is installed in the cluster.
+    """Detect Argo Rollouts presence for a specific namespace.
 
-    Two-phase detection:
-    1. CRD probe: checks for ``rollouts.argoproj.io`` CRD (fast, cached).
-    2. Annotation fallback: if CRD probe fails (404 or 403 RBAC), scans
-       Deployment annotations in the target namespace for Argo Rollouts markers
-       like ``rollout.argoproj.io/revision``.
+    Three-phase detection:
+    1. CRD probe (best-effort, fast signal): checks whether the
+       ``rollouts.argoproj.io`` CRD appears to exist cluster-wide. If this
+       probe can **positively** confirm the CRD is missing (404), Argo Rollouts
+       is considered not installed and the function returns ``False`` early.
+       If the probe is unavailable, forbidden (403), or otherwise inconclusive,
+       detection still continues via the annotation scan.
+    2. Namespace annotation scan: first queries Rollout CRDs directly; falls
+       back to checking deployment annotations if the CRD query fails.
+       A CRD existing cluster-wide does **not** guarantee this namespace has
+       Argo Rollouts–managed resources, and the annotation scan is used as a
+       namespace-scoped signal even when the CRD probe could not confirm
+       presence or absence.
+    3. Results are cached per ``(namespace, api_client)`` to avoid redundant
+       API calls and to prevent stale cache hits when the process switches
+       clusters/contexts. **Transient failures are NOT cached** — the next
+       call will retry.
 
     Args:
-        namespace: Namespace to scan for annotations. Empty = "default".
+        namespace: Target namespace to check. Empty = "default".
         api_client: Optional pre-configured ``kubernetes.client.ApiClient``.
             When ``None`` the function loads in-cluster or kube-config
             credentials automatically.
 
     Returns:
-        ``True`` if Argo Rollouts presence is confirmed, ``False`` otherwise.
+        ``True`` if Argo Rollouts manages resources in the target namespace.
     """
-    # Phase 1: CRD probe
-    if _check_crd_exists(_ARGO_ROLLOUTS_CRD, api_client=api_client):
-        logger.info("Argo Rollouts CRD detected — enabling Argo Rollouts tools.")
+    ns = namespace or "default"
+    cache_key = (ns, api_client)
+
+    # Check namespace-level cache, scoped by api_client/context
+    if cache_key in _rollouts_ns_cache:
+        return _rollouts_ns_cache[cache_key]
+
+    result = _detect_rollouts_for_namespace(ns, api_client)
+    # Only cache definitive outcomes — None means transient failure, do NOT cache.
+    if result is not None:
+        _rollouts_ns_cache[cache_key] = result
+    return result or False
+
+
+def _detect_rollouts_for_namespace(namespace: str, api_client: Any) -> bool | None:
+    """Internal: uncached namespace-scoped Argo Rollouts detection.
+
+    Returns:
+        ``True`` — Argo Rollouts detected.
+        ``False`` — definitively not detected (safe to cache).
+        ``None`` — transient failure; caller must NOT cache this result.
+    """
+    # Phase 1: CRD must exist cluster-wide (necessary condition)
+    crd_present = _check_crd_exists(_ARGO_ROLLOUTS_CRD, api_client=api_client)
+
+    # Phase 2: Check namespace for Rollout resources (sufficient condition)
+    # Even if CRD exists, we must verify THIS namespace has Rollouts-managed resources.
+    # If CRD check failed due to RBAC (403), annotation scan is the only path.
+    # Returns None on transient failure — do NOT cache that result.
+    ns_has_rollouts = _scan_namespace_for_rollouts_annotations(namespace, api_client)
+
+    if ns_has_rollouts is None:
+        # Transient API failure — signal caller to skip caching.
+        return None
+
+    if ns_has_rollouts:
+        if crd_present:
+            logger.info(
+                "Argo Rollouts detected for namespace '%s' (CRD present + resources found).",
+                namespace,
+            )
+        else:
+            logger.info(
+                "Argo Rollouts detected for namespace '%s' via resource scan "
+                "(CRD probe unavailable/failed).",
+                namespace,
+            )
         return True
 
-    # Phase 2: Annotation fallback (handles RBAC-restricted clusters)
+    if crd_present:
+        logger.debug(
+            "Argo Rollouts CRD exists cluster-wide but no managed resources found "
+            "in namespace '%s' — skipping Argo Rollouts tools for this namespace.",
+            namespace,
+        )
+
+    return False
+
+
+def _scan_namespace_for_rollouts_annotations(namespace: str, api_client: Any) -> bool | None:
+    """Scan a namespace for Argo Rollouts-managed resources.
+
+    Detection strategy (Fix C):
+    1. **Primary**: Query Rollout CRDs directly via ``CustomObjectsApi``.
+       If any Rollout objects exist in the namespace → True (definitive).
+    2. **Fallback**: If the Rollout CRD query itself fails transiently, fall back to
+       checking Deployment annotations (``rollout.argoproj.io/revision``, etc.).
+
+    Transient errors (5xx, 429, network) are retried up to ``_RETRY_ATTEMPTS`` times
+    with ``_RETRY_BACKOFF_SECONDS`` delay.  If all attempts are transient → return
+    ``None`` to signal the caller that this result must NOT be cached.
+
+    Definitive failures (403, 404, config errors) → return ``False`` (safe to cache).
+
+    Returns:
+        ``True``  — Rollout resources found in this namespace.
+        ``False`` — Definitively none found (scan succeeded, nothing there).
+        ``None``  — Transient API failure; caller must NOT cache this result.
+    """
     if not _K8S_AVAILABLE:
         return False
 
@@ -80,29 +173,135 @@ def detect_argo_rollouts(namespace: str = "", api_client: Any = None) -> bool:
                     k8s_config.load_kube_config()
                 except k8s_config.ConfigException:
                     return False
+            custom_api = k8s_client.CustomObjectsApi()
             apps_api = k8s_client.AppsV1Api()
         else:
+            custom_api = k8s_client.CustomObjectsApi(api_client)
             apps_api = k8s_client.AppsV1Api(api_client)
 
-        ns = namespace or "default"
-        deployments = apps_api.list_namespaced_deployment(
-            namespace=ns,
-            limit=50,
-        )
-        for dep in deployments.items or []:
-            annotations = dep.metadata.annotations or {}
-            if any(k in annotations for k in _ROLLOUT_ANNOTATION_MARKERS):
-                logger.info(
-                    "Argo Rollouts detected via deployment annotations in namespace '%s' "
-                    "(CRD probe unavailable) — enabling Argo Rollouts tools.",
-                    ns,
+        # ── Primary path: query Rollout CRDs directly (Fix C) ──────────────
+        last_exc: Exception | None = None
+        crd_query_transient = False
+        for attempt in range(_RETRY_ATTEMPTS):
+            try:
+                result = custom_api.list_namespaced_custom_object(
+                    group=_ARGO_ROLLOUTS_GROUP,
+                    version=_ARGO_ROLLOUTS_VERSION,
+                    namespace=namespace,
+                    plural="rollouts",
+                    limit=1,
                 )
-                return True
+                items = result.get("items", [])
+                if items:
+                    return True
+                # Successful query, no Rollout objects → definitive False for this path
+                # but still check annotation fallback
+                crd_query_transient = False
+                break
+            except k8s_exceptions.ApiException as exc:
+                if exc.status in (403, 404):
+                    # Definitive: no permission or CRD not installed — fall through to annotation scan.
+                    logger.debug(
+                        "Rollout CRD query for namespace '%s' returned %d — trying annotation fallback",
+                        namespace, exc.status,
+                    )
+                    crd_query_transient = False
+                    break
+                # Transient — retry.
+                last_exc = exc
+                crd_query_transient = True
+                if attempt < _RETRY_ATTEMPTS - 1:
+                    logger.warning(
+                        "Transient K8s API error querying Rollout CRDs for '%s' "
+                        "(attempt %d/%d): %s — retrying",
+                        namespace, attempt + 1, _RETRY_ATTEMPTS, exc,
+                    )
+                    time.sleep(_RETRY_BACKOFF_SECONDS)
+                else:
+                    logger.warning(
+                        "Rollout CRD query failed for namespace '%s' after %d attempt(s): "
+                        "%s — trying annotation fallback",
+                        namespace, _RETRY_ATTEMPTS, exc,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                crd_query_transient = True
+                if attempt < _RETRY_ATTEMPTS - 1:
+                    logger.warning(
+                        "Unexpected error querying Rollout CRDs for '%s' (attempt %d/%d): %s — retrying",
+                        namespace, attempt + 1, _RETRY_ATTEMPTS, exc,
+                    )
+                    time.sleep(_RETRY_BACKOFF_SECONDS)
+                else:
+                    logger.warning(
+                        "Rollout CRD query failed for namespace '%s' after %d attempt(s): "
+                        "%s — trying annotation fallback",
+                        namespace, _RETRY_ATTEMPTS, last_exc,
+                    )
 
-    except Exception:  # noqa: BLE001
-        logger.debug("Argo Rollouts annotation fallback probe failed", exc_info=True)
+        # ── Fallback: Deployment annotation scan (Fix C fallback) ───────────
+        last_exc = None
+        for attempt in range(_RETRY_ATTEMPTS):
+            try:
+                deployments = apps_api.list_namespaced_deployment(
+                    namespace=namespace,
+                    limit=50,
+                )
+                for dep in deployments.items or []:
+                    annotations = dep.metadata.annotations or {}
+                    if any(k in annotations for k in _ROLLOUT_ANNOTATION_MARKERS):
+                        return True
+                # Scan succeeded, nothing found — only report transient if CRD path was transient.
+                return None if crd_query_transient else False
+            except k8s_exceptions.ApiException as exc:
+                if exc.status in (403, 404):
+                    logger.warning(
+                        "Rollout annotation scan for namespace '%s' returned %d — skipping",
+                        namespace, exc.status,
+                    )
+                    return None if crd_query_transient else False
+                # Transient — retry.
+                last_exc = exc
+                if attempt < _RETRY_ATTEMPTS - 1:
+                    logger.warning(
+                        "Transient K8s API error during Rollouts annotation scan for '%s' "
+                        "(attempt %d/%d): %s — retrying",
+                        namespace, attempt + 1, _RETRY_ATTEMPTS, exc,
+                    )
+                    time.sleep(_RETRY_BACKOFF_SECONDS)
+                else:
+                    logger.warning(
+                        "Rollouts annotation scan failed for namespace '%s' after %d attempt(s): "
+                        "%s — not caching result",
+                        namespace, _RETRY_ATTEMPTS, exc,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt < _RETRY_ATTEMPTS - 1:
+                    logger.warning(
+                        "Unexpected error during Rollouts annotation scan for '%s' "
+                        "(attempt %d/%d): %s — retrying",
+                        namespace, attempt + 1, _RETRY_ATTEMPTS, exc,
+                    )
+                    time.sleep(_RETRY_BACKOFF_SECONDS)
+                else:
+                    logger.warning(
+                        "Rollouts annotation scan failed for namespace '%s' after %d attempt(s): "
+                        "%s — not caching result",
+                        namespace, _RETRY_ATTEMPTS, last_exc,
+                    )
 
-    return False
+        # Both paths exhausted by transient errors — signal caller to skip caching.
+        return None
+
+    except Exception as exc:  # noqa: BLE001
+        # Outer catch: config loading errors — treat as definitive failure (return False).
+        logger.warning(
+            "Rollouts scan failed for namespace '%s': %s",
+            namespace,
+            exc,
+        )
+        return False
 
 
 # ── Helpers ──────────────────────────────────────────────────

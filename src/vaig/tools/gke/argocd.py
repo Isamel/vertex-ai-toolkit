@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from vaig.tools.base import ToolResult
@@ -40,6 +41,14 @@ _ARGOCD_COMMON_NAMESPACES: tuple[str, ...] = (
 )
 _argocd_namespace_cache: dict[str, str | None] = {}
 _crd_exists_cache: dict[str, bool] = {}
+_argocd_ns_cache: dict[tuple[str, Any], bool] = {}
+
+# ── Retry configuration ──────────────────────────────────────
+_RETRY_ATTEMPTS: int = 2
+_RETRY_BACKOFF_SECONDS: float = 0.5
+
+# Transient HTTP status codes that should be retried and NOT cached as permanent failures.
+_TRANSIENT_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -52,6 +61,11 @@ def _check_crd_exists(crd_name: str, api_client: Any = None) -> bool:
     the ``apiextensions.k8s.io/v1`` endpoint.  Results are cached per-process
     to avoid repeated API round-trips within the same invocation.
 
+    Only **definitive** outcomes (CRD found, 404 not-found, 403 no-permission)
+    are persisted to cache.  Transient errors (5xx, 429, network timeouts) are
+    logged at WARNING level and return ``False`` **without** writing to cache,
+    so the next call can try again.
+
     Args:
         crd_name: Fully-qualified CRD name, e.g. ``"applications.argoproj.io"``.
         api_client: Optional pre-configured ``kubernetes.client.ApiClient``.
@@ -60,8 +74,8 @@ def _check_crd_exists(crd_name: str, api_client: Any = None) -> bool:
 
     Returns:
         ``True`` if the CRD exists and is accessible, ``False`` otherwise.
-        Returns ``False`` on any error (404, 403, SDK unavailable, network
-        failure) to keep the caller logic simple.
+        Returns ``False`` on any error to keep the caller logic simple.
+        Transient errors do NOT populate the cache so subsequent calls retry.
     """
     if not _K8S_AVAILABLE:
         return False
@@ -86,23 +100,59 @@ def _check_crd_exists(crd_name: str, api_client: Any = None) -> bool:
         else:
             ext_api = k8s_client.ApiextensionsV1Api(api_client)
 
-        ext_api.read_custom_resource_definition(crd_name)
-        _crd_exists_cache[crd_name] = True
-        return True
+        # Retry loop — only for transient errors.
+        last_exc: Exception | None = None
+        for attempt in range(_RETRY_ATTEMPTS):
+            try:
+                ext_api.read_custom_resource_definition(crd_name)
+                _crd_exists_cache[crd_name] = True
+                return True
+            except k8s_exceptions.ApiException as exc:
+                if exc.status == 404:
+                    # Definitive: CRD does not exist — cache permanently.
+                    logger.debug("CRD '%s' not found (404)", crd_name)
+                    _crd_exists_cache[crd_name] = False
+                    return False
+                if exc.status == 403:
+                    # Definitive: no RBAC permission — cache permanently.
+                    logger.warning(
+                        "RBAC: cannot check CRD '%s' (403 Forbidden) — assuming absent", crd_name
+                    )
+                    _crd_exists_cache[crd_name] = False
+                    return False
+                # Transient (5xx, 429, etc.) — retry after backoff.
+                last_exc = exc
+                if attempt < _RETRY_ATTEMPTS - 1:
+                    logger.warning(
+                        "Transient K8s API error checking CRD '%s' (attempt %d/%d): %s — retrying",
+                        crd_name, attempt + 1, _RETRY_ATTEMPTS, exc,
+                    )
+                    time.sleep(_RETRY_BACKOFF_SECONDS)
+                else:
+                    logger.warning(
+                        "K8s API error checking CRD '%s' after %d attempt(s): %s — not caching",
+                        crd_name, _RETRY_ATTEMPTS, exc,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                # Network-level error (timeout, connection reset, DNS) — same policy: no cache.
+                last_exc = exc
+                if attempt < _RETRY_ATTEMPTS - 1:
+                    logger.warning(
+                        "Unexpected error checking CRD '%s' (attempt %d/%d): %s — retrying",
+                        crd_name, attempt + 1, _RETRY_ATTEMPTS, exc,
+                    )
+                    time.sleep(_RETRY_BACKOFF_SECONDS)
+                else:
+                    logger.warning(
+                        "Unexpected error checking CRD '%s' after %d attempt(s): %s — not caching",
+                        crd_name, _RETRY_ATTEMPTS, last_exc,
+                    )
 
-    except k8s_exceptions.ApiException as exc:
-        if exc.status == 404:
-            logger.debug("CRD '%s' not found (404)", crd_name)
-        elif exc.status == 403:
-            logger.warning(
-                "RBAC: cannot check CRD '%s' (403 Forbidden) — assuming absent", crd_name
-            )
-        else:
-            logger.warning("K8s API error checking CRD '%s': %s", crd_name, exc)
-        _crd_exists_cache[crd_name] = False
+        # All attempts exhausted by transient errors — do NOT cache, return False.
         return False
 
     except Exception as exc:  # noqa: BLE001
+        # Outer catch: config loading errors (not retried) — these ARE definitive.
         logger.warning("Unexpected error checking CRD '%s': %s", crd_name, exc)
         _crd_exists_cache[crd_name] = False
         return False
@@ -115,27 +165,98 @@ _ARGOCD_ANNOTATION_MARKERS = (
 
 
 def detect_argocd(namespace: str = "", api_client: Any = None) -> bool:
-    """Detect ArgoCD presence via CRD probe + annotation fallback.
+    """Detect ArgoCD presence for a specific namespace.
 
-    Two-phase detection:
-    1. CRD probe: checks for ``applications.argoproj.io`` CRD (fast, cached).
-    2. Annotation fallback: if CRD probe fails (404 or 403 RBAC), scans
-       Deployment annotations in the target namespace for ArgoCD markers
-       like ``argocd.argoproj.io/tracking-id``.
+    Three-phase detection:
+    1. CRD probe (best-effort): checks if ``applications.argoproj.io`` CRD
+       exists cluster-wide. If the probe **positively** confirms the CRD is
+       absent (404), ArgoCD is definitely not installed → return False early.
+       When the probe is unavailable or forbidden (403), detection continues
+       via the annotation scan (the CRD check is not a strict gate).
+    2. Namespace annotation scan: checks if deployments in the target namespace
+       have ArgoCD management annotations (``argocd.argoproj.io/tracking-id``,
+       ``argocd.argoproj.io/managed-by``). CRD existing cluster-wide does NOT
+       mean this namespace is managed by ArgoCD.
+    3. Results are cached per ``(namespace, api_client)`` to avoid redundant
+       API calls and to prevent stale cache hits when the process switches
+       clusters/contexts. **Transient failures are NOT cached** — the next
+       call will retry.
 
     Args:
-        namespace: Namespace to scan for annotations. Empty = "default".
+        namespace: Target namespace to check. Empty = "default".
         api_client: Optional pre-configured kubernetes ApiClient.
 
     Returns:
-        True if ArgoCD presence is confirmed.
+        True if ArgoCD manages resources in the target namespace.
     """
-    # Phase 1: CRD probe
-    if _check_crd_exists("applications.argoproj.io", api_client=api_client):
-        logger.info("ArgoCD CRD detected — enabling ArgoCD tools.")
+    ns = namespace or "default"
+    cache_key = (ns, api_client)
+
+    # Check namespace-level cache, scoped by api_client/context
+    if cache_key in _argocd_ns_cache:
+        return _argocd_ns_cache[cache_key]
+
+    result = _detect_argocd_for_namespace(ns, api_client)
+    # Only cache definitive outcomes (True or False from non-transient paths).
+    # _detect_argocd_for_namespace returns None on transient failures.
+    if result is not None:
+        _argocd_ns_cache[cache_key] = result
+    return result or False
+
+
+def _detect_argocd_for_namespace(namespace: str, api_client: Any) -> bool | None:
+    """Internal: uncached namespace-scoped ArgoCD detection.
+
+    Returns:
+        ``True`` — ArgoCD detected.
+        ``False`` — definitively not detected (safe to cache).
+        ``None`` — transient failure; caller must NOT cache this result.
+    """
+    # Phase 1: CRD must exist cluster-wide (necessary condition)
+    crd_present = _check_crd_exists("applications.argoproj.io", api_client=api_client)
+
+    # Phase 2: Check namespace annotations (sufficient condition)
+    # Even if CRD exists, we must verify THIS namespace has ArgoCD-managed resources.
+    # If CRD check failed due to RBAC (403), annotation scan is the only path.
+    # Returns None on transient failure — do NOT cache that result.
+    ns_has_annotations = _scan_namespace_for_argocd_annotations(namespace, api_client)
+
+    if ns_has_annotations is None:
+        # Transient API failure during annotation scan — signal caller to skip caching.
+        return None
+
+    if ns_has_annotations:
+        if crd_present:
+            logger.info(
+                "ArgoCD detected for namespace '%s' (CRD present + annotations found).",
+                namespace,
+            )
+        else:
+            logger.info(
+                "ArgoCD detected for namespace '%s' via annotations "
+                "(CRD probe unavailable/failed).",
+                namespace,
+            )
         return True
 
-    # Phase 2: Annotation fallback (handles RBAC-restricted clusters)
+    if crd_present:
+        logger.debug(
+            "ArgoCD CRD exists cluster-wide but no managed resources found "
+            "in namespace '%s' — skipping ArgoCD tools for this namespace.",
+            namespace,
+        )
+
+    return False
+
+
+def _scan_namespace_for_argocd_annotations(namespace: str, api_client: Any) -> bool | None:
+    """Scan deployments in a namespace for ArgoCD management annotations.
+
+    Returns:
+        ``True``  — ArgoCD annotations found (ArgoCD is managing this namespace).
+        ``False`` — No ArgoCD annotations found (definitive: scan succeeded, nothing found).
+        ``None``  — Transient API failure (5xx, 429, network error); caller must NOT cache.
+    """
     if not _K8S_AVAILABLE:
         return False
 
@@ -155,25 +276,69 @@ def detect_argocd(namespace: str = "", api_client: Any = None) -> bool:
         else:
             apps_api = k8s_client.AppsV1Api(api_client)
 
-        ns = namespace or "default"
-        deployments = apps_api.list_namespaced_deployment(
-            namespace=ns,
-            limit=50,
-        )
-        for dep in deployments.items or []:
-            annotations = dep.metadata.annotations or {}
-            if any(k in annotations for k in _ARGOCD_ANNOTATION_MARKERS):
-                logger.info(
-                    "ArgoCD detected via deployment annotations in namespace '%s' "
-                    "(CRD probe unavailable) — enabling ArgoCD tools.",
-                    ns,
+        # Retry loop for transient failures.
+        last_exc: Exception | None = None
+        for attempt in range(_RETRY_ATTEMPTS):
+            try:
+                deployments = apps_api.list_namespaced_deployment(
+                    namespace=namespace,
+                    limit=50,
                 )
-                return True
+                for dep in deployments.items or []:
+                    annotations = dep.metadata.annotations or {}
+                    if any(k in annotations for k in _ARGOCD_ANNOTATION_MARKERS):
+                        return True
+                return False
+            except k8s_exceptions.ApiException as exc:
+                if exc.status in (403, 404):
+                    # Definitive: no permission or namespace not found — return False (cacheable).
+                    logger.warning(
+                        "ArgoCD annotation scan for namespace '%s' returned %d — skipping",
+                        namespace, exc.status,
+                    )
+                    return False
+                # Transient error — retry.
+                last_exc = exc
+                if attempt < _RETRY_ATTEMPTS - 1:
+                    logger.warning(
+                        "Transient K8s API error during ArgoCD annotation scan for '%s' "
+                        "(attempt %d/%d): %s — retrying",
+                        namespace, attempt + 1, _RETRY_ATTEMPTS, exc,
+                    )
+                    time.sleep(_RETRY_BACKOFF_SECONDS)
+                else:
+                    logger.warning(
+                        "ArgoCD annotation scan failed for namespace '%s' after %d attempt(s): "
+                        "%s — not caching result",
+                        namespace, _RETRY_ATTEMPTS, exc,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt < _RETRY_ATTEMPTS - 1:
+                    logger.warning(
+                        "Unexpected error during ArgoCD annotation scan for '%s' "
+                        "(attempt %d/%d): %s — retrying",
+                        namespace, attempt + 1, _RETRY_ATTEMPTS, exc,
+                    )
+                    time.sleep(_RETRY_BACKOFF_SECONDS)
+                else:
+                    logger.warning(
+                        "ArgoCD annotation scan failed for namespace '%s' after %d attempt(s): "
+                        "%s — not caching result",
+                        namespace, _RETRY_ATTEMPTS, last_exc,
+                    )
 
-    except Exception:  # noqa: BLE001
-        logger.debug("ArgoCD annotation fallback probe failed", exc_info=True)
+        # All retry attempts exhausted by transient errors — signal caller to skip caching.
+        return None
 
-    return False
+    except Exception as exc:  # noqa: BLE001
+        # Outer catch: config loading errors — treat as definitive failure (return False).
+        logger.warning(
+            "ArgoCD annotation scan failed for namespace '%s': %s",
+            namespace,
+            exc,
+        )
+        return False
 
 
 def _get_custom_objects_api() -> Any | None:
