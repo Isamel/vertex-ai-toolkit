@@ -441,7 +441,12 @@ class TestFetchWorkloadCosts:
 
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        report = fetch_workload_costs(self._make_gke_config())
+        # Patch monitoring so it doesn't attempt a real GCP connection
+        with patch(
+            "vaig.tools.gke.monitoring.get_workload_usage_metrics",
+            return_value={},
+        ):
+            report = fetch_workload_costs(self._make_gke_config())
         assert report.supported is True
         assert report.cluster_type == "autopilot"
         assert report.region == "northamerica-northeast1"
