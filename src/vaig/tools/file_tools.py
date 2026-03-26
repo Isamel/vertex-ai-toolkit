@@ -1,4 +1,4 @@
-"""File tools — read, write, edit, list, and search files within a workspace."""
+"""File tools — read, write, edit, list, search, and verify files within a workspace."""
 
 from __future__ import annotations
 
@@ -277,6 +277,91 @@ def search_files(pattern: str, path: str = ".", *, workspace: Path) -> ToolResul
     return ToolResult(output=result)
 
 
+# ── verify_completeness ──────────────────────────────────────
+
+# Patterns that indicate incomplete/placeholder code
+_INCOMPLETE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("TODO", re.compile(r"\bTODO\b")),
+    ("FIXME", re.compile(r"\bFIXME\b")),
+    ("HACK", re.compile(r"\bHACK\b")),
+    ("XXX", re.compile(r"\bXXX\b")),
+    ("bare pass", re.compile(r"^\s*pass\s*(?:#.*)?$")),
+    ("ellipsis body", re.compile(r"^\s*\.\.\.\s*(?:#.*)?$")),
+    ("NotImplementedError", re.compile(r"\bNotImplementedError\b")),
+]
+
+
+def verify_completeness(paths: list[str], *, workspace: Path) -> ToolResult:
+    """Scan files for incomplete placeholder patterns.
+
+    Checks each file in *paths* for common indicators of unfinished code:
+    ``TODO``, ``FIXME``, ``HACK``, ``XXX``, bare ``pass`` statements,
+    ellipsis bodies (``...``), and ``NotImplementedError`` raises.
+
+    Args:
+        paths: Relative paths to files to scan (from workspace root).
+        workspace: Resolved workspace root path used for path safety checks.
+
+    Returns:
+        ToolResult whose ``output`` is a human-readable report in the format
+        ``file:line: pattern — 'matched text'`` for each hit, or a
+        "No issues found" message when all files are clean.  ``error`` is
+        ``True`` only when a path safety or read error occurs; placeholder
+        findings do NOT set ``error=True`` — they are informational.
+    """
+    logger.debug("verify_completeness: paths=%s workspace=%s", paths, workspace)
+
+    if not paths:
+        return ToolResult(output="No paths provided — nothing to scan.")
+
+    findings: list[str] = []
+    errors: list[str] = []
+
+    for raw_path in paths:
+        resolved = _resolve_safe_path(raw_path, workspace)
+        if resolved is None:
+            errors.append(f"Path safety error: '{raw_path}' resolves outside the workspace.")
+            continue
+
+        if not resolved.exists():
+            errors.append(f"File not found: {raw_path}")
+            continue
+
+        if not resolved.is_file():
+            errors.append(f"Not a file: {raw_path}")
+            continue
+
+        try:
+            content = resolved.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            errors.append(f"Cannot read binary file: {raw_path}")
+            continue
+        except OSError as exc:
+            errors.append(f"Error reading {raw_path}: {exc}")
+            continue
+
+        for line_no, line in enumerate(content.splitlines(), start=1):
+            for pattern_name, pattern_re in _INCOMPLETE_PATTERNS:
+                if pattern_re.search(line):
+                    snippet = line.strip()[:120]
+                    findings.append(
+                        f"{raw_path}:{line_no}: {pattern_name} — '{snippet}'"
+                    )
+                    break  # One match per line is enough
+
+    parts: list[str] = []
+    if findings:
+        parts.append(f"Found {len(findings)} incomplete pattern(s):\n" + "\n".join(findings))
+    else:
+        parts.append("No incomplete patterns found — all scanned files look complete.")
+
+    if errors:
+        parts.append("Errors:\n" + "\n".join(errors))
+
+    has_errors = bool(errors)
+    return ToolResult(output="\n\n".join(parts), error=has_errors)
+
+
 # ── Task 2.8 — Tool factory ─────────────────────────────────
 
 
@@ -384,5 +469,25 @@ def create_file_tools(workspace: Path) -> list[ToolDef]:
             execute=lambda pattern, path=".", _ws=workspace: search_files(
                 pattern, path, workspace=_ws
             ),
+        ),
+        ToolDef(
+            name="verify_completeness",
+            description=(
+                "Scan files for incomplete placeholder patterns: TODO, FIXME, HACK, XXX, "
+                "bare `pass`, ellipsis `...`, and NotImplementedError. "
+                "Returns a report of findings with file:line references."
+            ),
+            categories=frozenset({CODING}),
+            parameters=[
+                ToolParam(
+                    name="paths",
+                    type="array",
+                    description=(
+                        "List of relative file paths (from workspace root) to scan. "
+                        "Pass the files you just created or modified."
+                    ),
+                ),
+            ],
+            execute=lambda paths, _ws=workspace: verify_completeness(paths, workspace=_ws),
         ),
     ]
