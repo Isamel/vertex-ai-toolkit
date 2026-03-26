@@ -224,13 +224,20 @@ class TestRolloutDetailsTableRendering:
     """Verify that _render_service_status() produces the correct Rollout Details table."""
 
     @staticmethod
-    def _make_report(services):
-        from vaig.skills.service_health.schema import HealthReport
-        return HealthReport(
-            cluster_name="test-cluster",
-            namespaces=["default"],
+    def _render(services) -> str:
+        """Call _render_service_status directly to avoid HealthReport required fields."""
+        from vaig.skills.service_health.schema import ExecutiveSummary, HealthReport
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status="HEALTHY",
+                scope="Cluster-wide",
+                summary_text="test",
+            ),
             service_statuses=services,
         )
+        parts: list[str] = []
+        report._render_service_status(parts)
+        return "\n".join(parts)
 
     def _svc(self, **kwargs):
         from vaig.skills.service_health.schema import ServiceStatus
@@ -250,25 +257,25 @@ class TestRolloutDetailsTableRendering:
     def test_rollout_details_table_includes_namespace_column(self) -> None:
         """The Rollout Details table header must include a Namespace column."""
         svc = self._svc(rollout_strategy="canary", namespace="prod")
-        md = self._make_report([svc]).to_markdown()
+        md = self._render([svc])
         assert "| Service | Namespace |" in md, "Rollout Details table must include Namespace column."
 
     def test_rollout_details_table_shows_na_for_empty_namespace(self) -> None:
         """Namespace cell must show '—' when namespace is empty/None."""
         svc = self._svc(rollout_strategy="canary", namespace="")
-        md = self._make_report([svc]).to_markdown()
+        md = self._render([svc])
         assert "| my-svc | — |" in md, "Empty namespace must render as '—' in the table."
 
     def test_rollout_details_table_shows_na_for_none_rollout_strategy(self) -> None:
         """Strategy cell must show 'N/A' when rollout_strategy is None but another field is set."""
         svc = self._svc(rollout_strategy=None, rollout_status="Healthy")
-        md = self._make_report([svc]).to_markdown()
+        md = self._render([svc])
         assert "N/A" in md, "None rollout_strategy must render as 'N/A'."
 
     def test_filter_includes_service_with_only_rollout_status(self) -> None:
         """A service with only rollout_status set must still appear in the Rollout Details table."""
         svc = self._svc(rollout_strategy=None, rollout_status="Progressing")
-        md = self._make_report([svc]).to_markdown()
+        md = self._render([svc])
         assert "### Rollout Details" in md, (
             "Rollout Details table must appear when rollout_status is set even if strategy is None."
         )
@@ -276,7 +283,7 @@ class TestRolloutDetailsTableRendering:
     def test_filter_includes_service_with_only_hpa_conditions(self) -> None:
         """A service with only hpa_conditions set must still appear in the Rollout Details table."""
         svc = self._svc(rollout_strategy=None, rollout_status=None, hpa_conditions=["ScalingLimited: True"])
-        md = self._make_report([svc]).to_markdown()
+        md = self._render([svc])
         assert "### Rollout Details" in md, (
             "Rollout Details table must appear when hpa_conditions is set even if strategy is None."
         )
@@ -284,7 +291,7 @@ class TestRolloutDetailsTableRendering:
     def test_no_rollout_details_section_when_all_fields_empty(self) -> None:
         """Services with no rollout data must NOT produce a Rollout Details section."""
         svc = self._svc()
-        md = self._make_report([svc]).to_markdown()
+        md = self._render([svc])
         assert "### Rollout Details" not in md, (
             "Rollout Details table must NOT appear when no service has rollout data."
         )
