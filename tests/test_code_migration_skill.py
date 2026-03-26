@@ -72,12 +72,13 @@ class TestCodeMigrationSkillSystemInstruction:
         assert len(instruction) > 0
 
     def test_system_instruction_contains_anti_injection(self) -> None:
+        from vaig.core.prompt_defense import ANTI_INJECTION_RULE
         from vaig.skills.code_migration.skill import CodeMigrationSkill
 
         skill = CodeMigrationSkill()
         instruction = skill.get_system_instruction()
-        # ANTI_INJECTION_RULE starts with "SECURITY RULE"
-        assert "SECURITY RULE" in instruction
+        # Contract: ANTI_INJECTION_RULE must be at the very start (repo-wide contract)
+        assert instruction.startswith(ANTI_INJECTION_RULE)
 
     def test_system_instruction_contains_migration_phases(self) -> None:
         from vaig.skills.code_migration.skill import CodeMigrationSkill
@@ -86,6 +87,7 @@ class TestCodeMigrationSkillSystemInstruction:
         instruction = skill.get_system_instruction()
         assert "INVENTORY" in instruction
         assert "SEMANTIC_MAP" in instruction
+        assert "SPEC" in instruction
         assert "IMPLEMENT" in instruction
         assert "VERIFY" in instruction
 
@@ -185,18 +187,29 @@ class TestCodeMigrationSkillPhasePrompts:
         )
         assert "haskell inventory" in prompt
 
-    def test_unknown_phase_falls_back_to_analyze(self) -> None:
+    def test_phase_prompt_fallback_for_truly_unknown_phase_uses_analyze(self) -> None:
+        """When PHASE_PROMPTS has no key matching phase.value, fall back to 'analyze' prompt."""
+        from unittest.mock import patch
+
+        from vaig.skills.code_migration.prompts import PHASE_PROMPTS
         from vaig.skills.code_migration.skill import CodeMigrationSkill
 
         skill = CodeMigrationSkill()
-        # REPORT maps to the "report" key in PHASE_PROMPTS
-        prompt = skill.get_phase_prompt(
-            SkillPhase.REPORT,
-            context="ctx",
-            user_input="inp",
-        )
-        assert "ctx" in prompt
-        assert "inp" in prompt
+        # Monkey-patch PHASE_PROMPTS to remove "report" so we hit the fallback path
+        with patch.dict(PHASE_PROMPTS, {}, clear=False):
+            original_report = PHASE_PROMPTS.pop("report", None)
+            try:
+                prompt = skill.get_phase_prompt(
+                    SkillPhase.REPORT,
+                    context="ctx",
+                    user_input="inp",
+                )
+                # Fallback to "analyze" prompt — still interpolates context/input
+                assert "ctx" in prompt
+                assert "inp" in prompt
+            finally:
+                if original_report is not None:
+                    PHASE_PROMPTS["report"] = original_report
 
 
 class TestCodeMigrationSkillAgentsConfig:
@@ -265,7 +278,7 @@ class TestMigrationPhaseEnum:
         from vaig.skills.code_migration.skill import MigrationPhase
 
         values = {p.value for p in MigrationPhase}
-        assert values == {"inventory", "semantic_map", "spec", "implement", "verify"}
+        assert values == {"inventory", "semantic_map", "spec", "implement", "verify", "report"}
 
     def test_is_str_subclass(self) -> None:
         from vaig.skills.code_migration.skill import MigrationPhase
@@ -280,20 +293,21 @@ class TestMigrationPhaseEnum:
         assert MigrationPhase.SEMANTIC_MAP.next_phase() == MigrationPhase.SPEC
         assert MigrationPhase.SPEC.next_phase() == MigrationPhase.IMPLEMENT
         assert MigrationPhase.IMPLEMENT.next_phase() == MigrationPhase.VERIFY
+        assert MigrationPhase.VERIFY.next_phase() == MigrationPhase.REPORT
 
     def test_last_phase_next_is_none(self) -> None:
         from vaig.skills.code_migration.skill import MigrationPhase
 
-        assert MigrationPhase.VERIFY.next_phase() is None
+        assert MigrationPhase.REPORT.next_phase() is None
 
     def test_from_skill_phase_mapping(self) -> None:
         from vaig.skills.code_migration.skill import MigrationPhase
 
         assert MigrationPhase.from_skill_phase(SkillPhase.ANALYZE) == MigrationPhase.INVENTORY
         assert MigrationPhase.from_skill_phase(SkillPhase.PLAN) == MigrationPhase.SEMANTIC_MAP
-        assert MigrationPhase.from_skill_phase(SkillPhase.EXECUTE) == MigrationPhase.IMPLEMENT
-        assert MigrationPhase.from_skill_phase(SkillPhase.VALIDATE) == MigrationPhase.VERIFY
-        assert MigrationPhase.from_skill_phase(SkillPhase.REPORT) == MigrationPhase.VERIFY
+        assert MigrationPhase.from_skill_phase(SkillPhase.EXECUTE) == MigrationPhase.SPEC
+        assert MigrationPhase.from_skill_phase(SkillPhase.VALIDATE) == MigrationPhase.IMPLEMENT
+        assert MigrationPhase.from_skill_phase(SkillPhase.REPORT) == MigrationPhase.REPORT
 
     def test_json_serializable(self) -> None:
         import json

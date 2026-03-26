@@ -63,6 +63,7 @@ packages = ["src/vaig"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/vaig/ui/spa_template.html" = "vaig/ui/spa_template.html"
 "src/vaig/ui/general_report_template.html" = "vaig/ui/general_report_template.html"
+"src/vaig/skills/code_migration/idioms/python_to_go.yaml" = "vaig/skills/code_migration/idioms/python_to_go.yaml"
 
 [tool.ruff]
 target-version = "py311"

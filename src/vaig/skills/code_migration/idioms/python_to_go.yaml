@@ -42,8 +42,17 @@ idioms:
     notes: "Go structs are the equivalent. Use exported fields (uppercase) for JSON serialisation."
 
   - source_pattern: "Generator / yield"
-    target_pattern: "Channel: func gen() <-chan T { ch := make(chan T); go func() { ch <- v; close(ch) }(); return ch }"
-    notes: "Go generators are implemented with goroutines and channels."
+    target_pattern: "Goroutine + channel (producer pattern)"
+    notes: |
+      Go has no generator syntax. Model a generator as a goroutine that sends values
+      into a channel and closes it when done. Example:
+        func gen(values []T) <-chan T {
+            ch := make(chan T)
+            go func() { for _, v := range values { ch <- v }; close(ch) }()
+            return ch
+        }
+      Consumers use `for v := range gen(values)`. For infinite generators, omit
+      close(ch) and let the caller cancel via context.Context.
 
   - source_pattern: "f-string: f'Hello, {name}!'"
     target_pattern: "fmt.Sprintf: fmt.Sprintf(\"Hello, %s!\", name)"

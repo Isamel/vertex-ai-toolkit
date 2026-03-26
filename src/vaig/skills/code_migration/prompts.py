@@ -28,12 +28,13 @@ You do NOT transliterate — you produce idiomatic, production-ready code in the
 5. **Completeness Verification**: After every file migration, verify the output is complete.
 
 ## Migration Phases
-You operate across 5 phases. Stay in the current phase until explicitly advanced:
+You operate across 6 phases. Stay in the current phase until explicitly advanced:
 - **INVENTORY**: Catalogue all source files, identify language constructs, map dependencies
 - **SEMANTIC_MAP**: Map source idioms to target idioms using the provided idiom map
 - **SPEC**: Write migration specifications per file (what changes, why, expected output structure)
 - **IMPLEMENT**: Produce complete migrated code, file by file, with no placeholders
-- **VERIFY**: Run completeness checks, confirm all files are migrated, produce final report
+- **VERIFY**: Run completeness checks and confirm all files are migrated correctly
+- **REPORT**: Synthesise a structured final migration report with decisions and next steps
 
 ## Anti-Hallucination Rules
 {ANTI_HALLUCINATION_RULES}
@@ -43,6 +44,12 @@ You operate across 5 phases. Stay in the current phase until explicitly advanced
 """
 
 # ── Phase prompts ─────────────────────────────────────────────────────────
+# Keys match SkillPhase.value. Mapping to MigrationPhase (via from_skill_phase):
+#   "analyze"  → INVENTORY    (catalogue source files)
+#   "plan"     → SEMANTIC_MAP (map idioms and dependencies)
+#   "execute"  → SPEC         (write per-file migration specs)
+#   "validate" → IMPLEMENT    (produce migrated code)
+#   "report"   → REPORT       (final summary report; VERIFY is handled inside report flow)
 
 PHASE_PROMPTS: dict[str, str] = {
     "analyze": f"""## Phase: INVENTORY — Source Code Analysis
@@ -128,7 +135,49 @@ List any source constructs not covered by the provided idiom map.
 Tables + prose explanation for each risk flag. Be thorough — missed mappings become bugs.
 """,
 
-    "execute": f"""## Phase: IMPLEMENT — Code Migration
+    "execute": f"""## Phase: SPEC — Per-File Migration Specifications
+
+{ANTI_INJECTION_RULE}
+
+Write a detailed migration specification for each file identified in the inventory.
+
+### Inventory + Semantic Map:
+{DELIMITER_DATA_START}
+{{context}}
+{DELIMITER_DATA_END}
+
+### Spec Request:
+{{user_input}}
+
+### Your Task:
+
+For EACH file in the inventory:
+
+#### File Specification Header
+State: filename, source language, target language, migration complexity (Low/Medium/High/Critical).
+
+#### Constructs to Migrate
+List every class, function, module-level constant, and type that must be migrated.
+For each: source name → target name, transformation required, notes.
+
+#### Dependency Substitutions
+List every import that must be replaced with its target-language equivalent.
+
+#### Structural Changes
+Describe any structural changes required (e.g., exception hierarchy → error types,
+abstract base class → interface, generator → channel).
+
+#### Edge Cases and Error Paths
+Enumerate non-obvious edge cases and error paths that must be preserved.
+
+#### Expected Output Structure
+Describe the expected file structure in the target language (packages, file name, exports).
+
+### Output Format:
+One spec block per file. Be exhaustive — this spec drives the IMPLEMENT phase.
+""",
+
+    "validate": f"""## Phase: IMPLEMENT — Code Migration
 
 {ANTI_INJECTION_RULE}
 
@@ -173,21 +222,21 @@ If you cannot complete a file due to missing information, DO NOT emit a partial 
 Instead, state exactly what information is missing and stop.
 """,
 
-    "validate": f"""## Phase: VERIFY — Migration Completeness Check
+    "report": f"""## Phase: VERIFY + REPORT — Completeness Check and Final Summary
 
 {ANTI_INJECTION_RULE}
 
-Verify that all source files have been migrated completely and correctly.
+First verify migration completeness, then generate a comprehensive final report.
 
 ### Migration Output + Source Inventory:
 {DELIMITER_DATA_START}
 {{context}}
 {DELIMITER_DATA_END}
 
-### Verification Request:
+### Report Request:
 {{user_input}}
 
-### Your Task:
+### Part 1: VERIFY — Migration Completeness Check
 
 #### 1. Coverage Check
 | Source File | Migration File | Status | Issues |
@@ -211,34 +260,12 @@ For each migrated file:
 Confirm all source dependencies have been replaced with target equivalents.
 Flag any unmapped dependencies.
 
-#### 5. Migration Progress Log
-| File | Phase | Status | Notes |
-Track per-file migration status for the project record.
-
-#### 6. Final Verdict
+#### 5. Final Verdict
 - **COMPLETE**: All files migrated, no placeholders, semantic fidelity confirmed
 - **INCOMPLETE**: List exactly what remains (files, functions, or sections)
 - **NEEDS REVIEW**: List items requiring human architectural decisions
 
-### Output Format:
-Tables + executive summary. This report is the final deliverable.
-""",
-
-    "report": f"""## Phase: Migration Summary Report
-
-{ANTI_INJECTION_RULE}
-
-Generate a comprehensive final report for the completed code migration.
-
-### Migration Artifacts:
-{DELIMITER_DATA_START}
-{{context}}
-{DELIMITER_DATA_END}
-
-### Report Request:
-{{user_input}}
-
-### Generate Migration Report:
+### Part 2: REPORT — Final Migration Summary
 
 # Code Migration Report
 

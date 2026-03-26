@@ -1,7 +1,8 @@
-"""Code Migration Skill — language-to-language code migration with 5-phase state machine."""
+"""Code Migration Skill — language-to-language code migration with 6-phase state machine."""
 
 from __future__ import annotations
 
+import importlib.resources
 import logging
 from enum import StrEnum
 from pathlib import Path
@@ -15,15 +16,12 @@ from vaig.tools.file_tools import create_file_tools
 
 logger = logging.getLogger(__name__)
 
-# Path to the bundled idiom maps directory
-_IDIOMS_DIR = Path(__file__).parent / "idioms"
-
 
 class MigrationPhase(StrEnum):
-    """5-phase state machine for language-to-language code migration.
+    """6-phase state machine for language-to-language code migration.
 
     The phases are ordered — each must complete before the next begins:
-    INVENTORY → SEMANTIC_MAP → SPEC → IMPLEMENT → VERIFY
+    INVENTORY → SEMANTIC_MAP → SPEC → IMPLEMENT → VERIFY → REPORT
 
     Inherits from ``StrEnum`` — instances compare equal to their string value
     and serialise as plain strings in JSON (no custom encoder required).
@@ -34,6 +32,7 @@ class MigrationPhase(StrEnum):
     SPEC = "spec"
     IMPLEMENT = "implement"
     VERIFY = "verify"
+    REPORT = "report"
 
     def next_phase(self) -> MigrationPhase | None:
         """Return the next migration phase, or None if this is the last phase."""
@@ -45,13 +44,23 @@ class MigrationPhase(StrEnum):
 
     @classmethod
     def from_skill_phase(cls, phase: SkillPhase) -> MigrationPhase:
-        """Map a SkillPhase to the corresponding MigrationPhase for prompt selection."""
+        """Map a SkillPhase to the corresponding MigrationPhase for prompt selection.
+
+        Mapping:
+        - ANALYZE  → INVENTORY    (catalogue source files)
+        - PLAN     → SEMANTIC_MAP (map idioms and dependencies)
+        - EXECUTE  → SPEC         (write per-file migration specs)
+        - VALIDATE → IMPLEMENT    (produce migrated code)
+        - REPORT   → REPORT       (final summary report)
+
+        Falls back to INVENTORY for any unknown phase.
+        """
         _mapping: dict[SkillPhase, MigrationPhase] = {
             SkillPhase.ANALYZE: cls.INVENTORY,
             SkillPhase.PLAN: cls.SEMANTIC_MAP,
-            SkillPhase.EXECUTE: cls.IMPLEMENT,
-            SkillPhase.VALIDATE: cls.VERIFY,
-            SkillPhase.REPORT: cls.VERIFY,
+            SkillPhase.EXECUTE: cls.SPEC,
+            SkillPhase.VALIDATE: cls.IMPLEMENT,
+            SkillPhase.REPORT: cls.REPORT,
         }
         return _mapping.get(phase, cls.INVENTORY)
 
@@ -59,35 +68,58 @@ class MigrationPhase(StrEnum):
 def _load_idiom_map(source_lang: str, target_lang: str) -> dict[str, Any] | None:
     """Load an idiom map YAML file for the given language pair.
 
-    Looks for ``{source_lang}_to_{target_lang}.yaml`` in the bundled idioms directory.
+    Looks for ``{source_lang}_to_{target_lang}.yaml`` in the bundled
+    ``vaig.skills.code_migration.idioms`` package, using :mod:`importlib.resources`
+    so the file is accessible whether the package is installed as a wheel or run
+    from source.
 
     Args:
         source_lang: Source programming language (e.g. ``"python"``).
         target_lang: Target programming language (e.g. ``"go"``).
 
     Returns:
-        Parsed YAML dict on success, or ``None`` if no map is found.
+        Parsed YAML dict on success, or ``None`` if no map is found or the file
+        is invalid / missing.
     """
     filename = f"{source_lang.lower()}_to_{target_lang.lower()}.yaml"
-    path = _IDIOMS_DIR / filename
 
-    if not path.exists():
-        logger.debug("No idiom map found for %s→%s at %s", source_lang, target_lang, path)
+    try:
+        idioms_pkg = importlib.resources.files("vaig.skills.code_migration.idioms")
+        resource = idioms_pkg.joinpath(filename)
+        content = resource.read_text(encoding="utf-8")
+    except (FileNotFoundError, ModuleNotFoundError):
+        logger.debug("No idiom map found for %s→%s", source_lang, target_lang)
+        return None
+    except OSError as exc:
+        logger.warning("Failed to read idiom map %s: %s", filename, exc)
         return None
 
     try:
-        with path.open(encoding="utf-8") as fh:
-            data: dict[str, Any] = yaml.safe_load(fh)
-        logger.debug(
-            "Loaded idiom map %s: %d idioms, %d deps",
-            filename,
-            len(data.get("idioms", [])),
-            len(data.get("dependencies", {})),
-        )
-        return data
-    except (OSError, yaml.YAMLError) as exc:
-        logger.warning("Failed to load idiom map %s: %s", filename, exc)
+        raw = yaml.safe_load(content)
+    except yaml.YAMLError as exc:
+        logger.warning("Failed to parse idiom map %s: %s", filename, exc)
         return None
+
+    # Schema validation: safe_load can return None or non-dict for empty/invalid files
+    if raw is None:
+        logger.warning("Idiom map %s is empty", filename)
+        return None
+    if not isinstance(raw, dict):
+        logger.warning(
+            "Idiom map %s has unexpected top-level type %s (expected dict)",
+            filename,
+            type(raw).__name__,
+        )
+        return None
+
+    data: dict[str, Any] = raw
+    logger.debug(
+        "Loaded idiom map %s: %d idioms, %d deps",
+        filename,
+        len(data.get("idioms", [])),
+        len(data.get("dependencies", {})),
+    )
+    return data
 
 
 def _format_idiom_map(idiom_data: dict[str, Any]) -> str:
@@ -327,7 +359,20 @@ class CodeMigrationSkill(BaseSkill):
             {
                 "name": "migration_lead",
                 "role": f"Migration Lead ({lang_pair})",
-                "system_instruction": SYSTEM_INSTRUCTION,
+                "system_instruction": (
+                    f"You are a senior engineering lead overseeing the final stages of a "
+                    f"{lang_pair} code migration project. "
+                    "Your responsibilities cover the VERIFY and REPORT phases: "
+                    "run completeness checks on all migrated files (scan for TODO, FIXME, "
+                    "stub bodies, placeholder patterns), confirm full semantic fidelity with "
+                    "the original source, and synthesise a structured final migration report. "
+                    "The report must include an executive summary, per-file status table, "
+                    "idiom transformations applied, dependency substitutions, design decisions "
+                    "made, and recommended next steps. "
+                    "Be direct and precise — your verdict determines whether the migration "
+                    "is accepted or sent back for rework. "
+                    "Use the provided file tools to scan migrated output before reporting."
+                ),
                 "model": "gemini-2.5-pro",
                 "requires_tools": True,
                 "tool_categories": ["coding"],
