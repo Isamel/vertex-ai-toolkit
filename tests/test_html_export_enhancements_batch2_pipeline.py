@@ -10,7 +10,7 @@ Covers:
 from __future__ import annotations
 
 from collections import Counter
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from vaig.cli.commands.live import _inject_report_metadata
 from vaig.skills.service_health.schema import (
@@ -250,7 +250,8 @@ class TestInjectBothNone:
         assert report.metadata.cost_metrics is None
         assert report.metadata.tool_usage is None
 
-    def test_still_fills_basic_metadata(self) -> None:
+    @patch("vaig.tools.gke.cost_estimation.fetch_workload_costs", return_value=None)
+    def test_still_fills_basic_metadata(self, _mock_fetch: MagicMock) -> None:
         """Other fields (cluster_name, model_used) still work when cost/tool are None."""
         report = _make_report()
         gke = MagicMock()

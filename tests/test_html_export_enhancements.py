@@ -53,10 +53,11 @@ def _make_consoles() -> tuple[MagicMock, MagicMock]:
 # ── _inject_report_metadata ───────────────────────────────────────────────────
 
 
+@patch("vaig.tools.gke.cost_estimation.fetch_workload_costs", return_value=None)
 class TestInjectReportMetadata:
     """Unit tests for _inject_report_metadata."""
 
-    def test_fills_empty_cluster_and_project(self) -> None:
+    def test_fills_empty_cluster_and_project(self, _mock_fetch: MagicMock) -> None:
         """Empty cluster_name / project_id are filled from gke_config."""
         report = _make_report()
         gke = _make_gke_config(cluster_name="cluster-a", project_id="proj-a")
@@ -67,7 +68,7 @@ class TestInjectReportMetadata:
         assert report.metadata.project_id == "proj-a"
         assert report.metadata.model_used == "gemini-2.0"
 
-    def test_fills_empty_model_used(self) -> None:
+    def test_fills_empty_model_used(self, _mock_fetch: MagicMock) -> None:
         """Empty model_used is filled from model_id argument."""
         report = _make_report()
 
@@ -75,7 +76,7 @@ class TestInjectReportMetadata:
 
         assert report.metadata.model_used == "gemini-pro"
 
-    def test_overwrites_populated_cluster_name(self) -> None:
+    def test_overwrites_populated_cluster_name(self, _mock_fetch: MagicMock) -> None:
         """cluster_name from gke_config ALWAYS overwrites — LLM may hallucinate this."""
         report = _make_report(cluster_name="hallucinated-cluster")
         gke = _make_gke_config(cluster_name="different-cluster")
@@ -84,7 +85,7 @@ class TestInjectReportMetadata:
 
         assert report.metadata.cluster_name == "different-cluster"
 
-    def test_overwrites_populated_project_id(self) -> None:
+    def test_overwrites_populated_project_id(self, _mock_fetch: MagicMock) -> None:
         """project_id from gke_config ALWAYS overwrites — LLM may hallucinate this."""
         report = _make_report(project_id="hallucinated-project")
         gke = _make_gke_config(project_id="other-project")
@@ -93,7 +94,7 @@ class TestInjectReportMetadata:
 
         assert report.metadata.project_id == "other-project"
 
-    def test_overwrites_populated_model_used(self) -> None:
+    def test_overwrites_populated_model_used(self, _mock_fetch: MagicMock) -> None:
         """model_used ALWAYS overwrites — LLM may hallucinate values like 'gke-sre-model-v1'."""
         report = _make_report(model_used="gke-sre-model-v1")  # hallucinated
 
@@ -101,7 +102,7 @@ class TestInjectReportMetadata:
 
         assert report.metadata.model_used == "new-model"
 
-    def test_na_sentinel_overwritten_cluster(self) -> None:
+    def test_na_sentinel_overwritten_cluster(self, _mock_fetch: MagicMock) -> None:
         """cluster_name of 'N/A' is treated as empty and overwritten."""
         report = _make_report(cluster_name="N/A")
         gke = _make_gke_config(cluster_name="real-cluster")
@@ -110,7 +111,7 @@ class TestInjectReportMetadata:
 
         assert report.metadata.cluster_name == "real-cluster"
 
-    def test_na_lowercase_sentinel_overwritten(self) -> None:
+    def test_na_lowercase_sentinel_overwritten(self, _mock_fetch: MagicMock) -> None:
         """'n/a' (lowercase) is also treated as the N/A sentinel."""
         report = _make_report(project_id="n/a")
         gke = _make_gke_config(project_id="real-project")
@@ -119,7 +120,7 @@ class TestInjectReportMetadata:
 
         assert report.metadata.project_id == "real-project"
 
-    def test_no_gke_config_no_crash(self) -> None:
+    def test_no_gke_config_no_crash(self, _mock_fetch: MagicMock) -> None:
         """Calling with gke_config=None should not raise."""
         report = _make_report()
 
@@ -127,7 +128,7 @@ class TestInjectReportMetadata:
 
         assert report.metadata.model_used == "m"
 
-    def test_no_metadata_attribute_no_crash(self) -> None:
+    def test_no_metadata_attribute_no_crash(self, _mock_fetch: MagicMock) -> None:
         """If the report has no metadata attribute, no exception is raised."""
         obj = MagicMock(spec=[])  # no attributes
 
