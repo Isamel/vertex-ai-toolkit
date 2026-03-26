@@ -1059,7 +1059,17 @@ def _inject_report_metadata(
 
             metadata.gke_cost = fetch_workload_costs(gke_config)
         except Exception as _gke_cost_exc:  # noqa: BLE001
-            logger.debug("GKE cost estimation skipped: %s", _gke_cost_exc)
+            logger.debug("GKE cost estimation failed: %s", _gke_cost_exc)
+            try:
+                from vaig.skills.service_health.schema import GKECostReport  # noqa: WPS433
+
+                metadata.gke_cost = GKECostReport(
+                    supported=False,
+                    cluster_type="unknown",
+                    unsupported_reason=str(_gke_cost_exc),
+                )
+            except Exception:  # noqa: BLE001
+                pass  # schema import failed — leave gke_cost unset
 
     # ── Generated-at timestamp — ALWAYS overwrite with actual time ────────────
     metadata.generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")

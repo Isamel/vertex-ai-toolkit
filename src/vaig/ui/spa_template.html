@@ -995,8 +995,8 @@ function renderGKECost() {
   const fmt = v => v != null ? '$' + Number(v).toFixed(2) : 'N/A';
   const summaryCards = [
     { label: 'Total Request Cost', value: fmt(gkeCost.total_request_cost_usd), sub: 'per month (est.)' },
-    { label: 'Total Usage Cost',   value: gkeCost.total_usage_cost_usd != null ? fmt(gkeCost.total_usage_cost_usd) : 'N/A', sub: 'per month (actual)' },
-    { label: 'Savings Potential',  value: gkeCost.total_savings_usd != null ? fmt(gkeCost.total_savings_usd) : 'N/A', sub: 'per month (est.)' },
+    { label: 'Total Usage Cost',   value: fmt(gkeCost.total_usage_cost_usd), sub: 'per month (actual)' },
+    { label: 'Savings Potential',  value: fmt(gkeCost.total_savings_usd), sub: 'per month (est.)' },
   ];
   document.getElementById('gke-cost-summary-grid').innerHTML = summaryCards.map(c =>
     `<div class="cost-card">

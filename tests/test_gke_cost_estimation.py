@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vaig.tools.gke.cost_estimation import (
+    _MEMORY_SUFFIXES,
     AUTOPILOT_PRICING,
     _aggregate_container_requests,
     _get_workload_name,
@@ -210,6 +211,33 @@ class TestCalculateWorkloadCost:
         )
         assert result["total_usage_cost_usd"] is None
         assert result["total_waste_usd"] is None
+
+    def test_partial_usage_later_dimension_still_computed(self) -> None:
+        # Fix 6: order-dependent bug.
+        # cpu_usage=None (first dim missing), memory_usage_gib and
+        # ephemeral_usage_gib are present.  Per-resource usage_cost_usd
+        # for memory and ephemeral must still be computed; only the TOTAL
+        # should be None (because cpu is missing).
+        result = calculate_workload_cost(
+            cpu_requests=1.0,
+            memory_requests_gib=4.0,
+            ephemeral_requests_gib=1.0,
+            pricing=_MONTREAL_PRICING,
+            cpu_usage=None,          # first dimension — missing
+            memory_usage_gib=2.0,    # second dimension — present
+            ephemeral_usage_gib=0.5, # third dimension — present
+        )
+        # Total must be None (not all dimensions available)
+        assert result["total_usage_cost_usd"] is None
+        assert result["total_waste_usd"] is None
+
+        # But per-resource usage costs for memory and ephemeral must be filled
+        by_type = {rc.resource_type: rc for rc in result["resource_costs"]}
+        assert by_type["cpu"].usage_cost_usd is None       # missing
+        assert by_type["memory"].usage_cost_usd is not None    # must not be None
+        assert by_type["ephemeral"].usage_cost_usd is not None # must not be None
+        assert by_type["memory"].usage_cost_usd > 0
+        assert by_type["ephemeral"].usage_cost_usd > 0
 
 
 # ── _aggregate_container_requests ────────────────────────────
@@ -441,3 +469,62 @@ class TestPricingTable:
         pricing = AUTOPILOT_PRICING["northamerica-northeast1"]
         with pytest.raises((AttributeError, TypeError)):
             pricing.cpu_per_vcpu_hour = 999.0  # type: ignore[misc]
+
+
+# ── _MEMORY_SUFFIXES module-level constant (Fix 7) ───────────
+
+
+class TestMemorySuffixesModuleLevel:
+    def test_is_at_module_level(self) -> None:
+        """_MEMORY_SUFFIXES must be a module-level dict, not re-created per call."""
+        import vaig.tools.gke.cost_estimation as mod  # noqa: PLC0415
+        assert hasattr(mod, "_MEMORY_SUFFIXES"), "_MEMORY_SUFFIXES must be module-level"
+        assert isinstance(mod._MEMORY_SUFFIXES, dict)
+
+    def test_ki_factor_is_correct(self) -> None:
+        """Ki factor must be 1/(1024*1024) for KiB→GiB, not 1/1024 (Fix 5+7)."""
+        assert _MEMORY_SUFFIXES["Ki"] == pytest.approx(1.0 / (1024.0 * 1024.0))
+
+    def test_ki_conversion(self) -> None:
+        # 1024 KiB = 1 MiB = 1/1024 GiB
+        assert parse_memory("1024Ki") == pytest.approx(1.0 / 1024.0)
+
+    def test_mi_conversion(self) -> None:
+        # 1024 MiB = 1 GiB
+        assert parse_memory("1024Mi") == pytest.approx(1.0)
+
+    def test_gi_conversion(self) -> None:
+        assert parse_memory("2Gi") == pytest.approx(2.0)
+
+    def test_ti_conversion(self) -> None:
+        assert parse_memory("1Ti") == pytest.approx(1024.0)
+
+
+# ── Fix 3: missing config fields → specific error message ─────
+
+
+class TestFetchWorkloadCostsMissingConfig:
+    def _make_incomplete_config(self, **overrides: Any) -> MagicMock:
+        cfg = MagicMock()
+        cfg.project_id = overrides.get("project_id", "my-project")
+        cfg.location = overrides.get("location", "northamerica-northeast1")
+        cfg.cluster_name = overrides.get("cluster_name", "my-cluster")
+        return cfg
+
+    def test_missing_project_id_gives_specific_message(self) -> None:
+        from vaig.tools.gke.cost_estimation import fetch_workload_costs  # noqa: PLC0415
+        with patch("vaig.tools.gke.cost_estimation.detect_autopilot", new=lambda _: None):
+            cfg = self._make_incomplete_config(project_id=None)
+            cfg.project_id = None
+            report = fetch_workload_costs(cfg)
+        assert report.supported is False
+        assert "project_id" in (report.unsupported_reason or "")
+
+    def test_missing_location_gives_specific_message(self) -> None:
+        from vaig.tools.gke.cost_estimation import fetch_workload_costs  # noqa: PLC0415
+        with patch("vaig.tools.gke.cost_estimation.detect_autopilot", new=lambda _: None):
+            cfg = self._make_incomplete_config(location=None)
+            cfg.location = None
+            report = fetch_workload_costs(cfg)
+        assert report.supported is False
+        assert "location" in (report.unsupported_reason or "")

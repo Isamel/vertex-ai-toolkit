@@ -1,8 +1,13 @@
 """GKE Autopilot workload cost estimation.
 
 Computes estimated monthly costs for GKE Autopilot workloads based on
-Kubernetes resource requests (CPU, memory, ephemeral storage) and — when
-available — actual usage metrics from Cloud Monitoring.
+Kubernetes resource *requests* (CPU, memory, ephemeral storage).
+
+Actual usage metrics are NOT collected by this module — ``kubectl top pods``
+and Cloud Monitoring integration are outside the scope of this pipeline.
+The ``total_usage_cost_usd`` and ``total_waste_usd`` fields in the report
+will always be ``None`` / show as "N/A" in the UI unless a caller provides
+explicit usage values through :func:`calculate_workload_cost`.
 
 Cost model:
     monthly_cost = resource_quantity * hourly_rate_per_unit * 730 hours/month
@@ -17,6 +22,7 @@ in the table are supported; unknown regions degrade gracefully.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -104,6 +110,21 @@ AUTOPILOT_PRICING: dict[str, GKEPricing] = {
 }
 
 
+# ── Memory suffix table (module-level constant) ───────────────
+# Maps Kubernetes memory suffix → factor to convert raw value to GiB.
+# Sorted longest-first so iteration always matches the most specific suffix.
+
+_MEMORY_SUFFIXES: dict[str, float] = {
+    "Ti": 1024.0,                             # TiB → GiB
+    "Gi": 1.0,                                # GiB → GiB
+    "Mi": 1.0 / 1024.0,                       # MiB → GiB
+    "Ki": 1.0 / (1024.0 * 1024.0),            # KiB → GiB  (fixed: was 1/1024)
+    "T":  1_000_000_000_000 / (1024.0 ** 3),  # TB  → GiB
+    "G":  1_000_000_000 / (1024.0 ** 3),      # GB  → GiB
+    "M":  1_000_000 / (1024.0 ** 3),          # MB  → GiB
+    "K":  1_000 / (1024.0 ** 3),              # KB  → GiB
+}
+
 # ── Unit parsers ──────────────────────────────────────────────
 
 
@@ -147,7 +168,7 @@ def parse_cpu(value: str | None) -> float:
 def parse_memory(value: str | None) -> float:
     """Parse a Kubernetes memory quantity string to GiB.
 
-    Supports binary suffixes (Ki, Mi, Gi) and decimal suffixes (K, M, G).
+    Supports binary suffixes (Ki, Mi, Gi, Ti) and decimal suffixes (K, M, G, T).
 
     Args:
         value: Memory quantity string from a Kubernetes resource spec, or None.
@@ -169,32 +190,15 @@ def parse_memory(value: str | None) -> float:
         return 0.0
     value = value.strip()
 
-    _SUFFIXES: dict[str, float] = {
-        "Ki": 1.0 / 1024.0,         # KiB → GiB
-        "Mi": 1.0 / 1024.0,         # MiB → GiB  (divide by 1024 from MiB)
-        "Gi": 1.0,                   # GiB → GiB
-        "Ti": 1024.0,                # TiB → GiB
-        "K":  1_000 / (1024.0 ** 3),
-        "M":  1_000_000 / (1024.0 ** 3),
-        "G":  1_000_000_000 / (1024.0 ** 3),
-        "T":  1_000_000_000_000 / (1024.0 ** 3),
-    }
-
-    # Binary suffixes first (longer match wins)
-    for suffix in ("Ti", "Gi", "Mi", "Ki", "T", "G", "M", "K"):
+    # Iterate suffixes longest-first (Ti/Gi/Mi/Ki before T/G/M/K)
+    for suffix, factor in _MEMORY_SUFFIXES.items():
         if value.endswith(suffix):
             numeric_part = value[: -len(suffix)]
             try:
-                raw = float(numeric_part)
+                return float(numeric_part) * factor
             except ValueError:
                 logger.debug("Unparseable memory value: %r", value)
                 return 0.0
-            # Special-case MiB: raw is in MiB, convert to GiB
-            if suffix == "Mi":
-                return raw / 1024.0
-            if suffix == "Ki":
-                return raw / (1024.0 * 1024.0)
-            return raw * _SUFFIXES[suffix]
 
     # Plain bytes (no suffix)
     try:
@@ -271,20 +275,22 @@ def calculate_workload_cost(
 
     result_costs: list[GKEResourceCost] = []
     total_request = 0.0
-    total_usage: float | None = 0.0
+    total_usage = 0.0
+    all_usage_available = True  # tracks whether ALL dimensions have usage data
 
     for res_type, req_qty, use_qty, rate in resource_specs:
         req_cost = calculate_resource_cost(req_qty, rate)
         total_request += req_cost
 
-        if use_qty is not None and total_usage is not None:
-            use_cost = calculate_resource_cost(use_qty, rate)
-            total_usage += use_cost
-            waste: float | None = req_cost - use_cost
+        if use_qty is not None:
+            use_cost_val: float = calculate_resource_cost(use_qty, rate)
+            total_usage += use_cost_val
+            use_cost: float | None = use_cost_val
+            waste: float | None = req_cost - use_cost_val
         else:
             use_cost = None
             waste = None
-            total_usage = None  # any missing usage makes total unavailable
+            all_usage_available = False  # this dimension is missing
 
         result_costs.append(
             GKEResourceCost(
@@ -297,12 +303,14 @@ def calculate_workload_cost(
             )
         )
 
-    total_waste = (total_request - total_usage) if total_usage is not None else None
+    # Only expose totals when every dimension had usage data
+    final_usage: float | None = total_usage if all_usage_available else None
+    total_waste = (total_request - final_usage) if final_usage is not None else None
 
     return {
         "resource_costs": result_costs,
         "total_request_cost_usd": total_request,
-        "total_usage_cost_usd": total_usage,
+        "total_usage_cost_usd": final_usage,
         "total_waste_usd": total_waste,
     }
 
@@ -330,7 +338,6 @@ def _aggregate_container_requests(
         if not spec:
             continue
         containers = list(spec.containers or [])
-        init_containers = list(spec.init_containers or [])
         # Only bill regular containers (init containers are transient)
         for container in containers:
             requests = {}
@@ -340,9 +347,6 @@ def _aggregate_container_requests(
             total_memory += parse_memory(requests.get("memory"))
             total_ephemeral += parse_ephemeral(requests.get("ephemeral-storage"))
 
-        # suppress unused variable warning
-        _ = init_containers
-
     return total_cpu, total_memory, total_ephemeral
 
 
@@ -350,14 +354,19 @@ def fetch_workload_costs(
     gke_config: GKEConfig,
     namespaces: list[str] | None = None,
 ) -> GKECostReport:
-    """Fetch resource requests from the K8s API and build a GKECostReport.
+    """Fetch resource *requests* from the K8s API and build a GKECostReport.
 
     This is the top-level entry point for the cost estimation pipeline.
     It:
     1. Detects whether the cluster is Autopilot (required for per-workload billing).
     2. Looks up regional pricing from :data:`AUTOPILOT_PRICING`.
-    3. Lists all pods in the target namespaces and sums container requests.
-    4. Returns a :class:`GKECostReport` with per-workload breakdowns.
+    3. Lists all pods in the target namespaces and sums container *requests*.
+    4. Returns a :class:`GKECostReport` with per-workload request-based cost breakdowns.
+
+    Note:
+        Actual usage metrics (CPU/RAM consumed) are **not** collected here.
+        ``total_usage_cost_usd`` and ``total_waste_usd`` in the returned report
+        will always be ``None``. The UI will display "N/A" for those fields.
 
     Args:
         gke_config: GKE configuration (project_id, location, cluster_name).
@@ -377,7 +386,41 @@ def fetch_workload_costs(
     region = gke_config.location or ""
 
     # ── 1. Autopilot detection ─────────────────────────────────
-    is_autopilot = detect_autopilot(gke_config)
+    # Provide specific error messages for common failure cases upfront.
+    if detect_autopilot is None:
+        return GKECostReport(
+            cluster_type="unknown",
+            region=region,
+            supported=False,
+            unsupported_reason=(
+                "GKE client library not available. "
+                "Install the optional dependency: pip install vertex-ai-toolkit[live]."
+            ),
+        )
+
+    missing_fields = [
+        f for f in ("project_id", "location", "cluster_name")
+        if not getattr(gke_config, f, None)
+    ]
+    if missing_fields:
+        return GKECostReport(
+            cluster_type="unknown",
+            region=region,
+            supported=False,
+            unsupported_reason=(
+                f"GKE configuration is incomplete — missing fields: {', '.join(missing_fields)}."
+            ),
+        )
+
+    try:
+        is_autopilot = detect_autopilot(gke_config)
+    except Exception as exc:  # noqa: BLE001
+        return GKECostReport(
+            cluster_type="unknown",
+            region=region,
+            supported=False,
+            unsupported_reason=f"Autopilot detection failed with API error: {exc}",
+        )
 
     if is_autopilot is None:
         return GKECostReport(
@@ -530,8 +573,6 @@ def _get_workload_name(pod: Any) -> str:
     Returns:
         Workload name string. Falls back to the pod name if no owner found.
     """
-    import re  # noqa: WPS433
-
     meta = pod.metadata
     if not meta:
         return "unknown"
