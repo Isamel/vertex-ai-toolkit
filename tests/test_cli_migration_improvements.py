@@ -161,7 +161,8 @@ class TestDirFlag:
                 ["ask", "Migrate this", "--dir", str(tmp_path), "--no-stream"],
             )
 
-        assert "Warning" in _strip_ansi(result.output) or result.exit_code == 0
+        assert result.exit_code == 0
+        assert "Warning" in _strip_ansi(result.output)
 
     def test_dir_flag_exits_on_missing_directory(self, tmp_path: Path) -> None:
         nonexistent = tmp_path / "does_not_exist"

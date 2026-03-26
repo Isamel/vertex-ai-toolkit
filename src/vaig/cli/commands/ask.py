@@ -28,6 +28,7 @@ from vaig.cli.commands.live import _build_gke_config, _execute_live_mode
 
 
 def register(app: typer.Typer) -> None:
+    """Register the ``ask`` command group with the CLI application."""
 
     @app.command()
     @track_command
@@ -38,7 +39,7 @@ def register(app: typer.Typer) -> None:
         files: Annotated[list[Path] | None, typer.Option("--file", "-f", help="Files to include as context")] = None,
         dirs: Annotated[
             list[Path] | None,
-            typer.Option("--dir", help="Directories to include as context (recursively loaded)"),
+            typer.Option("--dir", "-d", help="Directories to include as context (recursively loaded)"),
         ] = None,
         examples: Annotated[
             list[Path] | None,
@@ -128,6 +129,11 @@ def register(app: typer.Typer) -> None:
         try:  # ── CLI error boundary ──
             settings = _helpers._get_settings(config)
 
+            # Validate: --phases requires --skill
+            if phases and not skill:
+                console.print("[red]Error:[/red] --phases requires --skill to be specified.")
+                raise typer.Exit(code=1)
+
             # Eagerly initialize the telemetry collector and wire the
             # TelemetrySubscriber so events from CostTracker, track_command,
             # etc. are forwarded to the SQLite telemetry store.
@@ -204,16 +210,16 @@ def register(app: typer.Typer) -> None:
                 source_context = builder.bundle.to_context_string()
 
                 # Compose final context: examples section first (if any), then source code
-                if examples_context and source_context:
-                    context_str = (
-                        "## Reference Examples\n\n"
-                        + examples_context
-                        + "\n\n---\n\n"
-                        + "## Source Code (to migrate)\n\n"
-                        + source_context
-                    )
-                elif examples_context:
-                    context_str = "## Reference Examples\n\n" + examples_context
+                sections = []
+                if examples_context:
+                    sections.append("## Reference Examples\n\n" + examples_context)
+                if source_context and examples_context:
+                    sections.append("## Source Code (to migrate)\n\n" + source_context)
+
+                if len(sections) > 1:
+                    context_str = "\n\n---\n\n".join(sections)
+                elif sections:
+                    context_str = sections[0]
                 else:
                     context_str = source_context
 
@@ -258,6 +264,8 @@ def register(app: typer.Typer) -> None:
             context_file_paths = [str(f) for f in files] if files else []
             if dirs:
                 context_file_paths.extend(str(d) for d in dirs)
+            if examples:
+                context_file_paths.extend(str(e) for e in examples)
 
             # Auto-detect skill if requested (or enabled in config) and no explicit skill specified
             effective_auto_skill = auto_skill or settings.skills.auto_routing
@@ -290,8 +298,9 @@ def register(app: typer.Typer) -> None:
                 phase_list = _parse_phases(phases)
 
                 # Run each requested phase sequentially; each phase output feeds into the next
+                from vaig.skills.base import SkillPhase, SkillResult  # noqa: PLC0415
                 accumulated_context = context_str
-                final_result = None
+                final_result = SkillResult(output="", success=False, phase=SkillPhase.ANALYZE)
                 for phase in phase_list:
                     phase_label = f"{skill} [{phase.value}]"
                     with console.status(
@@ -303,6 +312,10 @@ def register(app: typer.Typer) -> None:
                             accumulated_context,
                             question,
                         )
+                    if not phase_result.success:
+                        console.print(f"[red]Phase '{phase.value}' failed. Aborting multi-phase execution.[/red]")
+                        final_result = phase_result
+                        break
                     console.print()
                     if phase_result.output:
                         if len(phase_list) > 1:
@@ -317,7 +330,6 @@ def register(app: typer.Typer) -> None:
                         )
                     final_result = phase_result
 
-                assert final_result is not None  # phase_list is never empty
                 result = final_result
 
                 # Show cost summary for skill execution
@@ -457,6 +469,11 @@ async def _async_ask_impl(
     """
     settings = _helpers._get_settings(config)
 
+    # Validate: --phases requires --skill
+    if phases and not skill:
+        console.print("[red]Error:[/red] --phases requires --skill to be specified.")
+        raise typer.Exit(code=1)
+
     # Initialize telemetry eagerly + wire subscriber
     _helpers._init_telemetry(settings)
 
@@ -523,16 +540,16 @@ async def _async_ask_impl(
         source_context = builder.bundle.to_context_string()
 
         # Compose final context: examples section first (if any), then source code
-        if examples_context and source_context:
-            context_str = (
-                "## Reference Examples\n\n"
-                + examples_context
-                + "\n\n---\n\n"
-                + "## Source Code (to migrate)\n\n"
-                + source_context
-            )
-        elif examples_context:
-            context_str = "## Reference Examples\n\n" + examples_context
+        sections = []
+        if examples_context:
+            sections.append("## Reference Examples\n\n" + examples_context)
+        if source_context and examples_context:
+            sections.append("## Source Code (to migrate)\n\n" + source_context)
+
+        if len(sections) > 1:
+            context_str = "\n\n---\n\n".join(sections)
+        elif sections:
+            context_str = sections[0]
         else:
             context_str = source_context
 
@@ -583,6 +600,8 @@ async def _async_ask_impl(
     context_file_paths = [str(f) for f in files] if files else []
     if dirs:
         context_file_paths.extend(str(d) for d in dirs)
+    if examples:
+        context_file_paths.extend(str(e) for e in examples)
 
     # Auto-detect skill
     effective_auto_skill = auto_skill or settings.skills.auto_routing
@@ -615,8 +634,9 @@ async def _async_ask_impl(
         phase_list = _parse_phases(phases)
 
         # Run each requested phase sequentially; each phase output feeds into the next
+        from vaig.skills.base import SkillPhase, SkillResult  # noqa: PLC0415
         accumulated_context = context_str
-        final_result = None
+        final_result = SkillResult(output="", success=False, phase=SkillPhase.ANALYZE)
         for phase in phase_list:
             phase_label = f"{skill} [{phase.value}]"
             with console.status(
@@ -628,6 +648,10 @@ async def _async_ask_impl(
                     accumulated_context,
                     question,
                 )
+            if not phase_result.success:
+                console.print(f"[red]Phase '{phase.value}' failed. Aborting multi-phase execution.[/red]")
+                final_result = phase_result
+                break
             console.print()
             if phase_result.output:
                 if len(phase_list) > 1:
@@ -642,7 +666,6 @@ async def _async_ask_impl(
                 )
             final_result = phase_result
 
-        assert final_result is not None  # phase_list is never empty
         result = final_result
 
         skill_usage = (result.metadata or {}).get("total_usage")
