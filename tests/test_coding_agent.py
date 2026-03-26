@@ -701,7 +701,7 @@ class TestCodingAgentExecute:
         mock_file_tools: MagicMock,
         mock_shell_tools: MagicMock,
     ) -> None:
-        """Context is included in the prompt."""
+        """Context is included in the prompt using XML structure."""
         client = _make_mock_client()
         client.generate_with_tools.return_value = _make_text_result(text="Got it")
 
@@ -710,9 +710,9 @@ class TestCodingAgentExecute:
 
         first_call = client.generate_with_tools.call_args_list[0]
         prompt = first_call[0][0]
-        assert "## Context" in prompt
+        assert "<external_code>" in prompt
         assert "Error traceback here" in prompt
-        assert "## Task" in prompt
+        assert "<task>" in prompt
         assert "Fix the bug" in prompt
 
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
@@ -732,7 +732,7 @@ class TestCodingAgentExecute:
         first_call = client.generate_with_tools.call_args_list[0]
         prompt = first_call[0][0]
         assert prompt == "Simple task"
-        assert "## Context" not in prompt
+        assert "<external_code>" not in prompt
 
 
 # ===========================================================================
@@ -897,9 +897,9 @@ class TestCodingAgentBuildPrompt:
 
         result = agent._build_prompt("Do stuff", "Some context")
 
-        assert "## Context" in result
+        assert "<external_code>" in result
         assert "Some context" in result
-        assert "## Task" in result
+        assert "<task>" in result
         assert "Do stuff" in result
 
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
@@ -1370,3 +1370,138 @@ class TestCodingAgentCachePassthrough:
 
         _, kwargs = mock_loop.call_args
         assert kwargs["tool_result_cache"] is None
+
+
+# ===========================================================================
+# TestCodingSystemPromptPhase1Improvements
+# ===========================================================================
+
+
+class TestCodingSystemPromptPhase1Improvements:
+    """Tests for the Phase 1 improvements to CODING_SYSTEM_PROMPT."""
+
+    def test_contains_cot_instruction(self) -> None:
+        """CODING_SYSTEM_PROMPT includes CoT enforcement content."""
+        from vaig.core.prompt_defense import COT_INSTRUCTION
+
+        assert COT_INSTRUCTION in CODING_SYSTEM_PROMPT
+
+    def test_contains_anti_hallucination_rules(self) -> None:
+        """CODING_SYSTEM_PROMPT includes anti-hallucination rules."""
+        from vaig.core.prompt_defense import ANTI_HALLUCINATION_RULES
+
+        assert ANTI_HALLUCINATION_RULES in CODING_SYSTEM_PROMPT
+
+    def test_contains_spec_phase(self) -> None:
+        """CODING_SYSTEM_PROMPT includes Phase 0 spec requirement."""
+        assert "Phase 0" in CODING_SYSTEM_PROMPT
+        assert "SPEC.md" in CODING_SYSTEM_PROMPT
+        assert "specification" in CODING_SYSTEM_PROMPT.lower()
+
+    def test_phases_renumbered(self) -> None:
+        """Existing phases are renumbered: Phase 1 and Phase 2 still present."""
+        assert "Phase 1" in CODING_SYSTEM_PROMPT
+        assert "Phase 2" in CODING_SYSTEM_PROMPT
+        assert "Phase 3" in CODING_SYSTEM_PROMPT
+
+    def test_contains_verify_completeness_reference(self) -> None:
+        """CODING_SYSTEM_PROMPT references the verify_completeness tool."""
+        assert "verify_completeness" in CODING_SYSTEM_PROMPT
+
+    def test_contains_chain_of_thought_section(self) -> None:
+        """CODING_SYSTEM_PROMPT has a Chain-of-Thought section."""
+        assert "Chain-of-Thought" in CODING_SYSTEM_PROMPT
+
+
+# ===========================================================================
+# TestCodingAgentBuildPromptXML
+# ===========================================================================
+
+
+class TestCodingAgentBuildPromptXML:
+    """Tests for the XML context boundary implementation in _build_prompt."""
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_context_wrapped_in_xml_tags(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """External context is wrapped in <external_code> XML tags."""
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config())
+
+        result = agent._build_prompt("Fix the bug", "some external code")
+
+        assert "<external_code>" in result
+        assert "</external_code>" in result
+        assert "some external code" in result
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_task_wrapped_in_xml_tags(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """Task is wrapped in <task> XML tags."""
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config())
+
+        result = agent._build_prompt("Fix the bug", "some context")
+
+        assert "<task>" in result
+        assert "</task>" in result
+        assert "Fix the bug" in result
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_system_rules_tag_present_with_context(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """<system_rules> tag is present when context is provided."""
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config())
+
+        result = agent._build_prompt("Do something", "context data")
+
+        assert "<system_rules>" in result
+        assert "</system_rules>" in result
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_context_uses_untrusted_delimiters(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """Context is wrapped with prompt_defense delimiter markers."""
+        from vaig.core.prompt_defense import DELIMITER_DATA_END, DELIMITER_DATA_START
+
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config())
+
+        result = agent._build_prompt("task", "untrusted data")
+
+        assert DELIMITER_DATA_START in result
+        assert DELIMITER_DATA_END in result
+        assert "untrusted data" in result
+
+    @patch("vaig.agents.coding.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding.create_file_tools", return_value=[])
+    def test_empty_context_returns_plain_prompt(
+        self,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """Empty context returns the raw prompt (no XML wrapping)."""
+        client = _make_mock_client()
+        agent = CodingAgent(client, _make_coding_config())
+
+        result = agent._build_prompt("My task", "")
+
+        assert result == "My task"
+        assert "<" not in result
