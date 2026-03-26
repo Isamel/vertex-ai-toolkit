@@ -7,6 +7,8 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
+import requests  # type: ignore[import-untyped]
+
 from vaig.core.config import DatadogAPIConfig
 from vaig.tools.base import ToolResult
 
@@ -24,17 +26,11 @@ _ERR_AUTH = "Authentication failed. Check your Datadog API key and application k
 _ERR_FORBIDDEN = "Insufficient permissions. Check your Datadog API/app key scopes."
 _ERR_RATE_LIMIT = "Rate limit exceeded. Try again later."
 
-# ── APM metric namespace families ───────────────────────────
-# Tried in order — stop at the first family that returns any data.
-# This allows the tool to work for HTTP, gRPC, Kafka, and other trace sources.
-_APM_METRIC_FAMILIES = [
-    "trace.web.request",   # HTTP frameworks (Flask, Django, Express, Rails, etc.)
-    "trace.grpc.server",   # gRPC server-side
-    "trace.grpc.client",   # gRPC client-side
-    "trace.kafka.produce", # Kafka producers
-    "trace.kafka.consume", # Kafka consumers
-    "trace",               # Generic "trace.*" fallback
-]
+# ── Datadog APM Spans Events Search v2 endpoints ─────────────
+_DD_SPANS_BASE_URL = "https://api.{site}"
+_DD_SPANS_POST_PATH = "/api/v2/spans/events/search"
+_DD_SPANS_GET_PATH = "/api/v2/apm/traces/search"
+_DD_DEFAULT_LOOKBACK_HOURS = 1  # Default 1-hour lookback for APM queries
 
 # ── Metric query templates ───────────────────────────────────
 # Templates use {filters} as a placeholder for the full tag filter string.
@@ -617,35 +613,33 @@ def get_datadog_apm_services(
     *,
     service_name: str = "",
     env: str = "production",
+    hours_back: float = _DD_DEFAULT_LOOKBACK_HOURS,
     config: DatadogAPIConfig | None = None,
-    _custom_api: Any = None,
+    _custom_session: Any = None,
 ) -> ToolResult:
-    """Fetch live APM trace metrics for a specific service from Datadog.
+    """Fetch live APM trace metrics for a specific service using the Spans Events Search v2 API.
 
-    Queries Datadog trace metrics (throughput, error rate, latency) for the
-    given service and environment using the Metrics v1 API.  The ``env``
-    parameter is used to scope the query — only trace data tagged with the
-    matching environment is returned.
+    Queries Datadog spans data (throughput, error rate, latency) for the given
+    service and environment.  Uses a fallback chain:
 
-    Results are cached for 60 seconds per (service_name, env) combination.
+    1. **Primary**: POST ``/api/v2/spans/events/search`` (Spans Events Search v2)
+    2. **Fallback 1**: GET ``/api/v2/apm/traces/search`` (APM Traces Search v2)
+    3. **Fallback 2**: Return empty result with warning (no crash)
+
+    Results are cached for 60 seconds per (service_name, env, hours_back) combination.
 
     Args:
         service_name: Service name to query — must match the ``service`` tag
             in Datadog APM (typically from ``tags.datadoghq.com/service``
             label or custom APM instrumentation).  If omitted or empty, the
-            tool returns guidance on how to resolve it from Kubernetes labels
-            rather than raising an error.
+            tool returns guidance on how to resolve it from Kubernetes labels.
         env: Datadog environment tag (e.g. ``"production"``, ``"staging"``).
             Used to scope the APM query.  Defaults to ``"production"``.
+        hours_back: Lookback window in hours.  Defaults to 1 hour.  Use
+            fractional values for sub-hour windows (e.g. ``0.5`` for 30 min).
         config: Optional ``DatadogAPIConfig`` (for testing / injection).
-        _custom_api: Optional pre-configured Datadog MetricsApi (for testing).
+        _custom_session: Optional pre-configured ``requests.Session`` (for testing).
     """
-    try:
-        from datadog_api_client.exceptions import ApiException  # noqa: WPS433
-        from datadog_api_client.v1.api.metrics_api import MetricsApi  # noqa: WPS433
-    except ImportError:
-        return ToolResult(output=_ERR_NOT_INSTALLED, error=True)
-
     if config is None:
         from vaig.core.config import get_settings  # noqa: WPS433
 
@@ -677,132 +671,210 @@ def get_datadog_apm_services(
     except ValueError as exc:
         return ToolResult(output=str(exc), error=True)
 
-    # Build tag filter using config.labels for configurable tag key names
-    # (e.g. config.labels.service may be "service" or a custom key like "svc")
-    scope, tag_err = _build_tag_filter(None, service_name, env, config)
-    if tag_err is not None:
-        return tag_err
+    # Validate hours_back
+    if hours_back <= 0:
+        return ToolResult(
+            output="hours_back must be a positive number (e.g. 1.0 for last hour).",
+            error=True,
+        )
 
-    # Cache check (TTL = 60s) — key includes service+env (metric family resolved at runtime)
-    cache_key = _cache._cache_key_discovery("dd_apm_trace", service_name, env)
+    # Cache check (TTL = 60s) — key includes service+env+hours_back
+    cache_key = _cache._cache_key_discovery(
+        "dd_apm_spans_v2", service_name, env, str(hours_back)
+    )
     cached = _cache._get_cached(cache_key)
     if cached is not None:
         return ToolResult(output=cached, error=False)
 
+    # Compute time range
     now = int(time.time())
-    # 30-minute lookback window — wider than 15 min to catch low-traffic services
-    # that may not have had requests in the last 15 minutes.
-    start = now - 1800
+    start = int(now - hours_back * 3600)
 
-    def _try_metric_family(api: Any, family: str) -> tuple[dict[str, float | None], bool]:
-        """Query hits/errors/duration for one metric namespace family.
+    # Build Datadog headers
+    headers = {
+        "DD-API-KEY": config.api_key,
+        "DD-APPLICATION-KEY": config.app_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
 
-        Returns (results_dict, found_any). ``found_any`` is True if any
-        non-empty metric series were found for this family. The generic "trace"
-        family uses trace.request.* metric names (no ".web." segment).
-        """
-        # Build the three query strings for this family
-        if family == "trace":
-            # Generic fallback uses trace.request.* (no sub-namespace)
-            queries = {
-                "hits": f"sum:trace.request.hits{{{scope}}}.as_rate()",
-                "errors": f"sum:trace.request.errors{{{scope}}}.as_rate()",
-                "duration": f"avg:trace.request.duration{{{scope}}}",
+    base_url = _DD_SPANS_BASE_URL.format(site=config.site)
+    service_label = config.labels.service if config.labels else "service"
+    env_label = config.labels.env if config.labels else "env"
+    filter_query = f"{service_label}:{service_name} {env_label}:{env}"
+
+    session = _custom_session or requests.Session()
+
+    def _try_spans_post() -> tuple[dict[str, Any] | None, str]:
+        """POST to /api/v2/spans/events/search. Returns (data, error_msg)."""
+        url = base_url + _DD_SPANS_POST_PATH
+        payload = {
+            "data": {
+                "attributes": {
+                    "filter": {
+                        "query": filter_query,
+                        "from": f"{start}000",  # milliseconds as string
+                        "to": f"{now}000",
+                    },
+                    "page": {"limit": 100},
+                    "sort": "-timestamp",
+                },
+                "type": "search_request",
             }
-        else:
-            queries = {
-                "hits": f"sum:{family}.hits{{{scope}}}.as_rate()",
-                "errors": f"sum:{family}.errors{{{scope}}}.as_rate()",
-                "duration": f"avg:{family}.duration{{{scope}}}",
-            }
-
-        results: dict[str, float | None] = {}
-        found_any = False
-
-        for metric_key, query in queries.items():
-            response = api.query_metrics(_from=start, to=now, query=query)
-            series = getattr(response, "series", []) or []
-
-            if not series:
-                results[metric_key] = None
-                continue
-
-            found_any = True
-            all_points: list[float] = []
-            for s in series:
-                for point in getattr(s, "pointlist", []) or []:
-                    if point[1] is not None:
-                        all_points.append(point[1])
-
-            results[metric_key] = sum(all_points) / len(all_points) if all_points else None
-
-        return results, found_any
-
-    def _execute_queries(api: Any) -> ToolResult:
-        """Try each APM metric family in order; stop at the first that returns data."""
-        matched_family: str | None = None
-        results: dict[str, float | None] = {}
-
-        # TODO: Optimize by probing a single metric (e.g. hits) per family first,
-        # then query errors/duration only for the matched family.
-        for family in _APM_METRIC_FAMILIES:
-            family_results, found_any = _try_metric_family(api, family)
-            if found_any:
-                matched_family = family
-                results = family_results
-                break
-
-        if matched_family is None:
-            no_data_msg = (
-                f"No APM trace data found for service '{service_name}' in env '{env}'. "
-                "Tried metric families: "
-                + ", ".join(_APM_METRIC_FAMILIES)
-                + ". Verify the service_name matches the '"
-                + config.labels.service
-                + "' tag in Datadog APM."
+        }
+        try:
+            resp = session.post(url, json=payload, headers=headers, timeout=config.timeout)
+            if resp.status_code == 200:
+                logger.info("Datadog APM: Spans Events Search v2 POST succeeded for service=%s env=%s", service_name, env)
+                return resp.json(), ""
+            logger.warning(
+                "Datadog APM: Spans Events Search v2 POST failed (HTTP %s) for service=%s",
+                resp.status_code, service_name,
             )
-            return ToolResult(output=no_data_msg, error=False)
+            return None, f"POST /api/v2/spans/events/search returned HTTP {resp.status_code}"
+        except requests.RequestException as exc:
+            logger.warning("Datadog APM: Spans Events Search v2 POST request error: %s", exc)
+            return None, f"POST /api/v2/spans/events/search request error: {exc}"
 
-        # Format output
+    def _try_spans_get() -> tuple[dict[str, Any] | None, str]:
+        """GET /api/v2/apm/traces/search fallback. Returns (data, error_msg)."""
+        url = base_url + _DD_SPANS_GET_PATH
+        params = {
+            "filter[query]": filter_query,
+            "filter[from]": str(start * 1000),  # milliseconds
+            "filter[to]": str(now * 1000),
+            "page[limit]": "100",
+            "sort": "-timestamp",
+        }
+        # Remove Content-Type for GET (no body)
+        get_headers = {k: v for k, v in headers.items() if k != "Content-Type"}
+        try:
+            resp = session.get(url, params=params, headers=get_headers, timeout=config.timeout)
+            if resp.status_code == 200:
+                logger.info("Datadog APM: APM Traces Search v2 GET succeeded for service=%s env=%s", service_name, env)
+                return resp.json(), ""
+            logger.warning(
+                "Datadog APM: APM Traces Search v2 GET failed (HTTP %s) for service=%s",
+                resp.status_code, service_name,
+            )
+            return None, f"GET /api/v2/apm/traces/search returned HTTP {resp.status_code}"
+        except requests.RequestException as exc:
+            logger.warning("Datadog APM: APM Traces Search v2 GET request error: %s", exc)
+            return None, f"GET /api/v2/apm/traces/search request error: {exc}"
+
+    def _parse_spans_response(data: dict[str, Any]) -> dict[str, float | None]:
+        """Parse spans data to extract aggregate metrics.
+
+        Iterates over spans and computes throughput (spans/s), error rate,
+        and average latency from ``duration`` attributes.
+        """
+        spans = data.get("data", []) or []
+        if not spans:
+            return {"hits": None, "errors": None, "duration": None}
+
+        total_spans = len(spans)
+        error_count = 0
+        durations: list[float] = []
+
+        for span in spans:
+            attrs = span.get("attributes", {}) or {}
+            resource_attrs = attrs.get("attributes", {}) or {}
+            # error flag
+            if resource_attrs.get("error", "0") in ("1", 1, True, "true"):
+                error_count += 1
+            # duration in nanoseconds
+            dur_ns = attrs.get("duration")
+            if dur_ns is not None:
+                try:
+                    durations.append(float(dur_ns) / 1e9)  # convert ns → seconds
+                except (TypeError, ValueError):
+                    pass
+
+        window_seconds = max(hours_back * 3600, 1)
+        hits_per_sec = total_spans / window_seconds
+        errors_per_sec = error_count / window_seconds
+        avg_duration = sum(durations) / len(durations) if durations else None
+
+        return {
+            "hits": hits_per_sec,
+            "errors": errors_per_sec,
+            "duration": avg_duration,
+        }
+
+    def _format_apm_output(
+        results: dict[str, float | None], source: str
+    ) -> str:
+        """Format APM metrics results into a human-readable text block."""
         hits = results.get("hits")
         errors = results.get("errors")
         duration = results.get("duration")
 
-        throughput_str = f"{hits:.2f} req/s" if hits is not None else "N/A"
+        throughput_str = f"{hits:.4f} req/s" if hits is not None else "N/A"
         error_rate_str = (
             f"{(errors / hits * 100):.2f}%" if hits is not None and hits > 0 and errors is not None
             else ("0.00%" if hits is not None and hits == 0 else "N/A")
         )
         latency_str = f"{(duration * 1000):.2f} ms" if duration is not None else "N/A"
+        window_str = f"last {hours_back:.4g} hour{'s' if hours_back != 1 else ''}"
 
-        lines: list[str] = [
+        lines = [
             "=== Datadog APM Trace Metrics ===",
             f"Service:    {service_name}",
             f"Env:        {env}",
-            "Window:     last 30 minutes",
-            f"Metric family: {matched_family}",
+            f"Window:     {window_str}",
+            f"Source:     {source}",
             "",
             f"Throughput: {throughput_str}",
             f"Error rate: {error_rate_str}",
             f"Avg latency: {latency_str}",
         ]
-
-        output_str = "\n".join(lines)
-        _cache._set_cache(cache_key, output_str)
-        return ToolResult(output=output_str, error=False)
+        return "\n".join(lines)
 
     try:
-        if _custom_api is not None:
-            return _execute_queries(_custom_api)
+        # ── Fallback chain ────────────────────────────────────
+        errors_seen: list[str] = []
 
-        with _get_dd_api_client(config) as client:
-            return _execute_queries(MetricsApi(client))  # type: ignore[no-untyped-call]
+        # Primary: POST Spans Events Search v2
+        post_data, post_err = _try_spans_post()
+        if post_data is not None:
+            spans = post_data.get("data", []) or []
+            if spans:
+                results = _parse_spans_response(post_data)
+                output = _format_apm_output(results, "Spans Events Search v2 (POST)")
+                _cache._set_cache(cache_key, output)
+                return ToolResult(output=output, error=False)
+            # 200 but no spans — try fallback anyway
+            logger.info(
+                "Datadog APM: Spans Events Search v2 returned 0 spans for service=%s, trying GET fallback",
+                service_name,
+            )
+        if post_err:
+            errors_seen.append(post_err)
 
-    except ApiException as exc:
-        status = getattr(exc, "status", 0)
-        msg = _dd_error_message(status)
-        logger.warning("Datadog APM trace metrics API error (HTTP %s): %s", status, exc)
-        return ToolResult(output=msg, error=True)
+        # Fallback 1: GET APM Traces Search v2
+        get_data, get_err = _try_spans_get()
+        if get_data is not None:
+            spans = get_data.get("data", []) or []
+            if spans:
+                results = _parse_spans_response(get_data)
+                output = _format_apm_output(results, "APM Traces Search v2 (GET fallback)")
+                _cache._set_cache(cache_key, output)
+                return ToolResult(output=output, error=False)
+        if get_err:
+            errors_seen.append(get_err)
+
+        # Fallback 2: return empty result with warning
+        tried = "; ".join(errors_seen) if errors_seen else "all APIs returned 0 spans"
+        no_data_msg = (
+            f"No APM trace data found for service '{service_name}' in env '{env}' "
+            f"over the last {hours_back:.4g} hour(s). "
+            f"APIs tried: {tried}. "
+            "Verify the service_name matches the Datadog APM service tag and "
+            "that APM instrumentation is active for this service."
+        )
+        logger.warning("Datadog APM: no span data found for service=%s env=%s. %s", service_name, env, tried)
+        return ToolResult(output=no_data_msg, error=False)
+
     except Exception:  # noqa: BLE001
         logger.exception("Unexpected error in get_datadog_apm_services")
         return ToolResult(output="Unexpected error retrieving APM trace metrics. See logs for details.", error=True)
