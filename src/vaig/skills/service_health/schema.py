@@ -560,6 +560,14 @@ class GKEWorkloadCost(BaseModel):
     total_usage_cost_usd: float | None = Field(default=None)
     total_waste_usd: float | None = Field(default=None)
     containers: list[GKEContainerCost] = Field(default_factory=list, description="Per-container cost breakdown; empty if container-level data unavailable")
+    partial_metrics: bool = Field(
+        default=False,
+        description=(
+            "True when usage cost is computed from only a subset of resource dimensions "
+            "(e.g. CPU available but memory unavailable). Consumers should display a "
+            "'partial data' indicator alongside usage cost figures."
+        ),
+    )
 
 
 class GKECostReport(BaseModel):
@@ -582,9 +590,29 @@ class GKECostReport(BaseModel):
     )
     workloads: list[GKEWorkloadCost] = Field(default_factory=list)
     total_request_cost_usd: float | None = Field(default=None, description="Sum of all workload request costs")
-    total_usage_cost_usd: float | None = Field(default=None, description="Sum of all workload usage costs; None if unavailable")
-    total_savings_usd: float | None = Field(default=None, description="Estimated total monthly savings potential; None if unavailable")
+    total_usage_cost_usd: float | None = Field(default=None, description="Sum of all workload usage costs; None if no workload had any usage data")
+    total_savings_usd: float | None = Field(default=None, description="Estimated total monthly savings potential; None if no usage data available")
     namespace_summaries: dict[str, GKENamespaceSummary] = Field(default_factory=dict, description="Per-namespace aggregated cost summaries keyed by namespace name")
+    monitoring_status: str | None = Field(
+        default=None,
+        description=(
+            "Status of the Cloud Monitoring usage query. None means OK (metrics were fetched). "
+            "Set to an error description when the monitoring query failed, e.g. "
+            "'PermissionDenied: Request had insufficient authentication scopes.'"
+        ),
+    )
+    workloads_with_full_metrics: int = Field(
+        default=0,
+        description="Number of workloads for which all resource dimensions (cpu + memory) had usage data",
+    )
+    workloads_with_partial_metrics: int = Field(
+        default=0,
+        description="Number of workloads for which only some resource dimensions had usage data",
+    )
+    workloads_without_metrics: int = Field(
+        default=0,
+        description="Number of workloads for which no usage data was available from Cloud Monitoring",
+    )
 
 
 class CostMetrics(BaseModel):
