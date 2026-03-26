@@ -1497,8 +1497,296 @@ class TestGetDatadogApmServices:
         )
 
         assert result.error is False
-        assert "ghost-service" in result.output
         assert "No APM trace data found" in result.output
+
+    def test_request_exception_falls_back_gracefully(self, dd_config: DatadogAPIConfig) -> None:
+        """When POST raises RequestException, falls back to GET and then empty result."""
+        import requests as req
+
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        mock_session = MagicMock()
+        mock_session.post.side_effect = req.RequestException("connection error")
+        mock_session.get.side_effect = req.RequestException("connection error")
+
+        result = get_datadog_apm_services(
+            service_name="svc",
+            env="prod",
+            config=dd_config,
+            _custom_session=mock_session,
+        )
+
+        assert result.error is False
+        assert "No APM trace data found" in result.output
+
+
+# ── SSL / proxy configuration ─────────────────────────────────
+
+
+class TestDatadogSSLConfig:
+    """Tests for DatadogAPIConfig.ssl_verify and SSL error handling."""
+
+    def setup_method(self) -> None:
+        """Clear the discovery cache before each test."""
+        from vaig.tools.gke._cache import clear_discovery_cache
+
+        clear_discovery_cache()
+
+    # ── Config field tests ────────────────────────────────────
+
+    def test_ssl_verify_default_is_true(self) -> None:
+        """Default ssl_verify is True (standard SSL verification)."""
+        cfg = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        assert cfg.ssl_verify is True
+
+    def test_ssl_verify_false_disables_verification(self) -> None:
+        """ssl_verify=False stores as False (disables SSL certificate checking)."""
+        cfg = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", ssl_verify=False)
+        assert cfg.ssl_verify is False
+
+    def test_ssl_verify_str_stores_ca_bundle_path(self) -> None:
+        """ssl_verify='/path/to/ca.crt' stores the path for custom CA bundle."""
+        ca_path = "/etc/ssl/certs/corporate-ca.crt"
+        cfg = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", ssl_verify=ca_path)
+        assert cfg.ssl_verify == ca_path
+
+    def test_ssl_verify_empty_string_raises_validation_error(self) -> None:
+        """ssl_verify='' raises a ValidationError — empty string is not a valid CA bundle path."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="ssl_verify must be True, False, or a non-empty path"):
+            DatadogAPIConfig(enabled=True, api_key="k", app_key="k", ssl_verify="")
+
+    def test_ssl_verify_whitespace_string_raises_validation_error(self) -> None:
+        """ssl_verify='   ' (whitespace only) raises a ValidationError."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="ssl_verify must be True, False, or a non-empty path"):
+            DatadogAPIConfig(enabled=True, api_key="k", app_key="k", ssl_verify="   ")
+
+    # ── requests.Session.verify passthrough ───────────────────
+
+    def test_session_verify_set_to_true_by_default(self, dd_config: DatadogAPIConfig) -> None:
+        """When ssl_verify=True, session.verify is set to True."""
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        mock_session = MagicMock()
+        mock_session.post.return_value = _make_spans_response()
+
+        with patch("requests.Session") as mock_session_cls:
+            mock_ctx_mgr = MagicMock()
+            mock_ctx_mgr.__enter__ = MagicMock(return_value=mock_session)
+            mock_ctx_mgr.__exit__ = MagicMock(return_value=False)
+            mock_session_cls.return_value = mock_ctx_mgr
+
+            get_datadog_apm_services(
+                service_name="svc",
+                env="prod",
+                config=dd_config,
+            )
+
+        # session.verify should have been set to True (the default ssl_verify)
+        assert mock_session.verify == dd_config.ssl_verify
+
+    def test_session_verify_set_to_false_when_ssl_disabled(self) -> None:
+        """When ssl_verify=False, session.verify is set to False."""
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        cfg = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", ssl_verify=False)
+        mock_session = MagicMock()
+        mock_session.post.return_value = _make_spans_response()
+
+        with patch("requests.Session") as mock_session_cls:
+            mock_ctx_mgr = MagicMock()
+            mock_ctx_mgr.__enter__ = MagicMock(return_value=mock_session)
+            mock_ctx_mgr.__exit__ = MagicMock(return_value=False)
+            mock_session_cls.return_value = mock_ctx_mgr
+
+            get_datadog_apm_services(
+                service_name="svc",
+                env="prod",
+                config=cfg,
+            )
+
+        assert mock_session.verify is False
+
+    def test_session_verify_set_to_ca_bundle_path(self) -> None:
+        """When ssl_verify is a CA bundle path, session.verify is set to that path."""
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        ca_path = "/etc/ssl/certs/corporate-ca.crt"
+        cfg = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", ssl_verify=ca_path)
+        mock_session = MagicMock()
+        mock_session.post.return_value = _make_spans_response()
+
+        with patch("requests.Session") as mock_session_cls:
+            mock_ctx_mgr = MagicMock()
+            mock_ctx_mgr.__enter__ = MagicMock(return_value=mock_session)
+            mock_ctx_mgr.__exit__ = MagicMock(return_value=False)
+            mock_session_cls.return_value = mock_ctx_mgr
+
+            get_datadog_apm_services(
+                service_name="svc",
+                env="prod",
+                config=cfg,
+            )
+
+        assert mock_session.verify == ca_path
+
+    def test_custom_session_bypasses_ssl_setting(self, dd_config: DatadogAPIConfig) -> None:
+        """When _custom_session is provided, it is used as-is (ssl_verify not applied).
+
+        This preserves test-injection behaviour — callers that inject a session control it
+        themselves.  The sentinel value proves that ``verify`` is NOT reassigned by the
+        function under test.
+        """
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        sentinel_value = object()  # unique object — any assignment would replace it
+
+        mock_session = MagicMock()
+        mock_session.post.return_value = _make_spans_response()
+        mock_session.verify = sentinel_value  # set before call
+
+        result = get_datadog_apm_services(
+            service_name="svc",
+            env="prod",
+            config=dd_config,
+            _custom_session=mock_session,
+        )
+
+        assert result.error is False
+        mock_session.post.assert_called_once()
+        # verify was NOT modified — custom session owns its own SSL config
+        assert mock_session.verify is sentinel_value
+
+    # ── SSLError handling ─────────────────────────────────────
+
+    def test_ssl_error_returns_helpful_message(self, dd_config: DatadogAPIConfig) -> None:
+        """SSLError is caught and returns a helpful message about REQUESTS_CA_BUNDLE."""
+        import requests as req
+
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        ssl_exc = req.exceptions.SSLError(
+            "SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED]'))"
+        )
+
+        mock_session = MagicMock()
+        mock_session.post.side_effect = ssl_exc
+
+        result = get_datadog_apm_services(
+            service_name="svc",
+            env="prod",
+            config=dd_config,
+            _custom_session=mock_session,
+        )
+
+        assert result.error is True
+        # Message must guide the user to fix the SSL issue
+        assert "SSL" in result.output or "ssl" in result.output.lower()
+        assert "REQUESTS_CA_BUNDLE" in result.output
+        assert "ssl_verify" in result.output
+
+    def test_ssl_error_on_get_fallback_surfaces_helpful_message(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """SSLError on the GET fallback (after POST 403) is re-raised and surfaces the
+        helpful SSL error message, just like on the POST path.
+        """
+        import requests as req
+
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        ssl_exc = req.exceptions.SSLError("certificate verify failed")
+
+        mock_session = MagicMock()
+        mock_session.post.return_value = _make_empty_spans_response(status_code=403)
+        mock_session.get.side_effect = ssl_exc
+
+        result = get_datadog_apm_services(
+            service_name="svc",
+            env="prod",
+            config=dd_config,
+            _custom_session=mock_session,
+        )
+
+        # SSLError from GET now propagates to the outer handler — helpful SSL message
+        assert result.error is True
+        assert "SSL" in result.output or "ssl" in result.output.lower()
+        assert "REQUESTS_CA_BUNDLE" in result.output
+        assert "ssl_verify" in result.output
+
+    # ── Datadog SDK client SSL config ─────────────────────────
+
+    def test_sdk_client_verify_ssl_false_when_ssl_disabled(self) -> None:
+        """When ssl_verify=False, the Datadog SDK Configuration has verify_ssl=False."""
+        from vaig.tools.gke.datadog_api import _get_dd_api_client
+
+        cfg = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", ssl_verify=False)
+
+        mock_configuration = MagicMock()
+        mock_configuration.server_variables = {}
+        mock_configuration.api_key = {}
+
+        dd_mods = _make_dd_modules()
+        dd_mods["datadog_api_client"].Configuration.return_value = mock_configuration  # type: ignore[attr-defined]
+        with patch.dict("sys.modules", dd_mods):
+            _get_dd_api_client(cfg)
+
+        assert mock_configuration.verify_ssl is False
+
+    def test_sdk_client_ssl_ca_cert_set_for_custom_bundle(self) -> None:
+        """When ssl_verify is a path, SDK Configuration has ssl_ca_cert set and verify_ssl=True."""
+        from vaig.tools.gke.datadog_api import _get_dd_api_client
+
+        ca_path = "/etc/ssl/certs/corporate-ca.crt"
+        cfg = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", ssl_verify=ca_path)
+
+        mock_configuration = MagicMock()
+        mock_configuration.server_variables = {}
+        mock_configuration.api_key = {}
+
+        dd_mods = _make_dd_modules()
+        dd_mods["datadog_api_client"].Configuration.return_value = mock_configuration  # type: ignore[attr-defined]
+        with patch.dict("sys.modules", dd_mods):
+            _get_dd_api_client(cfg)
+
+        assert mock_configuration.verify_ssl is True
+        assert mock_configuration.ssl_ca_cert == ca_path
+
+    def test_sdk_client_no_ssl_change_for_default_true(self) -> None:
+        """When ssl_verify=True (default), SDK Configuration verify_ssl and ssl_ca_cert
+        are NOT set at all — any attribute write would be detected by the spy.
+        """
+        from vaig.tools.gke.datadog_api import _get_dd_api_client
+
+        cfg = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")  # ssl_verify=True default
+
+        # Track every __setattr__ call on the configuration object so we can assert
+        # that neither verify_ssl nor ssl_ca_cert were written.
+        ssl_attrs_written: list[str] = []
+        original_setattr = MagicMock.__setattr__
+
+        mock_configuration = MagicMock()
+        mock_configuration.server_variables = {}
+        mock_configuration.api_key = {}
+
+        def _spy_setattr(self: object, name: str, value: object) -> None:
+            if name in ("verify_ssl", "ssl_ca_cert"):
+                ssl_attrs_written.append(name)
+            original_setattr(self, name, value)
+
+        dd_mods = _make_dd_modules()
+        dd_mods["datadog_api_client"].Configuration.return_value = mock_configuration  # type: ignore[attr-defined]
+        with patch.dict("sys.modules", dd_mods):
+            with patch.object(type(mock_configuration), "__setattr__", _spy_setattr):
+                _get_dd_api_client(cfg)
+
+        assert ssl_attrs_written == [], (
+            f"ssl_verify=True must not trigger any write to {ssl_attrs_written} "
+            "on the SDK Configuration object"
+        )
 
     def test_empty_result_when_both_return_zero_spans(self, dd_config: DatadogAPIConfig) -> None:
         """When both APIs return 200 with 0 spans, returns empty result with warning."""

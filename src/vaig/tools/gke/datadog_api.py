@@ -226,6 +226,16 @@ def _get_dd_api_client(config: DatadogAPIConfig) -> Any:
     configuration.api_key["apiKeyAuth"] = config.api_key
     configuration.api_key["appKeyAuth"] = config.app_key
     configuration.request_timeout = config.timeout
+    # SSL verification — mirrors the requests ssl_verify semantics:
+    #   True  = standard verification (default)
+    #   False = disable SSL verification (e.g. self-signed certs behind corporate proxy)
+    #   str   = path to a custom CA bundle file
+    if config.ssl_verify is False:
+        configuration.verify_ssl = False
+    elif isinstance(config.ssl_verify, str):
+        configuration.verify_ssl = True
+        configuration.ssl_ca_cert = config.ssl_verify
+    # ssl_verify=True is the SDK default; no changes needed
     return ApiClient(configuration)
 
 
@@ -745,6 +755,9 @@ def get_datadog_apm_services(
                 resp.status_code, service_name,
             )
             return None, f"POST /api/v2/spans/events/search returned HTTP {resp.status_code}"
+        except requests.exceptions.SSLError:
+            # Re-raise so the outer SSLError handler can surface a helpful message
+            raise
         except requests.RequestException as exc:
             logger.warning("Datadog APM: Spans Events Search v2 POST request error: %s", exc)
             return None, f"POST /api/v2/spans/events/search request error: {exc}"
@@ -771,6 +784,9 @@ def get_datadog_apm_services(
                 resp.status_code, service_name,
             )
             return None, f"GET /api/v2/apm/traces/search returned HTTP {resp.status_code}"
+        except requests.exceptions.SSLError:
+            # Re-raise so the outer SSLError handler can surface a helpful message
+            raise
         except requests.RequestException as exc:
             logger.warning("Datadog APM: APM Traces Search v2 GET request error: %s", exc)
             return None, f"GET /api/v2/apm/traces/search request error: {exc}"
@@ -901,6 +917,7 @@ def get_datadog_apm_services(
             early_result = _run_with_session(_custom_session)
         else:
             with requests.Session() as _owned_session:
+                _owned_session.verify = config.ssl_verify  # type: ignore[assignment]
                 early_result = _run_with_session(_owned_session)
 
         if early_result is not None:
@@ -918,6 +935,18 @@ def get_datadog_apm_services(
         logger.warning("Datadog APM: no span data found for service=%s env=%s. %s", service_name, env, tried)
         return ToolResult(output=no_data_msg, error=False)
 
+    except requests.exceptions.SSLError as exc:
+        logger.error("Datadog APM: SSL certificate verification failed: %s", exc)
+        return ToolResult(
+            output=(
+                f"SSL certificate verification failed connecting to Datadog: {exc}. "
+                "If you are behind a corporate proxy with SSL inspection, try one of:\n"
+                "  1. Set the REQUESTS_CA_BUNDLE env var to your corporate CA bundle path.\n"
+                "  2. Set datadog.ssl_verify = '/path/to/ca-bundle.crt' in your vaig config.\n"
+                "  3. Set datadog.ssl_verify = false to disable verification (not recommended)."
+            ),
+            error=True,
+        )
     except Exception:  # noqa: BLE001
         logger.exception("Unexpected error in get_datadog_apm_services")
         return ToolResult(output="Unexpected error retrieving APM trace metrics. See logs for details.", error=True)
