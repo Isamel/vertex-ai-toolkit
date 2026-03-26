@@ -6,6 +6,11 @@ Tests cover:
 - Cost calculation for single resources and workloads
 - K8s resource aggregation (mocked pods)
 - Autopilot / Standard / unknown cluster handling (mocked API)
+- v2: per-container cost breakdown in calculate_workload_cost()
+- v2: _aggregate_container_requests_per_container() helper
+- v2: _compute_namespace_summaries() aggregation
+- v2: GKEContainerCost and GKENamespaceSummary schema models
+- v2: fetch_workload_costs() backward-compat (monitoring unavailable)
 """
 
 from __future__ import annotations
@@ -441,7 +446,12 @@ class TestFetchWorkloadCosts:
 
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        report = fetch_workload_costs(self._make_gke_config())
+        # Patch monitoring so it doesn't attempt a real GCP connection
+        with patch(
+            "vaig.tools.gke.monitoring.get_workload_usage_metrics",
+            return_value={},
+        ):
+            report = fetch_workload_costs(self._make_gke_config())
         assert report.supported is True
         assert report.cluster_type == "autopilot"
         assert report.region == "northamerica-northeast1"
@@ -704,3 +714,456 @@ class TestUnknownRegionFallback:
         reason = report.unsupported_reason or ""
         # Should mention at least one known region
         assert any(r in reason for r in ("us-central1", "northamerica-northeast1", "europe-west1"))
+
+
+# ── v2: GKEContainerCost / GKENamespaceSummary schema ────────
+
+
+class TestGKEContainerCostSchema:
+    """Verify the new v2 schema models round-trip correctly."""
+
+    def test_container_cost_minimal(self) -> None:
+        from vaig.skills.service_health.schema import GKEContainerCost
+
+        cc = GKEContainerCost(container_name="app", resource_costs=[])
+        assert cc.container_name == "app"
+        assert cc.resource_costs == []
+        assert cc.total_request_cost_usd is None
+        assert cc.total_usage_cost_usd is None
+        assert cc.total_waste_usd is None
+
+    def test_container_cost_with_values(self) -> None:
+        from vaig.skills.service_health.schema import GKEContainerCost
+
+        cc = GKEContainerCost(
+            container_name="sidecar",
+            resource_costs=[],
+            total_request_cost_usd=1.5,
+            total_usage_cost_usd=0.8,
+            total_waste_usd=0.7,
+        )
+        assert cc.total_request_cost_usd == pytest.approx(1.5)
+        assert cc.total_usage_cost_usd == pytest.approx(0.8)
+        assert cc.total_waste_usd == pytest.approx(0.7)
+
+    def test_namespace_summary_minimal(self) -> None:
+        from vaig.skills.service_health.schema import GKENamespaceSummary
+
+        ns = GKENamespaceSummary(namespace="default")
+        assert ns.namespace == "default"
+        assert ns.total_request_cost_usd == pytest.approx(0.0)
+        assert ns.total_usage_cost_usd is None
+        assert ns.total_waste_usd is None
+
+    def test_namespace_summary_with_values(self) -> None:
+        from vaig.skills.service_health.schema import GKENamespaceSummary
+
+        ns = GKENamespaceSummary(
+            namespace="production",
+            total_request_cost_usd=10.0,
+            total_usage_cost_usd=6.0,
+            total_waste_usd=4.0,
+        )
+        assert ns.total_request_cost_usd == pytest.approx(10.0)
+        assert ns.total_waste_usd == pytest.approx(4.0)
+
+    def test_workload_cost_containers_field_defaults_empty(self) -> None:
+        from vaig.skills.service_health.schema import GKEWorkloadCost
+
+        wl = GKEWorkloadCost(
+            namespace="default",
+            workload_name="my-app",
+            resource_costs=[],
+        )
+        assert wl.containers == []
+
+    def test_cost_report_namespace_summaries_defaults_empty(self) -> None:
+        from vaig.skills.service_health.schema import GKECostReport
+
+        report = GKECostReport(supported=True, cluster_type="autopilot")
+        assert report.namespace_summaries == {}
+
+
+# ── v2: _aggregate_container_requests_per_container ─────────
+
+
+def _make_pod_with_named_container(
+    containers: list[dict[str, Any]],
+) -> MagicMock:
+    """Build a mock V1Pod with named containers."""
+    pod = MagicMock()
+    mock_containers = []
+    for c in containers:
+        mc = MagicMock()
+        mc.name = c["name"]
+        mc.resources.requests = c.get("requests", {})
+        mock_containers.append(mc)
+    pod.spec.containers = mock_containers
+    pod.spec.init_containers = []
+    return pod
+
+
+class TestAggregateContainerRequestsPerContainer:
+    """Tests for the v2 per-container request aggregation helper."""
+
+    def test_single_pod_two_containers(self) -> None:
+        from vaig.tools.gke.cost_estimation import _aggregate_container_requests_per_container
+
+        pod = _make_pod_with_named_container([
+            {"name": "app", "requests": {"cpu": "500m", "memory": "512Mi"}},
+            {"name": "sidecar", "requests": {"cpu": "100m", "memory": "128Mi"}},
+        ])
+        result = _aggregate_container_requests_per_container([pod])
+
+        assert "app" in result
+        assert "sidecar" in result
+        app_cpu, app_mem, _ = result["app"]
+        assert app_cpu == pytest.approx(0.5)
+        assert app_mem == pytest.approx(0.5)
+        sidecar_cpu, sidecar_mem, _ = result["sidecar"]
+        assert sidecar_cpu == pytest.approx(0.1)
+        assert sidecar_mem == pytest.approx(0.125)
+
+    def test_two_replicas_same_container_name_summed(self) -> None:
+        from vaig.tools.gke.cost_estimation import _aggregate_container_requests_per_container
+
+        pod1 = _make_pod_with_named_container([
+            {"name": "app", "requests": {"cpu": "250m", "memory": "256Mi"}},
+        ])
+        pod2 = _make_pod_with_named_container([
+            {"name": "app", "requests": {"cpu": "250m", "memory": "256Mi"}},
+        ])
+        result = _aggregate_container_requests_per_container([pod1, pod2])
+
+        assert len(result) == 1
+        cpu, mem, _ = result["app"]
+        assert cpu == pytest.approx(0.5)  # 2 × 250m
+        assert mem == pytest.approx(0.5)  # 2 × 256Mi
+
+    def test_empty_pod_list_returns_empty_dict(self) -> None:
+        from vaig.tools.gke.cost_estimation import _aggregate_container_requests_per_container
+
+        result = _aggregate_container_requests_per_container([])
+        assert result == {}
+
+    def test_pod_with_no_spec_skipped(self) -> None:
+        from vaig.tools.gke.cost_estimation import _aggregate_container_requests_per_container
+
+        pod = MagicMock()
+        pod.spec = None
+        result = _aggregate_container_requests_per_container([pod])
+        assert result == {}
+
+    def test_mock_container_without_name_uses_unknown(self) -> None:
+        """MagicMock containers that have no string .name fall back to 'unknown'."""
+        from vaig.tools.gke.cost_estimation import _aggregate_container_requests_per_container
+
+        pod = MagicMock()
+        mc = MagicMock()
+        mc.name = MagicMock()  # not a str — simulates the MagicMock gotcha
+        mc.resources.requests = {"cpu": "100m", "memory": "64Mi"}
+        pod.spec.containers = [mc]
+        pod.spec.init_containers = []
+        result = _aggregate_container_requests_per_container([pod])
+        # Should land in "unknown" bucket, not crash
+        assert "unknown" in result
+
+    def test_ephemeral_storage_tracked_per_container(self) -> None:
+        from vaig.tools.gke.cost_estimation import _aggregate_container_requests_per_container
+
+        pod = _make_pod_with_named_container([
+            {"name": "app", "requests": {"cpu": "100m", "ephemeral-storage": "2Gi"}},
+        ])
+        result = _aggregate_container_requests_per_container([pod])
+        _, _, eph = result["app"]
+        assert eph == pytest.approx(2.0)
+
+
+# ── v2: calculate_workload_cost with container_requests ──────
+
+
+class TestCalculateWorkloadCostV2Containers:
+    """Per-container breakdown in calculate_workload_cost()."""
+
+    def test_no_container_requests_returns_empty_containers_list(self) -> None:
+        result = calculate_workload_cost(
+            cpu_requests=1.0,
+            memory_requests_gib=1.0,
+            ephemeral_requests_gib=0.0,
+            pricing=_MONTREAL_PRICING,
+        )
+        assert result["containers"] == []
+
+    def test_two_containers_produces_two_container_cost_objects(self) -> None:
+        from vaig.skills.service_health.schema import GKEContainerCost
+
+        container_requests = {
+            "app": (0.5, 0.5, 0.0),
+            "sidecar": (0.1, 0.125, 0.0),
+        }
+        result = calculate_workload_cost(
+            cpu_requests=0.6,
+            memory_requests_gib=0.625,
+            ephemeral_requests_gib=0.0,
+            pricing=_MONTREAL_PRICING,
+            container_requests=container_requests,
+        )
+        containers = result["containers"]
+        assert len(containers) == 2
+        names = {c.container_name for c in containers}
+        assert names == {"app", "sidecar"}
+        for c in containers:
+            assert isinstance(c, GKEContainerCost)
+
+    def test_container_with_usage_gets_per_resource_usage_populated(self) -> None:
+        """Per-resource usage_cost_usd fields must be populated when usage data is available.
+
+        Ephemeral usage is never available from Cloud Monitoring — only CPU and memory
+        are queried. However, the container total is now computed from CPU+memory when
+        both are present; ephemeral is excluded from the availability check.
+        """
+        from vaig.tools.gke.monitoring import ContainerUsageMetrics
+
+        container_requests = {"app": (1.0, 1.0, 0.0)}
+        container_usage = {
+            "app": ContainerUsageMetrics(
+                container_name="app",
+                avg_cpu_cores=0.5,
+                avg_memory_gib=0.5,
+            )
+        }
+        result = calculate_workload_cost(
+            cpu_requests=1.0,
+            memory_requests_gib=1.0,
+            ephemeral_requests_gib=0.0,
+            pricing=_MONTREAL_PRICING,
+            container_requests=container_requests,
+            container_usage=container_usage,
+        )
+        (ct,) = result["containers"]
+        # Per-resource: cpu and memory must have usage costs populated
+        by_type = {rc.resource_type: rc for rc in ct.resource_costs}
+        assert by_type["cpu"].usage_cost_usd is not None
+        assert by_type["memory"].usage_cost_usd is not None
+        # Waste is also per-resource
+        assert by_type["cpu"].waste_cost_usd is not None
+        assert by_type["memory"].waste_cost_usd is not None
+        # total_usage_cost_usd is now computed from CPU+memory (ephemeral excluded from check)
+        assert ct.total_usage_cost_usd is not None
+        assert ct.total_usage_cost_usd > 0
+        assert ct.total_waste_usd is not None
+
+    def test_container_without_usage_has_none_usage_and_waste(self) -> None:
+        container_requests = {"app": (1.0, 1.0, 0.0)}
+        result = calculate_workload_cost(
+            cpu_requests=1.0,
+            memory_requests_gib=1.0,
+            ephemeral_requests_gib=0.0,
+            pricing=_MONTREAL_PRICING,
+            container_requests=container_requests,
+            container_usage=None,
+        )
+        (ct,) = result["containers"]
+        assert ct.total_usage_cost_usd is None
+        assert ct.total_waste_usd is None
+
+    def test_container_request_cost_sums_to_workload_total(self) -> None:
+        """Sum of container request costs must equal workload total_request_cost_usd."""
+        container_requests = {
+            "app": (0.5, 0.5, 0.0),
+            "sidecar": (0.5, 0.5, 0.0),
+        }
+        result = calculate_workload_cost(
+            cpu_requests=1.0,
+            memory_requests_gib=1.0,
+            ephemeral_requests_gib=0.0,
+            pricing=_MONTREAL_PRICING,
+            container_requests=container_requests,
+        )
+        container_total = sum(c.total_request_cost_usd or 0.0 for c in result["containers"])
+        assert container_total == pytest.approx(result["total_request_cost_usd"])
+
+
+# ── v2: _compute_namespace_summaries ─────────────────────────
+
+
+def _make_workload_cost(
+    namespace: str,
+    workload_name: str,
+    request_cost: float,
+    usage_cost: float | None = None,
+    waste: float | None = None,
+) -> Any:
+    """Build a minimal mock GKEWorkloadCost for namespace summary tests."""
+    wl = MagicMock()
+    wl.namespace = namespace
+    wl.workload_name = workload_name
+    wl.total_request_cost_usd = request_cost
+    wl.total_usage_cost_usd = usage_cost
+    wl.total_waste_usd = waste
+    return wl
+
+
+class TestComputeNamespaceSummaries:
+    """Tests for _compute_namespace_summaries()."""
+
+    def test_empty_workloads_returns_empty_dict(self) -> None:
+        from vaig.tools.gke.cost_estimation import _compute_namespace_summaries
+
+        result = _compute_namespace_summaries([])
+        assert result == {}
+
+    def test_single_workload_creates_one_namespace_entry(self) -> None:
+        from vaig.tools.gke.cost_estimation import _compute_namespace_summaries
+
+        wl = _make_workload_cost("default", "api", 5.0, 3.0, 2.0)
+        result = _compute_namespace_summaries([wl])
+
+        assert "default" in result
+        ns = result["default"]
+        assert ns.total_request_cost_usd == pytest.approx(5.0)
+        assert ns.total_usage_cost_usd == pytest.approx(3.0)
+        assert ns.total_waste_usd == pytest.approx(2.0)
+
+    def test_two_workloads_same_namespace_costs_are_summed(self) -> None:
+        from vaig.tools.gke.cost_estimation import _compute_namespace_summaries
+
+        wl1 = _make_workload_cost("production", "api", 5.0, 3.0, 2.0)
+        wl2 = _make_workload_cost("production", "worker", 3.0, 2.0, 1.0)
+        result = _compute_namespace_summaries([wl1, wl2])
+
+        ns = result["production"]
+        assert ns.total_request_cost_usd == pytest.approx(8.0)
+        assert ns.total_usage_cost_usd == pytest.approx(5.0)
+        assert ns.total_waste_usd == pytest.approx(3.0)
+
+    def test_two_namespaces_are_independent(self) -> None:
+        from vaig.tools.gke.cost_estimation import _compute_namespace_summaries
+
+        wl1 = _make_workload_cost("default", "api", 4.0, 2.0, 2.0)
+        wl2 = _make_workload_cost("staging", "worker", 2.0, 1.0, 1.0)
+        result = _compute_namespace_summaries([wl1, wl2])
+
+        assert set(result.keys()) == {"default", "staging"}
+        assert result["default"].total_request_cost_usd == pytest.approx(4.0)
+        assert result["staging"].total_request_cost_usd == pytest.approx(2.0)
+
+    def test_any_workload_missing_usage_makes_namespace_usage_none(self) -> None:
+        from vaig.tools.gke.cost_estimation import _compute_namespace_summaries
+
+        wl1 = _make_workload_cost("default", "api", 5.0, 3.0, 2.0)
+        wl2 = _make_workload_cost("default", "worker", 3.0, None, None)  # no usage
+        result = _compute_namespace_summaries([wl1, wl2])
+
+        ns = result["default"]
+        assert ns.total_request_cost_usd == pytest.approx(8.0)  # request always summed
+        assert ns.total_usage_cost_usd is None
+        assert ns.total_waste_usd is None
+
+    def test_namespace_summary_object_type(self) -> None:
+        from vaig.skills.service_health.schema import GKENamespaceSummary
+        from vaig.tools.gke.cost_estimation import _compute_namespace_summaries
+
+        wl = _make_workload_cost("default", "api", 1.0)
+        result = _compute_namespace_summaries([wl])
+        assert isinstance(result["default"], GKENamespaceSummary)
+
+
+# ── v2: fetch_workload_costs backward-compat ─────────────────
+
+
+class TestFetchWorkloadCostsV2BackwardCompat:
+    """Verify monitoring-unavailable path: containers=[], namespace_summaries preserved."""
+
+    def _make_gke_config(self, location: str = "northamerica-northeast1") -> MagicMock:
+        cfg = MagicMock()
+        cfg.project_id = "my-project"
+        cfg.location = location
+        cfg.cluster_name = "my-cluster"
+        return cfg
+
+    def _make_mock_clients(self, pod: MagicMock) -> MagicMock:
+        """Build a mock (core_v1, ...) tuple with a single namespace + pod."""
+        ns_item = MagicMock()
+        ns_item.metadata.name = "default"
+
+        core_v1 = MagicMock()
+        core_v1.list_namespace.return_value.items = [ns_item]
+        core_v1.list_namespaced_pod.return_value.items = [pod]
+        return core_v1
+
+    def _make_running_pod(
+        self, namespace: str = "default", cpu: str = "100m", memory: str = "128Mi"
+    ) -> MagicMock:
+        pod = MagicMock()
+        pod.status.phase = "Running"
+        pod.metadata.namespace = namespace
+        pod.metadata.name = "app-abc12"
+        pod.metadata.labels = {}
+        owner = MagicMock()
+        owner.kind = "Deployment"
+        owner.name = "my-app"
+        pod.metadata.owner_references = [owner]
+        mc = MagicMock()
+        mc.name = "app"
+        mc.resources.requests = {"cpu": cpu, "memory": memory}
+        pod.spec.containers = [mc]
+        pod.spec.init_containers = []
+        return pod
+
+    @patch("vaig.tools.gke.cost_estimation._create_k8s_clients")
+    @patch("vaig.tools.gke.cost_estimation.detect_autopilot", return_value=True)
+    def test_monitoring_unavailable_workload_has_empty_containers(
+        self, _mock_autopilot: MagicMock, mock_clients: MagicMock
+    ) -> None:
+        """When get_workload_usage_metrics returns {}, containers are populated from K8s requests
+        but have no usage/waste data (total_usage_cost_usd and total_waste_usd are None)."""
+        from vaig.tools.gke.cost_estimation import fetch_workload_costs
+
+        pod = self._make_running_pod()
+        core_v1 = self._make_mock_clients(pod)
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        with patch(
+            "vaig.tools.gke.monitoring.get_workload_usage_metrics",
+            return_value={},
+        ):
+            report = fetch_workload_costs(self._make_gke_config())
+
+        assert report.supported is True
+        for wl in report.workloads:
+            # containers are populated from K8s resource requests
+            assert len(wl.containers) >= 1
+            for ct in wl.containers:
+                # but no usage data → these must be None
+                assert ct.total_usage_cost_usd is None
+                assert ct.total_waste_usd is None
+            # workload-level totals are also None without monitoring
+            assert wl.total_usage_cost_usd is None
+            assert wl.total_waste_usd is None
+
+    @patch("vaig.tools.gke.cost_estimation._create_k8s_clients")
+    @patch("vaig.tools.gke.cost_estimation.detect_autopilot", return_value=True)
+    def test_monitoring_unavailable_namespace_summaries_present_without_usage(
+        self, _mock_autopilot: MagicMock, mock_clients: MagicMock
+    ) -> None:
+        """namespace_summaries should contain the namespace but with None usage/waste."""
+        from vaig.tools.gke.cost_estimation import fetch_workload_costs
+
+        pod = self._make_running_pod()
+        core_v1 = self._make_mock_clients(pod)
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        with patch(
+            "vaig.tools.gke.monitoring.get_workload_usage_metrics",
+            return_value={},
+        ):
+            report = fetch_workload_costs(self._make_gke_config())
+
+        # namespace_summaries should contain the namespace
+        assert "default" in report.namespace_summaries
+        ns = report.namespace_summaries["default"]
+        assert ns.total_usage_cost_usd is None
+        assert ns.total_waste_usd is None
+        # request cost should be non-zero (pod has 100m CPU + 128Mi memory)
+        assert ns.total_request_cost_usd > 0

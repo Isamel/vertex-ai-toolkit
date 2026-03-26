@@ -525,6 +525,29 @@ class GKEResourceCost(BaseModel):
     waste_cost_usd: float | None = Field(default=None, description="Estimated monthly waste (request_cost - usage_cost); None if unavailable")
 
 
+class GKEContainerCost(BaseModel):
+    """Cost breakdown for a single container within a workload."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    container_name: str = Field(default="", description="Container name within the pod spec")
+    resource_costs: list[GKEResourceCost] = Field(default_factory=list)
+    total_request_cost_usd: float | None = Field(default=None, description="Monthly request cost for this container (USD)")
+    total_usage_cost_usd: float | None = Field(default=None, description="Monthly usage cost for this container (USD); None if unavailable")
+    total_waste_usd: float | None = Field(default=None, description="Estimated monthly waste for this container (USD); None if unavailable")
+
+
+class GKENamespaceSummary(BaseModel):
+    """Aggregated cost summary for all workloads in a namespace."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    namespace: str = Field(default="", description="Kubernetes namespace name")
+    total_request_cost_usd: float = Field(default=0.0, description="Sum of all workload request costs in the namespace (USD)")
+    total_usage_cost_usd: float | None = Field(default=None, description="Sum of all workload usage costs in the namespace (USD); None if any workload is missing usage data")
+    total_waste_usd: float | None = Field(default=None, description="Estimated total monthly waste in the namespace (USD); None if usage data unavailable")
+
+
 class GKEWorkloadCost(BaseModel):
     """Cost estimate for a single Kubernetes workload (Deployment/StatefulSet)."""
 
@@ -536,6 +559,7 @@ class GKEWorkloadCost(BaseModel):
     total_request_cost_usd: float | None = Field(default=None)
     total_usage_cost_usd: float | None = Field(default=None)
     total_waste_usd: float | None = Field(default=None)
+    containers: list[GKEContainerCost] = Field(default_factory=list, description="Per-container cost breakdown; empty if container-level data unavailable")
 
 
 class GKECostReport(BaseModel):
@@ -560,6 +584,7 @@ class GKECostReport(BaseModel):
     total_request_cost_usd: float | None = Field(default=None, description="Sum of all workload request costs")
     total_usage_cost_usd: float | None = Field(default=None, description="Sum of all workload usage costs; None if unavailable")
     total_savings_usd: float | None = Field(default=None, description="Estimated total monthly savings potential; None if unavailable")
+    namespace_summaries: dict[str, GKENamespaceSummary] = Field(default_factory=dict, description="Per-namespace aggregated cost summaries keyed by namespace name")
 
 
 class CostMetrics(BaseModel):

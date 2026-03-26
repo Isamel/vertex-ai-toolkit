@@ -3,11 +3,16 @@
 Computes estimated monthly costs for GKE Autopilot workloads based on
 Kubernetes resource *requests* (CPU, memory, ephemeral storage).
 
-Actual usage metrics are NOT collected by this module — ``kubectl top pods``
-and Cloud Monitoring integration are outside the scope of this pipeline.
-The ``total_usage_cost_usd`` and ``total_waste_usd`` fields in the report
-will always be ``None`` / show as "N/A" in the UI unless a caller provides
-explicit usage values through :func:`calculate_workload_cost`.
+v2 enhancements:
+- Fetches actual usage metrics from Cloud Monitoring when available, populating
+  ``total_usage_cost_usd`` and ``total_waste_usd`` fields.
+- Computes per-container cost breakdowns stored in ``GKEWorkloadCost.containers``.
+- Aggregates per-namespace summaries into ``GKECostReport.namespace_summaries``.
+
+When Cloud Monitoring is unavailable, v1 behavior is preserved:
+``total_usage_cost_usd``, ``total_waste_usd`` and per-container usage/waste
+fields will be ``None``, and the UI will display "N/A". Containers are still
+reported with their request costs derived from K8s resource specs.
 
 Cost model:
     monthly_cost = resource_quantity * hourly_rate_per_unit * 730 hours/month
@@ -431,6 +436,8 @@ def calculate_workload_cost(
     cpu_usage: float | None = None,
     memory_usage_gib: float | None = None,
     ephemeral_usage_gib: float | None = None,
+    container_requests: dict[str, tuple[float, float, float]] | None = None,
+    container_usage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Calculate cost estimates for a single workload.
 
@@ -442,6 +449,13 @@ def calculate_workload_cost(
         cpu_usage: Actual avg CPU usage (vCPUs); None if unavailable.
         memory_usage_gib: Actual avg memory usage (GiB); None if unavailable.
         ephemeral_usage_gib: Actual avg ephemeral usage (GiB); None if unavailable.
+        container_requests: Optional per-container request breakdown as
+            ``{container_name: (cpu_vcpu, memory_gib, ephemeral_gib)}``.
+            When provided, per-container ``GKEContainerCost`` objects are included
+            in the returned dict under the ``"containers"`` key.
+        container_usage: Optional per-container usage metrics as a dict of
+            ``ContainerUsageMetrics`` objects keyed by container name.
+            When provided, usage and waste costs are computed per container.
 
     Returns:
         Dict with keys:
@@ -449,8 +463,12 @@ def calculate_workload_cost(
           ``total_request_cost_usd``: float
           ``total_usage_cost_usd``: float | None
           ``total_waste_usd``: float | None
+          ``containers``: list of GKEContainerCost (empty if container_requests is None)
     """
-    from vaig.skills.service_health.schema import GKEResourceCost  # noqa: WPS433
+    from vaig.skills.service_health.schema import (  # noqa: WPS433
+        GKEContainerCost,
+        GKEResourceCost,
+    )
 
     # Each tuple: (resource_type, requests, usage, hourly_rate)
     resource_specs: list[tuple[str, float, float | None, float]] = [
@@ -493,11 +511,77 @@ def calculate_workload_cost(
     final_usage: float | None = total_usage if all_usage_available else None
     total_waste = (total_request - final_usage) if final_usage is not None else None
 
+    # ── Per-container cost breakdown ──────────────────────────
+    containers: list[GKEContainerCost] = []
+
+    if container_requests:
+        for c_name, (c_cpu, c_mem, c_eph) in container_requests.items():
+            c_usage = container_usage.get(c_name) if container_usage else None
+
+            c_cpu_usage: float | None = c_usage.avg_cpu_cores if c_usage is not None else None
+            c_mem_usage: float | None = c_usage.avg_memory_gib if c_usage is not None else None
+
+            # Ephemeral usage is not available from Cloud Monitoring; it is excluded from
+            # the usage-availability check so that CPU+memory usage can still produce a total.
+            c_specs: list[tuple[str, float, float | None, float, bool]] = [
+                ("cpu",      c_cpu, c_cpu_usage, pricing.cpu_per_vcpu_hour,      True),
+                ("memory",   c_mem, c_mem_usage, pricing.ram_per_gib_hour,       True),
+                ("ephemeral", c_eph, None,        pricing.ephemeral_per_gib_hour, False),
+            ]
+
+            c_resource_costs: list[GKEResourceCost] = []
+            c_total_request = 0.0
+            c_total_usage = 0.0
+            c_all_usage_available = True
+
+            for c_res_type, c_req_qty, c_use_qty, c_rate, c_tracked in c_specs:
+                c_req_cost = calculate_resource_cost(c_req_qty, c_rate)
+                c_total_request += c_req_cost
+
+                if c_use_qty is not None:
+                    c_use_val: float = calculate_resource_cost(c_use_qty, c_rate)
+                    if c_tracked:
+                        c_total_usage += c_use_val
+                    c_use_cost: float | None = c_use_val
+                    c_waste: float | None = c_req_cost - c_use_val
+                else:
+                    c_use_cost = None
+                    c_waste = None
+                    if c_tracked:
+                        c_all_usage_available = False
+
+                c_resource_costs.append(
+                    GKEResourceCost(
+                        resource_type=c_res_type,
+                        requests=c_req_qty,
+                        usage=c_use_qty,
+                        request_cost_usd=c_req_cost,
+                        usage_cost_usd=c_use_cost,
+                        waste_cost_usd=c_waste,
+                    )
+                )
+
+            c_final_usage: float | None = c_total_usage if c_all_usage_available else None
+            c_final_waste: float | None = (
+                (c_total_request - c_final_usage) if c_final_usage is not None else None
+            )
+
+            containers.append(
+                GKEContainerCost(
+                    container_name=c_name,
+                    resource_costs=c_resource_costs,
+                    total_request_cost_usd=c_total_request,
+                    total_usage_cost_usd=c_final_usage,
+                    total_waste_usd=c_final_waste,
+                )
+            )
+
     return {
         "resource_costs": result_costs,
         "total_request_cost_usd": total_request,
         "total_usage_cost_usd": final_usage,
         "total_waste_usd": total_waste,
+        "containers": containers,
     }
 
 
@@ -536,6 +620,103 @@ def _aggregate_container_requests(
     return total_cpu, total_memory, total_ephemeral
 
 
+def _aggregate_container_requests_per_container(
+    pods: list[Any],
+) -> dict[str, tuple[float, float, float]]:
+    """Sum resource requests per container name across a list of pods.
+
+    Pods belonging to the same workload may have different replicas; requests
+    from the same container name are summed across all replicas so the result
+    represents the total requested capacity (not per-replica).
+
+    Args:
+        pods: List of kubernetes ``V1Pod`` objects.
+
+    Returns:
+        Dict mapping ``container_name`` →
+        ``(total_cpu_vcpu, total_memory_gib, total_ephemeral_gib)``.
+        Init containers are excluded (they are transient and not billed
+        continuously like regular containers).
+    """
+    per_container: dict[str, list[float]] = {}  # name → [cpu, mem, eph]
+
+    for pod in pods:
+        spec = pod.spec
+        if not spec:
+            continue
+        containers = list(spec.containers or [])
+        for container in containers:
+            requests = {}
+            if container.resources and container.resources.requests:
+                requests = container.resources.requests
+            c_name_raw = container.name
+            c_name: str = c_name_raw if isinstance(c_name_raw, str) and c_name_raw else "unknown"
+            cpu = parse_cpu(requests.get("cpu"))
+            mem = parse_memory(requests.get("memory"))
+            eph = parse_ephemeral(requests.get("ephemeral-storage"))
+            if c_name not in per_container:
+                per_container[c_name] = [0.0, 0.0, 0.0]
+            per_container[c_name][0] += cpu
+            per_container[c_name][1] += mem
+            per_container[c_name][2] += eph
+
+    return {name: (vals[0], vals[1], vals[2]) for name, vals in per_container.items()}
+
+
+def _compute_namespace_summaries(
+    workloads: list[Any],
+) -> dict[str, Any]:
+    """Aggregate per-workload costs into per-namespace summaries.
+
+    Iterates over all ``GKEWorkloadCost`` objects and sums request/usage/waste
+    costs per namespace. A namespace's ``total_usage_cost_usd`` is ``None`` if
+    any workload in that namespace is missing usage data (to avoid misleading
+    partial totals).
+
+    Args:
+        workloads: List of ``GKEWorkloadCost`` objects from a cost report.
+
+    Returns:
+        Dict mapping namespace name → ``GKENamespaceSummary``.
+    """
+    from vaig.skills.service_health.schema import GKENamespaceSummary  # noqa: WPS433
+
+    # Accumulators: ns → [total_request, total_usage (None if any missing), total_waste]
+    ns_request: dict[str, float] = {}
+    ns_usage: dict[str, float | None] = {}
+    ns_waste: dict[str, float | None] = {}
+
+    for wl in workloads:
+        ns = wl.namespace
+        req = wl.total_request_cost_usd or 0.0
+        use = wl.total_usage_cost_usd  # may be None
+        waste = wl.total_waste_usd     # may be None
+
+        ns_request[ns] = ns_request.get(ns, 0.0) + req
+
+        if ns not in ns_usage:
+            # First workload for this namespace
+            ns_usage[ns] = use
+            ns_waste[ns] = waste
+        elif ns_usage[ns] is None or use is None:
+            # Any workload missing usage → namespace total becomes None
+            ns_usage[ns] = None
+            ns_waste[ns] = None
+        else:
+            ns_usage[ns] = (ns_usage[ns] or 0.0) + use
+            ns_waste[ns] = (ns_waste[ns] or 0.0) + (waste or 0.0)
+
+    result: dict[str, Any] = {}
+    for ns, total_req in ns_request.items():
+        result[ns] = GKENamespaceSummary(
+            namespace=ns,
+            total_request_cost_usd=total_req,
+            total_usage_cost_usd=ns_usage.get(ns),
+            total_waste_usd=ns_waste.get(ns),
+        )
+    return result
+
+
 def fetch_workload_costs(
     gke_config: GKEConfig,
     namespaces: list[str] | None = None,
@@ -547,12 +728,14 @@ def fetch_workload_costs(
     1. Detects whether the cluster is Autopilot (required for per-workload billing).
     2. Looks up regional pricing from :data:`AUTOPILOT_PRICING`.
     3. Lists all pods in the target namespaces and sums container *requests*.
-    4. Returns a :class:`GKECostReport` with per-workload request-based cost breakdowns.
+    4. Optionally fetches actual usage metrics from Cloud Monitoring to populate
+       ``total_usage_cost_usd``, ``total_waste_usd``, and per-container breakdowns.
+    5. Returns a :class:`GKECostReport` with per-workload cost breakdowns and
+       per-namespace aggregated summaries.
 
-    Note:
-        Actual usage metrics (CPU/RAM consumed) are **not** collected here.
-        ``total_usage_cost_usd`` and ``total_waste_usd`` in the returned report
-        will always be ``None``. The UI will display "N/A" for those fields.
+    When Cloud Monitoring is unavailable or the query fails, v1 behavior is
+    preserved: ``total_usage_cost_usd``, ``total_waste_usd`` and per-container
+    fields will be ``None`` / ``[]``, and the UI will display "N/A".
 
     Args:
         gke_config: GKE configuration (project_id, location, cluster_name).
@@ -703,18 +886,70 @@ def fetch_workload_costs(
             key = (ns, workload_name)
             workload_pods.setdefault(key, []).append(pod)
 
+    # ── 5. Fetch usage metrics from Cloud Monitoring per namespace ─────────
+    # Build workload_pod_names per namespace for the monitoring query.
+    # ns_workload_pods: namespace → {workload_name: [pod_names]}
+    ns_workload_pod_names: dict[str, dict[str, list[str]]] = {}
+    for (ns, wl_name), pods in workload_pods.items():
+        pod_names = [
+            p.metadata.name
+            for p in pods
+            if p.metadata and p.metadata.name
+        ]
+        if pod_names:
+            ns_workload_pod_names.setdefault(ns, {}).setdefault(wl_name, []).extend(pod_names)
+
+    # Import lazily so monitoring module is optional at runtime
+    try:
+        from vaig.tools.gke.monitoring import get_workload_usage_metrics  # noqa: WPS433
+        monitoring_available = True
+    except ImportError:
+        monitoring_available = False
+
+    # ns_usage_metrics: namespace → {workload_name: WorkloadUsageMetrics}
+    ns_usage_metrics: dict[str, dict[str, Any]] = {}
+    if monitoring_available:
+        for ns, workload_pod_names in ns_workload_pod_names.items():
+            try:
+                usage = get_workload_usage_metrics(
+                    namespace=ns,
+                    workload_pod_names=workload_pod_names,
+                    gke_config=gke_config,
+                )
+                ns_usage_metrics[ns] = usage
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "GKE cost estimation: usage metrics query failed for ns=%s: %s", ns, exc
+                )
+
     workloads: list[GKEWorkloadCost] = []
     total_request = 0.0
     total_usage: float | None = 0.0  # stays None if any workload is missing
 
     for (ns, wl_name), pods in sorted(workload_pods.items()):
         cpu_req, mem_req, eph_req = _aggregate_container_requests(pods)
+        c_requests = _aggregate_container_requests_per_container(pods)
+
+        # Look up usage metrics for this workload (may be absent)
+        wl_usage_metrics = ns_usage_metrics.get(ns, {}).get(wl_name)
+        c_usage = wl_usage_metrics.containers if wl_usage_metrics is not None else None
+
+        # Aggregate workload-level usage from per-container data when available
+        wl_cpu_usage: float | None = None
+        wl_mem_usage: float | None = None
+        if c_usage:
+            wl_cpu_usage = sum(c.avg_cpu_cores for c in c_usage.values())
+            wl_mem_usage = sum(c.avg_memory_gib for c in c_usage.values())
 
         cost_data = calculate_workload_cost(
             cpu_requests=cpu_req,
             memory_requests_gib=mem_req,
             ephemeral_requests_gib=eph_req,
             pricing=pricing,
+            cpu_usage=wl_cpu_usage,
+            memory_usage_gib=wl_mem_usage,
+            container_requests=c_requests,
+            container_usage=c_usage,
         )
 
         workloads.append(
@@ -725,6 +960,7 @@ def fetch_workload_costs(
                 total_request_cost_usd=cost_data["total_request_cost_usd"],
                 total_usage_cost_usd=cost_data["total_usage_cost_usd"],
                 total_waste_usd=cost_data["total_waste_usd"],
+                containers=cost_data["containers"],
             )
         )
 
@@ -736,6 +972,9 @@ def fetch_workload_costs(
 
     total_savings = (total_request - total_usage) if total_usage is not None else None
 
+    # ── 6. Namespace aggregation ───────────────────────────────
+    namespace_summaries = _compute_namespace_summaries(workloads)
+
     return GKECostReport(
         cluster_type="autopilot",
         region=region,
@@ -744,6 +983,7 @@ def fetch_workload_costs(
         total_request_cost_usd=total_request,
         total_usage_cost_usd=total_usage,
         total_savings_usd=total_savings,
+        namespace_summaries=namespace_summaries,
     )
 
 
