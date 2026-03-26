@@ -471,6 +471,10 @@ class GKEConfig(BaseModel):
     # Argo Rollouts integration — None means auto-detect via CRD presence,
     # True forces enable, False disables entirely.
     argo_rollouts_enabled: bool | None = None
+    # Timeout in seconds for Kubernetes API calls.  Applied via ``_request_timeout``
+    # on all CustomObjectsApi and AppsV1Api requests.  Prevents indefinite hangs
+    # when the cluster is unreachable or slow (connect timeout=None bug).
+    request_timeout: int = 30
 
 
 class MCPServerConfig(BaseModel):
