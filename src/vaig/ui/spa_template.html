@@ -431,6 +431,41 @@
   .cost-card-value { font-size: 26px; font-weight: 800; color: var(--info); line-height: 1.1; font-family: var(--font-mono); }
   .cost-card-sub { font-size: 12px; color: var(--text-dim); }
 
+  /* ── GKE Cost Estimation ───────────────────────────────────── */
+  .gke-workload-block { margin-bottom: 20px; }
+  .gke-workload-header {
+    font-size: 13px; font-weight: 700; font-family: var(--font-mono);
+    color: var(--text-bright); padding: 8px 14px;
+    background: var(--bg-muted); border-radius: var(--radius) var(--radius) 0 0;
+    border: 1px solid var(--border);
+  }
+  .gke-workload-header .wl-ns { color: var(--text-dim); font-weight: 400; }
+  .gke-workload-total {
+    font-size: 12px; color: var(--text-dim); padding: 6px 14px;
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-top: none; border-radius: 0 0 var(--radius) var(--radius);
+    display: flex; gap: 20px;
+  }
+  .gke-workload-total span strong { color: var(--info); font-family: var(--font-mono); }
+  .gke-resource-table {
+    width: 100%; border-collapse: collapse;
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-top: none; font-size: 13px;
+  }
+  .gke-resource-table th {
+    text-align: left; padding: 6px 14px; font-size: 11px;
+    color: var(--text-dim); letter-spacing: .4px; text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+  }
+  .gke-resource-table td {
+    padding: 7px 14px; border-bottom: 1px solid var(--border);
+    color: var(--text-main); font-family: var(--font-mono); font-size: 12px;
+  }
+  .gke-resource-table tr:last-child td { border-bottom: none; }
+  .gke-resource-table tr:hover td { background: var(--bg-hover); }
+  .gke-waste-pos { color: var(--warning, #e0af68); }
+  .gke-na { color: var(--text-dim); font-style: italic; }
+
   /* ── Tool Usage ────────────────────────────────────────────── */
   .tool-usage-section { margin-top: 8px; }
   .tool-bar-container { display: flex; flex-direction: column; gap: 8px; }
@@ -496,7 +531,10 @@ const REPORT_DATA = /*{{REPORT_DATA_JSON}}*/null;
       <span class="nav-count" id="nav-recs-count"></span>
     </a>
     <a class="nav-item" href="#section-cost" onclick="setActiveNav(this)" id="nav-cost-item" style="display:none">
-      <span class="nav-icon">💰</span> Cost & Usage
+      <span class="nav-icon">💰</span> Cost &amp; Usage
+    </a>
+    <a class="nav-item" href="#section-gke-cost" onclick="setActiveNav(this)" id="nav-gke-cost-item" style="display:none">
+      <span class="nav-icon">☸️</span> GKE Cost
     </a>
     <a class="nav-item" href="#section-tools" onclick="setActiveNav(this)" id="nav-tools-item" style="display:none">
       <span class="nav-icon">🛠</span> Tool Usage
@@ -575,6 +613,23 @@ const REPORT_DATA = /*{{REPORT_DATA_JSON}}*/null;
     <section id="section-cost" style="display:none">
       <h2><span class="section-icon">💰</span> Cost &amp; Usage</h2>
       <div class="cost-grid" id="cost-grid"></div>
+    </section>
+
+    <!-- GKE Workload Cost Estimation -->
+    <section id="section-gke-cost" style="display:none">
+      <h2>
+        <span class="section-icon">☸️</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">GKE Workload Cost Estimation</span>
+      </h2>
+      <div class="section-content">
+        <div id="gke-cost-unsupported" style="display:none" class="card">
+          <p id="gke-cost-unsupported-msg" style="color:var(--text-dim);font-style:italic;padding:0.5rem 0;"></p>
+        </div>
+        <div id="gke-cost-supported">
+          <div class="cost-grid" id="gke-cost-summary-grid"></div>
+          <div id="gke-cost-workloads"></div>
+        </div>
+      </div>
     </section>
 
     <!-- Tool Usage -->
@@ -916,6 +971,85 @@ function renderToolUsage() {
   }
 }
 
+// ── GKE Workload Cost Estimation ─────────────────────────────────
+function renderGKECost() {
+  const gkeCost = REPORT_DATA.metadata && REPORT_DATA.metadata.gke_cost;
+  if (!gkeCost) return;
+
+  const section = document.getElementById('section-gke-cost');
+  const navItem = document.getElementById('nav-gke-cost-item');
+  if (section) section.style.display = '';
+  if (navItem) navItem.style.display = '';
+
+  if (!gkeCost.supported) {
+    const unsupported = document.getElementById('gke-cost-unsupported');
+    const msg = document.getElementById('gke-cost-unsupported-msg');
+    const supported = document.getElementById('gke-cost-supported');
+    if (unsupported) unsupported.style.display = '';
+    if (supported) supported.style.display = 'none';
+    if (msg) msg.textContent = gkeCost.unsupported_reason || 'Cost estimation not available for this cluster.';
+    return;
+  }
+
+  // ── Summary cards ─────────────────────────────────────────────
+  const fmt = v => v != null ? '$' + Number(v).toFixed(2) : 'N/A';
+  const summaryCards = [
+    { label: 'Total Request Cost', value: fmt(gkeCost.total_request_cost_usd), sub: 'per month (est.)' },
+    { label: 'Total Usage Cost',   value: gkeCost.total_usage_cost_usd != null ? fmt(gkeCost.total_usage_cost_usd) : 'N/A', sub: 'per month (actual)' },
+    { label: 'Savings Potential',  value: gkeCost.total_savings_usd != null ? fmt(gkeCost.total_savings_usd) : 'N/A', sub: 'per month (est.)' },
+  ];
+  document.getElementById('gke-cost-summary-grid').innerHTML = summaryCards.map(c =>
+    `<div class="cost-card">
+      <div class="cost-card-label">${esc(c.label)}</div>
+      <div class="cost-card-value">${esc(c.value)}</div>
+      <div class="cost-card-sub">${esc(c.sub)}</div>
+    </div>`
+  ).join('');
+
+  // ── Per-workload breakdown ─────────────────────────────────────
+  const workloads = gkeCost.workloads || [];
+  if (!workloads.length) {
+    document.getElementById('gke-cost-workloads').innerHTML =
+      '<p style="color:var(--text-dim);font-style:italic;padding:0.5rem 0;">No workloads found.</p>';
+    return;
+  }
+
+  document.getElementById('gke-cost-workloads').innerHTML = workloads.map(wl => {
+    const reqFmt = v => v != null ? '$' + Number(v).toFixed(2) : '<span class="gke-na">N/A</span>';
+    const rows = (wl.resource_costs || []).map(rc => {
+      const wasteHtml = rc.waste_cost_usd != null
+        ? `<span class="gke-waste-pos">$${Number(rc.waste_cost_usd).toFixed(2)}</span>`
+        : '<span class="gke-na">N/A</span>';
+      return `<tr>
+        <td>${esc(rc.resource_type)}</td>
+        <td>${rc.requests != null ? Number(rc.requests).toFixed(3) : '<span class="gke-na">N/A</span>'}</td>
+        <td>${rc.usage != null ? Number(rc.usage).toFixed(3) : '<span class="gke-na">N/A</span>'}</td>
+        <td>${rc.request_cost_usd != null ? '$' + Number(rc.request_cost_usd).toFixed(2) : '<span class="gke-na">N/A</span>'}</td>
+        <td>${rc.usage_cost_usd != null ? '$' + Number(rc.usage_cost_usd).toFixed(2) : '<span class="gke-na">N/A</span>'}</td>
+        <td>${wasteHtml}</td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="gke-workload-block">
+      <div class="gke-workload-header">
+        <span class="wl-ns">${esc(wl.namespace)} /</span> ${esc(wl.workload_name)}
+      </div>
+      <table class="gke-resource-table">
+        <thead><tr>
+          <th>Resource</th><th>Requested</th><th>Used</th>
+          <th>Req Cost/mo</th><th>Use Cost/mo</th><th>Waste</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="gke-workload-total">
+        <span>Request Cost: <strong>${reqFmt(wl.total_request_cost_usd)}</strong></span>
+        <span>Usage Cost: <strong>${wl.total_usage_cost_usd != null ? '$' + Number(wl.total_usage_cost_usd).toFixed(2) : 'N/A'}</strong></span>
+        <span>Waste: <strong>${wl.total_waste_usd != null ? '$' + Number(wl.total_waste_usd).toFixed(2) : 'N/A'}</strong></span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
 // ── Copy command ──────────────────────────────────────────────────
 function copyCmd(btn, priority) {
   const rec = REPORT_DATA.recommendations.find(r => r.priority === priority);
@@ -1003,6 +1137,7 @@ document.getElementById('main-content').addEventListener('scroll', updateActiveN
   renderRecs();
   renderCostUsage();
   renderToolUsage();
+  renderGKECost();
   const _titleCluster = REPORT_DATA.metadata.cluster_name;
   const _titleStatus  = REPORT_DATA.executive_summary.overall_status;
   document.title = ['Health Report', _titleCluster, _titleStatus].filter(Boolean).join(' — ');

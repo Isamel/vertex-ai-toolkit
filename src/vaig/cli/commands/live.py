@@ -1052,6 +1052,15 @@ def _inject_report_metadata(
                 tool_calls=tool_calls,
             )
 
+    # ── GKE workload cost estimation ──────────────────────────
+    if gke_config is not None and getattr(metadata, "gke_cost", None) is None:
+        try:
+            from vaig.tools.gke.cost_estimation import fetch_workload_costs  # noqa: WPS433
+
+            metadata.gke_cost = fetch_workload_costs(gke_config)
+        except Exception as _gke_cost_exc:  # noqa: BLE001
+            logger.debug("GKE cost estimation skipped: %s", _gke_cost_exc)
+
     # ── Generated-at timestamp — ALWAYS overwrite with actual time ────────────
     metadata.generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 

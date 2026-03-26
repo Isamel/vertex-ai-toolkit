@@ -512,6 +512,56 @@ class TimelineEvent(BaseModel):
     )
 
 
+class GKEResourceCost(BaseModel):
+    """Cost breakdown for a single resource dimension (CPU, RAM, or Ephemeral)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    resource_type: str = Field(default="", description="Resource type: 'cpu', 'memory', or 'ephemeral'")
+    requests: float | None = Field(default=None, description="Total requested units (vCPUs or GiB)")
+    usage: float | None = Field(default=None, description="Total actual usage units (from Cloud Monitoring); None if unavailable")
+    request_cost_usd: float | None = Field(default=None, description="Monthly cost based on requests (USD)")
+    usage_cost_usd: float | None = Field(default=None, description="Monthly cost based on actual usage (USD); None if unavailable")
+    waste_cost_usd: float | None = Field(default=None, description="Estimated monthly waste (request_cost - usage_cost); None if unavailable")
+
+
+class GKEWorkloadCost(BaseModel):
+    """Cost estimate for a single Kubernetes workload (Deployment/StatefulSet)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    namespace: str = Field(default="")
+    workload_name: str = Field(default="")
+    resource_costs: list[GKEResourceCost] = Field(default_factory=list)
+    total_request_cost_usd: float | None = Field(default=None)
+    total_usage_cost_usd: float | None = Field(default=None)
+    total_waste_usd: float | None = Field(default=None)
+
+
+class GKECostReport(BaseModel):
+    """Top-level GKE workload cost estimation report."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    cluster_type: str = Field(
+        default="unknown",
+        description="'autopilot', 'standard', or 'unknown'",
+    )
+    region: str = Field(default="", description="GCP region used for pricing, e.g. 'northamerica-northeast1'")
+    supported: bool = Field(
+        default=False,
+        description="True if cost estimation is supported (Autopilot cluster in known region)",
+    )
+    unsupported_reason: str | None = Field(
+        default=None,
+        description="Human-readable reason if supported=False",
+    )
+    workloads: list[GKEWorkloadCost] = Field(default_factory=list)
+    total_request_cost_usd: float | None = Field(default=None, description="Sum of all workload request costs")
+    total_usage_cost_usd: float | None = Field(default=None, description="Sum of all workload usage costs; None if unavailable")
+    total_savings_usd: float | None = Field(default=None, description="Estimated total monthly savings potential; None if unavailable")
+
+
 class CostMetrics(BaseModel):
     """Cost and token usage metrics for the report generation run."""
 
@@ -549,6 +599,7 @@ class ReportMetadata(BaseModel):
     skill_version: str = Field(default="")
     cost_metrics: CostMetrics | None = Field(default=None, description="Cost and token usage for this run")
     tool_usage: ToolUsageSummary | None = Field(default=None, description="Tool call statistics for this run")
+    gke_cost: GKECostReport | None = Field(default=None, description="GKE workload cost estimation (Autopilot only)")
 
 
 # ── Root model ───────────────────────────────────────────────
