@@ -430,8 +430,9 @@ Deployment is a stub (``spec.replicas=0``, managed by Argo Rollout), **omit that
 row entirely** and replace it with a row for the corresponding Rollout.  Use the Rollout's
 actual replica counts (``ready/desired``) for the ``Ready`` column — NEVER the stub
 Deployment's ``0/0``.  Map Rollout phase to the ``Status`` column as follows:
-``Healthy → Running``, ``Degraded → Failed``, ``Progressing → Degraded``, ``Paused → Unknown``.
-This ensures the table reflects real service health, not the intentional stub state.
+``Healthy → Running``, ``Progressing → Degraded``, ``Degraded → Failed``, ``Error → Failed``,
+``Paused → Unknown``, ``Unknown → Unknown``.  For any unrecognized phase, default ``Status`` to
+``Unknown``.  This ensures the table reflects real service health, not the intentional stub state.
 
 For each namespace, perform:
 
@@ -481,12 +482,12 @@ i. **HPA conditions for Rollout-managed workloads** — when collecting HPA data
    This list may be empty if the HPA has no conditions.
    These conditions are CRITICAL context for diagnosing scaling failures on Argo-managed workloads.
 
-j. **Rollout Details section** — after the main workload table (``## Service Status``), add a
-    dedicated **top-level** ``## Rollout Details`` section (NOT a subsection of Service Status)
-    for every service that has rollout data.  Separate it from the Service Status table with a
-    blank line.  Use this format per service:
+j. **Rollout Details section** — inside ``## Raw Findings (Workload)``, add a
+    ``### Rollout Details`` subsection (NOT a top-level section, NOT a subsection of
+    ``## Service Status``) for every service that has rollout data.
+    Use ``#### <service-name>`` for per-service entries.  Use this format per service:
 
-    ``### <service-name>``
+    ``#### <service-name>``
     - rollout_strategy: <blue-green|canary|N/A>
     - rollout_status: <Healthy|Progressing|Paused|Degraded|N/A>
     - hpa_conditions: <condition1; condition2|none>
