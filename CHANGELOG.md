@@ -8,23 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.9.0] - 2026-03-26
 
 ### Added
-- 3-agent CodingPipeline (Planner → Implementer → Verifier) for complex coding tasks — activate with `--pipeline` / `-p` flag on `vaig ask --code`
-- GreenfieldSkill with 6-stage pipeline for new project scaffolding from scratch (`skills/greenfield/`)
-- CodeMigrationSkill with 5-phase state machine (Analyze → Plan → Transform → Validate → Report) for language-to-language code migration, e.g., Python → Go (`skills/code_migration/`) — distinct from the ETL `migration` skill (Pentaho → AWS Glue)
-- Python-to-Go idiom mappings: 12 idiom translations + 17 dependency mappings (YAML-driven, `skills/code_migration/idioms/python_to_go.yaml`)
-- GKE Autopilot workload cost estimation with per-container breakdown (#105)
-- Namespace-level cost summaries with waste/efficiency metrics (#105)
-- Usage metrics integration via Cloud Monitoring API for cost estimation (#105)
-- 32 GCP regions in Autopilot pricing table (#105)
-- `verify_completeness` file tool with regex pattern validation for coding agent workflows (#107)
-- Chain-of-thought enforcement in coding agent system prompts for more reliable output (#108)
+- `CodingSkillOrchestrator` — 3-agent coding pipeline (Planner → Implementer → Verifier) for complex coding tasks — activate with `--pipeline` flag on `vaig ask --code` (#111)
+- `GreenfieldSkill` with 6-stage pipeline for new project scaffolding from scratch: Requirements → Architecture Decision → Project Spec → Scaffold → Implement → Verify (`skills/greenfield/`) (#111)
+- `CodeMigrationSkill` with 6-phase state machine (Inventory → Semantic Map → Spec → Implement → Verify → Report) for language-to-language code migration, e.g., Python → Go (`skills/code_migration/`) — distinct from the ETL `migration` skill (Pentaho → AWS Glue) (#110)
+- Python-to-Go idiom mappings: 12 idiom translations + 17 dependency mappings (YAML-driven, `skills/code_migration/idioms/python_to_go.yaml`) (#110)
+- GKE Autopilot workload cost estimation with per-container breakdown (#106)
+- Namespace-level cost summaries with waste/efficiency metrics (#108)
+- Usage metrics integration via Cloud Monitoring API for cost estimation (#108)
+- 32 GCP regions in Autopilot pricing table (#107)
+- `verify_completeness` file tool scanning for incomplete placeholder patterns (TODO, FIXME, HACK, XXX, bare `pass`, ellipsis, NotImplementedError) in coding agent workflows (#109)
+- Chain-of-thought enforcement in coding agent system prompts for more reliable output (#109)
 - XML context boundaries (`<DATA>` delimiters) via `wrap_untrusted_content()` for prompt injection defense (#109)
-- SPEC phase (Phase 0) in coding workflow for specification-first development (#110)
+- SPEC phase (Phase 0) in coding workflow for specification-first development (#109)
 
 ### Changed
-- Split monolithic `prompts.py` into 9-file `prompts/` package in `service_health` skill for improved maintainability (#111)
+- Split monolithic `prompts.py` into 9-file `prompts/` package in `service_health` skill for improved maintainability (#105)
 - Enhanced prompt defense with `wrap_untrusted_content()` integration in CodingAgent (#109)
-- Anti-hallucination rules now enforced in coding agent system prompts (#108)
+- Anti-hallucination rules now enforced in coding agent system prompts (#109)
 
 ## [0.8.0] - 2026-03-18
 

@@ -31,7 +31,7 @@ vaig ask "Your question here" [OPTIONS]
 | `--auto-skill` | | Auto-detect best skill for the query | `false` |
 | `--no-stream` | | Disable streaming output | `false` |
 | `--code` | | Enable coding agent mode (file read/write/edit) | `false` |
-| `--pipeline` | `-p` | Enable 3-agent pipeline mode (Planner→Implementer→Verifier). Requires `--code`. Maps to `coding.pipeline_mode` config key | `false` |
+| `--pipeline` | | Enable 3-agent pipeline mode (Planner→Implementer→Verifier). Requires `--code`. Maps to `coding.pipeline_mode` config key | `false` |
 | `--live` | | Enable live infrastructure tools | `false` |
 | `--workspace` | `-w` | Workspace root for coding agent | `.` |
 | `--cluster` | | GKE cluster name | Config value |

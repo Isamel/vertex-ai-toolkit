@@ -11,7 +11,7 @@ BaseAgent (ABC)
 │   ├── CodingAgent          — File I/O + shell commands
 │   └── InfraAgent           — GKE + GCloud tools for SRE
 ├── Orchestrator             — Coordinates multi-agent execution
-├── CodingPipeline           — 3-agent coding orchestrator (Planner→Implementer→Verifier)
+├── CodingSkillOrchestrator  — 3-agent coding orchestrator (Planner→Implementer→Verifier)
 └── ChunkedProcessor         — Map-Reduce for large files
 ```
 
@@ -65,7 +65,7 @@ vaig ask "Refactor this to use async/await" -f server.py --code
 > Refactor the auth module to use dependency injection
 ```
 
-### CodingPipeline
+### CodingSkillOrchestrator
 
 A 3-agent orchestrator for complex coding tasks that require a structured planning phase before writing code. Activate with `--pipeline` on `vaig ask --code` or by setting `coding.pipeline_mode: true` in config.
 

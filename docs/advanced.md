@@ -283,7 +283,7 @@ coding:
   pipeline_mode: true
 ```
 
-> **Warning:** Pipeline mode still requires `confirm_actions: true` (default) to approve file writes. Do not set `confirm_actions: false` in production workspaces.
+> **Warning:** Pipeline mode does **not** support interactive `confirm_actions`. If `confirm_actions: true` is set in config, a warning is logged and the pipeline proceeds without prompts. For interactive confirmation, use single-agent mode (omit `--pipeline`).
 
 ### Configuration
 
@@ -291,7 +291,7 @@ coding:
 coding:
   pipeline_mode: false               # Default; set true to always use pipeline
   confirm_actions: true              # Always require approval for writes
-  workspace: /path/to/project        # Workspace root (or pass -w on CLI)
+  workspace_root: /path/to/project    # Workspace root (or pass -w on CLI)
 ```
 
 ---

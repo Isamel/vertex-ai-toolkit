@@ -30,7 +30,7 @@ See [Architecture](architecture.md) for detailed Mermaid diagrams.
 │  chat (REPL) │ ask (single-shot) │ live (infra) │ stats │
 ├──────────────────────────────────────────────────────────┤
 │                     Agent Layer                          │
-│  Orchestrator │ CodingAgent │ CodingPipeline │ InfraAgent │ Chunked │
+│  Orchestrator │ CodingAgent │ CodingSkillOrchestrator │ InfraAgent │ Chunked │
 ├──────────────────────────────────────────────────────────┤
 │                     Skills Layer                         │
 │  31 built-in skills with phase-based multi-agent pipes   │
@@ -51,7 +51,7 @@ See [Architecture](architecture.md) for detailed Mermaid diagrams.
 - **Multi-agent orchestration** — Sequential, fan-out, and lead-delegate strategies
 - **Async-native** — Full async stack from CLI to API calls, with sync backward compat
 - **31 SRE/DevOps skills** — From root cause analysis to threat modeling, code migration, and greenfield generation
-- **CodingPipeline** — 3-agent Planner → Implementer → Verifier pipeline for complex coding tasks
+- **CodingSkillOrchestrator** — 3-agent Planner → Implementer → Verifier pipeline for complex coding tasks
 - **Live infrastructure** — Query GKE clusters, read logs, check metrics in real-time
 - **Helm & ArgoCD integration** — Read release status, sync state, drift detection (opt-in)
 - **Istio/ASM mesh tools** — VirtualService, DestinationRule, sidecar introspection

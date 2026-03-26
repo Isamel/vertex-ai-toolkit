@@ -15,8 +15,8 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
   - **Code Migration** — migrate source code between programming languages (e.g., Python → Go) with YAML-driven idiom mappings
   - **Greenfield** — scaffold new projects from scratch with a 6-stage pipeline
   - **Service Health** — comprehensive GKE service diagnostics (4-agent pipeline with two-pass gathering)
-  - Plus 26+ built-in skills for SRE, DevOps, and platform engineering
-- **CodingPipeline** — 3-agent orchestration (Planner → Implementer → Verifier) for complex coding tasks; activate with `--pipeline` on `vaig ask --code`
+  - Plus 25+ built-in skills for SRE, DevOps, and platform engineering
+- **CodingSkillOrchestrator** — 3-agent orchestration (Planner → Implementer → Verifier) for complex coding tasks; activate with `--pipeline` on `vaig ask --code`
 - **Multi-agent orchestration** — skills spawn specialized agents with different roles and models
 - **Async fanout** — true parallel agent execution via ThreadPoolExecutor for multi-agent workflows
 - **Cost tracking** — per-request token and cost tracking with live CLI display and export report summaries; GKE Autopilot workload cost estimation with per-container breakdown and namespace-level waste/efficiency metrics
@@ -508,7 +508,7 @@ vaig ask "Migrate this Python module to Go" -s code-migration -f service.py --co
 
 #### Greenfield Project Scaffolding
 
-Agents: 6-stage pipeline (requirements → architecture → scaffold → implement → dependencies → validate)
+Agents: 6-stage pipeline (requirements → architecture_decision → project_spec → scaffold → implement → verify)
 
 ```bash
 vaig ask "Create a new Go REST API service" -s greenfield --code
@@ -677,12 +677,12 @@ vertex-ai-toolkit/
 │   │   ├── code_migration/ # Code Migration skill (language-to-language, e.g. Python → Go)
 │   │   │   └── idioms/     # YAML idiom + dependency mappings
 │   │   ├── greenfield/     # Greenfield project scaffolding (6-stage pipeline)
-│   │   └── ...             # 26+ additional built-in skills
+│   │   └── ...             # 25+ additional built-in skills
 │   ├── agents/
 │   │   ├── base.py            # AgentRole, AgentConfig, BaseAgent ABC
 │   │   ├── specialist.py      # SpecialistAgent (wraps GeminiClient)
 │   │   ├── orchestrator.py    # Multi-agent coordination + async fanout
-│   │   ├── coding_pipeline.py # CodingPipeline (Planner→Implementer→Verifier)
+│   │   ├── coding_pipeline.py # CodingSkillOrchestrator (Planner→Implementer→Verifier)
 │   │   └── registry.py        # Agent factory
 │   ├── tools/
 │   │   ├── base.py           # ToolResult, ToolCallRecord

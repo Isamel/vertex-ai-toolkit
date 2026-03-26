@@ -19,7 +19,7 @@ graph TB
         spec["SpecialistAgent<br/>(text-only)"]
         tool["ToolAwareAgent<br/>(tool-use loop)"]
         code["CodingAgent<br/>(file I/O + shell)"]
-        pipeline["CodingPipeline<br/>(Planner→Implementer→Verifier)"]
+        pipeline["CodingSkillOrchestrator<br/>(Planner→Implementer→Verifier)"]
         infra["InfraAgent<br/>(GKE + GCloud)"]
         chunk["ChunkedProcessor<br/>(Map-Reduce)"]
     end
