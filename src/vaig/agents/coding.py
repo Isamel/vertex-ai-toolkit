@@ -518,7 +518,11 @@ class CodingAgent(BaseAgent, ToolLoopMixin):
         if not context:
             return prompt
 
-        wrapped_context = wrap_untrusted_content(context)
+        # Escape XML metacharacters so untrusted content cannot break out of
+        # the <external_code> boundary (e.g. by injecting </external_code>).
+        # '&' must be escaped first to avoid double-encoding.
+        xml_safe_context = context.replace("&", "&amp;").replace("<", "&lt;")
+        wrapped_context = wrap_untrusted_content(xml_safe_context)
         return (
             f"<system_rules>\n"
             f"You are operating within a structured coding session. "

@@ -287,7 +287,7 @@ _INCOMPLETE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("XXX", re.compile(r"\bXXX\b")),
     ("bare pass", re.compile(r"^\s*pass\s*(?:#.*)?$")),
     ("ellipsis body", re.compile(r"^\s*\.\.\.\s*(?:#.*)?$")),
-    ("NotImplementedError", re.compile(r"\bNotImplementedError\b")),
+    ("NotImplementedError", re.compile(r"raise\s+NotImplementedError")),
 ]
 
 
@@ -296,7 +296,7 @@ def verify_completeness(paths: list[str], *, workspace: Path) -> ToolResult:
 
     Checks each file in *paths* for common indicators of unfinished code:
     ``TODO``, ``FIXME``, ``HACK``, ``XXX``, bare ``pass`` statements,
-    ellipsis bodies (``...``), and ``NotImplementedError`` raises.
+    ellipsis bodies (``...``), and ``raise NotImplementedError`` expressions.
 
     Args:
         paths: Relative paths to files to scan (from workspace root).
@@ -329,6 +329,20 @@ def verify_completeness(paths: list[str], *, workspace: Path) -> ToolResult:
 
         if not resolved.is_file():
             errors.append(f"Not a file: {raw_path}")
+            continue
+
+        try:
+            size = resolved.stat().st_size
+        except OSError as exc:
+            errors.append(f"Error reading {raw_path}: {exc}")
+            continue
+
+        if size > _MAX_FILE_SIZE:
+            size_kb = size / 1024
+            errors.append(
+                f"File too large: {raw_path} ({size_kb:.1f} KB). "
+                f"Maximum supported size is 1 MB."
+            )
             continue
 
         try:
@@ -481,13 +495,17 @@ def create_file_tools(workspace: Path) -> list[ToolDef]:
             parameters=[
                 ToolParam(
                     name="paths",
-                    type="array",
+                    type="string",
                     description=(
-                        "List of relative file paths (from workspace root) to scan. "
-                        "Pass the files you just created or modified."
+                        "Comma-separated relative file paths (from workspace root) to scan. "
+                        "Pass the files you just created or modified, e.g. "
+                        "'src/foo.py,src/bar.py'."
                     ),
                 ),
             ],
-            execute=lambda paths, _ws=workspace: verify_completeness(paths, workspace=_ws),
+            execute=lambda paths, _ws=workspace: verify_completeness(
+                [p.strip() for p in paths.split(",") if p.strip()],
+                workspace=_ws,
+            ),
         ),
     ]

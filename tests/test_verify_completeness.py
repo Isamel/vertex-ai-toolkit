@@ -338,19 +338,19 @@ class TestVerifyCompletenessIntegration:
         tools = create_file_tools(workspace)
         verify_tool = next(t for t in tools if t.name == "verify_completeness")
 
-        result = verify_tool.execute(paths=[path])
+        result = verify_tool.execute(paths=path)
 
         assert isinstance(result, ToolResult)
 
     def test_tool_registered_in_coding_agent(self, workspace: Path) -> None:
         """CodingAgent registers verify_completeness as an available tool."""
-        from unittest.mock import patch
+        from unittest.mock import MagicMock, patch
 
         from vaig.agents.coding import CodingAgent
         from vaig.core.config import CodingConfig
 
         config = CodingConfig(workspace_root=str(workspace))
-        client_mock = __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock()
+        client_mock = MagicMock()
         client_mock.current_model = "gemini-2.5-pro"
 
         with patch("vaig.agents.coding.create_shell_tools", return_value=[]):
