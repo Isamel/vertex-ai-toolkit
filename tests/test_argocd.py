@@ -539,7 +539,7 @@ class TestCheckCrdExists:
             result = _check_crd_exists("applications.argoproj.io")
 
         assert result is True
-        mock_ext_api.read_custom_resource_definition.assert_called_once_with("applications.argoproj.io")
+        mock_ext_api.read_custom_resource_definition.assert_called_once_with("applications.argoproj.io", _request_timeout=30)
 
     def test_crd_not_found_returns_false(self) -> None:
         """CRD doesn't exist (404) — returns False."""

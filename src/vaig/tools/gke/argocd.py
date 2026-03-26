@@ -6,6 +6,7 @@ import logging
 import time
 from typing import Any
 
+from vaig.core.config import get_settings
 from vaig.tools.base import ToolResult
 
 from . import _cache, _clients
@@ -104,7 +105,7 @@ def _check_crd_exists(crd_name: str, api_client: Any = None) -> bool:
         last_exc: Exception | None = None
         for attempt in range(_RETRY_ATTEMPTS):
             try:
-                ext_api.read_custom_resource_definition(crd_name)
+                ext_api.read_custom_resource_definition(crd_name, _request_timeout=get_settings().gke.request_timeout)
                 _crd_exists_cache[crd_name] = True
                 return True
             except k8s_exceptions.ApiException as exc:

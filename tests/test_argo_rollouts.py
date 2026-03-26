@@ -318,10 +318,14 @@ class TestDetectArgoRollouts:
         mock_apps_api = MagicMock()
         mock_apps_api.list_namespaced_deployment.return_value.items = []
 
+        mock_custom_api = MagicMock()
+        mock_custom_api.list_namespaced_custom_object.return_value = {"items": []}
+
         with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
              patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
              patch("vaig.tools.gke.argocd._crd_exists_cache", {"rollouts.argoproj.io": False}), \
              patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.client.CustomObjectsApi", return_value=mock_custom_api), \
              patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
              patch("kubernetes.config.load_kube_config", return_value=None), \
              patch("kubernetes.config.ConfigException", Exception):
