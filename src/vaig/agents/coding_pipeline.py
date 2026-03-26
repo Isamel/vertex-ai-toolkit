@@ -19,6 +19,7 @@ Single-agent mode is retained via :class:`~vaig.agents.coding.CodingAgent`.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -278,6 +279,24 @@ class CodingSkillOrchestrator:
         plan_result = planner.execute(planner_prompt)
         plan_content = plan_result.content
 
+        if not plan_result.success:
+            logger.warning("CodingSkillOrchestrator — Planner reported failure; short-circuiting pipeline")
+            usage = self._aggregate_usage(plan_result.usage)
+            return CodingPipelineResult(
+                task=task,
+                plan=plan_content,
+                implementation_summary="",
+                verification_report="",
+                success=False,
+                usage=usage,
+                metadata={
+                    "planner": plan_result.metadata,
+                    "implementer": {},
+                    "verifier": {},
+                    "workspace": str(self._workspace),
+                },
+            )
+
         # Step 2 — Implementer (receives plan as context)
         implementer = self._make_agent(
             name="coding-implementer",
@@ -293,6 +312,24 @@ class CodingSkillOrchestrator:
         logger.debug("CodingSkillOrchestrator — running Implementer agent")
         impl_result = implementer.execute(implementer_prompt, context=implementer_context)
         impl_content = impl_result.content
+
+        if not impl_result.success:
+            logger.warning("CodingSkillOrchestrator — Implementer reported failure; short-circuiting pipeline")
+            usage = self._aggregate_usage(plan_result.usage, impl_result.usage)
+            return CodingPipelineResult(
+                task=task,
+                plan=plan_content,
+                implementation_summary=impl_content,
+                verification_report="",
+                success=False,
+                usage=usage,
+                metadata={
+                    "planner": plan_result.metadata,
+                    "implementer": impl_result.metadata,
+                    "verifier": {},
+                    "workspace": str(self._workspace),
+                },
+            )
 
         # Step 3 — Verifier (receives plan + implementation as context)
         verifier = self._make_agent(
@@ -364,7 +401,7 @@ class CodingSkillOrchestrator:
 
                 for tool in load_all_plugin_tools(self._settings):
                     registry.register(tool)
-            except Exception:  # noqa: BLE001
+            except (ImportError, AttributeError):
                 logger.warning(
                     "Failed to load plugin tools for CodingSkillOrchestrator. Skipping.",
                     exc_info=True,
@@ -403,7 +440,7 @@ class CodingSkillOrchestrator:
                 "and write it to PLAN.md."
             )
 
-        xml_safe = context.replace("&", "&amp;").replace("<", "&lt;")
+        xml_safe = context.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         wrapped = wrap_untrusted_content(xml_safe)
         return (
             f"<system_rules>\n"
@@ -446,7 +483,7 @@ class CodingSkillOrchestrator:
     @staticmethod
     def _wrap_agent_output(*, label: str, content: str) -> str:
         """Wrap a prior agent's output in XML delimiters for safe context passing."""
-        xml_safe = content.replace("&", "&amp;").replace("<", "&lt;")
+        xml_safe = content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return (
             f"<{label.lower()}>\n"
             f"{xml_safe}\n"
@@ -470,12 +507,28 @@ class CodingSkillOrchestrator:
     def _parse_success(verification_report: str) -> bool:
         """Infer overall success from the verification report text.
 
+        Looks for explicit PASS ✅ or FAIL ❌ markers, or the words PASS/FAIL
+        as standalone tokens (case-insensitive, word-boundary match).
+
         Returns True when the report contains a PASS indicator and no FAIL
         indicators, or when no explicit verdict is found (optimistic default).
+
+        .. note::
+            Matches ``FAIL`` only at word boundaries to avoid misclassifying
+            phrases like "No failures detected" or "without failover" as failures.
         """
-        lowered = verification_report.lower()
-        has_fail = "fail" in lowered or "❌" in verification_report
-        has_pass = "pass" in lowered or "✅" in verification_report
+        # Emoji markers — exact and unambiguous
+        has_fail_emoji = "❌" in verification_report
+        has_pass_emoji = "✅" in verification_report
+
+        # Word-boundary token match: standalone FAIL / PASS only
+        # e.g. matches "FAIL" in "Overall: FAIL" but NOT in "No failures detected"
+        has_fail_word = bool(re.search(r"\bFAIL\b", verification_report, re.IGNORECASE))
+        has_pass_word = bool(re.search(r"\bPASS\b", verification_report, re.IGNORECASE))
+
+        has_fail = has_fail_emoji or has_fail_word
+        has_pass = has_pass_emoji or has_pass_word
+
         if has_fail:
             return False
         if has_pass:

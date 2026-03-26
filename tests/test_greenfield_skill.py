@@ -101,9 +101,10 @@ class TestGreenfieldSkillGetPhasePrompt:
         prompt = skill.get_phase_prompt(SkillPhase.PLAN, context="requirements doc", user_input="")
         assert "Architecture Decision" in prompt or "ADR" in prompt
 
-    def test_execute_maps_to_implement(self, skill: GreenfieldSkill) -> None:
+    def test_execute_maps_to_scaffold(self, skill: GreenfieldSkill) -> None:
+        """EXECUTE phase maps to scaffold (first stage); implement is the second sub-stage."""
         prompt = skill.get_phase_prompt(SkillPhase.EXECUTE, context="spec doc", user_input="")
-        assert "Implement" in prompt or "implement" in prompt.lower()
+        assert "Scaffold" in prompt or "scaffold" in prompt.lower()
 
     def test_validate_maps_to_verify(self, skill: GreenfieldSkill) -> None:
         prompt = skill.get_phase_prompt(SkillPhase.VALIDATE, context="spec doc", user_input="")

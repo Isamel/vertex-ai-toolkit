@@ -51,9 +51,7 @@ _REQUIREMENTS_PROMPT = f"""## Stage 1 — Requirements Analysis
 Analyse the user input and extract structured, unambiguous requirements.
 
 ### User Input:
-{DELIMITER_DATA_START}
 {{user_input}}
-{DELIMITER_DATA_END}
 
 ### Your Task:
 
@@ -258,6 +256,11 @@ STAGE_PROMPTS: dict[str, str] = {
 Each template has ``{context}`` and ``{user_input}`` placeholders.
 The ``requirements`` stage only uses ``{user_input}``.
 """
+
+# Alias for compatibility with the standard skill prompt-defense test suite,
+# which iterates over ``PHASE_PROMPTS``.  Greenfield uses stage terminology
+# internally but exposes the same interface.
+PHASE_PROMPTS = STAGE_PROMPTS
 
 STAGE_ORDER: list[str] = [
     "requirements",

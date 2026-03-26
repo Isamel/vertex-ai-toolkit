@@ -260,13 +260,6 @@ class CodingConfig(BaseModel):
             "(Planner→Implementer→Verifier) instead of the single-agent CodingAgent"
         ),
     )
-    greenfield_output_dir: str = Field(
-        default="greenfield",
-        description=(
-            "Output directory for GreenfieldSkill generated projects "
-            "(relative to cwd)"
-        ),
-    )
     denied_commands: list[str] = Field(
         default_factory=lambda: [
             # Destructive disk / filesystem operations

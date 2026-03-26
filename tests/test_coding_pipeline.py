@@ -400,6 +400,57 @@ class TestCodingSkillOrchestratorRun:
         prompt_arg = first_call[0][0]
         assert "Some existing code here" in prompt_arg
 
+    @patch("vaig.agents.coding_pipeline.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding_pipeline.create_file_tools", return_value=[])
+    @patch("vaig.agents.coding_pipeline.ToolAwareAgent")
+    def test_run_short_circuits_on_planner_failure(
+        self,
+        mock_agent_cls: MagicMock,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """run() returns immediately with success=False when Planner fails (Fix 10)."""
+        mock_agent = MagicMock()
+        mock_agent_cls.return_value = mock_agent
+
+        # Planner returns success=False — pipeline should stop here
+        mock_agent.execute.return_value = _make_agent_result("planner output", success=False)
+
+        orchestrator = CodingSkillOrchestrator(_make_mock_client(), _make_coding_config())
+        result = orchestrator.run("Task")
+
+        # Only 1 agent call — Implementer and Verifier never run
+        assert mock_agent.execute.call_count == 1
+        assert result.success is False
+        assert result.implementation_summary == ""
+        assert result.verification_report == ""
+
+    @patch("vaig.agents.coding_pipeline.create_shell_tools", return_value=[])
+    @patch("vaig.agents.coding_pipeline.create_file_tools", return_value=[])
+    @patch("vaig.agents.coding_pipeline.ToolAwareAgent")
+    def test_run_short_circuits_on_implementer_failure(
+        self,
+        mock_agent_cls: MagicMock,
+        mock_file_tools: MagicMock,
+        mock_shell_tools: MagicMock,
+    ) -> None:
+        """run() returns immediately with success=False when Implementer fails (Fix 10)."""
+        mock_agent = MagicMock()
+        mock_agent_cls.return_value = mock_agent
+
+        mock_agent.execute.side_effect = [
+            _make_agent_result("plan content", success=True),
+            _make_agent_result("impl failed", success=False),
+        ]
+
+        orchestrator = CodingSkillOrchestrator(_make_mock_client(), _make_coding_config())
+        result = orchestrator.run("Task")
+
+        # Exactly 2 agent calls — Verifier never runs
+        assert mock_agent.execute.call_count == 2
+        assert result.success is False
+        assert result.verification_report == ""
+
 
 # ===========================================================================
 # TestParseSuccess
@@ -422,8 +473,8 @@ class TestParseSuccess:
         assert CodingSkillOrchestrator._parse_success("Overall result: fail") is False
 
     def test_fail_overrides_pass(self) -> None:
-        """When report contains both FAIL and PASS, FAIL wins."""
-        assert CodingSkillOrchestrator._parse_success("Some passed, some failed") is False
+        """When report contains both FAIL and PASS markers, FAIL wins."""
+        assert CodingSkillOrchestrator._parse_success("Status: PASS for tests, FAIL for lint") is False
 
     def test_empty_report_defaults_to_success(self) -> None:
         """No verdict → optimistic default (True)."""
@@ -431,6 +482,18 @@ class TestParseSuccess:
 
     def test_ambiguous_report_defaults_to_success(self) -> None:
         assert CodingSkillOrchestrator._parse_success("All files written.") is True
+
+    def test_no_failures_detected_is_success(self) -> None:
+        """'No failures detected' must NOT be misclassified as failure (Fix 9)."""
+        assert CodingSkillOrchestrator._parse_success("No failures detected") is True
+
+    def test_without_failover_is_success(self) -> None:
+        """'without failover' must NOT be misclassified as failure."""
+        assert CodingSkillOrchestrator._parse_success("System operates without failover") is True
+
+    def test_fail_as_standalone_word_is_failure(self) -> None:
+        """'FAIL' as a standalone word is a real failure verdict."""
+        assert CodingSkillOrchestrator._parse_success("Overall: FAIL") is False
 
 
 # ===========================================================================
@@ -490,6 +553,11 @@ class TestWrapAgentOutput:
     def test_escapes_less_than(self) -> None:
         result = CodingSkillOrchestrator._wrap_agent_output(label="X", content="a < b")
         assert "&lt;" in result
+
+    def test_escapes_greater_than(self) -> None:
+        result = CodingSkillOrchestrator._wrap_agent_output(label="X", content="a > b")
+        assert "&gt;" in result
+        assert "a > b" not in result
 
     def test_label_lowercased(self) -> None:
         result = CodingSkillOrchestrator._wrap_agent_output(label="SOME_LABEL", content="c")

@@ -35,6 +35,7 @@ ALL_SKILLS = [
     "db_review",
     "dependency_audit",
     "error_triage",
+    "greenfield",
     "iac_review",
     "incident_comms",
     "log_analysis",
@@ -52,6 +53,12 @@ ALL_SKILLS = [
     "threat_model",
     "toil_analysis",
 ]
+
+# Phases that do not use {context} (trusted user_input only) — exempt from
+# the context-wrapping and user_input-not-in-delimiters checks.
+_CONTEXT_EXEMPT_PHASES: set[tuple[str, str]] = {
+    ("greenfield", "requirements"),
+}
 
 
 def _load_skill_prompts(skill_name: str):
@@ -89,8 +96,14 @@ for _skill in ALL_SKILLS:
     for _phase in _mod.PHASE_PROMPTS:
         _SKILL_PHASE_PAIRS.append((_skill, _phase))
 
+# Pairs where {context} is intentionally absent (trusted user_input only)
+_CONTEXT_WRAPPING_PAIRS = [
+    (s, p) for s, p in _SKILL_PHASE_PAIRS
+    if (s, p) not in _CONTEXT_EXEMPT_PHASES
+]
 
-@pytest.mark.parametrize("skill_name,phase", _SKILL_PHASE_PAIRS)
+
+@pytest.mark.parametrize("skill_name,phase", _CONTEXT_WRAPPING_PAIRS)
 def test_context_wrapped_in_delimiters(skill_name: str, phase: str) -> None:
     """The {context} placeholder must be between DELIMITER_DATA_START and DELIMITER_DATA_END."""
     mod = _load_skill_prompts(skill_name)
@@ -144,15 +157,20 @@ def test_user_input_not_in_delimiters(skill_name: str, phase: str) -> None:
 
 # ── Phase prompts: .format() still works ─────────────────────
 
+# For context-exempt phases (no {context} placeholder), only check {user_input}
+_FORMAT_INTERPOLATION_PAIRS = _SKILL_PHASE_PAIRS  # all pairs
 
-@pytest.mark.parametrize("skill_name,phase", _SKILL_PHASE_PAIRS)
+
+@pytest.mark.parametrize("skill_name,phase", _FORMAT_INTERPOLATION_PAIRS)
 def test_format_interpolation_works(skill_name: str, phase: str) -> None:
     """Phase prompts must still accept .format(context=..., user_input=...)."""
     mod = _load_skill_prompts(skill_name)
     prompt = mod.PHASE_PROMPTS[phase]
     result = prompt.format(context="ctx_data", user_input="usr_query")
-    assert "ctx_data" in result
     assert "usr_query" in result
+    # context-exempt phases intentionally have no {context} — skip ctx_data check
+    if (skill_name, phase) not in _CONTEXT_EXEMPT_PHASES:
+        assert "ctx_data" in result
 
 
 # ── Phase prompts: contain ANTI_INJECTION_RULE ───────────────

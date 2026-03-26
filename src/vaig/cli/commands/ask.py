@@ -40,6 +40,17 @@ def register(app: typer.Typer) -> None:
         auto_skill: Annotated[bool, typer.Option("--auto-skill", help="Auto-detect the best skill based on query")] = False,
         no_stream: Annotated[bool, typer.Option("--no-stream", help="Disable streaming output")] = False,
         code: Annotated[bool, typer.Option("--code", help="Enable coding agent mode (read/write/edit files)")] = False,
+        pipeline: Annotated[
+            bool,
+            typer.Option(
+                "--pipeline",
+                help=(
+                    "Use 3-agent pipeline (Planner→Implementer→Verifier) for code mode. "
+                    "Requires --code. Pipeline mode does not support interactive "
+                    "confirm_actions; use in non-interactive contexts."
+                ),
+            ),
+        ] = False,
         live: Annotated[bool, typer.Option("--live", help="Enable live infrastructure tools (GKE/GCP)")] = False,
         workspace: Annotated[
             Path | None,
@@ -84,6 +95,7 @@ def register(app: typer.Typer) -> None:
             vaig ask "Investigate this incident" -s rca -f logs.txt
             vaig ask "Add error handling to app.py" --code
             vaig ask "Fix the bug in utils.py" --code -w ./my-project
+            vaig ask "Implement retry logic" --code --pipeline
             vaig ask "Analyze pod crashes" --live -s log-analysis
             vaig ask "Check OOM kills in prod" --live --namespace=production
             vaig ask "Explain this code" -f main.py --format json -o report.json
@@ -150,7 +162,7 @@ def register(app: typer.Typer) -> None:
                         err_console.print(f"[red]Workspace directory not found: {resolved_ws}[/red]")
                         raise typer.Exit(1)
                     settings.coding.workspace_root = str(resolved_ws)
-                _execute_code_mode(client, settings, question, context_str, output=output)
+                _execute_code_mode(client, settings, question, context_str, output=output, pipeline=pipeline)
                 return
 
             # Live infrastructure mode — use InfraAgent

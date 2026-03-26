@@ -123,10 +123,25 @@ def _execute_code_pipeline(
 
     Runs Planner → Implementer → Verifier sequentially and displays the
     verification report.  Exits with code 1 when the Verifier reports failure.
+
+    .. note::
+        Pipeline mode uses :class:`~vaig.agents.tool_aware.ToolAwareAgent` which
+        does **not** implement interactive ``confirm_actions``.  If
+        ``settings.coding.confirm_actions`` is True, a warning is logged and
+        pipeline proceeds without confirmation prompts.  For interactive
+        confirmation, use single-agent mode (omit ``--pipeline``).
     """
     from vaig.agents.coding_pipeline import CodingSkillOrchestrator
+    from vaig.core.exceptions import MaxIterationsError
 
     coding_config = settings.coding
+
+    if coding_config.confirm_actions:
+        logger.warning(
+            "Pipeline mode does not support interactive confirm_actions. "
+            "Proceeding without confirmation prompts. "
+            "Set confirm_actions=false in config or use single-agent mode for interactive confirmation."
+        )
 
     console.print(
         Panel.fit(
@@ -144,8 +159,16 @@ def _execute_code_pipeline(
         settings=settings,
     )
 
-    console.print("[bold cyan]🤖 Pipeline running (Planner → Implementer → Verifier)...[/bold cyan]")
-    result = orchestrator.run(question, context=context)
+    try:
+        console.print("[bold cyan]🤖 Pipeline running (Planner → Implementer → Verifier)...[/bold cyan]")
+        result = orchestrator.run(question, context=context)
+    except MaxIterationsError as exc:
+        err_console.print(
+            f"\n[bold red]⚠ Max iterations reached ({exc.iterations})[/bold red]\n"
+            "[yellow]The pipeline hit its iteration limit. "
+            "Try breaking the task into smaller steps or increasing max_tool_iterations.[/yellow]"
+        )
+        raise typer.Exit(1)  # noqa: B904
 
     # Display verification report
     console.print()

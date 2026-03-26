@@ -23,6 +23,11 @@ Greenfield stages as follows:
   SkillPhase.EXECUTE  → scaffold, implement
   SkillPhase.VALIDATE → verify
   SkillPhase.REPORT   → verify (summary report)
+
+When a SkillPhase maps to multiple stages, :meth:`get_phase_prompt` returns
+the prompt for the **first** stage in that phase (e.g. ``architecture_decision``
+for ``PLAN``, ``scaffold`` for ``EXECUTE``).  Use :meth:`get_stage_prompt` to
+access any individual stage by name.
 """
 
 from __future__ import annotations
@@ -46,28 +51,35 @@ class GreenfieldSkill(BaseSkill):
 
     Supported phase mapping:
 
-    +-------------------+------------------------------------+
-    | SkillPhase        | Greenfield Stage                   |
-    +===================+====================================+
-    | ANALYZE           | requirements                       |
-    +-------------------+------------------------------------+
-    | PLAN              | architecture_decision              |
-    +-------------------+------------------------------------+
-    | EXECUTE           | scaffold + implement (combined)    |
-    +-------------------+------------------------------------+
-    | VALIDATE          | verify                             |
-    +-------------------+------------------------------------+
-    | REPORT            | verify (summary report)            |
-    +-------------------+------------------------------------+
+    +-------------------+---------------------------------------------+
+    | SkillPhase        | Greenfield Stage(s)                         |
+    +===================+=============================================+
+    | ANALYZE           | requirements                                |
+    +-------------------+---------------------------------------------+
+    | PLAN              | architecture_decision, project_spec         |
+    +-------------------+---------------------------------------------+
+    | EXECUTE           | scaffold, implement                         |
+    +-------------------+---------------------------------------------+
+    | VALIDATE          | verify                                      |
+    +-------------------+---------------------------------------------+
+    | REPORT            | verify (summary report)                     |
+    +-------------------+---------------------------------------------+
+
+    When a phase maps to multiple stages, :meth:`get_phase_prompt` returns
+    the prompt for the **first** stage in that list.  Use
+    :meth:`get_stage_prompt` to address individual stages by name.
     """
 
-    # Maps SkillPhase → Greenfield stage name(s)
-    _PHASE_TO_STAGE: dict[str, str] = {
-        SkillPhase.ANALYZE: "requirements",
-        SkillPhase.PLAN: "architecture_decision",
-        SkillPhase.EXECUTE: "implement",
-        SkillPhase.VALIDATE: "verify",
-        SkillPhase.REPORT: "verify",
+    # Maps SkillPhase → ordered list of Greenfield stage name(s).
+    # When a phase covers multiple stages the first entry is returned by
+    # get_phase_prompt(); callers that need sub-stage granularity should use
+    # get_stage_prompt() directly.
+    _PHASE_TO_STAGE: dict[SkillPhase, list[str]] = {
+        SkillPhase.ANALYZE: ["requirements"],
+        SkillPhase.PLAN: ["architecture_decision", "project_spec"],
+        SkillPhase.EXECUTE: ["scaffold", "implement"],
+        SkillPhase.VALIDATE: ["verify"],
+        SkillPhase.REPORT: ["verify"],
     }
 
     def get_metadata(self) -> SkillMetadata:
@@ -108,9 +120,14 @@ class GreenfieldSkill(BaseSkill):
     ) -> str:
         """Build a prompt for a specific Greenfield phase.
 
+        When a phase maps to multiple stages (e.g. ``PLAN`` → ``architecture_decision``,
+        ``project_spec``), the prompt for the **first** stage in that list is
+        returned.  Use :meth:`get_stage_prompt` to address sub-stages individually.
+
         Args:
             phase: The :class:`~vaig.skills.base.SkillPhase` to execute.
-                Maps to a Greenfield stage via :attr:`_PHASE_TO_STAGE`.
+                Maps to one or more Greenfield stages via :attr:`_PHASE_TO_STAGE`.
+                The first stage in the list is used.
             context: Output from the previous stage (passed as ``{context}``
                 in the prompt template).  Empty string for the first stage.
             user_input: The user's project description / request (passed as
@@ -119,7 +136,8 @@ class GreenfieldSkill(BaseSkill):
         Returns:
             Formatted prompt string ready to send to the model.
         """
-        stage_name = self._PHASE_TO_STAGE.get(phase, "requirements")
+        stages = self._PHASE_TO_STAGE.get(phase, ["requirements"])
+        stage_name = stages[0]
         template = STAGE_PROMPTS.get(stage_name, STAGE_PROMPTS["requirements"])
         return template.format(context=context, user_input=user_input)
 
