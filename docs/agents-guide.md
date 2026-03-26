@@ -11,6 +11,7 @@ BaseAgent (ABC)
 │   ├── CodingAgent          — File I/O + shell commands
 │   └── InfraAgent           — GKE + GCloud tools for SRE
 ├── Orchestrator             — Coordinates multi-agent execution
+├── CodingSkillOrchestrator  — 3-agent coding orchestrator (Planner→Implementer→Verifier)
 └── ChunkedProcessor         — Map-Reduce for large files
 ```
 
@@ -48,7 +49,7 @@ Skills mark agents that need tools with `requires_tools: True`:
 ### CodingAgent
 
 Specialized agent for software engineering tasks. Has access to:
-- **File tools**: `read_file`, `write_file`, `edit_file`, `list_files`, `search_files`
+- **File tools**: `read_file`, `write_file`, `edit_file`, `list_files`, `search_files`, `verify_completeness`
 - **Shell tools**: `run_command` (with allowlist)
 
 Activated via `vaig ask --code` or `/code` in the REPL.
@@ -63,6 +64,37 @@ vaig ask "Refactor this to use async/await" -f server.py --code
 /code
 > Refactor the auth module to use dependency injection
 ```
+
+### CodingSkillOrchestrator
+
+A 3-agent orchestrator for complex coding tasks that require a structured planning phase before writing code. Activate with `--pipeline` on `vaig ask --code` or by setting `coding.pipeline_mode: true` in config.
+
+**Agent flow:**
+
+```
+[User Input]
+    └─→ Planner
+          └─→ Implementer (has full file tools access)
+                └─→ Verifier
+                      └─→ [Final Result]
+```
+
+- **Planner** — Generates a specification document: architecture decisions, file breakdown, edge cases
+- **Implementer** — Executes the plan using the full `CodingAgent` tool set (read, write, edit, shell, `verify_completeness`)
+- **Verifier** — Reviews the implementation against the plan and reports pass/fail. On failure, the pipeline short-circuits and returns the verifier's findings
+
+The Verifier uses a `_parse_success` function that is robust to freeform model output — it checks for explicit failure indicators before assuming success, which prevents false positives from ambiguous responses.
+
+```bash
+# Pipeline mode — structured Planner → Implementer → Verifier
+vaig ask "Implement a rate limiter with Redis" --code --pipeline
+
+# Also configurable in vaig.yaml
+# coding:
+#   pipeline_mode: true
+```
+
+> **Note:** Pipeline mode does not support interactive `confirm_actions`. Use in non-interactive contexts or set `coding.confirm_actions: false` when using `--pipeline`.
 
 ### InfraAgent
 

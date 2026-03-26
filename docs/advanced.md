@@ -240,6 +240,137 @@ skills:
     - my-skill                       # Add your custom skill name
 ```
 
+## Pipeline Mode
+
+Pipeline mode replaces the single `CodingAgent` loop with a structured 3-agent pipeline: **Planner → Implementer → Verifier**. Use it for complex coding tasks that benefit from an explicit planning phase and automated completeness verification.
+
+### When to Use
+
+| Situation | Recommendation |
+|-----------|---------------|
+| Small edits, one-file changes | Default single-agent (`--code`) |
+| Multi-file features, refactors, new modules | `--pipeline` |
+| Tasks where correctness must be verified automatically | `--pipeline` |
+
+### How It Works
+
+```
+Planner ──────────────────────────────────────────────────────
+  1. Reads the codebase (read_file, list_files, search_files)
+  2. Writes PLAN.md to the workspace root
+
+Implementer ──────────────────────────────────────────────────
+  3. Reads PLAN.md
+  4. Writes ALL files — no placeholders, no TODOs
+
+Verifier ─────────────────────────────────────────────────────
+  5. Reads PLAN.md + written files
+  6. Runs verify_completeness on each file
+  7. Checks syntax; emits a structured PASS / FAIL report
+  8. Short-circuits (halts) the pipeline on first failure
+```
+
+### Usage
+
+```bash
+# One-shot pipeline mode
+vaig ask "Add a rate-limiting middleware to the FastAPI app" \
+    --code --pipeline -w /path/to/project
+
+# Enable pipeline mode by default in config (avoid passing --pipeline every time)
+# vaig.yaml
+coding:
+  pipeline_mode: true
+```
+
+> **Warning:** Pipeline mode does **not** support interactive `confirm_actions`. If `confirm_actions: true` is set in config, a warning is logged and the pipeline proceeds without prompts. For interactive confirmation, use single-agent mode (omit `--pipeline`).
+
+### Configuration
+
+```yaml
+coding:
+  pipeline_mode: false               # Default; set true to always use pipeline
+  confirm_actions: true              # Always require approval for writes
+  workspace_root: /path/to/project    # Workspace root (or pass -w on CLI)
+```
+
+---
+
+## GreenfieldSkill — Full Project Generation
+
+`GreenfieldSkill` generates a complete project from a plain-language description. It runs 6 sequential stages, each building on the previous stage's output.
+
+### Stages
+
+| # | Stage | What It Produces |
+|---|-------|-----------------|
+| 1 | **Requirements** | Structured requirements extracted from your description |
+| 2 | **Architecture Decision** | ADRs (Architecture Decision Records) for key technical choices |
+| 3 | **Project Spec** | File-level implementation spec derived from the ADRs |
+| 4 | **Scaffold** | Project skeleton — config files, CI pipeline, stub modules |
+| 5 | **Implement** | Every stub replaced with production-ready code |
+| 6 | **Verify** | Full project validated against the original requirements |
+
+### Phase-to-Stage Mapping
+
+The `GreenfieldSkill` maps standard `SkillPhase` values to internal stages:
+
+| SkillPhase | Greenfield Stage(s) |
+|------------|---------------------|
+| `ANALYZE` | `requirements` |
+| `PLAN` | `architecture_decision` → `project_spec` |
+| `EXECUTE` | `scaffold` → `implement` |
+| `VALIDATE` | `verify` |
+| `REPORT` | `verify` (summary report) |
+
+When a phase covers multiple stages, `get_phase_prompt()` returns the first stage. Use `get_stage_prompt(stage_name, ...)` to address a specific stage directly.
+
+### Invoking Greenfield
+
+```bash
+# Generate a full project from a description
+vaig ask "Build a REST API in Python with FastAPI, Postgres, and Docker" \
+    --skill greenfield -w /path/to/output-dir
+```
+
+```python
+from vaig.skills.greenfield import GreenfieldSkill
+from vaig.skills.base import SkillPhase
+
+skill = GreenfieldSkill()
+
+# Execute stages in order, passing previous output as context
+requirements = skill.get_stage_prompt("requirements", context="", user_input="Build a REST API in Python with FastAPI")
+# ... run model, collect output ...
+
+adr = skill.get_stage_prompt("architecture_decision", context=requirements_output, user_input="")
+# ... run model, collect output ...
+
+# Or use SkillPhase enum (returns first stage in that phase)
+prompt = skill.get_phase_prompt(SkillPhase.PLAN, context=requirements_output, user_input="")
+```
+
+### Requirements
+
+- `requires_live_tools: true` — the Greenfield agent needs file tools (write_file, list_files, etc.) to scaffold the project
+- A writable workspace root must be set via `-w` or `coding.workspace` in config
+- Recommended model: `gemini-2.5-pro` (set automatically by skill metadata)
+- All 6 stages run sequentially; do not skip stages — each stage depends on the previous output
+
+### Advanced: Accessing Individual Stages
+
+```python
+# List stage order
+skill = GreenfieldSkill()
+print(skill.stage_order)
+# ['requirements', 'architecture_decision', 'project_spec', 'scaffold', 'implement', 'verify']
+
+# Address a stage by name (raises ValueError for unknown stage names)
+prompt = skill.get_stage_prompt("project_spec", context=adr_output, user_input="")
+```
+
+---
+
 ## Auto-Skill Detection
 
 The `--auto-skill` flag uses keyword matching to automatically select the best skill:

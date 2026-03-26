@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-03-26
+
+### Added
+- `CodingSkillOrchestrator` — 3-agent coding pipeline (Planner → Implementer → Verifier) for complex coding tasks — activate with `--pipeline` flag on `vaig ask --code` (#111)
+- `GreenfieldSkill` with 6-stage pipeline for new project scaffolding from scratch: Requirements → Architecture Decision → Project Spec → Scaffold → Implement → Verify (`skills/greenfield/`) (#111)
+- `CodeMigrationSkill` with 6-phase state machine (Inventory → Semantic Map → Spec → Implement → Verify → Report) for language-to-language code migration, e.g., Python → Go (`skills/code_migration/`) — distinct from the ETL `migration` skill (Pentaho → AWS Glue) (#110)
+- Python-to-Go idiom mappings: 12 idiom translations + 17 dependency mappings (YAML-driven, `skills/code_migration/idioms/python_to_go.yaml`) (#110)
+- GKE Autopilot workload cost estimation with per-container breakdown (#106)
+- Namespace-level cost summaries with waste/efficiency metrics (#108)
+- Usage metrics integration via Cloud Monitoring API for cost estimation (#108)
+- 32 GCP regions in Autopilot pricing table (#107)
+- `verify_completeness` file tool scanning for incomplete placeholder patterns (TODO, FIXME, HACK, XXX, bare `pass`, ellipsis, NotImplementedError) in coding agent workflows (#109)
+- Chain-of-thought enforcement in coding agent system prompts for more reliable output (#109)
+- XML context boundaries (`<DATA>` delimiters) via `wrap_untrusted_content()` for prompt injection defense (#109)
+- SPEC phase (Phase 0) in coding workflow for specification-first development (#109)
+
+### Changed
+- Split monolithic `prompts.py` into 9-file `prompts/` package in `service_health` skill for improved maintainability (#105)
+- Enhanced prompt defense with `wrap_untrusted_content()` integration in CodingAgent (#109)
+- Anti-hallucination rules now enforced in coding agent system prompts (#109)
+
 ## [0.8.0] - 2026-03-18
 
 ### Added
@@ -160,6 +181,7 @@ SRE workflows.
 - Extracted shared test fixtures into `conftest.py`
 - Applied 12 code quality improvements from audit
 
+[0.9.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.9.0
 [0.7.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.6.0
 [0.1.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.1.0

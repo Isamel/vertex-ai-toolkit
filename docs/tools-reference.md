@@ -111,6 +111,23 @@ search_files(query="def authenticate", pattern="*.py")
 search_files(query="TODO", path="src")
 ```
 
+### `verify_completeness`
+
+Scan files for incomplete placeholder patterns. Checks each file for: `TODO`, `FIXME`, `HACK`, `XXX`, bare `pass` statements, ellipsis bodies (`...`), and `raise NotImplementedError` expressions. Useful for the Verifier agent in the `CodingSkillOrchestrator` to confirm implementation completeness before approving a result.
+
+Files larger than `_MAX_FILE_SIZE` (1 MB) are skipped with a warning rather than causing a hard failure.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `paths` | string | Yes | Comma-separated relative file paths from workspace root to scan (e.g. `src/foo.py,src/bar.py`) |
+
+```
+verify_completeness(paths="src/auth.py,tests/test_auth.py")
+verify_completeness(paths="src/server.go")
+```
+
+Returns a `ToolResult` whose `output` is a human-readable report in `file:line: pattern — 'matched text'` format for each hit, or a "No incomplete patterns found" message when all files are clean. `error` is `True` only on path safety or read errors; placeholder findings do **not** set `error=True`.
+
 ## Shell Tool
 
 ### `run_command`

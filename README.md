@@ -11,12 +11,15 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
 - **Pluggable skills** — specialized multi-agent workflows:
   - **RCA** — Root Cause Analysis with 5 Whys + Fishbone methodology
   - **Anomaly Detection** — detect unusual patterns in logs, metrics, and data
-  - **Code Migration** — migrate between platforms (e.g., Pentaho KTR/KJB → AWS Glue PySpark)
+  - **ETL Migration** — migrate ETL pipelines between platforms (e.g., Pentaho KTR/KJB → AWS Glue PySpark)
+  - **Code Migration** — migrate source code between programming languages (e.g., Python → Go) with YAML-driven idiom mappings
+  - **Greenfield** — scaffold new projects from scratch with a 6-stage pipeline
   - **Service Health** — comprehensive GKE service diagnostics (4-agent pipeline with two-pass gathering)
   - Plus 25+ built-in skills for SRE, DevOps, and platform engineering
+- **CodingSkillOrchestrator** — 3-agent orchestration (Planner → Implementer → Verifier) for complex coding tasks; activate with `--pipeline` on `vaig ask --code`
 - **Multi-agent orchestration** — skills spawn specialized agents with different roles and models
 - **Async fanout** — true parallel agent execution via ThreadPoolExecutor for multi-agent workflows
-- **Cost tracking** — per-request token and cost tracking with live CLI display and export report summaries
+- **Cost tracking** — per-request token and cost tracking with live CLI display and export report summaries; GKE Autopilot workload cost estimation with per-container breakdown and namespace-level waste/efficiency metrics
 - **Usage telemetry** — local-only event capture (tool calls, API usage, errors) with `vaig stats` for analytics and export
 - **Token budget enforcement** — configurable spending limits per session with warn/stop actions
 - **Plugin tool registration** — extend the toolkit with custom Python modules or MCP servers
@@ -483,12 +486,32 @@ Agents: `pattern_analyzer`, `anomaly_detector`
 vaig ask "Find anomalies in this data" -s anomaly -f metrics.csv
 ```
 
-#### Code Migration
+#### ETL Migration
 
 Agents: `code_analyzer`, `code_generator`, `migration_validator`
 
 ```bash
 vaig ask "Migrate this Pentaho job to AWS Glue" -s migration -f transform.ktr
+```
+
+#### Code Migration (Language-to-Language)
+
+Agents: `analyzer`, `transformer`, `validator`
+
+Migrates source code between programming languages using YAML-driven idiom and dependency mappings. For example, Python → Go. Use `--code` for filesystem access during transformation.
+
+```bash
+vaig ask "Migrate this Python module to Go" -s code-migration -f service.py --code
+```
+
+> **Note:** For ETL pipeline migration (Pentaho → AWS Glue), use the `migration` skill instead.
+
+#### Greenfield Project Scaffolding
+
+Agents: 6-stage pipeline (requirements → architecture_decision → project_spec → scaffold → implement → verify)
+
+```bash
+vaig ask "Create a new Go REST API service" -s greenfield --code
 ```
 
 ### Custom Skills
@@ -636,6 +659,7 @@ vertex-ai-toolkit/
 │   │   ├── auth.py            # ADC + SA impersonation + dual-auth
 │   │   ├── client.py          # GeminiClient (streaming, multi-model)
 │   │   ├── cost_tracker.py    # Per-request cost tracking (SQLite)
+│   │   ├── prompt_defense.py  # wrap_untrusted_content() for prompt injection defense
 │   │   └── tool_call_store.py # ToolCallStore — per-tool-call JSONL recording
 │   ├── context/
 │   │   ├── filters.py      # .gitignore patterns, binary detection
@@ -649,15 +673,20 @@ vertex-ai-toolkit/
 │   │   ├── registry.py     # Discovery, loading, lazy initialization
 │   │   ├── rca/            # Root Cause Analysis skill
 │   │   ├── anomaly/        # Anomaly Detection skill
-│   │   ├── migration/      # Code Migration skill
+│   │   ├── migration/      # ETL Migration skill (Pentaho → AWS Glue)
+│   │   ├── code_migration/ # Code Migration skill (language-to-language, e.g. Python → Go)
+│   │   │   └── idioms/     # YAML idiom + dependency mappings
+│   │   ├── greenfield/     # Greenfield project scaffolding (6-stage pipeline)
 │   │   └── ...             # 25+ additional built-in skills
 │   ├── agents/
-│   │   ├── base.py         # AgentRole, AgentConfig, BaseAgent ABC
-│   │   ├── specialist.py   # SpecialistAgent (wraps GeminiClient)
-│   │   ├── orchestrator.py # Multi-agent coordination + async fanout
-│   │   └── registry.py     # Agent factory
+│   │   ├── base.py            # AgentRole, AgentConfig, BaseAgent ABC
+│   │   ├── specialist.py      # SpecialistAgent (wraps GeminiClient)
+│   │   ├── orchestrator.py    # Multi-agent coordination + async fanout
+│   │   ├── coding_pipeline.py # CodingSkillOrchestrator (Planner→Implementer→Verifier)
+│   │   └── registry.py        # Agent factory
 │   ├── tools/
 │   │   ├── base.py           # ToolResult, ToolCallRecord
+│   │   ├── file_tools.py     # File tools incl. verify_completeness
 │   │   ├── gke_tools.py      # GKE tool wrappers (legacy)
 │   │   └── gke/
 │   │       ├── _cache.py       # TTL cache for discovery/mesh resources

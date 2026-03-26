@@ -31,6 +31,7 @@ vaig ask "Your question here" [OPTIONS]
 | `--auto-skill` | | Auto-detect best skill for the query | `false` |
 | `--no-stream` | | Disable streaming output | `false` |
 | `--code` | | Enable coding agent mode (file read/write/edit) | `false` |
+| `--pipeline` | | Enable 3-agent pipeline mode (Planner→Implementer→Verifier). Requires `--code`. Maps to `coding.pipeline_mode` config key | `false` |
 | `--live` | | Enable live infrastructure tools | `false` |
 | `--workspace` | `-w` | Workspace root for coding agent | `.` |
 | `--cluster` | | GKE cluster name | Config value |
@@ -57,6 +58,9 @@ vaig ask "Is this Terraform plan safe to apply?" -f plan.tf --auto-skill
 
 # Coding agent mode
 vaig ask "Refactor this function to use async/await" -f server.py --code
+
+# Pipeline mode — 3-agent Planner→Implementer→Verifier (requires --code)
+vaig ask "Implement a retry decorator with exponential backoff" --code --pipeline
 
 # Live infrastructure query
 vaig ask "What's the CPU usage of the API pods?" --live --cluster prod

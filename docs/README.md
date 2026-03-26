@@ -9,7 +9,7 @@
 | [Getting Started](getting-started.md) | Installation, authentication, and your first query |
 | [CLI Reference](cli-reference.md) | Complete reference for all CLI commands and options |
 | [REPL Guide](repl-guide.md) | Interactive chat mode with 17 slash commands |
-| [Skills Guide](skills-guide.md) | All 29 built-in skills for SRE, security, code quality, and more |
+| [Skills Guide](skills-guide.md) | All 31 built-in skills for SRE, security, code quality, and more |
 | [Agents Guide](agents-guide.md) | Multi-agent architecture and orchestration strategies |
 | [Tools Reference](tools-reference.md) | 34 infrastructure tools: GKE, GCloud, Helm, ArgoCD, Mesh, Labels, MCP |
 | [Configuration](configuration.md) | All 14 config sections, YAML format, and environment variables |
@@ -30,10 +30,10 @@ See [Architecture](architecture.md) for detailed Mermaid diagrams.
 │  chat (REPL) │ ask (single-shot) │ live (infra) │ stats │
 ├──────────────────────────────────────────────────────────┤
 │                     Agent Layer                          │
-│  Orchestrator │ CodingAgent │ InfraAgent │ Chunked       │
+│  Orchestrator │ CodingAgent │ CodingSkillOrchestrator │ InfraAgent │ Chunked │
 ├──────────────────────────────────────────────────────────┤
 │                     Skills Layer                         │
-│  29 built-in skills with phase-based multi-agent pipes   │
+│  31 built-in skills with phase-based multi-agent pipes   │
 ├──────────────────────────────────────────────────────────┤
 │                     Tools Layer                          │
 │  File │ Shell │ GKE │ GCloud │ Helm │ ArgoCD │ Mesh │MCP│
@@ -50,7 +50,8 @@ See [Architecture](architecture.md) for detailed Mermaid diagrams.
 
 - **Multi-agent orchestration** — Sequential, fan-out, and lead-delegate strategies
 - **Async-native** — Full async stack from CLI to API calls, with sync backward compat
-- **29 SRE/DevOps skills** — From root cause analysis to threat modeling
+- **31 SRE/DevOps skills** — From root cause analysis to threat modeling, code migration, and greenfield generation
+- **CodingSkillOrchestrator** — 3-agent Planner → Implementer → Verifier pipeline for complex coding tasks
 - **Live infrastructure** — Query GKE clusters, read logs, check metrics in real-time
 - **Helm & ArgoCD integration** — Read release status, sync state, drift detection (opt-in)
 - **Istio/ASM mesh tools** — VirtualService, DestinationRule, sidecar introspection
@@ -76,4 +77,4 @@ See [Architecture](architecture.md) for detailed Mermaid diagrams.
 
 ---
 
-*VAIG v0.1.0 — MIT License*
+*VAIG v0.9.0 — MIT License*

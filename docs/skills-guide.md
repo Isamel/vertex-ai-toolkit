@@ -1,6 +1,6 @@
 # Skills Guide
 
-VAIG ships with 29 built-in skills organized by domain. Each skill provides a specialized system instruction, multi-agent pipeline, and phase-based workflow.
+VAIG ships with 31 built-in skills organized by domain. Each skill provides a specialized system instruction, multi-agent pipeline, and phase-based workflow.
 
 ## How Skills Work
 
@@ -78,7 +78,9 @@ vaig ask "Analyze these logs" -f error.log -s log-analysis --auto-skill
 | `test-generation` | Test Generation | Generate comprehensive test suites from source code with unit, integration, and edge case coverage | ANALYZE, PLAN, EXECUTE, REPORT |
 | `api-design` | API Design Review | Review API design for REST/GraphQL/gRPC best practices, consistency, security, and developer experience | ANALYZE, PLAN, REPORT |
 | `db-review` | Database Review | Review database schemas, queries, and execution plans for performance issues, design problems, and operational risks | ANALYZE, PLAN, REPORT |
-| `migration` | Code Migration | Migrate code and ETL pipelines between platforms (Pentaho to AWS Glue, etc.) | ANALYZE, PLAN, EXECUTE, VALIDATE, REPORT |
+| `migration` | ETL Migration | Migrate ETL pipelines between platforms (Pentaho KTR/KJB to AWS Glue PySpark, etc.) | ANALYZE, PLAN, EXECUTE, VALIDATE, REPORT |
+| `code-migration` | Code Migration | Migrate source code between programming languages (e.g., Python → Go) using a 6-phase state machine (Inventory → Semantic Map → Spec → Implement → Verify → Report) with YAML-driven idiom and dependency mappings. **Note:** This skill handles language-to-language code conversion. For ETL pipeline migration (Pentaho → AWS Glue), use the `migration` skill instead. | ANALYZE, PLAN, EXECUTE, VALIDATE, REPORT |
+| `greenfield` | Greenfield Project | Scaffold new projects from scratch using a 6-stage pipeline: Requirements, Architecture Decision, Project Spec, Scaffold, Implement, and Verify | ANALYZE, PLAN, EXECUTE, VALIDATE, REPORT |
 | `perf-analysis` | Performance Analysis | Analyze distributed traces, CPU/memory profiles, and performance metrics to identify bottlenecks and optimization opportunities | ANALYZE, PLAN, REPORT |
 
 ### Security & Compliance
