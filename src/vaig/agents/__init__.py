@@ -17,6 +17,12 @@ try:
 except ImportError:
     _logger.debug("CodingAgent not available — optional dependency missing")
 
+# Coding pipeline orchestrator (Phase 3 — 3-agent pipeline)
+try:
+    from vaig.agents.coding_pipeline import CodingPipelineResult, CodingSkillOrchestrator
+except ImportError:
+    _logger.debug("CodingSkillOrchestrator not available — optional dependency missing")
+
 # Infra agent — requires kubernetes / google-cloud packages
 try:
     from vaig.agents.infra_agent import InfraAgent
@@ -31,6 +37,8 @@ __all__ = [
     "AgentRole",
     "BaseAgent",
     "CodingAgent",
+    "CodingPipelineResult",
+    "CodingSkillOrchestrator",
     "InfraAgent",
     "Orchestrator",
     "OrchestratorResult",

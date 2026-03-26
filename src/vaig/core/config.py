@@ -253,6 +253,20 @@ class CodingConfig(BaseModel):
     confirm_actions: bool = True
     allowed_commands: list[str] = Field(default_factory=list)
     blocked_paths: list[str] = Field(default_factory=list)
+    pipeline_mode: bool = Field(
+        default=False,
+        description=(
+            "When True, routes `vaig code` through CodingSkillOrchestrator "
+            "(Planner→Implementer→Verifier) instead of the single-agent CodingAgent"
+        ),
+    )
+    greenfield_output_dir: str = Field(
+        default="greenfield",
+        description=(
+            "Output directory for GreenfieldSkill generated projects "
+            "(relative to cwd)"
+        ),
+    )
     denied_commands: list[str] = Field(
         default_factory=lambda: [
             # Destructive disk / filesystem operations
