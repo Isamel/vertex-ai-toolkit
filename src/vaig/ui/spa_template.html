@@ -466,6 +466,46 @@
   .gke-waste-pos { color: var(--warning, #e0af68); }
   .gke-na { color: var(--text-dim); font-style: italic; }
 
+  /* ── GKE Namespace Summaries ──────────────────────────────── */
+  .gke-ns-summary-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .gke-ns-card {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 18px;
+    border-left: 3px solid var(--accent, #7aa2f7);
+  }
+  .gke-ns-card-name {
+    font-size: 12px; font-weight: 700; font-family: var(--font-mono);
+    color: var(--accent, #7aa2f7); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .4px;
+  }
+  .gke-ns-card-rows { display: flex; flex-direction: column; gap: 4px; }
+  .gke-ns-card-row { display: flex; justify-content: space-between; font-size: 12px; }
+  .gke-ns-card-row .label { color: var(--text-dim); }
+  .gke-ns-card-row .val { color: var(--text-bright); font-family: var(--font-mono); }
+  .gke-ns-section-label {
+    font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase;
+    color: var(--text-dim); margin: 16px 0 10px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ── GKE Container breakdown (collapsible) ──────────────────── */
+  .gke-container-toggle {
+    font-size: 11px; font-family: var(--font-mono); color: var(--info);
+    cursor: pointer; padding: 5px 14px; background: var(--bg-muted);
+    border: 1px solid var(--border); border-top: none;
+    user-select: none; display: flex; align-items: center; gap: 6px;
+  }
+  .gke-container-toggle::before { content: "▸"; transition: transform var(--transition); }
+  .gke-container-toggle.open::before { transform: rotate(90deg); }
+  .gke-container-breakdown { display: none; }
+  .gke-container-breakdown.open { display: block; }
+  .gke-container-block { padding: 8px 14px; background: var(--bg-surface); border: 1px solid var(--border); border-top: none; }
+  .gke-container-name {
+    font-size: 11px; font-weight: 700; font-family: var(--font-mono);
+    color: var(--text-dim); text-transform: uppercase; letter-spacing: .4px;
+    margin: 10px 0 4px;
+  }
+  .gke-container-name:first-child { margin-top: 2px; }
+
   /* ── Tool Usage ────────────────────────────────────────────── */
   .tool-usage-section { margin-top: 8px; }
   .tool-bar-container { display: flex; flex-direction: column; gap: 8px; }
@@ -627,6 +667,7 @@ const REPORT_DATA = /*{{REPORT_DATA_JSON}}*/null;
         </div>
         <div id="gke-cost-supported">
           <div class="cost-grid" id="gke-cost-summary-grid"></div>
+          <div id="gke-cost-namespace-summaries"></div>
           <div id="gke-cost-workloads"></div>
         </div>
       </div>
@@ -1006,6 +1047,32 @@ function renderGKECost() {
     </div>`
   ).join('');
 
+  // ── Namespace summaries ────────────────────────────────────────
+  const nsSummaries = gkeCost.namespace_summaries || {};
+  const nsEntries = Object.entries(nsSummaries);
+  const nsSummariesEl = document.getElementById('gke-cost-namespace-summaries');
+  if (nsSummariesEl) {
+    if (nsEntries.length > 0) {
+      nsSummariesEl.innerHTML =
+        '<div class="gke-ns-section-label">By Namespace</div>' +
+        '<div class="gke-ns-summary-grid">' +
+        nsEntries.map(([ns, summary]) => {
+          const fmtVal = v => v != null ? '$' + Number(v).toFixed(2) : '<span class="gke-na">N/A</span>';
+          return `<div class="gke-ns-card">
+            <div class="gke-ns-card-name">${esc(ns)}</div>
+            <div class="gke-ns-card-rows">
+              <div class="gke-ns-card-row"><span class="label">Request Cost/mo</span><span class="val">${fmtVal(summary.total_request_cost_usd)}</span></div>
+              <div class="gke-ns-card-row"><span class="label">Usage Cost/mo</span><span class="val">${fmtVal(summary.total_usage_cost_usd)}</span></div>
+              <div class="gke-ns-card-row"><span class="label">Waste/mo</span><span class="val">${fmtVal(summary.total_waste_usd)}</span></div>
+            </div>
+          </div>`;
+        }).join('') +
+        '</div>';
+    } else {
+      nsSummariesEl.innerHTML = '';
+    }
+  }
+
   // ── Per-workload breakdown ─────────────────────────────────────
   const workloads = gkeCost.workloads || [];
   if (!workloads.length) {
@@ -1014,7 +1081,7 @@ function renderGKECost() {
     return;
   }
 
-  document.getElementById('gke-cost-workloads').innerHTML = workloads.map(wl => {
+  document.getElementById('gke-cost-workloads').innerHTML = workloads.map((wl, wlIdx) => {
     const reqFmt = v => v != null ? '$' + Number(v).toFixed(2) : '<span class="gke-na">N/A</span>';
     const rows = (wl.resource_costs || []).map(rc => {
       const wasteHtml = rc.waste_cost_usd != null
@@ -1029,6 +1096,54 @@ function renderGKECost() {
         <td>${wasteHtml}</td>
       </tr>`;
     }).join('');
+
+    // ── Per-container breakdown (collapsible) ──────────────────
+    const containers = wl.containers || [];
+    const toggleId = `gke-ct-toggle-${wlIdx}`;
+    const breakdownId = `gke-ct-breakdown-${wlIdx}`;
+    const containerToggleHtml = containers.length > 0
+      ? `<div class="gke-container-toggle" id="${esc(toggleId)}"
+           onclick="(function(t){
+             t.classList.toggle('open');
+             document.getElementById('${esc(breakdownId)}').classList.toggle('open');
+           })(this)"
+           role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
+           ${esc(containers.length)} container${containers.length !== 1 ? 's' : ''} — click to expand
+         </div>
+         <div class="gke-container-breakdown" id="${esc(breakdownId)}">
+           <div class="gke-container-block">
+           ${containers.map(ct => {
+             const ctRows = (ct.resource_costs || []).map(rc => {
+               const ctWasteHtml = rc.waste_cost_usd != null
+                 ? `<span class="gke-waste-pos">$${Number(rc.waste_cost_usd).toFixed(2)}</span>`
+                 : '<span class="gke-na">N/A</span>';
+               return `<tr>
+                 <td>${esc(rc.resource_type)}</td>
+                 <td>${rc.requests != null ? Number(rc.requests).toFixed(3) : '<span class="gke-na">N/A</span>'}</td>
+                 <td>${rc.usage != null ? Number(rc.usage).toFixed(3) : '<span class="gke-na">N/A</span>'}</td>
+                 <td>${rc.request_cost_usd != null ? '$' + Number(rc.request_cost_usd).toFixed(2) : '<span class="gke-na">N/A</span>'}</td>
+                 <td>${rc.usage_cost_usd != null ? '$' + Number(rc.usage_cost_usd).toFixed(2) : '<span class="gke-na">N/A</span>'}</td>
+                 <td>${ctWasteHtml}</td>
+               </tr>`;
+             }).join('');
+             return `<div class="gke-container-name">${esc(ct.container_name)}</div>
+               <table class="gke-resource-table">
+                 <thead><tr>
+                   <th>Resource</th><th>Requested</th><th>Used</th>
+                   <th>Req Cost/mo</th><th>Use Cost/mo</th><th>Waste</th>
+                 </tr></thead>
+                 <tbody>${ctRows}</tbody>
+               </table>
+               <div class="gke-workload-total" style="border-radius:0;border-top:none;">
+                 <span>Request Cost: <strong>${reqFmt(ct.total_request_cost_usd)}</strong></span>
+                 <span>Usage Cost: <strong>${ct.total_usage_cost_usd != null ? '$' + Number(ct.total_usage_cost_usd).toFixed(2) : 'N/A'}</strong></span>
+                 <span>Waste: <strong>${ct.total_waste_usd != null ? '$' + Number(ct.total_waste_usd).toFixed(2) : 'N/A'}</strong></span>
+               </div>`;
+           }).join('')}
+           </div>
+         </div>`
+      : '';
 
     return `<div class="gke-workload-block">
       <div class="gke-workload-header">
@@ -1046,6 +1161,7 @@ function renderGKECost() {
         <span>Usage Cost: <strong>${wl.total_usage_cost_usd != null ? '$' + Number(wl.total_usage_cost_usd).toFixed(2) : 'N/A'}</strong></span>
         <span>Waste: <strong>${wl.total_waste_usd != null ? '$' + Number(wl.total_waste_usd).toFixed(2) : 'N/A'}</strong></span>
       </div>
+      ${containerToggleHtml}
     </div>`;
   }).join('');
 }
