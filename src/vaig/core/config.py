@@ -413,6 +413,17 @@ class DatadogAPIConfig(BaseModel):
     app_key: str = Field(default="", repr=False)
     site: str = "datadoghq.com"
     timeout: int = 30
+    ssl_verify: bool | str = Field(
+        default=True,
+        description=(
+            "SSL certificate verification for Datadog API requests. "
+            "True (default) = standard SSL verification. "
+            "False = disable SSL verification (not recommended; use for debugging only). "
+            "str = path to a custom CA bundle file (e.g. '/etc/ssl/certs/corporate-ca.crt'). "
+            "The REQUESTS_CA_BUNDLE environment variable is also respected by the requests "
+            "library and takes effect when ssl_verify=True."
+        ),
+    )
     labels: DatadogLabelConfig = Field(default_factory=DatadogLabelConfig)
     detection: DatadogDetectionConfig = Field(default_factory=DatadogDetectionConfig)
     custom_metrics: dict[str, str] = Field(default_factory=dict)
