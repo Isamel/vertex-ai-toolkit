@@ -1553,11 +1553,12 @@ class TestGetDatadogApmServices:
         assert result.error is False
         assert "last 4 hours" in result.output
 
-    def test_invalid_hours_back_returns_error(self, dd_config: DatadogAPIConfig) -> None:
-        """hours_back=0 returns error without calling the API."""
+    def test_non_positive_hours_back_clamps_to_default(self, dd_config: DatadogAPIConfig) -> None:
+        """hours_back=0 clamps to default (1h) and proceeds normally — does not return an error."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
         mock_session = MagicMock()
+        mock_session.post.return_value = _make_spans_response()
 
         result = get_datadog_apm_services(
             service_name="svc",
@@ -1567,9 +1568,9 @@ class TestGetDatadogApmServices:
             _custom_session=mock_session,
         )
 
-        assert result.error is True
-        assert "hours_back" in result.output.lower()
-        mock_session.post.assert_not_called()
+        # Should not be an error — clamps to 1h window and queries the API
+        assert result.error is False
+        mock_session.post.assert_called_once()
 
     def test_caches_result(self, dd_config: DatadogAPIConfig) -> None:
         """Calling get_datadog_apm_services twice with the same args only calls the API once."""

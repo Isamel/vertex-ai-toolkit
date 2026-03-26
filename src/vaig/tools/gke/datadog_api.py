@@ -671,16 +671,22 @@ def get_datadog_apm_services(
     except ValueError as exc:
         return ToolResult(output=str(exc), error=True)
 
-    # Validate hours_back
+    # Validate hours_back — clamp to default if non-positive rather than hard-failing
+    _DD_DEFAULT_LOOKBACK_HOURS = 1.0
     if hours_back <= 0:
-        return ToolResult(
-            output="hours_back must be a positive number (e.g. 1.0 for last hour).",
-            error=True,
+        logger.warning(
+            "hours_back=%s is not positive — clamping to default %sh",
+            hours_back,
+            _DD_DEFAULT_LOOKBACK_HOURS,
         )
+        hours_back = _DD_DEFAULT_LOOKBACK_HOURS
 
-    # Cache check (TTL = 60s) — key includes service+env+hours_back
+    # Cache check (TTL = 60s) — key includes service+env+window in whole seconds
+    # Normalising to int seconds prevents duplicate entries for equivalent float values
+    # like hours_back=1.0 vs hours_back=1.00.
+    cache_key_window = int(hours_back * 3600)
     cache_key = _cache._cache_key_discovery(
-        "dd_apm_spans_v2", service_name, env, str(hours_back)
+        "dd_apm_spans_v2", service_name, env, str(cache_key_window)
     )
     cached = _cache._get_cached(cache_key)
     if cached is not None:
@@ -701,11 +707,18 @@ def get_datadog_apm_services(
     base_url = _DD_SPANS_BASE_URL.format(site=config.site)
     service_label = config.labels.service if config.labels else "service"
     env_label = config.labels.env if config.labels else "env"
+
+    # Validate config-provided tag key names — a misconfigured label key would
+    # silently corrupt filter queries (e.g. "my:service:svc" is invalid syntax).
+    try:
+        _validate_tag_key(service_label)
+        _validate_tag_key(env_label)
+    except ValueError as exc:
+        return ToolResult(output=str(exc), error=True)
+
     filter_query = f"{service_label}:{service_name} {env_label}:{env}"
 
-    session = _custom_session or requests.Session()
-
-    def _try_spans_post() -> tuple[dict[str, Any] | None, str]:
+    def _try_spans_post(session: Any) -> tuple[dict[str, Any] | None, str]:
         """POST to /api/v2/spans/events/search. Returns (data, error_msg)."""
         url = base_url + _DD_SPANS_POST_PATH
         payload = {
@@ -736,7 +749,7 @@ def get_datadog_apm_services(
             logger.warning("Datadog APM: Spans Events Search v2 POST request error: %s", exc)
             return None, f"POST /api/v2/spans/events/search request error: {exc}"
 
-    def _try_spans_get() -> tuple[dict[str, Any] | None, str]:
+    def _try_spans_get(session: Any) -> tuple[dict[str, Any] | None, str]:
         """GET /api/v2/apm/traces/search fallback. Returns (data, error_msg)."""
         url = base_url + _DD_SPANS_GET_PATH
         params = {
@@ -795,10 +808,16 @@ def get_datadog_apm_services(
         errors_per_sec = error_count / window_seconds
         avg_duration = sum(durations) / len(durations) if durations else None
 
+        # Flag when the result set hit the API page limit (100 spans).
+        # In that case throughput is a lower bound — the true rate may be higher.
+        PAGE_LIMIT = 100
+        at_page_limit = total_spans >= PAGE_LIMIT
+
         return {
             "hits": hits_per_sec,
             "errors": errors_per_sec,
             "duration": avg_duration,
+            "at_page_limit": at_page_limit,
         }
 
     def _format_apm_output(
@@ -809,11 +828,21 @@ def get_datadog_apm_services(
         errors = results.get("errors")
         duration = results.get("duration")
 
-        throughput_str = f"{hits:.4f} req/s" if hits is not None else "N/A"
-        error_rate_str = (
-            f"{(errors / hits * 100):.2f}%" if hits is not None and hits > 0 and errors is not None
-            else ("0.00%" if hits is not None and hits == 0 else "N/A")
-        )
+        at_page_limit = bool(results.get("at_page_limit", False))
+        # NOTE: throughput is derived from len(spans) which is capped at the API page
+        # limit (100). When the result set hits that limit, throughput is a lower bound.
+        if hits is not None and at_page_limit:
+            throughput_str = f"≥{hits:.4f} req/s (page limit reached — actual rate may be higher)"
+        elif hits is not None:
+            throughput_str = f"{hits:.4f} req/s"
+        else:
+            throughput_str = "N/A"
+        if hits is not None and hits > 0 and errors is not None:
+            error_rate_str = f"{(errors / hits * 100):.2f}%"
+        elif hits is not None and hits == 0:
+            error_rate_str = "0.00%"
+        else:
+            error_rate_str = "N/A"
         latency_str = f"{(duration * 1000):.2f} ms" if duration is not None else "N/A"
         window_str = f"last {hours_back:.4g} hour{'s' if hours_back != 1 else ''}"
 
@@ -835,33 +864,47 @@ def get_datadog_apm_services(
         errors_seen: list[str] = []
 
         # Primary: POST Spans Events Search v2
-        post_data, post_err = _try_spans_post()
-        if post_data is not None:
-            spans = post_data.get("data", []) or []
-            if spans:
-                results = _parse_spans_response(post_data)
-                output = _format_apm_output(results, "Spans Events Search v2 (POST)")
-                _cache._set_cache(cache_key, output)
-                return ToolResult(output=output, error=False)
-            # 200 but no spans — try fallback anyway
-            logger.info(
-                "Datadog APM: Spans Events Search v2 returned 0 spans for service=%s, trying GET fallback",
-                service_name,
-            )
-        if post_err:
-            errors_seen.append(post_err)
+        # Use caller-provided session or create one with a context manager to ensure
+        # the socket is released when we're done, even on exceptions.
+        def _run_with_session(sess: Any) -> ToolResult | None:
+            nonlocal errors_seen
+            post_data, post_err = _try_spans_post(sess)
+            if post_data is not None:
+                spans = post_data.get("data", []) or []
+                if spans:
+                    results = _parse_spans_response(post_data)
+                    output = _format_apm_output(results, "Spans Events Search v2 (POST)")
+                    _cache._set_cache(cache_key, output)
+                    return ToolResult(output=output, error=False)
+                # 200 but no spans — try fallback anyway
+                logger.info(
+                    "Datadog APM: Spans Events Search v2 returned 0 spans for service=%s, trying GET fallback",
+                    service_name,
+                )
+            if post_err:
+                errors_seen.append(post_err)
 
-        # Fallback 1: GET APM Traces Search v2
-        get_data, get_err = _try_spans_get()
-        if get_data is not None:
-            spans = get_data.get("data", []) or []
-            if spans:
-                results = _parse_spans_response(get_data)
-                output = _format_apm_output(results, "APM Traces Search v2 (GET fallback)")
-                _cache._set_cache(cache_key, output)
-                return ToolResult(output=output, error=False)
-        if get_err:
-            errors_seen.append(get_err)
+            # Fallback 1: GET APM Traces Search v2
+            get_data, get_err = _try_spans_get(sess)
+            if get_data is not None:
+                spans = get_data.get("data", []) or []
+                if spans:
+                    results = _parse_spans_response(get_data)
+                    output = _format_apm_output(results, "APM Traces Search v2 (GET fallback)")
+                    _cache._set_cache(cache_key, output)
+                    return ToolResult(output=output, error=False)
+            if get_err:
+                errors_seen.append(get_err)
+            return None
+
+        if _custom_session is not None:
+            early_result = _run_with_session(_custom_session)
+        else:
+            with requests.Session() as _owned_session:
+                early_result = _run_with_session(_owned_session)
+
+        if early_result is not None:
+            return early_result
 
         # Fallback 2: return empty result with warning
         tried = "; ".join(errors_seen) if errors_seen else "all APIs returned 0 spans"
