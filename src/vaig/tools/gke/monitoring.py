@@ -63,12 +63,14 @@ class ContainerUsageMetrics:
     Attributes:
         container_name: Kubernetes container name.
         avg_cpu_cores: Average CPU usage in vCPU cores (not millicores).
+            ``None`` when the CPU metric was unavailable for this container.
         avg_memory_gib: Average memory usage in GiB.
+            ``None`` when the memory metric was unavailable for this container.
     """
 
     container_name: str
-    avg_cpu_cores: float
-    avg_memory_gib: float
+    avg_cpu_cores: float | None
+    avg_memory_gib: float | None
 
 
 @dataclass
@@ -732,12 +734,14 @@ def get_workload_usage_metrics(
             cpu_values = wl_container_cpu.get(workload_name, {}).get(c_name, [])
             mem_values = wl_container_mem.get(workload_name, {}).get(c_name, [])
 
-            if not cpu_values or not mem_values:
+            if not cpu_values and not mem_values:
+                # No data at all for this container — skip it
                 continue
 
-            # Sum per-pod values so total usage matches summed requests across replicas
-            total_cpu = sum(cpu_values)
-            total_mem = sum(mem_values)
+            # Sum per-pod values so total usage matches summed requests across replicas.
+            # Keep individual dimensions as None when data is absent (partial metrics).
+            total_cpu: float | None = sum(cpu_values) if cpu_values else None
+            total_mem: float | None = sum(mem_values) if mem_values else None
 
             containers[c_name] = ContainerUsageMetrics(
                 container_name=c_name,

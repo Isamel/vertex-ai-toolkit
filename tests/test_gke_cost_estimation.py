@@ -182,6 +182,11 @@ class TestCalculateWorkloadCost:
         assert result["total_waste_usd"] > 0
 
     def test_usage_equals_requests_zero_waste(self) -> None:
+        # When usage == requests for all TRACKED dimensions (cpu + memory),
+        # per-resource waste for cpu and memory must be 0.
+        # total_waste_usd = total_request - tracked_usage = ephemeral_request_cost
+        # because ephemeral is intentionally excluded from the usage tracking
+        # (Cloud Monitoring never provides ephemeral usage data).
         result = calculate_workload_cost(
             cpu_requests=1.0,
             memory_requests_gib=1.0,
@@ -191,7 +196,13 @@ class TestCalculateWorkloadCost:
             memory_usage_gib=1.0,
             ephemeral_usage_gib=1.0,
         )
-        assert result["total_waste_usd"] == pytest.approx(0.0, abs=1e-9)
+        by_type = {rc.resource_type: rc for rc in result["resource_costs"]}
+        # Tracked dimensions: cpu and memory waste must be exactly 0
+        assert by_type["cpu"].waste_cost_usd == pytest.approx(0.0, abs=1e-9)
+        assert by_type["memory"].waste_cost_usd == pytest.approx(0.0, abs=1e-9)
+        # total_waste = total_request - tracked_usage = ephemeral request cost only
+        expected_ephemeral_cost = calculate_resource_cost(1.0, _MONTREAL_PRICING.ephemeral_per_gib_hour)
+        assert result["total_waste_usd"] == pytest.approx(expected_ephemeral_cost, rel=1e-6)
 
     def test_resource_costs_count(self) -> None:
         result = calculate_workload_cost(
@@ -204,8 +215,10 @@ class TestCalculateWorkloadCost:
         types = {rc.resource_type for rc in result["resource_costs"]}
         assert types == {"cpu", "memory", "ephemeral"}
 
-    def test_partial_usage_makes_total_none(self) -> None:
-        # Providing cpu_usage but not memory_usage — total_usage must be None
+    def test_partial_usage_produces_partial_cost(self) -> None:
+        # Providing cpu_usage but not memory_usage — partial metrics policy:
+        # total_usage_cost_usd is populated with the partial sum (not None),
+        # but total_waste_usd remains None because not all tracked dims are available.
         result = calculate_workload_cost(
             cpu_requests=1.0,
             memory_requests_gib=1.0,
@@ -214,15 +227,22 @@ class TestCalculateWorkloadCost:
             cpu_usage=0.5,
             memory_usage_gib=None,
         )
-        assert result["total_usage_cost_usd"] is None
+        # Partial usage is exposed — not None anymore (new behavior)
+        assert result["total_usage_cost_usd"] is not None
+        assert result["total_usage_cost_usd"] > 0
+        # waste is still None (not all tracked dimensions available)
         assert result["total_waste_usd"] is None
+        # partial_metrics flag must be set
+        assert result["partial_metrics"] is True
 
     def test_partial_usage_later_dimension_still_computed(self) -> None:
         # Fix 6: order-dependent bug.
         # cpu_usage=None (first dim missing), memory_usage_gib and
         # ephemeral_usage_gib are present.  Per-resource usage_cost_usd
-        # for memory and ephemeral must still be computed; only the TOTAL
-        # should be None (because cpu is missing).
+        # for memory and ephemeral must still be computed.
+        # With partial-metrics policy, total_usage_cost_usd is the partial sum
+        # (memory only, since cpu is the missing tracked dim).
+        # total_waste_usd is still None (not all tracked dimensions available).
         result = calculate_workload_cost(
             cpu_requests=1.0,
             memory_requests_gib=4.0,
@@ -232,9 +252,13 @@ class TestCalculateWorkloadCost:
             memory_usage_gib=2.0,    # second dimension — present
             ephemeral_usage_gib=0.5, # third dimension — present
         )
-        # Total must be None (not all dimensions available)
-        assert result["total_usage_cost_usd"] is None
+        # Partial usage is now exposed — not None (new partial-metrics behavior)
+        assert result["total_usage_cost_usd"] is not None
+        assert result["total_usage_cost_usd"] > 0
+        # waste is still None (not all tracked dimensions available)
         assert result["total_waste_usd"] is None
+        # partial_metrics flag must be set
+        assert result["partial_metrics"] is True
 
         # But per-resource usage costs for memory and ephemeral must be filled
         by_type = {rc.resource_type: rc for rc in result["resource_costs"]}

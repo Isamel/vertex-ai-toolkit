@@ -417,6 +417,16 @@ def register(app: typer.Typer) -> None:
             bool,
             typer.Option("--open", "-O", help="Open HTML report in default browser (requires --format html)"),
         ] = False,
+        all_namespaces: Annotated[
+            bool,
+            typer.Option(
+                "--all-namespaces",
+                help=(
+                    "Analyse all non-system namespaces for cost estimation, "
+                    "ignoring the --namespace / config default_namespace filter."
+                ),
+            ),
+        ] = False,
     ) -> None:
         """Investigate live GKE/GCP infrastructure using AI with read-only tools.
 
@@ -574,6 +584,7 @@ def register(app: typer.Typer) -> None:
                         summary=summary,
                         no_bell=no_bell,
                         open_browser=open_browser if not watch else False,
+                        all_namespaces=all_namespaces,
                     )
                 else:
                     _execute_live_mode(
@@ -962,6 +973,7 @@ def _inject_report_metadata(
     model_id: str = "",
     orch_result: Any = None,
     tool_logger: Any = None,
+    cost_namespaces: list[str] | None = None,
 ) -> None:
     """Fill metadata fields in *report* from runtime context.
 
@@ -985,6 +997,9 @@ def _inject_report_metadata(
         tool_logger: Optional :class:`ToolCallLogger`.  When provided, its
             ``tool_name_counts`` and ``tool_count`` are used to populate
             ``metadata.tool_usage``.
+        cost_namespaces: Optional explicit namespace list for cost estimation.
+            ``None`` means "use the default_namespace from gke_config (if set)".
+            Pass an empty list to analyse all non-system namespaces.
     """
     metadata = getattr(report, "metadata", None)
     if metadata is None:
@@ -1057,7 +1072,16 @@ def _inject_report_metadata(
         try:
             from vaig.tools.gke.cost_estimation import fetch_workload_costs  # noqa: WPS433
 
-            metadata.gke_cost = fetch_workload_costs(gke_config)
+            if cost_namespaces is None:
+                # Not using --all-namespaces or an explicit list, so fall back to the default namespace from config.
+                default_ns = getattr(gke_config, "default_namespace", None)
+                effective_namespaces: list[str] | None = [default_ns] if default_ns else None
+            else:
+                # An empty list from --all-namespaces means "all namespaces", which is represented by `None`.
+                # A non-empty list is an explicit filter.
+                effective_namespaces = cost_namespaces or None
+
+            metadata.gke_cost = fetch_workload_costs(gke_config, namespaces=effective_namespaces)
         except Exception as _gke_cost_exc:  # noqa: BLE001
             logger.debug("GKE cost estimation failed: %s", _gke_cost_exc)
             try:
@@ -1109,6 +1133,7 @@ def _dispatch_format_output(
     gke_config: Any = None,
     open_browser: bool = False,
     tool_logger: Any = None,
+    all_namespaces: bool = False,
 ) -> None:
     """Dispatch output based on *format_* for an orchestrated skill result.
 
@@ -1156,6 +1181,7 @@ def _dispatch_format_output(
                 model_id=model_id,
                 orch_result=orch_result,
                 tool_logger=tool_logger,
+                cost_namespaces=[] if all_namespaces else None,
             )
             _export_html_report(
                 orch_result.structured_report,
@@ -1237,6 +1263,7 @@ def _execute_orchestrated_skill(
     summary: bool = False,
     no_bell: bool = False,
     open_browser: bool = False,
+    all_namespaces: bool = False,
 ) -> None:
     """Execute a skill through the Orchestrator's tool-aware pipeline.
 
@@ -1351,6 +1378,7 @@ def _execute_orchestrated_skill(
             gke_config=gke_config,
             open_browser=open_browser,
             tool_logger=tool_logger,
+            all_namespaces=all_namespaces,
         )
 
         # Show agent pipeline summary (includes cost line)
@@ -1734,6 +1762,7 @@ async def _async_execute_orchestrated_skill(
     summary: bool = False,
     no_bell: bool = False,
     open_browser: bool = False,
+    all_namespaces: bool = False,
 ) -> None:
     """Async version of :func:`_execute_orchestrated_skill`.
 
@@ -1842,6 +1871,7 @@ async def _async_execute_orchestrated_skill(
             gke_config=gke_config,
             open_browser=open_browser,
             tool_logger=tool_logger,
+            all_namespaces=all_namespaces,
         )
 
         _show_orchestrated_summary(orch_result, model_id=settings.models.default)
