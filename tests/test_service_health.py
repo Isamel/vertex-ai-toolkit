@@ -3314,3 +3314,120 @@ class TestWorkloadGathererOwnershipChainInstructions:
         prompt = build_workload_gatherer_prompt()
         assert "Step 4c" in prompt
         assert "get_rollout_history" in prompt
+
+
+# ── Block C — Rollout Analysis Enrichment: prompt content ─────────────────
+
+
+class TestWorkloadGathererRolloutEnrichmentInstructions:
+    """Verify that build_workload_gatherer_prompt(argo_rollouts_enabled=True) includes
+    the Block-C Rollout strategy, status, and HPA conditions instructions.
+
+    These tests are intentionally coupled to the prompt text so that accidental
+    removal is caught immediately.
+    """
+
+    def test_strategy_extraction_instructions_present(self) -> None:
+        """Step 4d must instruct the agent to extract the rollout_strategy field."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=True)
+        assert "rollout_strategy" in prompt, (
+            "Step 4d must instruct the agent to report rollout_strategy for each Rollout."
+        )
+
+    def test_strategy_values_canary_and_blue_green_mentioned(self) -> None:
+        """Prompt must explicitly mention both 'canary' and 'blue-green' strategy values."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=True)
+        assert "canary" in prompt, "Step 4d must mention 'canary' as a strategy value."
+        assert "blue-green" in prompt, "Step 4d must mention 'blue-green' as a strategy value."
+
+    def test_rollout_status_extraction_instructions_present(self) -> None:
+        """Step 4d must instruct the agent to map rollout phase to rollout_status."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=True)
+        assert "rollout_status" in prompt, (
+            "Step 4d must instruct the agent to report rollout_status for each Rollout."
+        )
+
+    def test_hpa_conditions_instructions_present(self) -> None:
+        """Step 4d must instruct the agent to extract HPA conditions for Rollout-targeted HPAs."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=True)
+        assert "hpa_conditions" in prompt, (
+            "Step 4d must instruct the agent to report hpa_conditions when HPA targets a Rollout."
+        )
+
+    def test_hpa_scale_target_ref_rollout_check_mentioned(self) -> None:
+        """Prompt must tell the agent to check scaleTargetRef.kind == 'Rollout' for HPAs."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=True)
+        assert "scaleTargetRef" in prompt, (
+            "Step 4d must mention 'scaleTargetRef' to tell the agent how to detect "
+            "HPAs that target a Rollout."
+        )
+
+    def test_enrichment_instructions_absent_when_argo_disabled(self) -> None:
+        """rollout_strategy / rollout_status / hpa_conditions enrichment instructions
+        must NOT appear in the prompt when argo_rollouts_enabled=False (default).
+
+        Note: the base prompt already contains 'get_rollout_status' as a tool call
+        reference — we check for the Block-C specific instruction phrases instead.
+        """
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=False)
+        assert "rollout_strategy" not in prompt, (
+            "rollout_strategy instructions must only appear when argo_rollouts_enabled=True."
+        )
+        assert "hpa_conditions" not in prompt, (
+            "hpa_conditions instructions must only appear when argo_rollouts_enabled=True."
+        )
+        # 'rollout_status' appears in the base prompt as part of the tool call
+        # 'get_rollout_status(...)' — so we check for the Block-C instruction phrase instead
+        assert '"rollout_status:' not in prompt, (
+            "The rollout_status output instruction must only appear when argo_rollouts_enabled=True."
+        )
+
+
+    def test_bluegreen_camelcase_normalization_instruction_present(self) -> None:
+        """Step g must explicitly instruct the agent to normalize 'blueGreen' → 'blue-green'."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=True)
+        assert "ALWAYS normalize to" in prompt, (
+            "Prompt must include camelCase normalization instruction for blueGreen → blue-green."
+        )
+        assert "blue-green" in prompt, "Prompt must show canonical 'blue-green' (hyphenated) form."
+
+    def test_rollout_details_subsection_instruction_present(self) -> None:
+        """Step j must instruct the agent to emit a ### Rollout Details subsection."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=True)
+        assert "Rollout Details subsection" in prompt, (
+            "Prompt must include instruction to add a '### Rollout Details' subsection (step j)."
+        )
+        assert "rollout_strategy: <blue-green|canary|N/A>" in prompt, (
+            "Prompt must include rollout_strategy format line in step j."
+        )
+        assert "rollout_status: <Healthy|Progressing|Paused|Degraded|N/A>" in prompt, (
+            "Prompt must include rollout_status format line in step j."
+        )
+        assert "hpa_conditions: <condition1; condition2|none>" in prompt, (
+            "Prompt must include hpa_conditions format line in step j."
+        )
+
+    def test_normalization_instruction_absent_when_argo_disabled(self) -> None:
+        """camelCase normalization instruction must NOT appear when argo_rollouts_enabled=False."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=False)
+        assert "ALWAYS normalize to" not in prompt, (
+            "Normalization instruction must only appear when argo_rollouts_enabled=True."
+        )

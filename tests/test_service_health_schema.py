@@ -141,3 +141,157 @@ class TestEnumCoercion:
         from vaig.skills.service_health.schema import Effort
         action = RecommendedAction(priority=1, title="Fix", effort="NOPE")  # type: ignore[arg-type]
         assert action.effort == Effort.MEDIUM
+
+
+class TestServiceStatusRolloutFields:
+    """ServiceStatus optional Argo Rollouts enrichment fields — Block C."""
+
+    def test_rollout_strategy_defaults_to_none(self) -> None:
+        """rollout_strategy is None when not provided — backward compatible."""
+        svc = ServiceStatus(service="my-svc")
+        assert svc.rollout_strategy is None
+
+    def test_rollout_status_defaults_to_none(self) -> None:
+        """rollout_status is None when not provided — backward compatible."""
+        svc = ServiceStatus(service="my-svc")
+        assert svc.rollout_status is None
+
+    def test_hpa_conditions_defaults_to_empty_list(self) -> None:
+        """hpa_conditions defaults to [] when not provided — backward compatible."""
+        svc = ServiceStatus(service="my-svc")
+        assert svc.hpa_conditions == []
+
+    def test_rollout_strategy_canary_accepted(self) -> None:
+        svc = ServiceStatus(service="my-svc", rollout_strategy="canary")
+        assert svc.rollout_strategy == "canary"
+
+    def test_rollout_strategy_blue_green_accepted(self) -> None:
+        svc = ServiceStatus(service="my-svc", rollout_strategy="blue-green")
+        assert svc.rollout_strategy == "blue-green"
+
+    def test_rollout_status_accepted(self) -> None:
+        for status in ("Healthy", "Progressing", "Paused", "Degraded"):
+            svc = ServiceStatus(service="my-svc", rollout_status=status)
+            assert svc.rollout_status == status
+
+    def test_hpa_conditions_list_accepted(self) -> None:
+        conditions = ["AbleToScale: True", "ScalingActive: False — DesiredReplicas=0"]
+        svc = ServiceStatus(service="my-svc", hpa_conditions=conditions)
+        assert svc.hpa_conditions == conditions
+
+    def test_all_rollout_fields_together(self) -> None:
+        svc = ServiceStatus(
+            service="my-svc",
+            namespace="prod",
+            rollout_strategy="canary",
+            rollout_status="Progressing",
+            hpa_conditions=["AbleToScale: True"],
+        )
+        assert svc.rollout_strategy == "canary"
+        assert svc.rollout_status == "Progressing"
+        assert svc.hpa_conditions == ["AbleToScale: True"]
+
+    def test_backward_compat_old_servicestatus_without_rollout_fields(self) -> None:
+        """Existing ServiceStatus data without rollout fields must still validate cleanly."""
+        data = {
+            "service": "payment-svc",
+            "namespace": "default",
+            "status": "HEALTHY",
+            "pods_ready": "3/3",
+            "restarts_1h": "0",
+            "cpu_usage": "120m",
+            "memory_usage": "256Mi",
+            "issues": "",
+        }
+        svc = ServiceStatus(**data)
+        assert svc.service == "payment-svc"
+        assert svc.rollout_strategy is None
+        assert svc.rollout_status is None
+        assert svc.hpa_conditions == []
+
+    def test_extra_field_still_ignored_alongside_rollout_fields(self) -> None:
+        """extra='ignore' still applies even when rollout fields are present."""
+        svc = ServiceStatus(
+            service="my-svc",
+            rollout_strategy="canary",
+            future_unknown_field="should be ignored",  # type: ignore[call-arg]
+        )
+        assert svc.rollout_strategy == "canary"
+        assert not hasattr(svc, "future_unknown_field")
+
+
+class TestRolloutDetailsTableRendering:
+    """Verify that _render_service_status() produces the correct Rollout Details table."""
+
+    @staticmethod
+    def _render(services) -> str:
+        """Call _render_service_status directly to avoid HealthReport required fields."""
+        from vaig.skills.service_health.schema import ExecutiveSummary, HealthReport
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status="HEALTHY",
+                scope="Cluster-wide",
+                summary_text="test",
+            ),
+            service_statuses=services,
+        )
+        parts: list[str] = []
+        report._render_service_status(parts)
+        return "\n".join(parts)
+
+    def _svc(self, **kwargs):
+        from vaig.skills.service_health.schema import ServiceStatus
+        defaults = {
+            "service": "my-svc",
+            "namespace": "default",
+            "status": "HEALTHY",
+            "pods_ready": "1/1",
+            "restarts_1h": "0",
+            "cpu_usage": "100m",
+            "memory_usage": "128Mi",
+            "issues": "",
+        }
+        defaults.update(kwargs)
+        return ServiceStatus(**defaults)
+
+    def test_rollout_details_table_includes_namespace_column(self) -> None:
+        """The Rollout Details table header must include a Namespace column."""
+        svc = self._svc(rollout_strategy="canary", namespace="prod")
+        md = self._render([svc])
+        assert "| Service | Namespace |" in md, "Rollout Details table must include Namespace column."
+
+    def test_rollout_details_table_shows_na_for_empty_namespace(self) -> None:
+        """Namespace cell must show '—' when namespace is empty/None."""
+        svc = self._svc(rollout_strategy="canary", namespace="")
+        md = self._render([svc])
+        assert "| my-svc | — |" in md, "Empty namespace must render as '—' in the table."
+
+    def test_rollout_details_table_shows_na_for_none_rollout_strategy(self) -> None:
+        """Strategy cell must show 'N/A' when rollout_strategy is None but another field is set."""
+        svc = self._svc(rollout_strategy=None, rollout_status="Healthy")
+        md = self._render([svc])
+        assert "N/A" in md, "None rollout_strategy must render as 'N/A'."
+
+    def test_filter_includes_service_with_only_rollout_status(self) -> None:
+        """A service with only rollout_status set must still appear in the Rollout Details table."""
+        svc = self._svc(rollout_strategy=None, rollout_status="Progressing")
+        md = self._render([svc])
+        assert "### Rollout Details" in md, (
+            "Rollout Details table must appear when rollout_status is set even if strategy is None."
+        )
+
+    def test_filter_includes_service_with_only_hpa_conditions(self) -> None:
+        """A service with only hpa_conditions set must still appear in the Rollout Details table."""
+        svc = self._svc(rollout_strategy=None, rollout_status=None, hpa_conditions=["ScalingLimited: True"])
+        md = self._render([svc])
+        assert "### Rollout Details" in md, (
+            "Rollout Details table must appear when hpa_conditions is set even if strategy is None."
+        )
+
+    def test_no_rollout_details_section_when_all_fields_empty(self) -> None:
+        """Services with no rollout data must NOT produce a Rollout Details section."""
+        svc = self._svc()
+        md = self._render([svc])
+        assert "### Rollout Details" not in md, (
+            "Rollout Details table must NOT appear when no service has rollout data."
+        )
