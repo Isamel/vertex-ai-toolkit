@@ -360,17 +360,6 @@ _DESCRIBE_SUPPORTED_RESOURCES: frozenset[str] = frozenset(
         "externalsecrets",
         "externalsecret",
         "verticalpodautoscalers",
-        # Argo Rollouts CRDs
-        "rollout",
-        "rollouts",
-        "analysisrun",
-        "analysisruns",
-        "analysistemplate",
-        "analysistemplates",
-        "clusteranalysistemplate",
-        "clusteranalysistemplates",
-        "experiment",
-        "experiments",
     }
 )
 
@@ -741,7 +730,7 @@ def _list_resource(
         except k8s_exceptions.ApiException as exc:
             if exc.status == 404:
                 return ToolResult(
-                    output="Argo Rollouts CRD not installed in this cluster (resource: clusteranalysistemplates).",
+                    output=f"Argo Rollouts CRD not installed in this cluster (resource: {resource}).",
                 )
             raise
 

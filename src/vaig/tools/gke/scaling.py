@@ -335,6 +335,7 @@ def get_scaling_status(
     # ── Fetch HPA ─────────────────────────────────────────────
     hpa_obj: Any = None
     hpa_error: str | None = None
+    target_kind: str = "deployment"
 
     try:
         from kubernetes.client import AutoscalingV2Api  # noqa: WPS433
@@ -346,6 +347,7 @@ def get_scaling_status(
             scale_target = spec.scale_target_ref if spec else None
             if scale_target and scale_target.kind.lower() in ("deployment", "rollout") and scale_target.name == name:
                 hpa_obj = hpa
+                target_kind = scale_target.kind.lower()
                 break
     except k8s_exceptions.ApiException as exc:
         if exc.status == 403:
@@ -420,13 +422,13 @@ def get_scaling_status(
     if hpa_obj is not None:
         lines.append(_format_hpa_section(hpa_obj))
     elif hpa_error is None:
-        lines.append(f"\n### Horizontal Pod Autoscaler\nNo HPA configured for deployment/{name} in namespace '{ns}'.")
+        lines.append(f"\n### Horizontal Pod Autoscaler\nNo HPA configured for {target_kind}/{name} in namespace '{ns}'.")
 
     # VPA section
     if vpa_obj is not None:
         lines.append(_format_vpa_section(vpa_obj))
     elif not vpa_not_installed and vpa_error is None:
-        lines.append(f"\n### Vertical Pod Autoscaler\nNo VPA configured for deployment/{name} in namespace '{ns}'.")
+        lines.append(f"\n### Vertical Pod Autoscaler\nNo VPA configured for {target_kind}/{name} in namespace '{ns}'.")
 
     # Assessment
     lines.append(

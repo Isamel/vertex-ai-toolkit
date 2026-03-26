@@ -720,7 +720,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             description=(
                 "Discover all workloads running in the cluster or a specific namespace. "
                 "Returns a summary table of deployments, statefulsets, daemonsets, and "
-                "optionally jobs/cronjobs. Shows ready/desired replicas, restarts, and "
+                "optionally jobs/cronjobs and Argo Rollouts. Shows ready/desired replicas, restarts, and "
                 "age. Unhealthy workloads are listed first. Use this BEFORE drilling into "
                 "specific resources to get a high-level overview of what is running. "
                 "Results are cached for 60 seconds. Read-only — does not modify any resources."
