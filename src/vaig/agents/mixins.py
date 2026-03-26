@@ -251,8 +251,18 @@ class ToolLoopMixin:
                     iteration,
                     len(tools_executed),
                 )
+                final_text = result.text
+                # Synthesize a minimal summary when no text was produced but tools ran.
+                # This ensures callers always have a non-empty content string to display.
+                if not final_text and tools_executed:
+                    tool_names = ", ".join(
+                        t["name"] for t in tools_executed
+                    )
+                    final_text = (
+                        f"Completed {len(tools_executed)} tool operation(s): {tool_names}"
+                    )
                 return ToolLoopResult(
-                    text=result.text,
+                    text=final_text,
                     usage=total_usage,
                     tools_executed=tools_executed,
                     iterations=iteration,
@@ -907,8 +917,18 @@ class ToolLoopMixin:
                     iteration,
                     len(tools_executed),
                 )
+                final_text = result.text
+                # Synthesize a minimal summary when no text was produced but tools ran.
+                # This ensures callers always have a non-empty content string to display.
+                if not final_text and tools_executed:
+                    tool_names = ", ".join(
+                        t["name"] for t in tools_executed
+                    )
+                    final_text = (
+                        f"Completed {len(tools_executed)} tool operation(s): {tool_names}"
+                    )
                 return ToolLoopResult(
-                    text=result.text,
+                    text=final_text,
                     usage=total_usage,
                     tools_executed=tools_executed,
                     iterations=iteration,
