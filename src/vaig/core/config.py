@@ -253,6 +253,13 @@ class CodingConfig(BaseModel):
     confirm_actions: bool = True
     allowed_commands: list[str] = Field(default_factory=list)
     blocked_paths: list[str] = Field(default_factory=list)
+    pipeline_mode: bool = Field(
+        default=False,
+        description=(
+            "When True, routes `vaig code` through CodingSkillOrchestrator "
+            "(Planner→Implementer→Verifier) instead of the single-agent CodingAgent"
+        ),
+    )
     denied_commands: list[str] = Field(
         default_factory=lambda: [
             # Destructive disk / filesystem operations

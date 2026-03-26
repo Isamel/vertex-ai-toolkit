@@ -34,16 +34,26 @@ def _execute_code_mode(
     context: str,
     *,
     output: Path | None = None,
+    pipeline: bool = False,
 ) -> None:
-    """Execute a coding task using the CodingAgent.
+    """Execute a coding task using the CodingAgent or CodingSkillOrchestrator.
+
+    When ``pipeline=True`` (or ``settings.coding.pipeline_mode`` is set), routes
+    the task through the 3-agent Planner → Implementer → Verifier pipeline.
+    Otherwise falls back to the single-agent CodingAgent loop.
 
     Handles confirmation prompts, tool execution feedback,
     iteration/usage summary, and MaxIterationsError.
     """
+    coding_config = settings.coding
+    use_pipeline = pipeline or coding_config.pipeline_mode
+
+    if use_pipeline:
+        _execute_code_pipeline(client, settings, question, context, output=output)
+        return
+
     from vaig.agents.coding import CodingAgent
     from vaig.core.exceptions import MaxIterationsError
-
-    coding_config = settings.coding
 
     console.print(
         Panel.fit(
@@ -101,7 +111,7 @@ def _execute_code_mode(
         raise typer.Exit(1)  # noqa: B904
 
 
-async def _async_execute_code_mode(
+def _execute_code_pipeline(
     client: GeminiClientProtocol,
     settings: Settings,
     question: str,
@@ -109,16 +119,114 @@ async def _async_execute_code_mode(
     *,
     output: Path | None = None,
 ) -> None:
-    """Async version of :func:`_execute_code_mode`.
+    """Execute a coding task using the 3-agent CodingSkillOrchestrator pipeline.
 
-    Uses ``CodingAgent.async_execute()`` for non-blocking tool loops.
-    The confirmation callback still runs synchronously (prompt_toolkit
-    limitation in non-async REPL context), but all agent I/O is async.
+    Runs Planner → Implementer → Verifier sequentially and displays the
+    verification report.  Exits with code 1 when the Verifier reports failure.
+
+    .. note::
+        Pipeline mode uses :class:`~vaig.agents.tool_aware.ToolAwareAgent` which
+        does **not** implement interactive ``confirm_actions``.  If
+        ``settings.coding.confirm_actions`` is True, a warning is logged and
+        pipeline proceeds without confirmation prompts.  For interactive
+        confirmation, use single-agent mode (omit ``--pipeline``).
     """
-    from vaig.agents.coding import CodingAgent
+    from vaig.agents.coding_pipeline import CodingSkillOrchestrator
     from vaig.core.exceptions import MaxIterationsError
 
     coding_config = settings.coding
+
+    if coding_config.confirm_actions:
+        logger.warning(
+            "Pipeline mode does not support interactive confirm_actions. "
+            "Proceeding without confirmation prompts. "
+            "Set confirm_actions=false in config or use single-agent mode for interactive confirmation."
+        )
+
+    console.print(
+        Panel.fit(
+            "[bold yellow]🔧 Code Mode (Pipeline)[/bold yellow]\n"
+            f"[dim]Workspace: {Path(coding_config.workspace_root).resolve()}[/dim]\n"
+            f"[dim]Model: {settings.models.default} | "
+            f"Pipeline: Planner → Implementer → Verifier[/dim]",
+            border_style="yellow",
+        )
+    )
+
+    orchestrator = CodingSkillOrchestrator(
+        client,
+        coding_config,
+        settings=settings,
+    )
+
+    try:
+        console.print("[bold cyan]🤖 Pipeline running (Planner → Implementer → Verifier)...[/bold cyan]")
+        result = orchestrator.run(question, context=context)
+    except MaxIterationsError as exc:
+        err_console.print(
+            f"\n[bold red]⚠ Max iterations reached ({exc.iterations})[/bold red]\n"
+            "[yellow]The pipeline hit its iteration limit. "
+            "Try breaking the task into smaller steps or increasing max_tool_iterations.[/yellow]"
+        )
+        raise typer.Exit(1)  # noqa: B904
+
+    # Display verification report
+    console.print()
+    if result.verification_report:
+        console.print(Markdown(result.verification_report))
+    console.print()
+
+    if output:
+        save_content = result.verification_report
+        if result.usage:
+            cost_section = _build_cost_markdown_section(
+                result.usage, settings.models.default,
+                _compute_cost_str(result.usage, settings.models.default),
+            )
+            if cost_section:
+                save_content = f"{result.verification_report}\n\n{cost_section}"
+        _save_output(output, save_content)
+
+    status = "✅ PASS" if result.success else "❌ FAIL"
+    total = result.usage.get("total_tokens", 0)
+    console.print(
+        f"[dim]Pipeline {status} | Total tokens: {total}[/dim]"
+    )
+
+    if not result.success:
+        raise typer.Exit(1)
+
+
+async def _async_execute_code_mode(
+    client: GeminiClientProtocol,
+    settings: Settings,
+    question: str,
+    context: str,
+    *,
+    output: Path | None = None,
+    pipeline: bool = False,
+) -> None:
+    """Async version of :func:`_execute_code_mode`.
+
+    When ``pipeline=True`` (or ``settings.coding.pipeline_mode`` is set), wraps
+    the synchronous :func:`_execute_code_pipeline` via ``asyncio.to_thread``.
+    Otherwise uses ``CodingAgent.async_execute()`` for non-blocking tool loops.
+    The confirmation callback still runs synchronously (prompt_toolkit
+    limitation in non-async REPL context), but all agent I/O is async.
+    """
+    import asyncio
+
+    coding_config = settings.coding
+    use_pipeline = pipeline or coding_config.pipeline_mode
+
+    if use_pipeline:
+        await asyncio.to_thread(
+            _execute_code_pipeline, client, settings, question, context, output=output
+        )
+        return
+
+    from vaig.agents.coding import CodingAgent
+    from vaig.core.exceptions import MaxIterationsError
 
     console.print(
         Panel.fit(
