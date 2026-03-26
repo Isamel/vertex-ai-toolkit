@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 from rich.markdown import Markdown
 
 from vaig.cli import _helpers
 from vaig.cli._completions import complete_namespace
+
+if TYPE_CHECKING:
+    from vaig.skills.base import SkillPhase
 from vaig.cli._helpers import (
     _apply_subcommand_log_flags,
     _compute_cost_str,
@@ -25,7 +28,6 @@ from vaig.cli.commands.live import _build_gke_config, _execute_live_mode
 
 
 def register(app: typer.Typer) -> None:
-    """Register the ask command on the given Typer app."""
 
     @app.command()
     @track_command
@@ -34,6 +36,25 @@ def register(app: typer.Typer) -> None:
         config: Annotated[str | None, typer.Option("--config", "-c", help="Path to config YAML")] = None,
         model: Annotated[str | None, typer.Option("--model", "-m", help="Model to use")] = None,
         files: Annotated[list[Path] | None, typer.Option("--file", "-f", help="Files to include as context")] = None,
+        dirs: Annotated[
+            list[Path] | None,
+            typer.Option("--dir", help="Directories to include as context (recursively loaded)"),
+        ] = None,
+        examples: Annotated[
+            list[Path] | None,
+            typer.Option("--examples", "-e", help="Reference/example files to guide the LLM (shown in a separate section)"),
+        ] = None,
+        phases: Annotated[
+            str | None,
+            typer.Option(
+                "--phases",
+                help=(
+                    "Comma-separated list of skill phases to run sequentially "
+                    "(e.g. 'analyze,plan,execute,validate,report'). "
+                    "Requires --skill. Default: run only 'analyze'."
+                ),
+            ),
+        ] = None,
         output: Annotated[Path | None, typer.Option("--output", "-o", help="Save response to a file")] = None,
         format_: Annotated[str | None, typer.Option("--format", help="Export format: json, md, html")] = None,
         skill: Annotated[str | None, typer.Option("--skill", "-s", help="Use a specific skill")] = None,
@@ -83,7 +104,7 @@ def register(app: typer.Typer) -> None:
         ] = False,
         debug: Annotated[
             bool,
-            typer.Option("--debug", "-d", help="Enable debug logging (DEBUG level, shows paths and full tracebacks)"),
+            typer.Option("--debug", help="Enable debug logging (DEBUG level, shows paths and full tracebacks)"),
         ] = False,
     ) -> None:
         """Ask a single question and get a response.
@@ -99,6 +120,8 @@ def register(app: typer.Typer) -> None:
             vaig ask "Analyze pod crashes" --live -s log-analysis
             vaig ask "Check OOM kills in prod" --live --namespace=production
             vaig ask "Explain this code" -f main.py --format json -o report.json
+            vaig ask "Migrate to AWS Glue" -d ./pentaho -s migration --phases analyze,plan,execute,validate,report
+            vaig ask "Migrate this code" -f src.py -e example_output.py -s code-migration
         """
         _apply_subcommand_log_flags(verbose=verbose, debug=debug)
 
@@ -134,25 +157,65 @@ def register(app: typer.Typer) -> None:
             from vaig.agents.orchestrator import Orchestrator
             from vaig.context.builder import ContextBuilder
             from vaig.core.container import build_container
-            from vaig.skills.base import SkillPhase
             from vaig.skills.registry import SkillRegistry
 
             container = build_container(settings)
             client = container.gemini_client
             orchestrator = Orchestrator(client, settings)
 
-            # Build context from files
+            # Build context from files and/or directories
             context_str = ""
-            if files:
+            if files or dirs or examples:
                 builder = ContextBuilder(settings)
-                for f in files:
-                    try:
-                        builder.add_file(f)
-                    except FileNotFoundError:
-                        err_console.print(f"[red]File not found: {f}[/red]")
-                        raise typer.Exit(1)  # noqa: B904
+
+                # Load --examples first into a separate bundle so we can format them distinctly
+                examples_context = ""
+                if examples:
+                    examples_builder = ContextBuilder(settings)
+                    for ex in examples:
+                        try:
+                            examples_builder.add_file(ex)
+                        except FileNotFoundError:
+                            err_console.print(f"[red]Example file not found: {ex}[/red]")
+                            raise typer.Exit(1)  # noqa: B904
+                    examples_context = examples_builder.bundle.to_context_string()
+
+                # Load --file entries
+                if files:
+                    for f in files:
+                        try:
+                            builder.add_file(f)
+                        except FileNotFoundError:
+                            err_console.print(f"[red]File not found: {f}[/red]")
+                            raise typer.Exit(1)  # noqa: B904
+
+                # Load --dir entries (recursive)
+                if dirs:
+                    for d in dirs:
+                        try:
+                            count = builder.add_directory(d)
+                            if count == 0:
+                                err_console.print(f"[yellow]Warning: no supported files found in directory: {d}[/yellow]")
+                        except FileNotFoundError:
+                            err_console.print(f"[red]Directory not found: {d}[/red]")
+                            raise typer.Exit(1)  # noqa: B904
+
                 builder.show_summary()
-                context_str = builder.bundle.to_context_string()
+                source_context = builder.bundle.to_context_string()
+
+                # Compose final context: examples section first (if any), then source code
+                if examples_context and source_context:
+                    context_str = (
+                        "## Reference Examples\n\n"
+                        + examples_context
+                        + "\n\n---\n\n"
+                        + "## Source Code (to migrate)\n\n"
+                        + source_context
+                    )
+                elif examples_context:
+                    context_str = "## Reference Examples\n\n" + examples_context
+                else:
+                    context_str = source_context
 
             # Code mode — use CodingAgent (Tasks 5.1, 5.4, 5.5, 5.6, 5.7)
             if code:
@@ -193,6 +256,8 @@ def register(app: typer.Typer) -> None:
 
             # Execute with or without skill
             context_file_paths = [str(f) for f in files] if files else []
+            if dirs:
+                context_file_paths.extend(str(d) for d in dirs)
 
             # Auto-detect skill if requested (or enabled in config) and no explicit skill specified
             effective_auto_skill = auto_skill or settings.skills.auto_routing
@@ -221,18 +286,39 @@ def register(app: typer.Typer) -> None:
                     err_console.print(f"[dim]Available: {', '.join(registry.list_names())}[/dim]")
                     raise typer.Exit(1)
 
-                with console.status(
-                    f"[bold cyan]Running {skill} skill on {settings.models.default}...[/bold cyan]"
-                ):
-                    result = orchestrator.execute_skill_phase(
-                        active_skill,
-                        SkillPhase.ANALYZE,
-                        context_str,
-                        question,
-                    )
-                console.print()
-                if result.output:
-                    console.print(Markdown(result.output))
+                # Parse --phases (comma-separated phase names, e.g. "analyze,plan,execute")
+                phase_list = _parse_phases(phases)
+
+                # Run each requested phase sequentially; each phase output feeds into the next
+                accumulated_context = context_str
+                final_result = None
+                for phase in phase_list:
+                    phase_label = f"{skill} [{phase.value}]"
+                    with console.status(
+                        f"[bold cyan]Running {phase_label} on {settings.models.default}...[/bold cyan]"
+                    ):
+                        phase_result = orchestrator.execute_skill_phase(
+                            active_skill,
+                            phase,
+                            accumulated_context,
+                            question,
+                        )
+                    console.print()
+                    if phase_result.output:
+                        if len(phase_list) > 1:
+                            console.print(f"[bold]── Phase: {phase.value} ──[/bold]")
+                        console.print(Markdown(phase_result.output))
+                    # Feed this phase's output as context for the next phase
+                    if phase_result.output:
+                        accumulated_context = (
+                            f"{accumulated_context}\n\n"
+                            f"## Phase Output ({phase.value})\n\n"
+                            f"{phase_result.output}"
+                        )
+                    final_result = phase_result
+
+                assert final_result is not None  # phase_list is never empty
+                result = final_result
 
                 # Show cost summary for skill execution
                 skill_usage = (result.metadata or {}).get("total_usage")
@@ -305,6 +391,35 @@ def register(app: typer.Typer) -> None:
             handle_cli_error(exc, debug=debug)
 
 
+# ── Phase parsing helper ──────────────────────────────────────
+
+
+def _parse_phases(phases: str | None) -> list[SkillPhase]:
+    """Parse a comma-separated phases string into a list of SkillPhase values.
+
+    Falls back to [SkillPhase.ANALYZE] when phases is None or empty.
+    Raises typer.Exit(1) on invalid phase names.
+    """
+    from vaig.skills.base import SkillPhase
+
+    if not phases:
+        return [SkillPhase.ANALYZE]
+
+    valid = {p.value: p for p in SkillPhase}
+    result: list[SkillPhase] = []
+    for token in phases.split(","):
+        token = token.strip().lower()
+        if not token:
+            continue
+        if token not in valid:
+            err_console.print(
+                f"[red]Unknown phase: '{token}'. Valid: {', '.join(valid)}[/red]"
+            )
+            raise typer.Exit(1)
+        result.append(valid[token])
+    return result or [SkillPhase.ANALYZE]
+
+
 # ── Async Ask Implementation ─────────────────────────────────
 
 
@@ -314,6 +429,9 @@ async def _async_ask_impl(
     config: str | None = None,
     model: str | None = None,
     files: list[Path] | None = None,
+    dirs: list[Path] | None = None,
+    examples: list[Path] | None = None,
+    phases: str | None = None,
     output: Path | None = None,
     format_: str | None = None,
     skill: str | None = None,
@@ -356,25 +474,67 @@ async def _async_ask_impl(
     from vaig.agents.orchestrator import Orchestrator
     from vaig.context.builder import ContextBuilder
     from vaig.core.container import build_container
-    from vaig.skills.base import SkillPhase
     from vaig.skills.registry import SkillRegistry
 
     container = build_container(settings)
     client = container.gemini_client
     orchestrator = Orchestrator(client, settings)
 
-    # Build context from files (async file loading)
+    # Build context from files and/or directories (async)
     context_str = ""
-    if files:
+    if files or dirs or examples:
         builder = ContextBuilder(settings)
-        for f in files:
-            try:
-                await builder.async_add_file(f)
-            except FileNotFoundError:
-                err_console.print(f"[red]File not found: {f}[/red]")
-                raise typer.Exit(1)  # noqa: B904
+
+        # Load --examples into a separate builder for distinct section
+        examples_context = ""
+        if examples:
+            examples_builder = ContextBuilder(settings)
+            for ex in examples:
+                try:
+                    await examples_builder.async_add_file(ex)
+                except FileNotFoundError:
+                    err_console.print(f"[red]Example file not found: {ex}[/red]")
+                    raise typer.Exit(1)  # noqa: B904
+            examples_context = examples_builder.bundle.to_context_string()
+
+        # Load --file entries (async)
+        if files:
+            for f in files:
+                try:
+                    await builder.async_add_file(f)
+                except FileNotFoundError:
+                    err_console.print(f"[red]File not found: {f}[/red]")
+                    raise typer.Exit(1)  # noqa: B904
+
+        # Load --dir entries (async, recursive)
+        if dirs:
+            for d in dirs:
+                try:
+                    count = await builder.async_add_directory(d)
+                    if count == 0:
+                        err_console.print(
+                            f"[yellow]Warning: no supported files found in directory: {d}[/yellow]"
+                        )
+                except FileNotFoundError:
+                    err_console.print(f"[red]Directory not found: {d}[/red]")
+                    raise typer.Exit(1)  # noqa: B904
+
         builder.show_summary()
-        context_str = builder.bundle.to_context_string()
+        source_context = builder.bundle.to_context_string()
+
+        # Compose final context: examples section first (if any), then source code
+        if examples_context and source_context:
+            context_str = (
+                "## Reference Examples\n\n"
+                + examples_context
+                + "\n\n---\n\n"
+                + "## Source Code (to migrate)\n\n"
+                + source_context
+            )
+        elif examples_context:
+            context_str = "## Reference Examples\n\n" + examples_context
+        else:
+            context_str = source_context
 
     # Code mode — async CodingAgent
     if code:
@@ -421,6 +581,8 @@ async def _async_ask_impl(
 
     # Execute with or without skill
     context_file_paths = [str(f) for f in files] if files else []
+    if dirs:
+        context_file_paths.extend(str(d) for d in dirs)
 
     # Auto-detect skill
     effective_auto_skill = auto_skill or settings.skills.auto_routing
@@ -449,18 +611,39 @@ async def _async_ask_impl(
             err_console.print(f"[dim]Available: {', '.join(registry.list_names())}[/dim]")
             raise typer.Exit(1)
 
-        with console.status(
-            f"[bold cyan]Running {skill} skill on {settings.models.default} (async)...[/bold cyan]"
-        ):
-            result = await orchestrator.async_execute_skill_phase(
-                active_skill,
-                SkillPhase.ANALYZE,
-                context_str,
-                question,
-            )
-        console.print()
-        if result.output:
-            console.print(Markdown(result.output))
+        # Parse --phases (comma-separated phase names, e.g. "analyze,plan,execute")
+        phase_list = _parse_phases(phases)
+
+        # Run each requested phase sequentially; each phase output feeds into the next
+        accumulated_context = context_str
+        final_result = None
+        for phase in phase_list:
+            phase_label = f"{skill} [{phase.value}]"
+            with console.status(
+                f"[bold cyan]Running {phase_label} on {settings.models.default} (async)...[/bold cyan]"
+            ):
+                phase_result = await orchestrator.async_execute_skill_phase(
+                    active_skill,
+                    phase,
+                    accumulated_context,
+                    question,
+                )
+            console.print()
+            if phase_result.output:
+                if len(phase_list) > 1:
+                    console.print(f"[bold]── Phase: {phase.value} ──[/bold]")
+                console.print(Markdown(phase_result.output))
+            # Feed this phase's output as context for the next phase
+            if phase_result.output:
+                accumulated_context = (
+                    f"{accumulated_context}\n\n"
+                    f"## Phase Output ({phase.value})\n\n"
+                    f"{phase_result.output}"
+                )
+            final_result = phase_result
+
+        assert final_result is not None  # phase_list is never empty
+        result = final_result
 
         skill_usage = (result.metadata or {}).get("total_usage")
         _show_cost_line(skill_usage, settings.models.default)
