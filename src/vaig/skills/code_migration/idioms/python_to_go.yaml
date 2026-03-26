@@ -1,0 +1,81 @@
+# Idiom map: Python → Go
+# Schema: source_lang, target_lang, idioms (list), dependencies (mapping)
+#
+# idioms entries:
+#   source_pattern:  Human-readable description of the Python idiom
+#   target_pattern:  Equivalent Go idiom description
+#   notes:           Optional clarification for the migration agent
+#
+# dependencies entries:
+#   "<python-package>": "<go-module-path>"
+
+source_lang: python
+target_lang: go
+
+idioms:
+  - source_pattern: "List comprehension: [x for x in iterable if cond]"
+    target_pattern: "for loop with append: var result []T; for _, x := range iterable { if cond { result = append(result, x) } }"
+    notes: "Go has no list comprehension syntax. Use explicit for-range loops."
+
+  - source_pattern: "Dictionary: {key: value}"
+    target_pattern: "map: map[KeyType]ValueType{key: value}"
+    notes: "Go maps require explicit key/value types. Zero-value is nil — initialise with make(map[K]V) or a literal."
+
+  - source_pattern: "Optional / None: value: Optional[T] = None"
+    target_pattern: "Pointer or wrapper: var value *T  (nil means absent)"
+    notes: "Go has no built-in Option type. Use pointers (*T) or a (T, bool) pair for optional values."
+
+  - source_pattern: "Exception handling: try/except/finally"
+    target_pattern: "Error return: result, err := fn(); if err != nil { ... }"
+    notes: "Go uses explicit error return values, not exceptions. defer replaces finally."
+
+  - source_pattern: "Context manager: with open(path) as f:"
+    target_pattern: "defer close: f, err := os.Open(path); defer f.Close()"
+    notes: "Go uses defer for cleanup. Always check the error from Open before deferring Close."
+
+  - source_pattern: "Decorator: @functools.lru_cache"
+    target_pattern: "sync.Map or manual cache with sync.Mutex"
+    notes: "Go has no built-in memoisation decorator. Use a map protected by sync.Mutex or sync.Map."
+
+  - source_pattern: "Dataclass: @dataclass class Foo: x: int; y: str"
+    target_pattern: "Struct: type Foo struct { X int; Y string }"
+    notes: "Go structs are the equivalent. Use exported fields (uppercase) for JSON serialisation."
+
+  - source_pattern: "Generator / yield"
+    target_pattern: "Channel: func gen() <-chan T { ch := make(chan T); go func() { ch <- v; close(ch) }(); return ch }"
+    notes: "Go generators are implemented with goroutines and channels."
+
+  - source_pattern: "f-string: f'Hello, {name}!'"
+    target_pattern: "fmt.Sprintf: fmt.Sprintf(\"Hello, %s!\", name)"
+    notes: "Use fmt.Sprintf for string formatting. Consider fmt.Fprintf to write directly to writers."
+
+  - source_pattern: "Abstract base class: from abc import ABC, abstractmethod"
+    target_pattern: "Interface: type Doer interface { Do() error }"
+    notes: "Go uses implicit interfaces — any type implementing the method set satisfies the interface."
+
+  - source_pattern: "Module-level __init__: if __name__ == '__main__': main()"
+    target_pattern: "func main() in package main"
+    notes: "Go entry point is always func main() in package main. No equivalent of __name__ guard needed."
+
+  - source_pattern: "Type alias: MyList = list[int]"
+    target_pattern: "Type definition: type MyList []int"
+    notes: "Go type definitions create distinct types, unlike Python aliases."
+
+dependencies:
+  requests: "net/http"
+  httpx: "net/http"
+  aiohttp: "net/http"
+  pydantic: "encoding/json"
+  sqlalchemy: "database/sql"
+  psycopg2: "github.com/lib/pq"
+  boto3: "github.com/aws/aws-sdk-go-v2"
+  redis: "github.com/redis/go-redis/v9"
+  celery: "github.com/hibiken/asynq"
+  fastapi: "github.com/gin-gonic/gin"
+  flask: "github.com/gin-gonic/gin"
+  click: "github.com/spf13/cobra"
+  pytest: "testing"
+  loguru: "go.uber.org/zap"
+  structlog: "go.uber.org/zap"
+  yaml: "gopkg.in/yaml.v3"
+  toml: "github.com/BurntSushi/toml"
