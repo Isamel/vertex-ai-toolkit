@@ -96,6 +96,8 @@ skills:
     - api-design
     - db-review
     - migration
+    - code-migration
+    - greenfield
     - perf-analysis
     - threat-model
     - compliance-check
@@ -190,6 +192,7 @@ coding:
   workspace_root: "."                # Root directory for file operations
   max_tool_iterations: 25            # Max tool-use loop iterations
   confirm_actions: true              # Require user confirmation for write ops
+  pipeline_mode: false               # When true, routes --code through CodingPipeline (Planner→Implementer→Verifier). Also set by --pipeline CLI flag.
   allowed_commands:                  # Shell commands the agent can run
     - ls
     - cat

@@ -19,20 +19,23 @@ graph TB
         spec["SpecialistAgent<br/>(text-only)"]
         tool["ToolAwareAgent<br/>(tool-use loop)"]
         code["CodingAgent<br/>(file I/O + shell)"]
+        pipeline["CodingPipeline<br/>(Planner→Implementer→Verifier)"]
         infra["InfraAgent<br/>(GKE + GCloud)"]
         chunk["ChunkedProcessor<br/>(Map-Reduce)"]
     end
 
-    subgraph Skills["Skills Layer (29 built-in)"]
+    subgraph Skills["Skills Layer (31 built-in)"]
         rca["RCA"]
         sh["Service Health<br/>(4-agent pipeline)"]
         anomaly["Anomaly Detection"]
-        migration["Code Migration"]
+        migration["ETL Migration"]
+        code_mig["Code Migration<br/>(Python→Go, etc.)"]
+        greenfield["Greenfield<br/>(6-stage scaffold)"]
         others["... 25 more"]
     end
 
     subgraph Tools["Tools Layer"]
-        file_tools["File Tools<br/>read, write, edit,<br/>list, search"]
+        file_tools["File Tools<br/>read, write, edit,<br/>list, search,<br/>verify_completeness"]
         shell_tools["Shell Tools<br/>run_command"]
         gke_tools["GKE Tools<br/>kubectl, diagnostics,<br/>discovery, mesh,<br/>mutations, security"]
         gcloud["GCloud Tools<br/>Cloud Logging,<br/>Cloud Monitoring"]
@@ -51,6 +54,7 @@ graph TB
         cost["CostTracker<br/>(per-session)"]
         telemetry["TelemetryCollector<br/>(SQLite, buffered)"]
         cache["ResponseCache<br/>(LRU + TTL)"]
+        prompt_def["PromptDefense<br/>wrap_untrusted_content()"]
         lang["Language Detection<br/>(9 languages)"]
     end
 

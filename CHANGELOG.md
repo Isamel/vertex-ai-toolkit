@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-03-26
+
+### Added
+- 3-agent CodingPipeline (Planner → Implementer → Verifier) for complex coding tasks — activate with `--pipeline` / `-p` flag on `vaig ask --code`
+- GreenfieldSkill with 6-stage pipeline for new project scaffolding from scratch (`skills/greenfield/`)
+- CodeMigrationSkill with 5-phase state machine (Analyze → Plan → Transform → Validate → Report) for language-to-language code migration, e.g., Python → Go (`skills/code_migration/`) — distinct from the ETL `migration` skill (Pentaho → AWS Glue)
+- Python-to-Go idiom mappings: 12 idiom translations + 17 dependency mappings (YAML-driven, `skills/code_migration/idioms/python_to_go.yaml`)
+- GKE Autopilot workload cost estimation with per-container breakdown (#105)
+- Namespace-level cost summaries with waste/efficiency metrics (#105)
+- Usage metrics integration via Cloud Monitoring API for cost estimation (#105)
+- 32 GCP regions in Autopilot pricing table (#105)
+- `verify_completeness` file tool with regex pattern validation for coding agent workflows (#107)
+- Chain-of-thought enforcement in coding agent system prompts for more reliable output (#108)
+- XML context boundaries (`<DATA>` delimiters) via `wrap_untrusted_content()` for prompt injection defense (#109)
+- SPEC phase (Phase 0) in coding workflow for specification-first development (#110)
+
+### Changed
+- Split monolithic `prompts.py` into 9-file `prompts/` package in `service_health` skill for improved maintainability (#111)
+- Enhanced prompt defense with `wrap_untrusted_content()` integration in CodingAgent (#109)
+- Anti-hallucination rules now enforced in coding agent system prompts (#108)
+
 ## [0.8.0] - 2026-03-18
 
 ### Added
@@ -160,6 +181,7 @@ SRE workflows.
 - Extracted shared test fixtures into `conftest.py`
 - Applied 12 code quality improvements from audit
 
+[0.9.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.9.0
 [0.7.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.6.0
 [0.1.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.1.0

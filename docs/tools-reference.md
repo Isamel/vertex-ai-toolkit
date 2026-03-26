@@ -111,6 +111,24 @@ search_files(query="def authenticate", pattern="*.py")
 search_files(query="TODO", path="src")
 ```
 
+### `verify_completeness`
+
+Verify that one or more files exist, are non-empty, and optionally match a set of regex patterns. Useful for the Verifier agent in the CodingPipeline to confirm implementation completeness before approving a result.
+
+Files larger than `_MAX_FILE_SIZE` (1 MB) are skipped with a warning rather than causing a hard failure.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `paths` | array of strings | Yes | Relative paths from workspace root to verify |
+| `patterns` | array of strings | No | Regex patterns that must match somewhere in the file content |
+
+```
+verify_completeness(paths=["src/auth.py", "tests/test_auth.py"])
+verify_completeness(paths=["src/server.go"], patterns=["func main\\(", "func NewServer\\("])
+```
+
+Returns a `ToolResult` with `success=True` if all files exist, are non-empty, and all patterns match. On failure, `output` contains a detailed per-file report of what failed.
+
 ## Shell Tool
 
 ### `run_command`
