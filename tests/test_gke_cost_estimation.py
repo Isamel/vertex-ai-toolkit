@@ -537,9 +537,9 @@ class TestMultiRegionPricingTable:
     """Spot-check that major regions exist and have sensible rates."""
 
     def test_total_region_count(self) -> None:
-        """We should have at least 30 regions in the table."""
-        assert len(AUTOPILOT_PRICING) >= 30, (
-            f"Expected >= 30 regions, got {len(AUTOPILOT_PRICING)}"
+        """We should have at least 32 regions in the table."""
+        assert len(AUTOPILOT_PRICING) >= 32, (
+            f"Expected >= 32 regions, got {len(AUTOPILOT_PRICING)}"
         )
 
     # ── North America spot-checks ─────────────────────────────
@@ -574,29 +574,17 @@ class TestMultiRegionPricingTable:
         assert "europe-west2" in AUTOPILOT_PRICING
         assert AUTOPILOT_PRICING["europe-west2"].cpu_per_vcpu_hour > 0
 
-    def test_europe_west3_frankfurt_exists(self) -> None:
-        assert "europe-west3" in AUTOPILOT_PRICING
-
-    def test_europe_west4_netherlands_exists(self) -> None:
-        assert "europe-west4" in AUTOPILOT_PRICING
-
     def test_europe_west6_zurich_is_priciest_europe(self) -> None:
         """Zurich carries a Swiss premium — should be the most expensive EU region."""
         zurich = AUTOPILOT_PRICING["europe-west6"]
         other_eu = [
             AUTOPILOT_PRICING[r]
-            for r in ("europe-west1", "europe-west2", "europe-west3", "europe-west4", "europe-west9")
+            for r in ("europe-west1", "europe-west2", "europe-west3", "europe-west4", "europe-west9", "europe-north1")
         ]
         for other in other_eu:
             assert zurich.cpu_per_vcpu_hour >= other.cpu_per_vcpu_hour, (
                 "Zurich should have >= CPU price vs other EU regions"
             )
-
-    def test_europe_west9_paris_exists(self) -> None:
-        assert "europe-west9" in AUTOPILOT_PRICING
-
-    def test_europe_north1_finland_exists(self) -> None:
-        assert "europe-north1" in AUTOPILOT_PRICING
 
     # ── Asia-Pacific spot-checks ──────────────────────────────
 
@@ -609,33 +597,6 @@ class TestMultiRegionPricingTable:
         assert "asia-east1" in AUTOPILOT_PRICING
         assert AUTOPILOT_PRICING["asia-east1"].cpu_per_vcpu_hour > 0
 
-    def test_asia_east2_hong_kong_exists(self) -> None:
-        assert "asia-east2" in AUTOPILOT_PRICING
-
-    def test_asia_northeast2_osaka_exists(self) -> None:
-        assert "asia-northeast2" in AUTOPILOT_PRICING
-
-    def test_asia_northeast3_seoul_exists(self) -> None:
-        assert "asia-northeast3" in AUTOPILOT_PRICING
-
-    def test_asia_south1_mumbai_exists(self) -> None:
-        assert "asia-south1" in AUTOPILOT_PRICING
-
-    def test_asia_south2_delhi_exists(self) -> None:
-        assert "asia-south2" in AUTOPILOT_PRICING
-
-    def test_asia_southeast1_singapore_exists(self) -> None:
-        assert "asia-southeast1" in AUTOPILOT_PRICING
-
-    def test_asia_southeast2_jakarta_exists(self) -> None:
-        assert "asia-southeast2" in AUTOPILOT_PRICING
-
-    def test_australia_southeast1_sydney_exists(self) -> None:
-        assert "australia-southeast1" in AUTOPILOT_PRICING
-
-    def test_australia_southeast2_melbourne_exists(self) -> None:
-        assert "australia-southeast2" in AUTOPILOT_PRICING
-
     # ── South America spot-checks ─────────────────────────────
 
     def test_southamerica_east1_sao_paulo_exists(self) -> None:
@@ -647,38 +608,57 @@ class TestMultiRegionPricingTable:
         assert ratio >= 1.30, f"São Paulo should be >= 30% more than Iowa, got {ratio:.2f}x"
         assert ratio <= 1.60, f"São Paulo ratio seems too high: {ratio:.2f}x"
 
-    def test_southamerica_west1_santiago_exists(self) -> None:
-        assert "southamerica-west1" in AUTOPILOT_PRICING
-
     # ── Middle East spot-checks ───────────────────────────────
 
     def test_me_west1_tel_aviv_exists(self) -> None:
         assert "me-west1" in AUTOPILOT_PRICING
         assert AUTOPILOT_PRICING["me-west1"].cpu_per_vcpu_hour > 0
 
-    def test_me_central1_doha_exists(self) -> None:
-        assert "me-central1" in AUTOPILOT_PRICING
+    # ── Parametrized existence checks (simple membership) ─────
 
-    def test_me_central2_dammam_exists(self) -> None:
-        assert "me-central2" in AUTOPILOT_PRICING
+    @pytest.mark.parametrize("region", [
+        # North America
+        "us-west4",
+        "us-south1",
+        # Europe
+        "europe-west3",
+        "europe-west4",
+        "europe-west9",
+        "europe-north1",
+        # Asia-Pacific
+        "asia-east2",
+        "asia-northeast2",
+        "asia-northeast3",
+        "asia-south1",
+        "asia-south2",
+        "asia-southeast1",
+        "asia-southeast2",
+        "australia-southeast1",
+        "australia-southeast2",
+        # South America
+        "southamerica-west1",
+        # Middle East
+        "me-central1",
+        "me-central2",
+    ])
+    def test_region_exists_in_pricing_table(self, region: str) -> None:
+        """All listed regions must have an entry in AUTOPILOT_PRICING."""
+        assert region in AUTOPILOT_PRICING, (
+            f"Region '{region}' not found in AUTOPILOT_PRICING"
+        )
 
     # ── Regional ordering sanity checks ──────────────────────
 
     def test_us_regions_cheaper_than_south_america(self) -> None:
         """All US regions should be cheaper than São Paulo on CPU."""
         sao_paulo_cpu = AUTOPILOT_PRICING["southamerica-east1"].cpu_per_vcpu_hour
-        for us_region in ("us-central1", "us-east1", "us-east4", "us-west1", "us-west2"):
-            us_cpu = AUTOPILOT_PRICING[us_region].cpu_per_vcpu_hour
+        for us_region, pricing in AUTOPILOT_PRICING.items():
+            if not us_region.startswith("us-"):
+                continue
+            us_cpu = pricing.cpu_per_vcpu_hour
             assert us_cpu < sao_paulo_cpu, (
                 f"{us_region} ({us_cpu}) should be cheaper than São Paulo ({sao_paulo_cpu})"
             )
-
-    def test_all_regions_have_positive_rates_extended(self) -> None:
-        """Every region entry must have all three positive rates."""
-        for region, pricing in AUTOPILOT_PRICING.items():
-            assert pricing.cpu_per_vcpu_hour > 0, f"{region}: cpu rate must be > 0"
-            assert pricing.ram_per_gib_hour > 0, f"{region}: ram rate must be > 0"
-            assert pricing.ephemeral_per_gib_hour > 0, f"{region}: ephemeral rate must be > 0"
 
 
 # ── Unknown region graceful degradation ───────────────────────
