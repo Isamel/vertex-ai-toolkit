@@ -318,10 +318,14 @@ class TestDetectArgoRollouts:
         mock_apps_api = MagicMock()
         mock_apps_api.list_namespaced_deployment.return_value.items = []
 
+        mock_custom_api = MagicMock()
+        mock_custom_api.list_namespaced_custom_object.return_value = {"items": []}
+
         with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
              patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
              patch("vaig.tools.gke.argocd._crd_exists_cache", {"rollouts.argoproj.io": False}), \
              patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
+             patch("kubernetes.client.CustomObjectsApi", return_value=mock_custom_api), \
              patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
              patch("kubernetes.config.load_kube_config", return_value=None), \
              patch("kubernetes.config.ConfigException", Exception):
@@ -330,6 +334,7 @@ class TestDetectArgoRollouts:
         mock_apps_api.list_namespaced_deployment.assert_called_once_with(
             namespace="default",
             limit=50,
+            _request_timeout=30,
         )
 
     def test_namespace_cache_hit_avoids_api_calls(self) -> None:
@@ -366,7 +371,11 @@ class TestDetectArgoRollouts:
 
         mock_apps_api = MagicMock()
 
-        def _list_by_namespace(namespace: str, limit: int) -> MagicMock:
+        # CRD query returns empty (no Rollout objects), falling back to annotation scan.
+        mock_custom_api = MagicMock()
+        mock_custom_api.list_namespaced_custom_object.return_value = {"items": []}
+
+        def _list_by_namespace(namespace: str, limit: int, **kwargs: object) -> MagicMock:
             result = MagicMock()
             result.items = [dep_managed] if namespace == "rollouts-ns" else [dep_plain]
             return result
@@ -376,6 +385,7 @@ class TestDetectArgoRollouts:
         with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
              patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
              patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
+             patch("kubernetes.client.CustomObjectsApi", return_value=mock_custom_api), \
              patch("kubernetes.client.AppsV1Api", return_value=mock_apps_api), \
              patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster")), \
              patch("kubernetes.config.load_kube_config", return_value=None), \
@@ -571,6 +581,7 @@ class TestKubectlGetRollout:
             namespace="production",
             plural="rollouts",
             name="payment-svc",
+            _request_timeout=30,
         )
 
     def test_empty_namespace_returns_no_rollouts(self) -> None:
@@ -990,6 +1001,7 @@ class TestRolloutCRDQuery:
             namespace="rollouts-ns",
             plural="rollouts",
             limit=1,
+            _request_timeout=30,
         )
 
     def test_no_rollout_objects_falls_back_to_annotations(self) -> None:
