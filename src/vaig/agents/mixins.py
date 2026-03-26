@@ -97,6 +97,66 @@ class ToolLoopMixin:
     # ── Public loop entry-point ──────────────────────────────
 
     @staticmethod
+    def _synthesize_tool_summary(tools_executed: list[dict[str, Any]]) -> str:
+        """Synthesize a human-readable summary of executed tools.
+
+        Lists each tool name with its primary target argument (the first
+        match among ``path``, ``file``, ``filepath``, ``filename``,
+        ``command``, ``query``, ``url``), counts failures, and returns a
+        single summary line.  Returns an empty string when *tools_executed*
+        is empty so callers can use it as a falsy guard.
+
+        Args:
+            tools_executed: List of tool-execution dicts, each with keys
+                ``name`` (str), ``args`` (dict), and ``error`` (bool).
+
+        Returns:
+            Summary string such as::
+
+                "Completed 3 tool operation(s): edit_file(path='foo.py'), ..."
+
+            or with failures::
+
+                "Completed 3 tool operation(s) with 1 failure(s): edit_file(path='foo.py'), read_file(path='baz.py') [FAILED]"
+
+            Returns ``""`` when *tools_executed* is empty.
+        """
+        if not tools_executed:
+            return ""
+
+        _TARGET_ARG_KEYS = ("path", "file", "filepath", "filename", "command", "query", "url")
+        failure_count = 0
+        parts: list[str] = []
+
+        for t in tools_executed:
+            name = t["name"]
+            args: dict[str, Any] = t.get("args") or {}
+            failed: bool = bool(t.get("error"))
+
+            # Find first matching target arg
+            target_val: str | None = None
+            for key in _TARGET_ARG_KEYS:
+                if key in args:
+                    target_val = str(args[key])
+                    label = f"{name}({key}={target_val!r})"
+                    break
+            else:
+                label = name
+
+            if failed:
+                failure_count += 1
+                label = f"{label} [FAILED]"
+
+            parts.append(label)
+
+        total = len(tools_executed)
+        tool_list = ", ".join(parts)
+
+        if failure_count:
+            return f"Completed {total} tool operation(s) with {failure_count} failure(s): {tool_list}"
+        return f"Completed {total} tool operation(s): {tool_list}"
+
+    @staticmethod
     def _load_cw_thresholds() -> tuple[float, float]:
         """Load context window warn/error thresholds from settings.
 
@@ -251,8 +311,13 @@ class ToolLoopMixin:
                     iteration,
                     len(tools_executed),
                 )
+                final_text = result.text
+                # Synthesize a minimal summary when no text was produced but tools ran.
+                # This ensures callers always have a non-empty content string to display.
+                if not final_text and tools_executed:
+                    final_text = self._synthesize_tool_summary(tools_executed)
                 return ToolLoopResult(
-                    text=result.text,
+                    text=final_text,
                     usage=total_usage,
                     tools_executed=tools_executed,
                     iterations=iteration,
@@ -907,8 +972,13 @@ class ToolLoopMixin:
                     iteration,
                     len(tools_executed),
                 )
+                final_text = result.text
+                # Synthesize a minimal summary when no text was produced but tools ran.
+                # This ensures callers always have a non-empty content string to display.
+                if not final_text and tools_executed:
+                    final_text = self._synthesize_tool_summary(tools_executed)
                 return ToolLoopResult(
-                    text=result.text,
+                    text=final_text,
                     usage=total_usage,
                     tools_executed=tools_executed,
                     iterations=iteration,

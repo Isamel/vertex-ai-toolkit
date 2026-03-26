@@ -82,6 +82,10 @@ def _execute_code_mode(
         console.print()
         if result.content:
             console.print(Markdown(result.content))
+        elif result.success:
+            console.print("[green]Code task completed successfully.[/green]")
+        else:
+            console.print("[yellow]Agent finished with no output.[/yellow]")
         console.print()
 
         if output:
@@ -253,6 +257,10 @@ async def _async_execute_code_mode(
         console.print()
         if result.content:
             console.print(Markdown(result.content))
+        elif result.success:
+            console.print("[green]Code task completed successfully.[/green]")
+        else:
+            console.print("[yellow]Agent finished with no output.[/yellow]")
         console.print()
 
         if output:
