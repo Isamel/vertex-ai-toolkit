@@ -459,10 +459,14 @@ def calculate_workload_cost(
 
     Returns:
         Dict with keys:
-          ``resource_costs``: list of per-resource cost dicts
+          ``resource_costs``: list of per-resource cost dicts (includes ephemeral when provided)
           ``total_request_cost_usd``: float
-          ``total_usage_cost_usd``: float | None
+          ``total_usage_cost_usd``: float | None — derived from tracked dimensions only (CPU +
+            memory). Ephemeral storage costs appear in ``resource_costs`` but are excluded from
+            totals because ephemeral usage is never available from Cloud Monitoring and therefore
+            cannot be validated against request-based costs.
           ``total_waste_usd``: float | None
+          ``partial_metrics``: bool — True when some but not all tracked dimensions have usage data
           ``containers``: list of GKEContainerCost (empty if container_requests is None)
     """
     from vaig.skills.service_health.schema import (  # noqa: WPS433
@@ -926,7 +930,7 @@ def fetch_workload_costs(
 
     # ns_usage_metrics: namespace → {workload_name: WorkloadUsageMetrics}
     ns_usage_metrics: dict[str, dict[str, Any]] = {}
-    monitoring_status: str | None = None  # None = not checked yet; "ok" = metrics fetched; str = issue
+    monitoring_status: str | None = None  # None = not explicitly checked / status not set; "ok" = metrics fetched; str = issue
     if monitoring_available:
         for ns, workload_pod_names in ns_workload_pod_names.items():
             try:

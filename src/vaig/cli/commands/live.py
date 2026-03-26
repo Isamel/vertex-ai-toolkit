@@ -1072,24 +1072,14 @@ def _inject_report_metadata(
         try:
             from vaig.tools.gke.cost_estimation import fetch_workload_costs  # noqa: WPS433
 
-            # Determine namespace filter:
-            # - explicit cost_namespaces=[] → analyse all non-system namespaces (--all-namespaces)
-            # - explicit cost_namespaces=[...] → use that list
-            # - cost_namespaces is None AND default_namespace is set → filter to default_namespace
-            # - cost_namespaces is None AND no default_namespace → analyse all (legacy behaviour)
-            default_ns = getattr(gke_config, "default_namespace", None)
-            if cost_namespaces is not None and not cost_namespaces:
-                # Explicitly empty list → all-namespaces mode
-                effective_namespaces: list[str] | None = None
-            elif cost_namespaces:
-                # Explicit list of namespaces
-                effective_namespaces = cost_namespaces
-            elif default_ns:
-                # Fall back to the cluster's default namespace
-                effective_namespaces = [default_ns]
+            if cost_namespaces is None:
+                # Not using --all-namespaces or an explicit list, so fall back to the default namespace from config.
+                default_ns = getattr(gke_config, "default_namespace", None)
+                effective_namespaces: list[str] | None = [default_ns] if default_ns else None
             else:
-                # No filter — analyse everything
-                effective_namespaces = None
+                # An empty list from --all-namespaces means "all namespaces", which is represented by `None`.
+                # A non-empty list is an explicit filter.
+                effective_namespaces = cost_namespaces or None
 
             metadata.gke_cost = fetch_workload_costs(gke_config, namespaces=effective_namespaces)
         except Exception as _gke_cost_exc:  # noqa: BLE001

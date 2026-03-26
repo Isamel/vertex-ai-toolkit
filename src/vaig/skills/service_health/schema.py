@@ -597,11 +597,10 @@ class GKECostReport(BaseModel):
         default=None,
         description=(
             "Status of the Cloud Monitoring usage query. "
-            "None means monitoring was not attempted (e.g. monitoring module unavailable via ImportError). "
+            "None means monitoring was not explicitly checked or status was not set. "
             "'ok' means metrics were successfully fetched. "
-            "'no_data: ...' means the query returned empty results. "
-            "Any other non-None string is an error description, e.g. "
-            "'Monitoring query failed for ns=default: PermissionDenied: ...'"
+            "'no_data' means monitoring was queried but returned empty results. "
+            "Other string values indicate errors, e.g. 'PermissionDenied: ...'"
         ),
     )
     workloads_with_full_metrics: int = Field(
