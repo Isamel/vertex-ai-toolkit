@@ -6,8 +6,8 @@ and pod-name prefix. Designed for the service-health pipeline: produces a
 concise LLM-friendly summary table with trend indicators.
 
 Also exposes :func:`get_workload_usage_metrics` which returns structured
-numeric metrics (avg CPU vCores, avg memory GiB) keyed by namespace and
-pod-name prefix, for consumption by the cost estimation pipeline.
+numeric metrics (avg CPU vCores, avg memory GiB) keyed by workload_name,
+for consumption by the cost estimation pipeline.
 """
 
 from __future__ import annotations
@@ -653,7 +653,8 @@ def get_workload_usage_metrics(
         if not values:
             continue
 
-        # ALIGN_RATE gives cores/s — the value IS already in cores (not cores/s after integration)
+        # ALIGN_RATE on a cumulative counter (core_usage_time in core-seconds) yields
+        # the instantaneous rate in cores — so each aligned point is already in vCPU cores.
         avg_cores = sum(values) / len(values)
         cpu_by_pod_container[(pod_name, container_name)] = avg_cores
 
@@ -694,7 +695,9 @@ def get_workload_usage_metrics(
     # Collect all (pod, container) keys observed
     all_keys: set[tuple[str, str]] = set(cpu_by_pod_container.keys()) | set(mem_by_pod_container.keys())
 
-    # Group by workload, averaging across pods within the same workload+container
+    # Group by workload, summing across pods within the same workload+container.
+    # Requests are already summed across pods (total capacity), so usage must
+    # also be summed across pods to compare like-for-like and avoid inflating waste.
     # Structure: workload_name → container_name → list of (cpu, memory) per pod
     wl_container_cpu: dict[str, dict[str, list[float]]] = {}
     wl_container_mem: dict[str, dict[str, list[float]]] = {}
@@ -729,13 +732,17 @@ def get_workload_usage_metrics(
             cpu_values = wl_container_cpu.get(workload_name, {}).get(c_name, [])
             mem_values = wl_container_mem.get(workload_name, {}).get(c_name, [])
 
-            avg_cpu = sum(cpu_values) / len(cpu_values) if cpu_values else 0.0
-            avg_mem = sum(mem_values) / len(mem_values) if mem_values else 0.0
+            if not cpu_values or not mem_values:
+                continue
+
+            # Sum per-pod values so total usage matches summed requests across replicas
+            total_cpu = sum(cpu_values)
+            total_mem = sum(mem_values)
 
             containers[c_name] = ContainerUsageMetrics(
                 container_name=c_name,
-                avg_cpu_cores=avg_cpu,
-                avg_memory_gib=avg_mem,
+                avg_cpu_cores=total_cpu,
+                avg_memory_gib=total_mem,
             )
 
         result[workload_name] = WorkloadUsageMetrics(

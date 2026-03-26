@@ -10,8 +10,9 @@ v2 enhancements:
 - Aggregates per-namespace summaries into ``GKECostReport.namespace_summaries``.
 
 When Cloud Monitoring is unavailable, v1 behavior is preserved:
-``total_usage_cost_usd``, ``total_waste_usd`` and per-container fields will be
-``None`` / ``[]``, and the UI will display "N/A".
+``total_usage_cost_usd``, ``total_waste_usd`` and per-container usage/waste
+fields will be ``None``, and the UI will display "N/A". Containers are still
+reported with their request costs derived from K8s resource specs.
 
 Cost model:
     monthly_cost = resource_quantity * hourly_rate_per_unit * 730 hours/month
@@ -520,10 +521,12 @@ def calculate_workload_cost(
             c_cpu_usage: float | None = c_usage.avg_cpu_cores if c_usage is not None else None
             c_mem_usage: float | None = c_usage.avg_memory_gib if c_usage is not None else None
 
-            c_specs: list[tuple[str, float, float | None, float]] = [
-                ("cpu", c_cpu, c_cpu_usage, pricing.cpu_per_vcpu_hour),
-                ("memory", c_mem, c_mem_usage, pricing.ram_per_gib_hour),
-                ("ephemeral", c_eph, None, pricing.ephemeral_per_gib_hour),
+            # Ephemeral usage is not available from Cloud Monitoring; it is excluded from
+            # the usage-availability check so that CPU+memory usage can still produce a total.
+            c_specs: list[tuple[str, float, float | None, float, bool]] = [
+                ("cpu",      c_cpu, c_cpu_usage, pricing.cpu_per_vcpu_hour,      True),
+                ("memory",   c_mem, c_mem_usage, pricing.ram_per_gib_hour,       True),
+                ("ephemeral", c_eph, None,        pricing.ephemeral_per_gib_hour, False),
             ]
 
             c_resource_costs: list[GKEResourceCost] = []
@@ -531,19 +534,21 @@ def calculate_workload_cost(
             c_total_usage = 0.0
             c_all_usage_available = True
 
-            for c_res_type, c_req_qty, c_use_qty, c_rate in c_specs:
+            for c_res_type, c_req_qty, c_use_qty, c_rate, c_tracked in c_specs:
                 c_req_cost = calculate_resource_cost(c_req_qty, c_rate)
                 c_total_request += c_req_cost
 
                 if c_use_qty is not None:
                     c_use_val: float = calculate_resource_cost(c_use_qty, c_rate)
-                    c_total_usage += c_use_val
+                    if c_tracked:
+                        c_total_usage += c_use_val
                     c_use_cost: float | None = c_use_val
                     c_waste: float | None = c_req_cost - c_use_val
                 else:
                     c_use_cost = None
                     c_waste = None
-                    c_all_usage_available = False
+                    if c_tracked:
+                        c_all_usage_available = False
 
                 c_resource_costs.append(
                     GKEResourceCost(

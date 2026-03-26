@@ -918,9 +918,9 @@ class TestCalculateWorkloadCostV2Containers:
     def test_container_with_usage_gets_per_resource_usage_populated(self) -> None:
         """Per-resource usage_cost_usd fields must be populated when usage data is available.
 
-        Note: total_usage_cost_usd stays None for containers because ephemeral usage
-        is never available from Cloud Monitoring — only CPU and memory are queried.
-        The per-resource entries for cpu and memory ARE populated.
+        Ephemeral usage is never available from Cloud Monitoring — only CPU and memory
+        are queried. However, the container total is now computed from CPU+memory when
+        both are present; ephemeral is excluded from the availability check.
         """
         from vaig.tools.gke.monitoring import ContainerUsageMetrics
 
@@ -948,8 +948,10 @@ class TestCalculateWorkloadCostV2Containers:
         # Waste is also per-resource
         assert by_type["cpu"].waste_cost_usd is not None
         assert by_type["memory"].waste_cost_usd is not None
-        # But total_usage_cost_usd is None because ephemeral usage is not available
-        assert ct.total_usage_cost_usd is None
+        # total_usage_cost_usd is now computed from CPU+memory (ephemeral excluded from check)
+        assert ct.total_usage_cost_usd is not None
+        assert ct.total_usage_cost_usd > 0
+        assert ct.total_waste_usd is not None
 
     def test_container_without_usage_has_none_usage_and_waste(self) -> None:
         container_requests = {"app": (1.0, 1.0, 0.0)}
