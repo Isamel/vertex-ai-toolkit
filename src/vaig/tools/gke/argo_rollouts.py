@@ -460,6 +460,88 @@ def _format_analysistemplate(template: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _format_cluster_analysis_template(template: dict[str, Any]) -> str:
+    """Format a ClusterAnalysisTemplate CRD dict into a human-readable string.
+
+    ClusterAnalysisTemplate is cluster-scoped (no namespace field).
+
+    Args:
+        template: Raw CustomObjectsApi response for a ClusterAnalysisTemplate resource.
+
+    Returns:
+        Multi-line string with key fields extracted safely.
+    """
+    meta = template.get("metadata", {})
+    spec = template.get("spec", {})
+
+    name = meta.get("name", "<unknown>")
+
+    metrics = spec.get("metrics", [])
+    metrics = metrics if isinstance(metrics, list) else []
+    metric_lines = []
+    for metric in metrics:
+        metric_name = metric.get("name", "?")
+        provider = next(iter(metric.get("provider", {})), "unknown")
+        metric_lines.append(f"    {metric_name} (provider: {provider})")
+
+    lines = [
+        f"ClusterAnalysisTemplate: {name}",
+        "  Scope:     cluster",
+        f"  Metrics:   {len(metrics)} defined",
+    ]
+    if metric_lines:
+        lines.extend(metric_lines)
+    return "\n".join(lines)
+
+
+def _format_experiment(experiment: dict[str, Any]) -> str:
+    """Format an Experiment CRD dict into a human-readable string.
+
+    Args:
+        experiment: Raw CustomObjectsApi response for an Argo Experiment resource.
+
+    Returns:
+        Multi-line string with key fields extracted safely.
+    """
+    meta = experiment.get("metadata", {})
+    spec = experiment.get("spec", {})
+    status = experiment.get("status", {})
+
+    name = meta.get("name", "<unknown>")
+    namespace = meta.get("namespace", "<unknown>")
+    phase = status.get("phase", "Unknown")
+    message = status.get("message", "")
+
+    templates = spec.get("templates", [])
+    templates = templates if isinstance(templates, list) else []
+    template_lines = []
+    for tmpl in templates:
+        tmpl_name = tmpl.get("name", "?")
+        replicas = tmpl.get("replicas", "?")
+        template_lines.append(f"    {tmpl_name} (replicas: {replicas})")
+
+    analyses = spec.get("analyses", [])
+    analyses = analyses if isinstance(analyses, list) else []
+    analysis_lines = []
+    for analysis in analyses:
+        analysis_name = analysis.get("name", "?")
+        template_name = analysis.get("templateName", "?")
+        analysis_lines.append(f"    {analysis_name} (template: {template_name})")
+
+    lines = [
+        f"Experiment: {name}",
+        f"  Namespace: {namespace}",
+        f"  Phase:     {phase}" + (f" — {message}" if message else ""),
+        f"  Templates: {len(templates)} defined",
+    ]
+    if template_lines:
+        lines.extend(template_lines)
+    if analyses:
+        lines.append(f"  Analyses:  {len(analyses)} defined")
+        lines.extend(analysis_lines)
+    return "\n".join(lines)
+
+
 # ── Tools ─────────────────────────────────────────────────────
 
 
@@ -701,3 +783,152 @@ def kubectl_get_analysistemplate(namespace: str = "", name: str = "") -> ToolRes
     except Exception as exc:  # noqa: BLE001
         logger.warning("kubectl_get_analysistemplate unexpected error: %s", exc)
         return ToolResult(output=f"kubectl_get_analysistemplate unexpected error: {exc}", error=True)
+
+
+def kubectl_get_cluster_analysis_template(name: str = "") -> ToolResult:
+    """List or get Argo Rollouts ClusterAnalysisTemplate resources via CustomObjectsApi.
+
+    ClusterAnalysisTemplate is cluster-scoped (no namespace parameter).
+
+    Args:
+        name: ClusterAnalysisTemplate name.  When provided, fetches a single resource;
+            otherwise lists all ClusterAnalysisTemplates cluster-wide.
+
+    Returns:
+        :class:`~vaig.tools.base.ToolResult` with formatted ClusterAnalysisTemplate output,
+        or an error result on API failure.
+    """
+    if not _clients._K8S_AVAILABLE:
+        return _clients._k8s_unavailable()
+
+    custom_api = _get_custom_objects_api()
+    if custom_api is None:
+        return ToolResult(
+            output="kubectl_get_cluster_analysis_template: cannot connect to cluster — kubernetes unconfigured",
+            error=True,
+        )
+
+    try:
+        if name:
+            resource = custom_api.get_cluster_custom_object(
+                group=_ARGO_ROLLOUTS_GROUP,
+                version=_ARGO_ROLLOUTS_VERSION,
+                plural="clusteranalysistemplates",
+                name=name,
+            )
+            return ToolResult(output=_format_cluster_analysis_template(resource))
+
+        result = custom_api.list_cluster_custom_object(
+            group=_ARGO_ROLLOUTS_GROUP,
+            version=_ARGO_ROLLOUTS_VERSION,
+            plural="clusteranalysistemplates",
+        )
+
+        items = result.get("items", [])
+        if not items:
+            return ToolResult(output="No ClusterAnalysisTemplates found.")
+
+        formatted = [_format_cluster_analysis_template(item) for item in items]
+        return ToolResult(output="\n\n".join(formatted))
+
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            if name:
+                return ToolResult(
+                    output=f"ClusterAnalysisTemplate '{name}' not found.", error=False
+                )
+            return ToolResult(output="No ClusterAnalysisTemplates found.", error=False)
+        if exc.status == 403:
+            return ToolResult(
+                output=(
+                    "RBAC: permission denied listing ClusterAnalysisTemplates — "
+                    "ensure the service account has 'get/list' on "
+                    "apiGroups: [\"argoproj.io\"], resources: [\"clusteranalysistemplates\"]."
+                ),
+                error=True,
+            )
+        return ToolResult(output=f"kubectl_get_cluster_analysis_template error: {exc}", error=True)
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("kubectl_get_cluster_analysis_template unexpected error: %s", exc)
+        return ToolResult(output=f"kubectl_get_cluster_analysis_template unexpected error: {exc}", error=True)
+
+
+def kubectl_get_experiment(namespace: str = "", name: str = "") -> ToolResult:
+    """List or get Argo Rollouts Experiment resources via CustomObjectsApi.
+
+    Args:
+        namespace: Kubernetes namespace.  Empty string queries all namespaces.
+        name: Experiment name.  When provided, fetches a single resource;
+            otherwise lists all Experiments in the namespace.
+
+    Returns:
+        :class:`~vaig.tools.base.ToolResult` with formatted Experiment output,
+        or an error result on API failure.
+    """
+    if not _clients._K8S_AVAILABLE:
+        return _clients._k8s_unavailable()
+
+    custom_api = _get_custom_objects_api()
+    if custom_api is None:
+        return ToolResult(
+            output="kubectl_get_experiment: cannot connect to cluster — kubernetes unconfigured",
+            error=True,
+        )
+
+    try:
+        if name:
+            ns = namespace or "default"
+            resource = custom_api.get_namespaced_custom_object(
+                group=_ARGO_ROLLOUTS_GROUP,
+                version=_ARGO_ROLLOUTS_VERSION,
+                namespace=ns,
+                plural="experiments",
+                name=name,
+            )
+            return ToolResult(output=_format_experiment(resource))
+
+        if namespace:
+            result = custom_api.list_namespaced_custom_object(
+                group=_ARGO_ROLLOUTS_GROUP,
+                version=_ARGO_ROLLOUTS_VERSION,
+                namespace=namespace,
+                plural="experiments",
+            )
+        else:
+            result = custom_api.list_cluster_custom_object(
+                group=_ARGO_ROLLOUTS_GROUP,
+                version=_ARGO_ROLLOUTS_VERSION,
+                plural="experiments",
+            )
+
+        items = result.get("items", [])
+        if not items:
+            scope = f"namespace '{namespace}'" if namespace else "cluster"
+            return ToolResult(output=f"No Experiments found in {scope}.")
+
+        formatted = [_format_experiment(item) for item in items]
+        return ToolResult(output="\n\n".join(formatted))
+
+    except k8s_exceptions.ApiException as exc:
+        if exc.status == 404:
+            if name:
+                ns = namespace or "default"
+                return ToolResult(
+                    output=f"Experiment '{name}' not found in namespace '{ns}'.", error=False
+                )
+            return ToolResult(output="No Experiments found.", error=False)
+        if exc.status == 403:
+            return ToolResult(
+                output=(
+                    "RBAC: permission denied listing Experiments — "
+                    "ensure the service account has 'get/list' on "
+                    "apiGroups: [\"argoproj.io\"], resources: [\"experiments\"]."
+                ),
+                error=True,
+            )
+        return ToolResult(output=f"kubectl_get_experiment error: {exc}", error=True)
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("kubectl_get_experiment unexpected error: %s", exc)
+        return ToolResult(output=f"kubectl_get_experiment unexpected error: {exc}", error=True)

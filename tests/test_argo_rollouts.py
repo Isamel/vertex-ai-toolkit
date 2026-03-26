@@ -1127,3 +1127,552 @@ class TestRetryLogicRollouts:
         assert result is True
         assert mock_apps_api.list_namespaced_deployment.call_count == 2
         mock_sleep.assert_called_once()
+
+
+# ── Test data helpers (new CRDs) ─────────────────────────────
+
+
+def _make_cluster_analysis_template(
+    name: str = "global-success-rate",
+    metrics: list | None = None,
+) -> dict:
+    """Create a realistic ClusterAnalysisTemplate CRD dict (cluster-scoped)."""
+    if metrics is None:
+        metrics = [
+            {
+                "name": "success-rate",
+                "provider": {
+                    "prometheus": {
+                        "address": "http://prometheus:9090",
+                        "query": "sum(rate(http_requests_total{status!~'5..'}[5m]))",
+                    }
+                },
+            }
+        ]
+    return {
+        "apiVersion": "argoproj.io/v1alpha1",
+        "kind": "ClusterAnalysisTemplate",
+        "metadata": {
+            "name": name,
+        },
+        "spec": {
+            "metrics": metrics,
+        },
+    }
+
+
+def _make_experiment(
+    name: str = "my-experiment",
+    namespace: str = "production",
+    phase: str = "Running",
+    message: str = "",
+    templates: list | None = None,
+) -> dict:
+    """Create a realistic Experiment CRD dict."""
+    if templates is None:
+        templates = [
+            {"name": "baseline", "replicas": 1},
+            {"name": "canary", "replicas": 1},
+        ]
+    return {
+        "apiVersion": "argoproj.io/v1alpha1",
+        "kind": "Experiment",
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+        },
+        "spec": {
+            "templates": templates,
+        },
+        "status": {
+            "phase": phase,
+            "message": message,
+        },
+    }
+
+
+# ── kubectl_get_cluster_analysis_template ────────────────────
+
+
+class TestKubectlGetClusterAnalysisTemplate:
+    """Tests for kubectl_get_cluster_analysis_template."""
+
+    def test_list_all_templates(self) -> None:
+        """Lists all ClusterAnalysisTemplates cluster-wide."""
+        from vaig.tools.gke.argo_rollouts import kubectl_get_cluster_analysis_template
+
+        mock_api = MagicMock()
+        mock_api.list_cluster_custom_object.return_value = {
+            "items": [
+                _make_cluster_analysis_template(name="global-success-rate"),
+                _make_cluster_analysis_template(name="global-latency"),
+            ]
+        }
+
+        with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
+            result = kubectl_get_cluster_analysis_template()
+
+        assert result.error is False
+        assert "global-success-rate" in result.output
+        assert "global-latency" in result.output
+
+    def test_get_single_template_by_name(self) -> None:
+        """Fetches a single ClusterAnalysisTemplate by name."""
+        from vaig.tools.gke.argo_rollouts import kubectl_get_cluster_analysis_template
+
+        mock_api = MagicMock()
+        mock_api.get_cluster_custom_object.return_value = _make_cluster_analysis_template(
+            name="global-success-rate",
+            metrics=[
+                {
+                    "name": "success-rate",
+                    "provider": {"prometheus": {"query": "rate(http_requests_total[5m])"}},
+                },
+                {
+                    "name": "latency",
+                    "provider": {"datadog": {"query": "avg:trace.web.request.duration{*}"}},
+                },
+            ],
+        )
+
+        with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
+            result = kubectl_get_cluster_analysis_template(name="global-success-rate")
+
+        assert result.error is False
+        assert "global-success-rate" in result.output
+        assert "2 defined" in result.output
+        assert "cluster" in result.output
+
+    def test_empty_list_returns_message(self) -> None:
+        """Returns informational message when no ClusterAnalysisTemplates exist."""
+        from vaig.tools.gke.argo_rollouts import kubectl_get_cluster_analysis_template
+
+        mock_api = MagicMock()
+        mock_api.list_cluster_custom_object.return_value = {"items": []}
+
+        with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
+            result = kubectl_get_cluster_analysis_template()
+
+        assert result.error is False
+        assert "No ClusterAnalysisTemplates found" in result.output
+
+    def test_404_by_name_returns_not_found(self) -> None:
+        """404 on named get returns not-found message without error flag."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argo_rollouts import kubectl_get_cluster_analysis_template
+
+        mock_api = MagicMock()
+        mock_api.get_cluster_custom_object.side_effect = k8s_exc.ApiException(status=404)
+
+        with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
+            result = kubectl_get_cluster_analysis_template(name="does-not-exist")
+
+        assert result.error is False
+        assert "not found" in result.output.lower()
+
+    def test_403_returns_rbac_error(self) -> None:
+        """403 on list returns RBAC guidance with error=True."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argo_rollouts import kubectl_get_cluster_analysis_template
+
+        mock_api = MagicMock()
+        mock_api.list_cluster_custom_object.side_effect = k8s_exc.ApiException(status=403)
+
+        with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
+            result = kubectl_get_cluster_analysis_template()
+
+        assert result.error is True
+        assert "RBAC" in result.output
+        assert "clusteranalysistemplates" in result.output
+
+    def test_k8s_unavailable_returns_error(self) -> None:
+        """Returns error when kubernetes SDK is not available."""
+        from vaig.tools.gke.argo_rollouts import kubectl_get_cluster_analysis_template
+
+        with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", False):
+            result = kubectl_get_cluster_analysis_template()
+
+        assert result.error is True
+
+
+# ── kubectl_get_experiment ───────────────────────────────────
+
+
+class TestKubectlGetExperiment:
+    """Tests for kubectl_get_experiment."""
+
+    def test_list_experiments_in_namespace(self) -> None:
+        """Lists Experiments in a specific namespace."""
+        from vaig.tools.gke.argo_rollouts import kubectl_get_experiment
+
+        mock_api = MagicMock()
+        mock_api.list_namespaced_custom_object.return_value = {
+            "items": [
+                _make_experiment(name="rollout-exp-1"),
+                _make_experiment(name="rollout-exp-2", phase="Successful"),
+            ]
+        }
+
+        with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
+            result = kubectl_get_experiment(namespace="production")
+
+        assert result.error is False
+        assert "rollout-exp-1" in result.output
+        assert "rollout-exp-2" in result.output
+
+    def test_list_experiments_all_namespaces(self) -> None:
+        """Lists Experiments across all namespaces when namespace is empty."""
+        from vaig.tools.gke.argo_rollouts import kubectl_get_experiment
+
+        mock_api = MagicMock()
+        mock_api.list_cluster_custom_object.return_value = {
+            "items": [
+                _make_experiment(name="exp-ns-a", namespace="ns-a"),
+                _make_experiment(name="exp-ns-b", namespace="ns-b"),
+            ]
+        }
+
+        with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
+            result = kubectl_get_experiment()
+
+        assert result.error is False
+        assert "exp-ns-a" in result.output
+        assert "exp-ns-b" in result.output
+        mock_api.list_cluster_custom_object.assert_called_once()
+
+    def test_get_single_experiment_by_name(self) -> None:
+        """Fetches a single Experiment by name."""
+        from vaig.tools.gke.argo_rollouts import kubectl_get_experiment
+
+        mock_api = MagicMock()
+        mock_api.get_namespaced_custom_object.return_value = _make_experiment(
+            name="canary-exp",
+            namespace="production",
+            phase="Running",
+            templates=[
+                {"name": "baseline", "replicas": 2},
+                {"name": "canary", "replicas": 2},
+            ],
+        )
+
+        with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
+            result = kubectl_get_experiment(namespace="production", name="canary-exp")
+
+        assert result.error is False
+        assert "canary-exp" in result.output
+        assert "Running" in result.output
+        assert "baseline" in result.output
+
+    def test_empty_namespace_returns_message(self) -> None:
+        """Returns informational message when no Experiments found."""
+        from vaig.tools.gke.argo_rollouts import kubectl_get_experiment
+
+        mock_api = MagicMock()
+        mock_api.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
+            result = kubectl_get_experiment(namespace="production")
+
+        assert result.error is False
+        assert "No Experiments found" in result.output
+
+    def test_404_by_name_returns_not_found(self) -> None:
+        """404 on named get returns not-found message without error flag."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argo_rollouts import kubectl_get_experiment
+
+        mock_api = MagicMock()
+        mock_api.get_namespaced_custom_object.side_effect = k8s_exc.ApiException(status=404)
+
+        with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
+            result = kubectl_get_experiment(namespace="production", name="ghost-exp")
+
+        assert result.error is False
+        assert "not found" in result.output.lower()
+        assert "ghost-exp" in result.output
+
+    def test_403_returns_rbac_error(self) -> None:
+        """403 on list returns RBAC guidance with error=True."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.tools.gke.argo_rollouts import kubectl_get_experiment
+
+        mock_api = MagicMock()
+        mock_api.list_namespaced_custom_object.side_effect = k8s_exc.ApiException(status=403)
+
+        with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api):
+            result = kubectl_get_experiment(namespace="production")
+
+        assert result.error is True
+        assert "RBAC" in result.output
+        assert "experiments" in result.output
+
+    def test_k8s_unavailable_returns_error(self) -> None:
+        """Returns error when kubernetes SDK is not available."""
+        from vaig.tools.gke.argo_rollouts import kubectl_get_experiment
+
+        with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", False), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", False):
+            result = kubectl_get_experiment()
+
+        assert result.error is True
+
+
+# ── _RESOURCE_API_MAP Argo entries ───────────────────────────
+
+
+class TestResourceApiMapArgoEntries:
+    """Verify all Argo Rollouts entries are present in _RESOURCE_API_MAP."""
+
+    def test_rollout_entries_present(self) -> None:
+        """rollout and rollouts map to custom_argo_rollouts."""
+        from vaig.tools.gke._resources import _RESOURCE_API_MAP
+
+        assert _RESOURCE_API_MAP.get("rollout") == "custom_argo_rollouts"
+        assert _RESOURCE_API_MAP.get("rollouts") == "custom_argo_rollouts"
+
+    def test_analysisrun_entries_present(self) -> None:
+        """analysisrun(s) map to custom_argo_rollouts."""
+        from vaig.tools.gke._resources import _RESOURCE_API_MAP
+
+        assert _RESOURCE_API_MAP.get("analysisrun") == "custom_argo_rollouts"
+        assert _RESOURCE_API_MAP.get("analysisruns") == "custom_argo_rollouts"
+
+    def test_analysistemplate_entries_present(self) -> None:
+        """analysistemplate(s) map to custom_argo_rollouts."""
+        from vaig.tools.gke._resources import _RESOURCE_API_MAP
+
+        assert _RESOURCE_API_MAP.get("analysistemplate") == "custom_argo_rollouts"
+        assert _RESOURCE_API_MAP.get("analysistemplates") == "custom_argo_rollouts"
+
+    def test_clusteranalysistemplate_entries_present(self) -> None:
+        """clusteranalysistemplate(s) map to custom_argo_rollouts_cluster (cluster-scoped)."""
+        from vaig.tools.gke._resources import _RESOURCE_API_MAP
+
+        assert _RESOURCE_API_MAP.get("clusteranalysistemplate") == "custom_argo_rollouts_cluster"
+        assert _RESOURCE_API_MAP.get("clusteranalysistemplates") == "custom_argo_rollouts_cluster"
+
+    def test_experiment_entries_present(self) -> None:
+        """experiment(s) map to custom_argo_rollouts."""
+        from vaig.tools.gke._resources import _RESOURCE_API_MAP
+
+        assert _RESOURCE_API_MAP.get("experiment") == "custom_argo_rollouts"
+        assert _RESOURCE_API_MAP.get("experiments") == "custom_argo_rollouts"
+
+    def test_clusteranalysistemplate_is_cluster_scoped(self) -> None:
+        """ClusterAnalysisTemplate entries are in _CLUSTER_SCOPED_RESOURCES."""
+        from vaig.tools.gke._resources import _CLUSTER_SCOPED_RESOURCES
+
+        assert "clusteranalysistemplate" in _CLUSTER_SCOPED_RESOURCES
+        assert "clusteranalysistemplates" in _CLUSTER_SCOPED_RESOURCES
+
+
+# ── HPA/VPA Rollout scaleTargetRef matching ──────────────────
+
+
+class TestScalingRolloutMatch:
+    """Tests that HPA and VPA scaleTargetRef matching works for Rollout kind."""
+
+    def test_hpa_matches_rollout_kind(self) -> None:
+        """HPA with scaleTargetRef.kind=Rollout is matched to the Rollout workload."""
+        from unittest.mock import MagicMock, patch
+
+        from vaig.tools.gke.scaling import get_scaling_status
+
+        def _make_scaling_gke_config():
+            from vaig.core.config import GKEConfig
+            return GKEConfig(project="test-project", location="us-central1", cluster="test-cluster")
+
+        mock_hpa = MagicMock()
+        mock_hpa.metadata.name = "rollout-hpa"
+        mock_hpa.metadata.namespace = "production"
+        mock_hpa.spec.scale_target_ref.kind = "Rollout"
+        mock_hpa.spec.scale_target_ref.name = "my-rollout"
+        mock_hpa.spec.min_replicas = 2
+        mock_hpa.spec.max_replicas = 10
+        mock_hpa.spec.metrics = []
+        mock_hpa.status.current_replicas = 3
+        mock_hpa.status.desired_replicas = 3
+        mock_hpa.status.conditions = []
+        mock_hpa.status.current_metrics = []
+
+        mock_auto_v2 = MagicMock()
+        mock_auto_v2.list_namespaced_horizontal_pod_autoscaler.return_value = MagicMock(
+            items=[mock_hpa]
+        )
+
+        with patch("vaig.tools.gke.scaling._clients._create_k8s_clients") as mock_clients, \
+             patch("kubernetes.client.AutoscalingV2Api", return_value=mock_auto_v2), \
+             patch("vaig.tools.gke.scaling._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.scaling._K8S_AVAILABLE", True):
+            mock_clients.return_value = (
+                MagicMock(), MagicMock(),
+                MagicMock(**{"list_namespaced_custom_object.return_value": {"items": []}}),
+                MagicMock()
+            )
+            result = get_scaling_status("my-rollout", namespace="production", gke_config=_make_scaling_gke_config())
+
+        assert result.error is not True
+        assert "rollout-hpa" in result.output
+
+    def test_hpa_deployment_kind_still_matches(self) -> None:
+        """HPA with scaleTargetRef.kind=Deployment still matches as before."""
+        from unittest.mock import MagicMock, patch
+
+        from vaig.tools.gke.scaling import get_scaling_status
+
+        def _make_scaling_gke_config():
+            from vaig.core.config import GKEConfig
+            return GKEConfig(project="test-project", location="us-central1", cluster="test-cluster")
+
+        mock_hpa = MagicMock()
+        mock_hpa.metadata.name = "deploy-hpa"
+        mock_hpa.metadata.namespace = "production"
+        mock_hpa.spec.scale_target_ref.kind = "Deployment"
+        mock_hpa.spec.scale_target_ref.name = "my-deploy"
+        mock_hpa.spec.min_replicas = 2
+        mock_hpa.spec.max_replicas = 10
+        mock_hpa.spec.metrics = []
+        mock_hpa.status.current_replicas = 3
+        mock_hpa.status.desired_replicas = 3
+        mock_hpa.status.conditions = []
+        mock_hpa.status.current_metrics = []
+
+        mock_auto_v2 = MagicMock()
+        mock_auto_v2.list_namespaced_horizontal_pod_autoscaler.return_value = MagicMock(
+            items=[mock_hpa]
+        )
+
+        with patch("vaig.tools.gke.scaling._clients._create_k8s_clients") as mock_clients, \
+             patch("kubernetes.client.AutoscalingV2Api", return_value=mock_auto_v2), \
+             patch("vaig.tools.gke.scaling._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.scaling._K8S_AVAILABLE", True):
+            mock_clients.return_value = (
+                MagicMock(), MagicMock(),
+                MagicMock(**{"list_namespaced_custom_object.return_value": {"items": []}}),
+                MagicMock()
+            )
+            result = get_scaling_status("my-deploy", namespace="production", gke_config=_make_scaling_gke_config())
+
+        assert result.error is not True
+        assert "deploy-hpa" in result.output
+
+
+# ── discover_workloads with include_rollouts ─────────────────
+
+
+class TestDiscoverWorkloadsRollouts:
+    """Tests for discover_workloads with include_rollouts parameter."""
+
+    def test_include_rollouts_false_does_not_query_argo(self) -> None:
+        """When include_rollouts=False, no Argo Rollout queries are made."""
+        from vaig.core.config import GKEConfig
+        from vaig.tools.gke.discovery import discover_workloads
+
+        cfg = GKEConfig(project="test-project", location="us-central1", cluster="test-cluster")
+
+        mock_apps = MagicMock()
+        mock_apps.list_namespaced_deployment.return_value.items = []
+        mock_apps.list_namespaced_stateful_set.return_value.items = []
+        mock_apps.list_namespaced_daemon_set.return_value.items = []
+        mock_apps.list_deployment_for_all_namespaces.return_value.items = []
+        mock_apps.list_stateful_set_for_all_namespaces.return_value.items = []
+        mock_apps.list_daemon_set_for_all_namespaces.return_value.items = []
+
+        mock_custom = MagicMock()
+        mock_core = MagicMock()
+
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.discovery._clients._create_k8s_clients") as mock_clients:
+            mock_clients.return_value = (mock_core, mock_apps, mock_custom, MagicMock())
+            result = discover_workloads(gke_config=cfg, include_rollouts=False, force_refresh=True)
+
+        assert result.error is not True
+        # Argo custom objects API should NOT be called for rollouts
+        rollout_calls = [
+            call for call in mock_custom.method_calls
+            if "rollout" in str(call).lower()
+        ]
+        assert len(rollout_calls) == 0
+
+    def test_include_rollouts_true_queries_argo(self) -> None:
+        """When include_rollouts=True, Argo Rollout resources are queried."""
+        from vaig.core.config import GKEConfig
+        from vaig.tools.gke.discovery import discover_workloads
+
+        cfg = GKEConfig(project="test-project", location="us-central1", cluster="test-cluster")
+
+        mock_apps = MagicMock()
+        mock_apps.list_deployment_for_all_namespaces.return_value.items = []
+        mock_apps.list_stateful_set_for_all_namespaces.return_value.items = []
+        mock_apps.list_daemon_set_for_all_namespaces.return_value.items = []
+
+        mock_custom = MagicMock()
+        # Return empty rollouts list
+        mock_custom.list_cluster_custom_object.return_value = {"items": []}
+        mock_core = MagicMock()
+
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.discovery._clients._create_k8s_clients") as mock_clients:
+            mock_clients.return_value = (mock_core, mock_apps, mock_custom, MagicMock())
+            result = discover_workloads(gke_config=cfg, include_rollouts=True, force_refresh=True)
+
+        assert result.error is not True
+
+    def test_rollouts_graceful_degradation_on_crd_error(self) -> None:
+        """When Argo CRDs are not installed, discovery degrades gracefully (no exception)."""
+        from kubernetes.client import exceptions as k8s_exc
+
+        from vaig.core.config import GKEConfig
+        from vaig.tools.gke.discovery import discover_workloads
+
+        cfg = GKEConfig(project="test-project", location="us-central1", cluster="test-cluster")
+
+        mock_apps = MagicMock()
+        mock_apps.list_deployment_for_all_namespaces.return_value.items = []
+        mock_apps.list_stateful_set_for_all_namespaces.return_value.items = []
+        mock_apps.list_daemon_set_for_all_namespaces.return_value.items = []
+
+        mock_custom = MagicMock()
+        # Simulate CRD not installed — 404 on list
+        mock_custom.list_cluster_custom_object.side_effect = k8s_exc.ApiException(status=404)
+        mock_core = MagicMock()
+
+        with patch("vaig.tools.gke.discovery._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.discovery._clients._create_k8s_clients") as mock_clients:
+            mock_clients.return_value = (mock_core, mock_apps, mock_custom, MagicMock())
+            # Should NOT raise — graceful degradation
+            result = discover_workloads(gke_config=cfg, include_rollouts=True, force_refresh=True)
+
+        # Result should be a valid ToolResult (not an exception)
+        assert result is not None
+        assert result.error is not True

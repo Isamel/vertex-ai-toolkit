@@ -146,6 +146,17 @@ _RESOURCE_API_MAP: dict[str, str] = {
     "kustomizations.kustomize.toolkit.fluxcd.io": "custom_flux_kustomize",
     # VPA CRDs
     "verticalpodautoscalers": "custom_vpa",
+    # Argo Rollouts CRDs
+    "rollout": "custom_argo_rollouts",
+    "rollouts": "custom_argo_rollouts",
+    "analysisrun": "custom_argo_rollouts",
+    "analysisruns": "custom_argo_rollouts",
+    "analysistemplate": "custom_argo_rollouts",
+    "analysistemplates": "custom_argo_rollouts",
+    "clusteranalysistemplate": "custom_argo_rollouts_cluster",
+    "clusteranalysistemplates": "custom_argo_rollouts_cluster",
+    "experiment": "custom_argo_rollouts",
+    "experiments": "custom_argo_rollouts",
 }
 
 # Canonical aliases so users can type short names
@@ -234,6 +245,12 @@ _RESOURCE_ALIASES: dict[str, str] = {
     # VPA aliases
     "vpa": "verticalpodautoscalers",
     "verticalpodautoscaler": "verticalpodautoscalers",
+    # Argo Rollouts aliases
+    "ro": "rollouts",
+    "ar": "analysisruns",
+    "at": "analysistemplates",
+    "cat": "clusteranalysistemplates",
+    "exp": "experiments",
 }
 
 # Resource types expanded when ``resource="all"`` is requested.
@@ -290,6 +307,9 @@ _CLUSTER_SCOPED_RESOURCES = frozenset(
         "priorityclasses",
         # Runtime cluster-scoped
         "runtimeclasses",
+        # Argo Rollouts cluster-scoped
+        "clusteranalysistemplate",
+        "clusteranalysistemplates",
     }
 )
 
@@ -340,6 +360,17 @@ _DESCRIBE_SUPPORTED_RESOURCES: frozenset[str] = frozenset(
         "externalsecrets",
         "externalsecret",
         "verticalpodautoscalers",
+        # Argo Rollouts CRDs
+        "rollout",
+        "rollouts",
+        "analysisrun",
+        "analysisruns",
+        "analysistemplate",
+        "analysistemplates",
+        "clusteranalysistemplate",
+        "clusteranalysistemplates",
+        "experiment",
+        "experiments",
     }
 )
 
@@ -657,6 +688,60 @@ def _list_resource(
             if exc.status == 404:
                 return ToolResult(
                     output="VPA CRD not installed in this cluster. Install the Vertical Pod Autoscaler to use this resource.",
+                )
+            raise
+
+    # ── Argo Rollouts namespace-scoped CRDs (custom) ─────────
+    _ARGO_ROLLOUTS_PLURAL_MAP: dict[str, str] = {
+        "rollout": "rollouts",
+        "rollouts": "rollouts",
+        "analysisrun": "analysisruns",
+        "analysisruns": "analysisruns",
+        "analysistemplate": "analysistemplates",
+        "analysistemplates": "analysistemplates",
+        "experiment": "experiments",
+        "experiments": "experiments",
+    }
+    if api_group == "custom_argo_rollouts":
+        plural = _ARGO_ROLLOUTS_PLURAL_MAP.get(resource, resource)
+        try:
+            if namespace in ("", "all", None):
+                raw = custom_api.list_cluster_custom_object(
+                    group="argoproj.io",
+                    version="v1alpha1",
+                    plural=plural,
+                    **kwargs,
+                )
+            else:
+                raw = custom_api.list_namespaced_custom_object(
+                    group="argoproj.io",
+                    version="v1alpha1",
+                    namespace=namespace,
+                    plural=plural,
+                    **kwargs,
+                )
+            return _DictItemList(raw)
+        except k8s_exceptions.ApiException as exc:
+            if exc.status == 404:
+                return ToolResult(
+                    output=f"Argo Rollouts CRD not installed in this cluster (resource: {resource}).",
+                )
+            raise
+
+    # ── Argo Rollouts cluster-scoped CRDs (custom) ───────────
+    if api_group == "custom_argo_rollouts_cluster":
+        try:
+            raw = custom_api.list_cluster_custom_object(
+                group="argoproj.io",
+                version="v1alpha1",
+                plural="clusteranalysistemplates",
+                **kwargs,
+            )
+            return _DictItemList(raw)
+        except k8s_exceptions.ApiException as exc:
+            if exc.status == 404:
+                return ToolResult(
+                    output="Argo Rollouts CRD not installed in this cluster (resource: clusteranalysistemplates).",
                 )
             raise
 

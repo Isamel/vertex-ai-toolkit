@@ -28,6 +28,8 @@ from .argo_rollouts import (
     detect_argo_rollouts,
     kubectl_get_analysisrun,
     kubectl_get_analysistemplate,
+    kubectl_get_cluster_analysis_template,
+    kubectl_get_experiment,
     kubectl_get_rollout,
 )
 from .argocd import (
@@ -739,6 +741,15 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
                 ToolParam(
+                    name="include_rollouts",
+                    type="boolean",
+                    description=(
+                        "Include Argo Rollouts in the discovery (default: false). "
+                        "Gracefully skipped if Argo Rollouts CRDs are not installed."
+                    ),
+                    required=False,
+                ),
+                ToolParam(
                     name="force_refresh",
                     type="boolean",
                     description="Bypass cache and re-scan the cluster (default: false).",
@@ -746,10 +757,11 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ),
             ],
             categories=frozenset({KUBERNETES}),
-            execute=lambda namespace="", include_jobs=False, force_refresh=False,
+            execute=lambda namespace="", include_jobs=False, include_rollouts=False,
+                    force_refresh=False,
                     _cfg=gke_config: discovery.discover_workloads(
                 gke_config=_cfg, namespace=namespace, include_jobs=include_jobs,
-                force_refresh=force_refresh,
+                include_rollouts=include_rollouts, force_refresh=force_refresh,
             ),
         ),
         ToolDef(
@@ -1798,6 +1810,69 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 categories=frozenset({ARGO_ROLLOUTS}),
                 execute=lambda namespace="", name="",
                         _cfg=gke_config: kubectl_get_analysistemplate(
+                    namespace=namespace, name=name,
+                ),
+            ),
+            ToolDef(
+                name="kubectl_get_cluster_analysis_template",
+                description=(
+                    "List or inspect Argo Rollouts ClusterAnalysisTemplate resources "
+                    "(argoproj.io/v1alpha1). "
+                    "ClusterAnalysisTemplates are cluster-scoped (not namespace-bound) and define "
+                    "reusable analysis metrics (Prometheus, Datadog, Web, Job, etc.) that can be "
+                    "referenced by Rollouts across any namespace. "
+                    "Returns template name and the list of defined metrics with their provider types. "
+                    "Use to understand what cluster-wide analysis criteria are available before "
+                    "investigating a failed AnalysisRun. "
+                    "Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="name",
+                        type="string",
+                        description=(
+                            "ClusterAnalysisTemplate name; omit to list all cluster-scoped templates"
+                        ),
+                        required=False,
+                    ),
+                ],
+                categories=frozenset({ARGO_ROLLOUTS}),
+                execute=lambda name="",
+                        _cfg=gke_config: kubectl_get_cluster_analysis_template(
+                    name=name,
+                ),
+            ),
+            ToolDef(
+                name="kubectl_get_experiment",
+                description=(
+                    "List or inspect Argo Rollouts Experiment resources "
+                    "(argoproj.io/v1alpha1). "
+                    "Experiments run multiple ReplicaSets simultaneously for A/B or canary testing, "
+                    "each with a defined template and replica count. "
+                    "Returns experiment name, namespace, phase (Running/Successful/Failed), "
+                    "and the list of templates with their replica counts. "
+                    "Use to debug active or failed canary experiments associated with a Rollout. "
+                    "Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="namespace",
+                        type="string",
+                        description="Kubernetes namespace to query (default: all namespaces)",
+                        required=False,
+                    ),
+                    ToolParam(
+                        name="name",
+                        type="string",
+                        description=(
+                            "Experiment name; omit to list all experiments in the namespace"
+                        ),
+                        required=False,
+                    ),
+                ],
+                categories=frozenset({ARGO_ROLLOUTS}),
+                execute=lambda namespace="", name="",
+                        _cfg=gke_config: kubectl_get_experiment(
                     namespace=namespace, name=name,
                 ),
             ),

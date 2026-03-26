@@ -344,7 +344,7 @@ def get_scaling_status(
         for hpa in hpa_list.items or []:
             spec = hpa.spec
             scale_target = spec.scale_target_ref if spec else None
-            if scale_target and scale_target.kind.lower() == "deployment" and scale_target.name == name:
+            if scale_target and scale_target.kind.lower() in ("deployment", "rollout") and scale_target.name == name:
                 hpa_obj = hpa
                 break
     except k8s_exceptions.ApiException as exc:
@@ -374,7 +374,7 @@ def get_scaling_status(
         for vpa in vpa_list.get("items", []) or []:
             spec = vpa.get("spec", {})
             target_ref = spec.get("targetRef", {})
-            if target_ref.get("kind", "").lower() == "deployment" and target_ref.get("name") == name:
+            if target_ref.get("kind", "").lower() in ("deployment", "rollout") and target_ref.get("name") == name:
                 vpa_obj = vpa
                 break
     except k8s_exceptions.ApiException as exc:
@@ -393,7 +393,7 @@ def get_scaling_status(
 
     # ── Build report ──────────────────────────────────────────
     lines: list[str] = []
-    lines.append(f"## Scaling Status: deployment/{name} (namespace: {ns})")
+    lines.append(f"## Scaling Status: {name} (namespace: {ns})")
 
     # Active strategy summary
     lines.append("\n### Active Scaling Strategy")
