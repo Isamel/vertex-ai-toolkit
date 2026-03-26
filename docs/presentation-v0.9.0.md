@@ -134,7 +134,7 @@ Three layers: CLI, orchestration, execution. The skill orchestrator is the key �
 **Tool surface:** 28 tool modules — diagnostics, discovery, scaling, security, mutations, cost estimation, mesh introspection
 
 <!-- Speaker notes:
-vaig is not a toy. It connects to the real GCP control plane via the same APIs your SREs use manually. The difference is that an AI agent is driving, structured, and repeatable.
+vaig is not a toy. It connects to the real GCP control plane via the same APIs your SREs use manually. The difference is that the process is AI-driven, structured, and repeatable.
 -->
 
 ---
@@ -155,7 +155,7 @@ vaig is not a toy. It connects to the real GCP control plane via the same APIs y
 | #106 | Cost | GKE Autopilot workload cost estimation (basic) |
 | #107 | Cost | 32-region Autopilot pricing table |
 | #108 | Cost | Cost estimation v2 — usage metrics + namespace summaries |
-| #109 | Coding | CoT enforcement, XML prompt defense, SPEC phase, `verify_completeness` |
+| #109 | Coding | CoT enforcement, text-delimited prompt defense, SPEC phase, `verify_completeness` |
 | #110 | Coding | `CodeMigrationSkill` — 6-phase language migration state machine |
 | #111 | Coding | `CodingSkillOrchestrator` (3-agent pipeline) + `GreenfieldSkill` |
 | #112 | Docs | Full documentation sync covering all v0.9.0 changes |
@@ -191,8 +191,8 @@ This is the most immediate ROI story. If your organization runs Autopilot cluste
 
 **Phase 1 — Quality Hardening (#109)**
 - Chain-of-thought (CoT) enforcement in coding agent system prompts
-- XML context boundaries (`<DATA>` delimiters) for prompt injection defense
-- SPEC phase (Phase 0) — specification before implementation
+- Text-delimited boundaries (`DELIMITER_DATA_START`/`DELIMITER_DATA_END`) for prompt injection defense
+- SPEC phase — added as a preliminary specification step before implementation, within Phase 1
 - `verify_completeness` tool — scans output for TODO, FIXME, `pass`, `...`, `NotImplementedError`
 
 **Phase 2 — CodeMigrationSkill (#110)**
@@ -307,7 +307,7 @@ The coding skills are not replacing engineers — they are removing the mechanic
 ## Risk Reduction
 
 **Prompt Injection Defense**
-- `wrap_untrusted_content()` wraps all external data in `<DATA>` XML delimiters
+- `wrap_untrusted_content()` wraps all external data in text-delimited boundaries (`DELIMITER_DATA_START`/`DELIMITER_DATA_END`)
 - Prevents untrusted content (logs, code, user input) from hijacking agent instructions
 
 **Anti-Hallucination**
@@ -378,8 +378,9 @@ vaig ask "Show pod restart counts in production" --output report.md
 
 **Python SDK — Embed in automation scripts**
 ```python
-from vaig.skills.service_health import ServiceHealthSkill
-result = await skill.execute(namespace="payments", cluster="prod-us")
+# Skills are invoked via the CLI or the Skill Orchestrator; there is no standalone execute() API.
+# Use the CLI for scripted integration:
+#   vaig ask "Assess service health in namespace payments" --skill service-health
 ```
 
 **CI/CD pipelines — Automated cost and security review**
@@ -433,7 +434,7 @@ We are not committing to a roadmap here. We are communicating architectural read
 - 8 pull requests merged across 4 capability blocks
 - 26 commits, zero regression (5,938 tests passing)
 - 3 new major capabilities: cost estimation v2, CodeMigrationSkill, GreenfieldSkill
-- 4 quality improvements: CoT enforcement, XML prompt defense, SPEC phase, verify_completeness
+- 4 quality improvements: CoT enforcement, text-delimited prompt defense, SPEC phase, verify_completeness
 - Full documentation coverage synchronized with implementation
 
 **The codebase:** 207 source files, ~60,200 lines, 31 skills, 7 agent modules, 28 tool modules
