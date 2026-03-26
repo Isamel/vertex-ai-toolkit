@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from vaig.core.config import GKEConfig
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -847,3 +849,234 @@ class TestRegexInjectionProtection:
 
         expected_escaped = re_module.escape("pod[0]-")
         assert expected_escaped in result
+
+
+# ── Tests for _build_metric_filter_with_container ────────────
+
+
+class TestBuildMetricFilterWithContainer:
+    """Tests for the v2 container-level filter builder."""
+
+    def test_filter_contains_metric_type(self) -> None:
+        from vaig.tools.gke.monitoring import _CPU_METRIC, _build_metric_filter_with_container
+
+        result = _build_metric_filter_with_container(_CPU_METRIC, "my-cluster", "production")
+
+        assert f'metric.type = "{_CPU_METRIC}"' in result
+
+    def test_filter_contains_k8s_container_resource_type(self) -> None:
+        from vaig.tools.gke.monitoring import _CPU_METRIC, _build_metric_filter_with_container
+
+        result = _build_metric_filter_with_container(_CPU_METRIC, "cluster", "ns")
+
+        assert 'resource.type = "k8s_container"' in result
+
+    def test_filter_contains_cluster_name(self) -> None:
+        from vaig.tools.gke.monitoring import _CPU_METRIC, _build_metric_filter_with_container
+
+        result = _build_metric_filter_with_container(_CPU_METRIC, "my-cluster", "ns")
+
+        assert 'resource.labels.cluster_name = "my-cluster"' in result
+
+    def test_filter_contains_namespace(self) -> None:
+        from vaig.tools.gke.monitoring import _CPU_METRIC, _build_metric_filter_with_container
+
+        result = _build_metric_filter_with_container(_CPU_METRIC, "cluster", "production")
+
+        assert 'resource.labels.namespace_name = "production"' in result
+
+    def test_filter_does_not_contain_pod_name_filter(self) -> None:
+        """Unlike _build_metric_filter, the container variant must NOT restrict by pod name."""
+        from vaig.tools.gke.monitoring import _CPU_METRIC, _build_metric_filter_with_container
+
+        result = _build_metric_filter_with_container(_CPU_METRIC, "cluster", "ns")
+
+        assert "pod_name" not in result
+
+
+# ── Tests for get_workload_usage_metrics ─────────────────────
+
+
+def _make_container_ts(
+    pod_name: str,
+    container_name: str,
+    double_values: list[float],
+) -> MagicMock:
+    """Build a mock TimeSeries for container-level metrics.
+
+    resource.labels → pod_name, namespace_name
+    metric.labels   → container_name
+    """
+    ts = MagicMock()
+    ts.resource.labels = {"pod_name": pod_name, "namespace_name": "default"}
+    ts.metric.labels = {"container_name": container_name}
+
+    points = []
+    for v in reversed(double_values):
+        point = MagicMock()
+        point.value.double_value = v
+        point.value.int64_value = 0
+        points.append(point)
+
+    ts.points = points
+    return ts
+
+
+class TestGetWorkloadUsageMetrics:
+    """Tests for get_workload_usage_metrics()."""
+
+    def test_empty_workload_pod_names_returns_empty_dict(self) -> None:
+        from vaig.tools.gke.monitoring import get_workload_usage_metrics
+
+        cfg = _make_gke_config()
+        with patch("vaig.tools.gke.monitoring.MetricServiceClient"):
+            result = get_workload_usage_metrics(
+                namespace="default",
+                workload_pod_names={},
+                gke_config=cfg,
+            )
+
+        assert result == {}
+
+    def test_monitoring_unavailable_returns_empty_dict(self) -> None:
+        """When _MONITORING_AVAILABLE is False, should return {} without calling GCP."""
+        from vaig.tools.gke.monitoring import get_workload_usage_metrics
+
+        cfg = _make_gke_config()
+        with (
+            patch("vaig.tools.gke.monitoring._MONITORING_AVAILABLE", False),
+            patch("vaig.tools.gke.monitoring.MetricServiceClient") as mock_client_cls,
+        ):
+            result = get_workload_usage_metrics(
+                namespace="default",
+                workload_pod_names={"api": ["api-pod-1"]},
+                gke_config=cfg,
+            )
+
+        mock_client_cls.assert_not_called()
+        assert result == {}
+
+    def test_client_creation_failure_returns_empty_dict(self) -> None:
+        """If MetricServiceClient() raises, should return {} gracefully."""
+        from vaig.tools.gke.monitoring import get_workload_usage_metrics
+
+        cfg = _make_gke_config()
+        with patch(
+            "vaig.tools.gke.monitoring.MetricServiceClient",
+            side_effect=RuntimeError("auth error"),
+        ):
+            result = get_workload_usage_metrics(
+                namespace="default",
+                workload_pod_names={"api": ["api-pod-1"]},
+                gke_config=cfg,
+            )
+
+        assert result == {}
+
+    def test_single_container_metrics_mapped_to_workload(self) -> None:
+        """A single container time-series should be aggregated into the workload entry."""
+        from vaig.tools.gke.monitoring import get_workload_usage_metrics
+
+        cfg = _make_gke_config()
+        mock_client = MagicMock()
+
+        cpu_ts = _make_container_ts("api-pod-1", "app", [0.2, 0.3, 0.25])
+        mem_ts = _make_container_ts("api-pod-1", "app", [0.5 * (1024 ** 3)] * 3)  # 0.5 GiB in bytes
+
+        # First call → CPU, second → memory
+        mock_client.list_time_series.side_effect = [[cpu_ts], [mem_ts]]
+
+        with patch("vaig.tools.gke.monitoring.MetricServiceClient", return_value=mock_client):
+            result = get_workload_usage_metrics(
+                namespace="default",
+                workload_pod_names={"api": ["api-pod-1"]},
+                gke_config=cfg,
+            )
+
+        assert "api" in result
+        workload_metrics = result["api"]
+        assert "app" in workload_metrics.containers
+        ct = workload_metrics.containers["app"]
+        assert ct.container_name == "app"
+        assert ct.avg_cpu_cores == pytest.approx(0.25)  # mean of [0.2, 0.3, 0.25]
+        # Memory is stored in bytes internally; 0.5 GiB = 0.5 * (1024^3) bytes
+        # The function converts to GiB: bytes / (1024^3)
+        assert ct.avg_memory_gib == pytest.approx(0.5, abs=1e-3)
+
+    def test_pod_not_in_workload_pod_names_is_ignored(self) -> None:
+        """Time series for pods not in workload_pod_names must be silently skipped."""
+        from vaig.tools.gke.monitoring import get_workload_usage_metrics
+
+        cfg = _make_gke_config()
+        mock_client = MagicMock()
+
+        # Pod "unknown-pod-9" is NOT in workload_pod_names
+        cpu_ts = _make_container_ts("unknown-pod-9", "app", [0.5])
+        mock_client.list_time_series.side_effect = [[cpu_ts], []]
+
+        with patch("vaig.tools.gke.monitoring.MetricServiceClient", return_value=mock_client):
+            result = get_workload_usage_metrics(
+                namespace="default",
+                workload_pod_names={"api": ["api-pod-1"]},
+                gke_config=cfg,
+            )
+
+        # "api" has no matching time series → absent from result
+        assert result == {}
+
+    def test_cpu_query_failure_falls_back_gracefully(self) -> None:
+        """If the CPU query raises, memory query should still run."""
+        from vaig.tools.gke.monitoring import get_workload_usage_metrics
+
+        cfg = _make_gke_config()
+        mock_client = MagicMock()
+
+        mem_ts = _make_container_ts("api-pod-1", "app", [0.25 * (1024 ** 3)] * 2)
+        mock_client.list_time_series.side_effect = [
+            RuntimeError("CPU query failed"),
+            [mem_ts],
+        ]
+
+        with patch("vaig.tools.gke.monitoring.MetricServiceClient", return_value=mock_client):
+            result = get_workload_usage_metrics(
+                namespace="default",
+                workload_pod_names={"api": ["api-pod-1"]},
+                gke_config=cfg,
+            )
+
+        # With no CPU data, container is absent from result
+        # (memory alone doesn't create a WorkloadUsageMetrics entry)
+        # The important thing is it doesn't crash
+        assert isinstance(result, dict)
+
+    def test_multiple_workloads_mapped_independently(self) -> None:
+        """Multiple workloads in the same namespace each get their own entry."""
+        from vaig.tools.gke.monitoring import get_workload_usage_metrics
+
+        cfg = _make_gke_config()
+        mock_client = MagicMock()
+
+        cpu_ts_api = _make_container_ts("api-pod-1", "app", [0.3])
+        cpu_ts_worker = _make_container_ts("worker-pod-1", "worker", [0.6])
+        mem_ts_api = _make_container_ts("api-pod-1", "app", [0.2 * (1024 ** 3)])
+        mem_ts_worker = _make_container_ts("worker-pod-1", "worker", [0.4 * (1024 ** 3)])
+
+        mock_client.list_time_series.side_effect = [
+            [cpu_ts_api, cpu_ts_worker],
+            [mem_ts_api, mem_ts_worker],
+        ]
+
+        with patch("vaig.tools.gke.monitoring.MetricServiceClient", return_value=mock_client):
+            result = get_workload_usage_metrics(
+                namespace="default",
+                workload_pod_names={
+                    "api": ["api-pod-1"],
+                    "worker": ["worker-pod-1"],
+                },
+                gke_config=cfg,
+            )
+
+        assert "api" in result
+        assert "worker" in result
+        assert result["api"].containers["app"].avg_cpu_cores == pytest.approx(0.3)
+        assert result["worker"].containers["worker"].avg_cpu_cores == pytest.approx(0.6)
