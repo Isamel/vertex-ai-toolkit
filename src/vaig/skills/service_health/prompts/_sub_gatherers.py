@@ -424,6 +424,16 @@ these Deployments.  A ``Managed by Argo Rollout`` status MUST NOT be reported as
 zero", "unavailable", or any other health issue.  It is the expected and correct state.
 The actual replica counts and health information live in the Rollout object, not the Deployment.
 
+**IMPORTANT — ``## Service Status`` table with Argo Rollouts**: For the ``## Service Status``
+table, emit **one row per Argo Rollout** instead of one row per Deployment stub.  When a
+Deployment is a stub (``spec.replicas=0``, managed by Argo Rollout), **omit that Deployment
+row entirely** and replace it with a row for the corresponding Rollout.  Use the Rollout's
+actual replica counts (``ready/desired``) for the ``Ready`` column — NEVER the stub
+Deployment's ``0/0``.  Map Rollout phase to the ``Status`` column as follows:
+``Healthy → Running``, ``Progressing → Degraded``, ``Degraded → Failed``, ``Error → Failed``,
+``Paused → Unknown``, ``Unknown → Unknown``.  For any unrecognized phase, default ``Status`` to
+``Unknown``.  This ensures the table reflects real service health, not the intentional stub state.
+
 For each namespace, perform:
 
 a. ``kubectl_get_rollout(namespace="{ns}")`` — list all Rollouts, note phase, strategy,
@@ -472,11 +482,15 @@ i. **HPA conditions for Rollout-managed workloads** — when collecting HPA data
    This list may be empty if the HPA has no conditions.
    These conditions are CRITICAL context for diagnosing scaling failures on Argo-managed workloads.
 
-j. **Rollout Details subsection** — after the main workload table, add a dedicated
-   ``### Rollout Details`` subsection for every service that has rollout data. Use this format:
-   - rollout_strategy: <blue-green|canary|N/A>
-   - rollout_status: <Healthy|Progressing|Paused|Degraded|N/A>
-   - hpa_conditions: <condition1; condition2|none>
+j. **Rollout Details section** — inside ``## Raw Findings (Workload)``, add a
+    ``### Rollout Details`` subsection (NOT a top-level section, NOT a subsection of
+    ``## Service Status``) for every service that has rollout data.
+    Use ``#### <service-name>`` for per-service entries.  Use this format per service:
+
+    ``#### <service-name>``
+    - rollout_strategy: <blue-green|canary|N/A>
+    - rollout_status: <Healthy|Progressing|Paused|Degraded|N/A>
+    - hpa_conditions: <condition1; condition2|none>
 """
         prompt = prompt + argo_rollouts_section
     return prompt

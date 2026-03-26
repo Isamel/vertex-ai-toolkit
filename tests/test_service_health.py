@@ -3406,12 +3406,12 @@ class TestWorkloadGathererRolloutEnrichmentInstructions:
         assert "blue-green" in prompt, "Prompt must show canonical 'blue-green' (hyphenated) form."
 
     def test_rollout_details_subsection_instruction_present(self) -> None:
-        """Step j must instruct the agent to emit a ### Rollout Details subsection."""
+        """Step j must instruct the agent to emit a ## Rollout Details top-level section."""
         from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
 
         prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=True)
-        assert "Rollout Details subsection" in prompt, (
-            "Prompt must include instruction to add a '### Rollout Details' subsection (step j)."
+        assert "Rollout Details section" in prompt, (
+            "Prompt must include instruction to add a '## Rollout Details' top-level section (step j)."
         )
         assert "rollout_strategy: <blue-green|canary|N/A>" in prompt, (
             "Prompt must include rollout_strategy format line in step j."
