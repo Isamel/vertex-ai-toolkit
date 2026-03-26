@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from vaig.agents.mixins import ToolLoopMixin
 from vaig.core.config import Settings
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -96,7 +97,7 @@ class TestExecuteCodeModeOutput:
             _execute_code_mode(mock_client, settings, "Fix the bug", "")
 
         assert any(
-            "completed successfully" in s or "files modified" in s
+            "completed successfully" in s
             for s in printed
         ), f"Expected success message in prints; got: {printed}"
 
@@ -193,7 +194,7 @@ class TestAsyncExecuteCodeModeOutput:
             await _async_execute_code_mode(mock_client, settings, "Fix the bug", "")
 
         assert any(
-            "completed successfully" in s or "files modified" in s
+            "completed successfully" in s
             for s in printed
         ), f"Expected success message in prints; got: {printed}"
 
@@ -226,3 +227,118 @@ class TestAsyncExecuteCodeModeOutput:
             "no output" in s.lower() or "finished" in s.lower()
             for s in printed
         ), f"Expected warning message in prints; got: {printed}"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# _synthesize_tool_summary (pure function tests)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestSynthesizeToolSummary:
+    """Tests for the ToolLoopMixin._synthesize_tool_summary helper."""
+
+    def test_empty_list_returns_empty_string(self) -> None:
+        """Empty tools_executed → empty string (falsy guard)."""
+        result = ToolLoopMixin._synthesize_tool_summary([])
+        assert result == ""
+
+    def test_single_tool_with_path_arg(self) -> None:
+        """Tool with a 'path' arg shows path in output."""
+        tools = [
+            {"name": "edit_file", "args": {"path": "foo.py"}, "error": False},
+        ]
+        result = ToolLoopMixin._synthesize_tool_summary(tools)
+        assert "edit_file" in result
+        assert "foo.py" in result
+        assert "Completed 1 tool operation(s)" in result
+        assert "failure" not in result
+
+    def test_multiple_tools_with_path_args(self) -> None:
+        """Multiple tools each show their path arg."""
+        tools = [
+            {"name": "edit_file", "args": {"path": "foo.py"}, "error": False},
+            {"name": "write_file", "args": {"path": "bar.py"}, "error": False},
+            {"name": "read_file", "args": {"path": "baz.py"}, "error": False},
+        ]
+        result = ToolLoopMixin._synthesize_tool_summary(tools)
+        assert "Completed 3 tool operation(s)" in result
+        assert "edit_file" in result
+        assert "foo.py" in result
+        assert "write_file" in result
+        assert "bar.py" in result
+        assert "read_file" in result
+        assert "baz.py" in result
+        assert "failure" not in result
+
+    def test_tool_with_no_args_shows_just_name(self) -> None:
+        """Tool with no recognized target arg shows just the tool name."""
+        tools = [
+            {"name": "list_directory", "args": {}, "error": False},
+        ]
+        result = ToolLoopMixin._synthesize_tool_summary(tools)
+        assert "list_directory" in result
+        assert "Completed 1 tool operation(s)" in result
+        # No parentheses with arg since there's no target arg
+        assert "list_directory(" not in result
+
+    def test_failed_tool_includes_failure_count(self) -> None:
+        """A tool with error=True shows [FAILED] and failure count."""
+        tools = [
+            {"name": "edit_file", "args": {"path": "foo.py"}, "error": False},
+            {"name": "write_file", "args": {"path": "bar.py"}, "error": True},
+        ]
+        result = ToolLoopMixin._synthesize_tool_summary(tools)
+        assert "Completed 2 tool operation(s) with 1 failure(s)" in result
+        assert "[FAILED]" in result
+        assert "write_file" in result
+        assert "bar.py" in result
+
+    def test_all_tools_failed(self) -> None:
+        """All tools failing → failure count equals total count."""
+        tools = [
+            {"name": "edit_file", "args": {"path": "foo.py"}, "error": True},
+            {"name": "read_file", "args": {"path": "baz.py"}, "error": True},
+        ]
+        result = ToolLoopMixin._synthesize_tool_summary(tools)
+        assert "Completed 2 tool operation(s) with 2 failure(s)" in result
+        assert result.count("[FAILED]") == 2
+
+    def test_command_based_tool_shows_command(self) -> None:
+        """Tool with 'command' arg shows the command value."""
+        tools = [
+            {"name": "run_command", "args": {"command": "kubectl get pods"}, "error": False},
+        ]
+        result = ToolLoopMixin._synthesize_tool_summary(tools)
+        assert "run_command" in result
+        assert "kubectl get pods" in result
+        assert "command=" in result
+
+    def test_filepath_arg_recognized(self) -> None:
+        """Tool with 'filepath' arg (not 'path') is still recognized."""
+        tools = [
+            {"name": "some_tool", "args": {"filepath": "/tmp/data.json"}, "error": False},
+        ]
+        result = ToolLoopMixin._synthesize_tool_summary(tools)
+        assert "/tmp/data.json" in result
+        assert "filepath=" in result
+
+    def test_url_arg_recognized(self) -> None:
+        """Tool with 'url' arg is still recognized."""
+        tools = [
+            {"name": "fetch_url", "args": {"url": "https://example.com"}, "error": False},
+        ]
+        result = ToolLoopMixin._synthesize_tool_summary(tools)
+        assert "https://example.com" in result
+        assert "url=" in result
+
+    def test_path_takes_priority_over_other_keys(self) -> None:
+        """When tool has both 'path' and 'command', 'path' wins (first match)."""
+        tools = [
+            {"name": "edit_file", "args": {"path": "foo.py", "command": "some_cmd"}, "error": False},
+        ]
+        result = ToolLoopMixin._synthesize_tool_summary(tools)
+        assert "path=" in result
+        assert "foo.py" in result
+        # command should NOT appear since path was matched first
+        assert "command=" not in result
+

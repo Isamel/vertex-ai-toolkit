@@ -83,7 +83,7 @@ def _execute_code_mode(
         if result.content:
             console.print(Markdown(result.content))
         elif result.success:
-            console.print("[green]Code task completed successfully (files modified via tool calls).[/green]")
+            console.print("[green]Code task completed successfully.[/green]")
         else:
             console.print("[yellow]Agent finished with no output.[/yellow]")
         console.print()
@@ -258,7 +258,7 @@ async def _async_execute_code_mode(
         if result.content:
             console.print(Markdown(result.content))
         elif result.success:
-            console.print("[green]Code task completed successfully (files modified via tool calls).[/green]")
+            console.print("[green]Code task completed successfully.[/green]")
         else:
             console.print("[yellow]Agent finished with no output.[/yellow]")
         console.print()
