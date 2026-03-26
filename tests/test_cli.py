@@ -718,7 +718,7 @@ class TestVerboseDebugFlags:
         assert "--verbose" in _strip_ansi(result.output)
 
     def test_debug_flag_after_ask_subcommand(self) -> None:
-        """``vaig ask "Hello" -d`` sets DEBUG level (flag after subcommand)."""
+        """``vaig ask "Hello" --debug`` sets DEBUG level (flag after subcommand)."""
         import logging
 
         mock_agent_result = MagicMock()
@@ -731,7 +731,7 @@ class TestVerboseDebugFlags:
             patch("vaig.core.container.build_container", return_value=create_test_container()),
             patch("vaig.agents.orchestrator.Orchestrator", return_value=mock_orchestrator),
         ):
-            result = runner.invoke(app, ["ask", "Hello", "--no-stream", "-d"])
+            result = runner.invoke(app, ["ask", "Hello", "--no-stream", "--debug"])
 
         assert result.exit_code == 0
         vaig_logger = logging.getLogger("vaig")

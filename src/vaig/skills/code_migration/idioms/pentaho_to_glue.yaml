@@ -1,0 +1,184 @@
+# Idiom map: Pentaho PDI (Kettle) → AWS Glue (PySpark / Glue ETL)
+# Schema: source_lang, target_lang, idioms (list), dependencies (mapping)
+#
+# idioms entries:
+#   source_pattern:  Human-readable description of the Pentaho concept / step
+#   target_pattern:  Equivalent AWS Glue / PySpark construct
+#   notes:           Optional clarification for the migration agent
+#
+# dependencies entries:
+#   "<pentaho-component>": "<aws-glue-or-pyspark-equivalent>"
+
+source_lang: pentaho
+target_lang: glue
+
+idioms:
+  - source_pattern: "Transformation (.ktr file): visual ETL pipeline with connected steps"
+    target_pattern: "Glue Job script (Python): awsglue.job.Job + GlueContext + DynamicFrame pipeline"
+    notes: |
+      Each Pentaho transformation becomes a Glue Job. Initialise with:
+        args = getResolvedOptions(sys.argv, ['JOB_NAME'])
+        sc = SparkContext()
+        glueContext = GlueContext(sc)
+        job = Job(glueContext)
+        job.init(args['JOB_NAME'], args)
+      Commit at the end: job.commit()
+
+  - source_pattern: "Job (.kjb file): orchestrates multiple transformations with success/failure hops"
+    target_pattern: "AWS Step Functions state machine or Glue Workflow with triggers"
+    notes: "Pentaho Jobs map to orchestration layers. Use Glue Workflows for simple sequences; Step Functions for conditional branching."
+
+  - source_pattern: "Table Input step: SELECT query from a relational database"
+    target_pattern: "glueContext.create_dynamic_frame.from_options with JDBC connection"
+    notes: |
+      Example:
+        datasource = glueContext.create_dynamic_frame.from_options(
+            connection_type="mysql",
+            connection_options={"url": jdbc_url, "dbtable": "schema.table", "user": ..., "password": ...},
+        )
+      Use AWS Glue connections or Secrets Manager for credentials.
+
+  - source_pattern: "Table Output / Insert-Update step: write rows to a relational table"
+    target_pattern: "glueContext.write_dynamic_frame.from_options with JDBC connection"
+    notes: |
+      Example:
+        glueContext.write_dynamic_frame.from_options(
+            frame=output_frame,
+            connection_type="mysql",
+            connection_options={"url": jdbc_url, "dbtable": "schema.target", ...},
+        )
+      For upserts, convert to DataFrame, use MERGE via pushdown_query, or use foreachBatch.
+
+  - source_pattern: "CSV File Input step: read delimited text file"
+    target_pattern: "glueContext.create_dynamic_frame.from_options with S3 + CSV format"
+    notes: |
+      Example:
+        datasource = glueContext.create_dynamic_frame.from_options(
+            connection_type="s3",
+            connection_options={"paths": ["s3://bucket/prefix/"]},
+            format="csv",
+            format_options={"withHeader": True, "separator": ","},
+        )
+
+  - source_pattern: "CSV File Output step: write delimited text file"
+    target_pattern: "glueContext.write_dynamic_frame.from_options with S3 + CSV format"
+    notes: |
+      Example:
+        glueContext.write_dynamic_frame.from_options(
+            frame=output_frame,
+            connection_type="s3",
+            connection_options={"path": "s3://bucket/prefix/"},
+            format="csv",
+        )
+
+  - source_pattern: "Select Values step: rename, reorder, or remove fields"
+    target_pattern: "DynamicFrame.select_fields() or DataFrame column selection"
+    notes: |
+      Rename + select:
+        df = datasource.toDF().select(
+            col("old_name").alias("new_name"),
+            col("keep_col"),
+        )
+        frame = DynamicFrame.fromDF(df, glueContext, "renamed")
+
+  - source_pattern: "Filter Rows step: keep rows matching a condition"
+    target_pattern: "DynamicFrame.filter() or DataFrame.filter() / .where()"
+    notes: |
+      Using native DynamicFrame:
+        filtered = Filter.apply(frame=datasource, f=lambda x: x["status"] == "active")
+      Or via Spark DataFrame:
+        df = datasource.toDF().filter(col("status") == "active")
+
+  - source_pattern: "Sort Rows step: order rows by one or more fields"
+    target_pattern: "DataFrame.orderBy() / .sort()"
+    notes: |
+      df = datasource.toDF().orderBy(col("created_at").desc(), col("id"))
+      Convert back: DynamicFrame.fromDF(df, glueContext, "sorted")
+
+  - source_pattern: "Group By / Aggregate step: SUM, COUNT, AVG, MIN, MAX aggregations"
+    target_pattern: "DataFrame.groupBy().agg()"
+    notes: |
+      from pyspark.sql import functions as F
+      df = datasource.toDF().groupBy("region").agg(
+          F.sum("amount").alias("total_amount"),
+          F.count("*").alias("row_count"),
+      )
+
+  - source_pattern: "Merge Rows (diff) step: detect inserted/updated/deleted rows"
+    target_pattern: "DataFrame join with conditional column to detect changes"
+    notes: |
+      Compare new vs old using a full outer join on key columns, then classify rows:
+        merged = new_df.join(old_df, on="id", how="full_outer")
+        merged = merged.withColumn("change_type",
+            F.when(old_df["id"].isNull(), "INSERT")
+             .when(new_df["id"].isNull(), "DELETE")
+             .otherwise("UPDATE"))
+
+  - source_pattern: "Stream Lookup / Database Lookup step: enrich rows from a lookup table"
+    target_pattern: "DataFrame.join() with broadcast hint for small lookup tables"
+    notes: |
+      from pyspark.sql.functions import broadcast
+      enriched = main_df.join(broadcast(lookup_df), on="key_col", how="left")
+
+  - source_pattern: "Add Constants step: add a column with a fixed value"
+    target_pattern: "DataFrame.withColumn(F.lit(value))"
+    notes: |
+      df = df.withColumn("source_system", F.lit("pentaho_migrated"))
+
+  - source_pattern: "Calculator step: compute derived fields with expressions"
+    target_pattern: "DataFrame.withColumn() with PySpark column expressions"
+    notes: |
+      df = df.withColumn("total_price", col("quantity") * col("unit_price"))
+      df = df.withColumn("full_name", F.concat(col("first_name"), F.lit(" "), col("last_name")))
+
+  - source_pattern: "Modified JavaScript Value step: custom row-level transformations in JS"
+    target_pattern: "DataFrame.withColumn() with Python UDF or built-in PySpark functions"
+    notes: |
+      Prefer built-in Spark functions (F.regexp_replace, F.substring, etc.) over UDFs for performance.
+      When a UDF is necessary:
+        from pyspark.sql.types import StringType
+        @F.udf(returnType=StringType())
+        def clean_phone(phone):
+            import re
+            return re.sub(r'\D', '', phone or '')
+        df = df.withColumn("phone_clean", clean_phone(col("phone")))
+
+  - source_pattern: "Execute SQL script step: run arbitrary DDL/DML on a database"
+    target_pattern: "boto3 RDS Data API, JDBC pushdown query, or Glue custom connection script"
+    notes: "For DDL (CREATE/ALTER), use boto3 or a pre-job Lambda. For DML via JDBC, use connection_options with a pushdown_query."
+
+  - source_pattern: "Send Mail step: email notification on job completion or failure"
+    target_pattern: "boto3 SNS publish or SES send_email"
+    notes: |
+      import boto3
+      sns = boto3.client('sns')
+      sns.publish(TopicArn='arn:aws:sns:...', Message='Glue job completed', Subject='ETL Done')
+
+  - source_pattern: "Write to log step / logging"
+    target_pattern: "Python logging module (already captured by CloudWatch Logs)"
+    notes: |
+      import logging
+      logger = logging.getLogger(__name__)
+      logger.info("Processing %d records", record_count)
+      All stdout/stderr from Glue jobs is automatically forwarded to CloudWatch Logs.
+
+  - source_pattern: "Hop (success/failure/unconditional): step connections"
+    target_pattern: "Python try/except/finally blocks or Step Functions error handling"
+    notes: "Within a single Glue Job, use try/except. Across jobs, use Glue Workflow triggers or Step Functions Catch states."
+
+  - source_pattern: "Variables / Named Parameters in transformations"
+    target_pattern: "Glue Job Parameters via getResolvedOptions"
+    notes: |
+      Define job parameters in the Glue console or via boto3. Retrieve with:
+        args = getResolvedOptions(sys.argv, ['JOB_NAME', 'INPUT_PATH', 'OUTPUT_PATH'])
+        input_path = args['INPUT_PATH']
+
+dependencies:
+  kettle: "awsglue"
+  pdi: "awsglue"
+  pentaho-kettle: "awsglue"
+  mysql-connector: "com.mysql.jdbc.Driver (JDBC via Glue connection)"
+  postgresql-driver: "org.postgresql.Driver (JDBC via Glue connection)"
+  oracle-driver: "oracle.jdbc.OracleDriver (JDBC via Glue connection)"
+  mssql-driver: "com.microsoft.sqlserver.jdbc.SQLServerDriver (JDBC via Glue connection)"
+  slf4j: "logging"
