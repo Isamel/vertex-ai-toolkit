@@ -528,3 +528,199 @@ class TestFetchWorkloadCostsMissingConfig:
             report = fetch_workload_costs(cfg)
         assert report.supported is False
         assert "location" in (report.unsupported_reason or "")
+
+
+# ── Multi-region pricing table spot-checks ────────────────────
+
+
+class TestMultiRegionPricingTable:
+    """Spot-check that major regions exist and have sensible rates."""
+
+    def test_total_region_count(self) -> None:
+        """We should have at least 30 regions in the table."""
+        assert len(AUTOPILOT_PRICING) >= 30, (
+            f"Expected >= 30 regions, got {len(AUTOPILOT_PRICING)}"
+        )
+
+    # ── North America spot-checks ─────────────────────────────
+
+    def test_us_central1_iowa_exists(self) -> None:
+        pricing = AUTOPILOT_PRICING["us-central1"]
+        # Iowa is typically the cheapest US region
+        assert pricing.cpu_per_vcpu_hour == pytest.approx(0.0485, rel=1e-3)
+        assert pricing.ram_per_gib_hour == pytest.approx(0.0052, rel=1e-3)
+
+    def test_us_east1_south_carolina_exists(self) -> None:
+        assert "us-east1" in AUTOPILOT_PRICING
+        p = AUTOPILOT_PRICING["us-east1"]
+        assert p.cpu_per_vcpu_hour > 0
+        assert p.ram_per_gib_hour > 0
+
+    def test_northamerica_northeast2_toronto_exists(self) -> None:
+        assert "northamerica-northeast2" in AUTOPILOT_PRICING
+        p = AUTOPILOT_PRICING["northamerica-northeast2"]
+        # Toronto should be close to Montreal pricing
+        montreal = AUTOPILOT_PRICING["northamerica-northeast1"]
+        assert abs(p.cpu_per_vcpu_hour - montreal.cpu_per_vcpu_hour) < 0.01
+
+    # ── Europe spot-checks ────────────────────────────────────
+
+    def test_europe_west1_belgium_exists(self) -> None:
+        pricing = AUTOPILOT_PRICING["europe-west1"]
+        assert pricing.cpu_per_vcpu_hour == pytest.approx(0.0534, rel=1e-3)
+        assert pricing.ram_per_gib_hour == pytest.approx(0.0059, rel=1e-3)
+
+    def test_europe_west2_london_exists(self) -> None:
+        assert "europe-west2" in AUTOPILOT_PRICING
+        assert AUTOPILOT_PRICING["europe-west2"].cpu_per_vcpu_hour > 0
+
+    def test_europe_west3_frankfurt_exists(self) -> None:
+        assert "europe-west3" in AUTOPILOT_PRICING
+
+    def test_europe_west4_netherlands_exists(self) -> None:
+        assert "europe-west4" in AUTOPILOT_PRICING
+
+    def test_europe_west6_zurich_is_priciest_europe(self) -> None:
+        """Zurich carries a Swiss premium — should be the most expensive EU region."""
+        zurich = AUTOPILOT_PRICING["europe-west6"]
+        other_eu = [
+            AUTOPILOT_PRICING[r]
+            for r in ("europe-west1", "europe-west2", "europe-west3", "europe-west4", "europe-west9")
+        ]
+        for other in other_eu:
+            assert zurich.cpu_per_vcpu_hour >= other.cpu_per_vcpu_hour, (
+                "Zurich should have >= CPU price vs other EU regions"
+            )
+
+    def test_europe_west9_paris_exists(self) -> None:
+        assert "europe-west9" in AUTOPILOT_PRICING
+
+    def test_europe_north1_finland_exists(self) -> None:
+        assert "europe-north1" in AUTOPILOT_PRICING
+
+    # ── Asia-Pacific spot-checks ──────────────────────────────
+
+    def test_asia_northeast1_tokyo_exists(self) -> None:
+        pricing = AUTOPILOT_PRICING["asia-northeast1"]
+        assert pricing.cpu_per_vcpu_hour == pytest.approx(0.0613, rel=1e-3)
+        assert pricing.ram_per_gib_hour == pytest.approx(0.0068, rel=1e-3)
+
+    def test_asia_east1_taiwan_exists(self) -> None:
+        assert "asia-east1" in AUTOPILOT_PRICING
+        assert AUTOPILOT_PRICING["asia-east1"].cpu_per_vcpu_hour > 0
+
+    def test_asia_east2_hong_kong_exists(self) -> None:
+        assert "asia-east2" in AUTOPILOT_PRICING
+
+    def test_asia_northeast2_osaka_exists(self) -> None:
+        assert "asia-northeast2" in AUTOPILOT_PRICING
+
+    def test_asia_northeast3_seoul_exists(self) -> None:
+        assert "asia-northeast3" in AUTOPILOT_PRICING
+
+    def test_asia_south1_mumbai_exists(self) -> None:
+        assert "asia-south1" in AUTOPILOT_PRICING
+
+    def test_asia_south2_delhi_exists(self) -> None:
+        assert "asia-south2" in AUTOPILOT_PRICING
+
+    def test_asia_southeast1_singapore_exists(self) -> None:
+        assert "asia-southeast1" in AUTOPILOT_PRICING
+
+    def test_asia_southeast2_jakarta_exists(self) -> None:
+        assert "asia-southeast2" in AUTOPILOT_PRICING
+
+    def test_australia_southeast1_sydney_exists(self) -> None:
+        assert "australia-southeast1" in AUTOPILOT_PRICING
+
+    def test_australia_southeast2_melbourne_exists(self) -> None:
+        assert "australia-southeast2" in AUTOPILOT_PRICING
+
+    # ── South America spot-checks ─────────────────────────────
+
+    def test_southamerica_east1_sao_paulo_exists(self) -> None:
+        assert "southamerica-east1" in AUTOPILOT_PRICING
+        sao_paulo = AUTOPILOT_PRICING["southamerica-east1"]
+        iowa = AUTOPILOT_PRICING["us-central1"]
+        # São Paulo should be ~30-40% more expensive than Iowa
+        ratio = sao_paulo.cpu_per_vcpu_hour / iowa.cpu_per_vcpu_hour
+        assert ratio >= 1.30, f"São Paulo should be >= 30% more than Iowa, got {ratio:.2f}x"
+        assert ratio <= 1.60, f"São Paulo ratio seems too high: {ratio:.2f}x"
+
+    def test_southamerica_west1_santiago_exists(self) -> None:
+        assert "southamerica-west1" in AUTOPILOT_PRICING
+
+    # ── Middle East spot-checks ───────────────────────────────
+
+    def test_me_west1_tel_aviv_exists(self) -> None:
+        assert "me-west1" in AUTOPILOT_PRICING
+        assert AUTOPILOT_PRICING["me-west1"].cpu_per_vcpu_hour > 0
+
+    def test_me_central1_doha_exists(self) -> None:
+        assert "me-central1" in AUTOPILOT_PRICING
+
+    def test_me_central2_dammam_exists(self) -> None:
+        assert "me-central2" in AUTOPILOT_PRICING
+
+    # ── Regional ordering sanity checks ──────────────────────
+
+    def test_us_regions_cheaper_than_south_america(self) -> None:
+        """All US regions should be cheaper than São Paulo on CPU."""
+        sao_paulo_cpu = AUTOPILOT_PRICING["southamerica-east1"].cpu_per_vcpu_hour
+        for us_region in ("us-central1", "us-east1", "us-east4", "us-west1", "us-west2"):
+            us_cpu = AUTOPILOT_PRICING[us_region].cpu_per_vcpu_hour
+            assert us_cpu < sao_paulo_cpu, (
+                f"{us_region} ({us_cpu}) should be cheaper than São Paulo ({sao_paulo_cpu})"
+            )
+
+    def test_all_regions_have_positive_rates_extended(self) -> None:
+        """Every region entry must have all three positive rates."""
+        for region, pricing in AUTOPILOT_PRICING.items():
+            assert pricing.cpu_per_vcpu_hour > 0, f"{region}: cpu rate must be > 0"
+            assert pricing.ram_per_gib_hour > 0, f"{region}: ram rate must be > 0"
+            assert pricing.ephemeral_per_gib_hour > 0, f"{region}: ephemeral rate must be > 0"
+
+
+# ── Unknown region graceful degradation ───────────────────────
+
+
+class TestUnknownRegionFallback:
+    """Verify fetch_workload_costs() degrades gracefully for unsupported regions."""
+
+    def _make_gke_config(self, location: str) -> MagicMock:
+        cfg = MagicMock()
+        cfg.project_id = "my-project"
+        cfg.location = location
+        cfg.cluster_name = "my-cluster"
+        return cfg
+
+    def test_unknown_region_returns_unsupported(self) -> None:
+        from vaig.tools.gke.cost_estimation import fetch_workload_costs  # noqa: PLC0415
+        with patch("vaig.tools.gke.cost_estimation.detect_autopilot", return_value=True):
+            report = fetch_workload_costs(self._make_gke_config("mars-west1"))
+        assert report.supported is False
+        assert report.cluster_type == "autopilot"
+        # Error message should name the region and mention the pricing table
+        assert "mars-west1" in (report.unsupported_reason or "")
+        assert "pricing table" in (report.unsupported_reason or "")
+
+    def test_empty_region_returns_unsupported(self) -> None:
+        from vaig.tools.gke.cost_estimation import fetch_workload_costs  # noqa: PLC0415
+        with patch("vaig.tools.gke.cost_estimation.detect_autopilot", return_value=True):
+            cfg = self._make_gke_config("")
+            cfg.location = ""
+            report = fetch_workload_costs(cfg)
+        assert report.supported is False
+        # Empty location triggers the "missing fields" validation guard before reaching
+        # the pricing table lookup — so the error message differs from unknown regions.
+        reason = report.unsupported_reason or ""
+        assert "location" in reason
+
+    def test_unknown_region_message_lists_supported_regions(self) -> None:
+        """The error message should list at least some supported regions so users know what to use."""
+        from vaig.tools.gke.cost_estimation import fetch_workload_costs  # noqa: PLC0415
+        with patch("vaig.tools.gke.cost_estimation.detect_autopilot", return_value=True):
+            report = fetch_workload_costs(self._make_gke_config("invalid-region1"))
+        reason = report.unsupported_reason or ""
+        # Should mention at least one known region
+        assert any(r in reason for r in ("us-central1", "northamerica-northeast1", "europe-west1"))

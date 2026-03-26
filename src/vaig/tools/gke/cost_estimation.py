@@ -73,15 +73,33 @@ class GKEPricing:
 
 
 # ── Regional pricing table ────────────────────────────────────
-# Source: https://cloud.google.com/kubernetes-engine/pricing (Autopilot)
-# Prices in USD as of 2024. Expand this dict to add more regions.
+# Source:      https://cloud.google.com/kubernetes-engine/pricing (Autopilot)
+# Last update: 2026-03-26
+# Compute class: Autopilot Balanced Pod (default for Autopilot clusters)
+#
+# NOTE: These are best-effort estimates derived from GCP Cloud Billing SKU data
+# and regional pricing multipliers.  Actual prices may differ — GCP updates
+# rates without notice.  Always verify against the official pricing page or the
+# Cloud Billing API before making financial decisions.
+#
+# Regions not present in this table will cause fetch_workload_costs() to return
+# supported=False with an "unknown region" message.  Add new entries here to
+# extend coverage.
 
 AUTOPILOT_PRICING: dict[str, GKEPricing] = {
+    # ── North America ─────────────────────────────────────────────────────────
+
     # Canada / Montréal — northamerica-northeast1
     "northamerica-northeast1": GKEPricing(
         cpu_per_vcpu_hour=0.0511,
         ram_per_gib_hour=0.0056,
         ephemeral_per_gib_hour=0.000063,
+    ),
+    # Canada / Toronto — northamerica-northeast2
+    "northamerica-northeast2": GKEPricing(
+        cpu_per_vcpu_hour=0.0520,
+        ram_per_gib_hour=0.0058,
+        ephemeral_per_gib_hour=0.000066,
     ),
     # US (Iowa) — us-central1
     "us-central1": GKEPricing(
@@ -89,23 +107,191 @@ AUTOPILOT_PRICING: dict[str, GKEPricing] = {
         ram_per_gib_hour=0.0052,
         ephemeral_per_gib_hour=0.000054,
     ),
-    # US (Virginia) — us-east4
+    # US (South Carolina) — us-east1
+    "us-east1": GKEPricing(
+        cpu_per_vcpu_hour=0.0508,
+        ram_per_gib_hour=0.0056,
+        ephemeral_per_gib_hour=0.000063,
+    ),
+    # US (Northern Virginia) — us-east4
     "us-east4": GKEPricing(
         cpu_per_vcpu_hour=0.0510,
         ram_per_gib_hour=0.0056,
         ephemeral_per_gib_hour=0.000063,
     ),
+    # US (Oregon) — us-west1
+    "us-west1": GKEPricing(
+        cpu_per_vcpu_hour=0.0489,
+        ram_per_gib_hour=0.0052,
+        ephemeral_per_gib_hour=0.000056,
+    ),
+    # US (Los Angeles) — us-west2
+    "us-west2": GKEPricing(
+        cpu_per_vcpu_hour=0.0520,
+        ram_per_gib_hour=0.0058,
+        ephemeral_per_gib_hour=0.000066,
+    ),
+    # US (Las Vegas) — us-west4
+    "us-west4": GKEPricing(
+        cpu_per_vcpu_hour=0.0511,
+        ram_per_gib_hour=0.0056,
+        ephemeral_per_gib_hour=0.000063,
+    ),
+    # US (Dallas) — us-south1
+    "us-south1": GKEPricing(
+        cpu_per_vcpu_hour=0.0506,
+        ram_per_gib_hour=0.0055,
+        ephemeral_per_gib_hour=0.000062,
+    ),
+
+    # ── Europe ────────────────────────────────────────────────────────────────
+
     # Europe (Belgium) — europe-west1
     "europe-west1": GKEPricing(
         cpu_per_vcpu_hour=0.0534,
         ram_per_gib_hour=0.0059,
         ephemeral_per_gib_hour=0.000066,
     ),
-    # Asia Pacific (Tokyo) — asia-northeast1
+    # Europe (London) — europe-west2
+    "europe-west2": GKEPricing(
+        cpu_per_vcpu_hour=0.0539,
+        ram_per_gib_hour=0.0059,
+        ephemeral_per_gib_hour=0.000066,
+    ),
+    # Europe (Frankfurt) — europe-west3
+    "europe-west3": GKEPricing(
+        cpu_per_vcpu_hour=0.0540,
+        ram_per_gib_hour=0.0060,
+        ephemeral_per_gib_hour=0.000066,
+    ),
+    # Europe (Netherlands) — europe-west4
+    "europe-west4": GKEPricing(
+        cpu_per_vcpu_hour=0.0534,
+        ram_per_gib_hour=0.0059,
+        ephemeral_per_gib_hour=0.000066,
+    ),
+    # Europe (Zurich) — europe-west6
+    "europe-west6": GKEPricing(
+        cpu_per_vcpu_hour=0.0574,
+        ram_per_gib_hour=0.0063,
+        ephemeral_per_gib_hour=0.000070,
+    ),
+    # Europe (Paris) — europe-west9
+    "europe-west9": GKEPricing(
+        cpu_per_vcpu_hour=0.0540,
+        ram_per_gib_hour=0.0060,
+        ephemeral_per_gib_hour=0.000066,
+    ),
+    # Europe (Finland) — europe-north1
+    "europe-north1": GKEPricing(
+        cpu_per_vcpu_hour=0.0520,
+        ram_per_gib_hour=0.0058,
+        ephemeral_per_gib_hour=0.000066,
+    ),
+
+    # ── Asia-Pacific ──────────────────────────────────────────────────────────
+
+    # Asia (Taiwan) — asia-east1
+    "asia-east1": GKEPricing(
+        cpu_per_vcpu_hour=0.0586,
+        ram_per_gib_hour=0.0068,
+        ephemeral_per_gib_hour=0.000075,
+    ),
+    # Asia (Hong Kong) — asia-east2
+    "asia-east2": GKEPricing(
+        cpu_per_vcpu_hour=0.0660,
+        ram_per_gib_hour=0.0072,
+        ephemeral_per_gib_hour=0.000080,
+    ),
+    # Asia (Tokyo) — asia-northeast1
     "asia-northeast1": GKEPricing(
         cpu_per_vcpu_hour=0.0613,
         ram_per_gib_hour=0.0068,
         ephemeral_per_gib_hour=0.000076,
+    ),
+    # Asia (Osaka) — asia-northeast2
+    "asia-northeast2": GKEPricing(
+        cpu_per_vcpu_hour=0.0601,
+        ram_per_gib_hour=0.0068,
+        ephemeral_per_gib_hour=0.000075,
+    ),
+    # Asia (Seoul) — asia-northeast3
+    "asia-northeast3": GKEPricing(
+        cpu_per_vcpu_hour=0.0620,
+        ram_per_gib_hour=0.0072,
+        ephemeral_per_gib_hour=0.000080,
+    ),
+    # Asia (Mumbai) — asia-south1
+    "asia-south1": GKEPricing(
+        cpu_per_vcpu_hour=0.0598,
+        ram_per_gib_hour=0.0068,
+        ephemeral_per_gib_hour=0.000075,
+    ),
+    # Asia (Delhi) — asia-south2
+    "asia-south2": GKEPricing(
+        cpu_per_vcpu_hour=0.0601,
+        ram_per_gib_hour=0.0068,
+        ephemeral_per_gib_hour=0.000076,
+    ),
+    # Asia (Singapore) — asia-southeast1
+    "asia-southeast1": GKEPricing(
+        cpu_per_vcpu_hour=0.0601,
+        ram_per_gib_hour=0.0068,
+        ephemeral_per_gib_hour=0.000076,
+    ),
+    # Asia (Jakarta) — asia-southeast2
+    "asia-southeast2": GKEPricing(
+        cpu_per_vcpu_hour=0.0630,
+        ram_per_gib_hour=0.0072,
+        ephemeral_per_gib_hour=0.000080,
+    ),
+    # Australia (Sydney) — australia-southeast1
+    "australia-southeast1": GKEPricing(
+        cpu_per_vcpu_hour=0.0629,
+        ram_per_gib_hour=0.0072,
+        ephemeral_per_gib_hour=0.000080,
+    ),
+    # Australia (Melbourne) — australia-southeast2
+    "australia-southeast2": GKEPricing(
+        cpu_per_vcpu_hour=0.0629,
+        ram_per_gib_hour=0.0072,
+        ephemeral_per_gib_hour=0.000080,
+    ),
+
+    # ── South America ─────────────────────────────────────────────────────────
+
+    # South America (São Paulo) — southamerica-east1
+    "southamerica-east1": GKEPricing(
+        cpu_per_vcpu_hour=0.0727,
+        ram_per_gib_hour=0.0080,
+        ephemeral_per_gib_hour=0.000090,
+    ),
+    # South America (Santiago) — southamerica-west1
+    "southamerica-west1": GKEPricing(
+        cpu_per_vcpu_hour=0.0731,
+        ram_per_gib_hour=0.0081,
+        ephemeral_per_gib_hour=0.000090,
+    ),
+
+    # ── Middle East ───────────────────────────────────────────────────────────
+
+    # Middle East (Tel Aviv) — me-west1
+    "me-west1": GKEPricing(
+        cpu_per_vcpu_hour=0.0650,
+        ram_per_gib_hour=0.0072,
+        ephemeral_per_gib_hour=0.000080,
+    ),
+    # Middle East (Doha) — me-central1
+    "me-central1": GKEPricing(
+        cpu_per_vcpu_hour=0.0681,
+        ram_per_gib_hour=0.0074,
+        ephemeral_per_gib_hour=0.000082,
+    ),
+    # Middle East (Dammam) — me-central2
+    "me-central2": GKEPricing(
+        cpu_per_vcpu_hour=0.0681,
+        ram_per_gib_hour=0.0074,
+        ephemeral_per_gib_hour=0.000082,
     ),
 }
 
