@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -427,6 +427,15 @@ class DatadogAPIConfig(BaseModel):
     labels: DatadogLabelConfig = Field(default_factory=DatadogLabelConfig)
     detection: DatadogDetectionConfig = Field(default_factory=DatadogDetectionConfig)
     custom_metrics: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("ssl_verify", mode="before")
+    @classmethod
+    def _validate_ssl_verify(cls, v: Any) -> Any:
+        if isinstance(v, str) and v.strip() == "":
+            raise ValueError(
+                "ssl_verify must be True, False, or a non-empty path to a CA bundle"
+            )
+        return v
 
     @model_validator(mode="after")
     def _auto_enable_or_disable(self) -> DatadogAPIConfig:

@@ -1550,6 +1550,20 @@ class TestDatadogSSLConfig:
         cfg = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", ssl_verify=ca_path)
         assert cfg.ssl_verify == ca_path
 
+    def test_ssl_verify_empty_string_raises_validation_error(self) -> None:
+        """ssl_verify='' raises a ValidationError — empty string is not a valid CA bundle path."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="ssl_verify must be True, False, or a non-empty path"):
+            DatadogAPIConfig(enabled=True, api_key="k", app_key="k", ssl_verify="")
+
+    def test_ssl_verify_whitespace_string_raises_validation_error(self) -> None:
+        """ssl_verify='   ' (whitespace only) raises a ValidationError."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="ssl_verify must be True, False, or a non-empty path"):
+            DatadogAPIConfig(enabled=True, api_key="k", app_key="k", ssl_verify="   ")
+
     # ── requests.Session.verify passthrough ───────────────────
 
     def test_session_verify_set_to_true_by_default(self, dd_config: DatadogAPIConfig) -> None:
@@ -1623,12 +1637,16 @@ class TestDatadogSSLConfig:
         """When _custom_session is provided, it is used as-is (ssl_verify not applied).
 
         This preserves test-injection behaviour — callers that inject a session control it
-        themselves.
+        themselves.  The sentinel value proves that ``verify`` is NOT reassigned by the
+        function under test.
         """
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
+        sentinel_value = object()  # unique object — any assignment would replace it
+
         mock_session = MagicMock()
         mock_session.post.return_value = _make_spans_response()
+        mock_session.verify = sentinel_value  # set before call
 
         result = get_datadog_apm_services(
             service_name="svc",
@@ -1639,6 +1657,8 @@ class TestDatadogSSLConfig:
 
         assert result.error is False
         mock_session.post.assert_called_once()
+        # verify was NOT modified — custom session owns its own SSL config
+        assert mock_session.verify is sentinel_value
 
     # ── SSLError handling ─────────────────────────────────────
 
@@ -1668,12 +1688,11 @@ class TestDatadogSSLConfig:
         assert "REQUESTS_CA_BUNDLE" in result.output
         assert "ssl_verify" in result.output
 
-    def test_ssl_error_on_get_fallback_caught_as_request_exception(
+    def test_ssl_error_on_get_fallback_surfaces_helpful_message(
         self, dd_config: DatadogAPIConfig
     ) -> None:
-        """SSLError on the GET fallback (after POST 403) is caught by the RequestException
-        handler inside _try_spans_get — the result is 'no data found', not an SSL error,
-        because SSLError is a subclass of RequestException.
+        """SSLError on the GET fallback (after POST 403) is re-raised and surfaces the
+        helpful SSL error message, just like on the POST path.
         """
         import requests as req
 
@@ -1692,9 +1711,11 @@ class TestDatadogSSLConfig:
             _custom_session=mock_session,
         )
 
-        # SSLError from GET is handled inside _try_spans_get as RequestException
-        assert result.error is False
-        assert "No APM trace data found" in result.output
+        # SSLError from GET now propagates to the outer handler — helpful SSL message
+        assert result.error is True
+        assert "SSL" in result.output or "ssl" in result.output.lower()
+        assert "REQUESTS_CA_BUNDLE" in result.output
+        assert "ssl_verify" in result.output
 
     # ── Datadog SDK client SSL config ─────────────────────────
 
@@ -1735,29 +1756,36 @@ class TestDatadogSSLConfig:
         assert mock_configuration.ssl_ca_cert == ca_path
 
     def test_sdk_client_no_ssl_change_for_default_true(self) -> None:
-        """When ssl_verify=True (default), SDK Configuration is not modified for SSL."""
+        """When ssl_verify=True (default), SDK Configuration verify_ssl and ssl_ca_cert
+        are NOT set at all — any attribute write would be detected by the spy.
+        """
         from vaig.tools.gke.datadog_api import _get_dd_api_client
 
         cfg = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")  # ssl_verify=True default
+
+        # Track every __setattr__ call on the configuration object so we can assert
+        # that neither verify_ssl nor ssl_ca_cert were written.
+        ssl_attrs_written: list[str] = []
+        original_setattr = MagicMock.__setattr__
 
         mock_configuration = MagicMock()
         mock_configuration.server_variables = {}
         mock_configuration.api_key = {}
 
+        def _spy_setattr(self: object, name: str, value: object) -> None:
+            if name in ("verify_ssl", "ssl_ca_cert"):
+                ssl_attrs_written.append(name)
+            original_setattr(self, name, value)
+
         dd_mods = _make_dd_modules()
         dd_mods["datadog_api_client"].Configuration.return_value = mock_configuration  # type: ignore[attr-defined]
         with patch.dict("sys.modules", dd_mods):
-            _get_dd_api_client(cfg)
+            with patch.object(type(mock_configuration), "__setattr__", _spy_setattr):
+                _get_dd_api_client(cfg)
 
-        # verify_ssl and ssl_ca_cert should NOT have been explicitly set to concrete values.
-        # If they were never assigned, they remain as auto-created MagicMock child attributes.
-        # If they were assigned a concrete value (False, a path string), they'd be that value.
-        assert mock_configuration.verify_ssl is not False, (
-            "verify_ssl must not be set to False when ssl_verify=True"
-        )
-        # ssl_ca_cert should not have been assigned a string path
-        assert not isinstance(mock_configuration.ssl_ca_cert, str), (
-            "ssl_ca_cert must not be set to a path when ssl_verify=True"
+        assert ssl_attrs_written == [], (
+            f"ssl_verify=True must not trigger any write to {ssl_attrs_written} "
+            "on the SDK Configuration object"
         )
 
     def test_empty_result_when_both_return_zero_spans(self, dd_config: DatadogAPIConfig) -> None:

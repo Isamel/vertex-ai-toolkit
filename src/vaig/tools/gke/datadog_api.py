@@ -784,6 +784,9 @@ def get_datadog_apm_services(
                 resp.status_code, service_name,
             )
             return None, f"GET /api/v2/apm/traces/search returned HTTP {resp.status_code}"
+        except requests.exceptions.SSLError:
+            # Re-raise so the outer SSLError handler can surface a helpful message
+            raise
         except requests.RequestException as exc:
             logger.warning("Datadog APM: APM Traces Search v2 GET request error: %s", exc)
             return None, f"GET /api/v2/apm/traces/search request error: {exc}"
