@@ -1628,8 +1628,9 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             ToolDef(
                 name="get_datadog_apm_services",
                 description=(
-                    "Fetch live APM trace metrics for a specific service from Datadog. "
-                    "Returns throughput, error rate, and avg latency from actual trace data over the last 30 minutes. "
+                    "Fetch live APM trace metrics for a specific service from Datadog using Spans Events Search v2. "
+                    "Returns throughput, error rate, and avg latency from actual span data. "
+                    "Uses a fallback chain: POST /api/v2/spans/events/search → GET /api/v2/apm/traces/search → empty result with warning. "
                     "Use this for real-time performance data — NOT for ownership metadata (use get_datadog_service_catalog for that). "
                     "Provide service_name when known — resolve it from Kubernetes pod labels before calling. "
                     "If service_name cannot be determined, call the tool anyway — it will return guidance on resolution. "
@@ -1659,11 +1660,21 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         ),
                         required=False,
                     ),
+                    ToolParam(
+                        name="hours_back",
+                        type="number",
+                        description=(
+                            "Lookback window in hours for the APM query. "
+                            "Defaults to 1 hour. Use fractional values for sub-hour windows "
+                            "(e.g. 0.5 for 30 minutes, 4 for 4 hours)."
+                        ),
+                        required=False,
+                    ),
                 ],
                 categories=frozenset({DATADOG}),
-                execute=lambda service_name="", env="production",
+                execute=lambda service_name="", env="production", hours_back=1.0,
                         _dd=_dd_config: get_datadog_apm_services(
-                    service_name=service_name, env=env, config=_dd,
+                    service_name=service_name, env=env, hours_back=hours_back, config=_dd,
                 ),
             ),
         ])
