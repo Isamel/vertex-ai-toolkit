@@ -283,6 +283,14 @@ You MUST use the workload_gatherer's original columns for ``Ready``, ``Restarts`
 ``CPU Usage``, ``Memory Usage`` values.  If the workload_gatherer table is not
 available, use the best data available from the analyzer summary.
 
+**Argo Rollout stub rows — SKIP them**: A row in the ``## Service Status`` table where
+``pods_ready=0/0`` AND ``status=FAILED`` or ``status=UNKNOWN`` is likely a Deployment
+stub created by Argo Rollouts (the real workload is managed by a Rollout CRD, not the
+Deployment).  If a ``## Rollout Details`` section exists in the upstream data and contains
+an entry for the same service name, **skip the stub row entirely** and use the Rollout's
+actual data from ``## Rollout Details`` instead — map ``rollout_status`` to the
+``service_statuses[].status`` field, and use the Rollout's replica counts for ``pods_ready``.
+
 **Scaling data mapping** — when ``get_scaling_status`` output is present in the
 upstream data, populate ``ServiceStatus`` fields as follows:
 - ``cpu_usage`` / ``memory_usage``: Always use ``kubectl_top`` absolute values for these
