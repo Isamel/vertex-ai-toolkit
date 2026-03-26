@@ -455,6 +455,9 @@ g. **Rollout strategy extraction** — for EVERY Rollout found in step (a), extr
    Include the strategy in the per-service output as:
    ``"rollout_strategy: canary"`` or ``"rollout_strategy: blue-green"``
 
+   **IMPORTANT — camelCase normalization**: the tool output may show ``blueGreen`` (camelCase).
+   ALWAYS normalize to ``blue-green`` (hyphenated) in your output. Emit ``canary`` as-is.
+
 h. **Rollout status for output schema** — map the Rollout phase to one of these values and
    include it in the per-service output as ``"rollout_status: <value>"``:
    - ``Healthy`` → ``"Healthy"``
@@ -468,6 +471,12 @@ i. **HPA conditions for Rollout-managed workloads** — when collecting HPA data
    ``"hpa_conditions: [<condition-message-1>, <condition-message-2>, ...]"``
    This list may be empty if the HPA has no conditions.
    These conditions are CRITICAL context for diagnosing scaling failures on Argo-managed workloads.
+
+j. **Rollout Details subsection** — after the main workload table, add a dedicated
+   ``### Rollout Details`` subsection for every service that has rollout data. Use this format:
+   - rollout_strategy: <blue-green|canary|N/A>
+   - rollout_status: <Healthy|Progressing|Paused|Degraded|N/A>
+   - hpa_conditions: <condition1; condition2|none>
 """
         prompt = prompt + argo_rollouts_section
     return prompt

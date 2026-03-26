@@ -3393,3 +3393,41 @@ class TestWorkloadGathererRolloutEnrichmentInstructions:
         assert '"rollout_status:' not in prompt, (
             "The rollout_status output instruction must only appear when argo_rollouts_enabled=True."
         )
+
+
+    def test_bluegreen_camelcase_normalization_instruction_present(self) -> None:
+        """Step g must explicitly instruct the agent to normalize 'blueGreen' → 'blue-green'."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=True)
+        assert "ALWAYS normalize to" in prompt, (
+            "Prompt must include camelCase normalization instruction for blueGreen → blue-green."
+        )
+        assert "blue-green" in prompt, "Prompt must show canonical 'blue-green' (hyphenated) form."
+
+    def test_rollout_details_subsection_instruction_present(self) -> None:
+        """Step j must instruct the agent to emit a ### Rollout Details subsection."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=True)
+        assert "Rollout Details subsection" in prompt, (
+            "Prompt must include instruction to add a '### Rollout Details' subsection (step j)."
+        )
+        assert "rollout_strategy: <blue-green|canary|N/A>" in prompt, (
+            "Prompt must include rollout_strategy format line in step j."
+        )
+        assert "rollout_status: <Healthy|Progressing|Paused|Degraded|N/A>" in prompt, (
+            "Prompt must include rollout_status format line in step j."
+        )
+        assert "hpa_conditions: <condition1; condition2|none>" in prompt, (
+            "Prompt must include hpa_conditions format line in step j."
+        )
+
+    def test_normalization_instruction_absent_when_argo_disabled(self) -> None:
+        """camelCase normalization instruction must NOT appear when argo_rollouts_enabled=False."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(namespace="default", argo_rollouts_enabled=False)
+        assert "ALWAYS normalize to" not in prompt, (
+            "Normalization instruction must only appear when argo_rollouts_enabled=True."
+        )

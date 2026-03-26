@@ -368,7 +368,10 @@ class ServiceStatus(BaseModel):
     # the workload; absent for standard Deployment-based services)
     rollout_strategy: str | None = Field(
         default=None,
-        description="Argo Rollout strategy: 'canary' | 'blue-green' | None",
+        description=(
+            "Argo Rollout strategy in canonical hyphenated form: 'canary' | 'blue-green' | None. "
+            "Note: tool output may show 'blueGreen' (camelCase); always normalize to 'blue-green'."
+        ),
     )
     rollout_status: str | None = Field(
         default=None,
@@ -796,17 +799,17 @@ class HealthReport(BaseModel):
             )
         parts.append("")
 
-        # Argo Rollouts enrichment — render only when at least one service has rollout data
-        rollout_svcs = [s for s in self.service_statuses if s.rollout_strategy is not None]
+        # Argo Rollouts enrichment — render when any rollout field is present
+        rollout_svcs = [s for s in self.service_statuses if s.rollout_strategy or s.rollout_status or s.hpa_conditions]
         if rollout_svcs:
             parts.append("### Rollout Details")
             parts.append("")
-            parts.append("| Service | Strategy | Rollout Status | HPA Conditions |")
-            parts.append("|---------|----------|----------------|----------------|")
+            parts.append("| Service | Namespace | Strategy | Rollout Status | HPA Conditions |")
+            parts.append("|---------|-----------|----------|----------------|----------------|")
             for svc in rollout_svcs:
                 hpa = "; ".join(svc.hpa_conditions) if svc.hpa_conditions else "—"
                 parts.append(
-                    f"| {svc.service} | {svc.rollout_strategy} "
+                    f"| {svc.service} | {svc.namespace or '—'} | {svc.rollout_strategy or 'N/A'} "
                     f"| {svc.rollout_status or 'N/A'} | {hpa} |"
                 )
             parts.append("")
