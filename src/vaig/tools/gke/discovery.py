@@ -32,20 +32,29 @@ def discover_workloads(
     gke_config: GKEConfig,
     namespace: str = "",
     include_jobs: bool = False,
+    include_rollouts: bool = False,
     force_refresh: bool = False,
 ) -> ToolResult:
     """Discover all workloads in the cluster (or a namespace).
 
     Returns a summary table of deployments, statefulsets, daemonsets, and
-    optionally jobs/cronjobs.  Unhealthy workloads are listed first.
-    Results are cached for ``_DISCOVERY_TTL`` seconds unless *force_refresh*
-    is ``True``.
+    optionally jobs/cronjobs and Argo Rollouts.  Unhealthy workloads are listed
+    first.  Results are cached for ``_DISCOVERY_TTL`` seconds unless
+    *force_refresh* is ``True``.
+
+    Args:
+        gke_config: GKE cluster configuration.
+        namespace: Kubernetes namespace to filter on.  Empty = all namespaces.
+        include_jobs: Whether to include Jobs and CronJobs in the output.
+        include_rollouts: Whether to include Argo Rollouts in the output.
+            Gracefully skipped if the Argo Rollouts CRDs are not installed.
+        force_refresh: Bypass the discovery cache and force a fresh API call.
     """
     if not _K8S_AVAILABLE:
         return _clients._k8s_unavailable()
 
     # ── Cache check ───────────────────────────────────────────
-    cache_key = _cache._cache_key_discovery("workloads", namespace, str(include_jobs))
+    cache_key = _cache._cache_key_discovery("workloads", namespace, str(include_jobs), str(include_rollouts))
     if not force_refresh:
         cached = _cache._get_cached(cache_key)
         if cached is not None:
@@ -128,6 +137,32 @@ def discover_workloads(
                 all_items.append((rtype, name, ns, ready, desired, restarts, age, healthy))
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{rtype}: {exc}")
+
+    # ── Argo Rollouts (optional, graceful degradation) ────────
+    if include_rollouts:
+        try:
+            res = _resources._list_resource(
+                core_v1, apps_v1, custom_api, "rollouts", namespace, api_client=api_client
+            )
+            if isinstance(res, ToolResult):
+                # Graceful: CRDs not installed or RBAC error → log warning, skip
+                logger.warning("discover_workloads: Argo Rollouts not available — %s", res.output)
+            else:
+                rollout_items = getattr(res, "items", []) or []
+                for item in rollout_items:
+                    meta = item.metadata
+                    rname = meta.name or "<unknown>"
+                    rns = meta.namespace or ""
+                    rage = _formatters._age(meta.creation_timestamp)
+                    spec_dict = item.spec or {}
+                    status_dict = item.status or {}
+                    r_desired = spec_dict.get("replicas", 0) or 0
+                    r_ready = status_dict.get("readyReplicas", 0) or 0
+                    r_phase = status_dict.get("phase", "Unknown")
+                    r_healthy = r_phase in ("Healthy", "Paused") and r_ready >= r_desired and r_desired > 0
+                    all_items.append(("rollouts", rname, rns, r_ready, r_desired, 0, rage, r_healthy))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("discover_workloads: Argo Rollouts query failed — %s", exc)
 
     # ── Sort: unhealthy first, then by kind + name ────────────
     all_items.sort(key=lambda x: (x[7], x[0], x[1]))
