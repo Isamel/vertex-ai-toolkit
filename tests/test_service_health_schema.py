@@ -225,8 +225,8 @@ class TestRolloutDetailsTableRendering:
 
     @staticmethod
     def _make_report(services):
-        from vaig.skills.service_health.schema import ServiceHealthReport
-        return ServiceHealthReport(
+        from vaig.skills.service_health.schema import HealthReport
+        return HealthReport(
             cluster_name="test-cluster",
             namespaces=["default"],
             service_statuses=services,
