@@ -364,6 +364,21 @@ class ServiceStatus(BaseModel):
     memory_usage: str = Field(default="N/A")
     issues: str = Field(default="")
 
+    # Argo Rollouts enrichment fields (optional — only present when Argo Rollouts manages
+    # the workload; absent for standard Deployment-based services)
+    rollout_strategy: str | None = Field(
+        default=None,
+        description="Argo Rollout strategy: 'canary' | 'blue-green' | None",
+    )
+    rollout_status: str | None = Field(
+        default=None,
+        description="Argo Rollout phase mapped to: 'Healthy' | 'Progressing' | 'Paused' | 'Degraded' | None",
+    )
+    hpa_conditions: list[str] = Field(
+        default_factory=list,
+        description="HPA status.conditions messages when HPA scaleTargetRef points to a Rollout",
+    )
+
 
 class Finding(BaseModel):
     """An individual health finding (issue or observation)."""
@@ -780,6 +795,21 @@ class HealthReport(BaseModel):
                 f"| {svc.restarts_1h} | {svc.cpu_usage} | {svc.memory_usage} | {svc.issues} |"
             )
         parts.append("")
+
+        # Argo Rollouts enrichment — render only when at least one service has rollout data
+        rollout_svcs = [s for s in self.service_statuses if s.rollout_strategy is not None]
+        if rollout_svcs:
+            parts.append("### Rollout Details")
+            parts.append("")
+            parts.append("| Service | Strategy | Rollout Status | HPA Conditions |")
+            parts.append("|---------|----------|----------------|----------------|")
+            for svc in rollout_svcs:
+                hpa = "; ".join(svc.hpa_conditions) if svc.hpa_conditions else "—"
+                parts.append(
+                    f"| {svc.service} | {svc.rollout_strategy} "
+                    f"| {svc.rollout_status or 'N/A'} | {hpa} |"
+                )
+            parts.append("")
 
     def _render_findings(self, parts: list[str]) -> None:
         parts.append("## Findings")

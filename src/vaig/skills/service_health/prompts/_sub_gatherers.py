@@ -446,6 +446,28 @@ e. For pod ownership tracing (Step 4c): when a failing pod's owning ReplicaSet i
 f. Add a ``### Rollout Issues`` sub-section to ``## Raw Findings (Workload)`` if any Rollouts
    are not in Healthy phase.  Format:
    ``"Rollout <name> in <namespace>: phase=<phase>, strategy=<canary|blueGreen>, <detail>"``
+
+g. **Rollout strategy extraction** — for EVERY Rollout found in step (a), extract the strategy
+   type from the Rollout spec:
+   - If ``spec.strategy.canary`` is present → strategy is ``canary``
+   - If ``spec.strategy.blueGreen`` is present → strategy is ``blue-green``
+   The ``kubectl_get_rollout`` output includes a "Strategy:" line — use it.
+   Include the strategy in the per-service output as:
+   ``"rollout_strategy: canary"`` or ``"rollout_strategy: blue-green"``
+
+h. **Rollout status for output schema** — map the Rollout phase to one of these values and
+   include it in the per-service output as ``"rollout_status: <value>"``:
+   - ``Healthy`` → ``"Healthy"``
+   - ``Progressing`` → ``"Progressing"``
+   - ``Paused`` → ``"Paused"``
+   - ``Degraded`` or ``Error`` → ``"Degraded"``
+
+i. **HPA conditions for Rollout-managed workloads** — when collecting HPA data (Step 4b),
+   check whether the HPA's ``spec.scaleTargetRef.kind`` is ``"Rollout"`` (not ``"Deployment"``).
+   If so, extract all HPA ``status.conditions`` messages and report them as:
+   ``"hpa_conditions: [<condition-message-1>, <condition-message-2>, ...]"``
+   This list may be empty if the HPA has no conditions.
+   These conditions are CRITICAL context for diagnosing scaling failures on Argo-managed workloads.
 """
         prompt = prompt + argo_rollouts_section
     return prompt

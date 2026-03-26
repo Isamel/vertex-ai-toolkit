@@ -141,3 +141,80 @@ class TestEnumCoercion:
         from vaig.skills.service_health.schema import Effort
         action = RecommendedAction(priority=1, title="Fix", effort="NOPE")  # type: ignore[arg-type]
         assert action.effort == Effort.MEDIUM
+
+
+class TestServiceStatusRolloutFields:
+    """ServiceStatus optional Argo Rollouts enrichment fields — Block C."""
+
+    def test_rollout_strategy_defaults_to_none(self) -> None:
+        """rollout_strategy is None when not provided — backward compatible."""
+        svc = ServiceStatus(service="my-svc")
+        assert svc.rollout_strategy is None
+
+    def test_rollout_status_defaults_to_none(self) -> None:
+        """rollout_status is None when not provided — backward compatible."""
+        svc = ServiceStatus(service="my-svc")
+        assert svc.rollout_status is None
+
+    def test_hpa_conditions_defaults_to_empty_list(self) -> None:
+        """hpa_conditions defaults to [] when not provided — backward compatible."""
+        svc = ServiceStatus(service="my-svc")
+        assert svc.hpa_conditions == []
+
+    def test_rollout_strategy_canary_accepted(self) -> None:
+        svc = ServiceStatus(service="my-svc", rollout_strategy="canary")
+        assert svc.rollout_strategy == "canary"
+
+    def test_rollout_strategy_blue_green_accepted(self) -> None:
+        svc = ServiceStatus(service="my-svc", rollout_strategy="blue-green")
+        assert svc.rollout_strategy == "blue-green"
+
+    def test_rollout_status_accepted(self) -> None:
+        for status in ("Healthy", "Progressing", "Paused", "Degraded"):
+            svc = ServiceStatus(service="my-svc", rollout_status=status)
+            assert svc.rollout_status == status
+
+    def test_hpa_conditions_list_accepted(self) -> None:
+        conditions = ["AbleToScale: True", "ScalingActive: False — DesiredReplicas=0"]
+        svc = ServiceStatus(service="my-svc", hpa_conditions=conditions)
+        assert svc.hpa_conditions == conditions
+
+    def test_all_rollout_fields_together(self) -> None:
+        svc = ServiceStatus(
+            service="my-svc",
+            namespace="prod",
+            rollout_strategy="canary",
+            rollout_status="Progressing",
+            hpa_conditions=["AbleToScale: True"],
+        )
+        assert svc.rollout_strategy == "canary"
+        assert svc.rollout_status == "Progressing"
+        assert svc.hpa_conditions == ["AbleToScale: True"]
+
+    def test_backward_compat_old_servicestatus_without_rollout_fields(self) -> None:
+        """Existing ServiceStatus data without rollout fields must still validate cleanly."""
+        data = {
+            "service": "payment-svc",
+            "namespace": "default",
+            "status": "HEALTHY",
+            "pods_ready": "3/3",
+            "restarts_1h": "0",
+            "cpu_usage": "120m",
+            "memory_usage": "256Mi",
+            "issues": "",
+        }
+        svc = ServiceStatus(**data)
+        assert svc.service == "payment-svc"
+        assert svc.rollout_strategy is None
+        assert svc.rollout_status is None
+        assert svc.hpa_conditions == []
+
+    def test_extra_field_still_ignored_alongside_rollout_fields(self) -> None:
+        """extra='ignore' still applies even when rollout fields are present."""
+        svc = ServiceStatus(
+            service="my-svc",
+            rollout_strategy="canary",
+            future_unknown_field="should be ignored",  # type: ignore[call-arg]
+        )
+        assert svc.rollout_strategy == "canary"
+        assert not hasattr(svc, "future_unknown_field")
