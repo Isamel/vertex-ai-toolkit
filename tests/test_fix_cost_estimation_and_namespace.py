@@ -131,9 +131,10 @@ class TestContainerUsageMetricsPartial:
 class TestGetWorkloadUsageMetricsPartial:
     """get_workload_usage_metrics should allow containers with only one dimension."""
 
-    def _make_ts(self, pod_name: str, values: list[float]) -> MagicMock:
+    def _make_ts(self, pod_name: str, values: list[float], container_name: str = "app") -> MagicMock:
         ts = MagicMock()
         ts.resource.labels = {"pod_name": pod_name, "namespace_name": "default"}
+        ts.metric.labels = {"container_name": container_name}
         points = []
         for v in reversed(values):
             point = MagicMock()
@@ -426,9 +427,10 @@ class TestMonitoringErrorSurfacing:
 
     @patch("vaig.tools.gke.cost_estimation._create_k8s_clients")
     @patch("vaig.tools.gke.cost_estimation.detect_autopilot", return_value=True)
-    def test_no_monitoring_error_status_is_none(
+    def test_no_monitoring_error_empty_metrics_sets_no_data_status(
         self, _mock_autopilot: MagicMock, mock_clients: MagicMock
     ) -> None:
+        """When monitoring returns empty results, status reflects no_data (not None)."""
         from vaig.tools.gke.cost_estimation import fetch_workload_costs
 
         pod = _make_running_pod()
@@ -441,7 +443,9 @@ class TestMonitoringErrorSurfacing:
         ):
             report = fetch_workload_costs(_make_gke_config())
 
-        assert report.monitoring_status is None
+        # Empty metrics should now be reflected in monitoring_status rather than None
+        assert report.monitoring_status is not None
+        assert "no_data" in report.monitoring_status
 
 
 # ── FIX B: _inject_report_metadata namespace logic ────────────

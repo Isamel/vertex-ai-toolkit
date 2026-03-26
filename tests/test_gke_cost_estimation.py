@@ -215,7 +215,7 @@ class TestCalculateWorkloadCost:
         types = {rc.resource_type for rc in result["resource_costs"]}
         assert types == {"cpu", "memory", "ephemeral"}
 
-    def test_partial_usage_makes_total_none(self) -> None:
+    def test_partial_usage_produces_partial_cost(self) -> None:
         # Providing cpu_usage but not memory_usage — partial metrics policy:
         # total_usage_cost_usd is populated with the partial sum (not None),
         # but total_waste_usd remains None because not all tracked dims are available.

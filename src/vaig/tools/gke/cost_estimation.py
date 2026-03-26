@@ -475,6 +475,8 @@ def calculate_workload_cost(
     # check.  Ephemeral storage is never available from Cloud Monitoring, so it is
     # not tracked — CPU+memory coverage alone is sufficient to declare a workload
     # as having full metrics.  This mirrors the per-container loop below.
+    # NOTE: because ephemeral is ``tracked=False``, it is also excluded from
+    # ``total_usage_cost_usd``; that field only sums CPU and memory usage costs.
     resource_specs: list[tuple[str, float, float | None, float, bool]] = [
         ("cpu",      cpu_requests,          cpu_usage,          pricing.cpu_per_vcpu_hour,      True),
         ("memory",   memory_requests_gib,   memory_usage_gib,   pricing.ram_per_gib_hour,       True),
@@ -924,7 +926,7 @@ def fetch_workload_costs(
 
     # ns_usage_metrics: namespace → {workload_name: WorkloadUsageMetrics}
     ns_usage_metrics: dict[str, dict[str, Any]] = {}
-    monitoring_status: str | None = None  # None = OK; str = error description
+    monitoring_status: str | None = None  # None = not checked yet; "ok" = metrics fetched; str = issue
     if monitoring_available:
         for ns, workload_pod_names in ns_workload_pod_names.items():
             try:
@@ -934,6 +936,12 @@ def fetch_workload_costs(
                     gke_config=gke_config,
                 )
                 ns_usage_metrics[ns] = usage
+                if not usage:
+                    # Query succeeded but returned no data for this namespace
+                    if monitoring_status is None:
+                        monitoring_status = f"no_data: empty metrics returned for ns={ns}"
+                else:
+                    monitoring_status = "ok"
             except Exception as exc:  # noqa: BLE001
                 exc_desc = f"{type(exc).__name__}: {exc}"
                 logger.error(
