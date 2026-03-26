@@ -626,12 +626,19 @@ class TestSearchFiles:
 class TestCreateFileTools:
     def test_returns_correct_count(self, tmp_path: Path) -> None:
         tools = create_file_tools(tmp_path)
-        assert len(tools) == 5
+        assert len(tools) == 6
 
     def test_tool_names(self, tmp_path: Path) -> None:
         tools = create_file_tools(tmp_path)
         names = {t.name for t in tools}
-        assert names == {"read_file", "write_file", "edit_file", "list_files", "search_files"}
+        assert names == {
+            "read_file",
+            "write_file",
+            "edit_file",
+            "list_files",
+            "search_files",
+            "verify_completeness",
+        }
 
     def test_all_tools_are_tooldefs(self, tmp_path: Path) -> None:
         tools = create_file_tools(tmp_path)
