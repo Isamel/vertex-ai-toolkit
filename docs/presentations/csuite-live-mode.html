@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VAIG Live Mode — Real-Time GKE Service Monitoring</title>
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      /* Kanagawa-inspired palette */
+      --bg-deep:     #1f1f28;
+      --bg-mid:      #2a2a37;
+      --bg-card:     #223249;
+      --bg-accent:   #1a2a3a;
+      --border:      #363646;
+      --text-main:   #dcd7ba;
+      --text-dim:    #727169;
+      --text-bright: #c8c093;
+      --blue:        #7fb4ca;
+      --blue-bright: #7aa2f7;
+      --teal:        #7dcfff;
+      --green:       #98bb6c;
+      --yellow:      #dca561;
+      --orange:      #ff9e3b;
+      --red:         #ff5d62;
+      --purple:      #957fb8;
+      --pink:        #d27e99;
+      --cyan:        #6a9589;
+      --slide-w:     1280px;
+      --slide-h:     720px;
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--bg-deep);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      color: var(--text-main);
+      overflow: hidden;
+    }
+
+    /* ── Slide Container ──────────────────────────────────── */
+    .deck {
+      width: 100vw; height: 100vh;
+      overflow-y: scroll;
+      scroll-snap-type: y mandatory;
+      scroll-behavior: smooth;
+    }
+
+    .slide {
+      width: 100vw; height: 100vh;
+      min-height: 100vh;
+      scroll-snap-align: start;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 60px 80px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* ── Slide number badge ───────────────────────────────── */
+    .slide-num {
+      position: absolute;
+      bottom: 28px; right: 40px;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      letter-spacing: 0.1em;
+    }
+
+    /* ── Logo/brand watermark ─────────────────────────────── */
+    .brand {
+      position: absolute;
+      top: 28px; left: 40px;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+    }
+
+    /* ── Progress bar ─────────────────────────────────────── */
+    #progress-bar {
+      position: fixed;
+      top: 0; left: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--blue-bright), var(--teal));
+      transition: width 0.3s ease;
+      z-index: 999;
+    }
+
+    /* ── Slide counter nav dots ───────────────────────────── */
+    #nav-dots {
+      position: fixed;
+      right: 18px; top: 50%;
+      transform: translateY(-50%);
+      display: flex; flex-direction: column; gap: 8px;
+      z-index: 999;
+    }
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--border);
+      cursor: pointer;
+      transition: background 0.2s, transform 0.2s;
+    }
+    .dot.active {
+      background: var(--blue-bright);
+      transform: scale(1.3);
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       SLIDE 1 — TITLE
+    ══════════════════════════════════════════════════════════ */
+    .slide-title {
+      background: radial-gradient(ellipse at 60% 40%, #16213e 0%, var(--bg-deep) 70%);
+      text-align: center;
+    }
+    .slide-title .kicker {
+      font-size: 0.9rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--teal);
+      margin-bottom: 20px;
+    }
+    .slide-title h1 {
+      font-size: clamp(2.4rem, 4vw, 3.8rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      background: linear-gradient(135deg, var(--blue-bright) 0%, var(--teal) 60%, var(--green) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 16px;
+    }
+    .slide-title .subtitle {
+      font-size: 1.25rem;
+      color: var(--text-bright);
+      margin-bottom: 40px;
+    }
+    .slide-title .meta {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      display: flex; gap: 32px; justify-content: center;
+    }
+    .slide-title .meta span { display: flex; align-items: center; gap: 6px; }
+    .tag-pill {
+      display: inline-block;
+      padding: 4px 14px;
+      border-radius: 20px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      border: 1px solid currentColor;
+      margin: 0 4px;
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       SLIDE 2 — PROBLEM
+    ══════════════════════════════════════════════════════════ */
+    .slide-problem { background: var(--bg-deep); }
+    .slide-label {
+      font-size: 0.7rem;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      align-self: flex-start;
+    }
+    h2 {
+      font-size: clamp(1.8rem, 3vw, 2.8rem);
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      margin-bottom: 36px;
+      color: var(--text-bright);
+      align-self: flex-start;
+    }
+    .pain-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      width: 100%;
+      max-width: 1100px;
+    }
+    .pain-card {
+      background: var(--bg-mid);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px 24px;
+    }
+    .pain-card .icon { font-size: 2rem; margin-bottom: 12px; }
+    .pain-card .title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--red);
+      margin-bottom: 8px;
+    }
+    .pain-card p { font-size: 0.88rem; color: var(--text-dim); line-height: 1.55; }
+
+    /* ═══════════════════════════════════════════════════════
+       SLIDE 3 — SOLUTION
+    ══════════════════════════════════════════════════════════ */
+    .slide-solution {
+      background: linear-gradient(135deg, var(--bg-deep) 0%, #0d1b2a 100%);
+    }
+    .solution-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 60px;
+      width: 100%; max-width: 1100px;
+      align-items: center;
+    }
+    .solution-left h2 { font-size: clamp(1.8rem, 2.8vw, 2.6rem); margin-bottom: 20px; }
+    .solution-desc {
+      font-size: 1.05rem;
+      color: var(--text-dim);
+      line-height: 1.65;
+      margin-bottom: 28px;
+    }
+    .solution-features { list-style: none; }
+    .solution-features li {
+      display: flex; align-items: flex-start; gap: 10px;
+      font-size: 0.95rem;
+      color: var(--text-main);
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+    .solution-features li::before {
+      content: "→";
+      color: var(--blue-bright);
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .code-demo {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 24px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 0.85rem;
+      line-height: 1.7;
+    }
+    .code-demo .prompt { color: var(--green); }
+    .code-demo .cmd { color: var(--text-bright); }
+    .code-demo .arg { color: var(--blue); }
+    .code-demo .flag { color: var(--yellow); }
+    .code-demo .comment { color: var(--text-dim); }
+
+    /* ═══════════════════════════════════════════════════════
+       SLIDE 4 — KEY FEATURES
+    ══════════════════════════════════════════════════════════ */
+    .slide-features { background: var(--bg-deep); }
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      width: 100%; max-width: 1140px;
+    }
+    .feature-card {
+      background: var(--bg-mid);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px 20px;
+      position: relative;
+      overflow: hidden;
+    }
+    .feature-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+    }
+    .feature-card.blue::before   { background: var(--blue-bright); }
+    .feature-card.teal::before   { background: var(--teal); }
+    .feature-card.green::before  { background: var(--green); }
+    .feature-card.purple::before { background: var(--purple); }
+    .feature-card.orange::before { background: var(--orange); }
+    .feature-card.pink::before   { background: var(--pink); }
+    .feature-card.yellow::before { background: var(--yellow); }
+    .feature-card.cyan::before   { background: var(--cyan); }
+    .feature-card .icon { font-size: 1.6rem; margin-bottom: 12px; }
+    .feature-card .name {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-bright);
+      margin-bottom: 8px;
+    }
+    .feature-card .desc {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       SLIDE 5 — ARCHITECTURE
+    ══════════════════════════════════════════════════════════ */
+    .slide-arch { background: var(--bg-deep); }
+    .arch-diagram {
+      width: 100%; max-width: 1100px;
+    }
+    .arch-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      margin-bottom: 20px;
+    }
+    .arch-node {
+      background: var(--bg-mid);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 22px;
+      text-align: center;
+      min-width: 140px;
+    }
+    .arch-node .node-icon { font-size: 1.5rem; margin-bottom: 6px; }
+    .arch-node .node-name {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-bright);
+      margin-bottom: 3px;
+    }
+    .arch-node .node-sub { font-size: 0.68rem; color: var(--text-dim); }
+    .arch-arrow {
+      font-size: 1.4rem;
+      color: var(--blue);
+      padding: 0 12px;
+      flex-shrink: 0;
+    }
+    .arch-tools {
+      background: var(--bg-accent);
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 16px 24px;
+      margin-top: 24px;
+    }
+    .arch-tools .tools-label {
+      font-size: 0.7rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+    }
+    .tools-row {
+      display: flex; flex-wrap: wrap; gap: 8px;
+    }
+    .tool-badge {
+      background: var(--bg-mid);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.72rem;
+      color: var(--blue);
+      font-family: 'Cascadia Code', 'Fira Code', monospace;
+    }
+    .arch-stat-row {
+      display: flex; gap: 20px; justify-content: center;
+      margin-top: 24px;
+    }
+    .arch-stat {
+      text-align: center;
+      padding: 12px 24px;
+      background: var(--bg-mid);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .arch-stat .num {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: var(--blue-bright);
+    }
+    .arch-stat .lbl { font-size: 0.72rem; color: var(--text-dim); }
+
+    /* ═══════════════════════════════════════════════════════
+       SLIDE 6 — RECENT IMPROVEMENTS
+    ══════════════════════════════════════════════════════════ */
+    .slide-improvements { background: var(--bg-deep); }
+    .improvements-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      width: 100%; max-width: 1100px;
+    }
+    .pr-card {
+      background: var(--bg-mid);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 18px;
+    }
+    .pr-card .pr-tag {
+      font-size: 0.68rem;
+      font-family: monospace;
+      color: var(--text-dim);
+      background: var(--bg-accent);
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      display: inline-block;
+    }
+    .pr-card .pr-title {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text-bright);
+      margin-bottom: 6px;
+      line-height: 1.35;
+    }
+    .pr-card .pr-desc {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+    .pr-card.fix .pr-title { color: var(--green); }
+    .pr-card.feat .pr-title { color: var(--blue-bright); }
+    .pr-card.infra .pr-title { color: var(--purple); }
+
+    /* ═══════════════════════════════════════════════════════
+       SLIDE 7 — DEMO
+    ══════════════════════════════════════════════════════════ */
+    .slide-demo { background: linear-gradient(135deg, #0d1117 0%, var(--bg-deep) 100%); }
+    .demo-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 48px;
+      width: 100%; max-width: 1100px;
+      align-items: start;
+    }
+    .demo-left h2 { margin-bottom: 16px; font-size: clamp(1.6rem, 2.4vw, 2.4rem); }
+    .demo-steps { list-style: none; margin-bottom: 24px; }
+    .demo-steps li {
+      display: flex; align-items: flex-start; gap: 14px;
+      margin-bottom: 16px;
+      font-size: 0.9rem;
+      line-height: 1.4;
+    }
+    .step-num {
+      width: 28px; height: 28px;
+      background: var(--blue-bright);
+      color: var(--bg-deep);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .step-content strong { color: var(--text-bright); }
+    .step-content span { color: var(--text-dim); }
+    .demo-code { display: flex; flex-direction: column; gap: 12px; }
+    .demo-snippet {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px 18px;
+      font-family: 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 0.78rem;
+      line-height: 1.6;
+    }
+    .demo-snippet .label {
+      font-size: 0.62rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+      font-family: system-ui;
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       SLIDE 8 — ROI
+    ══════════════════════════════════════════════════════════ */
+    .slide-roi {
+      background: radial-gradient(ellipse at 30% 60%, #0d1b2a 0%, var(--bg-deep) 65%);
+    }
+    .roi-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 60px;
+      width: 100%; max-width: 1100px;
+      align-items: center;
+    }
+    .roi-left h2 { font-size: clamp(1.6rem, 2.4vw, 2.4rem); margin-bottom: 20px; }
+    .roi-metrics { display: flex; flex-direction: column; gap: 16px; }
+    .roi-metric {
+      display: flex; align-items: center; gap: 20px;
+      background: var(--bg-mid);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+    }
+    .roi-metric .val {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--green);
+      min-width: 90px;
+      line-height: 1;
+    }
+    .roi-metric .txt strong { color: var(--text-bright); font-size: 0.9rem; }
+    .roi-metric .txt p { color: var(--text-dim); font-size: 0.78rem; margin-top: 2px; }
+    .roi-right { display: flex; flex-direction: column; gap: 16px; }
+    .roi-quote {
+      background: var(--bg-card);
+      border-left: 4px solid var(--blue-bright);
+      border-radius: 0 8px 8px 0;
+      padding: 20px 22px;
+    }
+    .roi-quote .quote-text {
+      font-size: 1rem;
+      color: var(--text-bright);
+      line-height: 1.6;
+      font-style: italic;
+      margin-bottom: 8px;
+    }
+    .roi-quote .quote-source { font-size: 0.75rem; color: var(--text-dim); }
+    .roi-callout {
+      background: linear-gradient(135deg, var(--bg-card), var(--bg-accent));
+      border: 1px solid var(--blue);
+      border-radius: 10px;
+      padding: 20px 24px;
+      text-align: center;
+    }
+    .roi-callout .headline {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--blue-bright);
+      margin-bottom: 6px;
+    }
+    .roi-callout p { font-size: 0.82rem; color: var(--text-dim); }
+
+    /* ═══════════════════════════════════════════════════════
+       SHARED UTILITIES
+    ══════════════════════════════════════════════════════════ */
+    .highlight { color: var(--blue-bright); }
+    .hl-green  { color: var(--green); }
+    .hl-teal   { color: var(--teal); }
+    .hl-yellow { color: var(--yellow); }
+    .hl-red    { color: var(--red); }
+    .hl-purple { color: var(--purple); }
+
+    /* ── Keyboard hint ────────────────────────────────────── */
+    #kbd-hint {
+      position: fixed;
+      bottom: 20px; left: 50%; transform: translateX(-50%);
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      letter-spacing: 0.1em;
+      z-index: 998;
+      opacity: 1;
+      transition: opacity 3s ease;
+    }
+    #kbd-hint.hidden { opacity: 0; pointer-events: none; }
+
+    /* ── Utility classes (extracted from repeated inline styles) ── */
+    .tag-pill-row {
+      margin-top: 32px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .tag-pill-blue   { color: var(--blue-bright); }
+    .tag-pill-green  { color: var(--green); }
+    .tag-pill-purple { color: var(--purple); }
+    .tag-pill-teal   { color: var(--teal); }
+    .code-teal       { color: var(--teal); }
+    .code-line-gap   { margin: 4px 0 10px 0; }
+    .sh-prompt       { color: var(--green); }
+    .sh-cmd          { color: var(--text-bright); }
+    .sh-arg          { color: var(--blue); }
+    .sh-flag         { color: var(--yellow); }
+    .next-steps-box  {
+      background: var(--bg-mid);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .next-steps-box strong { color: var(--text-bright); display: block; margin-bottom: 6px; }
+    .hl-bright       { color: var(--text-bright); }
+  </style>
+</head>
+<body>
+
+<!-- Progress bar -->
+<div id="progress-bar" style="width: 12.5%"></div>
+
+<!-- Nav dots -->
+<div id="nav-dots"></div>
+
+<!-- Keyboard hint -->
+<div id="kbd-hint">↑ ↓ arrow keys · PageUp / PageDown · scroll</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     DECK
+══════════════════════════════════════════════════════════════ -->
+<div class="deck" id="deck">
+
+  <!-- ── SLIDE 1: TITLE ─────────────────────────────────── -->
+  <section class="slide slide-title">
+    <div class="brand">vertex-ai-toolkit · vaig</div>
+    <p class="kicker">C-Suite Briefing · March 2026</p>
+    <h1>VAIG Live Mode</h1>
+    <p class="subtitle">Real-Time GKE Service Monitoring, Powered by AI</p>
+    <div class="meta">
+      <span><span style="color:var(--green)">●</span> &nbsp;47 read-only GKE &amp; GCP tools</span>
+      <span><span style="color:var(--blue)">●</span> &nbsp;Multi-agent pipeline</span>
+      <span><span style="color:var(--yellow)">●</span> &nbsp;v0.9.0+</span>
+    </div>
+    <div class="tag-pill-row">
+      <span class="tag-pill tag-pill-blue">Production-Ready</span>
+      <span class="tag-pill tag-pill-green">Read-Only</span>
+      <span class="tag-pill tag-pill-purple">Gemini-Powered</span>
+      <span class="tag-pill tag-pill-teal">GKE + GCP</span>
+    </div>
+    <div class="slide-num">01 / 08</div>
+  </section>
+
+  <!-- ── SLIDE 2: PROBLEM ───────────────────────────────── -->
+  <section class="slide slide-problem">
+    <div class="brand">vertex-ai-toolkit · vaig</div>
+    <p class="slide-label">The Challenge</p>
+    <h2>Manual Monitoring is <span class="hl-red">Slow, Reactive, and Expertise-Gated</span></h2>
+    <div class="pain-grid">
+      <div class="pain-card">
+        <div class="icon"><span role="img" aria-label="Timer">⏱️</span></div>
+        <div class="title">Slow Diagnosis</div>
+        <p>Engineers navigate kubectl, Cloud Logging, and Cloud Monitoring simultaneously — diagnosis takes minutes or hours instead of seconds.</p>
+      </div>
+      <div class="pain-card">
+        <div class="icon"><span role="img" aria-label="Muted bell">🔇</span></div>
+        <div class="title">Reactive, Not Proactive</div>
+        <p>Teams find out about degraded services only after customers report impact. There is no systematic pre-alert health sweep.</p>
+      </div>
+      <div class="pain-card">
+        <div class="icon"><span role="img" aria-label="Graduation cap">🎓</span></div>
+        <div class="title">Expertise-Gated</div>
+        <p>Effective GKE troubleshooting requires deep knowledge of Kubernetes, Istio, ArgoCD, Helm, and Cloud Monitoring APIs.</p>
+      </div>
+      <div class="pain-card">
+        <div class="icon"><span role="img" aria-label="Declining chart">📉</span></div>
+        <div class="title">High MTTR</div>
+        <p>Mean time to resolution is inflated by context-switching between 5+ tools and manual correlation of unstructured log data.</p>
+      </div>
+      <div class="pain-card">
+        <div class="icon"><span role="img" aria-label="Warning sign">⚠️</span></div>
+        <div class="title">Inconsistent Runbooks</div>
+        <p>Every engineer follows a different diagnostic path, producing inconsistent outputs and missed signals during incidents.</p>
+      </div>
+      <div class="pain-card">
+        <div class="icon"><span role="img" aria-label="Money with wings">💸</span></div>
+        <div class="title">Invisible Cost Waste</div>
+        <p>Idle containers, over-provisioned workloads, and namespace cost anomalies go undetected without dedicated analysis tooling.</p>
+      </div>
+    </div>
+    <div class="slide-num">02 / 08</div>
+  </section>
+
+  <!-- ── SLIDE 3: SOLUTION ──────────────────────────────── -->
+  <section class="slide slide-solution">
+    <div class="brand">vertex-ai-toolkit · vaig</div>
+    <div class="solution-layout">
+      <div class="solution-left">
+        <p class="slide-label">The Solution</p>
+        <h2><span class="highlight">vaig live</span> — AI-Powered<br>Infrastructure Investigation</h2>
+        <p class="solution-desc">
+          A single command that deploys a fleet of autonomous AI agents against your GKE cluster and GCP stack — returning structured, actionable insights in seconds.
+        </p>
+        <ul class="solution-features">
+          <li>Natural language queries — no kubectl expertise required</li>
+          <li>47 read-only tools across GKE, Cloud Logging, Monitoring, ArgoCD, Helm &amp; Datadog</li>
+          <li>Multi-agent pipeline with parallel gatherers and AI synthesis</li>
+          <li>Structured HTML/JSON/Markdown reports exportable to any BI tool</li>
+          <li><code class="code-teal">--watch</code> mode for continuous polling (min 10s interval)</li>
+          <li>Skill routing — auto-selects the right specialist agent for the query</li>
+        </ul>
+      </div>
+      <div class="solution-right">
+        <div class="code-demo">
+          <div class="comment"># Investigate a degraded service</div>
+          <div><span class="prompt">$</span> <span class="cmd">vaig live</span> <span class="arg">"Why is payment-service slow?"</span></div>
+          <div class="code-line-gap"><span class="flag">  --cluster</span><span class="cmd"> prod</span> <span class="flag">--namespace</span><span class="cmd"> api</span></div>
+          <div class="comment"># Full health check with a skill</div>
+          <div><span class="prompt">$</span> <span class="cmd">vaig live</span> <span class="arg">"Health check staging"</span></div>
+          <div class="code-line-gap"><span class="flag">  --skill</span><span class="cmd"> service-health</span> <span class="flag">--format</span><span class="cmd"> html</span></div>
+          <div class="comment"># Continuous watch mode (every 60s)</div>
+          <div><span class="prompt">$</span> <span class="cmd">vaig live</span> <span class="arg">"OOM kills in prod?"</span></div>
+          <div class="code-line-gap"><span class="flag">  --watch</span><span class="cmd"> 60</span> <span class="flag">--namespace</span><span class="cmd"> production</span></div>
+          <div class="comment"># Preview without running (safe)</div>
+          <div><span class="prompt">$</span> <span class="cmd">vaig live</span> <span class="arg">"Check pod health"</span></div>
+          <div><span class="flag">  --dry-run</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-num">03 / 08</div>
+  </section>
+
+  <!-- ── SLIDE 4: KEY FEATURES ──────────────────────────── -->
+  <section class="slide slide-features">
+    <div class="brand">vertex-ai-toolkit · vaig</div>
+    <p class="slide-label">Key Capabilities</p>
+    <h2>What <span class="highlight">vaig live</span> Delivers</h2>
+    <div class="features-grid">
+      <div class="feature-card blue">
+        <div class="icon"><span role="img" aria-label="Magnifying glass">🔍</span></div>
+        <div class="name">Real-Time Diagnostics</div>
+        <div class="desc">Inspect pods, nodes, events, and container states live. Get answers in seconds, not minutes.</div>
+      </div>
+      <div class="feature-card teal">
+        <div class="icon"><span role="img" aria-label="Scroll">📜</span></div>
+        <div class="name">Log Intelligence</div>
+        <div class="desc">Queries Cloud Logging with AI-driven filtering — surfaces OOM kills, crash loops, and 5xx patterns automatically.</div>
+      </div>
+      <div class="feature-card green">
+        <div class="icon"><span role="img" aria-label="Bar chart">📊</span></div>
+        <div class="name">Metrics Correlation</div>
+        <div class="desc">Pulls Cloud Monitoring time-series and Datadog APM metrics, correlating CPU, memory, and latency anomalies.</div>
+      </div>
+      <div class="feature-card purple">
+        <div class="icon"><span role="img" aria-label="Robot">🤖</span></div>
+        <div class="name">Multi-Agent Pipeline</div>
+        <div class="desc">Parallel gatherer agents feed a synthesis agent — breadth and depth simultaneously, not sequentially.</div>
+      </div>
+      <div class="feature-card orange">
+        <div class="icon"><span role="img" aria-label="Gear">⚙️</span></div>
+        <div class="name">Skill Auto-Routing</div>
+        <div class="desc">Query scored against all registered skills — best match activates the right specialist pipeline automatically.</div>
+      </div>
+      <div class="feature-card pink">
+        <div class="icon"><span role="img" aria-label="Refresh arrows">🔄</span></div>
+        <div class="name">Watch Mode</div>
+        <div class="desc">Re-executes the investigation every N seconds. Monitors drift, catch regressions, alert on changes.</div>
+      </div>
+      <div class="feature-card yellow">
+        <div class="icon"><span role="img" aria-label="Document">📄</span></div>
+        <div class="name">Export Reports</div>
+        <div class="desc">One-command HTML SPA dashboards, JSON for BI pipelines, or Markdown for incident tickets.</div>
+      </div>
+      <div class="feature-card cyan">
+        <div class="icon"><span role="img" aria-label="Shield">🛡️</span></div>
+        <div class="name">Read-Only Safety</div>
+        <div class="desc">All 47 tools are strictly read-only. No cluster mutations are possible — safe to run in production at any time.</div>
+      </div>
+    </div>
+    <div class="slide-num">04 / 08</div>
+  </section>
+
+  <!-- ── SLIDE 5: ARCHITECTURE ──────────────────────────── -->
+  <section class="slide slide-arch">
+    <div class="brand">vertex-ai-toolkit · vaig</div>
+    <p class="slide-label">Architecture</p>
+    <h2>How It Works</h2>
+    <div class="arch-diagram">
+      <div class="arch-row">
+        <div class="arch-node" style="border-color:var(--blue);">
+          <div class="node-icon">👤</div>
+          <div class="node-name">Engineer</div>
+          <div class="node-sub">Natural language<br>query</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node" style="border-color:var(--green);">
+          <div class="node-icon">🖥️</div>
+          <div class="node-name">vaig live CLI</div>
+          <div class="node-sub">Skill router<br>Dry-run / Watch</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node" style="border-color:var(--purple); min-width:170px;">
+          <div class="node-icon">🤖</div>
+          <div class="node-name">Orchestrator</div>
+          <div class="node-sub">Gemini · Multi-agent<br>Parallel gatherers</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node" style="border-color:var(--orange);">
+          <div class="node-icon">☁️</div>
+          <div class="node-name">GKE / GCP</div>
+          <div class="node-sub">K8s · Logging<br>Monitoring · Argo</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node" style="border-color:var(--teal);">
+          <div class="node-icon">📋</div>
+          <div class="node-name">Report</div>
+          <div class="node-sub">HTML · JSON<br>Markdown</div>
+        </div>
+      </div>
+
+      <div class="arch-tools">
+        <div class="tools-label">47 Read-Only Tools Available</div>
+        <div class="tools-row">
+          <span class="tool-badge">kubectl_get</span>
+          <span class="tool-badge">kubectl_logs</span>
+          <span class="tool-badge">kubectl_top</span>
+          <span class="tool-badge">get_events</span>
+          <span class="tool-badge">get_pod_metrics</span>
+          <span class="tool-badge">get_scaling_status</span>
+          <span class="tool-badge">get_rollout_status</span>
+          <span class="tool-badge">discover_workloads</span>
+          <span class="tool-badge">discover_dependencies</span>
+          <span class="tool-badge">get_mesh_overview</span>
+          <span class="tool-badge">helm_list_releases</span>
+          <span class="tool-badge">argocd_app_status</span>
+          <span class="tool-badge">argocd_app_diff</span>
+          <span class="tool-badge">gcloud_logging_query</span>
+          <span class="tool-badge">gcloud_monitoring_query</span>
+          <span class="tool-badge">query_datadog_metrics</span>
+          <span class="tool-badge">get_datadog_monitors</span>
+          <span class="tool-badge">check_rbac</span>
+          <span class="tool-badge">get_node_conditions</span>
+          <span class="tool-badge">+27 more</span>
+        </div>
+      </div>
+
+      <div class="arch-stat-row">
+        <div class="arch-stat"><div class="num">47</div><div class="lbl">Read-only tools</div></div>
+        <div class="arch-stat"><div class="num">4+</div><div class="lbl">Parallel agents</div></div>
+        <div class="arch-stat"><div class="num">3</div><div class="lbl">Export formats</div></div>
+        <div class="arch-stat"><div class="num">0</div><div class="lbl">Cluster mutations</div></div>
+      </div>
+    </div>
+    <div class="slide-num">05 / 08</div>
+  </section>
+
+  <!-- ── SLIDE 6: RECENT IMPROVEMENTS ──────────────────── -->
+  <section class="slide slide-improvements">
+    <div class="brand">vertex-ai-toolkit · vaig</div>
+    <p class="slide-label">Recent Delivery · PRs #119–#127</p>
+    <h2>9 Fixes &amp; Features Shipped This Cycle</h2>
+    <div class="improvements-grid">
+      <div class="pr-card fix">
+        <span class="pr-tag">#119</span>
+        <div class="pr-title">Service Status Regression Fixed</div>
+        <div class="pr-desc">CPU/memory metrics and replica counts restored for Argo Rollout-managed services — was showing N/A and 0/0.</div>
+      </div>
+      <div class="pr-card fix">
+        <span class="pr-tag">#120</span>
+        <div class="pr-title">ArgoCD Timeout Protection</div>
+        <div class="pr-desc">Explicit timeout on all Kubernetes API calls in argo_rollouts.py — prevents indefinite hangs on unreachable clusters.</div>
+      </div>
+      <div class="pr-card fix">
+        <span class="pr-tag">#121 / #123</span>
+        <div class="pr-title">Datadog SSL &amp; Proxy Support</div>
+        <div class="pr-desc">Improved SSL error discovery for corporate proxies. Configurable ssl_verify flag with CA bundle path support.</div>
+      </div>
+      <div class="pr-card fix">
+        <span class="pr-tag">#122</span>
+        <div class="pr-title">Code Output Restored</div>
+        <div class="pr-desc"><code>vaig ask --code --file</code> now shows output when the LLM uses file tools without returning a text response.</div>
+      </div>
+      <div class="pr-card feat">
+        <span class="pr-tag">#124</span>
+        <div class="pr-title">Datadog APM Mode</div>
+        <div class="pr-desc">New metric_mode config: choose between k8s_agent metrics or APM trace metrics. Configurable lookback window and cluster name override.</div>
+      </div>
+      <div class="pr-card feat">
+        <span class="pr-tag">#125</span>
+        <div class="pr-title">Fast CRD Timeout</div>
+        <div class="pr-desc">5s CRD existence probe timeout (was ~84s). urllib3 retries disabled for K8s API calls — fails fast, never hangs.</div>
+      </div>
+      <div class="pr-card infra">
+        <span class="pr-tag">#126</span>
+        <div class="pr-title">Windows &amp; Non-ANSI Support</div>
+        <div class="pr-desc">TTY detection at startup. Falls back to plain text logging on non-ANSI terminals — no more WinError 1 or garbled output.</div>
+      </div>
+      <div class="pr-card feat">
+        <span class="pr-tag">#127</span>
+        <div class="pr-title">Fuzzy Tool Matching</div>
+        <div class="pr-desc">When the LLM hallucinates a tool name, agents now return scored close-match suggestions with the full tool registry.</div>
+      </div>
+      <div class="pr-card infra">
+        <span class="pr-tag">#128</span>
+        <div class="pr-title">Docs &amp; Config Updated</div>
+        <div class="pr-desc">README, CHANGELOG, and configuration guide updated. New config options for GKE timeouts and Datadog settings documented.</div>
+      </div>
+    </div>
+    <div class="slide-num">06 / 08</div>
+  </section>
+
+  <!-- ── SLIDE 7: DEMO ──────────────────────────────────── -->
+  <section class="slide slide-demo">
+    <div class="brand">vertex-ai-toolkit · vaig</div>
+    <div class="demo-layout">
+      <div class="demo-left">
+        <p class="slide-label">Live Demo</p>
+        <h2>Running a <span class="highlight">vaig live</span> Investigation</h2>
+        <ol class="demo-steps">
+          <li>
+            <span class="step-num">1</span>
+            <div class="step-content">
+              <strong>Install with live support</strong><br>
+              <span>Adds GKE, Cloud Logging, Monitoring dependencies</span>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">2</span>
+            <div class="step-content">
+              <strong>Configure cluster &amp; project</strong><br>
+              <span>YAML config or CLI flags — takes 2 minutes</span>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">3</span>
+            <div class="step-content">
+              <strong>Run a dry-run first</strong><br>
+              <span>See exactly what agents &amp; tools would execute</span>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">4</span>
+            <div class="step-content">
+              <strong>Execute and export</strong><br>
+              <span>Get an HTML report in ~30–90 seconds</span>
+            </div>
+          </li>
+          <li>
+            <span class="step-num">5</span>
+            <div class="step-content">
+              <strong>Enable watch for continuous monitoring</strong><br>
+              <span>Re-runs every N seconds — keeps the team informed</span>
+            </div>
+          </li>
+        </ol>
+      </div>
+      <div class="demo-code">
+        <div class="demo-snippet">
+          <div class="label">Install</div>
+          <span class="sh-prompt">$</span> <span class="sh-cmd">pip install</span> <span class="sh-arg">"vertex-ai-toolkit[live]"</span>
+        </div>
+        <div class="demo-snippet">
+          <div class="label">Dry-run preview</div>
+          <span class="sh-prompt">$</span> <span class="sh-cmd">vaig live</span> <span class="sh-arg">"Check pod health in prod"</span> <span class="sh-flag">--dry-run</span>
+        </div>
+        <div class="demo-snippet">
+          <div class="label">Full health report</div>
+          <span class="sh-prompt">$</span> <span class="sh-cmd">vaig live</span> <span class="sh-arg">"Service health check"</span> \<br>
+          &nbsp;&nbsp;<span class="sh-flag">--skill</span> service-health \<br>
+          &nbsp;&nbsp;<span class="sh-flag">--cluster</span> prod <span class="sh-flag">--namespace</span> api \<br>
+          &nbsp;&nbsp;<span class="sh-flag">--format</span> html <span class="sh-flag">--open</span>
+        </div>
+        <div class="demo-snippet">
+          <div class="label">Continuous watch</div>
+          <span class="sh-prompt">$</span> <span class="sh-cmd">vaig live</span> <span class="sh-arg">"OOM kills &amp; crash loops?"</span> \<br>
+          &nbsp;&nbsp;<span class="sh-flag">--namespace</span> production <span class="sh-flag">--watch</span> 60
+        </div>
+        <div class="demo-snippet">
+          <div class="label">RCA with export</div>
+          <span class="sh-prompt">$</span> <span class="sh-cmd">vaig live</span> <span class="sh-arg">"Investigate 5xx spike at 14:30"</span> \<br>
+          &nbsp;&nbsp;<span class="sh-flag">--skill</span> rca <span class="sh-flag">-o</span> incident-rca.md <span class="sh-flag">--format</span> md
+        </div>
+      </div>
+    </div>
+    <div class="slide-num">07 / 08</div>
+  </section>
+
+  <!-- ── SLIDE 8: ROI ───────────────────────────────────── -->
+  <section class="slide slide-roi">
+    <div class="brand">vertex-ai-toolkit · vaig</div>
+    <div class="roi-layout">
+      <div class="roi-left">
+        <p class="slide-label">Business Impact</p>
+        <h2>Why This Matters to <span class="hl-green">the Bottom Line</span></h2>
+        <div class="roi-metrics">
+          <div class="roi-metric">
+            <div class="val">~75%</div>
+            <div class="txt">
+              <strong>MTTR Reduction</strong>
+              <p>Diagnosis that took 30–60 min manually completes in 30–90 seconds with vaig live.</p>
+            </div>
+          </div>
+          <div class="roi-metric">
+            <div class="val">0</div>
+            <div class="txt">
+              <strong>Cluster Mutations</strong>
+              <p>All 47 tools are strictly read-only. Safe to run in production at any time, without change management approval.</p>
+            </div>
+          </div>
+          <div class="roi-metric">
+            <div class="val">~$0.05</div>
+            <div class="txt">
+              <strong>Cost Per Investigation</strong>
+              <p>Typical full health check costs $0.02–$0.10 in Gemini API tokens — orders of magnitude cheaper than an engineer-hour.</p>
+            </div>
+          </div>
+          <div class="roi-metric">
+            <div class="val">1</div>
+            <div class="txt">
+              <strong>Engineer → Any Cluster</strong>
+              <p>Junior engineers investigate production with the same depth as senior SREs. Skills compound across the whole team.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="roi-right">
+        <div class="roi-quote">
+          <div class="quote-text">
+            "The bottleneck in incident response isn't the fix — it's the diagnosis. vaig live eliminates that bottleneck entirely. Any engineer can ask 'why is this service broken?' and get a structured, evidence-backed answer in under two minutes."
+          </div>
+          <div class="quote-source">— Internal SRE team feedback</div>
+        </div>
+        <div class="roi-callout">
+          <div class="headline">Ready for Production Today</div>
+          <p>vaig live is <strong class="hl-bright">installed in one command</strong>, configured in YAML, and runs safely against any GKE cluster with ADC or SA impersonation. No infrastructure changes required.</p>
+        </div>
+        <div class="next-steps-box">
+          <strong>Recommended Next Steps</strong>
+          1. Pilot with one non-production cluster &amp; 2 engineers<br>
+          2. Run <code class="code-teal">vaig live "full health check" --skill service-health</code><br>
+          3. Review HTML report output with the SRE lead<br>
+          4. Enable watch mode for the staging environment
+        </div>
+      </div>
+    </div>
+    <div class="slide-num">08 / 08</div>
+  </section>
+
+</div><!-- /deck -->
+
+<script>
+  (function () {
+    const deck = document.getElementById('deck');
+    const progressBar = document.getElementById('progress-bar');
+    const kbdHint = document.getElementById('kbd-hint');
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const total = slides.length;
+    let currentIndex = 0;
+
+    // ── Build nav dots ──────────────────────────────────
+    const navDotsEl = document.getElementById('nav-dots');
+    slides.forEach((_, i) => {
+      const dot = document.createElement('div');
+      dot.className = 'dot' + (i === 0 ? ' active' : '');
+      dot.setAttribute('role', 'button');
+      dot.setAttribute('tabindex', '0');
+      dot.setAttribute('aria-label', 'Go to slide ' + (i + 1));
+      dot.addEventListener('click', () => goTo(i));
+      dot.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          goTo(i);
+        }
+      });
+      navDotsEl.appendChild(dot);
+    });
+
+    function updateUI(idx) {
+      currentIndex = Math.max(0, Math.min(total - 1, idx));
+      const pct = ((currentIndex + 1) / total) * 100;
+      progressBar.style.width = pct + '%';
+      const dots = navDotsEl.querySelectorAll('.dot');
+      dots.forEach((d, i) => d.classList.toggle('active', i === currentIndex));
+    }
+
+    function goTo(idx) {
+      const target = slides[Math.max(0, Math.min(total - 1, idx))];
+      target.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // ── Scroll observer ─────────────────────────────────
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const idx = slides.indexOf(entry.target);
+          if (idx >= 0) updateUI(idx);
+        }
+      });
+    }, { threshold: 0.5 });
+    slides.forEach(s => observer.observe(s));
+
+    // ── Keyboard navigation ─────────────────────────────
+    document.addEventListener('keydown', e => {
+      switch (e.key) {
+        case 'ArrowDown':
+        case 'ArrowRight':
+        case 'PageDown':
+        case ' ':
+          e.preventDefault();
+          goTo(currentIndex + 1);
+          break;
+        case 'ArrowUp':
+        case 'ArrowLeft':
+        case 'PageUp':
+          e.preventDefault();
+          goTo(currentIndex - 1);
+          break;
+        case 'Home':
+          e.preventDefault();
+          goTo(0);
+          break;
+        case 'End':
+          e.preventDefault();
+          goTo(total - 1);
+          break;
+      }
+    });
+
+    // ── Hide keyboard hint after 4s ─────────────────────
+    setTimeout(() => kbdHint.classList.add('hidden'), 4000);
+
+    // ── Initial state ───────────────────────────────────
+    updateUI(0);
+  })();
+</script>
+
+</body>
+</html>
