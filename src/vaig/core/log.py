@@ -60,10 +60,14 @@ class _SafeRichHandler(RichHandler):
     ``rich/console.py`` when it tries to write formatted output to the
     handle.
 
-    This subclass catches that ``OSError`` and falls back to
-    ``logging.StreamHandler.emit()``, which writes a plain-text line
-    instead.  The log record is **never silently lost** — it is always
-    emitted in some form.
+    This subclass catches that ``OSError`` and falls back to writing a
+    plain-text line directly to ``sys.stderr``.  The log record is
+    **never silently lost** — it is always emitted in some form.
+
+    Note: We cannot fall back to ``logging.StreamHandler.emit()`` because
+    ``RichHandler`` does not inherit from ``StreamHandler`` and never calls
+    ``StreamHandler.__init__``, so ``self.stream`` would be undefined and
+    would raise ``AttributeError``.
     """
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -72,9 +76,18 @@ class _SafeRichHandler(RichHandler):
         except OSError:
             # Windows: stderr handle does not support ANSI (PowerShell ISE,
             # pipes, concurrent.futures thread contexts, etc.).
-            # Fall back to plain-text StreamHandler output so the record
-            # is not silently lost.
-            logging.StreamHandler.emit(self, record)
+            # Fall back to plain-text write so the record is not silently lost.
+            # NOTE: We cannot call logging.StreamHandler.emit(self, record)
+            # because _SafeRichHandler / RichHandler does NOT inherit from
+            # StreamHandler — it never calls StreamHandler.__init__, so
+            # self.stream is undefined and would raise AttributeError.
+            try:
+                msg = self.format(record)
+                sys.stderr.write(msg + "\n")
+                sys.stderr.flush()
+            except Exception:  # noqa: BLE001
+                # Last-resort: never crash the logging machinery.
+                pass
 
 # Sentinel to make setup_logging() idempotent.
 _configured = False

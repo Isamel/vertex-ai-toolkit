@@ -46,33 +46,34 @@ class TestSafeRichHandler:
             mock_emit.assert_called_once_with(handler, record)
 
     def test_emit_falls_back_on_oserror(self) -> None:
-        """OSError raised by RichHandler.emit must NOT propagate — fallback to StreamHandler."""
+        """OSError raised by RichHandler.emit must NOT propagate — fallback to sys.stderr.write."""
         handler = self._make_handler()
         record = self._make_record("windows thread message")
 
         with patch("rich.logging.RichHandler.emit", side_effect=OSError("[WinError 1] thread stderr")):
-            with patch.object(logging.StreamHandler, "emit") as mock_fallback:
-                # Must NOT raise — falls back to StreamHandler.emit
+            with patch.object(sys, "stderr") as mock_stderr:
+                # Must NOT raise — falls back to sys.stderr.write
                 handler.emit(record)
-                # StreamHandler.emit is called as an unbound method: (self, record)
-                mock_fallback.assert_called_once_with(handler, record)
+                # Plain-text write was called at least once
+                mock_stderr.write.assert_called()
 
     def test_emit_fallback_preserves_record(self) -> None:
-        """The log record must reach StreamHandler.emit, not be silently lost."""
+        """The log record must be written to stderr, not silently lost."""
         handler = self._make_handler()
         record = self._make_record("important message that must not be lost")
 
-        captured: list[logging.LogRecord] = []
+        written: list[str] = []
 
-        def _capture_emit(self_arg: object, r: logging.LogRecord) -> None:
-            captured.append(r)
+        mock_stderr = MagicMock()
+        mock_stderr.write.side_effect = lambda s: written.append(s)
 
         with patch("rich.logging.RichHandler.emit", side_effect=OSError("[WinError 1]")):
-            with patch.object(logging.StreamHandler, "emit", side_effect=_capture_emit):
+            with patch.object(sys, "stderr", mock_stderr):
                 handler.emit(record)
 
-        assert len(captured) == 1
-        assert captured[0].getMessage() == "important message that must not be lost"
+        # At least one write call must contain the record message
+        full_output = "".join(written)
+        assert "important message that must not be lost" in full_output
 
     def test_emit_does_not_swallow_other_exceptions(self) -> None:
         """Non-OSError exceptions must propagate normally so bugs aren't hidden."""
@@ -91,18 +92,20 @@ class TestSafeRichHandler:
         """Multiple OSErrors must each trigger fallback — none silently lost."""
         handler = self._make_handler()
         records = [self._make_record(f"msg {i}") for i in range(5)]
-        fallback_calls: list[logging.LogRecord] = []
+        written: list[str] = []
 
-        def _capture(self_arg: object, r: logging.LogRecord) -> None:
-            fallback_calls.append(r)
+        mock_stderr = MagicMock()
+        mock_stderr.write.side_effect = lambda s: written.append(s)
 
         with patch("rich.logging.RichHandler.emit", side_effect=OSError("thread error")):
-            with patch.object(logging.StreamHandler, "emit", side_effect=_capture):
+            with patch.object(sys, "stderr", mock_stderr):
                 for record in records:
                     handler.emit(record)
 
-        # All 5 records must have reached the fallback
-        assert len(fallback_calls) == 5
+        # All 5 messages must appear somewhere in the written output
+        full_output = "".join(written)
+        for i in range(5):
+            assert f"msg {i}" in full_output
 
 
 class TestMakeConsole:
@@ -116,8 +119,10 @@ class TestMakeConsole:
         with patch.object(sys, "stderr", mock_stream):
             console = _make_console(stderr=True)
 
-        # force_terminal should be None (Rich default) meaning auto-detect
-        assert console._force_terminal is None or console._force_terminal is True
+        # force_terminal must be None (Rich default — auto-detect).
+        # When the stream is a real TTY, we let Rich decide; we never pass
+        # force_terminal=True/False explicitly, so the internal field is None.
+        assert console._force_terminal is None
 
     def test_non_tty_stream_returns_no_color_console(self) -> None:
         """When stderr is NOT a TTY, return Console with no_color=True."""
@@ -130,14 +135,17 @@ class TestMakeConsole:
         assert console.no_color is True
 
     def test_non_tty_stream_returns_force_terminal_false(self) -> None:
-        """When stderr is NOT a TTY, force_terminal must be False to prevent WinError 1."""
+        """When stderr is NOT a TTY, the console must not behave as a terminal."""
         mock_stream = MagicMock()
         mock_stream.isatty.return_value = False
 
         with patch.object(sys, "stderr", mock_stream):
             console = _make_console(stderr=True)
 
-        assert console._force_terminal is False
+        # Use public properties: no_color=True confirms ANSI is disabled;
+        # is_terminal=False confirms Rich won't treat it as an interactive handle.
+        assert console.no_color is True
+        assert console.is_terminal is False
 
     def test_stdout_non_tty_disables_ansi(self) -> None:
         """Works for stdout as well — non-TTY disables ANSI formatting."""
@@ -147,7 +155,7 @@ class TestMakeConsole:
         with patch.object(sys, "stdout", mock_stream):
             console = _make_console(stderr=False)
 
-        assert console._force_terminal is False
+        assert console.is_terminal is False
         assert console.no_color is True
 
     def test_stream_without_isatty_treated_as_non_tty(self) -> None:
@@ -158,7 +166,7 @@ class TestMakeConsole:
             console = _make_console(stderr=True)
 
         # Should have picked the safe non-TTY path
-        assert console._force_terminal is False
+        assert console.is_terminal is False
         assert console.no_color is True
 
     def test_stderr_console_uses_stderr_stream(self) -> None:
