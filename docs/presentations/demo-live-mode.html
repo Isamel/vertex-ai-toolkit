@@ -244,7 +244,10 @@ function delay(ms) {
   });
 }
 
-function checkAbort() { if (aborted) throw 'ABORT'; }
+class AbortError extends Error {
+  constructor() { super('ABORT'); this.name = 'AbortError'; }
+}
+function checkAbort() { if (aborted) throw new AbortError(); }
 
 /* Scroll to bottom */
 function scrollDown() {
@@ -327,8 +330,7 @@ async function scene1_config() {
     c('c-blue', '  cluster_name') + c('c-text', ': ') + c('c-green', 'prod-us-east1'),
     c('c-blue', '  default_namespace') + c('c-text', ': ') + c('c-green', 'production'),
     c('c-blue', '  argo_request_timeout') + c('c-text', ': ') + c('c-orange', '10'),
-    c('c-blue', '  argo_rollouts') + c('c-text', ':'),
-    c('c-blue', '    enabled') + c('c-text', ': ') + c('c-orange', 'true'),
+    c('c-blue', '  argo_rollouts_enabled') + c('c-text', ': ') + c('c-orange', 'true'),
     '',
     cr('c-purple', 'models') + c('c-text', ':'),
     c('c-blue', '  default') + c('c-text', ': ') + c('c-green', 'gemini-2.5-flash'),
@@ -558,15 +560,18 @@ async function runDemo() {
         }
       }, 200 / speed);
 
-      await s.fn();
-      clearInterval(progressInterval);
+      try {
+        await s.fn();
+      } finally {
+        clearInterval(progressInterval);
+      }
       updateProgress(s.end);
     }
 
     updateProgress(100);
     btnPlay.textContent = '✓ Done';
   } catch (e) {
-    if (e === 'ABORT') {
+    if (e instanceof AbortError) {
       /* stopped by user */
     } else {
       throw e;

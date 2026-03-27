@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Vertex AI 429 `RESOURCE_EXHAUSTED` errors no longer crash with zero retries — SDK-level `HttpRetryOptions` now configured with backoff from `RetryConfig` (previously `http_options=None` meant `stop_after_attempt(1)`) (#135)
-- Argo Rollouts API calls now use a configurable `argo_request_timeout` (default: 10s) instead of the previous unbounded timeout — prevents long hangs when the Argo Rollouts cluster is unreachable (#134)
+- Argo Rollouts API calls now use a dedicated configurable `argo_request_timeout` (default: 10s) instead of sharing the general `request_timeout` (default: 30s) — reduces hang duration when the Argo Rollouts cluster is unreachable (#134)
 
 ## [0.9.0] - 2026-03-27
 
