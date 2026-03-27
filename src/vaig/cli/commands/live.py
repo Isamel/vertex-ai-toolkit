@@ -57,6 +57,21 @@ logger = logging.getLogger(__name__)
 MINIMUM_WATCH_INTERVAL = 10
 """Minimum seconds between watch iterations to prevent abuse."""
 
+_AGENT_COLORS = [
+    "bright_cyan",
+    "bright_green",
+    "bright_magenta",
+    "bright_yellow",
+    "bright_blue",
+    "bright_red",
+    "cyan",
+    "green",
+]
+"""Per-agent colour palette for progress bars and status icons.
+
+Colours are assigned by ``agent_index % len(_AGENT_COLORS)`` so parallel
+gatherers in the same pipeline always get a distinct hue."""
+
 
 def _create_tool_call_store(settings: Settings) -> ToolCallStore | None:
     """Create a :class:`ToolCallStore` if tool-result persistence is enabled.
@@ -169,9 +184,14 @@ class ToolCallLogger:
                 status = "[red]✗ FAIL[/red]"
                 self._error_reasons.append("unknown")
 
-        # Print tool call line only in detailed mode, or always for errors
-        if self.detailed or not success:
+        # Print tool call line only in detailed mode.
+        # In non-detailed mode, failed tool calls are logged to the file
+        # logger (which always captures DEBUG+) but never printed to the
+        # console, keeping the terminal clean.
+        if self.detailed:
             console.print(f"  🔧 [cyan]{tool_name}[/cyan]({args_str}) {status} [dim]({duration:.1f}s)[/dim]")
+        elif not success:
+            logger.warning("Tool call failed: %s(%s) — %s (%.1fs)", tool_name, args_str, error_message, duration)
 
     def format_tool_counts(self) -> str:
         """Format per-tool-name breakdown for display.
@@ -364,17 +384,40 @@ class AgentProgressDisplay:
                 start_count = self._agent_start_counts.pop(agent_name, 0)
                 elapsed = time.perf_counter() - self._agent_start_times.pop(agent_name, time.perf_counter())
                 tools = self._tool_logger.tool_count - start_count
-                breakdown = self._tool_logger.format_tool_counts()
-                tools_detail = f" ({tools} tool{'s' if tools != 1 else ''} called)"
-                breakdown_detail = f" [dim]{breakdown}[/dim]" if breakdown else ""
-                console.print(
-                    f"  [bold cyan]\\[{_step_label()}][/bold cyan] "
-                    f"[green]{agent_name}[/green] — [green]done[/green]"
-                    f"{tools_detail}{breakdown_detail}"
-                )
+
                 # Track for tree-style summary (role_hint derived from name).
                 # success is None until reconciled with actual AgentResult.
                 self._completed.append((agent_name, agent_name, tools, elapsed, None))
+
+                # ── Real-time tree line (Change 3/4/5) ────────────
+                # Render the tree line immediately as each agent completes
+                # instead of deferring to print_tree().
+                try:
+                    effective_idx = end_agent_index if end_agent_index is not None else agent_index
+                    is_last = effective_idx == total_agents - 1
+                    connector = "└──" if is_last else "├──"
+                    emoji = self._emoji_for_role(agent_name)
+                    color = _AGENT_COLORS[agent_index % len(_AGENT_COLORS)]
+
+                    # Use tool error count as heuristic for success at
+                    # callback time (actual success is unknown until reconcile).
+                    has_errors = self._tool_logger.errors > 0
+                    if has_errors:
+                        status_icon = "[red]✗[/red]"
+                    else:
+                        status_icon = f"[{color}]✓[/{color}]"
+
+                    bar = f"[{color}]██████████[/{color}]"
+                    tool_str = f"{tools} tool{'s' if tools != 1 else ''}"
+                    console.print(
+                        f"   {connector} {emoji} [bold]{agent_name}[/bold]  "
+                        f"{bar}  {tool_str} ({elapsed:.1f}s) {status_icon}"
+                    )
+                except Exception:  # noqa: BLE001
+                    # Graceful degradation: never crash the pipeline from
+                    # rendering failures.
+                    logger.debug("AgentProgressDisplay: ignored tree-line render error", exc_info=True)
+
                 # Decrement active agent count; reset per-agent counters only
                 # when ALL active agents have finished.  Calling reset() on every
                 # "end" would clear shared tool_name_counts while other parallel
@@ -382,6 +425,18 @@ class AgentProgressDisplay:
                 self._active_agents = max(0, self._active_agents - 1)
                 if self._active_agents == 0:
                     self._tool_logger.reset()
+
+                # If more agents remain, restart spinner for the next one.
+                if not is_last and self._status is None:
+                    try:
+                        next_label = (
+                            f"[bold cyan]\\[{_step_label()}][/bold cyan] "
+                            "[dim]waiting for next agent…[/dim]"
+                        )
+                        self._status = console.status(next_label, spinner="dots")
+                        self._status.start()
+                    except Exception:  # noqa: BLE001
+                        logger.debug("AgentProgressDisplay: ignored spinner restart error", exc_info=True)
 
     def reconcile_results(self, agent_results: list[Any]) -> None:
         """Update success flags from actual AgentResult objects.
@@ -426,34 +481,11 @@ class AgentProgressDisplay:
             self._stop_current()
 
     def print_tree(self) -> None:
-        """Print a tree-style summary of all completed agents.
+        """No-op: tree lines are now rendered in real-time from ``__call__``.
 
-        Renders a visual tree with emoji icons per role and a completion
-        bar after all agents have finished executing.
+        Kept for backward compatibility with callers that invoke
+        ``progress_display.print_tree()`` after orchestration completes.
         """
-        with self._lock:
-            completed = list(self._completed)
-        if not completed:
-            return
-
-        console.print()
-        total = len(completed)
-        for idx, (name, role_hint, tools, elapsed, success) in enumerate(completed):
-            is_last = idx == total - 1
-            connector = "└──" if is_last else "├──"
-            emoji = self._emoji_for_role(role_hint)
-            if success is None:
-                color = "yellow"
-                status_icon = f"[{color}]⚠[/{color}]"
-            else:
-                color = "green" if success else "red"
-                status_icon = f"[{color}]{'✓' if success else '✗'}[/{color}]"
-            bar = f"[{color}]██████████[/{color}]"
-            tool_str = f"{tools} tool{'s' if tools != 1 else ''}"
-            console.print(
-                f"  {connector} {emoji} [bold]{name}[/bold] "
-                f"{status_icon} {bar} [dim]{elapsed:.1f}s · {tool_str}[/dim]"
-            )
 
 
 def _emit_bell(*, no_bell: bool) -> None:
@@ -765,6 +797,7 @@ def register(app: typer.Typer) -> None:
                         tool_call_store=tool_call_store,
                         tool_result_cache=tool_result_cache,
                         open_browser=open_browser if not watch else False,
+                        detailed=detailed,
                     )
 
             if not watch:
@@ -1490,6 +1523,19 @@ def _execute_orchestrated_skill(
         console.print(Rule("⏳ Pipeline Execution", style="bright_blue"))
         tool_logger = ToolCallLogger(detailed=detailed)
         progress_display = AgentProgressDisplay(tool_logger)
+
+        # ── Suppress console warnings during pipeline (Change 1) ──
+        # Unless --detailed is passed, raise console handler levels to
+        # ERROR so Python WARNING logs (e.g. gRPC, protobuf) don't
+        # clutter the real-time agent tree.  The file logger keeps
+        # capturing everything at DEBUG.
+        _suppressed_handlers: list[tuple[logging.Handler, int]] = []
+        if not detailed:
+            for h in logging.getLogger().handlers + logging.getLogger("vaig").handlers:
+                if hasattr(h, "console"):
+                    _suppressed_handlers.append((h, h.level))
+                    h.setLevel(logging.ERROR)
+
         try:
             orch_result = orchestrator.execute_with_tools(
                 query=question,
@@ -1506,6 +1552,9 @@ def _execute_orchestrated_skill(
             )
         finally:
             progress_display.stop()
+            # Restore original handler levels (always, even on exception).
+            for handler, original_level in _suppressed_handlers:
+                handler.setLevel(original_level)
         progress_display.reconcile_results(orch_result.agent_results)
         progress_display.print_tree()
         tool_logger.print_summary()
@@ -1777,6 +1826,7 @@ def _execute_live_mode(
     tool_call_store: ToolCallStore | None = None,
     tool_result_cache: ToolResultCache | None = None,
     open_browser: bool = False,
+    detailed: bool = False,
 ) -> None:
     """Execute an infrastructure investigation using the InfraAgent.
 
@@ -1819,7 +1869,7 @@ def _execute_live_mode(
 
     try:
         console.print("[bold cyan]🤖 Infrastructure agent investigating...[/bold cyan]")
-        tool_logger = ToolCallLogger(detailed=True)
+        tool_logger = ToolCallLogger(detailed=detailed)
         effective_cache = tool_result_cache or ToolResultCache()
         result = agent.execute(
             question,
@@ -1889,6 +1939,7 @@ async def _async_execute_live_mode(
     tool_call_store: ToolCallStore | None = None,
     tool_result_cache: ToolResultCache | None = None,
     open_browser: bool = False,
+    detailed: bool = False,
 ) -> None:
     """Async version of :func:`_execute_live_mode`.
 
@@ -1929,7 +1980,7 @@ async def _async_execute_live_mode(
 
     try:
         console.print("[bold cyan]🤖 Infrastructure agent investigating (async)...[/bold cyan]")
-        tool_logger = ToolCallLogger(detailed=True)
+        tool_logger = ToolCallLogger(detailed=detailed)
         effective_cache = tool_result_cache or ToolResultCache()
         result = await agent.async_execute(
             question,
@@ -2051,6 +2102,15 @@ async def _async_execute_orchestrated_skill(
         console.print(Rule("⏳ Pipeline Execution", style="bright_blue"))
         tool_logger = ToolCallLogger(detailed=detailed)
         progress_display = AgentProgressDisplay(tool_logger)
+
+        # ── Suppress console warnings during pipeline (Change 1) ──
+        _suppressed_handlers: list[tuple[logging.Handler, int]] = []
+        if not detailed:
+            for h in logging.getLogger().handlers + logging.getLogger("vaig").handlers:
+                if hasattr(h, "console"):
+                    _suppressed_handlers.append((h, h.level))
+                    h.setLevel(logging.ERROR)
+
         try:
             orch_result = await orchestrator.async_execute_with_tools(
                 query=question,
@@ -2067,6 +2127,9 @@ async def _async_execute_orchestrated_skill(
             )
         finally:
             progress_display.stop()
+            # Restore original handler levels (always, even on exception).
+            for handler, original_level in _suppressed_handlers:
+                handler.setLevel(original_level)
         progress_display.reconcile_results(orch_result.agent_results)
         progress_display.print_tree()
         tool_logger.print_summary()
