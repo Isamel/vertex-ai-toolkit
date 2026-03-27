@@ -529,6 +529,11 @@ class GKEConfig(BaseModel):
     # the tool from hanging ~84s (urllib3 retries × TCP timeout) when the
     # apiextensions endpoint is unreachable.
     crd_check_timeout: int = 5
+    # Timeout (seconds) for Argo Rollouts tool API calls.  Argo Rollouts
+    # typically lives on a *separate* cluster; a shorter timeout prevents
+    # the 5 tool functions from hanging ~84s when that cluster is
+    # unreachable, while still being generous enough for normal queries.
+    argo_request_timeout: int = 10
 
 
 class MCPServerConfig(BaseModel):
