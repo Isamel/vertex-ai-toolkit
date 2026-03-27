@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-03-27
+
 ### Added
 - Datadog `metric_mode` config option — choose `"k8s_agent"` (default, kubernetes.* metrics) or `"apm"` (trace.* metrics for APM-only setups without DaemonSet Agent) (#124)
 - Datadog `cluster_name_override` config option — override the auto-detected cluster name tag used in Datadog metric queries (e.g. when Datadog agent tags the cluster differently from the GKE name) (#124)
@@ -15,20 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GKE `crd_check_timeout` config option — short timeout (default: 5s) for CRD existence probes to prevent ~84s hangs when the apiextensions endpoint is unreachable (#125)
 - GKE `argo_rollouts_enabled` config option (under `gke:`) — set to `true` to skip CRD check and force-enable Argo Rollouts tools when Argo is deployed on a separate cluster (#125)
 - Unknown tool fuzzy matching — when the LLM hallucinates a tool name, agents now return helpful suggestions with a scored list of close matches and the full tool registry (#127)
-
-### Changed
-- Rich console now detects TTY on Windows and non-ANSI terminals at startup — falls back to plain text logging to prevent WinError 1 and garbled ANSI escape codes on non-ANSI handles (#126)
-- urllib3 retries disabled globally for Kubernetes API calls — previously 3 retries × 30s caused ~84s total hangs; now fails fast at the `crd_check_timeout` boundary (#125)
-
-### Fixed
-- Service status regression — CPU/memory metrics and replica counts showed `N` / `0/0` for Argo Rollout-managed services after Rollout stubs were introduced (#119)
-- Explicit timeout added to all Kubernetes API calls in `argo_rollouts.py` — prevents indefinite hangs on `_request_timeout=None` when the cluster is unreachable (#120)
-- SSL verification errors for Datadog API on corporate proxy — improved error messages with actionable remediation steps now surface on all Datadog API functions (#123)
-- `vaig ask --code --file` now shows output when the LLM uses file tools (edit_file/write_file) without returning a text response — previously the result was silently dropped (#122)
-
-## [0.9.0] - 2026-03-26
-
-### Added
 - `CodingSkillOrchestrator` — 3-agent coding pipeline (Planner → Implementer → Verifier) for complex coding tasks — activate with `--pipeline` flag on `vaig ask --code` (#111)
 - `GreenfieldSkill` with 6-stage pipeline for new project scaffolding from scratch: Requirements → Architecture Decision → Project Spec → Scaffold → Implement → Verify (`skills/greenfield/`) (#111)
 - `CodeMigrationSkill` with 6-phase state machine (Inventory → Semantic Map → Spec → Implement → Verify → Report) for language-to-language code migration, e.g., Python → Go (`skills/code_migration/`) — distinct from the ETL `migration` skill (Pentaho → AWS Glue) (#110)
@@ -43,9 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SPEC phase (Phase 0) in coding workflow for specification-first development (#109)
 
 ### Changed
+- Rich console now detects TTY on Windows and non-ANSI terminals at startup — falls back to plain text logging to prevent WinError 1 and garbled ANSI escape codes on non-ANSI handles (#126)
+- urllib3 retries disabled globally for Kubernetes API calls — previously 3 retries × 30s caused ~84s total hangs; now fails fast at the `crd_check_timeout` boundary (#125)
 - Split monolithic `prompts.py` into 9-file `prompts/` package in `service_health` skill for improved maintainability (#105)
 - Enhanced prompt defense with `wrap_untrusted_content()` integration in CodingAgent (#109)
 - Anti-hallucination rules now enforced in coding agent system prompts (#109)
+
+### Fixed
+- Service status regression — CPU/memory metrics and replica counts showed `N` / `0/0` for Argo Rollout-managed services after Rollout stubs were introduced (#119)
+- Explicit timeout added to all Kubernetes API calls in `argo_rollouts.py` — prevents indefinite hangs on `_request_timeout=None` when the cluster is unreachable (#120)
+- SSL verification errors for Datadog API on corporate proxy — improved error messages with actionable remediation steps now surface on all Datadog API functions (#123)
+- `vaig ask --code --file` now shows output when the LLM uses file tools (edit_file/write_file) without returning a text response — previously the result was silently dropped (#122)
 
 ## [0.8.0] - 2026-03-18
 
