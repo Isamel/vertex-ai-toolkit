@@ -30,6 +30,7 @@ from vaig.skills.service_health.prompts import (
     build_workload_gatherer_prompt,
 )
 from vaig.skills.service_health.schema import HealthReport
+from vaig.tools.base import ToolResult
 from vaig.tools.gke._clients import ensure_client_initialized
 from vaig.utils.json_cleaner import clean_llm_json
 
@@ -64,6 +65,19 @@ class ServiceHealthSkill(BaseSkill):
     The pipeline strategy is **sequential**: each agent's output feeds
     as context into the next agent.
     """
+
+    # Maximum lines of kubectl_top output to inject into prompts.
+    # Beyond this threshold the output is truncated with an informational
+    # notice so that very large namespaces don't bloat the prompt context.
+    _MAX_KUBECTL_TOP_LINES = 100
+
+    def __init__(self) -> None:
+        super().__init__()
+        # Pre-fetched metrics are populated by ``pre_execute_parallel()``
+        # and consumed by ``get_parallel_agents_config()``.  This ensures
+        # that inspecting the config (dry-run, ``vaig skills info``) does
+        # NOT trigger live K8s API calls — only the execution path does.
+        self._prefetched_metrics: dict[str, str] = {"pods": "", "nodes": ""}
 
     def get_metadata(self) -> SkillMetadata:
         return SkillMetadata(
@@ -105,18 +119,27 @@ class ServiceHealthSkill(BaseSkill):
         return template.format(context=context, user_input=user_input)
 
     def pre_execute_parallel(self, query: str) -> None:  # noqa: ARG002
-        """Pre-warm the K8s client cache before parallel gatherers launch.
+        """Pre-warm the K8s client cache and pre-fetch kubectl_top metrics.
 
-        The K8s client cache (``_CLIENT_CACHE``) is not thread-safe on first
-        write because :func:`~vaig.tools.gke._clients._suppress_stderr` mutates
-        ``sys.stdout`` and OS fd 2.  Calling this hook once, sequentially,
-        ensures the client is fully constructed and stored in the cache before
-        any concurrent threads start.
+        This hook runs **once**, sequentially, before any parallel gatherer
+        threads are launched by the orchestrator.  It performs two tasks:
 
-        Errors are swallowed silently — pre-warming is best-effort.  If the
-        client cannot be initialized (e.g. no kubeconfig, missing package),
-        the individual tools will surface the error through their normal
-        :class:`~vaig.tools.base.ToolResult` mechanism.
+        1. **Client pre-warming** — The K8s client cache
+           (``_CLIENT_CACHE``) is not thread-safe on first write because
+           :func:`~vaig.tools.gke._clients._suppress_stderr` mutates
+           ``sys.stdout`` and OS fd 2.  Warming the cache here ensures the
+           client is fully constructed before concurrent threads start.
+
+        2. **Metrics pre-fetch** — Calls ``_pre_fetch_metrics`` to gather
+           ``kubectl_top`` output programmatically.  The results are stored
+           on ``self._prefetched_metrics`` and consumed later by
+           :meth:`get_parallel_agents_config` when it builds prompts.
+           Moving the pre-fetch here (instead of inside
+           ``get_parallel_agents_config``) ensures that callers that only
+           *inspect* the config (e.g. ``vaig skills info``, dry-run) do
+           NOT trigger live K8s API calls.
+
+        Both steps are **best-effort** — any failure is swallowed silently.
         """
         try:
             from vaig.core.config import get_settings  # noqa: PLC0415
@@ -128,6 +151,120 @@ class ServiceHealthSkill(BaseSkill):
                 "K8s client pre-warm skipped (non-fatal): see ensure_client_initialized logs",
                 exc_info=True,
             )
+
+        # ── Pre-fetch kubectl_top metrics ────────────────────────────────
+        # Uses the same effective config resolution as get_parallel_agents_config
+        # so the namespace / location / cluster_name overrides are respected.
+        try:
+            from vaig.core.config import get_settings  # noqa: PLC0415
+            from vaig.tools.gke._clients import detect_autopilot  # noqa: PLC0415
+
+            settings = get_settings()
+            effective_gke = settings.gke
+            is_autopilot = bool(detect_autopilot(effective_gke))
+            self._prefetched_metrics = self._pre_fetch_metrics(
+                gke_config=effective_gke,
+                namespace=effective_gke.default_namespace,
+                is_autopilot=is_autopilot,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "kubectl_top pre-fetch skipped (non-fatal)",
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _pre_fetch_metrics(
+        gke_config: Any,
+        namespace: str,
+        is_autopilot: bool,
+    ) -> dict[str, str]:
+        """Call ``kubectl_top`` programmatically and return pre-gathered metrics.
+
+        This removes the dependency on LLM non-determinism for basic resource
+        metrics.  The results are injected into the sub-gatherer prompts so
+        the agents can use real data immediately without spending tool-call
+        budget on ``kubectl_top``.
+
+        The method is **best-effort** — any failure is captured as an
+        informational error string so the pipeline never crashes here.
+
+        **Sentinel detection** — ``kubectl_top`` can return non-metric
+        informational strings with ``error=False`` (e.g. *"No metrics data
+        available"*).  Genuine metric output always contains a header line
+        with ``CPU`` and ``MEMORY`` column labels.  Results that lack these
+        headers are treated as unavailable with an informational message.
+
+        **Truncation** — on namespaces with many pods/containers the output
+        can be very large.  Results are truncated to
+        ``_MAX_KUBECTL_TOP_LINES`` lines with a notice.
+
+        Args:
+            gke_config: Effective :class:`~vaig.core.config.GKEConfig` with
+                CLI overrides already applied.
+            namespace: Target namespace for pod metrics.
+            is_autopilot: Whether the cluster is GKE Autopilot.
+
+        Returns:
+            A dict with ``"pods"`` and ``"nodes"`` keys.  Each value is
+            either the formatted ``kubectl_top`` output string or an
+            informational error message.
+        """
+        from vaig.tools.gke.kubectl import kubectl_top  # noqa: PLC0415
+
+        result: dict[str, str] = {"pods": "", "nodes": ""}
+
+        max_lines = ServiceHealthSkill._MAX_KUBECTL_TOP_LINES
+
+        def _validate_and_truncate(output: str, resource_type: str) -> str:
+            """Return validated, potentially truncated output or a sentinel message."""
+            # Sentinel detection — genuine kubectl_top output has CPU/MEMORY headers
+            upper = output.upper()
+            if "CPU" not in upper or "MEMORY" not in upper:
+                return f"[kubectl_top {resource_type} unavailable: {output.strip()}]"
+            # Truncation for large outputs
+            lines = output.splitlines()
+            if len(lines) > max_lines:
+                truncated = "\n".join(lines[:max_lines])
+                return f"{truncated}\n[... truncated — {len(lines)} total lines]"
+            return output
+
+        # ── Pod metrics ──────────────────────────────────────────────────
+        try:
+            pod_result: ToolResult = kubectl_top(
+                "pods",
+                gke_config=gke_config,
+                namespace=namespace or "default",
+            )
+            if pod_result.error:
+                result["pods"] = f"[kubectl_top pods failed: {pod_result.output}]"
+            else:
+                result["pods"] = _validate_and_truncate(pod_result.output, "pods")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Pre-fetch kubectl_top pods failed (non-fatal): %s", exc)
+            result["pods"] = f"[kubectl_top pods unavailable: {exc}]"
+
+        # ── Node metrics ─────────────────────────────────────────────────
+        if is_autopilot:
+            result["nodes"] = (
+                "GKE Autopilot cluster detected — kubectl top nodes is not available. "
+                "Node infrastructure is managed by Google on Autopilot."
+            )
+        else:
+            try:
+                node_result: ToolResult = kubectl_top(
+                    "nodes",
+                    gke_config=gke_config,
+                )
+                if node_result.error:
+                    result["nodes"] = f"[kubectl_top nodes failed: {node_result.output}]"
+                else:
+                    result["nodes"] = _validate_and_truncate(node_result.output, "nodes")
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Pre-fetch kubectl_top nodes failed (non-fatal): %s", exc)
+                result["nodes"] = f"[kubectl_top nodes unavailable: {exc}]"
+
+        return result
 
     def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         """Return the default pipeline configuration — the parallel pipeline config.
@@ -349,6 +486,15 @@ class ServiceHealthSkill(BaseSkill):
         is_autopilot = bool(detect_autopilot(effective_gke))
         effective_namespace = effective_gke.default_namespace
 
+        # ── Read pre-fetched kubectl_top metrics ─────────────────────────
+        # The actual kubectl_top calls happen in ``pre_execute_parallel()``
+        # which the orchestrator invokes before threads launch.  Here we
+        # only *consume* the results.  If ``pre_execute_parallel()`` was
+        # never called (e.g. dry-run, ``vaig skills info``, direct test
+        # call), the dict defaults to empty strings — prompts simply omit
+        # the pre-gathered section and agents call kubectl_top themselves.
+        prefetched = self._prefetched_metrics
+
         # Resolve the 3-state Argo Rollouts flag:
         #   None  → auto-detect via CRD probe (lazy, cached per process)
         #   True  → force-enable regardless of CRD
@@ -406,7 +552,10 @@ class ServiceHealthSkill(BaseSkill):
                     "capacity", "allocatable", "pressure", "resource",
                     "taint", "cordon", "drain",
                 ],
-                "system_instruction": build_node_gatherer_prompt(is_autopilot=is_autopilot),
+                "system_instruction": build_node_gatherer_prompt(
+                    is_autopilot=is_autopilot,
+                    prefetched_node_metrics=prefetched["nodes"],
+                ),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
                 "max_iterations": 4 if is_autopilot else 15,
@@ -431,6 +580,7 @@ class ServiceHealthSkill(BaseSkill):
                 "system_instruction": build_workload_gatherer_prompt(
                     namespace=effective_namespace,
                     argo_rollouts_enabled=argo_rollouts_active,
+                    prefetched_pod_metrics=prefetched["pods"],
                 ),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
