@@ -728,7 +728,7 @@
     <p class="slide-label">Platform at a Glance</p>
     <h2>A Mature, Well-Tested, <span class="highlight">Comprehensive Platform</span></h2>
     <p class="metrics-intro">
-      VAIG is backed by an extensive codebase with a <strong style="color:var(--green)">1.5 : 1 test-to-source ratio</strong>,
+      VAIG is backed by an extensive codebase with a <strong class="hl-green">1.5 : 1 test-to-source ratio</strong>,
       6,162 passing tests, and 11 production AI agents — built and validated across 262+ commits by the team.
     </p>
 
@@ -736,7 +736,7 @@
       <!-- Codebase -->
       <div class="metric-group mg-codebase">
         <div class="metric-group-header">
-          <span class="mg-icon">🏗️</span>
+          <span class="mg-icon" role="img" aria-label="Codebase infrastructure">🏗️</span>
           <span class="mg-title">Codebase</span>
         </div>
         <div class="metric-row">
@@ -764,7 +764,7 @@
       <!-- Quality -->
       <div class="metric-group mg-quality">
         <div class="metric-group-header">
-          <span class="mg-icon">✅</span>
+          <span class="mg-icon" role="img" aria-label="Quality assurance">✅</span>
           <span class="mg-title">Quality</span>
         </div>
         <div class="metric-row">
@@ -792,7 +792,7 @@
       <!-- Capabilities -->
       <div class="metric-group mg-capabilities">
         <div class="metric-group-header">
-          <span class="mg-icon">⚡</span>
+          <span class="mg-icon" role="img" aria-label="Platform capabilities">⚡</span>
           <span class="mg-title">Capabilities</span>
         </div>
         <div class="metric-row">
@@ -820,19 +820,19 @@
 
     <div class="metrics-headline-row">
       <div class="metrics-headline">
-        <div class="mh-val" style="color:var(--blue-bright)">153,921</div>
+        <div class="mh-val mv-blue">153,921</div>
         <div class="mh-lbl">Total Lines of Code</div>
       </div>
       <div class="metrics-headline">
-        <div class="mh-val" style="color:var(--green)">6,162</div>
+        <div class="mh-val mv-green">6,162</div>
         <div class="mh-lbl">Tests — All Passing</div>
       </div>
       <div class="metrics-headline">
-        <div class="mh-val" style="color:var(--purple)">97</div>
-        <div class="mh-lbl">Tools + Skills + Agents</div>
+        <div class="mh-val mv-purple">97</div>
+        <div class="mh-lbl">Tools + Skills + Agents + CLI</div>
       </div>
       <div class="metrics-headline">
-        <div class="mh-val" style="color:var(--yellow)">v0.9.0</div>
+        <div class="mh-val mv-yellow">v0.9.0</div>
         <div class="mh-lbl">Production Release</div>
       </div>
     </div>
@@ -963,7 +963,7 @@
       <div class="feature-card cyan">
         <div class="icon"><span role="img" aria-label="Shield">🛡️</span></div>
         <div class="name">Read-Only Safety</div>
-        <div class="desc">All 47 tools are strictly read-only. No cluster mutations are possible — safe to run in production at any time.</div>
+        <div class="desc">Default toolset is read-only and safe for production. Live-mode Kubernetes write actions (scale/restart/label/annotate) are optional, explicit, and policy-gated.</div>
       </div>
     </div>
     <div class="slide-num">05 / 09</div>
@@ -1037,7 +1037,7 @@
         <div class="arch-stat"><div class="num">47</div><div class="lbl">Read-only tools</div></div>
         <div class="arch-stat"><div class="num">4+</div><div class="lbl">Parallel agents</div></div>
         <div class="arch-stat"><div class="num">3</div><div class="lbl">Export formats</div></div>
-        <div class="arch-stat"><div class="num">0</div><div class="lbl">Cluster mutations</div></div>
+        <div class="arch-stat"><div class="num">4</div><div class="lbl">Cluster mutation tools (gated)</div></div>
       </div>
     </div>
     <div class="slide-num">06 / 09</div>
