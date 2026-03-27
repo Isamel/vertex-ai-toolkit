@@ -550,6 +550,36 @@
       transition: opacity 3s ease;
     }
     #kbd-hint.hidden { opacity: 0; pointer-events: none; }
+
+    /* ── Utility classes (extracted from repeated inline styles) ── */
+    .tag-pill-row {
+      margin-top: 32px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .tag-pill-blue   { color: var(--blue-bright); }
+    .tag-pill-green  { color: var(--green); }
+    .tag-pill-purple { color: var(--purple); }
+    .tag-pill-teal   { color: var(--teal); }
+    .code-teal       { color: var(--teal); }
+    .code-line-gap   { margin: 4px 0 10px 0; }
+    .sh-prompt       { color: var(--green); }
+    .sh-cmd          { color: var(--text-bright); }
+    .sh-arg          { color: var(--blue); }
+    .sh-flag         { color: var(--yellow); }
+    .next-steps-box  {
+      background: var(--bg-mid);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .next-steps-box strong { color: var(--text-bright); display: block; margin-bottom: 6px; }
+    .hl-bright       { color: var(--text-bright); }
   </style>
 </head>
 <body>
@@ -579,11 +609,11 @@
       <span><span style="color:var(--blue)">●</span> &nbsp;Multi-agent pipeline</span>
       <span><span style="color:var(--yellow)">●</span> &nbsp;v0.9.0+</span>
     </div>
-    <div style="margin-top:32px; display:flex; gap:10px; flex-wrap:wrap; justify-content:center;">
-      <span class="tag-pill" style="color:var(--blue-bright);">Production-Ready</span>
-      <span class="tag-pill" style="color:var(--green);">Read-Only</span>
-      <span class="tag-pill" style="color:var(--purple);">Gemini-Powered</span>
-      <span class="tag-pill" style="color:var(--teal);">GKE + GCP</span>
+    <div class="tag-pill-row">
+      <span class="tag-pill tag-pill-blue">Production-Ready</span>
+      <span class="tag-pill tag-pill-green">Read-Only</span>
+      <span class="tag-pill tag-pill-purple">Gemini-Powered</span>
+      <span class="tag-pill tag-pill-teal">GKE + GCP</span>
     </div>
     <div class="slide-num">01 / 08</div>
   </section>
@@ -595,32 +625,32 @@
     <h2>Manual Monitoring is <span class="hl-red">Slow, Reactive, and Expertise-Gated</span></h2>
     <div class="pain-grid">
       <div class="pain-card">
-        <div class="icon">⏱️</div>
+        <div class="icon"><span role="img" aria-label="Timer">⏱️</span></div>
         <div class="title">Slow Diagnosis</div>
         <p>Engineers navigate kubectl, Cloud Logging, and Cloud Monitoring simultaneously — diagnosis takes minutes or hours instead of seconds.</p>
       </div>
       <div class="pain-card">
-        <div class="icon">🔇</div>
+        <div class="icon"><span role="img" aria-label="Muted bell">🔇</span></div>
         <div class="title">Reactive, Not Proactive</div>
         <p>Teams find out about degraded services only after customers report impact. There is no systematic pre-alert health sweep.</p>
       </div>
       <div class="pain-card">
-        <div class="icon">🎓</div>
+        <div class="icon"><span role="img" aria-label="Graduation cap">🎓</span></div>
         <div class="title">Expertise-Gated</div>
         <p>Effective GKE troubleshooting requires deep knowledge of Kubernetes, Istio, ArgoCD, Helm, and Cloud Monitoring APIs.</p>
       </div>
       <div class="pain-card">
-        <div class="icon">📉</div>
+        <div class="icon"><span role="img" aria-label="Declining chart">📉</span></div>
         <div class="title">High MTTR</div>
         <p>Mean time to resolution is inflated by context-switching between 5+ tools and manual correlation of unstructured log data.</p>
       </div>
       <div class="pain-card">
-        <div class="icon">⚠️</div>
+        <div class="icon"><span role="img" aria-label="Warning sign">⚠️</span></div>
         <div class="title">Inconsistent Runbooks</div>
         <p>Every engineer follows a different diagnostic path, producing inconsistent outputs and missed signals during incidents.</p>
       </div>
       <div class="pain-card">
-        <div class="icon">💸</div>
+        <div class="icon"><span role="img" aria-label="Money with wings">💸</span></div>
         <div class="title">Invisible Cost Waste</div>
         <p>Idle containers, over-provisioned workloads, and namespace cost anomalies go undetected without dedicated analysis tooling.</p>
       </div>
@@ -643,7 +673,7 @@
           <li>47 read-only tools across GKE, Cloud Logging, Monitoring, ArgoCD, Helm &amp; Datadog</li>
           <li>Multi-agent pipeline with parallel gatherers and AI synthesis</li>
           <li>Structured HTML/JSON/Markdown reports exportable to any BI tool</li>
-          <li><code style="color:var(--teal)">--watch</code> mode for continuous polling (min 10s interval)</li>
+          <li><code class="code-teal">--watch</code> mode for continuous polling (min 10s interval)</li>
           <li>Skill routing — auto-selects the right specialist agent for the query</li>
         </ul>
       </div>
@@ -651,13 +681,13 @@
         <div class="code-demo">
           <div class="comment"># Investigate a degraded service</div>
           <div><span class="prompt">$</span> <span class="cmd">vaig live</span> <span class="arg">"Why is payment-service slow?"</span></div>
-          <div style="margin:4px 0 10px 0;"><span class="flag">  --cluster</span><span class="cmd"> prod</span> <span class="flag">--namespace</span><span class="cmd"> api</span></div>
+          <div class="code-line-gap"><span class="flag">  --cluster</span><span class="cmd"> prod</span> <span class="flag">--namespace</span><span class="cmd"> api</span></div>
           <div class="comment"># Full health check with a skill</div>
           <div><span class="prompt">$</span> <span class="cmd">vaig live</span> <span class="arg">"Health check staging"</span></div>
-          <div style="margin:4px 0 10px 0;"><span class="flag">  --skill</span><span class="cmd"> service-health</span> <span class="flag">--format</span><span class="cmd"> html</span></div>
+          <div class="code-line-gap"><span class="flag">  --skill</span><span class="cmd"> service-health</span> <span class="flag">--format</span><span class="cmd"> html</span></div>
           <div class="comment"># Continuous watch mode (every 60s)</div>
           <div><span class="prompt">$</span> <span class="cmd">vaig live</span> <span class="arg">"OOM kills in prod?"</span></div>
-          <div style="margin:4px 0 10px 0;"><span class="flag">  --watch</span><span class="cmd"> 60</span> <span class="flag">--namespace</span><span class="cmd"> production</span></div>
+          <div class="code-line-gap"><span class="flag">  --watch</span><span class="cmd"> 60</span> <span class="flag">--namespace</span><span class="cmd"> production</span></div>
           <div class="comment"># Preview without running (safe)</div>
           <div><span class="prompt">$</span> <span class="cmd">vaig live</span> <span class="arg">"Check pod health"</span></div>
           <div><span class="flag">  --dry-run</span></div>
@@ -674,42 +704,42 @@
     <h2>What <span class="highlight">vaig live</span> Delivers</h2>
     <div class="features-grid">
       <div class="feature-card blue">
-        <div class="icon">🔍</div>
+        <div class="icon"><span role="img" aria-label="Magnifying glass">🔍</span></div>
         <div class="name">Real-Time Diagnostics</div>
         <div class="desc">Inspect pods, nodes, events, and container states live. Get answers in seconds, not minutes.</div>
       </div>
       <div class="feature-card teal">
-        <div class="icon">📜</div>
+        <div class="icon"><span role="img" aria-label="Scroll">📜</span></div>
         <div class="name">Log Intelligence</div>
         <div class="desc">Queries Cloud Logging with AI-driven filtering — surfaces OOM kills, crash loops, and 5xx patterns automatically.</div>
       </div>
       <div class="feature-card green">
-        <div class="icon">📊</div>
+        <div class="icon"><span role="img" aria-label="Bar chart">📊</span></div>
         <div class="name">Metrics Correlation</div>
         <div class="desc">Pulls Cloud Monitoring time-series and Datadog APM metrics, correlating CPU, memory, and latency anomalies.</div>
       </div>
       <div class="feature-card purple">
-        <div class="icon">🤖</div>
+        <div class="icon"><span role="img" aria-label="Robot">🤖</span></div>
         <div class="name">Multi-Agent Pipeline</div>
         <div class="desc">Parallel gatherer agents feed a synthesis agent — breadth and depth simultaneously, not sequentially.</div>
       </div>
       <div class="feature-card orange">
-        <div class="icon">⚙️</div>
+        <div class="icon"><span role="img" aria-label="Gear">⚙️</span></div>
         <div class="name">Skill Auto-Routing</div>
         <div class="desc">Query scored against all registered skills — best match activates the right specialist pipeline automatically.</div>
       </div>
       <div class="feature-card pink">
-        <div class="icon">🔄</div>
+        <div class="icon"><span role="img" aria-label="Refresh arrows">🔄</span></div>
         <div class="name">Watch Mode</div>
         <div class="desc">Re-executes the investigation every N seconds. Monitors drift, catch regressions, alert on changes.</div>
       </div>
       <div class="feature-card yellow">
-        <div class="icon">📄</div>
+        <div class="icon"><span role="img" aria-label="Document">📄</span></div>
         <div class="name">Export Reports</div>
         <div class="desc">One-command HTML SPA dashboards, JSON for BI pipelines, or Markdown for incident tickets.</div>
       </div>
       <div class="feature-card cyan">
-        <div class="icon">🛡️</div>
+        <div class="icon"><span role="img" aria-label="Shield">🛡️</span></div>
         <div class="name">Read-Only Safety</div>
         <div class="desc">All 47 tools are strictly read-only. No cluster mutations are possible — safe to run in production at any time.</div>
       </div>
@@ -894,28 +924,28 @@
       <div class="demo-code">
         <div class="demo-snippet">
           <div class="label">Install</div>
-          <span style="color:var(--green)">$</span> <span style="color:var(--text-bright)">pip install</span> <span style="color:var(--blue)">"vertex-ai-toolkit[live]"</span>
+          <span class="sh-prompt">$</span> <span class="sh-cmd">pip install</span> <span class="sh-arg">"vertex-ai-toolkit[live]"</span>
         </div>
         <div class="demo-snippet">
           <div class="label">Dry-run preview</div>
-          <span style="color:var(--green)">$</span> <span style="color:var(--text-bright)">vaig live</span> <span style="color:var(--blue)">"Check pod health in prod"</span> <span style="color:var(--yellow)">--dry-run</span>
+          <span class="sh-prompt">$</span> <span class="sh-cmd">vaig live</span> <span class="sh-arg">"Check pod health in prod"</span> <span class="sh-flag">--dry-run</span>
         </div>
         <div class="demo-snippet">
           <div class="label">Full health report</div>
-          <span style="color:var(--green)">$</span> <span style="color:var(--text-bright)">vaig live</span> <span style="color:var(--blue)">"Service health check"</span> \<br>
-          &nbsp;&nbsp;<span style="color:var(--yellow)">--skill</span> service-health \<br>
-          &nbsp;&nbsp;<span style="color:var(--yellow)">--cluster</span> prod <span style="color:var(--yellow)">--namespace</span> api \<br>
-          &nbsp;&nbsp;<span style="color:var(--yellow)">--format</span> html <span style="color:var(--yellow)">--open</span>
+          <span class="sh-prompt">$</span> <span class="sh-cmd">vaig live</span> <span class="sh-arg">"Service health check"</span> \<br>
+          &nbsp;&nbsp;<span class="sh-flag">--skill</span> service-health \<br>
+          &nbsp;&nbsp;<span class="sh-flag">--cluster</span> prod <span class="sh-flag">--namespace</span> api \<br>
+          &nbsp;&nbsp;<span class="sh-flag">--format</span> html <span class="sh-flag">--open</span>
         </div>
         <div class="demo-snippet">
           <div class="label">Continuous watch</div>
-          <span style="color:var(--green)">$</span> <span style="color:var(--text-bright)">vaig live</span> <span style="color:var(--blue)">"OOM kills &amp; crash loops?"</span> \<br>
-          &nbsp;&nbsp;<span style="color:var(--yellow)">--namespace</span> production <span style="color:var(--yellow)">--watch</span> 60
+          <span class="sh-prompt">$</span> <span class="sh-cmd">vaig live</span> <span class="sh-arg">"OOM kills &amp; crash loops?"</span> \<br>
+          &nbsp;&nbsp;<span class="sh-flag">--namespace</span> production <span class="sh-flag">--watch</span> 60
         </div>
         <div class="demo-snippet">
           <div class="label">RCA with export</div>
-          <span style="color:var(--green)">$</span> <span style="color:var(--text-bright)">vaig live</span> <span style="color:var(--blue)">"Investigate 5xx spike at 14:30"</span> \<br>
-          &nbsp;&nbsp;<span style="color:var(--yellow)">--skill</span> rca <span style="color:var(--yellow)">-o</span> incident-rca.md <span style="color:var(--yellow)">--format</span> md
+          <span class="sh-prompt">$</span> <span class="sh-cmd">vaig live</span> <span class="sh-arg">"Investigate 5xx spike at 14:30"</span> \<br>
+          &nbsp;&nbsp;<span class="sh-flag">--skill</span> rca <span class="sh-flag">-o</span> incident-rca.md <span class="sh-flag">--format</span> md
         </div>
       </div>
     </div>
@@ -969,12 +999,12 @@
         </div>
         <div class="roi-callout">
           <div class="headline">Ready for Production Today</div>
-          <p>vaig live is <strong style="color:var(--text-bright)">installed in one command</strong>, configured in YAML, and runs safely against any GKE cluster with ADC or SA impersonation. No infrastructure changes required.</p>
+          <p>vaig live is <strong class="hl-bright">installed in one command</strong>, configured in YAML, and runs safely against any GKE cluster with ADC or SA impersonation. No infrastructure changes required.</p>
         </div>
-        <div style="background:var(--bg-mid); border:1px solid var(--border); border-radius:10px; padding:16px 20px; font-size:0.8rem; color:var(--text-dim); line-height:1.6;">
-          <strong style="color:var(--text-bright); display:block; margin-bottom:6px;">Recommended Next Steps</strong>
+        <div class="next-steps-box">
+          <strong>Recommended Next Steps</strong>
           1. Pilot with one non-production cluster &amp; 2 engineers<br>
-          2. Run <code style="color:var(--teal)">vaig live "full health check" --skill service-health</code><br>
+          2. Run <code class="code-teal">vaig live "full health check" --skill service-health</code><br>
           3. Review HTML report output with the SRE lead<br>
           4. Enable watch mode for the staging environment
         </div>
@@ -999,7 +1029,16 @@
     slides.forEach((_, i) => {
       const dot = document.createElement('div');
       dot.className = 'dot' + (i === 0 ? ' active' : '');
+      dot.setAttribute('role', 'button');
+      dot.setAttribute('tabindex', '0');
+      dot.setAttribute('aria-label', 'Go to slide ' + (i + 1));
       dot.addEventListener('click', () => goTo(i));
+      dot.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          goTo(i);
+        }
+      });
       navDotsEl.appendChild(dot);
     });
 
