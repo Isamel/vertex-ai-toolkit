@@ -7,27 +7,87 @@ It only depends on stdlib ``logging`` and ``rich``.
 from __future__ import annotations
 
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from rich.console import Console
 from rich.logging import RichHandler
 
+
+def _make_console(*, stderr: bool = False) -> Console:
+    """Create a Rich Console that is resilient on non-ANSI terminals.
+
+    On Windows PowerShell ISE, pipes, and other non-TTY handles, writing
+    ANSI escape codes raises ``OSError: [WinError 1] Incorrect function``.
+    This factory inspects the target stream with ``isatty()`` and disables
+    ANSI formatting (``force_terminal=False, no_color=True``) when the
+    stream is not a real interactive terminal.
+
+    The result is safe to use on all platforms — the only downside on a
+    non-TTY is plain-text output instead of coloured Rich output.
+
+    Args:
+        stderr: When ``True``, the console targets ``sys.stderr``; otherwise
+            it targets ``sys.stdout`` (Rich's default).
+
+    Returns:
+        A :class:`rich.console.Console` configured for the current terminal.
+    """
+    stream = sys.stderr if stderr else sys.stdout
+    try:
+        is_tty = stream.isatty()
+    except AttributeError:
+        # Wrapped or replaced streams may lack isatty() — treat as non-TTY.
+        is_tty = False
+
+    if is_tty:
+        return Console(stderr=stderr)
+    return Console(stderr=stderr, force_terminal=False, no_color=True)
+
+
 # Stderr console for diagnostics — never interferes with stdout output.
-_stderr_console = Console(stderr=True)
+# Uses _make_console() so it is safe on Windows non-ANSI handles.
+_stderr_console = _make_console(stderr=True)
 
 
 class _SafeRichHandler(RichHandler):
-    """RichHandler that silently drops OSError on Windows thread contexts."""
+    """RichHandler that falls back to plain text on Windows non-ANSI terminals.
+
+    On Windows PowerShell ISE, pipes, and other terminals that do not
+    support ANSI escape codes, ``RichHandler.emit()`` raises
+    ``OSError: [WinError 1] Incorrect function`` at
+    ``rich/console.py`` when it tries to write formatted output to the
+    handle.
+
+    This subclass catches that ``OSError`` and falls back to writing a
+    plain-text line directly to ``sys.stderr``.  The log record is
+    **never silently lost** — it is always emitted in some form.
+
+    Note: We cannot fall back to ``logging.StreamHandler.emit()`` because
+    ``RichHandler`` does not inherit from ``StreamHandler`` and never calls
+    ``StreamHandler.__init__``, so ``self.stream`` would be undefined and
+    would raise ``AttributeError``.
+    """
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
             super().emit(record)
         except OSError:
-            # Windows: stderr not writable from background threads using
-            # concurrent.futures — the handle is invalid in thread context.
-            # Silently drop rather than crash the pipeline.
-            pass
+            # Windows: stderr handle does not support ANSI (PowerShell ISE,
+            # pipes, concurrent.futures thread contexts, etc.).
+            # Fall back to plain-text write so the record is not silently lost.
+            # NOTE: We cannot call logging.StreamHandler.emit(self, record)
+            # because _SafeRichHandler / RichHandler does NOT inherit from
+            # StreamHandler — it never calls StreamHandler.__init__, so
+            # self.stream is undefined and would raise AttributeError.
+            try:
+                msg = self.format(record)
+                sys.stderr.write(msg + "\n")
+                sys.stderr.flush()
+            except Exception:  # noqa: BLE001
+                # Last-resort: never crash the logging machinery.
+                pass
 
 # Sentinel to make setup_logging() idempotent.
 _configured = False
