@@ -19,8 +19,10 @@ import pytest
 @pytest.fixture(autouse=True)
 def _clear_caches() -> None:
     """Clear all caches before each test."""
+    from vaig.tools.gke._clients import _CLIENT_CACHE
     from vaig.tools.gke.argocd import _crd_exists_cache
     _crd_exists_cache.clear()
+    _CLIENT_CACHE.clear()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -342,3 +344,162 @@ class TestCheckCrdExistsCachingRegression:
 
         assert result is False
         assert _crd_exists_cache.get(("nonexistent.argoproj.io", mock_api_client)) is False
+
+
+# ══════════════════════════════════════════════════════════════
+# Change 3: _get_custom_objects_api disables urllib3 retries
+# ══════════════════════════════════════════════════════════════
+
+
+class TestGetCustomObjectsApiDelegatesToClients:
+    """_get_custom_objects_api must delegate to _clients._create_k8s_clients
+    and return the CustomObjectsApi (index [2]) from the shared tuple."""
+
+    def test_delegates_to_create_k8s_clients(self) -> None:
+        """Calls _create_k8s_clients and returns the CustomObjectsApi at index [2]."""
+        from vaig.tools.gke.argo_rollouts import _get_custom_objects_api
+
+        fake_custom_api = MagicMock()
+        fake_clients = (MagicMock(), MagicMock(), fake_custom_api, MagicMock())
+
+        with (
+            patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True),
+            patch("vaig.tools.gke.argo_rollouts._clients._create_k8s_clients", return_value=fake_clients) as mock_create,
+        ):
+            result = _get_custom_objects_api()
+
+        assert result is fake_custom_api
+        mock_create.assert_called_once()
+
+    def test_returns_none_when_create_k8s_clients_returns_error(self) -> None:
+        """Returns None when _create_k8s_clients returns a ToolResult (error)."""
+        from vaig.tools.base import ToolResult
+        from vaig.tools.gke.argo_rollouts import _get_custom_objects_api
+
+        error_result = ToolResult(output="Failed to configure Kubernetes client", error=True)
+
+        with (
+            patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True),
+            patch("vaig.tools.gke.argo_rollouts._clients._create_k8s_clients", return_value=error_result),
+        ):
+            result = _get_custom_objects_api()
+
+        assert result is None
+
+    def test_returns_none_when_k8s_unavailable(self) -> None:
+        """Returns None when the kubernetes SDK is not available."""
+        from vaig.tools.gke.argo_rollouts import _get_custom_objects_api
+
+        with patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", False):
+            result = _get_custom_objects_api()
+
+        assert result is None
+
+    def test_passes_gke_settings_to_create_k8s_clients(self) -> None:
+        """Passes get_settings().gke to _create_k8s_clients."""
+        from vaig.tools.gke.argo_rollouts import _get_custom_objects_api
+
+        fake_gke_config = MagicMock()
+        fake_clients = (MagicMock(), MagicMock(), MagicMock(), MagicMock())
+
+        with (
+            patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True),
+            patch("vaig.tools.gke.argo_rollouts.get_settings") as mock_settings,
+            patch("vaig.tools.gke.argo_rollouts._clients._create_k8s_clients", return_value=fake_clients) as mock_create,
+        ):
+            mock_settings.return_value.gke = fake_gke_config
+            _get_custom_objects_api()
+
+        mock_create.assert_called_once_with(fake_gke_config)
+
+
+# ══════════════════════════════════════════════════════════════
+# Change 4: argo_request_timeout field exists in GKEConfig
+# ══════════════════════════════════════════════════════════════
+
+
+class TestArgoRequestTimeoutConfig:
+    """GKEConfig.argo_request_timeout field exists and defaults to 10s."""
+
+    def test_default_argo_request_timeout(self) -> None:
+        """argo_request_timeout defaults to 10 seconds."""
+        from vaig.core.config import GKEConfig
+
+        cfg = GKEConfig()
+        assert cfg.argo_request_timeout == 10
+
+    def test_argo_request_timeout_customizable(self) -> None:
+        """argo_request_timeout can be set to a custom value."""
+        from vaig.core.config import GKEConfig
+
+        cfg = GKEConfig(argo_request_timeout=15)
+        assert cfg.argo_request_timeout == 15
+
+    def test_argo_request_timeout_independent_of_request_timeout(self) -> None:
+        """argo_request_timeout and request_timeout are independent fields."""
+        from vaig.core.config import GKEConfig
+
+        cfg = GKEConfig(request_timeout=60, argo_request_timeout=5)
+        assert cfg.request_timeout == 60
+        assert cfg.argo_request_timeout == 5
+
+
+# ══════════════════════════════════════════════════════════════
+# Change 5: Tool functions use argo_request_timeout
+# ══════════════════════════════════════════════════════════════
+
+
+class TestToolFunctionsUseArgoTimeout:
+    """All 5 Argo Rollouts tool functions use argo_request_timeout (10s)
+    instead of request_timeout (30s)."""
+
+    def _run_tool_with_mock(self, tool_func_name: str, **kwargs: str) -> MagicMock:
+        """Helper: invoke a tool function and return the mock CustomObjectsApi."""
+        import vaig.tools.gke.argo_rollouts as mod
+
+        tool_func = getattr(mod, tool_func_name)
+        mock_api = MagicMock()
+        mock_api.get_namespaced_custom_object.return_value = {
+            "metadata": {"name": "test", "namespace": "default"},
+            "spec": {},
+            "status": {},
+        }
+        mock_api.get_cluster_custom_object.return_value = {
+            "metadata": {"name": "test"},
+            "spec": {},
+            "status": {},
+        }
+
+        with (
+            patch("vaig.tools.gke.argo_rollouts._K8S_AVAILABLE", True),
+            patch("vaig.tools.gke._clients._K8S_AVAILABLE", True),
+            patch("vaig.tools.gke.argo_rollouts._get_custom_objects_api", return_value=mock_api),
+        ):
+            tool_func(**kwargs)
+
+        return mock_api
+
+    @pytest.mark.parametrize(
+        "tool_name,kwargs",
+        [
+            ("kubectl_get_rollout", {"namespace": "ns", "name": "r1"}),
+            ("kubectl_get_analysisrun", {"namespace": "ns", "name": "ar1"}),
+            ("kubectl_get_analysistemplate", {"namespace": "ns", "name": "at1"}),
+            ("kubectl_get_experiment", {"namespace": "ns", "name": "e1"}),
+        ],
+    )
+    def test_namespaced_tools_use_argo_timeout(self, tool_name: str, kwargs: dict) -> None:
+        """Namespaced tool functions pass argo_request_timeout (10) to the API."""  # noqa: E501
+        mock_api = self._run_tool_with_mock(tool_name, **kwargs)
+        call_kwargs = mock_api.get_namespaced_custom_object.call_args
+        assert call_kwargs is not None
+        assert call_kwargs.kwargs.get("_request_timeout") == 10
+
+    def test_cluster_analysis_template_uses_argo_timeout(self) -> None:
+        """kubectl_get_cluster_analysis_template passes argo_request_timeout."""
+        mock_api = self._run_tool_with_mock(
+            "kubectl_get_cluster_analysis_template", name="cat1"
+        )
+        call_kwargs = mock_api.get_cluster_custom_object.call_args
+        assert call_kwargs is not None
+        assert call_kwargs.kwargs.get("_request_timeout") == 10

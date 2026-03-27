@@ -581,7 +581,7 @@ class TestKubectlGetRollout:
             namespace="production",
             plural="rollouts",
             name="payment-svc",
-            _request_timeout=30,
+            _request_timeout=10,
         )
 
     def test_empty_namespace_returns_no_rollouts(self) -> None:

@@ -312,24 +312,25 @@ def _scan_namespace_for_rollouts_annotations(namespace: str, api_client: Any) ->
 
 
 def _get_custom_objects_api() -> Any | None:
-    """Return a CustomObjectsApi instance.
+    """Return a ``CustomObjectsApi`` via the shared client infrastructure.
+
+    Delegates to :func:`vaig.tools.gke._clients._create_k8s_clients` so that
+    ``gke.kubeconfig_path``, ``gke.context``, ``proxy-url`` resolution,
+    auth-plugin stderr suppression, ``retries=False``, and client caching
+    are all applied consistently.
 
     Returns ``None`` when the kubernetes SDK is not available or
     credentials cannot be loaded.
     """
     if not _K8S_AVAILABLE:
         return None
-    from kubernetes import client as k8s_client  # noqa: WPS433
-    from kubernetes import config as k8s_config  # noqa: WPS433
 
-    try:
-        k8s_config.load_incluster_config()
-    except k8s_config.ConfigException:
-        try:
-            k8s_config.load_kube_config()
-        except k8s_config.ConfigException:
-            return None
-    return k8s_client.CustomObjectsApi()
+    result = _clients._create_k8s_clients(get_settings().gke)
+    if isinstance(result, ToolResult):
+        return None
+
+    # _create_k8s_clients returns (CoreV1Api, AppsV1Api, CustomObjectsApi, ApiClient)
+    return result[2]
 
 
 def _format_rollout(rollout: dict[str, Any]) -> str:
@@ -579,7 +580,7 @@ def kubectl_get_rollout(namespace: str = "", name: str = "") -> ToolResult:
                 namespace=ns,
                 plural="rollouts",
                 name=name,
-                _request_timeout=get_settings().gke.request_timeout,
+                _request_timeout=get_settings().gke.argo_request_timeout,
             )
             return ToolResult(output=_format_rollout(resource))
 
@@ -589,14 +590,14 @@ def kubectl_get_rollout(namespace: str = "", name: str = "") -> ToolResult:
                 version=_ARGO_ROLLOUTS_VERSION,
                 namespace=namespace,
                 plural="rollouts",
-                _request_timeout=get_settings().gke.request_timeout,
+                _request_timeout=get_settings().gke.argo_request_timeout,
             )
         else:
             result = custom_api.list_cluster_custom_object(
                 group=_ARGO_ROLLOUTS_GROUP,
                 version=_ARGO_ROLLOUTS_VERSION,
                 plural="rollouts",
-                _request_timeout=get_settings().gke.request_timeout,
+                _request_timeout=get_settings().gke.argo_request_timeout,
             )
 
         items = result.get("items", [])
@@ -662,7 +663,7 @@ def kubectl_get_analysisrun(namespace: str = "", name: str = "") -> ToolResult:
                 namespace=ns,
                 plural="analysisruns",
                 name=name,
-                _request_timeout=get_settings().gke.request_timeout,
+                _request_timeout=get_settings().gke.argo_request_timeout,
             )
             return ToolResult(output=_format_analysisrun(resource))
 
@@ -672,14 +673,14 @@ def kubectl_get_analysisrun(namespace: str = "", name: str = "") -> ToolResult:
                 version=_ARGO_ROLLOUTS_VERSION,
                 namespace=namespace,
                 plural="analysisruns",
-                _request_timeout=get_settings().gke.request_timeout,
+                _request_timeout=get_settings().gke.argo_request_timeout,
             )
         else:
             result = custom_api.list_cluster_custom_object(
                 group=_ARGO_ROLLOUTS_GROUP,
                 version=_ARGO_ROLLOUTS_VERSION,
                 plural="analysisruns",
-                _request_timeout=get_settings().gke.request_timeout,
+                _request_timeout=get_settings().gke.argo_request_timeout,
             )
 
         items = result.get("items", [])
@@ -745,7 +746,7 @@ def kubectl_get_analysistemplate(namespace: str = "", name: str = "") -> ToolRes
                 namespace=ns,
                 plural="analysistemplates",
                 name=name,
-                _request_timeout=get_settings().gke.request_timeout,
+                _request_timeout=get_settings().gke.argo_request_timeout,
             )
             return ToolResult(output=_format_analysistemplate(resource))
 
@@ -755,14 +756,14 @@ def kubectl_get_analysistemplate(namespace: str = "", name: str = "") -> ToolRes
                 version=_ARGO_ROLLOUTS_VERSION,
                 namespace=namespace,
                 plural="analysistemplates",
-                _request_timeout=get_settings().gke.request_timeout,
+                _request_timeout=get_settings().gke.argo_request_timeout,
             )
         else:
             result = custom_api.list_cluster_custom_object(
                 group=_ARGO_ROLLOUTS_GROUP,
                 version=_ARGO_ROLLOUTS_VERSION,
                 plural="analysistemplates",
-                _request_timeout=get_settings().gke.request_timeout,
+                _request_timeout=get_settings().gke.argo_request_timeout,
             )
 
         items = result.get("items", [])
@@ -827,7 +828,7 @@ def kubectl_get_cluster_analysis_template(name: str = "") -> ToolResult:
                 version=_ARGO_ROLLOUTS_VERSION,
                 plural="clusteranalysistemplates",
                 name=name,
-                _request_timeout=get_settings().gke.request_timeout,
+                _request_timeout=get_settings().gke.argo_request_timeout,
             )
             return ToolResult(output=_format_cluster_analysis_template(resource))
 
@@ -835,7 +836,7 @@ def kubectl_get_cluster_analysis_template(name: str = "") -> ToolResult:
             group=_ARGO_ROLLOUTS_GROUP,
             version=_ARGO_ROLLOUTS_VERSION,
             plural="clusteranalysistemplates",
-            _request_timeout=get_settings().gke.request_timeout,
+            _request_timeout=get_settings().gke.argo_request_timeout,
         )
 
         items = result.get("items", [])
@@ -899,7 +900,7 @@ def kubectl_get_experiment(namespace: str = "", name: str = "") -> ToolResult:
                 namespace=ns,
                 plural="experiments",
                 name=name,
-                _request_timeout=get_settings().gke.request_timeout,
+                _request_timeout=get_settings().gke.argo_request_timeout,
             )
             return ToolResult(output=_format_experiment(resource))
 
@@ -909,14 +910,14 @@ def kubectl_get_experiment(namespace: str = "", name: str = "") -> ToolResult:
                 version=_ARGO_ROLLOUTS_VERSION,
                 namespace=namespace,
                 plural="experiments",
-                _request_timeout=get_settings().gke.request_timeout,
+                _request_timeout=get_settings().gke.argo_request_timeout,
             )
         else:
             result = custom_api.list_cluster_custom_object(
                 group=_ARGO_ROLLOUTS_GROUP,
                 version=_ARGO_ROLLOUTS_VERSION,
                 plural="experiments",
-                _request_timeout=get_settings().gke.request_timeout,
+                _request_timeout=get_settings().gke.argo_request_timeout,
             )
 
         items = result.get("items", [])
