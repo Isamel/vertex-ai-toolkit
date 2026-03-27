@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from google import genai
 from google.api_core import exceptions as google_exceptions
 from google.auth import exceptions as auth_exceptions
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from vaig.core.auth import get_credentials
@@ -50,6 +51,11 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
     google_exceptions.DeadlineExceeded,  # 504
     google_exceptions.Aborted,  # transient
 )
+
+# HTTP status codes that the SDK already retries via HttpRetryOptions.
+# Used in the genai_errors.APIError handler to distinguish retryable (SDK
+# already handled) from non-retryable (propagate immediately).
+_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 
 
 def _safe_int(value: Any) -> int:
@@ -262,6 +268,25 @@ class GeminiClient:
             # silently disable caching rather than crashing.
             self._cache = None
 
+    def _build_http_options(self) -> types.HttpOptions:
+        """Build HTTP options with retry configuration for the genai SDK.
+
+        Maps vaig's ``RetryConfig`` to the SDK's ``HttpRetryOptions`` so that
+        the underlying HTTP transport retries transient errors (429, 5xx)
+        automatically — before vaig's own application-level retry even kicks in.
+        """
+        retry_cfg = self._settings.retry
+        return types.HttpOptions(
+            retry_options=types.HttpRetryOptions(
+                attempts=retry_cfg.max_retries + 1,  # SDK counts initial call as attempt
+                initial_delay=retry_cfg.initial_delay,
+                max_delay=retry_cfg.max_delay,
+                exp_base=retry_cfg.backoff_multiplier,
+                jitter=0.5,
+                http_status_codes=retry_cfg.retryable_status_codes,
+            ),
+        )
+
     def initialize(self) -> None:
         """Initialize the google-genai Client with Vertex AI credentials (sync)."""
         if self._initialized:
@@ -275,6 +300,7 @@ class GeminiClient:
                 project=self._settings.gcp.project_id,
                 location=self._active_location,
                 credentials=credentials,
+                http_options=self._build_http_options(),
             )
         except (GCPAuthError, GCPPermissionError):
             raise  # Already our custom type — propagate as-is
@@ -326,6 +352,7 @@ class GeminiClient:
                 project=self._settings.gcp.project_id,
                 location=self._active_location,
                 credentials=credentials,
+                http_options=self._build_http_options(),
             )
         except (GCPAuthError, GCPPermissionError):
             raise  # Already our custom type — propagate as-is
@@ -468,6 +495,7 @@ class GeminiClient:
                     project=self._settings.gcp.project_id,
                     location=self._active_location,
                     credentials=credentials,
+                    http_options=self._build_http_options(),
                 )
                 self._client = new_client
                 self._initialized = True
@@ -622,6 +650,27 @@ class GeminiClient:
                     )
                     time.sleep(sleep_time)
                     delay *= retry_cfg.backoff_multiplier
+            except genai_errors.APIError as exc:
+                # google-genai SDK errors (ClientError / ServerError).
+                # The SDK already retried with backoff via HttpRetryOptions —
+                # do NOT retry at the app level (avoids retry budget explosion).
+                if exc.code in _RETRYABLE_STATUS_CODES:
+                    last_exception = exc
+                    # Check for SSL/connection errors that need location fallback.
+                    if _is_ssl_or_connection_error(exc) and not self._using_fallback:
+                        logger.warning(
+                            "Retryable genai error wraps SSL/proxy error (%s: %s) "
+                            "— attempting location fallback",
+                            type(exc).__name__,
+                            exc,
+                        )
+                        self._reinitialize_with_fallback()
+                        try:
+                            return fn()
+                        except Exception as fallback_exc:  # noqa: BLE001
+                            last_exception = fallback_exc
+                    break  # fall through to exhaustion handler
+                raise  # Non-retryable (400, 403, etc.) — propagate immediately.
             except Exception as exc:
                 if _is_ssl_or_connection_error(exc) and not self._using_fallback:
                     logger.warning(
@@ -643,6 +692,13 @@ class GeminiClient:
         msg = f"All {retries} retries exhausted. Last error: {last_exception}"
 
         if isinstance(last_exception, google_exceptions.ResourceExhausted):
+            raise GeminiRateLimitError(
+                msg,
+                original_error=last_exception,
+                retries_attempted=retries,
+            ) from last_exception
+
+        if isinstance(last_exception, genai_errors.APIError) and last_exception.code == 429:
             raise GeminiRateLimitError(
                 msg,
                 original_error=last_exception,
@@ -713,6 +769,27 @@ class GeminiClient:
                     )
                     await asyncio.sleep(sleep_time)
                     delay *= retry_cfg.backoff_multiplier
+            except genai_errors.APIError as exc:
+                # google-genai SDK errors (ClientError / ServerError).
+                # The SDK already retried with backoff via HttpRetryOptions —
+                # do NOT retry at the app level (avoids retry budget explosion).
+                if exc.code in _RETRYABLE_STATUS_CODES:
+                    last_exception = exc
+                    # Check for SSL/connection errors that need location fallback.
+                    if _is_ssl_or_connection_error(exc) and not self._using_fallback:
+                        logger.warning(
+                            "Retryable genai error wraps SSL/proxy error (%s: %s) "
+                            "— attempting location fallback",
+                            type(exc).__name__,
+                            exc,
+                        )
+                        await self._async_reinitialize_with_fallback()
+                        try:
+                            return await fn()
+                        except Exception as fallback_exc:  # noqa: BLE001
+                            last_exception = fallback_exc
+                    break  # fall through to exhaustion handler
+                raise  # Non-retryable (400, 403, etc.) — propagate immediately.
             except Exception as exc:
                 if _is_ssl_or_connection_error(exc) and not self._using_fallback:
                     logger.warning(
@@ -733,6 +810,13 @@ class GeminiClient:
         msg = f"All {retries} retries exhausted. Last error: {last_exception}"
 
         if isinstance(last_exception, google_exceptions.ResourceExhausted):
+            raise GeminiRateLimitError(
+                msg,
+                original_error=last_exception,
+                retries_attempted=retries,
+            ) from last_exception
+
+        if isinstance(last_exception, genai_errors.APIError) and last_exception.code == 429:
             raise GeminiRateLimitError(
                 msg,
                 original_error=last_exception,

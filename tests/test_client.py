@@ -131,12 +131,13 @@ class TestGeminiClientInit:
         client.initialize()
 
         mock_get_creds.assert_called_once_with(client._settings)
-        mock_genai_client_cls.assert_called_once_with(
-            vertexai=True,
-            project="test-project",
-            location="us-central1",
-            credentials=fake_creds,
-        )
+        mock_genai_client_cls.assert_called_once()
+        call_kwargs = mock_genai_client_cls.call_args[1]
+        assert call_kwargs["vertexai"] is True
+        assert call_kwargs["project"] == "test-project"
+        assert call_kwargs["location"] == "us-central1"
+        assert call_kwargs["credentials"] is fake_creds
+        assert "http_options" in call_kwargs  # SDK-level retry options
         assert client._initialized is True
         assert client._client is mock_genai_client_cls.return_value
 
@@ -209,12 +210,13 @@ class TestReinitialize:
 
         client.reinitialize(project="new-project")
 
-        mock_genai_client_cls.assert_called_once_with(
-            vertexai=True,
-            project="new-project",
-            location="us-central1",
-            credentials=mock_get_creds.return_value,
-        )
+        mock_genai_client_cls.assert_called_once()
+        call_kwargs = mock_genai_client_cls.call_args[1]
+        assert call_kwargs["vertexai"] is True
+        assert call_kwargs["project"] == "new-project"
+        assert call_kwargs["location"] == "us-central1"
+        assert call_kwargs["credentials"] is mock_get_creds.return_value
+        assert "http_options" in call_kwargs
         assert client._initialized is True
         assert client._settings.gcp.project_id == "new-project"
 
@@ -230,12 +232,13 @@ class TestReinitialize:
 
         client.reinitialize(location="europe-west1")
 
-        mock_genai_client_cls.assert_called_once_with(
-            vertexai=True,
-            project="test-project",
-            location="europe-west1",
-            credentials=mock_get_creds.return_value,
-        )
+        mock_genai_client_cls.assert_called_once()
+        call_kwargs = mock_genai_client_cls.call_args[1]
+        assert call_kwargs["vertexai"] is True
+        assert call_kwargs["project"] == "test-project"
+        assert call_kwargs["location"] == "europe-west1"
+        assert call_kwargs["credentials"] is mock_get_creds.return_value
+        assert "http_options" in call_kwargs
         assert client._active_location == "europe-west1"
         assert client._settings.gcp.location == "europe-west1"
 
@@ -251,12 +254,13 @@ class TestReinitialize:
 
         client.reinitialize(project="proj-2", location="asia-east1")
 
-        mock_genai_client_cls.assert_called_once_with(
-            vertexai=True,
-            project="proj-2",
-            location="asia-east1",
-            credentials=mock_get_creds.return_value,
-        )
+        mock_genai_client_cls.assert_called_once()
+        call_kwargs = mock_genai_client_cls.call_args[1]
+        assert call_kwargs["vertexai"] is True
+        assert call_kwargs["project"] == "proj-2"
+        assert call_kwargs["location"] == "asia-east1"
+        assert call_kwargs["credentials"] is mock_get_creds.return_value
+        assert "http_options" in call_kwargs
 
     @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
@@ -1255,12 +1259,13 @@ class TestAsyncInitialize:
         await client.async_initialize()
 
         mock_get_creds.assert_called_once_with(client._settings)
-        mock_genai_client_cls.assert_called_once_with(
-            vertexai=True,
-            project="test-project",
-            location="us-central1",
-            credentials=fake_creds,
-        )
+        mock_genai_client_cls.assert_called_once()
+        call_kwargs = mock_genai_client_cls.call_args[1]
+        assert call_kwargs["vertexai"] is True
+        assert call_kwargs["project"] == "test-project"
+        assert call_kwargs["location"] == "us-central1"
+        assert call_kwargs["credentials"] is fake_creds
+        assert "http_options" in call_kwargs
         assert client._initialized is True
 
     @patch("vaig.core.client.genai.Client")
