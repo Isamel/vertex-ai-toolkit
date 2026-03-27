@@ -376,7 +376,7 @@
     .arch-stat .lbl { font-size: 0.72rem; color: var(--text-dim); }
 
     /* ═══════════════════════════════════════════════════════
-       SLIDE 6 — RECENT IMPROVEMENTS
+       (unused) — .slide-improvements styles kept for compat
     ══════════════════════════════════════════════════════════ */
     .slide-improvements { background: var(--bg-deep); }
     .improvements-grid {
@@ -903,7 +903,7 @@
       <span class="tag-pill tag-pill-purple">Gemini-Powered</span>
       <span class="tag-pill tag-pill-teal">GKE + GCP</span>
     </div>
-    <div class="slide-num">01 / 11</div>
+    <div class="slide-num">01 / 10</div>
   </section>
 
   <!-- ── SLIDE 2: PROJECT METRICS ────────────────────────── -->
@@ -1021,7 +1021,7 @@
       </div>
     </div>
 
-    <div class="slide-num">02 / 11</div>
+    <div class="slide-num">02 / 10</div>
   </section>
 
   <!-- ── SLIDE 3: PROBLEM ───────────────────────────────── -->
@@ -1061,7 +1061,7 @@
         <p>Idle containers, over-provisioned workloads, and namespace cost anomalies go undetected without dedicated analysis tooling.</p>
       </div>
     </div>
-    <div class="slide-num">03 / 11</div>
+    <div class="slide-num">03 / 10</div>
   </section>
 
   <!-- ── SLIDE 4: SOLUTION ──────────────────────────────── -->
@@ -1100,7 +1100,7 @@
         </div>
       </div>
     </div>
-    <div class="slide-num">04 / 11</div>
+    <div class="slide-num">04 / 10</div>
   </section>
 
   <!-- ── SLIDE 5: KEY FEATURES ──────────────────────────── -->
@@ -1150,7 +1150,7 @@
         <div class="desc">Default toolset is read-only and safe for production. Live-mode Kubernetes write actions (scale/restart/label/annotate) are optional, explicit, and policy-gated.</div>
       </div>
     </div>
-    <div class="slide-num">05 / 11</div>
+    <div class="slide-num">05 / 10</div>
   </section>
 
   <!-- ── SLIDE 6: ARCHITECTURE ──────────────────────────── -->
@@ -1224,65 +1224,10 @@
         <div class="arch-stat"><div class="num">4</div><div class="lbl">Cluster mutation tools (gated)</div></div>
       </div>
     </div>
-    <div class="slide-num">06 / 11</div>
+    <div class="slide-num">06 / 10</div>
   </section>
 
-  <!-- ── SLIDE 7: RECENT IMPROVEMENTS ──────────────────── -->
-  <section class="slide slide-improvements">
-    <div class="brand">vertex-ai-toolkit · vaig</div>
-    <p class="slide-label">Recent Delivery · PRs #119–#127</p>
-    <h2>9 Fixes &amp; Features Shipped This Cycle</h2>
-    <div class="improvements-grid">
-      <div class="pr-card fix">
-        <span class="pr-tag">#119</span>
-        <div class="pr-title">Service Status Regression Fixed</div>
-        <div class="pr-desc">CPU/memory metrics and replica counts restored for Argo Rollout-managed services — was showing N/A and 0/0.</div>
-      </div>
-      <div class="pr-card fix">
-        <span class="pr-tag">#120</span>
-        <div class="pr-title">ArgoCD Timeout Protection</div>
-        <div class="pr-desc">Explicit timeout on all Kubernetes API calls in argo_rollouts.py — prevents indefinite hangs on unreachable clusters.</div>
-      </div>
-      <div class="pr-card fix">
-        <span class="pr-tag">#121 / #123</span>
-        <div class="pr-title">Datadog SSL &amp; Proxy Support</div>
-        <div class="pr-desc">Improved SSL error discovery for corporate proxies. Configurable ssl_verify flag with CA bundle path support.</div>
-      </div>
-      <div class="pr-card fix">
-        <span class="pr-tag">#122</span>
-        <div class="pr-title">Code Output Restored</div>
-        <div class="pr-desc"><code>vaig ask --code --file</code> now shows output when the LLM uses file tools without returning a text response.</div>
-      </div>
-      <div class="pr-card feat">
-        <span class="pr-tag">#124</span>
-        <div class="pr-title">Datadog APM Mode</div>
-        <div class="pr-desc">New metric_mode config: choose between k8s_agent metrics or APM trace metrics. Configurable lookback window and cluster name override.</div>
-      </div>
-      <div class="pr-card feat">
-        <span class="pr-tag">#125</span>
-        <div class="pr-title">Fast CRD Timeout</div>
-        <div class="pr-desc">5s CRD existence probe timeout (was ~84s). urllib3 retries disabled for K8s API calls — fails fast, never hangs.</div>
-      </div>
-      <div class="pr-card infra">
-        <span class="pr-tag">#126</span>
-        <div class="pr-title">Windows &amp; Non-ANSI Support</div>
-        <div class="pr-desc">TTY detection at startup. Falls back to plain text logging on non-ANSI terminals — no more WinError 1 or garbled output.</div>
-      </div>
-      <div class="pr-card feat">
-        <span class="pr-tag">#127</span>
-        <div class="pr-title">Fuzzy Tool Matching</div>
-        <div class="pr-desc">When the LLM hallucinates a tool name, agents now return scored close-match suggestions with the full tool registry.</div>
-      </div>
-      <div class="pr-card infra">
-        <span class="pr-tag">#128</span>
-        <div class="pr-title">Docs &amp; Config Updated</div>
-        <div class="pr-desc">README, CHANGELOG, and configuration guide updated. New config options for GKE timeouts and Datadog settings documented.</div>
-      </div>
-    </div>
-    <div class="slide-num">07 / 11</div>
-  </section>
-
-  <!-- ── SLIDE 8: DEMO ──────────────────────────────────── -->
+  <!-- ── SLIDE 7: DEMO ──────────────────────────────────── -->
   <section class="slide slide-demo">
     <div class="brand">vertex-ai-toolkit · vaig</div>
     <div class="demo-layout">
@@ -1355,10 +1300,10 @@
         </div>
       </div>
     </div>
-    <div class="slide-num">08 / 11</div>
+    <div class="slide-num">07 / 10</div>
   </section>
 
-  <!-- ── SLIDE 9: REPORT OUTPUT — CONSOLE ──────────────── -->
+  <!-- ── SLIDE 8: REPORT OUTPUT — CONSOLE ──────────────── -->
   <section class="slide slide-report-console">
     <div class="brand">vertex-ai-toolkit · vaig</div>
     <p class="slide-label">Report Output — Console</p>
@@ -1391,10 +1336,10 @@
         with prioritized actions. No log spelunking required.
       </p>
     </div>
-    <div class="slide-num">09 / 11</div>
+    <div class="slide-num">08 / 10</div>
   </section>
 
-  <!-- ── SLIDE 10: REPORT OUTPUT — HTML ───────────────────── -->
+  <!-- ── SLIDE 9: REPORT OUTPUT — HTML ───────────────────── -->
   <section class="slide slide-report-html">
     <div class="brand">vertex-ai-toolkit · vaig</div>
     <div class="report-html-layout">
@@ -1507,10 +1452,10 @@
         </div>
       </div>
     </div>
-    <div class="slide-num">10 / 11</div>
+    <div class="slide-num">09 / 10</div>
   </section>
 
-  <!-- ── SLIDE 11: ROI ───────────────────────────────────── -->
+  <!-- ── SLIDE 10: ROI ───────────────────────────────────── -->
   <section class="slide slide-roi">
     <div class="brand">vertex-ai-toolkit · vaig</div>
     <div class="roi-layout">
@@ -1568,7 +1513,7 @@
         </div>
       </div>
     </div>
-    <div class="slide-num">11 / 11</div>
+    <div class="slide-num">10 / 10</div>
   </section>
 
 </div><!-- /deck -->

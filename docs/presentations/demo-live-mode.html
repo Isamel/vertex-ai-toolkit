@@ -348,69 +348,47 @@ async function scene2_launch() {
   await typeCmd('vaig live --skill service_health --namespace production --services checkout-svc,payment-api,inventory-sync,auth-service,notification-svc');
   await delay(400);
   blank();
-  addLine(cr('c-teal', '🚀 VAIG Live Mode') + c('c-text', ' — Investigating ') + c('c-bright', '5 services') + c('c-text', ' in ') + c('c-blue', 'production') + c('c-text', ' namespace'));
-  addLine(c('c-dim', '   Cluster: ') + c('c-blue', 'prod-us-east1') + c('c-dim', ' │ Model: ') + c('c-purple', 'gemini-2.5-flash') + c('c-dim', ' │ Tools: ') + c('c-cyan', '47 loaded'));
+
+  /* Orchestrated Skill header — matches real vaig CLI output */
+  addLine(cr('c-cyan', '🔍 Orchestrated Skill: ') + c('c-bright', 'Service Health Assessment'));
+  addLine(c('c-dim', 'Cluster: ') + c('c-blue', 'prod-gke-01') + c('c-dim', ' | Namespace: ') + c('c-blue', 'production') + c('c-dim', ' | Project: ') + c('c-blue', 'acme-prod'));
+  addLine(c('c-dim', '42 tools loaded | Strategy: ') + c('c-purple', 'sequential'));
   blank();
   await delay(600);
 
-  addLine(c('c-dim', '⏳ Launching agents...'));
-
-  /* Progress bar animation */
-  const agents = [
-    { icon: '🔍', name: 'workload_gatherer', label: 'analyzing deployments & pods', color: 'c-blue' },
-    { icon: '📊', name: 'metrics_analyzer',  label: 'querying CPU/memory metrics',  color: 'c-cyan' },
-    { icon: '📝', name: 'log_investigator',  label: 'scanning recent logs',         color: 'c-purple' },
-    { icon: '🔄', name: 'rollout_checker',   label: 'argo rollouts checked',        color: 'c-yellow' },
-    { icon: '💰', name: 'cost_estimator',    label: 'calculating resource costs',   color: 'c-orange' },
-  ];
-
-  const barEls = [];
-  for (let i = 0; i < agents.length; i++) {
-    const a = agents[i];
-    const prefix = i < agents.length - 1 ? '├──' : '└──';
-    const lineEl = document.createElement('span');
-    lineEl.className = 'line';
-    lineEl.innerHTML = c('c-dim', `   ${prefix} `) + `${a.icon} ` + cr(a.color, a.name.padEnd(20)) + ' ';
-    const barSpan = document.createElement('span');
-    barSpan.className = a.color;
-    barSpan.textContent = '░░░░░░░░░░';
-    lineEl.appendChild(barSpan);
-    const statusSpan = document.createElement('span');
-    statusSpan.className = 'c-dim';
-    statusSpan.textContent = '  ' + a.label;
-    lineEl.appendChild(statusSpan);
-    term.appendChild(lineEl);
-    barEls.push({ bar: barSpan, status: statusSpan, agent: a });
-  }
-  scrollDown();
+  addLine(cr('c-teal', '🤖 Running Service Health Assessment pipeline...'));
+  addLine(c('c-dim', '[03/27/26 14:31:42] ') + c('c-yellow', 'WARNING') + c('c-dim', '  Auto-detected parallel_group agents - upgrading strategy to ') + c('c-purple', 'parallel_sequential'));
   await delay(400);
 
-  /* Animate bars filling at different rates */
-  const fills = [0, 0, 0, 0, 0];
-  const rates = [14, 11, 12, 18, 13];
-  for (let step = 0; step < 12; step++) {
+  /* Tool calls — matches real vaig CLI format: 🔧 tool_name(params) ✓ (time) */
+  const toolCalls = [
+    { name: 'kubectl_get_labels',      params: 'namespace=production, resource_type=deployments', time: '0.4s' },
+    { name: 'kubectl_get_pods',        params: 'namespace=production',                           time: '0.6s' },
+    { name: 'kubectl_get_events',      params: 'namespace=production',                           time: '1.5s' },
+    { name: 'kubectl_top',             params: 'namespace=production, resource_type=pods',       time: '0.8s' },
+    { name: 'get_pod_logs',            params: 'namespace=production, pod=inventory-sync-7f8b9-xk2p4', time: '2.1s' },
+    { name: 'get_pod_logs',            params: 'namespace=production, pod=payment-api-5c9d8-m3k7j',    time: '1.8s' },
+    { name: 'query_datadog_metrics',   params: 'cluster_name=prod-gke-01, metric=cpu',          time: '1.0s' },
+    { name: 'query_datadog_metrics',   params: 'cluster_name=prod-gke-01, metric=memory',       time: '0.9s' },
+    { name: 'kubectl_get_hpa',         params: 'namespace=production',                           time: '0.3s' },
+    { name: 'kubectl_get_services',    params: 'namespace=production',                           time: '0.4s' },
+    { name: 'kubectl_get_configmaps',  params: 'namespace=production',                           time: '0.3s' },
+    { name: 'kubectl_get_ingress',     params: 'namespace=production',                           time: '0.5s' },
+    { name: 'get_argo_rollout_status', params: 'namespace=production, name=payment-api',         time: '1.2s' },
+    { name: 'get_argo_rollout_status', params: 'namespace=production, name=inventory-sync',      time: '0.7s' },
+    { name: 'gcloud_logging_query',    params: 'namespace=production, severity=ERROR, hours=1',  time: '3.2s' },
+    { name: 'gcloud_monitoring_query', params: 'namespace=production, metric=cpu_utilization',   time: '2.8s' },
+    { name: 'kubectl_get_nodes',       params: 'label_selector=pool=default',                    time: '0.5s' },
+    { name: 'get_node_conditions',     params: 'node=gke-prod-pool-1-abc123',                    time: '0.4s' },
+  ];
+
+  for (const tc of toolCalls) {
     checkAbort();
-    for (let i = 0; i < 5; i++) {
-      fills[i] = Math.min(10, fills[i] + (Math.random() < rates[i] / 15 ? 1 : 0));
-      const filled = '▓'.repeat(fills[i]) + '░'.repeat(10 - fills[i]);
-      barEls[i].bar.textContent = filled;
-      if (fills[i] >= 10) {
-        barEls[i].status.textContent = '  ' + barEls[i].agent.label + ' ✓';
-        barEls[i].status.className = 'c-green';
-      }
-    }
-    scrollDown();
-    await delay(250);
+    addLine(c('c-green', '🔧 ') + c('c-cyan', tc.name) + c('c-dim', '(') + c('c-text', tc.params) + c('c-dim', ') ') + c('c-green', '✓') + c('c-dim', ' (' + tc.time + ')'));
+    await delay(120);
   }
 
-  /* Ensure all complete */
-  for (let i = 0; i < 5; i++) {
-    barEls[i].bar.textContent = '▓▓▓▓▓▓▓▓▓▓';
-    barEls[i].status.textContent = '  ' + barEls[i].agent.label + ' ✓';
-    barEls[i].status.className = 'c-green';
-  }
-  scrollDown();
-  await delay(800);
+  await delay(600);
   blank();
 }
 
@@ -471,6 +449,38 @@ async function scene3_report() {
     c('c-text', '   HPA scaling from 2→3 pods triggered but 1 pod stuck in ') + c('c-red', 'Pending'),
     c('c-dim', '   (insufficient CPU in node pool — consider adding spot instances).'),
   ], 80);
+  await delay(500);
+  blank();
+
+  /* Root Cause Hypotheses */
+  addLine(c('c-bright', '🧠 Root Cause Hypotheses'));
+  addLine(c('c-dim', '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+  await delay(200);
+  await printLines([
+    '  ' + c('c-red', '1.') + c('c-bright', ' Batch worker memory exhaustion') + c('c-dim', '  (confidence: HIGH)'),
+    '  ' + c('c-text', '   inventory-sync batch_workers increased 4→8 in revision 12'),
+    '  ' + c('c-text', '   Each worker allocates ~60Mi → 8×60 = 480Mi exceeds 512Mi limit'),
+    '',
+    '  ' + c('c-yellow', '2.') + c('c-bright', ' Canary traffic amplification') + c('c-dim', '  (confidence: MEDIUM)'),
+    '  ' + c('c-text', '   payment-api-v2 at 30% weight has ') + c('c-yellow', '2.3x latency') + c('c-text', ' vs v1'),
+    '  ' + c('c-text', '   Increased connection hold time amplifies CPU under load'),
+  ], 80);
+  await delay(500);
+  blank();
+
+  /* Timeline */
+  addLine(c('c-bright', '📅 Timeline'));
+  addLine(c('c-dim', '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+  await delay(200);
+  await printLines([
+    '  ' + c('c-dim', '12:45 UTC') + c('c-text', '  Argo Rollout rev 12 promoted (inventory-sync)'),
+    '  ' + c('c-dim', '13:02 UTC') + c('c-text', '  First OOMKilled event on inventory-sync'),
+    '  ' + c('c-dim', '14:15 UTC') + c('c-text', '  payment-api-v2 canary started (30% weight)'),
+    '  ' + c('c-dim', '14:23 UTC') + c('c-yellow', '  CPU spike detected on payment-api pods'),
+    '  ' + c('c-dim', '14:28 UTC') + c('c-text', '  HPA triggered: payment-api 2→3 pods'),
+    '  ' + c('c-dim', '14:29 UTC') + c('c-red', '  Pod payment-api-5c9d8-n7x2q stuck Pending'),
+    '  ' + c('c-dim', '14:31 UTC') + c('c-red', '  3rd OOMKilled event on inventory-sync'),
+  ], 70);
   await delay(500);
   blank();
 
