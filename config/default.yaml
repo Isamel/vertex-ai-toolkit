@@ -219,9 +219,15 @@ argocd:
 #
 # TIP: If your Argo Rollouts control-plane runs on a SEPARATE cluster from the
 # one vaig connects to, the CRD probe will always fail (the apiextensions endpoint
-# is unreachable).  Set `argo_rollouts_enabled: true` to skip the CRD check and
-# enable Argo Rollouts tools unconditionally.  This avoids ~5s timeouts per
-# kubectl_get_rollout call caused by the unreachable apiextensions endpoint.
+# is unreachable).  Set `argo_rollouts.enabled: true` under the `gke:` section
+# to skip the CRD check and enable Argo Rollouts tools unconditionally.
+# This avoids ~5s timeouts per kubectl_get_rollout call caused by the
+# unreachable apiextensions endpoint.  Example:
+#
+#   gke:
+#     argo_rollouts:
+#       enabled: true
+#
 # argo_rollouts:
 #   enabled: null
 

@@ -403,7 +403,11 @@ def _load_k8s_config(
                     # Fallback to in-cluster config (workload identity).
                     # Return wrapped ApiClient — caller handles this case.
                     k8s_config.load_incluster_config()
-                    return _InClusterClient(k8s_client.ApiClient())
+                    # Disable retries on the in-cluster path too — the same
+                    # ~84s hang risk applies if the API server is unreachable.
+                    ic_cfg = k8s_client.Configuration.get_default_copy()
+                    ic_cfg.retries = False
+                    return _InClusterClient(k8s_client.ApiClient(ic_cfg))
 
     except Exception as exc:  # noqa: BLE001
         return ToolResult(

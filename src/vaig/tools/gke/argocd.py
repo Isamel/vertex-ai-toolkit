@@ -41,7 +41,10 @@ _ARGOCD_COMMON_NAMESPACES: tuple[str, ...] = (
     "argo",
 )
 _argocd_namespace_cache: dict[str, str | None] = {}
-_crd_exists_cache: dict[str, bool] = {}
+# Cache keyed on (crd_name, api_client) so that calls using different ApiClient
+# instances (pointing to different clusters) never share entries.
+# api_client=None means "load from current kubeconfig context".
+_crd_exists_cache: dict[tuple[str, Any], bool] = {}
 _argocd_ns_cache: dict[tuple[str, Any], bool] = {}
 
 # ── Retry configuration ──────────────────────────────────────
@@ -62,6 +65,11 @@ def _check_crd_exists(crd_name: str, api_client: Any = None) -> bool:
     the ``apiextensions.k8s.io/v1`` endpoint.  Results are cached per-process
     to avoid repeated API round-trips within the same invocation.
 
+    The cache is keyed on ``(crd_name, api_client)`` so that calls using
+    different ``ApiClient`` instances (pointing to different clusters) never
+    share entries.  ``api_client=None`` represents the current kubeconfig
+    context.
+
     Only **definitive** outcomes (CRD found, 404 not-found, 403 no-permission)
     are persisted to cache.  Transient errors (5xx, 429, network timeouts) are
     logged at WARNING level and return ``False`` **without** writing to cache,
@@ -71,7 +79,7 @@ def _check_crd_exists(crd_name: str, api_client: Any = None) -> bool:
         crd_name: Fully-qualified CRD name, e.g. ``"applications.argoproj.io"``.
         api_client: Optional pre-configured ``kubernetes.client.ApiClient``.
             When ``None`` the function loads the in-cluster or kube-config
-            credentials automatically.
+            credentials automatically via ``_clients._load_k8s_config``.
 
     Returns:
         ``True`` if the CRD exists and is accessible, ``False`` otherwise.
@@ -81,12 +89,12 @@ def _check_crd_exists(crd_name: str, api_client: Any = None) -> bool:
     if not _K8S_AVAILABLE:
         return False
 
-    if crd_name in _crd_exists_cache:
-        return _crd_exists_cache[crd_name]
+    cache_key = (crd_name, api_client)
+    if cache_key in _crd_exists_cache:
+        return _crd_exists_cache[cache_key]
 
     try:
         from kubernetes import client as k8s_client  # noqa: WPS433
-        from kubernetes import config as k8s_config  # noqa: WPS433
 
         # Use the dedicated short timeout for CRD checks, not the global
         # request_timeout.  This prevents ~84s hangs when Argo Rollouts or
@@ -95,78 +103,94 @@ def _check_crd_exists(crd_name: str, api_client: Any = None) -> bool:
         crd_timeout = get_settings().gke.crd_check_timeout
 
         if api_client is None:
+            # Reuse the shared config-loading logic from _clients.py so we
+            # don't duplicate the incluster/kubeconfig fallback logic here.
+            result = _clients._load_k8s_config(get_settings().gke)
+            if isinstance(result, ToolResult):
+                # Config loading failed (no kubeconfig, auth plugin error…) —
+                # treat as definitive failure so we don't retry pointlessly.
+                _crd_exists_cache[cache_key] = False
+                return False
+            # _InClusterClient already has retries=False (fixed in _clients.py).
+            # Configuration has retries=False set by _load_k8s_config.
+            if isinstance(result, _clients._InClusterClient):
+                owned_client: Any = result.api_client
+            else:
+                owned_client = k8s_client.ApiClient(result)
             try:
-                k8s_config.load_incluster_config()
-            except k8s_config.ConfigException:
-                try:
-                    k8s_config.load_kube_config()
-                except k8s_config.ConfigException:
-                    _crd_exists_cache[crd_name] = False
-                    return False
-            # Build a fresh client with retries disabled — the default urllib3
-            # Retry(total=3) causes ~84s hangs on unreachable endpoints.
-            cfg = k8s_client.Configuration.get_default_copy()
-            cfg.retries = False
-            ext_api = k8s_client.ApiextensionsV1Api(k8s_client.ApiClient(cfg))
+                ext_api = k8s_client.ApiextensionsV1Api(owned_client)
+                return _run_crd_check(ext_api, crd_name, crd_timeout, cache_key)
+            finally:
+                owned_client.close()
         else:
             ext_api = k8s_client.ApiextensionsV1Api(api_client)
-
-        # Retry loop — only for transient errors.
-        last_exc: Exception | None = None
-        for attempt in range(_RETRY_ATTEMPTS):
-            try:
-                ext_api.read_custom_resource_definition(crd_name, _request_timeout=crd_timeout)
-                _crd_exists_cache[crd_name] = True
-                return True
-            except k8s_exceptions.ApiException as exc:
-                if exc.status == 404:
-                    # Definitive: CRD does not exist — cache permanently.
-                    logger.debug("CRD '%s' not found (404)", crd_name)
-                    _crd_exists_cache[crd_name] = False
-                    return False
-                if exc.status == 403:
-                    # Definitive: no RBAC permission — cache permanently.
-                    logger.warning(
-                        "RBAC: cannot check CRD '%s' (403 Forbidden) — assuming absent", crd_name
-                    )
-                    _crd_exists_cache[crd_name] = False
-                    return False
-                # Transient (5xx, 429, etc.) — retry after backoff.
-                last_exc = exc
-                if attempt < _RETRY_ATTEMPTS - 1:
-                    logger.warning(
-                        "Transient K8s API error checking CRD '%s' (attempt %d/%d): %s — retrying",
-                        crd_name, attempt + 1, _RETRY_ATTEMPTS, exc,
-                    )
-                    time.sleep(_RETRY_BACKOFF_SECONDS)
-                else:
-                    logger.warning(
-                        "K8s API error checking CRD '%s' after %d attempt(s): %s — not caching",
-                        crd_name, _RETRY_ATTEMPTS, exc,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                # Network-level error (timeout, connection reset, DNS) — same policy: no cache.
-                last_exc = exc
-                if attempt < _RETRY_ATTEMPTS - 1:
-                    logger.warning(
-                        "Unexpected error checking CRD '%s' (attempt %d/%d): %s — retrying",
-                        crd_name, attempt + 1, _RETRY_ATTEMPTS, exc,
-                    )
-                    time.sleep(_RETRY_BACKOFF_SECONDS)
-                else:
-                    logger.warning(
-                        "Unexpected error checking CRD '%s' after %d attempt(s): %s — not caching",
-                        crd_name, _RETRY_ATTEMPTS, last_exc,
-                    )
-
-        # All attempts exhausted by transient errors — do NOT cache, return False.
-        return False
+            return _run_crd_check(ext_api, crd_name, crd_timeout, cache_key)
 
     except Exception as exc:  # noqa: BLE001
-        # Outer catch: config loading errors (not retried) — these ARE definitive.
+        # Outer catch: unexpected errors (import failures, etc.) — definitive.
         logger.warning("Unexpected error checking CRD '%s': %s", crd_name, exc)
-        _crd_exists_cache[crd_name] = False
+        _crd_exists_cache[cache_key] = False
         return False
+
+
+def _run_crd_check(
+    ext_api: Any,
+    crd_name: str,
+    crd_timeout: int,
+    cache_key: tuple[str, Any],
+) -> bool:
+    """Execute the CRD read with retries; updates ``_crd_exists_cache`` on definitive outcomes.
+
+    Separated from ``_check_crd_exists`` to keep the resource-management logic
+    (``try/finally`` close) clean.
+    """
+    # Retry loop — only for transient errors.
+    for attempt in range(_RETRY_ATTEMPTS):
+        try:
+            ext_api.read_custom_resource_definition(crd_name, _request_timeout=crd_timeout)
+            _crd_exists_cache[cache_key] = True
+            return True
+        except k8s_exceptions.ApiException as exc:
+            if exc.status == 404:
+                # Definitive: CRD does not exist — cache permanently.
+                logger.debug("CRD '%s' not found (404)", crd_name)
+                _crd_exists_cache[cache_key] = False
+                return False
+            if exc.status == 403:
+                # Definitive: no RBAC permission — cache permanently.
+                logger.warning(
+                    "RBAC: cannot check CRD '%s' (403 Forbidden) — assuming absent", crd_name
+                )
+                _crd_exists_cache[cache_key] = False
+                return False
+            # Transient (5xx, 429, etc.) — retry after backoff.
+            if attempt < _RETRY_ATTEMPTS - 1:
+                logger.warning(
+                    "Transient K8s API error checking CRD '%s' (attempt %d/%d): %s — retrying",
+                    crd_name, attempt + 1, _RETRY_ATTEMPTS, exc,
+                )
+                time.sleep(_RETRY_BACKOFF_SECONDS)
+            else:
+                logger.warning(
+                    "K8s API error checking CRD '%s' after %d attempt(s): %s — not caching",
+                    crd_name, _RETRY_ATTEMPTS, exc,
+                )
+        except Exception as exc:  # noqa: BLE001
+            # Network-level error (timeout, connection reset, DNS) — same policy: no cache.
+            if attempt < _RETRY_ATTEMPTS - 1:
+                logger.warning(
+                    "Unexpected error checking CRD '%s' (attempt %d/%d): %s — retrying",
+                    crd_name, attempt + 1, _RETRY_ATTEMPTS, exc,
+                )
+                time.sleep(_RETRY_BACKOFF_SECONDS)
+            else:
+                logger.warning(
+                    "Unexpected error checking CRD '%s' after %d attempt(s): %s — not caching",
+                    crd_name, _RETRY_ATTEMPTS, exc,
+                )
+
+    # All attempts exhausted by transient errors — do NOT cache, return False.
+    return False
 
 
 _ARGOCD_ANNOTATION_MARKERS = (

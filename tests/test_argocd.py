@@ -535,8 +535,9 @@ class TestCheckCrdExists:
 
         with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
              patch("vaig.tools.gke.argocd.get_settings") as mock_settings, \
-             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
-             patch("kubernetes.config.load_incluster_config"):
+             patch("vaig.tools.gke.argocd._clients._load_k8s_config", return_value=MagicMock()), \
+             patch("kubernetes.client.ApiClient"), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api):
             mock_settings.return_value.gke.crd_check_timeout = 5
             result = _check_crd_exists("applications.argoproj.io")
 
@@ -552,9 +553,12 @@ class TestCheckCrdExists:
         mock_ext_api.read_custom_resource_definition.side_effect = exc_class()
 
         with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argocd.get_settings") as mock_settings, \
              patch("vaig.tools.gke.argocd.k8s_exceptions") as mock_k8s_exc, \
-             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
-             patch("kubernetes.config.load_incluster_config"):
+             patch("vaig.tools.gke.argocd._clients._load_k8s_config", return_value=MagicMock()), \
+             patch("kubernetes.client.ApiClient"), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api):
+            mock_settings.return_value.gke.crd_check_timeout = 5
             mock_k8s_exc.ApiException = exc_class
             result = _check_crd_exists("applications.argoproj.io")
 
@@ -572,9 +576,12 @@ class TestCheckCrdExists:
 
         with caplog.at_level(logging.WARNING, logger="vaig.tools.gke.argocd"), \
              patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argocd.get_settings") as mock_settings, \
              patch("vaig.tools.gke.argocd.k8s_exceptions") as mock_k8s_exc, \
-             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
-             patch("kubernetes.config.load_incluster_config"):
+             patch("vaig.tools.gke.argocd._clients._load_k8s_config", return_value=MagicMock()), \
+             patch("kubernetes.client.ApiClient"), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api):
+            mock_settings.return_value.gke.crd_check_timeout = 5
             mock_k8s_exc.ApiException = exc_class
             result = _check_crd_exists("applications.argoproj.io")
 
@@ -596,8 +603,11 @@ class TestCheckCrdExists:
 
         with caplog.at_level(logging.WARNING, logger="vaig.tools.gke.argocd"), \
              patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
-             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
-             patch("kubernetes.config.load_incluster_config"):
+             patch("vaig.tools.gke.argocd.get_settings") as mock_settings, \
+             patch("vaig.tools.gke.argocd._clients._load_k8s_config", return_value=MagicMock()), \
+             patch("kubernetes.client.ApiClient"), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api):
+            mock_settings.return_value.gke.crd_check_timeout = 5
             result = _check_crd_exists("applications.argoproj.io")
 
         assert result is False
@@ -624,8 +634,11 @@ class TestCheckCrdExists:
         mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
 
         with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
-             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
-             patch("kubernetes.config.load_incluster_config"):
+             patch("vaig.tools.gke.argocd.get_settings") as mock_settings, \
+             patch("vaig.tools.gke.argocd._clients._load_k8s_config", return_value=MagicMock()), \
+             patch("kubernetes.client.ApiClient"), \
+             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api):
+            mock_settings.return_value.gke.crd_check_timeout = 5
             result1 = _check_crd_exists("applications.argoproj.io")
             result2 = _check_crd_exists("applications.argoproj.io")
 
@@ -944,7 +957,7 @@ class TestCRDTransientNotCached:
             result = _check_crd_exists("applications.argoproj.io")
 
         assert result is False
-        assert "applications.argoproj.io" not in _crd_exists_cache
+        assert ("applications.argoproj.io", None) not in _crd_exists_cache
 
     def test_404_crd_check_is_cached_false(self) -> None:
         """404 on CRD check is DEFINITIVE → cached as False, second call skips API."""
@@ -963,7 +976,7 @@ class TestCRDTransientNotCached:
             result = _check_crd_exists("missing.argoproj.io")
 
         assert result is False
-        assert _crd_exists_cache.get("missing.argoproj.io") is False
+        assert _crd_exists_cache.get(("missing.argoproj.io", None)) is False
 
         # Second call — must NOT hit the API again (cache hit)
         mock_ext_api.read_custom_resource_definition.reset_mock()
@@ -995,7 +1008,7 @@ class TestCRDTransientNotCached:
             result = _check_crd_exists("applications.argoproj.io")
 
         assert result is True
-        assert _crd_exists_cache.get("applications.argoproj.io") is True
+        assert _crd_exists_cache.get(("applications.argoproj.io", None)) is True
         assert mock_ext_api.read_custom_resource_definition.call_count == 2
         mock_sleep.assert_called_once()
 

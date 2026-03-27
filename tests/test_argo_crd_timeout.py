@@ -80,7 +80,13 @@ class TestLoadK8sConfigRetriesDisabled:
         assert fake_cfg.retries is False
 
     def test_retries_attribute_is_actually_false(self) -> None:
-        """Verify config.retries ends up as False using a real Configuration-like object."""
+        """Verify config.retries ends up as False using a FakeConfig stub object.
+
+        FakeConfig tracks attribute assignments without the overhead of a real
+        ``kubernetes.client.Configuration`` instance — sufficient to assert that
+        ``_load_k8s_config`` sets the field to ``False`` (not ``None`` or any
+        truthy value).
+        """
         from vaig.core.config import GKEConfig
         from vaig.tools.gke._clients import _load_k8s_config
 
@@ -221,7 +227,13 @@ class TestCheckCrdExistsRetriesDisabled:
     """_check_crd_exists must build its own ApiClient with retries=False."""
 
     def test_no_api_client_builds_retries_false_client(self) -> None:
-        """When api_client=None, the created Configuration has retries=False."""
+        """When api_client=None, _load_k8s_config is called and config.retries=False.
+
+        Uses FakeConfig (a simple attribute-tracking stub) to assert that
+        _load_k8s_config sets retries=False on the Configuration it creates.
+        Both load_incluster_config and load_kube_config are mocked so the test
+        is environment-independent.
+        """
         from vaig.tools.gke.argocd import _check_crd_exists
 
         class FakeCfg:
@@ -234,16 +246,20 @@ class TestCheckCrdExistsRetriesDisabled:
         with (
             patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True),
             patch("vaig.tools.gke.argocd.get_settings") as mock_settings,
-            patch("kubernetes.client.Configuration") as mock_k8s_cfg_cls,
-            patch("kubernetes.client.ApiClient") as mock_api_client_cls,
+            # Patch Configuration in _clients so _load_k8s_config returns fake_cfg
+            patch("vaig.tools.gke._clients.k8s_client.Configuration", return_value=fake_cfg),
+            # Patch load_kube_config and load_incluster_config in _clients so the
+            # test is environment-independent (both paths exercised by mocks)
+            patch("vaig.tools.gke._clients.k8s_config.load_kube_config", return_value=None),
+            patch("vaig.tools.gke._clients.k8s_config.load_incluster_config", return_value=None),
+            patch("vaig.tools.gke._clients._extract_proxy_url_from_kubeconfig", return_value=None),
+            patch("kubernetes.client.ApiClient"),
             patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api),
-            patch("kubernetes.config") as mock_k8s_config,
         ):
             mock_settings.return_value.gke.crd_check_timeout = 5
-            # get_default_copy() returns our fake cfg so we can inspect .retries
-            mock_k8s_cfg_cls.get_default_copy.return_value = fake_cfg
-            mock_k8s_config.ConfigException = type("ConfigException", (Exception,), {})
-            mock_k8s_config.load_incluster_config.side_effect = mock_k8s_config.ConfigException("no cluster")
+            mock_settings.return_value.gke.kubeconfig_path = ""
+            mock_settings.return_value.gke.context = ""
+            mock_settings.return_value.gke.proxy_url = ""
 
             _check_crd_exists("rollouts.argoproj.io")
 
@@ -325,4 +341,4 @@ class TestCheckCrdExistsCachingRegression:
             result = _check_crd_exists("nonexistent.argoproj.io", api_client=mock_api_client)
 
         assert result is False
-        assert _crd_exists_cache.get("nonexistent.argoproj.io") is False
+        assert _crd_exists_cache.get(("nonexistent.argoproj.io", mock_api_client)) is False
