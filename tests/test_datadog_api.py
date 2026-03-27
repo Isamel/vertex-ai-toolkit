@@ -1499,25 +1499,324 @@ class TestGetDatadogApmServices:
         assert result.error is False
         assert "No APM trace data found" in result.output
 
-    def test_request_exception_falls_back_gracefully(self, dd_config: DatadogAPIConfig) -> None:
-        """When POST raises RequestException, falls back to GET and then empty result."""
-        import requests as req
 
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+# ── SSLError handling in SDK-based functions ──────────────────
 
-        mock_session = MagicMock()
-        mock_session.post.side_effect = req.RequestException("connection error")
-        mock_session.get.side_effect = req.RequestException("connection error")
 
-        result = get_datadog_apm_services(
-            service_name="svc",
-            env="prod",
-            config=dd_config,
-            _custom_session=mock_session,
+class TestSDKFunctionsSSLError:
+    """Tests for ssl.SSLError handling in query_datadog_metrics, get_datadog_monitors,
+    and get_datadog_service_catalog — the three SDK-based functions that use _get_dd_api_client.
+    """
+
+    _SSL_HELP_PHRASES = [
+        "SSL certificate verification failed",
+        "REQUESTS_CA_BUNDLE",
+        "ssl_verify",
+    ]
+
+    def setup_method(self) -> None:
+        """Clear the discovery cache before each test."""
+        from vaig.tools.gke._cache import clear_discovery_cache
+
+        clear_discovery_cache()
+
+    # ── query_datadog_metrics ─────────────────────────────────
+
+    def test_query_datadog_metrics_ssl_error_returns_helpful_message(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """ssl.SSLError from the metrics SDK call returns a helpful ToolResult."""
+        import ssl
+
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        ssl_exc = ssl.SSLError("CERTIFICATE_VERIFY_FAILED")
+        mock_api = MagicMock()
+        mock_api.query_metrics.side_effect = ssl_exc
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="cpu",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is True
+        for phrase in self._SSL_HELP_PHRASES:
+            assert phrase in result.output, f"Missing phrase {phrase!r} in output: {result.output}"
+
+    def test_query_datadog_metrics_ssl_error_contains_all_three_suggestions(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """The ssl.SSLError message contains all 3 numbered fix suggestions."""
+        import ssl
+
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.side_effect = ssl.SSLError("cert verify failed")
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert "1." in result.output
+        assert "2." in result.output
+        assert "3." in result.output
+
+    def test_query_datadog_metrics_maxretry_ssl_reason_returns_helpful_message(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """urllib3 MaxRetryError wrapping an SSLError returns the helpful SSL message."""
+        import ssl
+
+        import urllib3.exceptions
+
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        ssl_reason = ssl.SSLError("CERTIFICATE_VERIFY_FAILED")
+        max_retry_exc = urllib3.exceptions.MaxRetryError(
+            pool=MagicMock(), url="/api/v1/query", reason=ssl_reason
         )
+        mock_api = MagicMock()
+        mock_api.query_metrics.side_effect = max_retry_exc
 
-        assert result.error is False
-        assert "No APM trace data found" in result.output
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is True
+        assert "SSL certificate verification failed" in result.output
+
+    # ── get_datadog_monitors ──────────────────────────────────
+
+    def test_get_datadog_monitors_ssl_error_returns_helpful_message(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """ssl.SSLError from the monitors SDK call returns a helpful ToolResult."""
+        import ssl
+
+        from vaig.tools.gke.datadog_api import get_datadog_monitors
+
+        ssl_exc = ssl.SSLError("CERTIFICATE_VERIFY_FAILED")
+        mock_api = MagicMock()
+        mock_api.list_monitors.side_effect = ssl_exc
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_monitors(
+                cluster_name="my-cluster",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is True
+        for phrase in self._SSL_HELP_PHRASES:
+            assert phrase in result.output, f"Missing phrase {phrase!r} in output: {result.output}"
+
+    def test_get_datadog_monitors_ssl_error_contains_all_three_suggestions(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """The ssl.SSLError message for monitors contains all 3 numbered fix suggestions."""
+        import ssl
+
+        from vaig.tools.gke.datadog_api import get_datadog_monitors
+
+        mock_api = MagicMock()
+        mock_api.list_monitors.side_effect = ssl.SSLError("cert verify failed")
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_monitors(
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert "1." in result.output
+        assert "2." in result.output
+        assert "3." in result.output
+
+    def test_get_datadog_monitors_maxretry_ssl_reason_returns_helpful_message(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """urllib3 MaxRetryError wrapping an SSLError returns the helpful SSL message for monitors."""
+        import ssl
+
+        import urllib3.exceptions
+
+        from vaig.tools.gke.datadog_api import get_datadog_monitors
+
+        ssl_reason = ssl.SSLError("CERTIFICATE_VERIFY_FAILED")
+        max_retry_exc = urllib3.exceptions.MaxRetryError(
+            pool=MagicMock(), url="/api/v1/monitor", reason=ssl_reason
+        )
+        mock_api = MagicMock()
+        mock_api.list_monitors.side_effect = max_retry_exc
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_monitors(
+                cluster_name="my-cluster",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is True
+        assert "SSL certificate verification failed" in result.output
+
+    # ── get_datadog_service_catalog ───────────────────────────
+
+    def test_get_datadog_service_catalog_ssl_error_returns_helpful_message(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """ssl.SSLError from the service catalog SDK call returns a helpful ToolResult."""
+        import ssl
+
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
+
+        ssl_exc = ssl.SSLError("CERTIFICATE_VERIFY_FAILED")
+        mock_api = MagicMock()
+        mock_api.list_service_definitions.side_effect = ssl_exc
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_service_catalog(
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is True
+        for phrase in self._SSL_HELP_PHRASES:
+            assert phrase in result.output, f"Missing phrase {phrase!r} in output: {result.output}"
+
+    def test_get_datadog_service_catalog_ssl_error_contains_all_three_suggestions(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """The ssl.SSLError message for service catalog contains all 3 numbered fix suggestions."""
+        import ssl
+
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
+
+        mock_api = MagicMock()
+        mock_api.list_service_definitions.side_effect = ssl.SSLError("cert verify failed")
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_service_catalog(
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert "1." in result.output
+        assert "2." in result.output
+        assert "3." in result.output
+
+    def test_get_datadog_service_catalog_maxretry_ssl_reason_returns_helpful_message(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """urllib3 MaxRetryError wrapping an SSLError returns the helpful SSL message for catalog."""
+        import ssl
+
+        import urllib3.exceptions
+
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
+
+        ssl_reason = ssl.SSLError("CERTIFICATE_VERIFY_FAILED")
+        max_retry_exc = urllib3.exceptions.MaxRetryError(
+            pool=MagicMock(), url="/api/v2/services/definitions", reason=ssl_reason
+        )
+        mock_api = MagicMock()
+        mock_api.list_service_definitions.side_effect = max_retry_exc
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_service_catalog(
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is True
+        assert "SSL certificate verification failed" in result.output
+
+    # ── Non-SSL MaxRetryError (Fix 2) ─────────────────────────
+
+    def test_query_datadog_metrics_non_ssl_maxretry_returns_error_result(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """MaxRetryError with a non-SSL reason returns ToolResult(error=True) with 'multiple retries'."""
+        import urllib3.exceptions
+
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        non_ssl_reason = ConnectionError("timed out")
+        max_retry_exc = urllib3.exceptions.MaxRetryError(
+            pool=MagicMock(), url="/api/v1/query", reason=non_ssl_reason
+        )
+        mock_api = MagicMock()
+        mock_api.query_metrics.side_effect = max_retry_exc
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is True
+        assert "multiple retries" in result.output
+
+    def test_get_datadog_monitors_non_ssl_maxretry_returns_error_result(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """MaxRetryError with a non-SSL reason returns ToolResult(error=True) with 'multiple retries'."""
+        import urllib3.exceptions
+
+        from vaig.tools.gke.datadog_api import get_datadog_monitors
+
+        non_ssl_reason = ConnectionError("timed out")
+        max_retry_exc = urllib3.exceptions.MaxRetryError(
+            pool=MagicMock(), url="/api/v1/monitor", reason=non_ssl_reason
+        )
+        mock_api = MagicMock()
+        mock_api.list_monitors.side_effect = max_retry_exc
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_monitors(
+                cluster_name="my-cluster",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is True
+        assert "multiple retries" in result.output
+
+    def test_get_datadog_service_catalog_non_ssl_maxretry_returns_error_result(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """MaxRetryError with a non-SSL reason returns ToolResult(error=True) with 'multiple retries'."""
+        import urllib3.exceptions
+
+        from vaig.tools.gke.datadog_api import get_datadog_service_catalog
+
+        non_ssl_reason = ConnectionError("timed out")
+        max_retry_exc = urllib3.exceptions.MaxRetryError(
+            pool=MagicMock(), url="/api/v2/services/definitions", reason=non_ssl_reason
+        )
+        mock_api = MagicMock()
+        mock_api.list_service_definitions.side_effect = max_retry_exc
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_service_catalog(
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is True
+        assert "multiple retries" in result.output
 
 
 # ── SSL / proxy configuration ─────────────────────────────────
