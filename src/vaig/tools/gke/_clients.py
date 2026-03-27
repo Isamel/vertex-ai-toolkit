@@ -360,6 +360,15 @@ def _load_k8s_config(
                 config.proxy = proxy_url
                 logger.info("Using proxy URL for K8s API: %s", proxy_url)
 
+            # ── Disable urllib3-level retries globally ────────────
+            # The kubernetes Python client passes urllib3's Retry object to each
+            # request.  By default urllib3 uses Retry(total=3) which causes ~84s
+            # hangs when the API server is unreachable (3 × ~28s TCP timeout).
+            # vaig already has its own retry logic (_RETRY_ATTEMPTS), so we
+            # disable urllib3 retries to fail fast and let the app-level logic
+            # decide when to retry.
+            config.retries = False
+
             # ── Load kubeconfig into the Configuration ───────────
             if kubeconfig_path:
                 try:
@@ -394,7 +403,11 @@ def _load_k8s_config(
                     # Fallback to in-cluster config (workload identity).
                     # Return wrapped ApiClient — caller handles this case.
                     k8s_config.load_incluster_config()
-                    return _InClusterClient(k8s_client.ApiClient())
+                    # Disable retries on the in-cluster path too — the same
+                    # ~84s hang risk applies if the API server is unreachable.
+                    ic_cfg = k8s_client.Configuration.get_default_copy()
+                    ic_cfg.retries = False
+                    return _InClusterClient(k8s_client.ApiClient(ic_cfg))
 
     except Exception as exc:  # noqa: BLE001
         return ToolResult(
