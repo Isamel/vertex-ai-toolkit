@@ -296,6 +296,7 @@ argocd:
 
 # Argo Rollouts — set argo_rollouts.enabled under gke: to skip the CRD check
 # when Argo Rollouts is deployed on a separate cluster from vaig.
+# Add under existing gke: section:
 gke:
   argo_rollouts:
     enabled: true     # Force-enable; skips CRD probe (use when Argo is on a separate cluster)
@@ -307,7 +308,7 @@ datadog:
   app_key: ""         # Or VAIG_DATADOG__APP_KEY
   metric_mode: "k8s_agent"   # "k8s_agent" (kubernetes.* metrics) | "apm" (trace.* metrics)
   cluster_name_override: ""  # Override auto-detected cluster name for Datadog tag matching
-  default_lookback_hours: 4  # Default lookback for APM trace queries
+  default_lookback_hours: 4.0  # Default lookback for APM trace queries
   # ssl_verify: true          # true | false | "/path/to/ca-bundle.crt" (corporate proxies)
 ```
 
