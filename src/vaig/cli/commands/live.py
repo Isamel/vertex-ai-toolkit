@@ -428,12 +428,13 @@ def register(app: typer.Typer) -> None:
             ),
         ] = False,
     ) -> None:
-        """Investigate live GKE/GCP infrastructure using AI with read-only tools.
+        """Investigate live GKE/GCP infrastructure using AI with infrastructure tools.
 
         Launches an autonomous SRE agent that can inspect pods, logs, metrics,
         and Cloud Logging/Monitoring to answer infrastructure questions.
 
-        All tools are READ-ONLY — no cluster modifications are possible.
+        Most tools are read-only. Write tools (scale, restart, label, annotate)
+        are available but require explicit invocation by the agent.
 
         Examples:
             vaig live "What pods are crashing in the production namespace?"
@@ -1560,7 +1561,7 @@ def _execute_live_mode(
             f"[dim]Cluster: {gke_config.cluster_name or '(kubeconfig default)'}[/dim]\n"
             f"[dim]Namespace: {gke_config.default_namespace} | "
             f"Project: {gke_config.project_id or '(auto-detect)'}[/dim]\n"
-            "[dim]All tools are READ-ONLY[/dim]",
+            "[dim]Most tools are read-only; write tools (scale/restart/label) are available[/dim]",
             border_style="green",
         )
     )
@@ -1671,7 +1672,7 @@ async def _async_execute_live_mode(
             f"[dim]Cluster: {gke_config.cluster_name or '(kubeconfig default)'}[/dim]\n"
             f"[dim]Namespace: {gke_config.default_namespace} | "
             f"Project: {gke_config.project_id or '(auto-detect)'}[/dim]\n"
-            "[dim]All tools are READ-ONLY[/dim]",
+            "[dim]Most tools are read-only; write tools (scale/restart/label) are available[/dim]",
             border_style="green",
         )
     )

@@ -51,7 +51,7 @@ rules:
 Download from: **https://github.com/Isamel/vertex-ai-toolkit/releases/latest**
 
 > **Supported platforms:** Linux amd64 (`vaig`) and Windows amd64 (`vaig.exe`).
-> macOS users must [build from source](https://github.com/Isamel/vertex-ai-toolkit#development).
+> macOS users can install via `pip install vertex-ai-toolkit` (no binary is shipped for macOS).
 
 ### Linux
 
@@ -437,7 +437,7 @@ vaig live --all-namespaces "estimate cluster resource costs"
 
 ## 6. Troubleshooting
 
-### `Error: gcp.project_id is required`
+### `No GCP project specified and could not auto-detect from environment`
 
 vaig can't determine your GCP project. Set it via:
 ```sh

@@ -32,8 +32,8 @@ engineers investigate, diagnose, and understand their production infrastructure.
 
 ## Capabilities
 
-You have access to **read-only** tools for inspecting live GKE clusters and \
-GCP observability data:
+You have access to **mostly read-only** tools for inspecting live GKE clusters and \
+GCP observability data (write tools like scale, restart, label, and annotate are also available):
 
 ### Kubernetes (GKE) Tools
 - **kubectl_get**: List or get Kubernetes resources (pods, deployments, services, \
@@ -101,11 +101,11 @@ network inside containers (requires exec_enabled=true).
 After investigation:
 1. Summarise what you found with specific evidence (pod names, error messages, metrics).
 2. Identify the root cause or most likely candidates.
-3. Suggest actionable next steps (but remember: your tools are READ-ONLY).
+    3. Suggest actionable next steps (including write operations like scale or restart if appropriate).
 4. Highlight any concerning trends (high restart counts, resource pressure, etc.).
 
 ## Important Rules
-- You have **READ-ONLY** access. You cannot modify, delete, or create resources.
+- Most tools are **read-only** (inspect, query, list). Write tools (scale, restart, label, annotate) are available but use them only when explicitly asked.
 - Always specify namespaces explicitly — don't assume "default".
 - When checking pod health, look at: status, restart count, events, and logs.
 - For performance issues, correlate kubectl_top with Cloud Monitoring metrics.
@@ -132,11 +132,12 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
     2. If Gemini returns function calls, executes them and sends results back
     3. Repeats until Gemini returns a text response or max iterations is hit
 
-    All tools are READ-ONLY — no cluster modifications are possible.
+    Most tools are read-only (inspect, query, list). Write tools (scale, restart,
+    label, annotate) are available and registered in the tool registry.
 
     Architecture decisions:
     - Follows CodingAgent pattern exactly (same loop structure, same error handling)
-    - No confirmation callback needed — all tools are read-only
+    - No confirmation callback needed by default — most infrastructure tools are read-only
     - Max 25 tool iterations per turn (safety cap, configurable via GKEConfig)
     - Tool-use loop delegated to ToolLoopMixin for reuse across agents
     """
@@ -479,8 +480,8 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
     # ── Tool execution with error handling ───────────────────
 
     # The core tool execution logic lives in ToolLoopMixin._execute_single_tool().
-    # InfraAgent uses it as-is — all infrastructure tools are read-only,
-    # so no confirmation callback or special handling is needed.
+    # InfraAgent uses it as-is — most infrastructure tools are read-only,
+    # so no confirmation callback or special handling is needed for read ops.
 
     def _execute_tool(
         self,
