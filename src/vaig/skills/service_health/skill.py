@@ -30,6 +30,7 @@ from vaig.skills.service_health.prompts import (
     build_workload_gatherer_prompt,
 )
 from vaig.skills.service_health.schema import HealthReport
+from vaig.tools.base import ToolResult
 from vaig.tools.gke._clients import ensure_client_initialized
 from vaig.utils.json_cleaner import clean_llm_json
 
@@ -128,6 +129,74 @@ class ServiceHealthSkill(BaseSkill):
                 "K8s client pre-warm skipped (non-fatal): see ensure_client_initialized logs",
                 exc_info=True,
             )
+
+    @staticmethod
+    def _pre_fetch_metrics(
+        gke_config: Any,
+        namespace: str,
+        is_autopilot: bool,
+    ) -> dict[str, str]:
+        """Call ``kubectl_top`` programmatically and return pre-gathered metrics.
+
+        This removes the dependency on LLM non-determinism for basic resource
+        metrics.  The results are injected into the sub-gatherer prompts so
+        the agents can use real data immediately without spending tool-call
+        budget on ``kubectl_top``.
+
+        The method is **best-effort** — any failure is captured as an
+        informational error string so the pipeline never crashes here.
+
+        Args:
+            gke_config: Effective :class:`~vaig.core.config.GKEConfig` with
+                CLI overrides already applied.
+            namespace: Target namespace for pod metrics.
+            is_autopilot: Whether the cluster is GKE Autopilot.
+
+        Returns:
+            A dict with ``"pods"`` and ``"nodes"`` keys.  Each value is
+            either the formatted ``kubectl_top`` output string or an
+            informational error message.
+        """
+        from vaig.tools.gke.kubectl import kubectl_top  # noqa: PLC0415
+
+        result: dict[str, str] = {"pods": "", "nodes": ""}
+
+        # ── Pod metrics ──────────────────────────────────────────────────
+        try:
+            pod_result: ToolResult = kubectl_top(
+                "pods",
+                gke_config=gke_config,
+                namespace=namespace or "default",
+            )
+            if pod_result.error:
+                result["pods"] = f"[kubectl_top pods failed: {pod_result.output}]"
+            else:
+                result["pods"] = pod_result.output
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Pre-fetch kubectl_top pods failed (non-fatal): %s", exc)
+            result["pods"] = f"[kubectl_top pods unavailable: {exc}]"
+
+        # ── Node metrics ─────────────────────────────────────────────────
+        if is_autopilot:
+            result["nodes"] = (
+                "GKE Autopilot cluster detected — kubectl top nodes is not available. "
+                "Node infrastructure is managed by Google on Autopilot."
+            )
+        else:
+            try:
+                node_result: ToolResult = kubectl_top(
+                    "nodes",
+                    gke_config=gke_config,
+                )
+                if node_result.error:
+                    result["nodes"] = f"[kubectl_top nodes failed: {node_result.output}]"
+                else:
+                    result["nodes"] = node_result.output
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Pre-fetch kubectl_top nodes failed (non-fatal): %s", exc)
+                result["nodes"] = f"[kubectl_top nodes unavailable: {exc}]"
+
+        return result
 
     def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         """Return the default pipeline configuration — the parallel pipeline config.
@@ -349,6 +418,15 @@ class ServiceHealthSkill(BaseSkill):
         is_autopilot = bool(detect_autopilot(effective_gke))
         effective_namespace = effective_gke.default_namespace
 
+        # ── Pre-fetch kubectl_top metrics (programmatic, NOT LLM-decided) ─
+        # This guarantees real CPU/memory data reaches sub-agents regardless
+        # of LLM non-determinism or iteration budget exhaustion.
+        prefetched = self._pre_fetch_metrics(
+            gke_config=effective_gke,
+            namespace=effective_namespace,
+            is_autopilot=is_autopilot,
+        )
+
         # Resolve the 3-state Argo Rollouts flag:
         #   None  → auto-detect via CRD probe (lazy, cached per process)
         #   True  → force-enable regardless of CRD
@@ -406,7 +484,10 @@ class ServiceHealthSkill(BaseSkill):
                     "capacity", "allocatable", "pressure", "resource",
                     "taint", "cordon", "drain",
                 ],
-                "system_instruction": build_node_gatherer_prompt(is_autopilot=is_autopilot),
+                "system_instruction": build_node_gatherer_prompt(
+                    is_autopilot=is_autopilot,
+                    prefetched_node_metrics=prefetched["nodes"],
+                ),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
                 "max_iterations": 4 if is_autopilot else 15,
@@ -431,6 +512,7 @@ class ServiceHealthSkill(BaseSkill):
                 "system_instruction": build_workload_gatherer_prompt(
                     namespace=effective_namespace,
                     argo_rollouts_enabled=argo_rollouts_active,
+                    prefetched_pod_metrics=prefetched["pods"],
                 ),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,

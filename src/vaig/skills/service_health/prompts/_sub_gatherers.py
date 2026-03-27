@@ -24,7 +24,10 @@ from ._shared import (
 )
 
 
-def build_node_gatherer_prompt(is_autopilot: bool = False) -> str:
+def build_node_gatherer_prompt(
+    is_autopilot: bool = False,
+    prefetched_node_metrics: str = "",
+) -> str:
     """Build the system instruction for the ``node_gatherer`` sub-agent.
 
     The ``node_gatherer`` is responsible for **Step 1** of the standard SRE
@@ -54,6 +57,10 @@ def build_node_gatherer_prompt(is_autopilot: bool = False) -> str:
             Autopilot-specific prompt that skips per-node investigation
             (nodes are managed by Google and not actionable).  When ``False``
             (default), returns the full 6-step Standard prompt unchanged.
+        prefetched_node_metrics: Pre-gathered ``kubectl_top nodes`` output
+            from :meth:`ServiceHealthSkill._pre_fetch_metrics`.  When
+            non-empty, the prompt instructs the agent to use this data
+            directly instead of calling ``kubectl_top`` again.
 
     Returns:
         A formatted system-instruction string injecting
@@ -96,7 +103,7 @@ IMPORTANT: Replace all angle-bracket instructions above with actual values from
 your tool call results. Do NOT output literal placeholders or brackets.
 """
 
-    return f"""{ANTI_INJECTION_RULE}
+    prompt = f"""{ANTI_INJECTION_RULE}
 
 ## Anti-Hallucination Rules
 {ANTI_HALLUCINATION_RULES}
@@ -158,11 +165,29 @@ Produce exactly this section at the end of your response:
 - Every value in the Node Inventory table MUST come from an actual tool call.
 """
 
+    # ── Inject pre-fetched node metrics when available ────────────────
+    if prefetched_node_metrics:
+        prompt += f"""
+## PRE-GATHERED METRICS DATA — kubectl_top nodes
+
+The following ``kubectl_top(resource_type="nodes")`` output was gathered
+programmatically BEFORE your execution started.  Use this data directly
+for the Node Inventory CPU/Memory columns.  Do NOT call ``kubectl_top``
+again — the data is already here.
+
+```
+{prefetched_node_metrics}
+```
+"""
+
+    return prompt
+
 
 def build_workload_gatherer_prompt(
     namespace: str = "",
     datadog_api_enabled: bool = False,  # noqa: ARG001 — deprecated; Batch 2 will remove callers
     argo_rollouts_enabled: bool = False,
+    prefetched_pod_metrics: str = "",
 ) -> str:
     """Build the system instruction for the ``workload_gatherer`` sub-agent.
 
@@ -199,6 +224,10 @@ def build_workload_gatherer_prompt(
             ownership chain alongside standard Deployments, and instructs
             the agent to call ``kubectl_get_rollout`` and
             ``kubectl_get_analysisrun`` as part of Step 4.
+        prefetched_pod_metrics: Pre-gathered ``kubectl_top pods`` output
+            from :meth:`ServiceHealthSkill._pre_fetch_metrics`.  When
+            non-empty, the prompt instructs the agent to use this data
+            directly instead of calling ``kubectl_top`` again.
 
     Returns:
         A formatted system-instruction string injecting
@@ -493,6 +522,23 @@ j. **Rollout Details section** — inside ``## Raw Findings (Workload)``, add a
     - hpa_conditions: <condition1; condition2|none>
 """
         prompt = prompt + argo_rollouts_section
+
+    # ── Inject pre-fetched pod metrics when available ─────────────────
+    if prefetched_pod_metrics:
+        prompt += f"""
+## PRE-GATHERED METRICS DATA — kubectl_top pods
+
+The following ``kubectl_top(resource_type="pods")`` output was gathered
+programmatically BEFORE your execution started.  Use this data directly
+for the Service Status CPU/Memory columns.  Do NOT call ``kubectl_top``
+again — the data is already here.  You still need ``get_pod_metrics``
+for historical trends if required.
+
+```
+{prefetched_pod_metrics}
+```
+"""
+
     return prompt
 
 
