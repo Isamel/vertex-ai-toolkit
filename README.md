@@ -29,10 +29,12 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
 - **GKE live diagnostics** — connect to GKE clusters for pod inspection, log analysis, and metric queries (23 base tools)
 - **Helm introspection** — read-only Helm release status, history, and values via K8s secrets (4 tools, enabled by default)
 - **ArgoCD integration** — read-only ArgoCD Application status, sync history, diff, and managed resources (5 tools, opt-in)
+- **Argo Rollouts integration** — inspect Rollout, AnalysisRun, AnalysisTemplate, and Experiment resources; supports auto-detect or force-enable when Argo is on a separate cluster
 - **ASM/Istio mesh introspection** — service mesh overview, traffic config, security policies, and sidecar status
+- **Datadog APM integration** — real-time metrics and APM traces; supports `k8s_agent` and `apm` metric modes, cluster name override, configurable lookback, and corporate proxy SSL config
 - **ToolCallStore** — per-tool-call result storage (JSONL) for post-run analysis, debugging, and auditing
 - **Configurable auth** — Application Default Credentials (ADC) for GKE, service account impersonation for local dev
-- **Cross-platform** — UTF-8 enforcement on all file I/O for Windows compatibility
+- **Cross-platform** — UTF-8 enforcement on all file I/O; Rich console falls back to plain text on non-ANSI terminals (Windows-safe)
 
 ## Requirements
 
@@ -291,6 +293,22 @@ argocd:
   enabled: false      # ArgoCD Application introspection (5 read-only tools)
   namespace: argocd   # Namespace where ArgoCD Applications live
   context: ""         # kubeconfig context for ArgoCD management cluster
+
+# Argo Rollouts — set argo_rollouts.enabled under gke: to skip the CRD check
+# when Argo Rollouts is deployed on a separate cluster from vaig.
+gke:
+  argo_rollouts:
+    enabled: true     # Force-enable; skips CRD probe (use when Argo is on a separate cluster)
+  crd_check_timeout: 5  # Seconds before CRD existence probe times out (default: 5)
+
+datadog:
+  enabled: false      # Set true (or just provide api_key+app_key — auto-enables)
+  api_key: ""         # Or VAIG_DATADOG__API_KEY
+  app_key: ""         # Or VAIG_DATADOG__APP_KEY
+  metric_mode: "k8s_agent"   # "k8s_agent" (kubernetes.* metrics) | "apm" (trace.* metrics)
+  cluster_name_override: ""  # Override auto-detected cluster name for Datadog tag matching
+  default_lookback_hours: 4  # Default lookback for APM trace queries
+  # ssl_verify: true          # true | false | "/path/to/ca-bundle.crt" (corporate proxies)
 ```
 
 ### Environment variables

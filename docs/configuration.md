@@ -241,11 +241,49 @@ gke:
   metrics_interval_minutes: 60       # Default metrics time window
   proxy_url: null                    # Proxy URL for GKE API
   exec_enabled: false                # Enable exec_command tool (DISABLED by default)
+  crd_check_timeout: 5               # Timeout (seconds) for CRD existence probes
+  argo_rollouts:
+    enabled: null                    # null=auto-detect, true=force-enable, false=disable
 ```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `exec_enabled` | boolean | `false` | When `true`, enables the `exec_command` tool which allows executing diagnostic commands inside running containers. **Disabled by default for security.** Commands are still validated against a denylist (dangerous patterns) and an allowlist (read-only diagnostics) even when enabled. |
+| `crd_check_timeout` | integer | `5` | Timeout in seconds for CRD existence probes (used before ArgoCD and Argo Rollouts tool invocations). Prevents ~84s hangs when the apiextensions endpoint is unreachable. |
+| `argo_rollouts.enabled` | boolean \| null | `null` | `null` = auto-detect via CRD probe + annotation scan. `true` = force-enable without CRD check (use when Argo Rollouts is on a **separate cluster**). `false` = disable entirely. |
+
+### `datadog` — Datadog API Integration
+
+Datadog tools are auto-enabled when both `api_key` and `app_key` are set.
+
+```yaml
+datadog:
+  enabled: false                     # true = enable; or just set api_key+app_key (auto-enables)
+  api_key: ""                        # Datadog API key — prefer VAIG_DATADOG__API_KEY env var
+  app_key: ""                        # Datadog app key — prefer VAIG_DATADOG__APP_KEY env var
+  site: "datadoghq.com"              # Datadog site (e.g. datadoghq.eu for EU)
+  timeout: 30                        # API request timeout (seconds)
+  metric_mode: "k8s_agent"           # "k8s_agent" | "apm" — see below
+  cluster_name_override: ""          # Override auto-detected cluster name tag
+  default_lookback_hours: 4.0        # Default lookback for APM trace queries
+  # ssl_verify: true                 # true | false | "/path/to/ca-bundle.crt"
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `metric_mode` | string | `"k8s_agent"` | `"k8s_agent"` — query `kubernetes.*` metrics (requires Datadog DaemonSet Agent with kubelet check). `"apm"` — query `trace.*` metrics (for APM-only setups without a DaemonSet Agent). Override via `VAIG_DATADOG__METRIC_MODE`. |
+| `cluster_name_override` | string | `""` | Override the `cluster_name` tag value used in all Datadog metric queries. When empty (default), VAIG uses the GKE cluster name. Set this when the Datadog Agent tags the cluster differently (e.g. `"prod-us-east"` vs `"gke-prod-us"`). Override via `VAIG_DATADOG__CLUSTER_NAME_OVERRIDE`. |
+| `default_lookback_hours` | float | `4.0` | Default lookback window (hours) for APM trace queries. Increase for low-traffic services where 1h may return no data. Override via `VAIG_DATADOG__DEFAULT_LOOKBACK_HOURS`. |
+| `ssl_verify` | bool \| string | `true` | SSL certificate verification for Datadog API requests. `true` = standard verification. `false` = disable (not recommended; for debugging only). `"/path/to/ca.crt"` = path to a custom CA bundle file for corporate proxies with SSL inspection. Override via `VAIG_DATADOG__SSL_VERIFY`. |
+
+**Corporate proxy setup** — if your environment uses SSL inspection (e.g. Zscaler, Palo Alto), set:
+
+```yaml
+datadog:
+  ssl_verify: "/etc/ssl/certs/corporate-ca.crt"  # path to CA bundle
+```
+
+Or set the standard `REQUESTS_CA_BUNDLE` environment variable (respected by the `requests` library when `ssl_verify=true`).
 
 ### `mcp` — Model Context Protocol
 
