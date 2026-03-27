@@ -227,7 +227,7 @@ class TestExecuteTool:
 
         result = agent._execute_tool("nonexistent_tool", {})
         assert result.error is True
-        assert "Unknown tool" in result.output
+        assert "does not exist in the registry" in result.output
 
     @patch("vaig.agents.infra_agent.InfraAgent._register_tools")
     def test_tool_execution_success(self, mock_register: MagicMock) -> None:

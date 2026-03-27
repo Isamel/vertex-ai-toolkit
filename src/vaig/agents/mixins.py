@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import inspect
 import logging
 import math
@@ -769,9 +770,15 @@ class ToolLoopMixin:
 
         if tool is None:
             logger.warning("Unknown tool requested: %s", tool_name)
+            available_names = [t.name for t in tool_registry.list_tools()]
+            suggestions = difflib.get_close_matches(tool_name, available_names, n=3, cutoff=0.5)
+            suggestion_hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
             result = ToolResult(
-                output=f"Unknown tool: {tool_name}. Available tools: "
-                f"{', '.join(t.name for t in tool_registry.list_tools())}",
+                output=(
+                    f"Tool '{tool_name}' does not exist in the registry.{suggestion_hint}"
+                    f" Available tools: {', '.join(sorted(available_names))}."
+                    " Please use one of the available tools listed above."
+                ),
                 error=True,
             )
             self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="UnknownTool")
@@ -1271,9 +1278,15 @@ class ToolLoopMixin:
 
         if tool is None:
             logger.warning("Unknown tool requested: %s", tool_name)
+            available_names = [t.name for t in tool_registry.list_tools()]
+            suggestions = difflib.get_close_matches(tool_name, available_names, n=3, cutoff=0.5)
+            suggestion_hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
             result = ToolResult(
-                output=f"Unknown tool: {tool_name}. Available tools: "
-                f"{', '.join(t.name for t in tool_registry.list_tools())}",
+                output=(
+                    f"Tool '{tool_name}' does not exist in the registry.{suggestion_hint}"
+                    f" Available tools: {', '.join(sorted(available_names))}."
+                    " Please use one of the available tools listed above."
+                ),
                 error=True,
             )
             self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="UnknownTool")
