@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Vertex AI API retry now uses a two-layer strategy — the SDK's built-in `HttpRetryOptions` handles retries with exponential backoff at the transport level, while the application layer catches `google.genai.errors.ClientError` and converts to typed exceptions without re-retrying (avoids retry multiplication) (#135)
+- Argo Rollouts tools now reuse the shared Kubernetes client infrastructure (`_clients.py`) instead of creating standalone API clients — inherits proxy-url, kubeconfig, context, and auth-plugin settings automatically (#134)
+
+### Fixed
+- Vertex AI 429 `RESOURCE_EXHAUSTED` errors no longer crash with zero retries — SDK-level `HttpRetryOptions` now configured with backoff from `RetryConfig` (previously `http_options=None` meant `stop_after_attempt(1)`) (#135)
+- Argo Rollouts API calls now use a configurable `argo_request_timeout` (default: 10s) instead of the previous unbounded timeout — prevents long hangs when the Argo Rollouts cluster is unreachable (#134)
+
 ## [0.9.0] - 2026-03-27
 
 ### Added

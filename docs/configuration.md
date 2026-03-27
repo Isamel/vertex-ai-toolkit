@@ -163,17 +163,24 @@ context:
 
 ### `retry` — API Retry Configuration
 
+VAIG uses a **two-layer retry strategy** for Vertex AI API calls:
+
+1. **SDK layer** — The `google-genai` SDK retries automatically via `HttpRetryOptions` using your configured backoff settings. This handles transient HTTP errors (429, 500, 502, 503, 504) at the transport level.
+2. **Application layer** — Catches `google.genai.errors.ClientError` exceptions that escape the SDK and converts them to typed VAIG exceptions (`VertexAIRetryableError`, `VertexAIFatalError`). The application layer does **not** re-retry SDK-retryable codes to avoid retry multiplication.
+
 ```yaml
 retry:
-  max_retries: 3                     # Maximum retry attempts
-  initial_delay: 1.0                 # Initial delay in seconds
+  max_retries: 3                     # Maximum retry attempts (SDK + app layer)
+  initial_delay: 1.0                 # Initial delay in seconds (SDK backoff base)
   max_delay: 60.0                    # Maximum delay between retries
   backoff_multiplier: 2.0            # Exponential backoff multiplier
   retryable_status_codes:            # HTTP status codes that trigger retry
-    - 429                            # Too Many Requests
+    - 429                            # Too Many Requests / RESOURCE_EXHAUSTED
     - 500                            # Internal Server Error
     - 503                            # Service Unavailable
 ```
+
+> **Note**: The SDK's `HttpRetryOptions` also retries 502 and 504 automatically. The `retryable_status_codes` list configures VAIG's own retry loop for non-genai errors.
 
 ### `logging` — Logging Configuration
 
@@ -242,6 +249,7 @@ gke:
   proxy_url: null                    # Proxy URL for GKE API
   exec_enabled: false                # Enable exec_command tool (DISABLED by default)
   crd_check_timeout: 5               # Timeout (seconds) for CRD existence probes
+  argo_request_timeout: 10           # Timeout (seconds) for Argo Rollouts API calls
   argo_rollouts:
     enabled: null                    # null=auto-detect, true=force-enable, false=disable
 ```
@@ -250,6 +258,7 @@ gke:
 |--------|------|---------|-------------|
 | `exec_enabled` | boolean | `false` | When `true`, enables the `exec_command` tool which allows executing diagnostic commands inside running containers. **Disabled by default for security.** Commands are still validated against a denylist (dangerous patterns) and an allowlist (read-only diagnostics) even when enabled. |
 | `crd_check_timeout` | integer | `5` | Timeout in seconds for CRD existence probes (used before ArgoCD and Argo Rollouts tool invocations). Prevents ~84s hangs when the apiextensions endpoint is unreachable. |
+| `argo_request_timeout` | integer | `10` | Timeout in seconds for all Argo Rollouts Kubernetes API calls (`list`, `get` on rollouts, analysis runs, etc.). Keeps Argo tools fast-fail when the Argo Rollouts cluster is unreachable. Override via `VAIG_GKE__ARGO_REQUEST_TIMEOUT`. |
 | `argo_rollouts.enabled` | boolean \| null | `null` | `null` = auto-detect via CRD probe + annotation scan. `true` = force-enable without CRD check (use when Argo Rollouts is on a **separate cluster**). `false` = disable entirely. |
 
 ### `datadog` — Datadog API Integration

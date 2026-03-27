@@ -34,6 +34,7 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
 - **Datadog APM integration** — real-time metrics and APM traces; supports `k8s_agent` and `apm` metric modes, cluster name override, configurable lookback, and corporate proxy SSL config
 - **ToolCallStore** — per-tool-call result storage (JSONL) for post-run analysis, debugging, and auditing
 - **Configurable auth** — Application Default Credentials (ADC) for GKE, service account impersonation for local dev
+- **Automatic retry with exponential backoff** — two-layer retry strategy for Vertex AI API errors (SDK-level `HttpRetryOptions` + application-level typed exceptions); configurable max retries, backoff multiplier, and retryable status codes
 - **Cross-platform** — UTF-8 enforcement on all file I/O; Rich console falls back to plain text on non-ANSI terminals (Windows-safe)
 
 ## Requirements
