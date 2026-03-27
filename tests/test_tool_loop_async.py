@@ -111,7 +111,7 @@ class TestAsyncExecuteSingleTool:
         result = await host._async_execute_single_tool(registry, "nonexistent", {"a": 1})
 
         assert result.error is True
-        assert "Unknown tool: nonexistent" in result.output
+        assert "does not exist in the registry" in result.output
 
     async def test_type_error_returns_error_result(self) -> None:
         """TypeError during execution should be caught and returned as error."""

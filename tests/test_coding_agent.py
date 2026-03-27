@@ -592,7 +592,7 @@ class TestCodingAgentExecute:
 
         assert result.success is True
         assert result.metadata["tools_executed"][0]["error"] is True
-        assert "Unknown tool" in result.metadata["tools_executed"][0]["output"]
+        assert "does not exist in the registry" in result.metadata["tools_executed"][0]["output"]
 
     @patch("vaig.core.client.types.Part")
     @patch("vaig.agents.mixins.types.Content")

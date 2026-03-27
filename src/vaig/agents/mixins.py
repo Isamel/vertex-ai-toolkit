@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import inspect
 import logging
 import math
@@ -748,6 +749,41 @@ class ToolLoopMixin:
             len(history),
         )
 
+    # ── Unknown tool error message builder ───────────────────
+
+    def _build_unknown_tool_message(self, tool_name: str, tool_registry: ToolRegistry) -> str:
+        """Build a helpful error message for an unknown tool request.
+
+        Sorts available tool names once, caps the list at 10 entries to avoid
+        bloating the model's context, and includes fuzzy-match suggestions when
+        the requested name is close to an existing tool.
+
+        Args:
+            tool_name: The name of the tool that was not found.
+            tool_registry: The registry to look up available tools from.
+
+        Returns:
+            A human-readable error string suitable for returning to the model.
+        """
+        available_names = sorted(t.name for t in tool_registry.list_tools())
+        suggestions = difflib.get_close_matches(tool_name, available_names, n=3, cutoff=0.5)
+        suggestion_hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+
+        _max_display = 10
+        if not available_names:
+            available_hint = "(none registered)"
+        elif len(available_names) <= _max_display:
+            available_hint = ", ".join(available_names)
+        else:
+            remainder = len(available_names) - _max_display
+            available_hint = f"{', '.join(available_names[:_max_display])}, ... and {remainder} more"
+
+        return (
+            f"Tool '{tool_name}' does not exist in the registry.{suggestion_hint}"
+            f" Available tools: {available_hint}."
+            " Please use one of the available tools listed above."
+        )
+
     # ── Tool execution (overridable) ─────────────────────────
 
     def _execute_single_tool(
@@ -770,8 +806,7 @@ class ToolLoopMixin:
         if tool is None:
             logger.warning("Unknown tool requested: %s", tool_name)
             result = ToolResult(
-                output=f"Unknown tool: {tool_name}. Available tools: "
-                f"{', '.join(t.name for t in tool_registry.list_tools())}",
+                output=self._build_unknown_tool_message(tool_name, tool_registry),
                 error=True,
             )
             self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="UnknownTool")
@@ -1272,8 +1307,7 @@ class ToolLoopMixin:
         if tool is None:
             logger.warning("Unknown tool requested: %s", tool_name)
             result = ToolResult(
-                output=f"Unknown tool: {tool_name}. Available tools: "
-                f"{', '.join(t.name for t in tool_registry.list_tools())}",
+                output=self._build_unknown_tool_message(tool_name, tool_registry),
                 error=True,
             )
             self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="UnknownTool")
