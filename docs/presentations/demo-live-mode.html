@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VAIG Live Mode — Terminal Demo</title>
+  <style>
+    /* ── Reset & Kanagawa Theme ─────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #1a1b26;
+      --bg-term:     #13141c;
+      --bg-titlebar: #24283b;
+      --border:      #363646;
+      --text:        #c0caf5;
+      --text-dim:    #565f89;
+      --text-bright: #e0e4ff;
+      --green:       #9ece6a;
+      --yellow:      #e0af68;
+      --red:         #f7768e;
+      --blue:        #7aa2f7;
+      --cyan:        #7dcfff;
+      --purple:      #bb9af7;
+      --orange:      #ff9e3b;
+      --teal:        #73daca;
+      --prompt:      #9ece6a;
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--bg);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      color: var(--text);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* ── Watermark ──────────────────────────────────────── */
+    .watermark {
+      position: fixed;
+      bottom: 12px; right: 18px;
+      font-size: 0.65rem;
+      color: var(--text-dim);
+      opacity: 0.5;
+      letter-spacing: 0.08em;
+      z-index: 1000;
+      pointer-events: none;
+    }
+
+    /* ── Terminal Window ────────────────────────────────── */
+    .terminal-window {
+      width: min(96vw, 920px);
+      max-height: 80vh;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow:
+        0 8px 32px rgba(0,0,0,0.5),
+        0 0 80px rgba(122,162,247,0.06);
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Title bar */
+    .title-bar {
+      background: var(--bg-titlebar);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .dot { width: 12px; height: 12px; border-radius: 50%; }
+    .dot-red    { background: #ff5f57; }
+    .dot-yellow { background: #febc2e; }
+    .dot-green  { background: #28c840; }
+    .title-text {
+      flex: 1;
+      text-align: center;
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      letter-spacing: 0.04em;
+    }
+    .title-spacer { width: 52px; }
+
+    /* Terminal body */
+    .term-body {
+      background: var(--bg-term);
+      padding: 16px 20px;
+      flex: 1;
+      overflow-y: auto;
+      font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'SF Mono', 'Consolas', 'Menlo', monospace;
+      font-size: 13px;
+      line-height: 1.55;
+      min-height: 420px;
+      max-height: calc(80vh - 90px);
+    }
+    .term-body::-webkit-scrollbar { width: 6px; }
+    .term-body::-webkit-scrollbar-track { background: transparent; }
+    .term-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* Text glow */
+    .term-body span, .term-body .line {
+      text-shadow: 0 0 4px rgba(192,202,245,0.08);
+    }
+
+    /* Cursor */
+    .cursor {
+      display: inline-block;
+      width: 8px; height: 16px;
+      background: var(--text);
+      animation: blink 1s step-end infinite;
+      vertical-align: text-bottom;
+      margin-left: 1px;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* Line colors */
+    .line { white-space: pre; display: block; }
+    .c-prompt  { color: var(--prompt); }
+    .c-cmd     { color: var(--text-bright); }
+    .c-dim     { color: var(--text-dim); }
+    .c-blue    { color: var(--blue); }
+    .c-cyan    { color: var(--cyan); }
+    .c-green   { color: var(--green); }
+    .c-yellow  { color: var(--yellow); }
+    .c-red     { color: var(--red); }
+    .c-purple  { color: var(--purple); }
+    .c-orange  { color: var(--orange); }
+    .c-teal    { color: var(--teal); }
+    .c-text    { color: var(--text); }
+    .c-bright  { color: var(--text-bright); }
+
+    /* ── Controls ───────────────────────────────────────── */
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .ctrl-btn {
+      background: var(--bg-titlebar);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-family: inherit;
+    }
+    .ctrl-btn:hover { background: #2f3349; border-color: var(--blue); }
+    .ctrl-btn.active { border-color: var(--blue); color: var(--blue); }
+
+    .speed-btns { display: flex; gap: 4px; }
+
+    /* Progress bar */
+    .progress-bar-wrap {
+      width: min(96vw, 920px);
+      height: 3px;
+      background: rgba(54,54,70,0.5);
+      border-radius: 2px;
+      margin-top: 10px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--blue), var(--cyan));
+      transition: width 0.3s ease;
+      border-radius: 2px;
+    }
+
+    /* ── Responsive ─────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .terminal-window { width: 100vw; max-height: 85vh; border-radius: 0; }
+      .term-body { font-size: 10.5px; padding: 10px 12px; min-height: 320px; }
+      .progress-bar-wrap { width: 100vw; }
+      .controls { padding: 0 8px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="watermark">VAIG Demo — Simulated Output</div>
+
+  <div class="terminal-window">
+    <div class="title-bar">
+      <div class="dot dot-red"></div>
+      <div class="dot dot-yellow"></div>
+      <div class="dot dot-green"></div>
+      <div class="title-text">vaig — zsh — prod-us-east1</div>
+      <div class="title-spacer"></div>
+    </div>
+    <div class="term-body" id="terminal"></div>
+  </div>
+
+  <div class="progress-bar-wrap">
+    <div class="progress-bar-fill" id="progress-fill"></div>
+  </div>
+
+  <div class="controls">
+    <button class="ctrl-btn" id="btn-play" title="Play / Pause">▶ Play</button>
+    <button class="ctrl-btn" id="btn-restart" title="Restart">⟳ Restart</button>
+    <div class="speed-btns">
+      <button class="ctrl-btn active" data-speed="1">1×</button>
+      <button class="ctrl-btn" data-speed="2">2×</button>
+      <button class="ctrl-btn" data-speed="4">4×</button>
+    </div>
+  </div>
+
+<script>
+/* ─── Animation Engine ──────────────────────────────────── */
+const $ = s => document.querySelector(s);
+const term = $('#terminal');
+const progressFill = $('#progress-fill');
+const btnPlay = $('#btn-play');
+const btnRestart = $('#btn-restart');
+const speedBtns = document.querySelectorAll('[data-speed]');
+
+let speed = 1;
+let playing = false;
+let aborted = false;
+let currentResolve = null;
+
+/* Speed controls */
+speedBtns.forEach(b => b.addEventListener('click', () => {
+  speed = +b.dataset.speed;
+  speedBtns.forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+}));
+
+function delay(ms) {
+  return new Promise(r => {
+    currentResolve = r;
+    setTimeout(() => { currentResolve = null; r(); }, ms / speed);
+  });
+}
+
+function checkAbort() { if (aborted) throw 'ABORT'; }
+
+/* Scroll to bottom */
+function scrollDown() {
+  term.scrollTop = term.scrollHeight;
+}
+
+/* Add a colored line */
+function addLine(html) {
+  const el = document.createElement('span');
+  el.className = 'line';
+  el.innerHTML = html;
+  term.appendChild(el);
+  scrollDown();
+}
+
+/* Type characters one by one */
+async function typeCmd(text, promptStr) {
+  checkAbort();
+  const lineEl = document.createElement('span');
+  lineEl.className = 'line';
+  const promptSpan = `<span class="c-prompt">${promptStr || '$ '}</span>`;
+  const cursor = document.createElement('span');
+  cursor.className = 'cursor';
+
+  lineEl.innerHTML = promptSpan;
+  lineEl.appendChild(cursor);
+  term.appendChild(lineEl);
+  scrollDown();
+
+  for (let i = 0; i < text.length; i++) {
+    checkAbort();
+    const charSpan = document.createElement('span');
+    charSpan.className = 'c-cmd';
+    charSpan.textContent = text[i];
+    lineEl.insertBefore(charSpan, cursor);
+    scrollDown();
+    await delay(30);
+  }
+
+  /* Remove cursor after typing finishes */
+  cursor.remove();
+  await delay(300);
+}
+
+/* Print output lines with delay */
+async function printLines(lines, delayMs) {
+  for (const line of lines) {
+    checkAbort();
+    addLine(line);
+    await delay(delayMs || 60);
+  }
+}
+
+/* Print a block all at once */
+function printBlock(lines) {
+  for (const line of lines) addLine(line);
+  scrollDown();
+}
+
+/* Blank line */
+function blank() { addLine(''); }
+
+/* ─── Scene Definitions ─────────────────────────────────── */
+
+/* helper: colored text */
+function c(cls, text) { return `<span class="${cls}">${esc(text)}</span>`; }
+function cr(cls, raw) { return `<span class="${cls}">${raw}</span>`; }
+function esc(t) { return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+async function scene1_config() {
+  await typeCmd('cat config/default.yaml');
+  await delay(200);
+  await printLines([
+    c('c-dim', '# config/default.yaml'),
+    cr('c-purple', 'gcp') + c('c-text', ':'),
+    c('c-blue', '  project_id') + c('c-text', ': ') + c('c-green', 'acme-prod-2024'),
+    c('c-blue', '  location') + c('c-text', ': ') + c('c-green', 'us-central1'),
+    '',
+    cr('c-purple', 'gke') + c('c-text', ':'),
+    c('c-blue', '  cluster_name') + c('c-text', ': ') + c('c-green', 'prod-us-east1'),
+    c('c-blue', '  default_namespace') + c('c-text', ': ') + c('c-green', 'production'),
+    c('c-blue', '  argo_request_timeout') + c('c-text', ': ') + c('c-orange', '10'),
+    c('c-blue', '  argo_rollouts') + c('c-text', ':'),
+    c('c-blue', '    enabled') + c('c-text', ': ') + c('c-orange', 'true'),
+    '',
+    cr('c-purple', 'models') + c('c-text', ':'),
+    c('c-blue', '  default') + c('c-text', ': ') + c('c-green', 'gemini-2.5-flash'),
+    '',
+    cr('c-purple', 'retry') + c('c-text', ':'),
+    c('c-blue', '  max_retries') + c('c-text', ': ') + c('c-orange', '5'),
+    c('c-blue', '  initial_delay') + c('c-text', ': ') + c('c-orange', '1.0'),
+    c('c-blue', '  backoff_multiplier') + c('c-text', ': ') + c('c-orange', '2.0'),
+  ], 50);
+  await delay(800);
+  blank();
+}
+
+async function scene2_launch() {
+  await typeCmd('vaig live --skill service_health --namespace production --services checkout-svc,payment-api,inventory-sync,auth-service,notification-svc');
+  await delay(400);
+  blank();
+  addLine(cr('c-teal', '🚀 VAIG Live Mode') + c('c-text', ' — Investigating ') + c('c-bright', '5 services') + c('c-text', ' in ') + c('c-blue', 'production') + c('c-text', ' namespace'));
+  addLine(c('c-dim', '   Cluster: ') + c('c-blue', 'prod-us-east1') + c('c-dim', ' │ Model: ') + c('c-purple', 'gemini-2.5-flash') + c('c-dim', ' │ Tools: ') + c('c-cyan', '47 loaded'));
+  blank();
+  await delay(600);
+
+  addLine(c('c-dim', '⏳ Launching agents...'));
+
+  /* Progress bar animation */
+  const agents = [
+    { icon: '🔍', name: 'workload_gatherer', label: 'analyzing deployments & pods', color: 'c-blue' },
+    { icon: '📊', name: 'metrics_analyzer',  label: 'querying CPU/memory metrics',  color: 'c-cyan' },
+    { icon: '📝', name: 'log_investigator',  label: 'scanning recent logs',         color: 'c-purple' },
+    { icon: '🔄', name: 'rollout_checker',   label: 'argo rollouts checked',        color: 'c-yellow' },
+    { icon: '💰', name: 'cost_estimator',    label: 'calculating resource costs',   color: 'c-orange' },
+  ];
+
+  const barEls = [];
+  for (let i = 0; i < agents.length; i++) {
+    const a = agents[i];
+    const prefix = i < agents.length - 1 ? '├──' : '└──';
+    const lineEl = document.createElement('span');
+    lineEl.className = 'line';
+    lineEl.innerHTML = c('c-dim', `   ${prefix} `) + `${a.icon} ` + cr(a.color, a.name.padEnd(20)) + ' ';
+    const barSpan = document.createElement('span');
+    barSpan.className = a.color;
+    barSpan.textContent = '░░░░░░░░░░';
+    lineEl.appendChild(barSpan);
+    const statusSpan = document.createElement('span');
+    statusSpan.className = 'c-dim';
+    statusSpan.textContent = '  ' + a.label;
+    lineEl.appendChild(statusSpan);
+    term.appendChild(lineEl);
+    barEls.push({ bar: barSpan, status: statusSpan, agent: a });
+  }
+  scrollDown();
+  await delay(400);
+
+  /* Animate bars filling at different rates */
+  const fills = [0, 0, 0, 0, 0];
+  const rates = [14, 11, 12, 18, 13];
+  for (let step = 0; step < 12; step++) {
+    checkAbort();
+    for (let i = 0; i < 5; i++) {
+      fills[i] = Math.min(10, fills[i] + (Math.random() < rates[i] / 15 ? 1 : 0));
+      const filled = '▓'.repeat(fills[i]) + '░'.repeat(10 - fills[i]);
+      barEls[i].bar.textContent = filled;
+      if (fills[i] >= 10) {
+        barEls[i].status.textContent = '  ' + barEls[i].agent.label + ' ✓';
+        barEls[i].status.className = 'c-green';
+      }
+    }
+    scrollDown();
+    await delay(250);
+  }
+
+  /* Ensure all complete */
+  for (let i = 0; i < 5; i++) {
+    barEls[i].bar.textContent = '▓▓▓▓▓▓▓▓▓▓';
+    barEls[i].status.textContent = '  ' + barEls[i].agent.label + ' ✓';
+    barEls[i].status.className = 'c-green';
+  }
+  scrollDown();
+  await delay(800);
+  blank();
+}
+
+async function scene3_report() {
+  /* Box header */
+  await printLines([
+    c('c-blue', '╭─────────────────── VAIG Health Report ───────────────────╮'),
+    c('c-blue', '│') + c('c-text', '  Cluster: ') + c('c-cyan', 'prod-us-east1') + c('c-text', '  │  Namespace: ') + c('c-blue', 'production') + c('c-text', '        ') + c('c-blue', '│'),
+    c('c-blue', '│') + c('c-text', '  Generated: ') + c('c-dim', '2026-03-27 14:32:01 UTC') + c('c-text', '  │  Duration: ') + c('c-green', '47s') + c('c-text', '   ') + c('c-blue', '│'),
+    c('c-blue', '╰──────────────────────────────────────────────────────────╯'),
+  ], 80);
+  await delay(400);
+  blank();
+
+  /* Service status table */
+  await printLines([
+    c('c-blue', '┏━━━━━━━━━━━━━━━━━━━━━━━ Service Status ━━━━━━━━━━━━━━━━━━━┓'),
+    c('c-blue', '┃') + c('c-bright', ' Service              Status    Pods   CPU    Memory      ') + c('c-blue', '┃'),
+    c('c-blue', '┃') + c('c-dim',    '─────────────────────────────────────────────────────────  ') + c('c-blue', '┃'),
+    c('c-blue', '┃') + ' 🟢 ' + c('c-green', 'checkout-svc') + c('c-text', '      Healthy   3/3   12%    340Mi/1Gi   ') + c('c-blue', '┃'),
+    c('c-blue', '┃') + ' 🟡 ' + c('c-yellow', 'payment-api') + c('c-text', '       Warning   2/3   78%    620Mi/1Gi   ') + c('c-blue', '┃'),
+    c('c-blue', '┃') + ' 🔴 ' + c('c-red', 'inventory-sync') + c('c-text', '    Critical  1/3   95%    480Mi/512Mi ') + c('c-blue', '┃'),
+    c('c-blue', '┃') + ' 🟢 ' + c('c-green', 'auth-service') + c('c-text', '      Healthy   2/2    8%    256Mi/1Gi   ') + c('c-blue', '┃'),
+    c('c-blue', '┃') + ' 🟢 ' + c('c-green', 'notification-svc') + c('c-text', '  Healthy   2/2    5%    180Mi/512Mi ') + c('c-blue', '┃'),
+    c('c-blue', '┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛'),
+  ], 80);
+  await delay(500);
+  blank();
+
+  /* Executive Summary */
+  addLine(c('c-bright', '📋 Executive Summary'));
+  addLine(c('c-dim', '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+  await delay(200);
+  await printLines([
+    '  ' + c('c-green', '3 services healthy') + c('c-dim', '  │  ') + c('c-yellow', '1 warning') + c('c-dim', '  │  ') + c('c-red', '1 critical'),
+    '  ' + c('c-text', 'Total monthly cost estimate: ') + c('c-teal', '$847.20') + c('c-dim', ' (5 services, 12 pods)'),
+  ], 100);
+  await delay(600);
+  blank();
+
+  /* Critical finding */
+  await printLines([
+    c('c-red', '🔴 Critical: inventory-sync'),
+    c('c-text', '   OOMKilled 3 times in the last hour ') + c('c-dim', '(pods: inventory-sync-7f8b9-xk2p4)'),
+    c('c-text', '   Memory usage at ') + c('c-red', '94%') + c('c-text', ' of 512Mi limit. Current batch processing'),
+    c('c-text', '   configuration uses ') + c('c-orange', '8 concurrent workers') + c('c-text', ' — each consuming ~60Mi.'),
+    c('c-text', '   Root cause: batch size increased from ') + c('c-yellow', '4→8 workers') + c('c-text', ' in last deploy'),
+    c('c-dim', '   (argo rollout revision 12, promoted 2h ago).'),
+  ], 80);
+  await delay(500);
+  blank();
+
+  /* Warning finding */
+  await printLines([
+    c('c-yellow', '🟡 Warning: payment-api'),
+    c('c-text', '   CPU spike to ') + c('c-yellow', '78%') + c('c-text', ' started at 14:23 UTC. Correlates with'),
+    c('c-text', '   payment-api-v2 canary rollout at ') + c('c-orange', '30% traffic weight') + c('c-text', '.'),
+    c('c-text', '   HPA scaling from 2→3 pods triggered but 1 pod stuck in ') + c('c-red', 'Pending'),
+    c('c-dim', '   (insufficient CPU in node pool — consider adding spot instances).'),
+  ], 80);
+  await delay(500);
+  blank();
+
+  /* Cost breakdown */
+  addLine(c('c-bright', '💰 Cost Breakdown'));
+  addLine(c('c-dim', '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+  await delay(200);
+  await printLines([
+    '  ' + c('c-text', 'checkout-svc') + c('c-text', '      ') + c('c-teal', '$285.60/mo') + c('c-dim', '  (3 pods × e2-standard-4)'),
+    '  ' + c('c-text', 'payment-api') + c('c-text', '       ') + c('c-teal', '$198.40/mo') + c('c-dim', '  (3 pods × e2-standard-2)'),
+    '  ' + c('c-text', 'inventory-sync') + c('c-text', '    ') + c('c-teal', '$142.80/mo') + c('c-dim', '  (3 pods × e2-medium)'),
+    '  ' + c('c-text', 'auth-service') + c('c-text', '      ') + c('c-teal', '$128.00/mo') + c('c-dim', '  (2 pods × e2-standard-2)'),
+    '  ' + c('c-text', 'notification-svc') + c('c-text', '   ') + c('c-teal', ' $92.40/mo') + c('c-dim', '  (2 pods × e2-small)'),
+  ], 70);
+  await delay(500);
+  blank();
+
+  /* Recommended Actions */
+  addLine(c('c-bright', '⚡ Recommended Actions'));
+  addLine(c('c-dim', '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+  await delay(200);
+  await printLines([
+    '  ' + c('c-red',    '1. 🔴 URGENT') + c('c-text', '   Increase inventory-sync memory limit to 1Gi'),
+    '  ' + c('c-text', '                  or reduce batch workers from 8 → 4'),
+    '  ' + c('c-yellow', '2. 🟡 MONITOR') + c('c-text', '  Watch payment-api canary rollout — consider'),
+    '  ' + c('c-text', '                  pausing at 30% until CPU stabilizes'),
+    '  ' + c('c-green',  '3. 🟢 OPTIMIZE') + c('c-text', ' Add HPA to checkout-svc (consistent 12% CPU'),
+    '  ' + c('c-text', '                  suggests scale-down to 2 pods, saving ') + c('c-teal', '~$95/mo') + c('c-text', ')'),
+  ], 80);
+  await delay(500);
+  blank();
+
+  /* Footer stats */
+  addLine(c('c-dim', '📊 Tool Calls: ') + c('c-cyan', '47 total') + c('c-dim', ' │ ') + c('c-cyan', '12 cached') + c('c-dim', ' │ Duration: ') + c('c-green', '47s') + c('c-dim', ' │ Cost: ') + c('c-teal', '$0.48'));
+  blank();
+  addLine(c('c-green', '✅ Report saved: ') + c('c-blue', 'reports/health-report-2026-03-27T143201.html'));
+  await delay(1000);
+  blank();
+}
+
+async function scene4_export() {
+  await typeCmd('vaig live --skill service_health --namespace production --format html --output report.html');
+  await delay(600);
+  blank();
+  await printLines([
+    c('c-blue', '📄 HTML report exported → ') + c('c-bright', 'report.html') + c('c-dim', ' (standalone, no dependencies)'),
+    c('c-dim', '   Open in browser: ') + c('c-cyan', 'file:///home/user/reports/report.html'),
+  ], 100);
+  await delay(600);
+  blank();
+  addLine(c('c-prompt', '$ ') + '<span class="cursor"></span>');
+  scrollDown();
+}
+
+/* ─── Orchestrator ──────────────────────────────────────── */
+const scenes = [
+  { fn: scene1_config, start: 0,  end: 16 },
+  { fn: scene2_launch,  start: 16, end: 41 },
+  { fn: scene3_report,  start: 41, end: 88 },
+  { fn: scene4_export,  start: 88, end: 100 },
+];
+
+let animRunning = false;
+
+function updateProgress(pct) {
+  progressFill.style.width = pct + '%';
+}
+
+async function runDemo() {
+  if (animRunning) return;
+  animRunning = true;
+  aborted = false;
+  term.innerHTML = '';
+  updateProgress(0);
+  btnPlay.textContent = '⏸ Pause';
+
+  try {
+    for (let i = 0; i < scenes.length; i++) {
+      checkAbort();
+
+      /* Smoothly update progress during scene */
+      const s = scenes[i];
+      const progressInterval = setInterval(() => {
+        const current = parseFloat(progressFill.style.width) || s.start;
+        if (current < s.end - 2) {
+          updateProgress(current + 0.5);
+        }
+      }, 200 / speed);
+
+      await s.fn();
+      clearInterval(progressInterval);
+      updateProgress(s.end);
+    }
+
+    updateProgress(100);
+    btnPlay.textContent = '✓ Done';
+  } catch (e) {
+    if (e === 'ABORT') {
+      /* stopped by user */
+    } else {
+      throw e;
+    }
+  }
+  animRunning = false;
+}
+
+/* ─── Controls ──────────────────────────────────────────── */
+let paused = false;
+
+btnPlay.addEventListener('click', () => {
+  if (animRunning && !paused) {
+    /* Pause: we abort the current run */
+    paused = true;
+    aborted = true;
+    if (currentResolve) currentResolve();
+    btnPlay.textContent = '▶ Resume';
+    animRunning = false;
+    return;
+  }
+
+  if (paused) {
+    /* Resume is effectively a restart from current state — we just restart for simplicity */
+    paused = false;
+  }
+
+  runDemo();
+});
+
+btnRestart.addEventListener('click', () => {
+  aborted = true;
+  paused = false;
+  if (currentResolve) currentResolve();
+  animRunning = false;
+  setTimeout(() => runDemo(), 100);
+});
+
+/* Auto-play on load */
+setTimeout(() => runDemo(), 800);
+</script>
+</body>
+</html>
