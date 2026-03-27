@@ -7,6 +7,9 @@ Covers:
 - No suggestion when hallucinated name has no close match
 - Async variant (_async_execute_single_tool) behaves identically
 - Telemetry is emitted with error_type="UnknownTool"
+- Empty registry shows "(none registered)" instead of an empty list
+- Large registries cap the tool list at 10 with "... and N more"
+- _build_unknown_tool_message helper is tested directly
 """
 
 from __future__ import annotations
@@ -40,6 +43,9 @@ def _make_agent_with_mixin() -> MagicMock:
     # Bind real implementations so we exercise actual code paths
     agent._execute_single_tool = ToolLoopMixin._execute_single_tool.__get__(agent, ToolLoopMixin)
     agent._async_execute_single_tool = ToolLoopMixin._async_execute_single_tool.__get__(
+        agent, ToolLoopMixin
+    )
+    agent._build_unknown_tool_message = ToolLoopMixin._build_unknown_tool_message.__get__(
         agent, ToolLoopMixin
     )
     # _emit_tool_telemetry is a side-effect we don't need in unit tests
@@ -152,8 +158,8 @@ class TestExecuteSingleToolUnknown:
             for name in ("kubectl_logs", "kubectl_log_stream", "kubectl_log_tail")
         )
 
-    def test_empty_registry_returns_empty_tools_list(self) -> None:
-        """When no tools are registered, message should gracefully show empty list."""
+    def test_empty_registry_shows_none_registered(self) -> None:
+        """When no tools are registered, message must say '(none registered)'."""
         agent = _make_agent_with_mixin()
         registry = ToolRegistry()  # empty
 
@@ -161,6 +167,7 @@ class TestExecuteSingleToolUnknown:
 
         assert result.error is True
         assert "some_tool" in result.output
+        assert "(none registered)" in result.output
         # No suggestion when registry is empty
         assert "Did you mean" not in result.output
 
@@ -189,6 +196,73 @@ class TestExecuteSingleToolUnknown:
 
         assert result.error is False
         assert result.output == "success"
+
+    def test_large_registry_caps_tool_list_at_ten(self) -> None:
+        """When >10 tools are registered, only 10 are shown plus '... and N more'."""
+        agent = _make_agent_with_mixin()
+        # Register 15 tools — should cap at 10
+        registry = _make_registry(*[f"tool_{i:02d}" for i in range(15)])
+
+        result = agent._execute_single_tool(registry, "nonexistent_xyz", {})
+
+        assert "... and 5 more" in result.output
+
+    def test_exactly_ten_tools_shows_no_overflow(self) -> None:
+        """When exactly 10 tools are registered, all are shown without 'and N more'."""
+        agent = _make_agent_with_mixin()
+        registry = _make_registry(*[f"tool_{i:02d}" for i in range(10)])
+
+        result = agent._execute_single_tool(registry, "nonexistent_xyz", {})
+
+        assert "... and" not in result.output
+
+
+# ── _build_unknown_tool_message helper ───────────────────────
+
+
+class TestBuildUnknownToolMessage:
+    """Unit tests for the _build_unknown_tool_message shared helper."""
+
+    def test_empty_registry_uses_none_registered_placeholder(self) -> None:
+        """Empty registry must produce '(none registered)' in the message."""
+        agent = _make_agent_with_mixin()
+        registry = ToolRegistry()
+
+        msg = agent._build_unknown_tool_message("missing_tool", registry)
+
+        assert "(none registered)" in msg
+        assert "missing_tool" in msg
+
+    def test_cap_at_ten_adds_overflow_indicator(self) -> None:
+        """When >10 tools exist, message must include '... and N more'."""
+        agent = _make_agent_with_mixin()
+        registry = _make_registry(*[f"tool_{i:02d}" for i in range(20)])
+
+        msg = agent._build_unknown_tool_message("ghost", registry)
+
+        assert "... and 10 more" in msg
+
+    def test_names_are_sorted_alphabetically(self) -> None:
+        """Helper must sort tool names alphabetically."""
+        agent = _make_agent_with_mixin()
+        registry = _make_registry("zzz_tool", "aaa_tool", "mmm_tool")
+
+        msg = agent._build_unknown_tool_message("nope", registry)
+
+        idx_aaa = msg.index("aaa_tool")
+        idx_mmm = msg.index("mmm_tool")
+        idx_zzz = msg.index("zzz_tool")
+        assert idx_aaa < idx_mmm < idx_zzz
+
+    def test_fuzzy_suggestion_included(self) -> None:
+        """Helper must include 'Did you mean' when a close match exists."""
+        agent = _make_agent_with_mixin()
+        registry = _make_registry("kubectl_get", "kubectl_logs")
+
+        msg = agent._build_unknown_tool_message("kubectl_log", registry)
+
+        assert "Did you mean" in msg
+        assert "kubectl_logs" in msg
 
 
 # ── Async _async_execute_single_tool ─────────────────────────
