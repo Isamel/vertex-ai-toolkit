@@ -145,7 +145,7 @@ class TestToolCallLogger:
 
     @patch("vaig.cli.commands.live.console")
     def test_call_prints_ok_for_success(self, mock_console: MagicMock) -> None:
-        logger = ToolCallLogger()
+        logger = ToolCallLogger(detailed=True)
         logger("kubectl_get", {"resource": "pods"}, 1.2, True)
         mock_console.print.assert_called_once()
         output = mock_console.print.call_args[0][0]
@@ -153,6 +153,13 @@ class TestToolCallLogger:
         assert "✓" in output
         assert "1.2s" in output
         assert "🔧" in output
+
+    @patch("vaig.cli.commands.live.console")
+    def test_call_skips_print_for_success_when_not_detailed(self, mock_console: MagicMock) -> None:
+        """With detailed=False (default), successful calls are NOT printed."""
+        logger = ToolCallLogger()
+        logger("kubectl_get", {"resource": "pods"}, 1.2, True)
+        mock_console.print.assert_not_called()
 
     @patch("vaig.cli.commands.live.console")
     def test_call_prints_fail_for_error(self, mock_console: MagicMock) -> None:
@@ -368,8 +375,8 @@ class TestToolCallLogger:
 
     @patch("vaig.cli.commands.live.console")
     def test_cached_call_shows_cached_tag(self, mock_console: MagicMock) -> None:
-        """Cached tool calls display [cached] tag in output."""
-        logger = ToolCallLogger()
+        """Cached tool calls display [cached] tag in output (detailed mode)."""
+        logger = ToolCallLogger(detailed=True)
         logger("kubectl_get", {"resource": "pods"}, 0.0, True, cached=True)
         output = mock_console.print.call_args[0][0]
         assert "cached" in output
@@ -377,8 +384,8 @@ class TestToolCallLogger:
 
     @patch("vaig.cli.commands.live.console")
     def test_non_cached_call_no_cached_tag(self, mock_console: MagicMock) -> None:
-        """Non-cached tool calls do NOT show [cached] tag."""
-        logger = ToolCallLogger()
+        """Non-cached tool calls do NOT show [cached] tag (detailed mode)."""
+        logger = ToolCallLogger(detailed=True)
         logger("kubectl_get", {"resource": "pods"}, 1.0, True)
         output = mock_console.print.call_args[0][0]
         assert "cached" not in output

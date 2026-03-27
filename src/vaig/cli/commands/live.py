@@ -36,8 +36,11 @@ from vaig.cli._helpers import (
 )
 from vaig.cli.display import (
     print_colored_report,
+    print_cost_breakdown_table,
     print_executive_summary_panel,
     print_recommendations_table,
+    print_service_status_table,
+    print_severity_detail_blocks,
 )
 from vaig.core.cache import ToolResultCache
 from vaig.core.tool_call_store import ToolCallStore
@@ -108,7 +111,7 @@ class ToolCallLogger:
         tool_logger.print_summary()
     """
 
-    def __init__(self, *, detailed: bool = True) -> None:
+    def __init__(self, *, detailed: bool = False) -> None:
         self.tool_count: int = 0
         self.total_duration: float = 0.0
         self.errors: int = 0
@@ -282,7 +285,8 @@ class AgentProgressDisplay:
         self._lock = threading.Lock()
         # Completed agent records for tree-style summary.
         # Each entry: (name, role_hint, tools_used, elapsed_secs, success)
-        self._completed: list[tuple[str, str, int, float, bool]] = []
+        # success is initially None (unknown); reconciled after orch_result is available.
+        self._completed: list[tuple[str, str, int, float, bool | None]] = []
 
     def _stop_current(self) -> None:
         """Stop and discard the current spinner (if any).
@@ -368,8 +372,9 @@ class AgentProgressDisplay:
                     f"[green]{agent_name}[/green] — [green]done[/green]"
                     f"{tools_detail}{breakdown_detail}"
                 )
-                # Track for tree-style summary (role_hint derived from name)
-                self._completed.append((agent_name, agent_name, tools, elapsed, True))
+                # Track for tree-style summary (role_hint derived from name).
+                # success is None until reconciled with actual AgentResult.
+                self._completed.append((agent_name, agent_name, tools, elapsed, None))
                 # Decrement active agent count; reset per-agent counters only
                 # when ALL active agents have finished.  Calling reset() on every
                 # "end" would clear shared tool_name_counts while other parallel
@@ -377,6 +382,43 @@ class AgentProgressDisplay:
                 self._active_agents = max(0, self._active_agents - 1)
                 if self._active_agents == 0:
                     self._tool_logger.reset()
+
+    def reconcile_results(self, agent_results: list[Any]) -> None:
+        """Update success flags from actual AgentResult objects.
+
+        Called after the orchestrator returns, before :meth:`print_tree`,
+        so the tree renders actual success/failure instead of ``None``
+        (unknown).  Matches by agent name.
+
+        Thread-safe: acquires ``self._lock`` to mutate ``_completed``.
+
+        Args:
+            agent_results: List of :class:`~vaig.agents.base.AgentResult`
+                instances from the orchestrator.
+        """
+        if not agent_results:
+            return
+        # Build a lookup: agent_name → success bool
+        result_map: dict[str, bool] = {}
+        for ar in agent_results:
+            name = getattr(ar, "agent_name", None) or getattr(ar, "name", "")
+            success = getattr(ar, "success", None)
+            if name and success is not None:
+                result_map[name] = success
+
+        with self._lock:
+            self._completed = [
+                (name, role, tools, elapsed, result_map.get(name, success))
+                for name, role, tools, elapsed, success in self._completed
+            ]
+
+    def get_agent_timings(self) -> dict[str, float]:
+        """Return a mapping of agent_name → elapsed seconds.
+
+        Built from the ``_completed`` records.  Thread-safe.
+        """
+        with self._lock:
+            return {name: elapsed for name, _role, _tools, elapsed, _success in self._completed}
 
     def stop(self) -> None:
         """Stop the spinner if it's still running (e.g. on error)."""
@@ -400,8 +442,13 @@ class AgentProgressDisplay:
             is_last = idx == total - 1
             connector = "└──" if is_last else "├──"
             emoji = self._emoji_for_role(role_hint)
-            status_icon = "[green]✓[/green]" if success else "[red]✗[/red]"
-            bar = "[green]██████████[/green]" if success else "[red]██████████[/red]"
+            if success is None:
+                color = "yellow"
+                status_icon = f"[{color}]⚠[/{color}]"
+            else:
+                color = "green" if success else "red"
+                status_icon = f"[{color}]{'✓' if success else '✗'}[/{color}]"
+            bar = f"[{color}]██████████[/{color}]"
             tool_str = f"{tools} tool{'s' if tools != 1 else ''}"
             console.print(
                 f"  {connector} {emoji} [bold]{name}[/bold] "
@@ -439,7 +486,7 @@ def _print_launch_header(
     left.append("☸  Cluster: ", style="dim")
     left.append(f"{gke_config.cluster_name or '(kubeconfig default)'}\n")
     left.append("📂 Namespace: ", style="dim")
-    left.append(f"{gke_config.default_namespace}\n")
+    left.append(f"{gke_config.default_namespace or 'default'}\n")
     left.append("☁  Project: ", style="dim")
     left.append(f"{gke_config.project_id or '(auto-detect)'}")
 
@@ -1459,6 +1506,7 @@ def _execute_orchestrated_skill(
             )
         finally:
             progress_display.stop()
+        progress_display.reconcile_results(orch_result.agent_results)
         progress_display.print_tree()
         tool_logger.print_summary()
 
@@ -1474,21 +1522,10 @@ def _execute_orchestrated_skill(
                 print_executive_summary_panel(
                     orch_result.structured_report, console=console,
                 )
-            # Structured display.py tables (service status, cost breakdown,
-            # severity detail blocks) — gracefully skip if unavailable.
             if orch_result.structured_report is not None:
-                try:
-                    from vaig.cli.display import (
-                        print_cost_breakdown_table,
-                        print_service_status_table,
-                        print_severity_detail_blocks,
-                    )
-
-                    print_service_status_table(orch_result.structured_report, console=console)
-                    print_severity_detail_blocks(orch_result.structured_report, console=console)
-                    print_cost_breakdown_table(orch_result.structured_report, console=console)
-                except ImportError:
-                    pass
+                print_service_status_table(orch_result.structured_report, console=console)
+                print_severity_detail_blocks(orch_result.structured_report, console=console)
+                print_cost_breakdown_table(orch_result.structured_report, console=console)
             if orch_result.synthesized_output:
                 print_colored_report(orch_result.synthesized_output, console=console)
             # Rich Table for recommendations (after the full report)
@@ -1515,7 +1552,11 @@ def _execute_orchestrated_skill(
         )
 
         # Show agent pipeline summary (includes cost line)
-        _show_orchestrated_summary(orch_result, model_id=settings.models.default)
+        _show_orchestrated_summary(
+            orch_result,
+            model_id=settings.models.default,
+            agent_timings=progress_display.get_agent_timings(),
+        )
 
         # Auto-export report if configured.
         # ADR-4: auto-export fires here for the health report only, immediately after the live
@@ -1577,8 +1618,22 @@ def _format_models_used(models_used: list[str]) -> str:
     return ", ".join(sorted(counts))
 
 
-def _show_orchestrated_summary(orch_result: OrchestratorResult, *, model_id: str = "") -> None:
-    """Display a summary table for an orchestrated skill execution."""
+def _show_orchestrated_summary(
+    orch_result: OrchestratorResult,
+    *,
+    model_id: str = "",
+    agent_timings: dict[str, float] | None = None,
+) -> None:
+    """Display a summary table for an orchestrated skill execution.
+
+    Args:
+        orch_result: The orchestrator result.
+        model_id: Model identifier for cost display.
+        agent_timings: Optional mapping of agent_name → elapsed seconds,
+            typically built from :class:`AgentProgressDisplay._completed`.
+            When provided, per-agent timing comes from here instead of
+            (unreliable) ``agent_result.metadata`` keys.
+    """
     console.print(Rule("📈 Pipeline Summary", style="bright_blue"))
 
     table = Table(title="Pipeline Summary", show_lines=True)
@@ -1590,13 +1645,16 @@ def _show_orchestrated_summary(orch_result: OrchestratorResult, *, model_id: str
 
     total_time = 0.0
     total_tokens_sum = 0
+    timings = agent_timings or {}
 
     for agent_result in orch_result.agent_results:
         status = "[green]✓ success[/green]" if agent_result.success else "[red]✗ failed[/red]"
         role = agent_result.metadata.get("role") or agent_result.agent_name
 
-        # Extract timing from metadata if available
-        elapsed = agent_result.metadata.get("elapsed_time") or agent_result.metadata.get("duration")
+        # Extract timing: prefer AgentProgressDisplay data, then metadata fallback
+        elapsed = timings.get(agent_result.agent_name)
+        if elapsed is None:
+            elapsed = agent_result.metadata.get("elapsed_time") or agent_result.metadata.get("duration")
         if isinstance(elapsed, (int, float)):
             time_str = f"{elapsed:.1f}s"
             total_time += elapsed
@@ -1618,10 +1676,14 @@ def _show_orchestrated_summary(orch_result: OrchestratorResult, *, model_id: str
     table.add_section()
     total_time_str = f"{total_time:.1f}s" if total_time > 0 else "—"
     total_tokens_str = f"{total_tokens_sum:,}" if total_tokens_sum > 0 else "—"
+    # Count successful agents for the status column
+    success_count = sum(1 for ar in orch_result.agent_results if getattr(ar, "success", True))
+    total_count = len(orch_result.agent_results)
+    status_text = f"{success_count}/{total_count} ✅" if total_count > 0 else "—"
     table.add_row(
         Text("TOTAL", style="bold"),
         "",
-        "",
+        Text(status_text, style="bold"),
         Text(total_time_str, style="bold"),
         Text(total_tokens_str, style="bold"),
     )
@@ -1757,7 +1819,7 @@ def _execute_live_mode(
 
     try:
         console.print("[bold cyan]🤖 Infrastructure agent investigating...[/bold cyan]")
-        tool_logger = ToolCallLogger()
+        tool_logger = ToolCallLogger(detailed=True)
         effective_cache = tool_result_cache or ToolResultCache()
         result = agent.execute(
             question,
@@ -1867,7 +1929,7 @@ async def _async_execute_live_mode(
 
     try:
         console.print("[bold cyan]🤖 Infrastructure agent investigating (async)...[/bold cyan]")
-        tool_logger = ToolCallLogger()
+        tool_logger = ToolCallLogger(detailed=True)
         effective_cache = tool_result_cache or ToolResultCache()
         result = await agent.async_execute(
             question,
@@ -2005,6 +2067,7 @@ async def _async_execute_orchestrated_skill(
             )
         finally:
             progress_display.stop()
+        progress_display.reconcile_results(orch_result.agent_results)
         progress_display.print_tree()
         tool_logger.print_summary()
 
@@ -2020,21 +2083,10 @@ async def _async_execute_orchestrated_skill(
                 print_executive_summary_panel(
                     orch_result.structured_report, console=console,
                 )
-            # Structured display.py tables (service status, cost breakdown,
-            # severity detail blocks) — gracefully skip if unavailable.
             if orch_result.structured_report is not None:
-                try:
-                    from vaig.cli.display import (
-                        print_cost_breakdown_table,
-                        print_service_status_table,
-                        print_severity_detail_blocks,
-                    )
-
-                    print_service_status_table(orch_result.structured_report, console=console)
-                    print_severity_detail_blocks(orch_result.structured_report, console=console)
-                    print_cost_breakdown_table(orch_result.structured_report, console=console)
-                except ImportError:
-                    pass
+                print_service_status_table(orch_result.structured_report, console=console)
+                print_severity_detail_blocks(orch_result.structured_report, console=console)
+                print_cost_breakdown_table(orch_result.structured_report, console=console)
             if orch_result.synthesized_output:
                 print_colored_report(orch_result.synthesized_output, console=console)
             # Rich Table for recommendations (after the full report)
@@ -2060,7 +2112,11 @@ async def _async_execute_orchestrated_skill(
             all_namespaces=all_namespaces,
         )
 
-        _show_orchestrated_summary(orch_result, model_id=settings.models.default)
+        _show_orchestrated_summary(
+            orch_result,
+            model_id=settings.models.default,
+            agent_timings=progress_display.get_agent_timings(),
+        )
 
         # Auto-export report if configured.
         # ADR-4: auto-export fires here for the health report only, immediately after the live

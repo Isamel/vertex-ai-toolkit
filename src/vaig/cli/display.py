@@ -366,6 +366,12 @@ def print_executive_summary_panel(
 
 # ── Service Status Table ─────────────────────────────────────
 
+
+def _format_metric(value: str | None) -> str:
+    """Return the value or '—' if it's missing or 'N/A'."""
+    return value if value and value.strip().upper() != "N/A" else "—"
+
+
 # Maps ServiceHealthStatus value → (Rich style, emoji)
 _SERVICE_STATUS_STYLE: dict[str, tuple[str, str]] = {
     "HEALTHY": ("green", "🟢"),
@@ -403,9 +409,9 @@ def print_service_status_table(
                 {
                     "service": svc.service,
                     "status": status_key,
-                    "pods": svc.pods_ready if svc.pods_ready and svc.pods_ready != "N/A" else "—",
-                    "cpu": svc.cpu_usage if svc.cpu_usage and svc.cpu_usage != "N/A" else "—",
-                    "memory": svc.memory_usage if svc.memory_usage and svc.memory_usage != "N/A" else "—",
+                    "pods": _format_metric(svc.pods_ready),
+                    "cpu": _format_metric(svc.cpu_usage),
+                    "memory": _format_metric(svc.memory_usage),
                 }
             )
     elif report.findings:
@@ -522,14 +528,25 @@ def print_cost_breakdown_table(
     if gke_cost.total_request_cost_usd is not None:
         total_req = f"${gke_cost.total_request_cost_usd:,.2f}/mo"
         total_use = f"${gke_cost.total_usage_cost_usd:,.2f}/mo" if gke_cost.total_usage_cost_usd is not None else "—"
-        total_save = f"${gke_cost.total_savings_usd:,.2f}/mo" if gke_cost.total_savings_usd is not None else "—"
+        # Compute total waste by summing per-workload waste (not savings)
+        waste_values = [
+            wl.total_waste_usd
+            for wl in workloads
+            if getattr(wl, "total_waste_usd", None) is not None
+            and isinstance(wl.total_waste_usd, (int, float))
+        ]
+        if waste_values:
+            total_waste = sum(waste_values)
+            total_waste_str = f"${total_waste:,.2f}/mo"
+        else:
+            total_waste_str = "—"
         table.add_section()
         table.add_row(
             Text("TOTAL", style="bold"),
             "",
             Text(total_req, style="bold green"),
             Text(total_use, style="bold"),
-            Text(total_save, style="bold red"),
+            Text(total_waste_str, style="bold red"),
         )
 
     con.print(table)
