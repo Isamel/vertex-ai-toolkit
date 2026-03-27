@@ -17,15 +17,27 @@
 ### Kubernetes
 - `kubectl` installed and configured with cluster access
 - A valid kubeconfig (`~/.kube/config` by default)
-- Sufficient RBAC — vaig uses **read-only** tools only (get, list, describe, logs)
+- Sufficient RBAC — vaig uses mostly **read-only** tools (get, list, describe, logs), but also registers
+  write tools (`kubectl_scale`, `kubectl_restart`, `kubectl_label`, `kubectl_annotate`).
+  Use cluster RBAC to restrict write access if needed.
 
 ### Required RBAC (minimal)
 ```yaml
 rules:
   - apiGroups: ["", "apps", "autoscaling", "batch"]
-    resources: ["pods", "deployments", "replicasets", "statefulsets",
-                "daemonsets", "services", "endpoints", "events",
-                "namespaces", "nodes", "configmaps", "horizontalpodautoscalers"]
+    resources:
+      - pods
+      - deployments
+      - replicasets
+      - statefulsets
+      - daemonsets
+      - services
+      - endpoints
+      - events
+      - namespaces
+      - nodes
+      - configmaps
+      - horizontalpodautoscalers
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["pods/log"]
@@ -36,13 +48,16 @@ rules:
 
 ## 2. Download & Install
 
-Download from: **https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.9.0**
+Download from: **https://github.com/Isamel/vertex-ai-toolkit/releases/latest**
 
-### Linux / macOS
+> **Supported platforms:** Linux amd64 (`vaig`) and Windows amd64 (`vaig.exe`).
+> macOS users must [build from source](https://github.com/Isamel/vertex-ai-toolkit#development).
+
+### Linux
 
 ```sh
-# Download
-curl -Lo vaig https://github.com/Isamel/vertex-ai-toolkit/releases/download/v0.9.0/vaig
+# Replace vX.Y.Z with the latest version from the releases page
+curl -Lo vaig https://github.com/Isamel/vertex-ai-toolkit/releases/download/vX.Y.Z/vaig
 
 # Make executable
 chmod +x vaig
@@ -58,8 +73,9 @@ vaig --help
 ### Windows
 
 ```powershell
-# Download vaig.exe to a directory in your PATH
+# Replace vX.Y.Z with the latest version from the releases page
 # (e.g. C:\tools\ — add that directory to System PATH if not already)
+Invoke-WebRequest -Uri "https://github.com/Isamel/vertex-ai-toolkit/releases/download/vX.Y.Z/vaig.exe" -OutFile "C:\tools\vaig.exe"
 
 # Verify
 vaig.exe --version
@@ -80,7 +96,8 @@ Config is loaded in this priority order (highest wins):
 2. Explicit path (`--config path/to/config.yaml`)
 3. `./vaig.yaml` in the current working directory
 4. `~/.vaig/config.yaml` (user home config — **recommended location**)
-5. Built-in defaults
+5. `config/default.yaml` (project defaults — shipped with the binary)
+6. Built-in defaults
 
 ### Minimal config for live mode
 
@@ -134,9 +151,10 @@ helm:
   enabled: true                      # Discover Helm-managed releases
 
 # ── ArgoCD ────────────────────────────────────────────────────
-# Auto-detected by default (CRD probe + annotation scan)
+# ArgoCD is DISABLED by default — requires explicit opt-in via config.
+# Set enabled: true to enable, or null to auto-detect via CRD probe + annotation scan.
 argocd:
-  # enabled: null  # null = auto-detect, true = force-enable, false = disable
+  # enabled: false  # false = disabled (default), true = force-enable, null = auto-detect
   namespace: "argocd"
 
 # ── Datadog (optional) ────────────────────────────────────────
@@ -187,7 +205,7 @@ gke:
 
 Or via environment variable:
 ```sh
-# Not yet a top-level env var — use config for this one
+export VAIG_GKE__ARGO_ROLLOUTS_ENABLED=true
 ```
 
 ---
@@ -307,8 +325,8 @@ Expected output:
 │  Project    my-gcp-project                                        │
 │  Model      gemini-2.5-pro                                        │
 │                                                                   │
-│ Available tools (24): kubectl_get, kubectl_describe, get_logs,    │
-│   get_pod_events, cloud_logging_query, ...                        │
+│ Available tools (24): kubectl_get, kubectl_describe, kubectl_logs,  │
+│   get_events, gcloud_logging_query, ...                              │
 │                                                                   │
 │ Estimated cost: depends on tool usage (typically $0.02-0.10/run)  │
 └───────────────────────────────────────────────────────────────────┘
@@ -358,8 +376,8 @@ vaig live --model gemini-2.5-pro --skill rca "root cause for payment latency spi
 # Switch cluster without changing config
 vaig live --cluster staging-cluster --namespace staging "check staging environment"
 
-# Different GCP project
-vaig live --project my-gke-project --gke-project my-gke-project "check prod cluster"
+# Different GCP project for Vertex AI, separate GKE project
+vaig live --project my-vertex-project --gke-project my-gke-project "check prod cluster"
 
 # Different region
 vaig live --location europe-west4 "check EU cluster health"
@@ -435,9 +453,9 @@ vaig live --project my-project "..."
 
 ---
 
-### `Error: No GKE tools available`
+### `Error: No infrastructure tools available!`
 
-The binary does not include the Kubernetes client library in your environment, or your kubeconfig is not set up:
+The GKE tools could not be loaded. This usually means a kubeconfig issue:
 
 1. Verify `kubectl` works: `kubectl get pods -n production`
 2. Verify the cluster context: `kubectl config current-context`
@@ -495,9 +513,12 @@ gke:
 If Argo Rollouts CRD checks are causing ~5s delays per call (separate cluster scenario):
 ```yaml
 gke:
-  argo_rollouts_enabled: true   # Skip the CRD probe entirely
-  crd_check_timeout: 5          # Timeout for CRD existence checks (seconds)
+  argo_rollouts_enabled: true   # Skip the CRD probe entirely — recommended fix for separate-cluster setups
+  crd_check_timeout: 3          # Reduce CRD existence check timeout (default is 5s)
 ```
+
+> **Note:** `crd_check_timeout: 5` is already the default. Use `argo_rollouts_enabled: true` to skip
+> the CRD check completely when Argo Rollouts is on a different cluster.
 
 ---
 
