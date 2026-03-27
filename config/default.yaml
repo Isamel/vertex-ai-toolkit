@@ -226,6 +226,10 @@ datadog:
   app_key: ""                     # Or use VAIG_DATADOG__APP_KEY env var
   site: ""                        # Default: datadoghq.com; override via VAIG_DATADOG__SITE
   timeout: ""                     # Default: 30s; override via VAIG_DATADOG__TIMEOUT
+  # ssl_verify: true              # SSL verification for Datadog API connections. Override via VAIG_DATADOG__SSL_VERIFY.
+  #                               # true (default) = standard SSL verification.
+  #                               # false = disable SSL verification (for corporate proxies with SSL inspection — not recommended).
+  #                               # "/path/to/ca-bundle.crt" = path to a custom CA bundle file (e.g. /etc/ssl/certs/corporate-ca.crt).
 
   # Configurable tag/label names used in Datadog metric queries and monitor filters.
   # Override these when your Datadog agent uses custom tag naming conventions.
