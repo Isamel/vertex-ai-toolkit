@@ -684,12 +684,196 @@
       color: var(--text-dim);
       letter-spacing: 0.05em;
     }
+
+    /* ═══════════════════════════════════════════════════════
+       SLIDE — REPORT OUTPUT
+    ══════════════════════════════════════════════════════════ */
+    .slide-report-console {
+      background: linear-gradient(135deg, #0d1117 0%, var(--bg-deep) 100%);
+    }
+    .report-console-layout {
+      width: 100%; max-width: 1100px;
+    }
+    .report-console-pre {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 24px 28px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 0.72rem;
+      line-height: 1.6;
+      overflow-x: auto;
+      white-space: pre;
+      color: var(--text-main);
+      position: relative;
+    }
+    .report-console-pre .rc-border  { color: var(--text-dim); }
+    .report-console-pre .rc-green   { color: #98bb6c; }
+    .report-console-pre .rc-yellow  { color: #dca561; }
+    .report-console-pre .rc-red     { color: #ff5d62; }
+    .report-console-pre .rc-blue    { color: #7fb4ca; }
+    .report-console-pre .rc-bright  { color: #c8c093; }
+    .report-console-pre .rc-dim     { color: #727169; }
+    .report-console-pre .rc-heading { color: #7aa2f7; font-weight: 600; }
+    .report-console-pre .rc-urgent  { color: #ff5d62; font-weight: 700; }
+    .report-console-pre .rc-monitor { color: #dca561; font-weight: 600; }
+    .report-console-pre .rc-optimize{ color: #98bb6c; font-weight: 600; }
+    .terminal-dots {
+      display: flex; gap: 7px;
+      margin-bottom: 16px;
+    }
+    .terminal-dots span {
+      width: 11px; height: 11px;
+      border-radius: 50%;
+    }
+    .terminal-dots .td-red    { background: #ff5f56; }
+    .terminal-dots .td-yellow { background: #ffbd2e; }
+    .terminal-dots .td-green  { background: #27c93f; }
+    .report-console-subtitle {
+      font-size: 0.88rem;
+      color: var(--text-dim);
+      margin-top: 16px;
+      text-align: center;
+      line-height: 1.5;
+    }
+    .report-console-subtitle strong { color: var(--text-bright); }
+
+    /* ── HTML Report slide ──────────────────────────────────── */
+    .slide-report-html {
+      background: radial-gradient(ellipse at 50% 40%, #16213e 0%, var(--bg-deep) 70%);
+    }
+    .report-html-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 48px;
+      width: 100%; max-width: 1100px;
+      align-items: center;
+    }
+    .report-sections {
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    .report-section-card {
+      background: var(--bg-mid);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .report-section-card .rs-icon { font-size: 1.4rem; flex-shrink: 0; }
+    .report-section-card .rs-name {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text-bright);
+      margin-bottom: 3px;
+    }
+    .report-section-card .rs-desc {
+      font-size: 0.76rem;
+      color: var(--text-dim);
+      line-height: 1.45;
+    }
+    .report-html-mockup {
+      background: var(--bg-mid);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .mockup-titlebar {
+      background: var(--bg-accent);
+      padding: 10px 16px;
+      display: flex; align-items: center; gap: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .mockup-titlebar .mt-dots { display: flex; gap: 6px; }
+    .mockup-titlebar .mt-dots span {
+      width: 10px; height: 10px; border-radius: 50%;
+    }
+    .mockup-titlebar .mt-url {
+      font-size: 0.68rem;
+      color: var(--text-dim);
+      font-family: monospace;
+      background: var(--bg-deep);
+      padding: 3px 12px;
+      border-radius: 4px;
+      flex: 1;
+      margin-left: 8px;
+    }
+    .mockup-body { padding: 20px; }
+    .mockup-header {
+      text-align: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .mockup-header .mh-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--blue-bright);
+      margin-bottom: 4px;
+    }
+    .mockup-header .mh-sub {
+      font-size: 0.68rem;
+      color: var(--text-dim);
+    }
+    .mockup-stats {
+      display: flex; gap: 10px;
+      margin-bottom: 14px;
+    }
+    .mockup-stat {
+      flex: 1;
+      background: var(--bg-accent);
+      border-radius: 6px;
+      padding: 10px 8px;
+      text-align: center;
+    }
+    .mockup-stat .ms-val {
+      font-size: 1rem;
+      font-weight: 700;
+    }
+    .mockup-stat .ms-lbl {
+      font-size: 0.6rem;
+      color: var(--text-dim);
+    }
+    .mockup-services { display: flex; flex-direction: column; gap: 6px; }
+    .mockup-svc {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px;
+      border-radius: 5px;
+      background: var(--bg-accent);
+      font-size: 0.7rem;
+    }
+    .mockup-svc .ms-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .mockup-svc .ms-name {
+      color: var(--text-bright);
+      font-weight: 600;
+      flex: 1;
+    }
+    .mockup-svc .ms-status { color: var(--text-dim); }
+    .report-html-features {
+      display: flex; gap: 10px; flex-wrap: wrap;
+      margin-top: 16px;
+      justify-content: center;
+    }
+    .rhf-pill {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 0.72rem;
+      color: var(--text-dim);
+    }
+    .rhf-pill strong { color: var(--text-bright); }
   </style>
 </head>
 <body>
 
 <!-- Progress bar -->
-<div id="progress-bar" style="width: 11.1%"></div>
+<div id="progress-bar" style="width: 9.1%"></div>
 
 <!-- Nav dots -->
 <div id="nav-dots"></div>
@@ -719,7 +903,7 @@
       <span class="tag-pill tag-pill-purple">Gemini-Powered</span>
       <span class="tag-pill tag-pill-teal">GKE + GCP</span>
     </div>
-    <div class="slide-num">01 / 09</div>
+    <div class="slide-num">01 / 11</div>
   </section>
 
   <!-- ── SLIDE 2: PROJECT METRICS ────────────────────────── -->
@@ -729,7 +913,7 @@
     <h2>A Mature, Well-Tested, <span class="highlight">Comprehensive Platform</span></h2>
     <p class="metrics-intro">
       VAIG is backed by an extensive codebase with a <strong class="hl-green">1.5 : 1 test-to-source ratio</strong>,
-      6,162 passing tests, and 11 production AI agents — built and validated across 262+ commits by the team.
+      6,226 passing tests, and 11 production AI agents — built and validated across 265 commits and 10 releases by the team.
     </p>
 
     <div class="metrics-groups">
@@ -741,7 +925,7 @@
         </div>
         <div class="metric-row">
           <span class="metric-label">Source Code</span>
-          <span class="metric-value mv-blue">61,546 lines</span>
+          <span class="metric-value mv-blue">61,868 lines</span>
         </div>
         <div class="metric-row">
           <span class="metric-label">Source Files</span>
@@ -749,15 +933,15 @@
         </div>
         <div class="metric-row">
           <span class="metric-label">Total Commits</span>
-          <span class="metric-value mv-teal">262+</span>
+          <span class="metric-value mv-teal">265</span>
         </div>
         <div class="metric-row">
           <span class="metric-label">PRs Merged</span>
-          <span class="metric-value mv-teal">130+</span>
+          <span class="metric-value mv-teal">135</span>
         </div>
         <div class="metric-row">
-          <span class="metric-label">Release</span>
-          <span class="metric-value mv-yellow">v0.9.0</span>
+          <span class="metric-label">Releases</span>
+          <span class="metric-value mv-yellow">10 (v0.1–v0.10)</span>
         </div>
       </div>
 
@@ -777,7 +961,7 @@
         </div>
         <div class="metric-row">
           <span class="metric-label">Total Tests</span>
-          <span class="metric-value mv-green">6,162</span>
+          <span class="metric-value mv-green">6,226</span>
         </div>
         <div class="metric-row">
           <span class="metric-label">Passing</span>
@@ -796,20 +980,20 @@
           <span class="mg-title">Capabilities</span>
         </div>
         <div class="metric-row">
-          <span class="metric-label">GKE Tools</span>
-          <span class="metric-value mv-purple">47</span>
+          <span class="metric-label">Tool Functions</span>
+          <span class="metric-value mv-purple">231</span>
         </div>
         <div class="metric-row">
-          <span class="metric-label">AI Skills</span>
-          <span class="metric-value mv-purple">28</span>
+          <span class="metric-label">GKE + GCloud Tools</span>
+          <span class="metric-value mv-purple">47</span>
         </div>
         <div class="metric-row">
           <span class="metric-label">AI Agents</span>
           <span class="metric-value mv-orange">11</span>
         </div>
         <div class="metric-row">
-          <span class="metric-label">CLI Commands</span>
-          <span class="metric-value mv-orange">11</span>
+          <span class="metric-label">Config Sections</span>
+          <span class="metric-value mv-orange">9</span>
         </div>
         <div class="metric-row">
           <span class="metric-label">Platforms</span>
@@ -820,24 +1004,24 @@
 
     <div class="metrics-headline-row">
       <div class="metrics-headline">
-        <div class="mh-val mv-blue">153,921</div>
-        <div class="mh-lbl">Total Lines of Code</div>
+        <div class="mh-val mv-blue">61,868</div>
+        <div class="mh-lbl">Lines of Production Code</div>
       </div>
       <div class="metrics-headline">
-        <div class="mh-val mv-green">6,162</div>
+        <div class="mh-val mv-green">6,226</div>
         <div class="mh-lbl">Tests — All Passing</div>
       </div>
       <div class="metrics-headline">
-        <div class="mh-val mv-purple">97</div>
-        <div class="mh-lbl">Tools + Skills + Agents + CLI</div>
+        <div class="mh-val mv-purple">231</div>
+        <div class="mh-lbl">Tool Functions (47 GKE Live)</div>
       </div>
       <div class="metrics-headline">
-        <div class="mh-val mv-yellow">v0.9.0</div>
-        <div class="mh-lbl">Production Release</div>
+        <div class="mh-val mv-yellow">v0.10.0</div>
+        <div class="mh-lbl">10th Release — Upcoming</div>
       </div>
     </div>
 
-    <div class="slide-num">02 / 09</div>
+    <div class="slide-num">02 / 11</div>
   </section>
 
   <!-- ── SLIDE 3: PROBLEM ───────────────────────────────── -->
@@ -877,7 +1061,7 @@
         <p>Idle containers, over-provisioned workloads, and namespace cost anomalies go undetected without dedicated analysis tooling.</p>
       </div>
     </div>
-    <div class="slide-num">03 / 09</div>
+    <div class="slide-num">03 / 11</div>
   </section>
 
   <!-- ── SLIDE 4: SOLUTION ──────────────────────────────── -->
@@ -916,7 +1100,7 @@
         </div>
       </div>
     </div>
-    <div class="slide-num">04 / 09</div>
+    <div class="slide-num">04 / 11</div>
   </section>
 
   <!-- ── SLIDE 5: KEY FEATURES ──────────────────────────── -->
@@ -966,7 +1150,7 @@
         <div class="desc">Default toolset is read-only and safe for production. Live-mode Kubernetes write actions (scale/restart/label/annotate) are optional, explicit, and policy-gated.</div>
       </div>
     </div>
-    <div class="slide-num">05 / 09</div>
+    <div class="slide-num">05 / 11</div>
   </section>
 
   <!-- ── SLIDE 6: ARCHITECTURE ──────────────────────────── -->
@@ -1040,7 +1224,7 @@
         <div class="arch-stat"><div class="num">4</div><div class="lbl">Cluster mutation tools (gated)</div></div>
       </div>
     </div>
-    <div class="slide-num">06 / 09</div>
+    <div class="slide-num">06 / 11</div>
   </section>
 
   <!-- ── SLIDE 7: RECENT IMPROVEMENTS ──────────────────── -->
@@ -1095,7 +1279,7 @@
         <div class="pr-desc">README, CHANGELOG, and configuration guide updated. New config options for GKE timeouts and Datadog settings documented.</div>
       </div>
     </div>
-    <div class="slide-num">07 / 09</div>
+    <div class="slide-num">07 / 11</div>
   </section>
 
   <!-- ── SLIDE 8: DEMO ──────────────────────────────────── -->
@@ -1171,10 +1355,162 @@
         </div>
       </div>
     </div>
-    <div class="slide-num">08 / 09</div>
+    <div class="slide-num">08 / 11</div>
   </section>
 
-  <!-- ── SLIDE 9: ROI ───────────────────────────────────── -->
+  <!-- ── SLIDE 9: REPORT OUTPUT — CONSOLE ──────────────── -->
+  <section class="slide slide-report-console">
+    <div class="brand">vertex-ai-toolkit · vaig</div>
+    <p class="slide-label">Report Output — Console</p>
+    <h2>Rich Terminal Output in <span class="highlight">Real Time</span></h2>
+    <div class="report-console-layout">
+      <div class="report-console-pre">
+        <div class="terminal-dots"><span class="td-red"></span><span class="td-yellow"></span><span class="td-green"></span></div><span class="rc-border">╭──────────────────── </span><span class="rc-heading">VAIG Health Report</span><span class="rc-border"> ────────────────────╮</span>
+<span class="rc-border">│</span> <span class="rc-green">🟢 checkout-service</span>          <span class="rc-green">Healthy</span>    <span class="rc-dim">CPU: 12%  Mem: 45%</span> <span class="rc-border">│</span>
+<span class="rc-border">│</span> <span class="rc-yellow">🟡 payment-gateway</span>           <span class="rc-yellow">Warning</span>    <span class="rc-dim">CPU: 78%  Mem: 62%</span> <span class="rc-border">│</span>
+<span class="rc-border">│</span> <span class="rc-red">🔴 inventory-sync</span>            <span class="rc-red">Critical</span>   <span class="rc-dim">CPU: 95%  Mem: 88%</span> <span class="rc-border">│</span>
+<span class="rc-border">│</span> <span class="rc-green">🟢 auth-service</span>              <span class="rc-green">Healthy</span>    <span class="rc-dim">CPU:  8%  Mem: 32%</span> <span class="rc-border">│</span>
+<span class="rc-border">│</span> <span class="rc-green">🟢 notification-svc</span>          <span class="rc-green">Healthy</span>    <span class="rc-dim">CPU:  5%  Mem: 28%</span> <span class="rc-border">│</span>
+<span class="rc-border">╰────────────────────────────────────────────────────────────╯</span>
+
+<span class="rc-heading">📋 Executive Summary</span>
+<span class="rc-dim">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span>
+ <span class="rc-green">3 services healthy</span> <span class="rc-dim">|</span> <span class="rc-yellow">1 warning</span> <span class="rc-dim">|</span> <span class="rc-red">1 critical</span>
+
+<span class="rc-heading">🔍 Critical Finding:</span> <span class="rc-red">inventory-sync</span>
+   <span class="rc-bright">OOMKilled 3x in last hour. Memory limit 512Mi insufficient</span>
+   <span class="rc-bright">for current batch size. Recommend: increase to 1Gi or reduce</span>
+   <span class="rc-bright">batch concurrency from 8 → 4.</span>
+
+<span class="rc-heading">⚡ Recommended Actions</span>
+<span class="rc-blue">┃</span> 1. <span class="rc-red">🔴</span> <span class="rc-bright">Scale inventory-sync memory limit to 1Gi</span>     <span class="rc-urgent">[URGENT]</span>
+<span class="rc-blue">┃</span> 2. <span class="rc-yellow">🟡</span> <span class="rc-bright">Review payment-gateway CPU spike at 14:23</span>    <span class="rc-monitor">[MONITOR]</span>
+<span class="rc-blue">┃</span> 3. <span class="rc-green">🟢</span> <span class="rc-bright">Consider HPA for checkout-service</span>            <span class="rc-optimize">[OPTIMIZE]</span></div>
+      <p class="report-console-subtitle">
+        <strong>Structured, color-coded terminal output</strong> — instant visibility into cluster health<br>
+        with prioritized actions. No log spelunking required.
+      </p>
+    </div>
+    <div class="slide-num">09 / 11</div>
+  </section>
+
+  <!-- ── SLIDE 10: REPORT OUTPUT — HTML ───────────────────── -->
+  <section class="slide slide-report-html">
+    <div class="brand">vertex-ai-toolkit · vaig</div>
+    <div class="report-html-layout">
+      <div>
+        <p class="slide-label">Report Output — HTML</p>
+        <h2>Exportable <span class="highlight">Interactive Reports</span></h2>
+        <p class="solution-desc">
+          A single command generates a standalone HTML SPA report — no external dependencies, no server required.
+          Share via email, Slack, or embed in your incident management workflow.
+        </p>
+        <div class="report-sections">
+          <div class="report-section-card">
+            <span class="rs-icon" role="img" aria-label="Summary">📋</span>
+            <div>
+              <div class="rs-name">Executive Summary</div>
+              <div class="rs-desc">High-level health status with service counts, overall risk assessment, and time of investigation</div>
+            </div>
+          </div>
+          <div class="report-section-card">
+            <span class="rs-icon" role="img" aria-label="Services">🔍</span>
+            <div>
+              <div class="rs-name">Per-Service Breakdown</div>
+              <div class="rs-desc">CPU, memory, replica status, recent events, and container state for every service analyzed</div>
+            </div>
+          </div>
+          <div class="report-section-card">
+            <span class="rs-icon" role="img" aria-label="Timeline">📊</span>
+            <div>
+              <div class="rs-name">Timeline &amp; Events</div>
+              <div class="rs-desc">Chronological view of OOM kills, restarts, scaling events, and deployment rollouts</div>
+            </div>
+          </div>
+          <div class="report-section-card">
+            <span class="rs-icon" role="img" aria-label="Cost">💰</span>
+            <div>
+              <div class="rs-name">Cost Estimation &amp; Actions</div>
+              <div class="rs-desc">Resource optimization suggestions with urgency ratings — from critical fixes to long-term improvements</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <!-- Mockup browser window -->
+        <div class="report-html-mockup">
+          <div class="mockup-titlebar">
+            <div class="mt-dots">
+              <span style="background:#ff5f56"></span>
+              <span style="background:#ffbd2e"></span>
+              <span style="background:#27c93f"></span>
+            </div>
+            <div class="mt-url">vaig-report-prod-2026-03-27.html</div>
+          </div>
+          <div class="mockup-body">
+            <div class="mockup-header">
+              <div class="mh-title">🛡️ VAIG Infrastructure Health Report</div>
+              <div class="mh-sub">prod cluster · api namespace · 2026-03-27 14:32 UTC</div>
+            </div>
+            <div class="mockup-stats">
+              <div class="mockup-stat">
+                <div class="ms-val" style="color:var(--green)">3</div>
+                <div class="ms-lbl">Healthy</div>
+              </div>
+              <div class="mockup-stat">
+                <div class="ms-val" style="color:var(--yellow)">1</div>
+                <div class="ms-lbl">Warning</div>
+              </div>
+              <div class="mockup-stat">
+                <div class="ms-val" style="color:var(--red)">1</div>
+                <div class="ms-lbl">Critical</div>
+              </div>
+              <div class="mockup-stat">
+                <div class="ms-val" style="color:var(--blue)">47</div>
+                <div class="ms-lbl">Tools Used</div>
+              </div>
+            </div>
+            <div class="mockup-services">
+              <div class="mockup-svc">
+                <span class="ms-dot" style="background:var(--green)"></span>
+                <span class="ms-name">checkout-service</span>
+                <span class="ms-status">CPU 12% · Mem 45%</span>
+              </div>
+              <div class="mockup-svc">
+                <span class="ms-dot" style="background:var(--yellow)"></span>
+                <span class="ms-name">payment-gateway</span>
+                <span class="ms-status">CPU 78% · Mem 62%</span>
+              </div>
+              <div class="mockup-svc">
+                <span class="ms-dot" style="background:var(--red)"></span>
+                <span class="ms-name">inventory-sync</span>
+                <span class="ms-status">CPU 95% · Mem 88%</span>
+              </div>
+              <div class="mockup-svc">
+                <span class="ms-dot" style="background:var(--green)"></span>
+                <span class="ms-name">auth-service</span>
+                <span class="ms-status">CPU 8% · Mem 32%</span>
+              </div>
+              <div class="mockup-svc">
+                <span class="ms-dot" style="background:var(--green)"></span>
+                <span class="ms-name">notification-svc</span>
+                <span class="ms-status">CPU 5% · Mem 28%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="report-html-features">
+          <span class="rhf-pill"><strong>📧</strong> Share via email</span>
+          <span class="rhf-pill"><strong>🔗</strong> No dependencies</span>
+          <span class="rhf-pill"><strong>📱</strong> Mobile-friendly</span>
+          <span class="rhf-pill"><strong>🖨️</strong> Print-ready</span>
+        </div>
+      </div>
+    </div>
+    <div class="slide-num">10 / 11</div>
+  </section>
+
+  <!-- ── SLIDE 11: ROI ───────────────────────────────────── -->
   <section class="slide slide-roi">
     <div class="brand">vertex-ai-toolkit · vaig</div>
     <div class="roi-layout">
@@ -1197,10 +1533,10 @@
             </div>
           </div>
           <div class="roi-metric">
-            <div class="val">~$0.05</div>
+            <div class="val">~$0.50</div>
             <div class="txt">
-              <strong>Cost Per Investigation</strong>
-              <p>Typical full health check costs $0.02–$0.10 in Gemini API tokens — orders of magnitude cheaper than an engineer-hour.</p>
+              <strong>Per Comprehensive Health Report</strong>
+              <p>Multi-agent orchestration, 47 tool calls, parallel analysis &amp; HTML report — less than a coffee. What takes an SRE 2–4 hours, VAIG delivers in ~3 minutes.</p>
             </div>
           </div>
           <div class="roi-metric">
@@ -1232,7 +1568,7 @@
         </div>
       </div>
     </div>
-    <div class="slide-num">09 / 09</div>
+    <div class="slide-num">11 / 11</div>
   </section>
 
 </div><!-- /deck -->
