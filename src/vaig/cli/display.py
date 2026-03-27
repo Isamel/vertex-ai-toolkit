@@ -9,6 +9,7 @@ import typer
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
@@ -64,17 +65,44 @@ def colorize_severity(text: str) -> str:
     return text
 
 
+_SECTION_RULE_MAP: list[tuple[re.Pattern[str], str, str]] = [
+    # (pattern matching the header text after ##, Rule title, Rule style)
+    (re.compile(r"critical\s*issues?|critical", re.IGNORECASE), "🔴 Critical Issues", "red"),
+    (re.compile(r"warnings?|warning", re.IGNORECASE), "🟡 Warnings", "yellow"),
+    (re.compile(r"findings?", re.IGNORECASE), "📋 Findings", "blue"),
+    (re.compile(r"recommend", re.IGNORECASE), "📋 Recommendations", "cyan"),
+    (re.compile(r"cost", re.IGNORECASE), "💰 Cost Analysis", "green"),
+    (re.compile(r"timeline", re.IGNORECASE), "⏱ Timeline", "blue"),
+]
+
+
+def _section_rule_for_header(header_text: str) -> Rule:
+    """Return a styled ``Rule`` for a ``##``-level section header.
+
+    Matches *header_text* against known section patterns and returns a
+    Rule with the corresponding emoji and style.  Falls back to a
+    ``bright_blue`` Rule with the raw header text.
+    """
+    for pat, title, style in _SECTION_RULE_MAP:
+        if pat.search(header_text):
+            return Rule(title=title, style=style)
+    return Rule(title=header_text.strip(), style="bright_blue")
+
+
 def print_colored_report(
     text: str,
     *,
     console: Console | None = None,
 ) -> None:
-    """Print a report with severity keywords colorized.
+    """Print a report with severity keywords colorized and section dividers.
 
     Lines containing severity keywords are printed with Rich markup
     (plain text, not Markdown) so the colors render.  All other lines
     are accumulated and flushed as Markdown blocks to preserve
     headings, tables, code fences, etc.
+
+    ``##``-level Markdown headers are rendered as Rich ``Rule`` dividers
+    with descriptive labels and emojis (e.g. "🔴 Critical Issues").
 
     **Table & code-fence awareness**: when inside a multi-line Markdown
     structure (table or fenced code block), lines are ALWAYS kept in the
@@ -124,6 +152,15 @@ def print_colored_report(
         # Exiting table — a non-table line after table rows
         if in_table and not is_table_line:
             in_table = False
+
+        # ── Section dividers for ## headers ───────────────────
+        if stripped.startswith("## ") and not stripped.startswith("### "):
+            _flush_md()
+            header_text = stripped.lstrip("#").strip()
+            con.print()
+            con.print(_section_rule_for_header(header_text))
+            con.print()
+            continue
 
         # Normal line processing — severity coloring only outside structures
         if _line_has_severity(line):
@@ -325,6 +362,261 @@ def print_executive_summary_panel(
         padding=(1, 2),
     )
     con.print(panel)
+
+
+# ── Service Status Table ─────────────────────────────────────
+
+# Maps ServiceHealthStatus value → (Rich style, emoji)
+_SERVICE_STATUS_STYLE: dict[str, tuple[str, str]] = {
+    "HEALTHY": ("green", "🟢"),
+    "DEGRADED": ("yellow", "🟡"),
+    "FAILED": ("red", "🔴"),
+    "UNKNOWN": ("dim", "⚪"),
+}
+
+
+def print_service_status_table(
+    report: HealthReport,
+    console: Console | None = None,
+) -> None:
+    """Render a Rich table of per-service health status with colored indicators.
+
+    Uses ``report.service_statuses`` when available.  Falls back to
+    extracting a minimal service list from ``report.findings`` grouped
+    by severity (Critical → Failed, High/Medium → Degraded, else Healthy).
+
+    Missing metrics (pods, CPU, memory) are displayed as ``—``.
+
+    Args:
+        report: A parsed ``HealthReport`` instance.
+        console: Optional Rich Console; defaults to module-level instance.
+    """
+    con = console or _default_console
+
+    # ── Build rows from service_statuses or findings ──────────
+    rows: list[dict[str, str]] = []
+
+    if report.service_statuses:
+        for svc in report.service_statuses:
+            status_key = svc.status.value if hasattr(svc.status, "value") else str(svc.status)
+            rows.append(
+                {
+                    "service": svc.service,
+                    "status": status_key,
+                    "pods": svc.pods_ready if svc.pods_ready and svc.pods_ready != "N/A" else "—",
+                    "cpu": svc.cpu_usage if svc.cpu_usage and svc.cpu_usage != "N/A" else "—",
+                    "memory": svc.memory_usage if svc.memory_usage and svc.memory_usage != "N/A" else "—",
+                }
+            )
+    elif report.findings:
+        # Fallback: derive a rough service → status mapping from findings.
+        service_severity: dict[str, str] = {}
+        for f in report.findings:
+            svc_name = f.service or f.id
+            if not svc_name:
+                continue
+            sev = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
+            if sev in ("CRITICAL",):
+                service_severity[svc_name] = "FAILED"
+            elif sev in ("HIGH", "MEDIUM") and service_severity.get(svc_name) != "FAILED":
+                service_severity[svc_name] = "DEGRADED"
+            elif svc_name not in service_severity:
+                service_severity[svc_name] = "HEALTHY"
+
+        for svc_name, status_key in service_severity.items():
+            rows.append(
+                {
+                    "service": svc_name,
+                    "status": status_key,
+                    "pods": "—",
+                    "cpu": "—",
+                    "memory": "—",
+                }
+            )
+
+    if not rows:
+        return  # Nothing to display
+
+    # ── Build Rich table inside a Panel ───────────────────────
+    table = Table(
+        show_header=True,
+        header_style="bold",
+        show_lines=False,
+        pad_edge=True,
+        expand=True,
+    )
+    table.add_column("Service", style="bold white", min_width=20)
+    table.add_column("Status", min_width=10)
+    table.add_column("Pods", justify="center", min_width=6)
+    table.add_column("CPU", justify="center", min_width=8)
+    table.add_column("Memory", justify="center", min_width=12)
+
+    for row in rows:
+        style, emoji = _SERVICE_STATUS_STYLE.get(row["status"], ("dim", "⚪"))
+        status_text = Text(f"{row['status']}", style=style)
+        service_label = f"{emoji} {row['service']}"
+        table.add_row(service_label, status_text, row["pods"], row["cpu"], row["memory"])
+
+    panel = Panel(table, title="Service Status", border_style="bright_blue", padding=(0, 1))
+    con.print(panel)
+
+
+# ── Cost Breakdown Table ─────────────────────────────────────
+
+
+def print_cost_breakdown_table(
+    report: HealthReport,
+    console: Console | None = None,
+) -> None:
+    """Render a cost breakdown table from GKE workload cost data.
+
+    Extracts data from ``report.metadata.gke_cost`` when available.
+    If no structured cost data exists the function returns silently
+    (never crashes).
+
+    Args:
+        report: A parsed ``HealthReport`` instance.
+        console: Optional Rich Console; defaults to module-level instance.
+    """
+    con = console or _default_console
+
+    # Resolve cost data — prefer gke_cost, fall back gracefully
+    gke_cost = getattr(report.metadata, "gke_cost", None) if report.metadata else None
+    if gke_cost is None or not getattr(gke_cost, "workloads", None):
+        return  # No cost data — skip silently
+
+    workloads = gke_cost.workloads
+    if not workloads:
+        return
+
+    # Guard: verify cost fields are actually numeric (not mocks/stubs)
+    _sample = getattr(gke_cost, "total_request_cost_usd", None)
+    if _sample is not None and not isinstance(_sample, (int, float)):
+        return
+
+    con.print(Rule("💰 Cost Breakdown", style="green"))
+    con.print()
+
+    table = Table(
+        show_header=True,
+        header_style="bold",
+        show_lines=False,
+        pad_edge=True,
+        expand=True,
+    )
+    table.add_column("Workload", style="cyan", min_width=25)
+    table.add_column("Namespace", style="dim", min_width=12)
+    table.add_column("Request Cost", justify="right", style="bold green", min_width=14)
+    table.add_column("Usage Cost", justify="right", min_width=14)
+    table.add_column("Waste", justify="right", style="red", min_width=14)
+
+    for wl in workloads:
+        name = wl.workload_name or "—"
+        ns = wl.namespace or "—"
+        req_cost = f"${wl.total_request_cost_usd:,.2f}/mo" if wl.total_request_cost_usd is not None else "—"
+        use_cost = f"${wl.total_usage_cost_usd:,.2f}/mo" if wl.total_usage_cost_usd is not None else "—"
+        waste = f"${wl.total_waste_usd:,.2f}/mo" if wl.total_waste_usd is not None else "—"
+        table.add_row(name, ns, req_cost, use_cost, waste)
+
+    # Totals row
+    if gke_cost.total_request_cost_usd is not None:
+        total_req = f"${gke_cost.total_request_cost_usd:,.2f}/mo"
+        total_use = f"${gke_cost.total_usage_cost_usd:,.2f}/mo" if gke_cost.total_usage_cost_usd is not None else "—"
+        total_save = f"${gke_cost.total_savings_usd:,.2f}/mo" if gke_cost.total_savings_usd is not None else "—"
+        table.add_section()
+        table.add_row(
+            Text("TOTAL", style="bold"),
+            "",
+            Text(total_req, style="bold green"),
+            Text(total_use, style="bold"),
+            Text(total_save, style="bold red"),
+        )
+
+    con.print(table)
+    con.print()
+
+
+# ── Severity Detail Blocks ───────────────────────────────────
+
+# Emoji & label for severity detail rendering (extends the schema map)
+_SEVERITY_DETAIL_STYLE: dict[str, tuple[str, str, str]] = {
+    # key → (emoji, label, Rich style)
+    "CRITICAL": ("🔴", "Critical", "bold red"),
+    "HIGH": ("🟠", "High", "bold #ff8c00"),
+    "MEDIUM": ("🟡", "Medium", "bold yellow"),
+    "LOW": ("🔵", "Low", "bold blue"),
+    "INFO": ("🟢", "Info", "bold green"),
+}
+
+
+def print_severity_detail_blocks(
+    report: HealthReport,
+    console: Console | None = None,
+) -> None:
+    """Render findings grouped by severity as Rich-formatted detail blocks.
+
+    Groups findings by severity (CRITICAL → INFO), printing each with
+    a colored emoji prefix, bold title, and indented description /
+    root cause / evidence.
+
+    Args:
+        report: A parsed ``HealthReport`` instance.
+        console: Optional Rich Console; defaults to module-level instance.
+    """
+    con = console or _default_console
+
+    if not report.findings:
+        return
+
+    severity_order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+
+    # Group findings by severity
+    grouped: dict[str, list[Any]] = {s: [] for s in severity_order}
+    for f in report.findings:
+        sev = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
+        if sev in grouped:
+            grouped[sev].append(f)
+        else:
+            grouped.setdefault("INFO", []).append(f)
+
+    for sev in severity_order:
+        findings = grouped.get(sev, [])
+        if not findings:
+            continue
+
+        emoji, label, style = _SEVERITY_DETAIL_STYLE.get(sev, ("⚪", sev, "dim"))
+
+        for f in findings:
+            # Title line: 🔴 Critical: service-name
+            title_parts = Text()
+            title_parts.append(f"{emoji} {label}: ", style=style)
+            service_hint = getattr(f, "service", "") or getattr(f, "id", "")
+            title_parts.append(f"{getattr(f, 'title', service_hint)}", style="bold")
+            con.print(title_parts)
+
+            # Description (indented)
+            description = getattr(f, "description", "")
+            if description:
+                for desc_line in description.split("\n"):
+                    con.print(f"   {desc_line}")
+
+            # Root cause (indented)
+            root_cause = getattr(f, "root_cause", "")
+            if root_cause:
+                con.print(Text(f"   Root cause: {root_cause}", style="dim italic"))
+
+            # Evidence items (indented)
+            evidence = getattr(f, "evidence", [])
+            if evidence:
+                for ev_item in evidence:
+                    con.print(f"   • {ev_item}", style="dim")
+
+            # Impact
+            impact = getattr(f, "impact", "")
+            if impact:
+                con.print(Text(f"   Impact: {impact}", style="dim"))
+
+            con.print()  # Blank line between findings
 
 
 # ── Recommendations Table ────────────────────────────────────
