@@ -16,12 +16,50 @@ from vaig.core.prompt_defense import (
     ANTI_HALLUCINATION_RULES,
     ANTI_INJECTION_RULE,
     _sanitize_namespace,
+    wrap_untrusted_content,
 )
 
 from ._shared import (
     _DATADOG_API_TOOLS_TABLE,
     _PRIORITY_HIERARCHY,
 )
+
+
+def _node_step3_instruction(prefetched_node_metrics: str) -> str:
+    """Return the Step 3 instruction text for the node gatherer.
+
+    When pre-fetched node metrics are available, instructs the agent to
+    use the pre-gathered data instead of calling ``kubectl_top`` again.
+    Otherwise, emits the standard ``kubectl_top`` tool call instruction.
+    """
+    if prefetched_node_metrics:
+        return (
+            "kubectl_top data for nodes was pre-gathered — see the "
+            "PRE-GATHERED METRICS DATA section below.  Do NOT call "
+            "``kubectl_top(resource_type=\"nodes\")`` again."
+        )
+    return "``kubectl_top(resource_type=\"nodes\")`` — CPU/memory utilisation per node"
+
+
+def _workload_step2_instruction(prefetched_pod_metrics: str, ns: str) -> str:
+    """Return the Step 2 kubectl_top instruction text for the workload gatherer.
+
+    When pre-fetched pod metrics are available, instructs the agent to
+    use the pre-gathered data instead of calling ``kubectl_top`` again.
+    Otherwise, emits the standard MANDATORY ``kubectl_top`` tool call instruction.
+    """
+    if prefetched_pod_metrics:
+        return (
+            f"kubectl_top data for pods in namespace ``{ns}`` was pre-gathered — see the "
+            "PRE-GATHERED METRICS DATA section below.  Do NOT call "
+            "``kubectl_top`` again.  The reporter can use this data directly for the "
+            "Service Status CPU/Memory columns."
+        )
+    return (
+        f"``kubectl_top(resource_type=\"pods\", namespace=\"{ns}\")`` — real-time CPU/memory usage per pod\n"
+        "    This is MANDATORY — the reporter needs real CPU and memory values for the Service Status table.\n"
+        "    If this call fails, record the error and note \"kubectl_top unavailable\" — do NOT fabricate values."
+    )
 
 
 def build_node_gatherer_prompt(
@@ -119,7 +157,7 @@ work outside this scope.
 1. ``kubectl_get(resource="nodes", output="wide")`` — list all nodes with status
 2. ``get_node_conditions(name="<each node>")`` — for every node returned
    in step 1, call this to retrieve the full condition set
-3. ``kubectl_top(resource_type="nodes")`` — CPU/memory utilisation per node
+3. {_node_step3_instruction(prefetched_node_metrics)}
 4. ``kubectl_get(resource="pods", namespace="kube-system", output="wide")`` — system component health
 5. ``kubectl_get(resource="namespaces")`` — cluster namespace inventory
 6. ``get_events(namespace="kube-system", event_type="Warning")`` — system-level warning events
@@ -167,6 +205,7 @@ Produce exactly this section at the end of your response:
 
     # ── Inject pre-fetched node metrics when available ────────────────
     if prefetched_node_metrics:
+        wrapped_metrics = wrap_untrusted_content(prefetched_node_metrics)
         prompt += f"""
 ## PRE-GATHERED METRICS DATA — kubectl_top nodes
 
@@ -175,9 +214,7 @@ programmatically BEFORE your execution started.  Use this data directly
 for the Node Inventory CPU/Memory columns.  Do NOT call ``kubectl_top``
 again — the data is already here.
 
-```
-{prefetched_node_metrics}
-```
+{wrapped_metrics}
 """
 
     return prompt
@@ -266,9 +303,7 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
 
 ### Step 2 — Pod Status Analysis
 1. ``kubectl_get(resource="pods", namespace="{ns}", output="wide")`` — all pods
-2. ``kubectl_top(resource_type="pods", namespace="{ns}")`` — real-time CPU/memory usage per pod
-    This is MANDATORY — the reporter needs real CPU and memory values for the Service Status table.
-    If this call fails, record the error and note "kubectl_top unavailable" — do NOT fabricate values.
+2. {_workload_step2_instruction(prefetched_pod_metrics, ns)}
     For **historical trends** (past 1h by default), also call ``get_pod_metrics(namespace="{ns}", pod_name_prefix="<workload-prefix>")``
     to retrieve Cloud Monitoring time-series data (Avg/Max/Latest/Trend per pod). Use ``kubectl_top``
     for current-state values in the Service Status table and ``get_pod_metrics`` for trend context.
@@ -525,6 +560,7 @@ j. **Rollout Details section** — inside ``## Raw Findings (Workload)``, add a
 
     # ── Inject pre-fetched pod metrics when available ─────────────────
     if prefetched_pod_metrics:
+        wrapped_metrics = wrap_untrusted_content(prefetched_pod_metrics)
         prompt += f"""
 ## PRE-GATHERED METRICS DATA — kubectl_top pods
 
@@ -534,9 +570,7 @@ for the Service Status CPU/Memory columns.  Do NOT call ``kubectl_top``
 again — the data is already here.  You still need ``get_pod_metrics``
 for historical trends if required.
 
-```
-{prefetched_pod_metrics}
-```
+{wrapped_metrics}
 """
 
     return prompt

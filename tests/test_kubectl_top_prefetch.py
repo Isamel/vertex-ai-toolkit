@@ -4,9 +4,14 @@ Verifies that:
 - ``_pre_fetch_metrics()`` calls ``kubectl_top`` correctly and returns structured data
 - ``_pre_fetch_metrics()`` handles errors gracefully (never crashes)
 - ``_pre_fetch_metrics()`` respects Autopilot wrapper for node metrics
+- ``_pre_fetch_metrics()`` detects non-metric sentinel outputs (Fix #1)
+- ``_pre_fetch_metrics()`` truncates large outputs (Fix #3)
+- ``pre_execute_parallel()`` populates ``_prefetched_metrics`` (Fix #2)
+- ``get_parallel_agents_config()`` reads from ``_prefetched_metrics`` without calling kubectl_top (Fix #2)
 - ``build_node_gatherer_prompt(prefetched_node_metrics=...)`` includes pre-gathered data
 - ``build_workload_gatherer_prompt(prefetched_pod_metrics=...)`` includes pre-gathered data
-- Prompts instruct the agent NOT to call ``kubectl_top`` again when data is pre-fetched
+- Pre-fetched metrics are wrapped with ``wrap_untrusted_content()`` (Fix #4)
+- Step 2/3 instructions are conditional on pre-fetched data availability (Fix #5)
 - Backward compatibility: empty string omits the pre-fetch section
 """
 
@@ -14,6 +19,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from vaig.core.prompt_defense import DELIMITER_DATA_END, DELIMITER_DATA_START
 from vaig.tools.base import ToolResult
 
 # ── Pre-fetch helper tests ───────────────────────────────────────────────
@@ -38,7 +44,7 @@ class TestPreFetchMetrics:
 
         with patch(
             "vaig.tools.gke.kubectl.kubectl_top",
-            return_value=ToolResult(output="mock output"),
+            return_value=ToolResult(output=FAKE_POD_METRICS),
         ):
             result = ServiceHealthSkill._pre_fetch_metrics(
                 gke_config=None,  # type: ignore[arg-type] — mocked
@@ -92,7 +98,7 @@ class TestPreFetchMetrics:
         def _mock_kubectl_top(resource_type, *, gke_config, **kwargs):  # noqa: ARG001
             if resource_type == "nodes":
                 call_count["nodes"] += 1
-            return ToolResult(output="mock")
+            return ToolResult(output=FAKE_POD_METRICS)
 
         with patch(
             "vaig.tools.gke.kubectl.kubectl_top",
@@ -168,7 +174,7 @@ class TestPreFetchMetrics:
         def _mock_kubectl_top(resource_type, *, gke_config, namespace="default", **kwargs):  # noqa: ARG001
             if resource_type in ("pods", "pod"):
                 captured_ns["ns"] = namespace
-            return ToolResult(output="mock")
+            return ToolResult(output=FAKE_POD_METRICS)
 
         with patch(
             "vaig.tools.gke.kubectl.kubectl_top",
@@ -180,6 +186,243 @@ class TestPreFetchMetrics:
                 is_autopilot=False,
             )
         assert captured_ns["ns"] == "default"
+
+
+# ── Sentinel detection tests (Fix #1) ───────────────────────────────────
+
+
+class TestSentinelDetection:
+    """Verify _pre_fetch_metrics detects non-metric outputs lacking CPU/MEMORY headers."""
+
+    def test_sentinel_pod_output_detected(self) -> None:
+        """Output without CPU/MEMORY headers is treated as unavailable."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        sentinel = "No metrics data available. Is metrics-server installed?"
+        with patch(
+            "vaig.tools.gke.kubectl.kubectl_top",
+            return_value=ToolResult(output=sentinel),
+        ):
+            result = ServiceHealthSkill._pre_fetch_metrics(
+                gke_config=None,  # type: ignore[arg-type]
+                namespace="default",
+                is_autopilot=True,  # skip node call
+            )
+        assert "unavailable" in result["pods"].lower()
+        assert sentinel.strip() in result["pods"]
+
+    def test_sentinel_node_output_detected(self) -> None:
+        """Node output without CPU/MEMORY headers is treated as unavailable."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        sentinel = "error: Metrics API not available"
+
+        def _mock_kubectl_top(resource_type, *, gke_config, **kwargs):  # noqa: ARG001
+            if resource_type == "nodes":
+                return ToolResult(output=sentinel)
+            return ToolResult(output=FAKE_POD_METRICS)
+
+        with patch(
+            "vaig.tools.gke.kubectl.kubectl_top",
+            side_effect=_mock_kubectl_top,
+        ):
+            result = ServiceHealthSkill._pre_fetch_metrics(
+                gke_config=None,  # type: ignore[arg-type]
+                namespace="default",
+                is_autopilot=False,
+            )
+        assert "unavailable" in result["nodes"].lower()
+        assert result["pods"] == FAKE_POD_METRICS  # pods still succeed
+
+    def test_valid_output_not_flagged_as_sentinel(self) -> None:
+        """Output with CPU and MEMORY headers passes validation."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        with patch(
+            "vaig.tools.gke.kubectl.kubectl_top",
+            return_value=ToolResult(output=FAKE_POD_METRICS),
+        ):
+            result = ServiceHealthSkill._pre_fetch_metrics(
+                gke_config=None,  # type: ignore[arg-type]
+                namespace="default",
+                is_autopilot=True,  # skip node call
+            )
+        # Valid output should be passed through unchanged
+        assert result["pods"] == FAKE_POD_METRICS
+        assert "unavailable" not in result["pods"].lower()
+
+    def test_informational_message_with_error_false(self) -> None:
+        """Informational messages like 'metrics not available' with error=False are caught."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        msg = "Metrics not yet available for this cluster"
+        with patch(
+            "vaig.tools.gke.kubectl.kubectl_top",
+            return_value=ToolResult(output=msg),
+        ):
+            result = ServiceHealthSkill._pre_fetch_metrics(
+                gke_config=None,  # type: ignore[arg-type]
+                namespace="default",
+                is_autopilot=True,
+            )
+        assert "unavailable" in result["pods"].lower()
+
+
+# ── Truncation tests (Fix #3) ───────────────────────────────────────────
+
+
+class TestOutputTruncation:
+    """Verify _pre_fetch_metrics truncates large outputs."""
+
+    def test_output_within_limit_not_truncated(self) -> None:
+        """Output with fewer lines than the limit is not truncated."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        with patch(
+            "vaig.tools.gke.kubectl.kubectl_top",
+            return_value=ToolResult(output=FAKE_POD_METRICS),
+        ):
+            result = ServiceHealthSkill._pre_fetch_metrics(
+                gke_config=None,  # type: ignore[arg-type]
+                namespace="default",
+                is_autopilot=True,
+            )
+        assert "truncated" not in result["pods"].lower()
+
+    def test_output_exceeding_limit_is_truncated(self) -> None:
+        """Output with more than _MAX_KUBECTL_TOP_LINES lines is truncated."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        header = "NAME                  CPU(cores)     MEMORY\n"
+        lines = [f"pod-{i:04d}              0.001          10Mi" for i in range(200)]
+        large_output = header + "\n".join(lines)
+
+        with patch(
+            "vaig.tools.gke.kubectl.kubectl_top",
+            return_value=ToolResult(output=large_output),
+        ):
+            result = ServiceHealthSkill._pre_fetch_metrics(
+                gke_config=None,  # type: ignore[arg-type]
+                namespace="default",
+                is_autopilot=True,
+            )
+        assert "truncated" in result["pods"].lower()
+        assert "201 total lines" in result["pods"]
+        # First 100 lines should be present (header + 99 data lines)
+        output_lines = result["pods"].splitlines()
+        # 100 content lines + 1 truncation notice
+        assert len(output_lines) == 101
+
+    def test_truncation_preserves_header(self) -> None:
+        """The header line must be preserved in truncated output."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        header = "NAME                  CPU(cores)     MEMORY\n"
+        lines = [f"pod-{i:04d}              0.001          10Mi" for i in range(150)]
+        large_output = header + "\n".join(lines)
+
+        with patch(
+            "vaig.tools.gke.kubectl.kubectl_top",
+            return_value=ToolResult(output=large_output),
+        ):
+            result = ServiceHealthSkill._pre_fetch_metrics(
+                gke_config=None,  # type: ignore[arg-type]
+                namespace="default",
+                is_autopilot=True,
+            )
+        # Header (first line) should be present
+        assert "CPU(cores)" in result["pods"].splitlines()[0]
+
+    def test_node_output_also_truncated(self) -> None:
+        """Node metrics are also truncated when exceeding the limit."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        header = "NAME                  CPU(cores)     CPU%     MEMORY      MEMORY%\n"
+        lines = [f"node-{i:04d}              0.250       12%       2048Mi      45%" for i in range(150)]
+        large_output = header + "\n".join(lines)
+
+        def _mock_kubectl_top(resource_type, *, gke_config, **kwargs):  # noqa: ARG001
+            if resource_type == "nodes":
+                return ToolResult(output=large_output)
+            return ToolResult(output=FAKE_POD_METRICS)
+
+        with patch(
+            "vaig.tools.gke.kubectl.kubectl_top",
+            side_effect=_mock_kubectl_top,
+        ):
+            result = ServiceHealthSkill._pre_fetch_metrics(
+                gke_config=None,  # type: ignore[arg-type]
+                namespace="default",
+                is_autopilot=False,
+            )
+        assert "truncated" in result["nodes"].lower()
+
+
+# ── Pre-execute parallel and _prefetched_metrics tests (Fix #2) ─────────
+
+
+class TestPreExecuteParallelPrefetch:
+    """Verify pre_execute_parallel populates _prefetched_metrics (Fix #2)."""
+
+    def test_init_sets_empty_prefetched_metrics(self) -> None:
+        """ServiceHealthSkill.__init__ must set _prefetched_metrics to empty dict."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        assert skill._prefetched_metrics == {"pods": "", "nodes": ""}
+
+    def test_pre_execute_parallel_populates_prefetched_metrics(self) -> None:
+        """pre_execute_parallel must call _pre_fetch_metrics and store results."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        expected = {"pods": FAKE_POD_METRICS, "nodes": FAKE_NODE_METRICS}
+
+        with (
+            patch.object(
+                ServiceHealthSkill, "_pre_fetch_metrics", return_value=expected,
+            ),
+            patch("vaig.skills.service_health.skill.ensure_client_initialized"),
+            patch("vaig.tools.gke._clients.detect_autopilot", return_value=False),
+        ):
+            skill.pre_execute_parallel("check health")
+
+        assert skill._prefetched_metrics == expected
+
+    def test_pre_execute_parallel_error_keeps_empty_defaults(self) -> None:
+        """If _pre_fetch_metrics raises, _prefetched_metrics stays empty."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+
+        with (
+            patch.object(
+                ServiceHealthSkill, "_pre_fetch_metrics",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch("vaig.skills.service_health.skill.ensure_client_initialized"),
+            patch("vaig.tools.gke._clients.detect_autopilot", return_value=False),
+        ):
+            # Must not raise
+            skill.pre_execute_parallel("check health")
+
+        # Stays at initial empty defaults
+        assert skill._prefetched_metrics == {"pods": "", "nodes": ""}
+
+    def test_get_parallel_agents_config_does_not_call_pre_fetch(self) -> None:
+        """get_parallel_agents_config must NOT call _pre_fetch_metrics directly."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        skill = ServiceHealthSkill()
+        # Pre-populate metrics as if pre_execute_parallel had been called
+        skill._prefetched_metrics = {"pods": FAKE_POD_METRICS, "nodes": FAKE_NODE_METRICS}
+
+        with patch.object(
+            ServiceHealthSkill, "_pre_fetch_metrics",
+        ) as mock_pre_fetch:
+            skill.get_parallel_agents_config()
+
+        mock_pre_fetch.assert_not_called()
 
 
 # ── Node gatherer prompt injection tests ─────────────────────────────────
@@ -235,6 +478,39 @@ class TestNodeGathererPromptPrefetch:
         prompt_no_arg = build_node_gatherer_prompt(is_autopilot=False)
         prompt_explicit = build_node_gatherer_prompt(is_autopilot=False, prefetched_node_metrics="")
         assert prompt_no_arg == prompt_explicit
+
+    def test_prefetch_wrapped_with_untrusted_delimiters(self) -> None:
+        """Pre-fetched data must be wrapped with DELIMITER_DATA_START/END markers (Fix #4)."""
+        from vaig.skills.service_health.prompts import build_node_gatherer_prompt
+
+        prompt = build_node_gatherer_prompt(
+            is_autopilot=False,
+            prefetched_node_metrics=FAKE_NODE_METRICS,
+        )
+        assert DELIMITER_DATA_START in prompt
+        assert DELIMITER_DATA_END in prompt
+
+    def test_step3_conditional_with_prefetch(self) -> None:
+        """Step 3 should NOT say 'kubectl_top' is a tool to call when data is pre-fetched (Fix #5)."""
+        from vaig.skills.service_health.prompts import build_node_gatherer_prompt
+
+        prompt = build_node_gatherer_prompt(
+            is_autopilot=False,
+            prefetched_node_metrics=FAKE_NODE_METRICS,
+        )
+        # Step 3 should say the data was pre-gathered, not instruct to call kubectl_top
+        assert "pre-gathered" in prompt.lower()
+
+    def test_step3_normal_without_prefetch(self) -> None:
+        """Step 3 should instruct to call kubectl_top when no pre-fetched data (Fix #5)."""
+        from vaig.skills.service_health.prompts import build_node_gatherer_prompt
+
+        prompt = build_node_gatherer_prompt(
+            is_autopilot=False,
+            prefetched_node_metrics="",
+        )
+        # Step 3 should contain the kubectl_top tool call instruction
+        assert 'kubectl_top(resource_type="nodes")' in prompt
 
 
 # ── Workload gatherer prompt injection tests ─────────────────────────────
@@ -301,3 +577,37 @@ class TestWorkloadGathererPromptPrefetch:
             prefetched_pod_metrics=FAKE_POD_METRICS,
         )
         assert "get_pod_metrics" in prompt
+
+    def test_prefetch_wrapped_with_untrusted_delimiters(self) -> None:
+        """Pre-fetched data must be wrapped with DELIMITER_DATA_START/END markers (Fix #4)."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(
+            namespace="default",
+            prefetched_pod_metrics=FAKE_POD_METRICS,
+        )
+        assert DELIMITER_DATA_START in prompt
+        assert DELIMITER_DATA_END in prompt
+
+    def test_step2_conditional_with_prefetch(self) -> None:
+        """Step 2 should NOT say kubectl_top is MANDATORY when data is pre-fetched (Fix #5)."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(
+            namespace="default",
+            prefetched_pod_metrics=FAKE_POD_METRICS,
+        )
+        # Should NOT contain the original kubectl_top MANDATORY instruction for step 2
+        assert "MANDATORY — the reporter needs real CPU and memory" not in prompt
+        # Should have the conditional replacement
+        assert "pre-gathered" in prompt.lower()
+
+    def test_step2_normal_without_prefetch(self) -> None:
+        """Step 2 should say kubectl_top is MANDATORY when no pre-fetched data (Fix #5)."""
+        from vaig.skills.service_health.prompts import build_workload_gatherer_prompt
+
+        prompt = build_workload_gatherer_prompt(
+            namespace="default",
+            prefetched_pod_metrics="",
+        )
+        assert "MANDATORY" in prompt
