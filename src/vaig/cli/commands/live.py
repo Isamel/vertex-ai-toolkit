@@ -14,9 +14,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
+from rich.columns import Columns
 from rich.panel import Panel
+from rich.rule import Rule
 from rich.status import Status
 from rich.table import Table
+from rich.text import Text
 
 from vaig.cli import _helpers
 from vaig.cli._completions import complete_namespace
@@ -33,8 +36,11 @@ from vaig.cli._helpers import (
 )
 from vaig.cli.display import (
     print_colored_report,
+    print_cost_breakdown_table,
     print_executive_summary_panel,
     print_recommendations_table,
+    print_service_status_table,
+    print_severity_detail_blocks,
 )
 from vaig.core.cache import ToolResultCache
 from vaig.core.tool_call_store import ToolCallStore
@@ -105,7 +111,7 @@ class ToolCallLogger:
         tool_logger.print_summary()
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, detailed: bool = False) -> None:
         self.tool_count: int = 0
         self.total_duration: float = 0.0
         self.errors: int = 0
@@ -114,6 +120,7 @@ class ToolCallLogger:
         self.tool_name_counts: Counter[str] = Counter()
         self.pipeline_tool_name_counts: Counter[str] = Counter()
         self.cache_hits: int = 0
+        self.detailed = detailed
 
     @staticmethod
     def _extract_reason(error_message: str) -> str:
@@ -162,7 +169,9 @@ class ToolCallLogger:
                 status = "[red]✗ FAIL[/red]"
                 self._error_reasons.append("unknown")
 
-        console.print(f"  🔧 [cyan]{tool_name}[/cyan]({args_str}) {status} [dim]({duration:.1f}s)[/dim]")
+        # Print tool call line only in detailed mode, or always for errors
+        if self.detailed or not success:
+            console.print(f"  🔧 [cyan]{tool_name}[/cyan]({args_str}) {status} [dim]({duration:.1f}s)[/dim]")
 
     def format_tool_counts(self) -> str:
         """Format per-tool-name breakdown for display.
@@ -228,10 +237,36 @@ class AgentProgressDisplay:
     mutations so parallel gatherers cannot race on ``self._status`` and
     cause a Rich ``LiveError("Only one live display may be active at once")``.
 
+    After ALL agents complete, :meth:`print_tree` renders a tree-style
+    summary with emoji icons per role and completion bars.
+
     Args:
         tool_logger: The :class:`ToolCallLogger` for the current pipeline.
             Used to read the running ``tool_count`` for display.
     """
+
+    # Emoji lookup for agent roles (first match wins)
+    _ROLE_EMOJI: list[tuple[str, str]] = [
+        ("gather", "🔍"),
+        ("triage", "🔍"),
+        ("metric", "📊"),
+        ("analys", "📊"),
+        ("log", "📝"),
+        ("report", "📝"),
+        ("synth", "📝"),
+        ("rollout", "🔄"),
+        ("deploy", "🔄"),
+        ("cost", "💰"),
+    ]
+
+    @staticmethod
+    def _emoji_for_role(role: str) -> str:
+        """Return an emoji based on the agent's role keyword."""
+        role_lower = role.lower()
+        for keyword, emoji in AgentProgressDisplay._ROLE_EMOJI:
+            if keyword in role_lower:
+                return emoji
+        return "🤖"
 
     def __init__(self, tool_logger: ToolCallLogger) -> None:
         self._tool_logger = tool_logger
@@ -241,11 +276,17 @@ class AgentProgressDisplay:
         # Avoids overwriting a single shared counter when parallel gatherers
         # fire "start" events before any "end" events arrive.
         self._agent_start_counts: dict[str, int] = {}
+        # Per-agent start timestamps for timing.
+        self._agent_start_times: dict[str, float] = {}
         # Count of agents that have started but not yet ended.
         # Used to defer tool_logger.reset() until ALL active agents finish,
         # so parallel gatherers don't clear shared counters mid-run.
         self._active_agents: int = 0
         self._lock = threading.Lock()
+        # Completed agent records for tree-style summary.
+        # Each entry: (name, role_hint, tools_used, elapsed_secs, success)
+        # success is initially None (unknown); reconciled after orch_result is available.
+        self._completed: list[tuple[str, str, int, float, bool | None]] = []
 
     def _stop_current(self) -> None:
         """Stop and discard the current spinner (if any).
@@ -297,6 +338,7 @@ class AgentProgressDisplay:
                 # single shared counter prevents parallel gatherers from
                 # overwriting each other's baseline before their "end" fires.
                 self._agent_start_counts[agent_name] = self._tool_logger.tool_count
+                self._agent_start_times[agent_name] = time.perf_counter()
                 self._current_agent_name = agent_name
                 self._active_agents += 1
                 label = (
@@ -320,6 +362,7 @@ class AgentProgressDisplay:
                     self._stop_current()
                     self._current_agent_name = None
                 start_count = self._agent_start_counts.pop(agent_name, 0)
+                elapsed = time.perf_counter() - self._agent_start_times.pop(agent_name, time.perf_counter())
                 tools = self._tool_logger.tool_count - start_count
                 breakdown = self._tool_logger.format_tool_counts()
                 tools_detail = f" ({tools} tool{'s' if tools != 1 else ''} called)"
@@ -329,6 +372,9 @@ class AgentProgressDisplay:
                     f"[green]{agent_name}[/green] — [green]done[/green]"
                     f"{tools_detail}{breakdown_detail}"
                 )
+                # Track for tree-style summary (role_hint derived from name).
+                # success is None until reconciled with actual AgentResult.
+                self._completed.append((agent_name, agent_name, tools, elapsed, None))
                 # Decrement active agent count; reset per-agent counters only
                 # when ALL active agents have finished.  Calling reset() on every
                 # "end" would clear shared tool_name_counts while other parallel
@@ -337,10 +383,77 @@ class AgentProgressDisplay:
                 if self._active_agents == 0:
                     self._tool_logger.reset()
 
+    def reconcile_results(self, agent_results: list[Any]) -> None:
+        """Update success flags from actual AgentResult objects.
+
+        Called after the orchestrator returns, before :meth:`print_tree`,
+        so the tree renders actual success/failure instead of ``None``
+        (unknown).  Matches by agent name.
+
+        Thread-safe: acquires ``self._lock`` to mutate ``_completed``.
+
+        Args:
+            agent_results: List of :class:`~vaig.agents.base.AgentResult`
+                instances from the orchestrator.
+        """
+        if not agent_results:
+            return
+        # Build a lookup: agent_name → success bool
+        result_map: dict[str, bool] = {}
+        for ar in agent_results:
+            name = getattr(ar, "agent_name", None) or getattr(ar, "name", "")
+            success = getattr(ar, "success", None)
+            if name and success is not None:
+                result_map[name] = success
+
+        with self._lock:
+            self._completed = [
+                (name, role, tools, elapsed, result_map.get(name, success))
+                for name, role, tools, elapsed, success in self._completed
+            ]
+
+    def get_agent_timings(self) -> dict[str, float]:
+        """Return a mapping of agent_name → elapsed seconds.
+
+        Built from the ``_completed`` records.  Thread-safe.
+        """
+        with self._lock:
+            return {name: elapsed for name, _role, _tools, elapsed, _success in self._completed}
+
     def stop(self) -> None:
         """Stop the spinner if it's still running (e.g. on error)."""
         with self._lock:
             self._stop_current()
+
+    def print_tree(self) -> None:
+        """Print a tree-style summary of all completed agents.
+
+        Renders a visual tree with emoji icons per role and a completion
+        bar after all agents have finished executing.
+        """
+        with self._lock:
+            completed = list(self._completed)
+        if not completed:
+            return
+
+        console.print()
+        total = len(completed)
+        for idx, (name, role_hint, tools, elapsed, success) in enumerate(completed):
+            is_last = idx == total - 1
+            connector = "└──" if is_last else "├──"
+            emoji = self._emoji_for_role(role_hint)
+            if success is None:
+                color = "yellow"
+                status_icon = f"[{color}]⚠[/{color}]"
+            else:
+                color = "green" if success else "red"
+                status_icon = f"[{color}]{'✓' if success else '✗'}[/{color}]"
+            bar = f"[{color}]██████████[/{color}]"
+            tool_str = f"{tools} tool{'s' if tools != 1 else ''}"
+            console.print(
+                f"  {connector} {emoji} [bold]{name}[/bold] "
+                f"{status_icon} {bar} [dim]{elapsed:.1f}s · {tool_str}[/dim]"
+            )
 
 
 def _emit_bell(*, no_bell: bool) -> None:
@@ -350,6 +463,49 @@ def _emit_bell(*, no_bell: bool) -> None:
 
         sys.stdout.write("\a")
         sys.stdout.flush()
+
+
+def _print_launch_header(
+    skill_display_name: str,
+    gke_config: GKEConfig,
+    settings: Settings,
+    tool_count: int,
+    *,
+    model_id: str | None = None,
+    is_async: bool = False,
+) -> None:
+    """Print the enhanced launch header panel with two-column layout.
+
+    Left column: Cluster / Namespace / Project.
+    Right column: Model / Agents / Tools.
+    """
+    async_tag = " (async)" if is_async else ""
+    model_name = model_id or settings.models.default or "—"
+
+    left = Text()
+    left.append("☸  Cluster: ", style="dim")
+    left.append(f"{gke_config.cluster_name or '(kubeconfig default)'}\n")
+    left.append("📂 Namespace: ", style="dim")
+    left.append(f"{gke_config.default_namespace or 'default'}\n")
+    left.append("☁  Project: ", style="dim")
+    left.append(f"{gke_config.project_id or '(auto-detect)'}")
+
+    right = Text()
+    right.append("🧠 Model: ", style="dim")
+    right.append(f"{model_name}\n")
+    right.append("🔧 Tools: ", style="dim")
+    right.append(f"{tool_count} loaded\n")
+    right.append("📋 Strategy: ", style="dim")
+    right.append("sequential")
+
+    console.print(
+        Panel(
+            Columns([left, right], padding=(0, 4)),
+            title=f"🚀 VAIG Live Mode — {skill_display_name}{async_tag}",
+            border_style="bright_cyan",
+            padding=(1, 2),
+        )
+    )
 
 
 def register(app: typer.Typer) -> None:
@@ -425,6 +581,13 @@ def register(app: typer.Typer) -> None:
                     "Analyse all non-system namespaces for cost estimation, "
                     "ignoring the --namespace / config default_namespace filter."
                 ),
+            ),
+        ] = False,
+        detailed: Annotated[
+            bool,
+            typer.Option(
+                "--detailed",
+                help="Show every tool call as it happens (verbose execution output)",
             ),
         ] = False,
     ) -> None:
@@ -586,6 +749,7 @@ def register(app: typer.Typer) -> None:
                         no_bell=no_bell,
                         open_browser=open_browser if not watch else False,
                         all_namespaces=all_namespaces,
+                        detailed=detailed,
                     )
                 else:
                     _execute_live_mode(
@@ -1265,6 +1429,7 @@ def _execute_orchestrated_skill(
     no_bell: bool = False,
     open_browser: bool = False,
     all_namespaces: bool = False,
+    detailed: bool = False,
 ) -> None:
     """Execute a skill through the Orchestrator's tool-aware pipeline.
 
@@ -1311,22 +1476,19 @@ def _execute_orchestrated_skill(
         console.print(result.text)
         return
 
-    console.print(
-        Panel.fit(
-            f"[bold green]🔍 Orchestrated Skill: {skill_meta.display_name}[/bold green]\n"
-            f"[dim]Cluster: {gke_config.cluster_name or '(kubeconfig default)'}[/dim]\n"
-            f"[dim]Namespace: {gke_config.default_namespace} | "
-            f"Project: {gke_config.project_id or '(auto-detect)'}[/dim]\n"
-            f"[dim]{tool_count} tools loaded | Strategy: sequential[/dim]",
-            border_style="green",
-        )
+    _print_launch_header(
+        skill_meta.display_name,
+        gke_config,
+        settings,
+        tool_count,
+        model_id=model_id,
     )
 
     orchestrator = Orchestrator(client, settings)
 
     try:
-        console.print(f"[bold cyan]🤖 Running {skill_meta.display_name} pipeline...[/bold cyan]")
-        tool_logger = ToolCallLogger()
+        console.print(Rule("⏳ Pipeline Execution", style="bright_blue"))
+        tool_logger = ToolCallLogger(detailed=detailed)
         progress_display = AgentProgressDisplay(tool_logger)
         try:
             orch_result = orchestrator.execute_with_tools(
@@ -1344,10 +1506,13 @@ def _execute_orchestrated_skill(
             )
         finally:
             progress_display.stop()
+        progress_display.reconcile_results(orch_result.agent_results)
+        progress_display.print_tree()
         tool_logger.print_summary()
 
-        # Display final response with severity coloring
+        # ── Health Report section ─────────────────────────────
         console.print()
+        console.print(Rule("📊 Health Report", style="bright_blue"))
         if summary and orch_result.structured_report is not None:
             # --summary mode: compact output from the structured report
             console.print(orch_result.structured_report.to_summary())
@@ -1357,6 +1522,10 @@ def _execute_orchestrated_skill(
                 print_executive_summary_panel(
                     orch_result.structured_report, console=console,
                 )
+            if orch_result.structured_report is not None:
+                print_service_status_table(orch_result.structured_report, console=console)
+                print_severity_detail_blocks(orch_result.structured_report, console=console)
+                print_cost_breakdown_table(orch_result.structured_report, console=console)
             if orch_result.synthesized_output:
                 print_colored_report(orch_result.synthesized_output, console=console)
             # Rich Table for recommendations (after the full report)
@@ -1383,7 +1552,11 @@ def _execute_orchestrated_skill(
         )
 
         # Show agent pipeline summary (includes cost line)
-        _show_orchestrated_summary(orch_result, model_id=settings.models.default)
+        _show_orchestrated_summary(
+            orch_result,
+            model_id=settings.models.default,
+            agent_timings=progress_display.get_agent_timings(),
+        )
 
         # Auto-export report if configured.
         # ADR-4: auto-export fires here for the health report only, immediately after the live
@@ -1445,17 +1618,75 @@ def _format_models_used(models_used: list[str]) -> str:
     return ", ".join(sorted(counts))
 
 
-def _show_orchestrated_summary(orch_result: OrchestratorResult, *, model_id: str = "") -> None:
-    """Display a summary table for an orchestrated skill execution."""
+def _show_orchestrated_summary(
+    orch_result: OrchestratorResult,
+    *,
+    model_id: str = "",
+    agent_timings: dict[str, float] | None = None,
+) -> None:
+    """Display a summary table for an orchestrated skill execution.
+
+    Args:
+        orch_result: The orchestrator result.
+        model_id: Model identifier for cost display.
+        agent_timings: Optional mapping of agent_name → elapsed seconds,
+            typically built from :class:`AgentProgressDisplay._completed`.
+            When provided, per-agent timing comes from here instead of
+            (unreliable) ``agent_result.metadata`` keys.
+    """
+    console.print(Rule("📈 Pipeline Summary", style="bright_blue"))
+
     table = Table(title="Pipeline Summary", show_lines=True)
     table.add_column("Agent", style="cyan")
     table.add_column("Role", style="dim")
     table.add_column("Status", style="bold")
+    table.add_column("Time", style="dim", justify="right")
+    table.add_column("Tokens", style="dim", justify="right")
+
+    total_time = 0.0
+    total_tokens_sum = 0
+    timings = agent_timings or {}
 
     for agent_result in orch_result.agent_results:
         status = "[green]✓ success[/green]" if agent_result.success else "[red]✗ failed[/red]"
         role = agent_result.metadata.get("role") or agent_result.agent_name
-        table.add_row(agent_result.agent_name, role, status)
+
+        # Extract timing: prefer AgentProgressDisplay data, then metadata fallback
+        elapsed = timings.get(agent_result.agent_name)
+        if elapsed is None:
+            elapsed = agent_result.metadata.get("elapsed_time") or agent_result.metadata.get("duration")
+        if isinstance(elapsed, (int, float)):
+            time_str = f"{elapsed:.1f}s"
+            total_time += elapsed
+        else:
+            time_str = "—"
+
+        # Extract tokens from agent usage
+        agent_usage = agent_result.usage if isinstance(agent_result.usage, dict) else {}
+        agent_tokens = agent_usage.get("total_tokens", 0)
+        if isinstance(agent_tokens, (int, float)) and agent_tokens:
+            tokens_str = f"{int(agent_tokens):,}"
+            total_tokens_sum += int(agent_tokens)
+        else:
+            tokens_str = "—"
+
+        table.add_row(agent_result.agent_name, role, status, time_str, tokens_str)
+
+    # TOTAL row
+    table.add_section()
+    total_time_str = f"{total_time:.1f}s" if total_time > 0 else "—"
+    total_tokens_str = f"{total_tokens_sum:,}" if total_tokens_sum > 0 else "—"
+    # Count successful agents for the status column
+    success_count = sum(1 for ar in orch_result.agent_results if getattr(ar, "success", True))
+    total_count = len(orch_result.agent_results)
+    status_text = f"{success_count}/{total_count} ✅" if total_count > 0 else "—"
+    table.add_row(
+        Text("TOTAL", style="bold"),
+        "",
+        Text(status_text, style="bold"),
+        Text(total_time_str, style="bold"),
+        Text(total_tokens_str, style="bold"),
+    )
 
     console.print(table)
 
@@ -1588,7 +1819,7 @@ def _execute_live_mode(
 
     try:
         console.print("[bold cyan]🤖 Infrastructure agent investigating...[/bold cyan]")
-        tool_logger = ToolCallLogger()
+        tool_logger = ToolCallLogger(detailed=True)
         effective_cache = tool_result_cache or ToolResultCache()
         result = agent.execute(
             question,
@@ -1698,7 +1929,7 @@ async def _async_execute_live_mode(
 
     try:
         console.print("[bold cyan]🤖 Infrastructure agent investigating (async)...[/bold cyan]")
-        tool_logger = ToolCallLogger()
+        tool_logger = ToolCallLogger(detailed=True)
         effective_cache = tool_result_cache or ToolResultCache()
         result = await agent.async_execute(
             question,
@@ -1764,6 +1995,7 @@ async def _async_execute_orchestrated_skill(
     no_bell: bool = False,
     open_browser: bool = False,
     all_namespaces: bool = False,
+    detailed: bool = False,
 ) -> None:
     """Async version of :func:`_execute_orchestrated_skill`.
 
@@ -1804,22 +2036,20 @@ async def _async_execute_orchestrated_skill(
         console.print(result.text)
         return
 
-    console.print(
-        Panel.fit(
-            f"[bold green]🔍 Orchestrated Skill: {skill_meta.display_name} (async)[/bold green]\n"
-            f"[dim]Cluster: {gke_config.cluster_name or '(kubeconfig default)'}[/dim]\n"
-            f"[dim]Namespace: {gke_config.default_namespace} | "
-            f"Project: {gke_config.project_id or '(auto-detect)'}[/dim]\n"
-            f"[dim]{tool_count} tools loaded | Strategy: sequential[/dim]",
-            border_style="green",
-        )
+    _print_launch_header(
+        skill_meta.display_name,
+        gke_config,
+        settings,
+        tool_count,
+        model_id=model_id,
+        is_async=True,
     )
 
     orchestrator = Orchestrator(client, settings)
 
     try:
-        console.print(f"[bold cyan]🤖 Running {skill_meta.display_name} pipeline (async)...[/bold cyan]")
-        tool_logger = ToolCallLogger()
+        console.print(Rule("⏳ Pipeline Execution", style="bright_blue"))
+        tool_logger = ToolCallLogger(detailed=detailed)
         progress_display = AgentProgressDisplay(tool_logger)
         try:
             orch_result = await orchestrator.async_execute_with_tools(
@@ -1837,10 +2067,13 @@ async def _async_execute_orchestrated_skill(
             )
         finally:
             progress_display.stop()
+        progress_display.reconcile_results(orch_result.agent_results)
+        progress_display.print_tree()
         tool_logger.print_summary()
 
-        # Display final response with severity coloring
+        # ── Health Report section ─────────────────────────────
         console.print()
+        console.print(Rule("📊 Health Report", style="bright_blue"))
         if summary and orch_result.structured_report is not None:
             # --summary mode: compact output from the structured report
             console.print(orch_result.structured_report.to_summary())
@@ -1850,6 +2083,10 @@ async def _async_execute_orchestrated_skill(
                 print_executive_summary_panel(
                     orch_result.structured_report, console=console,
                 )
+            if orch_result.structured_report is not None:
+                print_service_status_table(orch_result.structured_report, console=console)
+                print_severity_detail_blocks(orch_result.structured_report, console=console)
+                print_cost_breakdown_table(orch_result.structured_report, console=console)
             if orch_result.synthesized_output:
                 print_colored_report(orch_result.synthesized_output, console=console)
             # Rich Table for recommendations (after the full report)
@@ -1875,7 +2112,11 @@ async def _async_execute_orchestrated_skill(
             all_namespaces=all_namespaces,
         )
 
-        _show_orchestrated_summary(orch_result, model_id=settings.models.default)
+        _show_orchestrated_summary(
+            orch_result,
+            model_id=settings.models.default,
+            agent_timings=progress_display.get_agent_timings(),
+        )
 
         # Auto-export report if configured.
         # ADR-4: auto-export fires here for the health report only, immediately after the live
