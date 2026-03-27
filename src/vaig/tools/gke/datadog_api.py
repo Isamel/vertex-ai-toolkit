@@ -32,7 +32,6 @@ _ERR_RATE_LIMIT = "Rate limit exceeded. Try again later."
 _DD_SPANS_BASE_URL = "https://api.{site}"
 _DD_SPANS_POST_PATH = "/api/v2/spans/events/search"
 _DD_SPANS_GET_PATH = "/api/v2/apm/traces/search"
-_DD_DEFAULT_LOOKBACK_HOURS = 1  # Default 1-hour lookback for APM queries
 
 # ── Metric query templates ───────────────────────────────────
 # Templates use {filters} as a placeholder for the full tag filter string.
@@ -385,13 +384,13 @@ def query_datadog_metrics(
         series = getattr(response, "series", []) or []
         if not series:
             return ToolResult(
-                output=f"=== Datadog Metrics: {metric} ===\nCluster: {cluster_name}\nNo data returned for the given time window.",
+                output=f"=== Datadog Metrics: {metric} ===\nCluster: {effective_cluster}\nNo data returned for the given time window.",
                 error=False,
             )
 
         lines: list[str] = [
             f"=== Datadog Metrics: {metric} ===",
-            f"Cluster: {cluster_name}",
+            f"Cluster: {effective_cluster}",
             f"Query: {query}",
             f"Window: {start} → {end}",
             "",
@@ -763,14 +762,9 @@ def get_datadog_apm_services(
         return ToolResult(output=str(exc), error=True)
 
     # Validate hours_back — clamp to default if non-positive rather than hard-failing
-    _DEFAULT_CLAMP = 4.0
     if hours_back <= 0:
-        logger.warning(
-            "hours_back=%s is not positive — clamping to default %sh",
-            hours_back,
-            _DEFAULT_CLAMP,
-        )
-        hours_back = _DEFAULT_CLAMP
+        hours_back = lookback  # Already resolved from config.default_lookback_hours
+        logger.warning("hours_back=%s is not positive — clamping to config default %sh", hours_back, lookback)
 
     # Cache check (TTL = 60s) — key includes service+env+window in whole seconds
     # Normalising to int seconds prevents duplicate entries for equivalent float values

@@ -458,6 +458,13 @@ class DatadogAPIConfig(BaseModel):
             )
         return v
 
+    @field_validator("default_lookback_hours")
+    @classmethod
+    def _validate_default_lookback_hours(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError(f"default_lookback_hours must be positive, got {v}")
+        return v
+
     @model_validator(mode="after")
     def _auto_enable_or_disable(self) -> DatadogAPIConfig:
         """Auto-enable when both keys are present; disable when enabled=True but keys missing."""
