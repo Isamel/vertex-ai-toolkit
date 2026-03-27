@@ -523,6 +523,12 @@ class GKEConfig(BaseModel):
     # on all CustomObjectsApi and AppsV1Api requests.  Prevents indefinite hangs
     # when the cluster is unreachable or slow (connect timeout=None bug).
     request_timeout: int = 30
+    # Short timeout (seconds) for CRD existence checks.  The CRD probe runs
+    # before each ArgoCD/Argo Rollouts tool invocation on a potentially different
+    # cluster (e.g. Argo on a separate cluster).  A short timeout here prevents
+    # the tool from hanging ~84s (urllib3 retries × TCP timeout) when the
+    # apiextensions endpoint is unreachable.
+    crd_check_timeout: int = 5
 
 
 class MCPServerConfig(BaseModel):

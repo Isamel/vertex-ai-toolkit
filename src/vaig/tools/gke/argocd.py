@@ -88,6 +88,12 @@ def _check_crd_exists(crd_name: str, api_client: Any = None) -> bool:
         from kubernetes import client as k8s_client  # noqa: WPS433
         from kubernetes import config as k8s_config  # noqa: WPS433
 
+        # Use the dedicated short timeout for CRD checks, not the global
+        # request_timeout.  This prevents ~84s hangs when Argo Rollouts or
+        # ArgoCD runs on a separate cluster whose apiextensions endpoint is
+        # unreachable from this machine.
+        crd_timeout = get_settings().gke.crd_check_timeout
+
         if api_client is None:
             try:
                 k8s_config.load_incluster_config()
@@ -97,7 +103,11 @@ def _check_crd_exists(crd_name: str, api_client: Any = None) -> bool:
                 except k8s_config.ConfigException:
                     _crd_exists_cache[crd_name] = False
                     return False
-            ext_api = k8s_client.ApiextensionsV1Api()
+            # Build a fresh client with retries disabled — the default urllib3
+            # Retry(total=3) causes ~84s hangs on unreachable endpoints.
+            cfg = k8s_client.Configuration.get_default_copy()
+            cfg.retries = False
+            ext_api = k8s_client.ApiextensionsV1Api(k8s_client.ApiClient(cfg))
         else:
             ext_api = k8s_client.ApiextensionsV1Api(api_client)
 
@@ -105,7 +115,7 @@ def _check_crd_exists(crd_name: str, api_client: Any = None) -> bool:
         last_exc: Exception | None = None
         for attempt in range(_RETRY_ATTEMPTS):
             try:
-                ext_api.read_custom_resource_definition(crd_name, _request_timeout=get_settings().gke.request_timeout)
+                ext_api.read_custom_resource_definition(crd_name, _request_timeout=crd_timeout)
                 _crd_exists_cache[crd_name] = True
                 return True
             except k8s_exceptions.ApiException as exc:

@@ -534,12 +534,14 @@ class TestCheckCrdExists:
         mock_ext_api.read_custom_resource_definition.return_value = MagicMock()
 
         with patch("vaig.tools.gke.argocd._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke.argocd.get_settings") as mock_settings, \
              patch("kubernetes.client.ApiextensionsV1Api", return_value=mock_ext_api), \
              patch("kubernetes.config.load_incluster_config"):
+            mock_settings.return_value.gke.crd_check_timeout = 5
             result = _check_crd_exists("applications.argoproj.io")
 
         assert result is True
-        mock_ext_api.read_custom_resource_definition.assert_called_once_with("applications.argoproj.io", _request_timeout=30)
+        mock_ext_api.read_custom_resource_definition.assert_called_once_with("applications.argoproj.io", _request_timeout=5)
 
     def test_crd_not_found_returns_false(self) -> None:
         """CRD doesn't exist (404) — returns False."""
