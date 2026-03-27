@@ -351,7 +351,8 @@ async function scene2_launch() {
 
   /* Orchestrated Skill header — matches real vaig CLI output */
   addLine(cr('c-cyan', '🔍 Orchestrated Skill: ') + c('c-bright', 'Service Health Assessment'));
-  addLine(c('c-dim', 'Cluster: ') + c('c-blue', 'prod-gke-01') + c('c-dim', ' | Namespace: ') + c('c-blue', 'production') + c('c-dim', ' | Project: ') + c('c-blue', 'acme-prod'));
+  addLine(c('c-dim', 'Cluster: ') + c('c-blue', 'prod-gke-01'));
+  addLine(c('c-dim', 'Namespace: ') + c('c-blue', 'production') + c('c-dim', ' | Project: ') + c('c-blue', 'acme-prod'));
   addLine(c('c-dim', '42 tools loaded | Strategy: ') + c('c-purple', 'sequential'));
   blank();
   await delay(600);
@@ -363,23 +364,23 @@ async function scene2_launch() {
   /* Tool calls — matches real vaig CLI format: 🔧 tool_name(params) ✓ (time) */
   const toolCalls = [
     { name: 'kubectl_get_labels',      params: 'namespace=production, resource_type=deployments', time: '0.4s' },
-    { name: 'kubectl_get_pods',        params: 'namespace=production',                           time: '0.6s' },
-    { name: 'kubectl_get_events',      params: 'namespace=production',                           time: '1.5s' },
-    { name: 'kubectl_top',             params: 'namespace=production, resource_type=pods',       time: '0.8s' },
-    { name: 'get_pod_logs',            params: 'namespace=production, pod=inventory-sync-7f8b9-xk2p4', time: '2.1s' },
-    { name: 'get_pod_logs',            params: 'namespace=production, pod=payment-api-5c9d8-m3k7j',    time: '1.8s' },
-    { name: 'query_datadog_metrics',   params: 'cluster_name=prod-gke-01, metric=cpu',          time: '1.0s' },
-    { name: 'query_datadog_metrics',   params: 'cluster_name=prod-gke-01, metric=memory',       time: '0.9s' },
-    { name: 'kubectl_get_hpa',         params: 'namespace=production',                           time: '0.3s' },
-    { name: 'kubectl_get_services',    params: 'namespace=production',                           time: '0.4s' },
-    { name: 'kubectl_get_configmaps',  params: 'namespace=production',                           time: '0.3s' },
-    { name: 'kubectl_get_ingress',     params: 'namespace=production',                           time: '0.5s' },
-    { name: 'get_argo_rollout_status', params: 'namespace=production, name=payment-api',         time: '1.2s' },
-    { name: 'get_argo_rollout_status', params: 'namespace=production, name=inventory-sync',      time: '0.7s' },
-    { name: 'gcloud_logging_query',    params: 'namespace=production, severity=ERROR, hours=1',  time: '3.2s' },
-    { name: 'gcloud_monitoring_query', params: 'namespace=production, metric=cpu_utilization',   time: '2.8s' },
-    { name: 'kubectl_get_nodes',       params: 'label_selector=pool=default',                    time: '0.5s' },
-    { name: 'get_node_conditions',     params: 'node=gke-prod-pool-1-abc123',                    time: '0.4s' },
+    { name: 'kubectl_get',             params: 'namespace=production, resource=pods',             time: '0.6s' },
+    { name: 'get_events',              params: 'namespace=production',                            time: '1.5s' },
+    { name: 'kubectl_top',             params: 'namespace=production, resource_type=pods',        time: '0.8s' },
+    { name: 'kubectl_logs',            params: 'pod=inventory-sync-7f8b9-xk2p4, namespace=production', time: '2.1s' },
+    { name: 'kubectl_logs',            params: 'pod=payment-api-5c9d8-m3k7j, namespace=production',    time: '1.8s' },
+    { name: 'query_datadog_metrics',   params: 'cluster_name=prod-gke-01, metric=cpu',           time: '1.0s' },
+    { name: 'query_datadog_metrics',   params: 'cluster_name=prod-gke-01, metric=memory',        time: '0.9s' },
+    { name: 'kubectl_get',             params: 'namespace=production, resource=hpa',              time: '0.3s' },
+    { name: 'kubectl_get',             params: 'namespace=production, resource=services',         time: '0.4s' },
+    { name: 'kubectl_get',             params: 'namespace=production, resource=configmaps',       time: '0.3s' },
+    { name: 'kubectl_get',             params: 'namespace=production, resource=ingress',          time: '0.5s' },
+    { name: 'kubectl_get_rollout',     params: 'namespace=production, name=payment-api',          time: '1.2s' },
+    { name: 'kubectl_get_rollout',     params: 'namespace=production, name=inventory-sync',       time: '0.7s' },
+    { name: 'gcloud_logging_query',    params: 'filter_expr=namespace="production" AND severity=ERROR', time: '3.2s' },
+    { name: 'gcloud_monitoring_query', params: 'metric_type=cpu_utilization, interval_minutes=60', time: '2.8s' },
+    { name: 'kubectl_get',             params: 'resource=nodes, label_selector=pool=default',     time: '0.5s' },
+    { name: 'get_node_conditions',     params: 'name=gke-prod-pool-1-abc123',                     time: '0.4s' },
   ];
 
   for (const tc of toolCalls) {
@@ -457,13 +458,13 @@ async function scene3_report() {
   addLine(c('c-dim', '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   await delay(200);
   await printLines([
-    '  ' + c('c-red', '1.') + c('c-bright', ' Batch worker memory exhaustion') + c('c-dim', '  (confidence: HIGH)'),
-    '  ' + c('c-text', '   inventory-sync batch_workers increased 4→8 in revision 12'),
-    '  ' + c('c-text', '   Each worker allocates ~60Mi → 8×60 = 480Mi exceeds 512Mi limit'),
+    `  ${c('c-red', '1.')}${c('c-bright', ' Batch worker memory exhaustion')}  ${c('c-dim', '(confidence: HIGH)')}`,
+    `  ${c('c-text', '   inventory-sync batch_workers increased 4→8 in revision 12')}`,
+    `  ${c('c-text', '   Each worker allocates ~60Mi → 8×60 = 480Mi exceeds 512Mi limit')}`,
     '',
-    '  ' + c('c-yellow', '2.') + c('c-bright', ' Canary traffic amplification') + c('c-dim', '  (confidence: MEDIUM)'),
-    '  ' + c('c-text', '   payment-api-v2 at 30% weight has ') + c('c-yellow', '2.3x latency') + c('c-text', ' vs v1'),
-    '  ' + c('c-text', '   Increased connection hold time amplifies CPU under load'),
+    `  ${c('c-yellow', '2.')}${c('c-bright', ' Canary traffic amplification')}  ${c('c-dim', '(confidence: MEDIUM)')}`,
+    `  ${c('c-text', '   payment-api-v2 at 30% weight has ')}${c('c-yellow', '2.3x latency')}${c('c-text', ' vs v1')}`,
+    `  ${c('c-text', '   Increased connection hold time amplifies CPU under load')}`,
   ], 80);
   await delay(500);
   blank();
@@ -473,13 +474,13 @@ async function scene3_report() {
   addLine(c('c-dim', '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   await delay(200);
   await printLines([
-    '  ' + c('c-dim', '12:45 UTC') + c('c-text', '  Argo Rollout rev 12 promoted (inventory-sync)'),
-    '  ' + c('c-dim', '13:02 UTC') + c('c-text', '  First OOMKilled event on inventory-sync'),
-    '  ' + c('c-dim', '14:15 UTC') + c('c-text', '  payment-api-v2 canary started (30% weight)'),
-    '  ' + c('c-dim', '14:23 UTC') + c('c-yellow', '  CPU spike detected on payment-api pods'),
-    '  ' + c('c-dim', '14:28 UTC') + c('c-text', '  HPA triggered: payment-api 2→3 pods'),
-    '  ' + c('c-dim', '14:29 UTC') + c('c-red', '  Pod payment-api-5c9d8-n7x2q stuck Pending'),
-    '  ' + c('c-dim', '14:31 UTC') + c('c-red', '  3rd OOMKilled event on inventory-sync'),
+    `  ${c('c-dim', '12:45 UTC')}  ${c('c-text', 'Argo Rollout rev 12 promoted (inventory-sync)')}`,
+    `  ${c('c-dim', '13:02 UTC')}  ${c('c-text', 'First OOMKilled event on inventory-sync')}`,
+    `  ${c('c-dim', '14:15 UTC')}  ${c('c-text', 'payment-api-v2 canary started (30% weight)')}`,
+    `  ${c('c-dim', '14:23 UTC')}  ${c('c-yellow', 'CPU spike detected on payment-api pods')}`,
+    `  ${c('c-dim', '14:28 UTC')}  ${c('c-text', 'HPA triggered: payment-api 2→3 pods')}`,
+    `  ${c('c-dim', '14:29 UTC')}  ${c('c-red', 'Pod payment-api-5c9d8-n7x2q stuck Pending')}`,
+    `  ${c('c-dim', '14:31 UTC')}  ${c('c-red', '3rd OOMKilled event on inventory-sync')}`,
   ], 70);
   await delay(500);
   blank();
