@@ -252,6 +252,21 @@ def _dd_error_message(status: int) -> str:
     return f"Datadog API error (HTTP {status})."
 
 
+def _ssl_error_result(context: str, exc: Exception) -> ToolResult:
+    """Return a ToolResult with SSL troubleshooting guidance."""
+    logger.error("Datadog %s: SSL certificate verification failed: %s", context, exc)
+    return ToolResult(
+        output=(
+            f"SSL certificate verification failed connecting to Datadog: {exc}. "
+            "If you are behind a corporate proxy with SSL inspection, try one of:\n"
+            "  1. Set the REQUESTS_CA_BUNDLE env var to your corporate CA bundle path.\n"
+            "  2. Set datadog.ssl_verify = '/path/to/ca-bundle.crt' in your vaig config.\n"
+            "  3. Set datadog.ssl_verify = false to disable verification (not recommended)."
+        ),
+        error=True,
+    )
+
+
 # ── Public Tool Functions ────────────────────────────────────
 
 
@@ -377,31 +392,15 @@ def query_datadog_metrics(
         logger.warning("Datadog metrics API error (HTTP %s): %s", status, exc)
         return ToolResult(output=msg, error=True)
     except urllib3.exceptions.MaxRetryError as exc:
-        if isinstance(exc.reason, ssl.SSLError):
-            logger.error("Datadog metrics: SSL verification failed (MaxRetryError): %s", exc)
-            return ToolResult(
-                output=(
-                    f"SSL certificate verification failed connecting to Datadog: {exc.reason}. "
-                    "If you are behind a corporate proxy with SSL inspection, try one of:\n"
-                    "  1. Set the REQUESTS_CA_BUNDLE env var to your corporate CA bundle path.\n"
-                    "  2. Set datadog.ssl_verify = '/path/to/ca-bundle.crt' in your vaig config.\n"
-                    "  3. Set datadog.ssl_verify = false to disable verification (not recommended)."
-                ),
-                error=True,
-            )
-        raise
-    except ssl.SSLError as exc:
-        logger.error("Datadog metrics: SSL verification failed: %s", exc)
+        if isinstance(getattr(exc, "reason", None), ssl.SSLError):
+            return _ssl_error_result("metrics", exc)
+        logger.error("Datadog metrics: connection failed after retries: %s", exc)
         return ToolResult(
-            output=(
-                f"SSL certificate verification failed connecting to Datadog: {exc}. "
-                "If you are behind a corporate proxy with SSL inspection, try one of:\n"
-                "  1. Set the REQUESTS_CA_BUNDLE env var to your corporate CA bundle path.\n"
-                "  2. Set datadog.ssl_verify = '/path/to/ca-bundle.crt' in your vaig config.\n"
-                "  3. Set datadog.ssl_verify = false to disable verification (not recommended)."
-            ),
+            output=f"Failed to connect to Datadog after multiple retries: {exc}",
             error=True,
         )
+    except ssl.SSLError as exc:
+        return _ssl_error_result("metrics", exc)
     except Exception:  # noqa: BLE001
         logger.exception("Unexpected error querying Datadog metrics")
         return ToolResult(output="Unexpected error querying Datadog metrics. See logs for details.", error=True)
@@ -508,31 +507,15 @@ def get_datadog_monitors(
         logger.warning("Datadog monitors API error (HTTP %s): %s", status, exc)
         return ToolResult(output=msg, error=True)
     except urllib3.exceptions.MaxRetryError as exc:
-        if isinstance(exc.reason, ssl.SSLError):
-            logger.error("Datadog monitors: SSL verification failed (MaxRetryError): %s", exc)
-            return ToolResult(
-                output=(
-                    f"SSL certificate verification failed connecting to Datadog: {exc.reason}. "
-                    "If you are behind a corporate proxy with SSL inspection, try one of:\n"
-                    "  1. Set the REQUESTS_CA_BUNDLE env var to your corporate CA bundle path.\n"
-                    "  2. Set datadog.ssl_verify = '/path/to/ca-bundle.crt' in your vaig config.\n"
-                    "  3. Set datadog.ssl_verify = false to disable verification (not recommended)."
-                ),
-                error=True,
-            )
-        raise
-    except ssl.SSLError as exc:
-        logger.error("Datadog monitors: SSL verification failed: %s", exc)
+        if isinstance(getattr(exc, "reason", None), ssl.SSLError):
+            return _ssl_error_result("monitors", exc)
+        logger.error("Datadog monitors: connection failed after retries: %s", exc)
         return ToolResult(
-            output=(
-                f"SSL certificate verification failed connecting to Datadog: {exc}. "
-                "If you are behind a corporate proxy with SSL inspection, try one of:\n"
-                "  1. Set the REQUESTS_CA_BUNDLE env var to your corporate CA bundle path.\n"
-                "  2. Set datadog.ssl_verify = '/path/to/ca-bundle.crt' in your vaig config.\n"
-                "  3. Set datadog.ssl_verify = false to disable verification (not recommended)."
-            ),
+            output=f"Failed to connect to Datadog after multiple retries: {exc}",
             error=True,
         )
+    except ssl.SSLError as exc:
+        return _ssl_error_result("monitors", exc)
     except Exception:  # noqa: BLE001
         logger.exception("Unexpected error fetching Datadog monitors")
         return ToolResult(output="Unexpected error fetching Datadog monitors. See logs for details.", error=True)
@@ -669,31 +652,15 @@ def get_datadog_service_catalog(
         logger.warning("Datadog service catalog API error (HTTP %s): %s", status, exc)
         return ToolResult(output=msg, error=True)
     except urllib3.exceptions.MaxRetryError as exc:
-        if isinstance(exc.reason, ssl.SSLError):
-            logger.error("Datadog service catalog: SSL verification failed (MaxRetryError): %s", exc)
-            return ToolResult(
-                output=(
-                    f"SSL certificate verification failed connecting to Datadog: {exc.reason}. "
-                    "If you are behind a corporate proxy with SSL inspection, try one of:\n"
-                    "  1. Set the REQUESTS_CA_BUNDLE env var to your corporate CA bundle path.\n"
-                    "  2. Set datadog.ssl_verify = '/path/to/ca-bundle.crt' in your vaig config.\n"
-                    "  3. Set datadog.ssl_verify = false to disable verification (not recommended)."
-                ),
-                error=True,
-            )
-        raise
-    except ssl.SSLError as exc:
-        logger.error("Datadog service catalog: SSL verification failed: %s", exc)
+        if isinstance(getattr(exc, "reason", None), ssl.SSLError):
+            return _ssl_error_result("service catalog", exc)
+        logger.error("Datadog service catalog: connection failed after retries: %s", exc)
         return ToolResult(
-            output=(
-                f"SSL certificate verification failed connecting to Datadog: {exc}. "
-                "If you are behind a corporate proxy with SSL inspection, try one of:\n"
-                "  1. Set the REQUESTS_CA_BUNDLE env var to your corporate CA bundle path.\n"
-                "  2. Set datadog.ssl_verify = '/path/to/ca-bundle.crt' in your vaig config.\n"
-                "  3. Set datadog.ssl_verify = false to disable verification (not recommended)."
-            ),
+            output=f"Failed to connect to Datadog after multiple retries: {exc}",
             error=True,
         )
+    except ssl.SSLError as exc:
+        return _ssl_error_result("service catalog", exc)
     except Exception:  # noqa: BLE001
         logger.exception("Unexpected error in get_datadog_service_catalog")
         return ToolResult(output="Unexpected error retrieving service catalog. See logs for details.", error=True)
@@ -1016,17 +983,7 @@ def get_datadog_apm_services(
         return ToolResult(output=no_data_msg, error=False)
 
     except requests.exceptions.SSLError as exc:
-        logger.error("Datadog APM: SSL certificate verification failed: %s", exc)
-        return ToolResult(
-            output=(
-                f"SSL certificate verification failed connecting to Datadog: {exc}. "
-                "If you are behind a corporate proxy with SSL inspection, try one of:\n"
-                "  1. Set the REQUESTS_CA_BUNDLE env var to your corporate CA bundle path.\n"
-                "  2. Set datadog.ssl_verify = '/path/to/ca-bundle.crt' in your vaig config.\n"
-                "  3. Set datadog.ssl_verify = false to disable verification (not recommended)."
-            ),
-            error=True,
-        )
+        return _ssl_error_result("APM", exc)
     except Exception:  # noqa: BLE001
         logger.exception("Unexpected error in get_datadog_apm_services")
         return ToolResult(output="Unexpected error retrieving APM trace metrics. See logs for details.", error=True)
