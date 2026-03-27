@@ -2105,8 +2105,8 @@ class TestDatadogSSLConfig:
         assert result.error is False
         assert "No APM trace data found" in result.output
 
-    def test_custom_time_range_1_hour_default(self, dd_config: DatadogAPIConfig) -> None:
-        """Default hours_back=1.0 — output mentions 1 hour window."""
+    def test_custom_time_range_default_lookback(self, dd_config: DatadogAPIConfig) -> None:
+        """Default hours_back (config default = 4.0) — output mentions 4 hours window."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
         mock_session = MagicMock()
@@ -2120,7 +2120,7 @@ class TestDatadogSSLConfig:
         )
 
         assert result.error is False
-        assert "last 1 hour" in result.output
+        assert "last 4 hours" in result.output
 
     def test_custom_time_range_4_hours(self, dd_config: DatadogAPIConfig) -> None:
         """hours_back=4 — output mentions 4 hours window."""
@@ -2285,3 +2285,256 @@ class TestDatadogSSLConfig:
 
         assert result.error is False
         assert "No APM trace data found" in result.output
+
+
+# ── Problem 1: APM-native metric templates ───────────────────
+
+
+class TestBuildMetricTemplatesMode:
+    """Tests for metric_mode field in DatadogAPIConfig and _build_metric_templates."""
+
+    def test_k8s_agent_mode_returns_kubernetes_templates(self) -> None:
+        """Default k8s_agent mode returns kubernetes.* metric templates."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="k8s_agent")
+        templates = _build_metric_templates(config)
+
+        assert "cpu" in templates
+        assert "memory" in templates
+        assert "restarts" in templates
+        assert "kubernetes.cpu.usage.total" in templates["cpu"]
+        assert "kubernetes.memory.usage" in templates["memory"]
+        # No APM keys
+        assert "requests" not in templates
+        assert "error_rate" not in templates
+
+    def test_default_mode_is_k8s_agent(self) -> None:
+        """When metric_mode is not specified, default is k8s_agent (kubernetes.* templates)."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        templates = _build_metric_templates(config)
+
+        assert "cpu" in templates
+        assert "kubernetes.cpu.usage.total" in templates["cpu"]
+
+    def test_apm_mode_returns_trace_templates(self) -> None:
+        """APM mode returns trace.http.request.* metric templates."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="apm")
+        templates = _build_metric_templates(config)
+
+        assert "requests" in templates
+        assert "errors" in templates
+        assert "latency" in templates
+        assert "error_rate" in templates
+        assert "apdex" in templates
+        assert "trace.http.request" in templates["requests"]
+        assert "trace.http.request" in templates["latency"]
+        # No k8s keys
+        assert "cpu" not in templates
+        assert "memory" not in templates
+
+    def test_apm_mode_all_templates_have_filters_placeholder(self) -> None:
+        """All APM-mode templates contain the required {filters} placeholder."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="apm")
+        templates = _build_metric_templates(config)
+
+        for name, tmpl in templates.items():
+            assert "{filters}" in tmpl, f"APM template '{name}' missing '{{filters}}' placeholder"
+
+    def test_custom_metrics_extend_k8s_agent_mode(self) -> None:
+        """custom_metrics are merged into k8s_agent templates."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            metric_mode="k8s_agent",
+            custom_metrics={"my_metric": "avg:custom.metric{{{filters}}} by {{pod_name}}"},
+        )
+        templates = _build_metric_templates(config)
+
+        assert "cpu" in templates
+        assert "my_metric" in templates
+        assert "custom.metric" in templates["my_metric"]
+
+    def test_custom_metrics_extend_apm_mode(self) -> None:
+        """custom_metrics are merged into APM templates."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            metric_mode="apm",
+            custom_metrics={"my_apm_extra": "sum:trace.custom.hits{{{filters}}} by {{pod_name}}"},
+        )
+        templates = _build_metric_templates(config)
+
+        assert "requests" in templates
+        assert "my_apm_extra" in templates
+
+    def test_custom_metrics_override_apm_builtin(self) -> None:
+        """A custom_metrics entry with same key as an APM built-in overrides it."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        custom_requests = "sum:trace.custom.requests{{{filters}}} by {{pod_name}}"
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            metric_mode="apm",
+            custom_metrics={"requests": custom_requests},
+        )
+        templates = _build_metric_templates(config)
+
+        assert templates["requests"] == custom_requests
+
+
+# ── Problem 2: cluster_name_override ─────────────────────────
+
+
+class TestClusterNameOverride:
+    """Tests for cluster_name_override in query_datadog_metrics."""
+
+    def test_cluster_name_override_used_when_set(self, dd_config: DatadogAPIConfig) -> None:
+        """When cluster_name_override is set, it replaces cluster_name in the tag filter."""
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.cluster_name_override = "override-cluster"
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(
+            series=[_make_series(scope="cluster_name:override-cluster")]
+        )
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="original-cluster",
+                metric="cpu",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        assert "override-cluster" in call_kwargs["query"]
+        assert "original-cluster" not in call_kwargs["query"]
+
+    def test_gke_cluster_name_used_when_override_empty(self, dd_config: DatadogAPIConfig) -> None:
+        """When cluster_name_override is empty (default), the passed cluster_name is used."""
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        assert dd_config.cluster_name_override == ""
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(
+            series=[_make_series(scope="cluster_name:my-cluster")]
+        )
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="cpu",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        assert "my-cluster" in call_kwargs["query"]
+
+    def test_cluster_name_override_default_is_empty_string(self) -> None:
+        """DatadogAPIConfig.cluster_name_override defaults to empty string."""
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        assert config.cluster_name_override == ""
+
+
+# ── Problem 3: default_lookback_hours ────────────────────────
+
+
+class TestDefaultLookbackHours:
+    """Tests for default_lookback_hours in DatadogAPIConfig and get_datadog_apm_services."""
+
+    def setup_method(self) -> None:
+        """Clear the discovery cache before each test."""
+        from vaig.tools.gke._cache import clear_discovery_cache
+
+        clear_discovery_cache()
+
+    def test_default_lookback_hours_from_config_used_when_no_hours_back(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """When hours_back is not passed, config.default_lookback_hours is used."""
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        dd_config.default_lookback_hours = 2.0
+
+        mock_session = MagicMock()
+        mock_session.post.return_value = _make_spans_response()
+
+        # The output window label reflects the resolved lookback
+        result = get_datadog_apm_services(
+            service_name="svc",
+            env="production",
+            config=dd_config,
+            _custom_session=mock_session,
+        )
+        assert result.error is False
+        assert "last 2 hours" in result.output
+
+    def test_explicit_hours_back_overrides_config_default(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """Explicit hours_back parameter takes priority over config.default_lookback_hours."""
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        dd_config.default_lookback_hours = 8.0
+
+        mock_session = MagicMock()
+        mock_session.post.return_value = _make_spans_response()
+
+        # Pass explicit hours_back=1.0 — output should say "1 hour", not "8 hours"
+        result = get_datadog_apm_services(
+            service_name="svc",
+            env="production",
+            hours_back=1.0,
+            config=dd_config,
+            _custom_session=mock_session,
+        )
+
+        assert result.error is False
+        assert "last 1 hour" in result.output
+        assert "8 hours" not in result.output
+
+    def test_default_lookback_hours_default_value_is_4(self) -> None:
+        """DatadogAPIConfig.default_lookback_hours defaults to 4.0."""
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        assert config.default_lookback_hours == 4.0
+
+    def test_hours_back_none_resolves_to_config_default(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """Passing hours_back=None explicitly uses config.default_lookback_hours."""
+        from vaig.tools.gke.datadog_api import get_datadog_apm_services
+
+        dd_config.default_lookback_hours = 6.0
+
+        mock_session = MagicMock()
+        mock_session.post.return_value = _make_spans_response()
+
+        get_datadog_apm_services(
+            service_name="svc",
+            env="production",
+            hours_back=None,
+            config=dd_config,
+            _custom_session=mock_session,
+        )
+
+        mock_session.post.assert_called_once()

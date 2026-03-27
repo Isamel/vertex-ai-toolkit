@@ -427,6 +427,27 @@ class DatadogAPIConfig(BaseModel):
     labels: DatadogLabelConfig = Field(default_factory=DatadogLabelConfig)
     detection: DatadogDetectionConfig = Field(default_factory=DatadogDetectionConfig)
     custom_metrics: dict[str, str] = Field(default_factory=dict)
+    metric_mode: Literal["k8s_agent", "apm"] = Field(
+        default="k8s_agent",
+        description=(
+            "Metric source: 'k8s_agent' for kubernetes.* metrics (requires DaemonSet Agent), "
+            "'apm' for trace.* metrics (APM-only setups)"
+        ),
+    )
+    cluster_name_override: str = Field(
+        default="",
+        description=(
+            "Override the cluster_name tag value used in Datadog queries. "
+            "When empty, uses the GKE cluster name."
+        ),
+    )
+    default_lookback_hours: float = Field(
+        default=4.0,
+        description=(
+            "Default lookback window (hours) for APM trace queries. "
+            "Increase for low-traffic services."
+        ),
+    )
 
     @field_validator("ssl_verify", mode="before")
     @classmethod
@@ -435,6 +456,13 @@ class DatadogAPIConfig(BaseModel):
             raise ValueError(
                 "ssl_verify must be True, False, or a non-empty path to a CA bundle"
             )
+        return v
+
+    @field_validator("default_lookback_hours")
+    @classmethod
+    def _validate_default_lookback_hours(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError(f"default_lookback_hours must be positive, got {v}")
         return v
 
     @model_validator(mode="after")

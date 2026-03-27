@@ -32,7 +32,6 @@ _ERR_RATE_LIMIT = "Rate limit exceeded. Try again later."
 _DD_SPANS_BASE_URL = "https://api.{site}"
 _DD_SPANS_POST_PATH = "/api/v2/spans/events/search"
 _DD_SPANS_GET_PATH = "/api/v2/apm/traces/search"
-_DD_DEFAULT_LOOKBACK_HOURS = 1  # Default 1-hour lookback for APM queries
 
 # ── Metric query templates ───────────────────────────────────
 # Templates use {filters} as a placeholder for the full tag filter string.
@@ -44,6 +43,12 @@ def _build_metric_templates(config: DatadogAPIConfig) -> dict[str, str]:
 
     The ``by {pod_name}`` grouping dimension is read from
     ``config.labels.pod_name`` so it can be overridden per environment.
+
+    When ``config.metric_mode`` is ``"apm"``, APM-native ``trace.*`` metric
+    templates are returned instead of the default ``kubernetes.*`` templates.
+    Use ``"apm"`` mode for setups that only have APM instrumentation and no
+    Datadog Agent DaemonSet with the kubelet check enabled.
+
     Any entries in ``config.custom_metrics`` are merged in after the
     built-in templates — the caller may provide additional metric names
     or override existing ones.
@@ -57,15 +62,34 @@ def _build_metric_templates(config: DatadogAPIConfig) -> dict[str, str]:
     # The "by {<tag>}" grouping uses {{ }} so .format() leaves them as literal braces
     # in the final Datadog query string (e.g. "by {pod_name}").
     _by = "{{" + pod_name + "}}"
-    templates: dict[str, str] = {
-        "cpu": "avg:kubernetes.cpu.usage.total{{{filters}}} by " + _by,
-        "memory": "avg:kubernetes.memory.usage{{{filters}}} by " + _by,
-        "restarts": "sum:kubernetes.containers.restarts{{{filters}}} by " + _by,
-        "network_in": "avg:kubernetes.network.rx_bytes{{{filters}}} by " + _by,
-        "network_out": "avg:kubernetes.network.tx_bytes{{{filters}}} by " + _by,
-        "disk_read": "avg:kubernetes.io.read_bytes{{{filters}}} by " + _by,
-        "disk_write": "avg:kubernetes.io.write_bytes{{{filters}}} by " + _by,
-    }
+
+    mode = getattr(config, "metric_mode", "k8s_agent")
+    if mode == "apm":
+        templates: dict[str, str] = {
+            "requests": "sum:trace.http.request.hits{{{filters}}} by " + _by,
+            "errors": "sum:trace.http.request.errors{{{filters}}} by " + _by,
+            "latency": "avg:trace.http.request.duration{{{filters}}} by " + _by,
+            "error_rate": (
+                "( sum:trace.http.request.errors{{{filters}}} by "
+                + _by
+                + " / sum:trace.http.request.hits{{{filters}}} by "
+                + _by
+                + " ) * 100"
+            ),
+            "apdex": "avg:trace.http.request.apdex{{{filters}}} by " + _by,
+        }
+    else:
+        # Default: k8s_agent mode — kubernetes.* metrics via DaemonSet Agent
+        templates = {
+            "cpu": "avg:kubernetes.cpu.usage.total{{{filters}}} by " + _by,
+            "memory": "avg:kubernetes.memory.usage{{{filters}}} by " + _by,
+            "restarts": "sum:kubernetes.containers.restarts{{{filters}}} by " + _by,
+            "network_in": "avg:kubernetes.network.rx_bytes{{{filters}}} by " + _by,
+            "network_out": "avg:kubernetes.network.tx_bytes{{{filters}}} by " + _by,
+            "disk_read": "avg:kubernetes.io.read_bytes{{{filters}}} by " + _by,
+            "disk_write": "avg:kubernetes.io.write_bytes{{{filters}}} by " + _by,
+        }
+
     for key, tmpl in config.custom_metrics.items():
         if "{filters}" not in tmpl:
             raise ValueError(
@@ -325,8 +349,12 @@ def query_datadog_metrics(
     end = to_ts if to_ts > 0 else now
     start = from_ts if from_ts > 0 else now - 3600
 
+    # Apply cluster_name_override when set — allows the Datadog tag value to differ
+    # from the GKE cluster name (e.g. when the DD agent uses a different tag value).
+    effective_cluster = getattr(config, "cluster_name_override", "") or cluster_name
+
     # Build tag filter string: always include cluster_name; optionally service/env
-    filters, tag_err = _build_tag_filter(cluster_name, service, env, config)
+    filters, tag_err = _build_tag_filter(effective_cluster, service, env, config)
     if tag_err is not None:
         return tag_err
 
@@ -356,13 +384,13 @@ def query_datadog_metrics(
         series = getattr(response, "series", []) or []
         if not series:
             return ToolResult(
-                output=f"=== Datadog Metrics: {metric} ===\nCluster: {cluster_name}\nNo data returned for the given time window.",
+                output=f"=== Datadog Metrics: {metric} ===\nCluster: {effective_cluster}\nNo data returned for the given time window.",
                 error=False,
             )
 
         lines: list[str] = [
             f"=== Datadog Metrics: {metric} ===",
-            f"Cluster: {cluster_name}",
+            f"Cluster: {effective_cluster}",
             f"Query: {query}",
             f"Window: {start} → {end}",
             "",
@@ -670,7 +698,7 @@ def get_datadog_apm_services(
     *,
     service_name: str = "",
     env: str = "production",
-    hours_back: float = _DD_DEFAULT_LOOKBACK_HOURS,
+    hours_back: float | None = None,
     config: DatadogAPIConfig | None = None,
     _custom_session: Any = None,
 ) -> ToolResult:
@@ -692,8 +720,9 @@ def get_datadog_apm_services(
             tool returns guidance on how to resolve it from Kubernetes labels.
         env: Datadog environment tag (e.g. ``"production"``, ``"staging"``).
             Used to scope the APM query.  Defaults to ``"production"``.
-        hours_back: Lookback window in hours.  Defaults to 1 hour.  Use
-            fractional values for sub-hour windows (e.g. ``0.5`` for 30 min).
+        hours_back: Lookback window in hours.  When ``None`` (default), the
+            value from ``config.default_lookback_hours`` is used (default 4h).
+            Use fractional values for sub-hour windows (e.g. ``0.5`` for 30 min).
         config: Optional ``DatadogAPIConfig`` (for testing / injection).
         _custom_session: Optional pre-configured ``requests.Session`` (for testing).
     """
@@ -704,6 +733,10 @@ def get_datadog_apm_services(
 
     if not config.enabled:
         return ToolResult(output=_ERR_NOT_ENABLED, error=True)
+
+    # Resolve lookback: explicit hours_back takes priority; fall back to config default.
+    lookback = hours_back if hours_back is not None else getattr(config, "default_lookback_hours", 4.0)
+    hours_back = lookback
 
     # Validate service_name before cache lookup
     try:
@@ -729,14 +762,9 @@ def get_datadog_apm_services(
         return ToolResult(output=str(exc), error=True)
 
     # Validate hours_back — clamp to default if non-positive rather than hard-failing
-    _DD_DEFAULT_LOOKBACK_HOURS = 1.0
     if hours_back <= 0:
-        logger.warning(
-            "hours_back=%s is not positive — clamping to default %sh",
-            hours_back,
-            _DD_DEFAULT_LOOKBACK_HOURS,
-        )
-        hours_back = _DD_DEFAULT_LOOKBACK_HOURS
+        hours_back = lookback  # Already resolved from config.default_lookback_hours
+        logger.warning("hours_back=%s is not positive — clamping to config default %sh", hours_back, lookback)
 
     # Cache check (TTL = 60s) — key includes service+env+window in whole seconds
     # Normalising to int seconds prevents duplicate entries for equivalent float values

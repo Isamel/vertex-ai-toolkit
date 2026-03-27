@@ -265,6 +265,21 @@ datadog:
   # Templates must include the {filters} placeholder for tag injection.
   # Example: {"my_metric": "avg:custom.metric{{{filters}}} by {{pod_name}}"}
 
+  # metric_mode: "k8s_agent"  # Metric source: 'k8s_agent' (default) for kubernetes.* metrics
+  #                           # (requires DaemonSet Agent with kubelet check), or 'apm' for
+  #                           # trace.* metrics (APM-only setups without DaemonSet Agent).
+  #                           # Override via VAIG_DATADOG__METRIC_MODE
+
+  # cluster_name_override: ""  # Override the cluster_name tag value used in Datadog queries.
+  #                            # When empty (default), the GKE cluster name is used as-is.
+  #                            # Set this when the Datadog agent tags the cluster differently
+  #                            # from the GKE cluster name (e.g. "prod-us-east" vs "gke-prod-us").
+  #                            # Override via VAIG_DATADOG__CLUSTER_NAME_OVERRIDE
+
+  # default_lookback_hours: 4.0  # Default lookback window (hours) for APM trace queries.
+  #                              # Increase for low-traffic services where 1h yields no data.
+  #                              # Override via VAIG_DATADOG__DEFAULT_LOOKBACK_HOURS
+
 mcp:
   enabled: false                    # Set to true to enable MCP integration
   auto_register: false              # Auto-register MCP server tools into agent pipelines

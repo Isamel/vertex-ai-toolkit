@@ -663,7 +663,7 @@ This tool returns service *definition* metadata, NOT live latency or error-rate 
 ALWAYS call ``get_datadog_apm_services`` — attempt it even if ``service_name``
 cannot be resolved. The tool handles empty ``service_name`` gracefully and returns
 guidance. This tool queries LIVE APM trace data (throughput, error rate, avg latency)
-for the last 30 minutes, scoped to the resolved service and env.
+for the configured default lookback window (default: 4 hours), scoped to the resolved service and env.
 
 When ``service_name`` IS resolved:
 ``get_datadog_apm_services(service_name="<resolved>", env="<resolved>")``
