@@ -580,12 +580,116 @@
     }
     .next-steps-box strong { color: var(--text-bright); display: block; margin-bottom: 6px; }
     .hl-bright       { color: var(--text-bright); }
+
+    /* ═══════════════════════════════════════════════════════
+       SLIDE — PROJECT METRICS
+    ══════════════════════════════════════════════════════════ */
+    .slide-metrics {
+      background: radial-gradient(ellipse at 40% 50%, #0d1b2a 0%, var(--bg-deep) 70%);
+    }
+    .metrics-intro {
+      font-size: 1rem;
+      color: var(--text-dim);
+      line-height: 1.6;
+      max-width: 720px;
+      text-align: center;
+      margin-bottom: 36px;
+    }
+    .metrics-groups {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      width: 100%;
+      max-width: 1140px;
+    }
+    .metric-group {
+      background: var(--bg-mid);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px 22px;
+      position: relative;
+      overflow: hidden;
+    }
+    .metric-group::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+    }
+    .metric-group.mg-codebase::before { background: var(--blue-bright); }
+    .metric-group.mg-quality::before  { background: var(--green); }
+    .metric-group.mg-capabilities::before { background: var(--purple); }
+    .metric-group-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .metric-group-header .mg-icon { font-size: 1.4rem; }
+    .metric-group-header .mg-title {
+      font-size: 0.82rem;
+      font-weight: 600;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .metric-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(54, 54, 70, 0.5);
+    }
+    .metric-row:last-child { border-bottom: none; }
+    .metric-label {
+      font-size: 0.82rem;
+      color: var(--text-dim);
+    }
+    .metric-value {
+      font-size: 1rem;
+      font-weight: 700;
+      font-family: 'Cascadia Code', 'Fira Code', monospace;
+    }
+    .mv-blue   { color: var(--blue-bright); }
+    .mv-green  { color: var(--green); }
+    .mv-purple { color: var(--purple); }
+    .mv-teal   { color: var(--teal); }
+    .mv-yellow { color: var(--yellow); }
+    .mv-orange { color: var(--orange); }
+
+    .metrics-headline-row {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      margin-top: 28px;
+      width: 100%;
+      max-width: 1140px;
+    }
+    .metrics-headline {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 28px;
+      text-align: center;
+      flex: 1;
+    }
+    .metrics-headline .mh-val {
+      font-size: 1.8rem;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+    .metrics-headline .mh-lbl {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      letter-spacing: 0.05em;
+    }
   </style>
 </head>
 <body>
 
 <!-- Progress bar -->
-<div id="progress-bar" style="width: 12.5%"></div>
+<div id="progress-bar" style="width: 11.1%"></div>
 
 <!-- Nav dots -->
 <div id="nav-dots"></div>
@@ -615,10 +719,128 @@
       <span class="tag-pill tag-pill-purple">Gemini-Powered</span>
       <span class="tag-pill tag-pill-teal">GKE + GCP</span>
     </div>
-    <div class="slide-num">01 / 08</div>
+    <div class="slide-num">01 / 09</div>
   </section>
 
-  <!-- ── SLIDE 2: PROBLEM ───────────────────────────────── -->
+  <!-- ── SLIDE 2: PROJECT METRICS ────────────────────────── -->
+  <section class="slide slide-metrics">
+    <div class="brand">vertex-ai-toolkit · vaig</div>
+    <p class="slide-label">Platform at a Glance</p>
+    <h2>A Mature, Well-Tested, <span class="highlight">Comprehensive Platform</span></h2>
+    <p class="metrics-intro">
+      VAIG is backed by an extensive codebase with a <strong class="hl-green">1.5 : 1 test-to-source ratio</strong>,
+      6,162 passing tests, and 11 production AI agents — built and validated across 262+ commits by the team.
+    </p>
+
+    <div class="metrics-groups">
+      <!-- Codebase -->
+      <div class="metric-group mg-codebase">
+        <div class="metric-group-header">
+          <span class="mg-icon" role="img" aria-label="Codebase infrastructure">🏗️</span>
+          <span class="mg-title">Codebase</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Source Code</span>
+          <span class="metric-value mv-blue">61,546 lines</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Source Files</span>
+          <span class="metric-value mv-blue">207</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Total Commits</span>
+          <span class="metric-value mv-teal">262+</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">PRs Merged</span>
+          <span class="metric-value mv-teal">130+</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Release</span>
+          <span class="metric-value mv-yellow">v0.9.0</span>
+        </div>
+      </div>
+
+      <!-- Quality -->
+      <div class="metric-group mg-quality">
+        <div class="metric-group-header">
+          <span class="mg-icon" role="img" aria-label="Quality assurance">✅</span>
+          <span class="mg-title">Quality</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Test Suite</span>
+          <span class="metric-value mv-green">92,375 lines</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Test Files</span>
+          <span class="metric-value mv-green">140</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Total Tests</span>
+          <span class="metric-value mv-green">6,162</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Passing</span>
+          <span class="metric-value mv-green">100%</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Test : Source Ratio</span>
+          <span class="metric-value mv-green">1.5 : 1</span>
+        </div>
+      </div>
+
+      <!-- Capabilities -->
+      <div class="metric-group mg-capabilities">
+        <div class="metric-group-header">
+          <span class="mg-icon" role="img" aria-label="Platform capabilities">⚡</span>
+          <span class="mg-title">Capabilities</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">GKE Tools</span>
+          <span class="metric-value mv-purple">47</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">AI Skills</span>
+          <span class="metric-value mv-purple">28</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">AI Agents</span>
+          <span class="metric-value mv-orange">11</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">CLI Commands</span>
+          <span class="metric-value mv-orange">11</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Platforms</span>
+          <span class="metric-value mv-yellow">Linux + Win</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="metrics-headline-row">
+      <div class="metrics-headline">
+        <div class="mh-val mv-blue">153,921</div>
+        <div class="mh-lbl">Total Lines of Code</div>
+      </div>
+      <div class="metrics-headline">
+        <div class="mh-val mv-green">6,162</div>
+        <div class="mh-lbl">Tests — All Passing</div>
+      </div>
+      <div class="metrics-headline">
+        <div class="mh-val mv-purple">97</div>
+        <div class="mh-lbl">Tools + Skills + Agents + CLI</div>
+      </div>
+      <div class="metrics-headline">
+        <div class="mh-val mv-yellow">v0.9.0</div>
+        <div class="mh-lbl">Production Release</div>
+      </div>
+    </div>
+
+    <div class="slide-num">02 / 09</div>
+  </section>
+
+  <!-- ── SLIDE 3: PROBLEM ───────────────────────────────── -->
   <section class="slide slide-problem">
     <div class="brand">vertex-ai-toolkit · vaig</div>
     <p class="slide-label">The Challenge</p>
@@ -655,10 +877,10 @@
         <p>Idle containers, over-provisioned workloads, and namespace cost anomalies go undetected without dedicated analysis tooling.</p>
       </div>
     </div>
-    <div class="slide-num">02 / 08</div>
+    <div class="slide-num">03 / 09</div>
   </section>
 
-  <!-- ── SLIDE 3: SOLUTION ──────────────────────────────── -->
+  <!-- ── SLIDE 4: SOLUTION ──────────────────────────────── -->
   <section class="slide slide-solution">
     <div class="brand">vertex-ai-toolkit · vaig</div>
     <div class="solution-layout">
@@ -694,10 +916,10 @@
         </div>
       </div>
     </div>
-    <div class="slide-num">03 / 08</div>
+    <div class="slide-num">04 / 09</div>
   </section>
 
-  <!-- ── SLIDE 4: KEY FEATURES ──────────────────────────── -->
+  <!-- ── SLIDE 5: KEY FEATURES ──────────────────────────── -->
   <section class="slide slide-features">
     <div class="brand">vertex-ai-toolkit · vaig</div>
     <p class="slide-label">Key Capabilities</p>
@@ -741,13 +963,13 @@
       <div class="feature-card cyan">
         <div class="icon"><span role="img" aria-label="Shield">🛡️</span></div>
         <div class="name">Read-Only Safety</div>
-        <div class="desc">All 47 tools are strictly read-only. No cluster mutations are possible — safe to run in production at any time.</div>
+        <div class="desc">Default toolset is read-only and safe for production. Live-mode Kubernetes write actions (scale/restart/label/annotate) are optional, explicit, and policy-gated.</div>
       </div>
     </div>
-    <div class="slide-num">04 / 08</div>
+    <div class="slide-num">05 / 09</div>
   </section>
 
-  <!-- ── SLIDE 5: ARCHITECTURE ──────────────────────────── -->
+  <!-- ── SLIDE 6: ARCHITECTURE ──────────────────────────── -->
   <section class="slide slide-arch">
     <div class="brand">vertex-ai-toolkit · vaig</div>
     <p class="slide-label">Architecture</p>
@@ -815,13 +1037,13 @@
         <div class="arch-stat"><div class="num">47</div><div class="lbl">Read-only tools</div></div>
         <div class="arch-stat"><div class="num">4+</div><div class="lbl">Parallel agents</div></div>
         <div class="arch-stat"><div class="num">3</div><div class="lbl">Export formats</div></div>
-        <div class="arch-stat"><div class="num">0</div><div class="lbl">Cluster mutations</div></div>
+        <div class="arch-stat"><div class="num">4</div><div class="lbl">Cluster mutation tools (gated)</div></div>
       </div>
     </div>
-    <div class="slide-num">05 / 08</div>
+    <div class="slide-num">06 / 09</div>
   </section>
 
-  <!-- ── SLIDE 6: RECENT IMPROVEMENTS ──────────────────── -->
+  <!-- ── SLIDE 7: RECENT IMPROVEMENTS ──────────────────── -->
   <section class="slide slide-improvements">
     <div class="brand">vertex-ai-toolkit · vaig</div>
     <p class="slide-label">Recent Delivery · PRs #119–#127</p>
@@ -873,10 +1095,10 @@
         <div class="pr-desc">README, CHANGELOG, and configuration guide updated. New config options for GKE timeouts and Datadog settings documented.</div>
       </div>
     </div>
-    <div class="slide-num">06 / 08</div>
+    <div class="slide-num">07 / 09</div>
   </section>
 
-  <!-- ── SLIDE 7: DEMO ──────────────────────────────────── -->
+  <!-- ── SLIDE 8: DEMO ──────────────────────────────────── -->
   <section class="slide slide-demo">
     <div class="brand">vertex-ai-toolkit · vaig</div>
     <div class="demo-layout">
@@ -949,10 +1171,10 @@
         </div>
       </div>
     </div>
-    <div class="slide-num">07 / 08</div>
+    <div class="slide-num">08 / 09</div>
   </section>
 
-  <!-- ── SLIDE 8: ROI ───────────────────────────────────── -->
+  <!-- ── SLIDE 9: ROI ───────────────────────────────────── -->
   <section class="slide slide-roi">
     <div class="brand">vertex-ai-toolkit · vaig</div>
     <div class="roi-layout">
@@ -1010,7 +1232,7 @@
         </div>
       </div>
     </div>
-    <div class="slide-num">08 / 08</div>
+    <div class="slide-num">09 / 09</div>
   </section>
 
 </div><!-- /deck -->
