@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-03-27
+
 ### Changed
 - Vertex AI API retry now uses a two-layer strategy — the SDK's built-in `HttpRetryOptions` handles retries with exponential backoff at the transport level, while the application layer catches `google.genai.errors.ClientError` and converts to typed exceptions without re-retrying (avoids retry multiplication) (#135)
 - Argo Rollouts tools now reuse the shared Kubernetes client infrastructure (`_clients.py`) instead of creating standalone API clients — inherits proxy-url, kubeconfig, context, and auth-plugin settings automatically (#134)
