@@ -11,6 +11,7 @@ from vaig.tools.gke.helm import (
     _REDACTED,
     _build_sensitive_pattern,
     _is_sensitive_key,
+    _is_sensitive_value,
     _redact_sensitive_values,
 )
 
@@ -464,3 +465,85 @@ class TestDefaultSensitiveKeys:
         data = {key: "sensitive-value"}
         result = _redact_sensitive_values(data)
         assert result[key] == _REDACTED, f"'{key}' should be redacted"
+
+
+# ── Test: value-based sensitive pattern redaction ────────────
+
+
+class TestSensitiveValueRedaction:
+    """Redaction based on the VALUE content, not the key name."""
+
+    def test_postgres_uri_redacted(self) -> None:
+        data = {"dsn": "postgresql://admin:s3cret@db.host:5432/mydb"}
+        result = _redact_sensitive_values(data)
+        assert result["dsn"] == _REDACTED
+
+    def test_mysql_uri_redacted(self) -> None:
+        data = {"url": "mysql://root:password123@localhost:3306/app"}
+        result = _redact_sensitive_values(data)
+        assert result["url"] == _REDACTED
+
+    def test_mongodb_uri_redacted(self) -> None:
+        data = {"connection": "mongodb://user:pass@mongo.svc:27017/db"}
+        result = _redact_sensitive_values(data)
+        assert result["connection"] == _REDACTED
+
+    def test_generic_userinfo_uri_redacted(self) -> None:
+        data = {"value": "amqp://guest:guest@rabbitmq:5672/"}
+        result = _redact_sensitive_values(data)
+        assert result["value"] == _REDACTED
+
+    def test_pem_private_key_redacted(self) -> None:
+        data = {"cert": "-----BEGIN RSA PRIVATE KEY-----\nMIIE..."}
+        result = _redact_sensitive_values(data)
+        assert result["cert"] == _REDACTED
+
+    def test_ec_private_key_redacted(self) -> None:
+        data = {"key": "-----BEGIN EC PRIVATE KEY-----\nabc123..."}
+        result = _redact_sensitive_values(data)
+        assert result["key"] == _REDACTED
+
+    def test_jwt_token_redacted(self) -> None:
+        data = {
+            "token": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+            "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        }
+        result = _redact_sensitive_values(data)
+        assert result["token"] == _REDACTED
+
+    def test_bearer_token_redacted(self) -> None:
+        data = {"auth_header": "Bearer ya29.a0ARrdaM8_long_opaque_token_value_here"}
+        result = _redact_sensitive_values(data)
+        assert result["auth_header"] == _REDACTED
+
+    def test_benign_url_not_redacted(self) -> None:
+        """URLs without userinfo credentials should NOT be redacted."""
+        data = {"endpoint": "https://api.example.com/v1/health"}
+        result = _redact_sensitive_values(data)
+        assert result["endpoint"] == "https://api.example.com/v1/health"
+
+    def test_plain_string_not_redacted(self) -> None:
+        data = {"name": "my-deployment", "replicas": "3"}
+        result = _redact_sensitive_values(data)
+        assert result["name"] == "my-deployment"
+        assert result["replicas"] == "3"
+
+    def test_nested_sensitive_value_redacted(self) -> None:
+        """Value-based redaction should work in nested dicts too."""
+        data = {
+            "config": {
+                "database_url": "postgresql://user:pass@host/db",
+                "host": "localhost",
+            }
+        }
+        result = _redact_sensitive_values(data)
+        assert result["config"]["database_url"] == _REDACTED
+        assert result["config"]["host"] == "localhost"
+
+    def test_is_sensitive_value_helper(self) -> None:
+        """Unit-test the _is_sensitive_value helper directly."""
+        assert _is_sensitive_value("postgresql://u:p@host/db") is True
+        assert _is_sensitive_value("-----BEGIN PRIVATE KEY-----") is True
+        assert _is_sensitive_value("Bearer abcdefghijklmnopqrstuvwxyz") is True
+        assert _is_sensitive_value("just a normal string") is False
+        assert _is_sensitive_value("https://example.com") is False
