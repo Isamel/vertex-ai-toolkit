@@ -813,6 +813,7 @@ def register(app: typer.Typer) -> None:
                 question=question,
                 output=output,
                 format_=format_,
+                html_output_path=str(output) if output else None,
             )
         except typer.Exit:
             raise  # Let typer exits pass through
@@ -855,9 +856,10 @@ def _run_watch_loop(
         question: Original query (shown in the header).
         output: Export path (informational — not used inside the loop).
         format_: Export format (informational — not used inside the loop).
-        html_output_path: When set, write a watch-session HTML report
-            to this path (or an auto-generated path if ``"auto"``)
-            when the loop is interrupted.
+        html_output_path: Optional destination for a watch-session HTML
+            report when the loop is interrupted. If ``None``, an
+            auto-generated temporary path is used; any other non-empty
+            string or ``Path`` is treated as the literal output path.
     """
     from vaig.skills.service_health.diff import DiffTimelineEntry, WatchSessionData
 
@@ -902,24 +904,14 @@ def _run_watch_loop(
                 print_watch_diff_summary(diff, iteration, console=console)
 
             # ── Accumulate diff timeline entry ────────────────
-            if iteration == 1:
-                diff_history.append(
-                    DiffTimelineEntry(
-                        iteration=iteration,
-                        timestamp=iter_timestamp,
-                        is_baseline=True,
-                        diff=None,
-                    )
+            diff_history.append(
+                DiffTimelineEntry(
+                    iteration=iteration,
+                    timestamp=iter_timestamp,
+                    is_baseline=(iteration == 1),
+                    diff=None if iteration == 1 else diff,
                 )
-            else:
-                diff_history.append(
-                    DiffTimelineEntry(
-                        iteration=iteration,
-                        timestamp=iter_timestamp,
-                        is_baseline=False,
-                        diff=diff,
-                    )
-                )
+            )
 
             if current_report is not None:
                 previous_report = current_report
@@ -954,6 +946,7 @@ def _run_watch_loop(
                 else:
                     ts = session_end.strftime("%Y%m%d_%H%M%S")
                     out_path = Path(f"vaig-watch-session-{ts}.html")
+                out_path.parent.mkdir(parents=True, exist_ok=True)
                 out_path.write_text(html_content, encoding="utf-8")
                 console.print(
                     f"[bold green]✓ Watch session HTML report written:[/bold green] "

@@ -1311,12 +1311,12 @@ function renderWatchHistory() {
 
   // ── Session summary card ──────────────────
   document.getElementById('watch-session-summary').innerHTML =
-    '<div class="watch-summary-grid">' +
-      '<div class="watch-summary-item"><div class="watch-summary-value">' + ws.total_iterations + '</div><div class="watch-summary-label">Iterations</div></div>' +
-      '<div class="watch-summary-item"><div class="watch-summary-value">' + ws.interval_seconds + 's</div><div class="watch-summary-label">Interval</div></div>' +
-      '<div class="watch-summary-item"><div class="watch-summary-value">' + dur + '</div><div class="watch-summary-label">Duration</div></div>' +
-      '<div class="watch-summary-item"><div class="watch-summary-value">' + esc(fmtTime(ws.start_time)) + '</div><div class="watch-summary-label">Started</div></div>' +
-    '</div>';
+    `<div class="watch-summary-grid">
+      <div class="watch-summary-item"><div class="watch-summary-value">${ws.total_iterations}</div><div class="watch-summary-label">Iterations</div></div>
+      <div class="watch-summary-item"><div class="watch-summary-value">${ws.interval_seconds}s</div><div class="watch-summary-label">Interval</div></div>
+      <div class="watch-summary-item"><div class="watch-summary-value">${dur}</div><div class="watch-summary-label">Duration</div></div>
+      <div class="watch-summary-item"><div class="watch-summary-value">${esc(fmtTime(ws.start_time))}</div><div class="watch-summary-label">Started</div></div>
+    </div>`;
 
   // ── Timeline entries ──────────────────────
   const container = document.getElementById('watch-timeline-entries');
@@ -1333,44 +1333,44 @@ function renderWatchHistory() {
       else { emoji = '✅'; subtitle = d.summary_line; }
     }
 
-    html += '<div class="watch-entry">';
-    html += '<div class="watch-entry-header" onclick="toggleWatchEntry(\'' + id + '\')">';
-    html += '<span class="watch-entry-emoji">' + emoji + '</span>';
-    html += '<span class="watch-entry-title">#' + entry.iteration + ' — ' + esc(subtitle) + '</span>';
-    html += '<span class="watch-entry-time">' + esc(fmtTime(entry.timestamp)) + '</span>';
-    html += '<span class="watch-entry-arrow" id="' + id + '-arrow">▸</span>';
-    html += '</div>';
+    html += `<div class="watch-entry">`;
+    html += `<div class="watch-entry-header" onclick="toggleWatchEntry('${id}')" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleWatchEntry('${id}')}" aria-expanded="false">`;
+    html += `<span class="watch-entry-emoji">${emoji}</span>`;
+    html += `<span class="watch-entry-title">#${entry.iteration} — ${esc(subtitle)}</span>`;
+    html += `<span class="watch-entry-time">${esc(fmtTime(entry.timestamp))}</span>`;
+    html += `<span class="watch-entry-arrow" id="${id}-arrow">▸</span>`;
+    html += `</div>`;
 
     // ── Expandable body ───────────────────
-    html += '<div class="watch-entry-body" id="' + id + '-body">';
+    html += `<div class="watch-entry-body" id="${id}-body">`;
     if (entry.is_baseline) {
-      html += '<p style="color:var(--text-dim);font-size:13px">Baseline iteration — no diff available.</p>';
+      html += `<p style="color:var(--text-dim);font-size:13px">Baseline iteration — no diff available.</p>`;
     } else if (entry.diff) {
       const d = entry.diff;
       // Stats row
-      html += '<div style="margin-bottom:10px">';
-      if (d.new_findings.length)     html += '<span class="watch-diff-stat watch-diff-new">+' + d.new_findings.length + ' new</span>';
-      if (d.resolved_findings.length) html += '<span class="watch-diff-stat watch-diff-resolved">' + d.resolved_findings.length + ' resolved</span>';
-      if (d.severity_changes.length)  html += '<span class="watch-diff-stat watch-diff-severity">' + d.severity_changes.length + ' sev changed</span>';
-      html += '<span class="watch-diff-stat watch-diff-unchanged">' + d.unchanged_count + ' unchanged</span>';
-      html += '</div>';
+      html += `<div style="margin-bottom:10px">`;
+      if (d.new_findings.length)     html += `<span class="watch-diff-stat watch-diff-new">+${d.new_findings.length} new</span>`;
+      if (d.resolved_findings.length) html += `<span class="watch-diff-stat watch-diff-resolved">${d.resolved_findings.length} resolved</span>`;
+      if (d.severity_changes.length)  html += `<span class="watch-diff-stat watch-diff-severity">${d.severity_changes.length} sev changed</span>`;
+      html += `<span class="watch-diff-stat watch-diff-unchanged">${d.unchanged_count} unchanged</span>`;
+      html += `</div>`;
 
       // New findings
       d.new_findings.forEach(f => {
-        html += '<div class="watch-finding-mini"><span class="sev-tag ' + sevColor(f.severity) + '">' + esc(f.severity) + '</span>' + esc(f.title || f.id) + '</div>';
+        html += `<div class="watch-finding-mini"><span class="sev-tag ${sevColor(f.severity)}">${esc(f.severity)}</span>${esc(f.title || f.id)}</div>`;
       });
       // Resolved findings
       d.resolved_findings.forEach(f => {
-        html += '<div class="watch-finding-mini" style="opacity:.6"><span class="sev-tag ' + sevColor(f.severity) + '">' + esc(f.severity) + '</span><s>' + esc(f.title || f.id) + '</s> (resolved)</div>';
+        html += `<div class="watch-finding-mini" style="opacity:.6"><span class="sev-tag ${sevColor(f.severity)}">${esc(f.severity)}</span><s>${esc(f.title || f.id)}</s> (resolved)</div>`;
       });
       // Severity changes
       d.severity_changes.forEach(sc => {
-        html += '<div class="watch-finding-mini"><span class="sev-tag ' + sevColor(sc.current_severity) + '">' + esc(sc.current_severity) + '</span>' + esc(sc.finding.title || sc.finding.id) + ' <span style="color:var(--text-dim)">(' + esc(sc.previous_severity) + ' → ' + esc(sc.current_severity) + ')</span></div>';
+        html += `<div class="watch-finding-mini"><span class="sev-tag ${sevColor(sc.current_severity)}">${esc(sc.current_severity)}</span>${esc(sc.finding.title || sc.finding.id)} <span style="color:var(--text-dim)">(${esc(sc.previous_severity)} → ${esc(sc.current_severity)})</span></div>`;
       });
     } else {
-      html += '<p style="color:var(--text-dim);font-size:13px">No diff data for this iteration.</p>';
+      html += `<p style="color:var(--text-dim);font-size:13px">No diff data for this iteration.</p>`;
     }
-    html += '</div></div>';
+    html += `</div></div>`;
   });
   container.innerHTML = html;
 }
@@ -1380,6 +1380,11 @@ function toggleWatchEntry(id) {
   const arrow = document.getElementById(id + '-arrow');
   if (body) { body.classList.toggle('open'); }
   if (arrow) { arrow.classList.toggle('open'); }
+  const header = body ? body.previousElementSibling : null;
+  if (header) {
+    const isOpen = body.classList.contains('open');
+    header.setAttribute('aria-expanded', String(isOpen));
+  }
 }
 
 // ── Init ──────────────────────────────────────────────────────────
