@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-03-28
+
 ### Added
 - `vaig discover` command — autonomous cluster health scanning without requiring a question; auto-generates investigation queries and runs a 4-agent discovery pipeline ([#142](https://github.com/Isamel/vertex-ai-toolkit/pull/142))
 - `vaig doctor` command — environment healthcheck with 10 diagnostic checks: GCP auth, Vertex AI API, GKE connectivity, Cloud Logging, Cloud Monitoring, Helm, ArgoCD, Datadog, optional deps, and MCP servers ([#143](https://github.com/Isamel/vertex-ai-toolkit/pull/143))
@@ -229,7 +231,8 @@ SRE workflows.
 - Extracted shared test fixtures into `conftest.py`
 - Applied 12 code quality improvements from audit
 
-[Unreleased]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.10.0
 [0.9.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.9.0
 [0.7.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.7.0
