@@ -116,7 +116,6 @@ def check_gke_connectivity(settings: Any) -> CheckResult:
     name = "GKE Connectivity"
     try:
         from kubernetes import client as k8s_client  # noqa: I001
-        from kubernetes import config as k8s_config
     except ImportError:
         return CheckResult(
             name=name,
@@ -125,21 +124,26 @@ def check_gke_connectivity(settings: Any) -> CheckResult:
         )
 
     try:
-        kubeconfig_path = settings.gke.kubeconfig_path or None
-        context = settings.gke.context or None
+        from vaig.tools.base import ToolResult
+        from vaig.tools.gke._clients import _InClusterClient, _load_k8s_config
 
-        if kubeconfig_path:
-            k8s_config.load_kube_config(
-                config_file=kubeconfig_path,
-                context=context,
+        result = _load_k8s_config(settings.gke)
+
+        if isinstance(result, ToolResult):
+            short_err = str(result.output)[:120]
+            return CheckResult(
+                name=name,
+                status="fail",
+                message=f"cannot connect to cluster ({short_err})",
             )
-        else:
-            try:
-                k8s_config.load_incluster_config()
-            except k8s_config.ConfigException:
-                k8s_config.load_kube_config(context=context)
 
-        v1 = k8s_client.VersionApi()
+        if isinstance(result, _InClusterClient):
+            api_client = result.api_client
+        else:
+            # result is a Configuration object
+            api_client = k8s_client.ApiClient(result)
+
+        v1 = k8s_client.VersionApi(api_client)
         version_info = v1.get_code()
         cluster_name = settings.gke.cluster_name or "connected"
 

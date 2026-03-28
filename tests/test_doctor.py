@@ -173,11 +173,16 @@ class TestCheckVertexAI:
 class TestCheckGKEConnectivity:
     """GKE / Kubernetes cluster connectivity check."""
 
-    @patch("kubernetes.config.load_incluster_config")
     @patch("kubernetes.client.VersionApi")
+    @patch("kubernetes.client.ApiClient")
+    @patch("vaig.tools.gke._clients._load_k8s_config")
     def test_pass_with_cluster(
-        self, mock_version_api: MagicMock, mock_load_config: MagicMock
+        self,
+        mock_load: MagicMock,
+        mock_api_client_cls: MagicMock,
+        mock_version_api: MagicMock,
     ) -> None:
+        mock_load.return_value = MagicMock()  # Configuration object
         mock_version = MagicMock()
         mock_version.git_version = "v1.28.3"
         mock_version_api.return_value.get_code.return_value = mock_version
@@ -187,60 +192,116 @@ class TestCheckGKEConnectivity:
         assert "test-cluster" in result.message
         assert "v1.28.3" in result.message
 
-    @patch("kubernetes.config.load_kube_config")
-    @patch("kubernetes.config.load_incluster_config", side_effect=Exception("not in cluster"))
     @patch("kubernetes.client.VersionApi")
-    def test_pass_fallback_to_kubeconfig(
+    @patch("vaig.tools.gke._clients._load_k8s_config")
+    def test_pass_with_incluster_config(
         self,
+        mock_load: MagicMock,
         mock_version_api: MagicMock,
-        mock_incluster: MagicMock,
-        mock_kube_config: MagicMock,
     ) -> None:
+        from vaig.tools.gke._clients import _InClusterClient
+
+        mock_api_client = MagicMock()
+        mock_load.return_value = _InClusterClient(api_client=mock_api_client)
         mock_version = MagicMock()
         mock_version.git_version = "v1.29.0"
         mock_version_api.return_value.get_code.return_value = mock_version
-        # ConfigException is the specific exception that triggers the fallback
-        from kubernetes.config import ConfigException
-
-        mock_incluster.side_effect = ConfigException("not in cluster")
         settings = _make_settings()
         result = check_gke_connectivity(settings)
         assert result.status == "pass"
+        assert "v1.29.0" in result.message
 
-    @patch("kubernetes.config.load_incluster_config")
-    @patch("kubernetes.client.VersionApi")
-    def test_fail_when_cluster_unreachable(
-        self, mock_version_api: MagicMock, mock_load_config: MagicMock
+    @patch("vaig.tools.gke._clients._load_k8s_config")
+    def test_fail_when_load_returns_error(
+        self,
+        mock_load: MagicMock,
     ) -> None:
+        from vaig.tools.base import ToolResult
+
+        mock_load.return_value = ToolResult(
+            output="Failed to configure Kubernetes client: something", error=True
+        )
+        settings = _make_settings()
+        result = check_gke_connectivity(settings)
+        assert result.status == "fail"
+        assert "cannot connect" in result.message
+
+    @patch("kubernetes.client.VersionApi")
+    @patch("kubernetes.client.ApiClient")
+    @patch("vaig.tools.gke._clients._load_k8s_config")
+    def test_fail_when_cluster_unreachable(
+        self,
+        mock_load: MagicMock,
+        mock_api_client_cls: MagicMock,
+        mock_version_api: MagicMock,
+    ) -> None:
+        mock_load.return_value = MagicMock()  # Configuration object
         mock_version_api.return_value.get_code.side_effect = Exception("Unable to connect")
         settings = _make_settings()
         result = check_gke_connectivity(settings)
         assert result.status == "fail"
         assert "cannot connect" in result.message
 
-    @patch("kubernetes.config.load_kube_config")
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=True)
     @patch("kubernetes.client.VersionApi")
-    def test_uses_kubeconfig_path_when_set(
-        self, mock_version_api: MagicMock, mock_load: MagicMock
+    @patch("kubernetes.client.ApiClient")
+    @patch("vaig.tools.gke._clients._load_k8s_config")
+    def test_pass_with_autopilot_detection(
+        self,
+        mock_load: MagicMock,
+        mock_api_client_cls: MagicMock,
+        mock_version_api: MagicMock,
+        mock_detect: MagicMock,
     ) -> None:
+        mock_load.return_value = MagicMock()
         mock_version = MagicMock()
-        mock_version.git_version = "v1.28.0"
+        mock_version.git_version = "v1.28.3"
         mock_version_api.return_value.get_code.return_value = mock_version
-        settings = _make_settings(
-            gke=SimpleNamespace(
-                cluster_name="custom",
-                kubeconfig_path="/custom/kubeconfig",
-                context="my-context",
-                project_id=None,
-                location=None,
-            )
-        )
+        settings = _make_settings()
         result = check_gke_connectivity(settings)
         assert result.status == "pass"
-        mock_load.assert_called_once_with(
-            config_file="/custom/kubeconfig",
-            context="my-context",
-        )
+        assert "(Autopilot)" in result.message
+
+    @patch("vaig.tools.gke._clients.detect_autopilot", return_value=False)
+    @patch("kubernetes.client.VersionApi")
+    @patch("kubernetes.client.ApiClient")
+    @patch("vaig.tools.gke._clients._load_k8s_config")
+    def test_pass_with_standard_detection(
+        self,
+        mock_load: MagicMock,
+        mock_api_client_cls: MagicMock,
+        mock_version_api: MagicMock,
+        mock_detect: MagicMock,
+    ) -> None:
+        mock_load.return_value = MagicMock()
+        mock_version = MagicMock()
+        mock_version.git_version = "v1.28.3"
+        mock_version_api.return_value.get_code.return_value = mock_version
+        settings = _make_settings()
+        result = check_gke_connectivity(settings)
+        assert result.status == "pass"
+        assert "(Standard)" in result.message
+
+    @patch("vaig.tools.gke._clients.detect_autopilot", side_effect=Exception("detection boom"))
+    @patch("kubernetes.client.VersionApi")
+    @patch("kubernetes.client.ApiClient")
+    @patch("vaig.tools.gke._clients._load_k8s_config")
+    def test_autopilot_detection_failure_ignored(
+        self,
+        mock_load: MagicMock,
+        mock_api_client_cls: MagicMock,
+        mock_version_api: MagicMock,
+        mock_detect: MagicMock,
+    ) -> None:
+        mock_load.return_value = MagicMock()
+        mock_version = MagicMock()
+        mock_version.git_version = "v1.28.3"
+        mock_version_api.return_value.get_code.return_value = mock_version
+        settings = _make_settings()
+        result = check_gke_connectivity(settings)
+        assert result.status == "pass"
+        assert "(Autopilot)" not in result.message
+        assert "(Standard)" not in result.message
 
 
 # ── Cloud Logging check tests ────────────────────────────────
