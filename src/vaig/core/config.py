@@ -785,6 +785,24 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    language: str = Field(
+        default="en",
+        description=(
+            "Preferred output language (BCP-47 code, e.g. 'es', 'pt', 'ja'). "
+            "When set to a non-'en' value, ALL agent output is produced in this "
+            "language regardless of the query language.  When 'en' (the default), "
+            "language is auto-detected from the user query at runtime."
+        ),
+    )
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def _normalize_language(cls, v: Any) -> str:
+        """Strip whitespace and lowercase the language code."""
+        if isinstance(v, str):
+            return v.strip().lower()
+        return str(v)
+
     gcp: GCPConfig = Field(default_factory=GCPConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)

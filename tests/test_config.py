@@ -879,3 +879,23 @@ class TestSafetyConfig:
         assert s.safety.settings[0].threshold == "BLOCK_LOW_AND_ABOVE"
         # Second entry uses default threshold
         assert s.safety.settings[1].threshold == "BLOCK_MEDIUM_AND_ABOVE"
+
+
+# ── Language field tests ──────────────────────────────────────
+
+
+class TestSettingsLanguage:
+    """Settings.language field — default and explicit override."""
+
+    def test_default_language_is_english(self) -> None:
+        s = Settings()
+        assert s.language == "en"
+
+    def test_custom_language_value(self) -> None:
+        s = Settings(language="es")
+        assert s.language == "es"
+
+    def test_language_accepts_bcp47_codes(self) -> None:
+        for code in ("pt", "ja", "de", "fr"):
+            s = Settings(language=code)
+            assert s.language == code
