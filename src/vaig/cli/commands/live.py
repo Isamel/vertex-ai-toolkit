@@ -1687,6 +1687,9 @@ def _execute_orchestrated_skill(
         # commands (vaig cloud push telemetry / tool-calls) so they are never auto-exported.
         _auto_export_report(settings, orch_result, gke_config)
 
+        # Interactive feedback prompt (only when export is enabled)
+        _prompt_feedback(settings)
+
         # Notify via terminal bell
         _emit_bell(no_bell=no_bell)
 
@@ -1701,6 +1704,63 @@ def _execute_orchestrated_skill(
         raise typer.Exit(1)  # noqa: B904
 
 
+def _prompt_feedback(settings: Settings) -> None:
+    """Prompt the user for optional post-run feedback.
+
+    Only activates when export is enabled.  Reads a rating (1-5) from stdin;
+    pressing Enter (empty input) skips.  If a valid rating is entered, also
+    offers an optional comment prompt.  Feedback is exported to BigQuery on a
+    daemon thread so it never blocks exit.
+    """
+    if not settings.export.enabled:
+        return
+
+    try:
+        raw = console.input(
+            "\n[dim]\U0001f4ca Was this analysis helpful? Rate 1-5 (Enter to skip):[/dim] "
+        )
+    except (EOFError, KeyboardInterrupt):
+        return
+
+    raw = raw.strip()
+    if not raw:
+        return
+
+    try:
+        rating = int(raw)
+    except ValueError:
+        return
+
+    if not 1 <= rating <= 5:
+        return
+
+    # Optional comment
+    comment = ""
+    try:
+        comment = console.input("[dim]   Comment (Enter to skip):[/dim] ").strip()
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+    # Export in background
+    from vaig.core.export import DataExporter, get_last_run_id
+
+    run_id = get_last_run_id() or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+    def _do_export() -> None:
+        try:
+            exporter = DataExporter(settings.export)
+            exporter.export_feedback_to_bigquery(
+                rating=rating, comment=comment, run_id=run_id,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("Post-run feedback export failed", exc_info=True)
+
+    thread = threading.Thread(target=_do_export, daemon=True, name="vaig-feedback-export")
+    thread.start()
+    stars = "\u2605" * rating + "\u2606" * (5 - rating)
+    console.print(f"  [green]\u2713[/green] Feedback recorded  {stars}")
+
+
 def _auto_export_report(
     settings: Settings,
     orch_result: OrchestratorResult,
@@ -1713,9 +1773,10 @@ def _auto_export_report(
     """
     if not (settings.export.enabled and settings.export.auto_export_reports and orch_result.structured_report is not None):
         return
-    from vaig.core.export import auto_export_report
+    from vaig.core.export import auto_export_report, save_last_run_id
 
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    save_last_run_id(run_id)
     auto_export_report(
         config=settings.export,
         report=orch_result.structured_report.to_dict(),
@@ -2260,6 +2321,9 @@ async def _async_execute_orchestrated_skill(
         # summary.  Telemetry and tool-calls are higher-volume and use the explicit CLI push
         # commands (vaig cloud push telemetry / tool-calls) so they are never auto-exported.
         _auto_export_report(settings, orch_result, gke_config)
+
+        # Interactive feedback prompt (only when export is enabled)
+        _prompt_feedback(settings)
 
         # Notify via terminal bell
         _emit_bell(no_bell=no_bell)

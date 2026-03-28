@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 from vaig.core.config import ExportConfig, Settings
 from vaig.core.export_transformers import (
+    transform_feedback_record,
     transform_health_report,
     transform_telemetry_record,
     transform_tool_call_record,
@@ -701,6 +702,54 @@ class DataExporter:
             )
             return False
 
+    def export_feedback_to_bigquery(
+        self,
+        rating: int,
+        comment: str = "",
+        run_id: str = "",
+        *,
+        report_summary: str = "",
+        auto_quality_score: float = 0.0,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        """Insert a single feedback row into BigQuery.
+
+        Transforms the feedback using :func:`transform_feedback_record` and
+        inserts it into the ``feedback`` table via streaming insert.
+
+        Args:
+            rating: User rating (1–5).
+            comment: Free-text feedback comment.
+            run_id: Pipeline run identifier linking feedback to a specific run.
+            report_summary: Optional summary of the associated report.
+            auto_quality_score: Optional automated quality score.
+            metadata: Optional arbitrary metadata dict.
+
+        Returns:
+            ``True`` if the row was inserted successfully, ``False`` on failure.
+        """
+        if not self._effective_project_id():
+            logger.warning(
+                "export_feedback_to_bigquery: bigquery_project is not configured — skipping"
+            )
+            return False
+        try:
+            feedback_data: dict[str, Any] = {
+                "rating": rating,
+                "comment": comment,
+                "report_summary": report_summary,
+                "auto_quality_score": auto_quality_score,
+                "metadata": metadata or {},
+            }
+            row = transform_feedback_record(feedback_data, run_id=run_id)
+            inserted = self._insert_rows("feedback", [row])
+            return inserted > 0
+        except _GCP_EXPORT_ERRORS:
+            logger.warning(
+                "export_feedback_to_bigquery: insert failed — skipping", exc_info=True
+            )
+            return False
+
     # ── GCS export methods ───────────────────────────────────
 
     def export_report_to_gcs(self, report: dict[str, Any], run_id: str) -> str | None:
@@ -800,6 +849,44 @@ class DataExporter:
         except _GCP_EXPORT_ERRORS:
             logger.warning("export_telemetry_to_gcs: upload failed — skipping", exc_info=True)
             return None
+
+
+# ── Run ID persistence ──────────────────────────────────────
+
+
+_LAST_RUN_ID_PATH = Path("~/.vaig/last_run_id")
+
+
+def save_last_run_id(run_id: str) -> None:
+    """Persist the most recent run_id to ``~/.vaig/last_run_id``.
+
+    Creates the ``~/.vaig/`` directory if it doesn't exist.  Silently
+    swallows any I/O errors so callers don't need error handling.
+    """
+    try:
+        path = _LAST_RUN_ID_PATH.expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(run_id.strip(), encoding="utf-8")
+    except OSError:
+        logger.debug("Could not save last run_id to %s", _LAST_RUN_ID_PATH, exc_info=True)
+
+
+def get_last_run_id() -> str | None:
+    """Read the most recent run_id from ``~/.vaig/last_run_id``.
+
+    Returns:
+        The stored run_id string, or ``None`` if the file doesn't exist or
+        is empty.
+    """
+    try:
+        path = _LAST_RUN_ID_PATH.expanduser()
+        if not path.is_file():
+            return None
+        content = path.read_text(encoding="utf-8").strip()
+        return content or None
+    except OSError:
+        logger.debug("Could not read last run_id from %s", _LAST_RUN_ID_PATH, exc_info=True)
+        return None
 
 
 # ── Fire-and-forget auto-export hook ────────────────────────
