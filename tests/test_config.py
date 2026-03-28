@@ -906,7 +906,7 @@ class TestSettingsLanguage:
 
 
 class TestDatadogAPIConfigYaml:
-    """Verify cluster_name_override round-trips through YAML config loading."""
+    """Verify cluster_name_override is loaded correctly from YAML config."""
 
     def test_cluster_name_override_defaults_empty(self) -> None:
         cfg = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")

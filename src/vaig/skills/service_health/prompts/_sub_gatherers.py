@@ -714,14 +714,19 @@ You MUST call ``query_datadog_metrics(cluster_name="{cluster}", metric="memory")
 [add ``service=`` and ``env=`` with the same values as Call 1 if they were resolved].
 
 **Fallback metric strategy** — if a Datadog metric query returns **no data points**
-(empty series or all-null values), retry with an alternative metric before giving up:
-- ``metric="cpu"`` returns no data → retry with ``metric="requests"``
-  (APM throughput trace metric — proves the service is receiving traffic).
-- ``metric="memory"`` returns no data → retry with ``metric="latency"``
-  (APM average latency — proves the service is responding).
+(empty series or all-null values), adjust the query before giving up:
+- First, retry the same call **without** any ``service`` / ``env`` filters
+  (only ``cluster_name`` and the same ``metric`` value).
+- If the tool supports a time-window parameter (for example, ``minutes``), you may
+  widen the time window on a second retry to check for sparse or delayed data.
+- If you still receive no usable data **or** the tool reports that the requested
+  metric is unsupported in this environment, do **not** keep guessing new metric
+  names. Instead, call ``get_datadog_apm_services(cluster_name="{cluster}")`` once
+  to infer whether the service is receiving traffic and responding, and explain
+  clearly in Raw Findings that infrastructure metrics were unavailable.
 
-Record both the original failure and the fallback result in Raw Findings so the
-analyst can see which metric source was actually used.
+Record both the original failure and any fallback attempts in Raw Findings so the
+analyst can see which metric source or strategy was actually used.
 
 ### Call 3 — Datadog Monitors
 
