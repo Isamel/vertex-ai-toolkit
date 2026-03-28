@@ -14,6 +14,7 @@ Actual command implementations live in:
 - ``vaig.cli.commands.models``      — model listing sub-commands
 - ``vaig.cli.commands.skills``      — skill management sub-commands
 - ``vaig.cli.commands.mcp``         — MCP server management sub-commands
+- ``vaig.cli.commands.doctor``      — environment healthcheck
 - ``vaig.cli.commands.stats``       — telemetry stats sub-commands
 - ``vaig.cli.commands.export_cmd``  — session export command
 - ``vaig.cli.commands._code``       — code mode + chunked analysis helpers
@@ -168,6 +169,9 @@ from vaig.cli.commands import (
     discover as _discover_mod,
 )
 from vaig.cli.commands import (
+    doctor as _doctor_mod,
+)
+from vaig.cli.commands import (
     export_cmd as _export_mod,
 )
 from vaig.cli.commands import (
@@ -194,6 +198,7 @@ _chat_mod.register(app)
 _ask_mod.register(app)
 _live_mod.register(app)
 _discover_mod.register(app)
+_doctor_mod.register(app)
 _export_mod.register(app)
 app.add_typer(cloud_app, name="cloud")
 
