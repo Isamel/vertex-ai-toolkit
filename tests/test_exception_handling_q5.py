@@ -169,23 +169,30 @@ class TestArgoCDKubeconfigExceptions:
 class TestArgoCDClientExceptions:
     """Verify _get_argocd_client raises specific exception types."""
 
-    def test_raises_not_implemented_for_api_mode(self) -> None:
+    def test_api_mode_returns_api_client(self) -> None:
         from vaig.tools.gke.argocd import _get_argocd_client
 
-        with pytest.raises(NotImplementedError, match="REST API mode"):
-            _get_argocd_client(server="https://argocd.example.com", token="my-token")
+        with patch("vaig.tools.gke.argocd._clients._create_argocd_client") as mock_create:
+            mock_create.return_value = ("api", MagicMock())
+            mode, _ = _get_argocd_client(server="https://argocd.example.com", token="my-token")
 
-    def test_raises_not_implemented_for_context_mode(self) -> None:
+        assert mode == "api"
+
+    def test_context_mode_returns_context_client(self) -> None:
         from vaig.tools.gke.argocd import _get_argocd_client
 
-        with pytest.raises(NotImplementedError, match="separate-context mode"):
-            _get_argocd_client(context="my-context")
+        with patch("vaig.tools.gke.argocd._clients._create_argocd_client") as mock_create:
+            mock_create.return_value = ("context", MagicMock())
+            mode, _ = _get_argocd_client(context="my-context")
+
+        assert mode == "context"
 
     def test_raises_runtime_error_when_sdk_unavailable(self) -> None:
         from vaig.tools.gke.argocd import _get_argocd_client
 
-        with patch("vaig.tools.gke.argocd._get_custom_objects_api", return_value=None):
-            with pytest.raises(RuntimeError, match="Cannot create CustomObjectsApi"):
+        with patch("vaig.tools.gke.argocd._clients._create_argocd_client") as mock_create:
+            mock_create.side_effect = RuntimeError("kubernetes SDK not available")
+            with pytest.raises(RuntimeError, match="kubernetes SDK not available"):
                 _get_argocd_client()
 
 

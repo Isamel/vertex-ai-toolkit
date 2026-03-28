@@ -448,21 +448,39 @@ class TestCreateArgocdClient:
         mock_k8s_client.ApiClient.assert_called_once()
         mock_k8s_client.CustomObjectsApi.assert_called_once_with(mock_api_client)
 
-    def test_create_argocd_client_api_mode_stub(self) -> None:
-        """API mode raises NotImplementedError."""
+    def test_create_argocd_client_api_mode(self) -> None:
+        """API mode returns ('api', ArgoCDAPIClient)."""
+        from vaig.tools.gke._clients import ArgoCDAPIClient, _create_argocd_client
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
+            mode, client = _create_argocd_client(
+                server="https://argocd.example.com", token="my-token"
+            )
+
+        assert mode == "api"
+        assert isinstance(client, ArgoCDAPIClient)
+
+    @patch("vaig.tools.gke._clients.k8s_config")
+    @patch("vaig.tools.gke._clients.k8s_client")
+    def test_create_argocd_client_context_mode(
+        self, mock_k8s_client: MagicMock, mock_k8s_config: MagicMock
+    ) -> None:
+        """Context mode returns ('context', CustomObjectsApi)."""
         from vaig.tools.gke._clients import _create_argocd_client
 
-        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
-             pytest.raises(NotImplementedError, match="REST API mode"):
-            _create_argocd_client(server="https://argocd.example.com", token="my-token")
+        mock_api_client = MagicMock()
+        mock_custom_api = MagicMock()
+        mock_k8s_client.ApiClient.return_value = mock_api_client
+        mock_k8s_client.CustomObjectsApi.return_value = mock_custom_api
 
-    def test_create_argocd_client_context_mode_stub(self) -> None:
-        """Context mode raises NotImplementedError."""
-        from vaig.tools.gke._clients import _create_argocd_client
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
+            mode, client = _create_argocd_client(context="argocd-cluster")
 
-        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
-             pytest.raises(NotImplementedError, match="separate-context mode"):
-            _create_argocd_client(context="argocd-context")
+        assert mode == "context"
+        assert client is mock_custom_api
+        mock_k8s_config.load_kube_config.assert_called_once_with(context="argocd-cluster")
+        mock_k8s_client.ApiClient.assert_called_once()
+        mock_k8s_client.CustomObjectsApi.assert_called_once_with(mock_api_client)
 
     def test_create_argocd_client_k8s_unavailable(self) -> None:
         """Raises RuntimeError when kubernetes SDK is not available."""
@@ -473,8 +491,280 @@ class TestCreateArgocdClient:
              pytest.raises(RuntimeError, match="kubernetes"):
             _create_argocd_client()
 
+    def test_create_argocd_client_context_mode_failure(self) -> None:
+        """Context mode wraps exceptions as RuntimeError."""
+        from vaig.tools.gke._clients import _create_argocd_client
 
-# ── Cache behavior ───────────────────────────────────────────
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True), \
+             patch("vaig.tools.gke._clients.k8s_config") as mock_cfg:
+            mock_cfg.load_kube_config.side_effect = Exception("bad context")
+            with pytest.raises(RuntimeError, match="bad context"):
+                _create_argocd_client(context="bad-ctx")
+
+    def test_create_argocd_client_api_mode_verify_ssl_false(self) -> None:
+        """API mode passes verify_ssl=False to the client."""
+        from vaig.tools.gke._clients import _create_argocd_client
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
+            mode, client = _create_argocd_client(
+                server="https://argocd.local", token="tok", verify_ssl=False
+            )
+
+        assert mode == "api"
+        assert client._session.verify is False
+
+    def test_create_argocd_client_api_priority_over_context(self) -> None:
+        """When both server+token and context are provided, API mode wins."""
+        from vaig.tools.gke._clients import ArgoCDAPIClient, _create_argocd_client
+
+        with patch("vaig.tools.gke._clients._K8S_AVAILABLE", True):
+            mode, client = _create_argocd_client(
+                server="https://argocd.example.com",
+                token="tok",
+                context="some-ctx",
+            )
+
+        assert mode == "api"
+        assert isinstance(client, ArgoCDAPIClient)
+
+
+# ── ArgoCDAPIClient ──────────────────────────────────────────
+
+
+class TestArgoCDAPIClient:
+    """Tests for the ArgoCDAPIClient REST wrapper."""
+
+    def _make_client(self, server: str = "https://argocd.example.com"):  # noqa: ANN202
+        from vaig.tools.gke._clients import ArgoCDAPIClient
+
+        return ArgoCDAPIClient(server=server, token="test-token", verify_ssl=True)
+
+    def test_api_client_property_is_none(self) -> None:
+        """api_client returns None (sentinel for CRD check skip)."""
+        client = self._make_client()
+        assert client.api_client is None
+
+    def test_list_namespaced_custom_object(self) -> None:
+        """list_namespaced_custom_object calls GET /api/v1/applications."""
+        client = self._make_client()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "items": [
+                {"metadata": {"name": "app1", "namespace": "argocd"}},
+                {"metadata": {"name": "app2", "namespace": "other"}},
+            ]
+        }
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch.object(client._session, "get", return_value=mock_resp) as mock_get:
+            result = client.list_namespaced_custom_object(
+                group="argoproj.io",
+                version="v1alpha1",
+                namespace="argocd",
+                plural="applications",
+            )
+
+        mock_get.assert_called_once_with(
+            "https://argocd.example.com/api/v1/applications", timeout=30
+        )
+        # Should filter to only argocd namespace
+        assert len(result["items"]) == 1
+        assert result["items"][0]["metadata"]["name"] == "app1"
+
+    def test_list_namespaced_no_namespace_filter(self) -> None:
+        """list_namespaced_custom_object without namespace returns all items."""
+        client = self._make_client()
+        items = [{"metadata": {"name": "a", "namespace": "ns1"}}]
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"items": items}
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch.object(client._session, "get", return_value=mock_resp):
+            result = client.list_namespaced_custom_object(
+                group="argoproj.io", version="v1alpha1", namespace="", plural="applications"
+            )
+
+        assert result["items"] == items
+
+    def test_get_namespaced_custom_object(self) -> None:
+        """get_namespaced_custom_object calls GET /api/v1/applications/{name}."""
+        client = self._make_client()
+        app_data = {"metadata": {"name": "my-app"}}
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = app_data
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch.object(client._session, "get", return_value=mock_resp) as mock_get:
+            result = client.get_namespaced_custom_object(
+                group="argoproj.io",
+                version="v1alpha1",
+                namespace="argocd",
+                name="my-app",
+                plural="applications",
+            )
+
+        mock_get.assert_called_once_with(
+            "https://argocd.example.com/api/v1/applications/my-app", timeout=30
+        )
+        assert result == app_data
+
+    def test_list_cluster_custom_object(self) -> None:
+        """list_cluster_custom_object calls GET /api/v1/applications."""
+        client = self._make_client()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"items": []}
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch.object(client._session, "get", return_value=mock_resp) as mock_get:
+            result = client.list_cluster_custom_object(
+                group="argoproj.io", version="v1alpha1", plural="applications"
+            )
+
+        mock_get.assert_called_once_with(
+            "https://argocd.example.com/api/v1/applications", timeout=30
+        )
+        assert result == {"items": []}
+
+    def test_server_trailing_slash_stripped(self) -> None:
+        """Trailing slash on server URL is stripped to avoid double-slash."""
+        client = self._make_client(server="https://argocd.example.com/")
+        assert client._server == "https://argocd.example.com"
+
+    def test_auth_header_set(self) -> None:
+        """Bearer token is set in session headers."""
+        client = self._make_client()
+        assert client._session.headers["Authorization"] == "Bearer test-token"
+
+    def test_http_error_propagates(self) -> None:
+        """HTTP errors from the ArgoCD server propagate as exceptions."""
+        from requests.exceptions import HTTPError
+
+        client = self._make_client()
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.side_effect = HTTPError("403 Forbidden")
+
+        with patch.object(client._session, "get", return_value=mock_resp), \
+             pytest.raises(HTTPError, match="403"):
+            client.list_namespaced_custom_object(
+                group="argoproj.io", version="v1alpha1", namespace="argocd", plural="applications"
+            )
+
+
+# ── _get_argocd_client (argocd.py) ──────────────────────────
+
+
+class TestGetArgocdClient:
+    """Tests for _get_argocd_client in argocd.py — settings-aware wrapper."""
+
+    @patch("vaig.tools.gke.argocd.get_settings")
+    @patch("vaig.tools.gke.argocd._clients._create_argocd_client")
+    def test_reads_settings_when_no_args(
+        self, mock_create: MagicMock, mock_settings: MagicMock
+    ) -> None:
+        """When called with no args, reads connection details from settings."""
+        from vaig.tools.gke.argocd import _get_argocd_client
+
+        gke = MagicMock()
+        gke.argocd_server = "https://argocd.prod.com"
+        gke.argocd_token = "secret-token"
+        gke.argocd_context = ""
+        gke.argocd_verify_ssl = False
+        mock_settings.return_value.gke = gke
+        mock_create.return_value = ("api", MagicMock())
+
+        mode, client = _get_argocd_client()
+
+        mock_create.assert_called_once_with(
+            server="https://argocd.prod.com",
+            token="secret-token",
+            context="",
+            verify_ssl=False,
+        )
+        assert mode == "api"
+
+    @patch("vaig.tools.gke.argocd.get_settings")
+    @patch("vaig.tools.gke.argocd._clients._create_argocd_client")
+    def test_reads_context_from_settings(
+        self, mock_create: MagicMock, mock_settings: MagicMock
+    ) -> None:
+        """Settings with context triggers context mode."""
+        from vaig.tools.gke.argocd import _get_argocd_client
+
+        gke = MagicMock()
+        gke.argocd_server = ""
+        gke.argocd_token = ""
+        gke.argocd_context = "argocd-mgmt"
+        gke.argocd_verify_ssl = True
+        mock_settings.return_value.gke = gke
+        mock_create.return_value = ("context", MagicMock())
+
+        mode, _ = _get_argocd_client()
+
+        mock_create.assert_called_once_with(
+            server="",
+            token="",
+            context="argocd-mgmt",
+            verify_ssl=True,
+        )
+        assert mode == "context"
+
+    @patch("vaig.tools.gke.argocd._clients._create_argocd_client")
+    def test_explicit_args_bypass_settings(self, mock_create: MagicMock) -> None:
+        """When server+token are passed explicitly, settings are not read."""
+        from vaig.tools.gke.argocd import _get_argocd_client
+
+        mock_create.return_value = ("api", MagicMock())
+
+        _get_argocd_client(server="https://explicit.com", token="explicit-tok")
+
+        mock_create.assert_called_once_with(
+            server="https://explicit.com",
+            token="explicit-tok",
+            context="",
+            verify_ssl=True,
+        )
+
+    @patch("vaig.tools.gke.argocd.get_settings")
+    @patch("vaig.tools.gke.argocd._clients._create_argocd_client")
+    def test_cluster_mode_when_no_remote_config(
+        self, mock_create: MagicMock, mock_settings: MagicMock
+    ) -> None:
+        """Falls through to cluster mode when settings have no remote config."""
+        from vaig.tools.gke.argocd import _get_argocd_client
+
+        gke = MagicMock()
+        gke.argocd_server = ""
+        gke.argocd_token = ""
+        gke.argocd_context = ""
+        gke.argocd_verify_ssl = True
+        mock_settings.return_value.gke = gke
+        mock_create.return_value = ("cluster", MagicMock())
+
+        mode, _ = _get_argocd_client()
+
+        mock_create.assert_called_once_with(
+            server="", token="", context="", verify_ssl=True
+        )
+        assert mode == "cluster"
+
+    @patch("vaig.tools.gke.argocd.get_settings")
+    @patch("vaig.tools.gke.argocd._clients._create_argocd_client")
+    def test_runtime_error_propagates(
+        self, mock_create: MagicMock, mock_settings: MagicMock
+    ) -> None:
+        """RuntimeError from _create_argocd_client propagates up."""
+        from vaig.tools.gke.argocd import _get_argocd_client
+
+        gke = MagicMock()
+        gke.argocd_server = ""
+        gke.argocd_token = ""
+        gke.argocd_context = ""
+        gke.argocd_verify_ssl = True
+        mock_settings.return_value.gke = gke
+        mock_create.side_effect = RuntimeError("k8s unavailable")
+
+        with pytest.raises(RuntimeError, match="k8s unavailable"):
+            _get_argocd_client()
 
 
 class TestCacheBehavior:

@@ -404,27 +404,33 @@ def _get_argocd_client(
 ) -> tuple[str, Any]:
     """Return an ArgoCD client based on connection mode.
 
+    When called without arguments (the common case from tool functions),
+    reads connection details from ``get_settings().gke`` and delegates to
+    :func:`_clients._create_argocd_client`.
+
     Returns:
-        Tuple of (mode, client) where mode is one of:
-        - ``"api"`` — REST API mode (stub, raises NotImplementedError)
-        - ``"context"`` — separate kubeconfig context (stub, raises NotImplementedError)
-        - ``"cluster"`` — same-cluster CustomObjectsApi
+        Tuple of ``(mode, client)`` where mode is one of:
+        - ``"api"`` — REST API wrapper around the ArgoCD server
+        - ``"context"`` — ``CustomObjectsApi`` loaded from a separate kubeconfig context
+        - ``"cluster"`` — ``CustomObjectsApi`` from the current cluster
     """
-    # Mode 1: API server
-    if server and token:
-        raise NotImplementedError("ArgoCD REST API mode not yet implemented (Phase 3). Use same-cluster mode instead.")
+    # Resolve connection parameters from settings when not provided explicitly.
+    if not server and not token and not context:
+        settings = get_settings()
+        gke = settings.gke
+        server = gke.argocd_server
+        token = gke.argocd_token
+        context = gke.argocd_context
+        verify_ssl = gke.argocd_verify_ssl
+    else:
+        verify_ssl = True
 
-    # Mode 2: Separate kubeconfig context
-    if context:
-        raise NotImplementedError(
-            "ArgoCD separate-context mode not yet implemented (Phase 3). Use same-cluster mode instead."
-        )
-
-    # Mode 3: Same-cluster (default fallback)
-    client = _get_custom_objects_api()
-    if client is None:
-        raise RuntimeError("Cannot create CustomObjectsApi — kubernetes SDK unavailable or unconfigured")
-    return ("cluster", client)
+    return _clients._create_argocd_client(
+        server=server,
+        token=token,
+        context=context,
+        verify_ssl=verify_ssl,
+    )
 
 
 def _discover_argocd_namespace(custom_api: Any) -> str | None:
