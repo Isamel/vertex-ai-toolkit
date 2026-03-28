@@ -7,9 +7,12 @@ Validates:
 - Agent pipeline configuration (4 agents, sequential, requires_tools flags)
 - Auto-generated discover query building
 - Prompt defense constants are present in agent prompts
+- pre_execute_parallel hook pre-warms K8s client cache
 """
 
 from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
 
 from vaig.skills.base import SkillPhase
 
@@ -411,3 +414,100 @@ class TestDiscoveryHelmArgoPrompts:
         from vaig.skills.discovery.prompts import CLUSTER_REPORTER_PROMPT
 
         assert "Helm & ArgoCD Status" in CLUSTER_REPORTER_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# Tests: DiscoverySkill.pre_execute_parallel
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoveryPreExecuteHook:
+    """Verify DiscoverySkill.pre_execute_parallel pre-warms the K8s client.
+
+    Mirrors ``TestServiceHealthPreExecuteHook`` in ``test_pre_execute_hook.py``.
+    """
+
+    def test_discovery_has_pre_execute_parallel(self) -> None:
+        """DiscoverySkill must implement pre_execute_parallel."""
+        from vaig.skills.discovery.skill import DiscoverySkill
+
+        skill = DiscoverySkill()
+        assert hasattr(skill, "pre_execute_parallel")
+        assert callable(skill.pre_execute_parallel)
+
+    def test_discovery_hook_calls_ensure_client_initialized(self) -> None:
+        """DiscoverySkill.pre_execute_parallel must call ensure_client_initialized."""
+        from vaig.skills.discovery.skill import DiscoverySkill
+
+        skill = DiscoverySkill()
+
+        mock_settings = MagicMock()
+        mock_settings.gke = MagicMock()
+
+        with (
+            patch(
+                "vaig.core.config.get_settings",
+                return_value=mock_settings,
+            ),
+            patch(
+                "vaig.skills.discovery.skill.ensure_client_initialized",
+            ) as mock_ensure,
+        ):
+            skill.pre_execute_parallel("scan all namespaces")
+
+        mock_ensure.assert_called_once_with(mock_settings.gke)
+
+    def test_discovery_hook_does_not_raise_on_settings_error(self) -> None:
+        """DiscoverySkill.pre_execute_parallel must be silent when get_settings fails."""
+        from vaig.skills.discovery.skill import DiscoverySkill
+
+        skill = DiscoverySkill()
+
+        with patch(
+            "vaig.core.config.get_settings",
+            side_effect=Exception("Settings not available"),
+        ):
+            # Must not propagate the exception
+            skill.pre_execute_parallel("discover health")
+
+    def test_discovery_hook_does_not_raise_on_client_init_error(self) -> None:
+        """DiscoverySkill.pre_execute_parallel must be silent when ensure_client_initialized fails."""
+        from vaig.skills.discovery.skill import DiscoverySkill
+
+        skill = DiscoverySkill()
+
+        mock_settings = MagicMock()
+        mock_settings.gke = MagicMock()
+
+        with (
+            patch(
+                "vaig.core.config.get_settings",
+                return_value=mock_settings,
+            ),
+            patch(
+                "vaig.skills.discovery.skill.ensure_client_initialized",
+                side_effect=RuntimeError("K8s not reachable"),
+            ),
+        ):
+            # Must not propagate the exception
+            skill.pre_execute_parallel("cluster scan")
+
+    def test_discovery_hook_returns_none(self) -> None:
+        """pre_execute_parallel must return None (it is a side-effect-only hook)."""
+        from vaig.skills.discovery.skill import DiscoverySkill
+
+        skill = DiscoverySkill()
+
+        mock_settings = MagicMock()
+        mock_settings.gke = MagicMock()
+
+        with (
+            patch(
+                "vaig.core.config.get_settings",
+                return_value=mock_settings,
+            ),
+            patch("vaig.skills.discovery.skill.ensure_client_initialized"),
+        ):
+            result = skill.pre_execute_parallel("scan")
+
+        assert result is None

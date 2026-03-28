@@ -8,10 +8,14 @@ Verifies that:
 - ``build_autopilot_instruction()`` returns the updated directive text
 - The Autopilot instruction contains "CONTEXT ONLY", "NotReady", and "WORKLOAD-LEVEL"
 - The default value of ``is_autopilot`` is ``False``
+- ``_query_autopilot_status`` passes ``timeout=_AUTOPILOT_TIMEOUT`` to ``get_cluster``
+- ``detect_autopilot`` returns ``False`` on ``DeadlineExceeded`` timeout
+- ``detect_autopilot`` returns ``None`` on generic errors (unchanged behaviour)
 """
 from __future__ import annotations
 
 import inspect
+from unittest.mock import MagicMock, patch
 
 
 class TestBuildNodeGathererPromptStandard:
@@ -207,3 +211,202 @@ class TestBuildAutopilotInstruction:
         result = build_autopilot_instruction(True)
         assert "MANDATORY" in result or "mandatory" in result.lower()
         assert "resource requests" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# Tests: _query_autopilot_status timeout parameter
+# ---------------------------------------------------------------------------
+
+
+class TestQueryAutopilotStatusTimeout:
+    """Verify _query_autopilot_status passes timeout to get_cluster."""
+
+    def test_timeout_constant_exists_and_is_positive(self) -> None:
+        """_AUTOPILOT_TIMEOUT must be a positive integer."""
+        from vaig.tools.gke._clients import _AUTOPILOT_TIMEOUT
+
+        assert isinstance(_AUTOPILOT_TIMEOUT, int)
+        assert _AUTOPILOT_TIMEOUT > 0
+
+    def test_timeout_constant_value(self) -> None:
+        """_AUTOPILOT_TIMEOUT must be 10 seconds."""
+        from vaig.tools.gke._clients import _AUTOPILOT_TIMEOUT
+
+        assert _AUTOPILOT_TIMEOUT == 10
+
+    def test_get_cluster_receives_timeout_kwarg(self) -> None:
+        """get_cluster must be called with timeout=_AUTOPILOT_TIMEOUT."""
+        from vaig.tools.gke._clients import _AUTOPILOT_TIMEOUT, _query_autopilot_status
+
+        mock_cluster_mgr = MagicMock()
+        mock_cluster = MagicMock()
+        mock_cluster.autopilot.enabled = True
+        mock_cluster_mgr.return_value.get_cluster.return_value = mock_cluster
+
+        with patch(
+            "google.cloud.container_v1.ClusterManagerClient",
+            mock_cluster_mgr,
+        ):
+            _query_autopilot_status("my-project", "us-central1", "my-cluster")
+
+        # Verify timeout was passed as kwarg
+        mock_cluster_mgr.return_value.get_cluster.assert_called_once()
+        call_kwargs = mock_cluster_mgr.return_value.get_cluster.call_args
+        assert call_kwargs.kwargs.get("timeout") == _AUTOPILOT_TIMEOUT
+
+    def test_get_cluster_called_with_correct_name(self) -> None:
+        """get_cluster must receive the correctly formatted resource name."""
+        from vaig.tools.gke._clients import _query_autopilot_status
+
+        mock_cluster_mgr = MagicMock()
+        mock_cluster = MagicMock()
+        mock_cluster.autopilot.enabled = False
+        mock_cluster_mgr.return_value.get_cluster.return_value = mock_cluster
+
+        with patch(
+            "google.cloud.container_v1.ClusterManagerClient",
+            mock_cluster_mgr,
+        ):
+            _query_autopilot_status("proj-1", "europe-west1", "cluster-x")
+
+        expected_name = "projects/proj-1/locations/europe-west1/clusters/cluster-x"
+        call_kwargs = mock_cluster_mgr.return_value.get_cluster.call_args
+        assert call_kwargs.kwargs.get("name") == expected_name
+
+
+# ---------------------------------------------------------------------------
+# Tests: detect_autopilot timeout handling
+# ---------------------------------------------------------------------------
+
+
+class TestDetectAutopilotTimeoutHandling:
+    """Verify detect_autopilot returns False on DeadlineExceeded (timeout)."""
+
+    def _make_gke_config(
+        self,
+        project: str = "test-project",
+        location: str = "us-central1",
+        cluster: str = "test-cluster",
+    ) -> MagicMock:
+        cfg = MagicMock()
+        cfg.project_id = project
+        cfg.location = location
+        cfg.cluster_name = cluster
+        return cfg
+
+    def test_deadline_exceeded_returns_false(self) -> None:
+        """DeadlineExceeded must result in False (assumes Standard cluster)."""
+        from vaig.tools.gke._clients import clear_autopilot_cache, detect_autopilot
+
+        clear_autopilot_cache()
+
+        # Simulate google.api_core.exceptions.DeadlineExceeded
+        exc = type("DeadlineExceeded", (Exception,), {})("Timeout on get_cluster")
+        gke_config = self._make_gke_config()
+
+        with patch(
+            "vaig.tools.gke._clients._query_autopilot_status",
+            side_effect=exc,
+        ):
+            result = detect_autopilot(gke_config)
+
+        assert result is False
+
+        clear_autopilot_cache()
+
+    def test_timeout_error_returns_false(self) -> None:
+        """An exception whose type name contains 'Timeout' must return False."""
+        from vaig.tools.gke._clients import clear_autopilot_cache, detect_autopilot
+
+        clear_autopilot_cache()
+
+        exc = type("GrpcTimeout", (Exception,), {})("gRPC timed out")
+        gke_config = self._make_gke_config()
+
+        with patch(
+            "vaig.tools.gke._clients._query_autopilot_status",
+            side_effect=exc,
+        ):
+            result = detect_autopilot(gke_config)
+
+        assert result is False
+
+        clear_autopilot_cache()
+
+    def test_generic_exception_still_returns_none(self) -> None:
+        """Non-timeout exceptions must return None (detection failed)."""
+        from vaig.tools.gke._clients import clear_autopilot_cache, detect_autopilot
+
+        clear_autopilot_cache()
+
+        gke_config = self._make_gke_config()
+
+        with patch(
+            "vaig.tools.gke._clients._query_autopilot_status",
+            side_effect=RuntimeError("Network unreachable"),
+        ):
+            result = detect_autopilot(gke_config)
+
+        assert result is None
+
+        clear_autopilot_cache()
+
+    def test_import_error_returns_none(self) -> None:
+        """ImportError (missing google-cloud-container) must return None."""
+        from vaig.tools.gke._clients import clear_autopilot_cache, detect_autopilot
+
+        clear_autopilot_cache()
+
+        gke_config = self._make_gke_config()
+
+        with patch(
+            "vaig.tools.gke._clients._query_autopilot_status",
+            side_effect=ImportError("no module google.cloud.container_v1"),
+        ):
+            result = detect_autopilot(gke_config)
+
+        assert result is None
+
+        clear_autopilot_cache()
+
+    def test_timeout_result_is_cached_as_false(self) -> None:
+        """After a timeout, the cache must store False (not None)."""
+        from vaig.tools.gke._clients import (
+            _AUTOPILOT_CACHE,
+            clear_autopilot_cache,
+            detect_autopilot,
+        )
+
+        clear_autopilot_cache()
+
+        exc = type("DeadlineExceeded", (Exception,), {})("timed out")
+        gke_config = self._make_gke_config()
+
+        with patch(
+            "vaig.tools.gke._clients._query_autopilot_status",
+            side_effect=exc,
+        ):
+            detect_autopilot(gke_config)
+
+        cache_key = (gke_config.project_id, gke_config.location, gke_config.cluster_name)
+        assert _AUTOPILOT_CACHE[cache_key] is False
+
+        clear_autopilot_cache()
+
+    def test_missing_config_returns_none_without_calling_api(self) -> None:
+        """Missing project_id/location/cluster_name must return None immediately."""
+        from vaig.tools.gke._clients import clear_autopilot_cache, detect_autopilot
+
+        clear_autopilot_cache()
+
+        gke_config = self._make_gke_config(project="", location="us-central1", cluster="c1")
+
+        with patch(
+            "vaig.tools.gke._clients._query_autopilot_status",
+        ) as mock_query:
+            result = detect_autopilot(gke_config)
+
+        assert result is None
+        mock_query.assert_not_called()
+
+        clear_autopilot_cache()
