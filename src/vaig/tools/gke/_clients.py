@@ -14,6 +14,21 @@ import yaml
 
 from vaig.tools.base import ToolResult
 
+# ── Optional dependency: requests ─────────────────────────────
+# Required only for API-server mode (ArgoCDAPIClient).
+_REQUESTS_AVAILABLE = True
+_REQUESTS_IMPORT_ERROR: str | None = None
+
+try:
+    from requests import Session as RequestsSession  # noqa: WPS433
+except ImportError as _req_exc:
+    _REQUESTS_AVAILABLE = False
+    _REQUESTS_IMPORT_ERROR = (
+        "The 'requests' package is not installed. "
+        "Install it with: pip install requests"
+    )
+    RequestsSession = None
+
 if TYPE_CHECKING:
     from google.auth.credentials import Credentials
 
@@ -593,12 +608,13 @@ def _create_argocd_client(
     Three connection modes are supported, resolved in priority order:
 
     1. **API Server mode** (``server`` + ``token`` provided):
-       Connect to the ArgoCD REST API via HTTP.
-       *Not yet implemented — raises ``NotImplementedError``.*
+       Connect to the ArgoCD REST API via HTTP.  Returns an
+       :class:`ArgoCDAPIClient` instance that duck-types the
+       ``CustomObjectsApi`` methods used by downstream code.
 
     2. **Separate context mode** (``context`` provided):
-       Use a different kubeconfig context to access ArgoCD's cluster.
-       *Not yet implemented — raises ``NotImplementedError``.*
+       Use a different kubeconfig context to access ArgoCD's cluster
+       via the Kubernetes ``CustomObjectsApi``.
 
     3. **Same-cluster mode** (default fallback):
        ArgoCD runs in the same cluster — use ``CustomObjectsApi`` directly.
@@ -614,30 +630,164 @@ def _create_argocd_client(
         ``"api"``, ``"context"``, or ``"cluster"``.
 
     Raises:
-        NotImplementedError: For API and context modes (Phase 3).
-        RuntimeError: If same-cluster client creation fails.
+        RuntimeError: If client creation fails.
     """
+    # Mode 1: API server — REST client wrapper (does NOT require kubernetes SDK)
+    if server and token:
+        client = ArgoCDAPIClient(server=server, token=token, verify_ssl=verify_ssl)
+        return ("api", client)
+
+    # Modes 2 & 3 require the kubernetes SDK
     if not _K8S_AVAILABLE:
         raise RuntimeError(_K8S_IMPORT_ERROR or "kubernetes SDK not available")
 
-    # Mode 1: API server (stub)
-    if server and token:
-        raise NotImplementedError(
-            "ArgoCD REST API mode is not yet implemented (Phase 3). "
-            "Use same-cluster mode by omitting server/token."
-        )
-
-    # Mode 2: Separate kubeconfig context (stub)
+    # Mode 2: Separate kubeconfig context
     if context:
-        raise NotImplementedError(
-            "ArgoCD separate-context mode is not yet implemented (Phase 3). "
-            "Use same-cluster mode by omitting the context parameter."
-        )
+        try:
+            with _suppress_stderr():
+                config = k8s_client.Configuration()
+                config.retries = False
 
-    # Mode 3: Same-cluster — build a CustomObjectsApi
+                # Proxy from environment (matching _load_k8s_config patterns)
+                env_proxy = (
+                    os.environ.get("HTTPS_PROXY")
+                    or os.environ.get("https_proxy")
+                    or os.environ.get("HTTP_PROXY")
+                    or os.environ.get("http_proxy")
+                )
+                if env_proxy:
+                    config.proxy = env_proxy
+
+                k8s_config.load_kube_config(context=context, client_configuration=config)
+                api_client = k8s_client.ApiClient(configuration=config)
+                custom_api = k8s_client.CustomObjectsApi(api_client)
+                return ("context", custom_api)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to create ArgoCD client with kubeconfig context '{context}': {exc}"
+            ) from exc
+
+    # Mode 3: Same-cluster — load k8s config and build a CustomObjectsApi
     try:
-        api_client = k8s_client.ApiClient()
-        custom_api = k8s_client.CustomObjectsApi(api_client)
-        return ("cluster", custom_api)
+        with _suppress_stderr():
+            try:
+                k8s_config.load_incluster_config()
+            except k8s_config.ConfigException:
+                k8s_config.load_kube_config()
+            api_client = k8s_client.ApiClient()
+            custom_api = k8s_client.CustomObjectsApi(api_client)
+            return ("cluster", custom_api)
     except Exception as exc:
         raise RuntimeError(f"Failed to create same-cluster ArgoCD client: {exc}") from exc
+
+
+class ArgoCDAPIClient:
+    """REST API wrapper for a remote ArgoCD server.
+
+    Implements duck-typed versions of ``kubernetes.client.CustomObjectsApi``
+    methods used by the ArgoCD introspection tools:
+
+    * ``list_namespaced_custom_object(...)``
+    * ``get_namespaced_custom_object(...)``
+    * ``list_cluster_custom_object(...)``
+
+    ArgoCD's REST API returns Application objects in the same JSON structure
+    as the Kubernetes CRD, so responses are passed through with minimal
+    transformation.
+    """
+
+    _DEFAULT_API_TIMEOUT: int = 30
+
+    def __init__(self, *, server: str, token: str, verify_ssl: bool = True) -> None:
+        if not _REQUESTS_AVAILABLE:
+            raise RuntimeError(_REQUESTS_IMPORT_ERROR or "requests package not available")
+        self._server = server.rstrip("/")
+        self._session = RequestsSession()
+        self._session.headers.update({
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        })
+        self._session.verify = verify_ssl
+
+    # -- Expose a sentinel so _discover_argocd_namespace can detect API mode --
+    @property
+    def api_client(self) -> None:
+        """Return ``None`` — there is no kubernetes ``ApiClient`` in REST mode.
+
+        ``_discover_argocd_namespace`` reads ``getattr(custom_api, 'api_client', None)``
+        and passes it to ``_check_crd_exists``.  Returning ``None`` causes the
+        CRD check to use the default kubeconfig context, which is correct for
+        the separate-management-cluster use-case.
+        """
+        return None
+
+    # -- CustomObjectsApi duck-typed methods ----------------------------------
+
+    def list_namespaced_custom_object(  # noqa: N802
+        self,
+        group: str = "",
+        version: str = "",
+        namespace: str = "",
+        plural: str = "",
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """List ArgoCD Applications, optionally filtered by namespace.
+
+        Maps to ``GET /api/v1/applications``.
+
+        When *namespace* is provided the response is filtered to only include
+        applications whose ``metadata.namespace`` or ``spec.destination.namespace``
+        matches.  ArgoCD's REST API does not have a per-namespace endpoint, so
+        this is handled client-side.
+        """
+        url = f"{self._server}/api/v1/applications"
+        resp = self._session.get(url, timeout=self._DEFAULT_API_TIMEOUT)
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+
+        # Client-side namespace filter (ArgoCD API lists all apps)
+        if namespace:
+            items = data.get("items") or []
+            data["items"] = [
+                item for item in items
+                if (
+                    item.get("metadata", {}).get("namespace") == namespace
+                    or item.get("spec", {}).get("destination", {}).get("namespace") == namespace
+                )
+            ]
+
+        return data
+
+    def get_namespaced_custom_object(  # noqa: N802
+        self,
+        group: str = "",
+        version: str = "",
+        namespace: str = "",
+        name: str = "",
+        plural: str = "",
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Get a single ArgoCD Application by name.
+
+        Maps to ``GET /api/v1/applications/{name}``.
+        """
+        url = f"{self._server}/api/v1/applications/{name}"
+        resp = self._session.get(url, timeout=self._DEFAULT_API_TIMEOUT)
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
+
+    def list_cluster_custom_object(  # noqa: N802
+        self,
+        group: str = "",
+        version: str = "",
+        plural: str = "",
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Cluster-wide list of ArgoCD Applications.
+
+        Maps to ``GET /api/v1/applications`` (ArgoCD API is already cluster-scoped).
+        """
+        url = f"{self._server}/api/v1/applications"
+        resp = self._session.get(url, timeout=self._DEFAULT_API_TIMEOUT)
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]

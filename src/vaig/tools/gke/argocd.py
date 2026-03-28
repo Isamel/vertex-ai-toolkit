@@ -401,30 +401,45 @@ def _get_argocd_client(
     server: str = "",
     token: str = "",
     context: str = "",
+    verify_ssl: bool | None = None,
 ) -> tuple[str, Any]:
     """Return an ArgoCD client based on connection mode.
 
+    When called without arguments (the common case from tool functions),
+    reads connection details from ``get_settings().gke`` and delegates to
+    :func:`_clients._create_argocd_client`.
+
+    Args:
+        server: ArgoCD API server URL.
+        token: ArgoCD API bearer token.
+        context: Kubeconfig context name pointing to ArgoCD's cluster.
+        verify_ssl: Whether to verify TLS certificates.  When ``None`` and
+            reading from settings, uses ``gke.argocd_verify_ssl``.  When
+            ``None`` with explicit args, defaults to ``True``.
+
     Returns:
-        Tuple of (mode, client) where mode is one of:
-        - ``"api"`` — REST API mode (stub, raises NotImplementedError)
-        - ``"context"`` — separate kubeconfig context (stub, raises NotImplementedError)
-        - ``"cluster"`` — same-cluster CustomObjectsApi
+        Tuple of ``(mode, client)`` where mode is one of:
+        - ``"api"`` — REST API wrapper around the ArgoCD server
+        - ``"context"`` — ``CustomObjectsApi`` loaded from a separate kubeconfig context
+        - ``"cluster"`` — ``CustomObjectsApi`` from the current cluster
     """
-    # Mode 1: API server
-    if server and token:
-        raise NotImplementedError("ArgoCD REST API mode not yet implemented (Phase 3). Use same-cluster mode instead.")
+    # Resolve connection parameters from settings when not provided explicitly.
+    if not server and not token and not context:
+        settings = get_settings()
+        gke = settings.gke
+        server = gke.argocd_server
+        token = gke.argocd_token
+        context = gke.argocd_context
+        resolved_verify_ssl = gke.argocd_verify_ssl if verify_ssl is None else verify_ssl
+    else:
+        resolved_verify_ssl = True if verify_ssl is None else verify_ssl
 
-    # Mode 2: Separate kubeconfig context
-    if context:
-        raise NotImplementedError(
-            "ArgoCD separate-context mode not yet implemented (Phase 3). Use same-cluster mode instead."
-        )
-
-    # Mode 3: Same-cluster (default fallback)
-    client = _get_custom_objects_api()
-    if client is None:
-        raise RuntimeError("Cannot create CustomObjectsApi — kubernetes SDK unavailable or unconfigured")
-    return ("cluster", client)
+    return _clients._create_argocd_client(
+        server=server,
+        token=token,
+        context=context,
+        verify_ssl=resolved_verify_ssl,
+    )
 
 
 def _discover_argocd_namespace(custom_api: Any) -> str | None:
@@ -455,11 +470,13 @@ def _discover_argocd_namespace(custom_api: Any) -> str | None:
         return _argocd_namespace_cache[cache_key]
 
     # Step 0: CRD existence pre-check (fast, avoids O(n) namespace probes when ArgoCD absent)
-    # Pass the api_client from the CustomObjectsApi so both checks use the same kubeconfig context.
-    client_for_crd = getattr(custom_api, "api_client", None)
-    if not _check_crd_exists("applications.argoproj.io", api_client=client_for_crd):
-        _argocd_namespace_cache[cache_key] = None
-        return None
+    # Skip the CRD check entirely in API-server mode — the REST endpoint doesn't use CRDs.
+    if not isinstance(custom_api, _clients.ArgoCDAPIClient):
+        # Pass the api_client from the CustomObjectsApi so both checks use the same kubeconfig context.
+        client_for_crd = getattr(custom_api, "api_client", None)
+        if not _check_crd_exists("applications.argoproj.io", api_client=client_for_crd):
+            _argocd_namespace_cache[cache_key] = None
+            return None
 
     # Try each common namespace first (faster than cluster-wide scan)
     for ns in _ARGOCD_COMMON_NAMESPACES:

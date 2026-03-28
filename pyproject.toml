@@ -138,6 +138,8 @@ module = [
     "google.protobuf.*",
     "datadog_api_client",
     "datadog_api_client.*",
+    "requests",
+    "requests.*",
 ]
 ignore_missing_imports = true
 
