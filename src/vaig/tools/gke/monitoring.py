@@ -39,8 +39,8 @@ except ImportError:
     _MONITORING_AVAILABLE = False
     gcp_exceptions = None  # type: ignore[assignment]
     PermissionDenied = None  # type: ignore[assignment,misc]
-    monitoring_v3 = None
-    MetricServiceClient = None
+    monitoring_v3 = None  # type: ignore[assignment]
+    MetricServiceClient = None  # type: ignore[assignment,misc]
 
 
 def _monitoring_unavailable() -> ToolResult:
