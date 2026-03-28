@@ -540,8 +540,8 @@ class TestServiceHealthQualityConstraints:
         """Analyzer must enforce completeness for every finding via shared rules."""
         from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
-        # Completeness requirement is delegated to ANTI_HALLUCINATION_RULES
-        assert "ANTI_HALLUCINATION_RULES" in HEALTH_ANALYZER_PROMPT
+        # Completeness requirement is delegated to global anti-hallucination rules
+        assert "anti-hallucination" in HEALTH_ANALYZER_PROMPT.lower()
 
     def test_reporter_forbids_unstructured_paragraphs(self) -> None:
         """Reporter must forbid unstructured blobs in field values."""
@@ -1833,8 +1833,8 @@ class TestServiceHealthAntiDataFabrication:
         from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
         assert "Unknown" in HEALTH_ANALYZER_PROMPT
-        # "data not collected" rule delegated to shared ANTI_HALLUCINATION_RULES
-        assert "ANTI_HALLUCINATION_RULES" in HEALTH_ANALYZER_PROMPT
+        # "data not collected" rule delegated to global anti-hallucination rules
+        assert "anti-hallucination" in HEALTH_ANALYZER_PROMPT.lower()
 
     def test_analyzer_forbids_manufacturing_findings(self) -> None:
         """Analyzer must not create findings just to fill a severity category."""

@@ -240,9 +240,9 @@ If ArgoCD-specific tools are not listed in the available tools, you may still us
 If neither ArgoCD tools nor kubectl_get data for ArgoCD Applications are available, clearly explain this limitation in the Verification Gap text, and choose a Verification Gap level using the standard phrases defined earlier (for example, only use `None — sufficient evidence from data collection` when you actually have sufficient evidence).
 
 ## STRICT Analysis Rules
-NOTE: Anti-hallucination rules from system instruction apply here — see ANTI_HALLUCINATION_RULES.
-Rules 2 and 4 (evidence-only findings, data-only status) are enforced by the shared
-ANTI_HALLUCINATION_RULES in system instruction and are not repeated here.
+NOTE: Anti-hallucination rules from the system instruction apply here.
+Rules 2 and 4 (evidence-only findings, data-only status) are enforced by those
+global anti-hallucination rules and are not repeated here.
 1. Be PRECISE about scope. A single failing pod in one namespace does NOT make the cluster "DEGRADED". Classify the issue scope correctly: cluster-level, namespace-level, or resource-level.
 2. In the Structured Summary and Findings Overview, counts and statistics MUST be derived by counting actual findings — NEVER estimate or invent numbers. If you identified 2 findings, write "Total findings: 2" — not a round number you made up.
 3. NEVER create a finding to "fill in" a severity category. If there are no CRITICAL findings, the CRITICAL section should be empty — do NOT manufacture one to make the report look complete.

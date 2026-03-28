@@ -391,19 +391,20 @@ async def _async_repl_loop(prompt_session: PromptSession[str], state: REPLState)
             continue
 
         # Multiline mode: collect lines between """ delimiters
-        if user_input == '"""':
-            multiline_result = await _collect_multiline_async(prompt_session)
-            if multiline_result is None:
-                continue
-            user_input = multiline_result
-        elif user_input.startswith('"""'):
-            # Opening delimiter with text on the same line
-            lines: list[str] = [user_input[3:]]
-            rest = await _collect_multiline_async(prompt_session)
-            if rest is None:
-                continue
-            lines.append(rest)
-            user_input = "\n".join(lines)
+        if user_input.startswith('"""'):
+            first_line = user_input[3:]
+            multiline_rest = await _collect_multiline_async(prompt_session)
+
+            if multiline_rest is None:
+                # True cancellation (Ctrl-C) — but preserve first-line text
+                if first_line:
+                    user_input = first_line
+                else:
+                    continue
+            elif first_line:
+                user_input = f"{first_line}\n{multiline_rest}"
+            else:
+                user_input = multiline_rest
 
         # Handle slash commands (sync — they're lightweight)
         if user_input.startswith("/"):
@@ -432,8 +433,8 @@ async def _collect_multiline_async(prompt_session: PromptSession[str]) -> str | 
         console.print("[yellow]Multiline input cancelled.[/yellow]")
         return None
 
-    result = "\n".join(lines).strip()
-    if not result:
+    result = "\n".join(lines).rstrip("\n")
+    if not result.strip():
         console.print("[dim]Empty multiline input — skipped.[/dim]")
         return None
     return result
@@ -683,19 +684,20 @@ def _repl_loop(prompt_session: PromptSession[str], state: REPLState) -> None:
             continue
 
         # Multiline mode: collect lines between """ delimiters
-        if user_input == '"""':
-            multiline_result = _collect_multiline_sync()
-            if multiline_result is None:
-                continue
-            user_input = multiline_result
-        elif user_input.startswith('"""'):
-            # Opening delimiter with text on the same line
-            lines: list[str] = [user_input[3:]]
-            rest = _collect_multiline_sync()
-            if rest is None:
-                continue
-            lines.append(rest)
-            user_input = "\n".join(lines)
+        if user_input.startswith('"""'):
+            first_line = user_input[3:]
+            multiline_rest = _collect_multiline_sync()
+
+            if multiline_rest is None:
+                # True cancellation (Ctrl-C) — but preserve first-line text
+                if first_line:
+                    user_input = first_line
+                else:
+                    continue
+            elif first_line:
+                user_input = f"{first_line}\n{multiline_rest}"
+            else:
+                user_input = multiline_rest
 
         # Handle slash commands
         if user_input.startswith("/"):
@@ -724,8 +726,8 @@ def _collect_multiline_sync() -> str | None:
         console.print("[yellow]Multiline input cancelled.[/yellow]")
         return None
 
-    result = "\n".join(lines).strip()
-    if not result:
+    result = "\n".join(lines).rstrip("\n")
+    if not result.strip():
         console.print("[dim]Empty multiline input — skipped.[/dim]")
         return None
     return result
