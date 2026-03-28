@@ -49,6 +49,7 @@ SLASH_COMMANDS = [
     "/code",
     "/config",
     "/cost",
+    "/live",
     "/location",
     "/model",
     "/project",
@@ -95,6 +96,10 @@ class REPLState:
         self.current_phase: SkillPhase = SkillPhase.ANALYZE
         self.stream_enabled: bool = True
         self.code_mode: bool = False
+        self.live_mode: bool = False
+        self.gke_config: Any = None  # GKEConfig when live_mode is active
+        self.tool_registry: Any = None  # ToolRegistry for orchestrated skill path
+        self.tool_result_cache: Any = None  # ToolResultCache for live sessions
         self.cost_tracker: CostTracker = CostTracker()
         self.debug: bool = debug
 
@@ -118,6 +123,8 @@ class REPLState:
         parts.append(f"[{self.model}]")
         if self.code_mode:
             parts.append("(🔧code)")
+        if self.live_mode:
+            parts.append("(🔍live)")
         if self.active_skill:
             parts.append(f"({self.skill_name}:{self.current_phase.value})")
         if self.context_builder.bundle.file_count > 0:
@@ -451,6 +458,11 @@ async def _async_handle_chat(state: REPLState, user_input: str) -> None:
 
     if state.code_mode:
         await _async_handle_code_chat(state, user_input, context_str)
+    elif state.live_mode:
+        if state.active_skill and state.active_skill.get_metadata().requires_live_tools:
+            await _async_handle_live_skill_chat(state, user_input, context_str)
+        else:
+            await _async_handle_live_chat(state, user_input, context_str)
     elif state.active_skill:
         await _async_handle_skill_chat(state, user_input, context_str)
     else:
@@ -654,6 +666,131 @@ async def _async_handle_code_chat(state: REPLState, user_input: str, context: st
             pass
 
 
+async def _async_handle_live_chat(state: REPLState, user_input: str, context: str) -> None:
+    """Async version of :func:`_handle_live_chat`."""
+    if not _check_budget(state):
+        return
+
+    from vaig.agents.infra_agent import InfraAgent
+    from vaig.core.exceptions import MaxIterationsError
+
+    agent = InfraAgent(
+        state.client,
+        state.gke_config,
+        settings=state.settings,
+        model_id=state.model,
+    )
+
+    try:
+        console.print("[bold cyan]🤖 Infrastructure agent investigating (async)...[/bold cyan]")
+        result = await agent.async_execute(
+            user_input,
+            context=context,
+            tool_result_cache=state.tool_result_cache,
+        )
+
+        # Display final response
+        console.print()
+        console.print(Markdown(result.content))
+        console.print()
+
+        # Record cost
+        _record_cost(state.cost_tracker, state.model, result.usage)
+
+        # Record model response (async)
+        await state.session_manager.async_add_message("model", result.content, model=state.model)
+
+    except MaxIterationsError as exc:
+        console.print(
+            f"\n[bold red]⚠ Max iterations reached ({exc.iterations})[/bold red]\n"
+            "[yellow]The infrastructure agent hit its tool-use iteration limit. "
+            "Try narrowing the scope of your question or specifying a namespace/resource.[/yellow]"
+        )
+    except Exception as e:
+        console.print(format_error_for_user(e, debug=state.debug))
+        logger.exception("Async live mode error")
+        try:
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import ErrorOccurred
+
+            EventBus.get().emit(
+                ErrorOccurred(
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    source="async_live_chat",
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _async_handle_live_skill_chat(state: REPLState, user_input: str, context: str) -> None:
+    """Async version of :func:`_handle_live_skill_chat`."""
+    if not _check_budget(state):
+        return
+
+    from vaig.core.exceptions import MaxIterationsError
+
+    skill = state.active_skill
+    if not skill or not state.tool_registry:
+        return
+
+    meta = skill.get_metadata()
+    console.print(
+        f"[dim]Running {meta.display_name} with live tools on {state.model} (async)...[/dim]"
+    )
+
+    try:
+        with console.status(
+            f"[bold cyan]{meta.display_name} (live) on {state.model}...[/bold cyan]"
+        ):
+            orch_result = await state.orchestrator.async_execute_with_tools(
+                query=user_input,
+                skill=skill,
+                tool_registry=state.tool_registry,
+                strategy="sequential",
+                gke_namespace=state.gke_config.default_namespace,
+                gke_location=state.gke_config.location or "",
+                gke_cluster_name=state.gke_config.cluster_name or "",
+            )
+
+        console.print()
+        if orch_result.synthesized_output:
+            console.print(Markdown(orch_result.synthesized_output))
+        console.print()
+
+        # Record cost from orchestrator result
+        if orch_result.total_usage:
+            _record_cost(state.cost_tracker, state.model, orch_result.total_usage)
+
+        # Record model response (async)
+        output = orch_result.synthesized_output or ""
+        await state.session_manager.async_add_message("model", output, model=state.model)
+
+    except MaxIterationsError as exc:
+        console.print(
+            f"\n[bold red]⚠ Max iterations reached ({exc.iterations})[/bold red]\n"
+            "[yellow]The orchestrated pipeline hit its iteration limit. "
+            "Try narrowing the scope or using a simpler skill.[/yellow]"
+        )
+    except Exception as e:
+        console.print(format_error_for_user(e, debug=state.debug))
+        logger.exception("Async live skill mode error")
+        try:
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import ErrorOccurred
+
+            EventBus.get().emit(
+                ErrorOccurred(
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    source="async_live_skill_chat",
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+
 async def _async_save_cost_data(state: REPLState) -> None:
     """Async version of :func:`_save_cost_data`."""
     if state.cost_tracker.request_count == 0:
@@ -746,6 +883,7 @@ def _handle_command(state: REPLState, raw_input: str) -> bool:
         "/code": lambda: _cmd_code(state),
         "/config": lambda: _cmd_config(state),
         "/cost": lambda: _cmd_cost(state),
+        "/live": lambda: _cmd_live(state),
         "/location": lambda: _cmd_location(state, args),
         "/model": lambda: _cmd_model(state, args),
         "/project": lambda: _cmd_project(state, args),
@@ -786,6 +924,11 @@ def _handle_chat(state: REPLState, user_input: str) -> None:
     if state.code_mode:
         # Code mode — use CodingAgent (Task 5.4)
         _handle_code_chat(state, user_input, context_str)
+    elif state.live_mode:
+        if state.active_skill and state.active_skill.get_metadata().requires_live_tools:
+            _handle_live_skill_chat(state, user_input, context_str)
+        else:
+            _handle_live_chat(state, user_input, context_str)
     elif state.active_skill:
         # Skill-based execution
         _handle_skill_chat(state, user_input, context_str)
@@ -1272,6 +1415,195 @@ def _cmd_code(state: REPLState) -> None:
         console.print("[green]✓ Code mode OFF — back to normal chat[/green]")
 
 
+def _cmd_live(state: REPLState) -> None:
+    """Toggle live infrastructure mode on/off.
+
+    When enabled, chat messages are routed to the InfraAgent for
+    tool-backed GKE/GCP infrastructure investigation.  If a skill with
+    ``requires_live_tools=True`` is active, the orchestrated pipeline
+    (``execute_with_tools``) is used instead.
+
+    Mutually exclusive with code mode — enabling live mode disables code mode.
+    """
+    state.live_mode = not state.live_mode
+
+    if state.live_mode:
+        # Disable code mode if active (mutually exclusive)
+        if state.code_mode:
+            state.code_mode = False
+            console.print("[dim]Code mode disabled (mutually exclusive with live mode)[/dim]")
+
+        try:
+            from vaig.cli.commands.live import _build_gke_config, _register_live_tools
+            from vaig.core.cache import ToolResultCache
+
+            gke_config = _build_gke_config(state.settings)
+            tool_registry = _register_live_tools(gke_config, settings=state.settings)
+            tool_result_cache = ToolResultCache()
+
+            state.gke_config = gke_config
+            state.tool_registry = tool_registry
+            state.tool_result_cache = tool_result_cache
+
+            tool_count = len(tool_registry.list_tools())
+            console.print(
+                Panel.fit(
+                    "[bold green]🔍 Live Mode ON[/bold green]\n"
+                    f"[dim]Cluster: {gke_config.cluster_name or '(kubeconfig default)'}[/dim]\n"
+                    f"[dim]Namespace: {gke_config.default_namespace} | "
+                    f"Project: {gke_config.project_id or '(auto-detect)'}[/dim]\n"
+                    f"[dim]{tool_count} tools loaded[/dim]\n"
+                    "[dim]Chat messages are routed to the infrastructure agent.[/dim]",
+                    border_style="green",
+                )
+            )
+        except ImportError:
+            state.live_mode = False
+            console.print(
+                "[bold red]Cannot enable live mode — missing dependencies.[/bold red]\n"
+                "[yellow]Install optional dependencies:[/yellow]\n"
+                "  pip install vertex-ai-toolkit[live]       # GKE tools\n"
+                "  pip install google-cloud-logging google-cloud-monitoring  # GCP observability"
+            )
+    else:
+        state.gke_config = None
+        state.tool_registry = None
+        state.tool_result_cache = None
+        console.print("[green]✓ Live mode OFF — back to normal chat[/green]")
+
+
+# ── Live Mode Chat Handlers ──────────────────────────────────
+
+
+def _handle_live_chat(state: REPLState, user_input: str, context: str) -> None:
+    """Handle chat in live mode — uses InfraAgent with tool-use loop."""
+    if not _check_budget(state):
+        return
+
+    from vaig.agents.infra_agent import InfraAgent
+    from vaig.core.exceptions import MaxIterationsError
+
+    agent = InfraAgent(
+        state.client,
+        state.gke_config,
+        settings=state.settings,
+        model_id=state.model,
+    )
+
+    try:
+        console.print("[bold cyan]🤖 Infrastructure agent investigating...[/bold cyan]")
+        result = agent.execute(
+            user_input,
+            context=context,
+            tool_result_cache=state.tool_result_cache,
+        )
+
+        # Display final response
+        console.print()
+        console.print(Markdown(result.content))
+        console.print()
+
+        # Record cost
+        _record_cost(state.cost_tracker, state.model, result.usage)
+
+        # Record model response
+        state.session_manager.add_message("model", result.content, model=state.model)
+
+    except MaxIterationsError as exc:
+        console.print(
+            f"\n[bold red]⚠ Max iterations reached ({exc.iterations})[/bold red]\n"
+            "[yellow]The infrastructure agent hit its tool-use iteration limit. "
+            "Try narrowing the scope of your question or specifying a namespace/resource.[/yellow]"
+        )
+    except Exception as e:
+        console.print(format_error_for_user(e, debug=state.debug))
+        logger.exception("Live mode error")
+        try:
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import ErrorOccurred
+
+            EventBus.get().emit(
+                ErrorOccurred(
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    source="live_chat",
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _handle_live_skill_chat(state: REPLState, user_input: str, context: str) -> None:
+    """Handle chat in live mode with an active skill — uses orchestrated pipeline.
+
+    Delegates to ``Orchestrator.execute_with_tools()`` when a skill with
+    ``requires_live_tools=True`` is active alongside live mode.
+    """
+    if not _check_budget(state):
+        return
+
+    from vaig.core.exceptions import MaxIterationsError
+
+    skill = state.active_skill
+    if not skill or not state.tool_registry:
+        return
+
+    meta = skill.get_metadata()
+    console.print(
+        f"[dim]Running {meta.display_name} with live tools on {state.model}...[/dim]"
+    )
+
+    try:
+        with console.status(
+            f"[bold cyan]{meta.display_name} (live) on {state.model}...[/bold cyan]"
+        ):
+            orch_result = state.orchestrator.execute_with_tools(
+                query=user_input,
+                skill=skill,
+                tool_registry=state.tool_registry,
+                strategy="sequential",
+                gke_namespace=state.gke_config.default_namespace,
+                gke_location=state.gke_config.location or "",
+                gke_cluster_name=state.gke_config.cluster_name or "",
+            )
+
+        console.print()
+        if orch_result.synthesized_output:
+            console.print(Markdown(orch_result.synthesized_output))
+        console.print()
+
+        # Record cost from orchestrator result
+        if orch_result.total_usage:
+            _record_cost(state.cost_tracker, state.model, orch_result.total_usage)
+
+        # Record model response
+        output = orch_result.synthesized_output or ""
+        state.session_manager.add_message("model", output, model=state.model)
+
+    except MaxIterationsError as exc:
+        console.print(
+            f"\n[bold red]⚠ Max iterations reached ({exc.iterations})[/bold red]\n"
+            "[yellow]The orchestrated pipeline hit its iteration limit. "
+            "Try narrowing the scope or using a simpler skill.[/yellow]"
+        )
+    except Exception as e:
+        console.print(format_error_for_user(e, debug=state.debug))
+        logger.exception("Live skill mode error")
+        try:
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import ErrorOccurred
+
+            EventBus.get().emit(
+                ErrorOccurred(
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    source="live_skill_chat",
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _cmd_model(state: REPLState, args: str) -> None:
     """Switch or show the current model."""
     if not args:
@@ -1545,6 +1877,10 @@ def _cmd_clear(state: REPLState) -> None:
     state.orchestrator.reset_agents()
     state.client.clear_cache()
     state.code_mode = False
+    state.live_mode = False
+    state.gke_config = None
+    state.tool_registry = None
+    state.tool_result_cache = None
     console.print("[green]✓ Cleared context, history, agent states, cache, and code mode[/green]")
 
 
@@ -1723,6 +2059,7 @@ def _cmd_help() -> None:
   [cyan]/cache [clear][/cyan]   — Show cache stats or clear the response cache
   [cyan]/code[/cyan]            — Toggle coding agent mode (read/write/edit files)
   [cyan]/cost[/cyan]            — Show session cost summary and budget status
+  [cyan]/live[/cyan]            — Toggle live infrastructure mode (GKE/GCP investigation)
   [cyan]/model [id][/cyan]      — Show or switch the current model
   [cyan]/skill [name][/cyan]    — Show, activate, or deactivate a skill (use 'off' to deactivate)
   [cyan]/phase [phase][/cyan]   — Show or switch the skill phase (analyze, plan, execute, validate, report)
@@ -1750,6 +2087,7 @@ def _cmd_help() -> None:
   • Use skills for specialized tasks: [dim]/skill rca[/dim] then describe the incident
   • Switch models anytime: [dim]/model gemini-2.5-flash[/dim]
   • Enable code mode for file operations: [dim]/code[/dim] then describe the task
+  • Enable live mode for infrastructure investigation: [dim]/live[/dim] then ask about your cluster
   • Resume your last session: [dim]/resume[/dim] or [dim]vaig chat --resume[/dim]
   • Switch projects at runtime: [dim]/project my-other-project[/dim]
 '''

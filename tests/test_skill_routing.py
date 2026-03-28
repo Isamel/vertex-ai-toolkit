@@ -283,6 +283,7 @@ def _make_repl_state(
     )
     state.active_skill = None
     state.current_phase = SkillPhase.ANALYZE
+    state.live_mode = False
     return state
 
 
