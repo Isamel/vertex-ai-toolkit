@@ -429,17 +429,44 @@ class TestCheckDatadog:
 class TestCheckOptionalDeps:
     """Optional dependencies importability check."""
 
-    def test_runs_without_crashing(self) -> None:
-        """Smoke test — runs the real check, shouldn't crash."""
-        result = check_optional_deps()
-        assert result.status in {"pass", "warn"}
+    def test_all_available(self) -> None:
+        """All optional deps importable → status pass."""
+        with patch("builtins.__import__", side_effect=lambda name, *a, **kw: MagicMock()):
+            result = check_optional_deps()
+        assert result.status == "pass"
         assert result.name == "Optional deps"
+        # All display names should appear
+        for pkg in ("kubernetes", "google-cloud-logging", "google-cloud-monitoring", "datadog-api-client"):
+            assert pkg in result.message
 
-    def test_reports_available_and_missing(self) -> None:
-        """Result message always provides useful information."""
-        result = check_optional_deps()
-        # At minimum, the message should be non-empty
-        assert result.message
+    def test_all_missing(self) -> None:
+        """No optional deps importable → status warn with missing list."""
+        def _fail_import(name: str, *args: Any, **kwargs: Any) -> None:
+            raise ImportError(name)
+
+        with patch("builtins.__import__", side_effect=_fail_import):
+            result = check_optional_deps()
+        assert result.status == "warn"
+        assert "missing" in result.message
+        assert "none" in result.message  # "installed: none"
+
+    def test_partial_availability(self) -> None:
+        """Some deps available, some missing → status warn with both lists."""
+        _real_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__  # type: ignore[union-attr]
+
+        def _selective_import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name in ("kubernetes", "google.cloud.logging"):
+                return MagicMock()
+            if name in ("google.cloud.monitoring_v3", "datadog_api_client"):
+                raise ImportError(name)
+            return _real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=_selective_import):
+            result = check_optional_deps()
+        assert result.status == "warn"
+        assert "kubernetes" in result.message
+        assert "google-cloud-logging" in result.message
+        assert "missing" in result.message
 
 
 # ── MCP check tests ──────────────────────────────────────────
@@ -521,8 +548,8 @@ def _configure_mocks(
 ) -> None:
     """Configure mock check functions to return given statuses."""
     mocks["settings"].return_value = _make_settings()
-    mocks["auth"].return_value = CheckResult("GCP Authentication", auth, f"{auth}")
-    mocks["vertex"].return_value = CheckResult("Vertex AI API", vertex, f"{vertex}")
+    mocks["auth"].return_value = CheckResult("GCP Authentication", auth, f"{auth}", is_critical=True)
+    mocks["vertex"].return_value = CheckResult("Vertex AI API", vertex, f"{vertex}", is_critical=True)
     mocks["gke"].return_value = CheckResult("GKE Connectivity", gke, f"{gke}")
     mocks["logging"].return_value = CheckResult("Cloud Logging", logging, f"{logging}")
     mocks["monitoring"].return_value = CheckResult("Cloud Monitoring", monitoring, f"{monitoring}")

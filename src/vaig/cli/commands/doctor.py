@@ -6,10 +6,11 @@ environment is properly configured for using vaig.
 
 from __future__ import annotations
 
+import functools
 import logging
 import shutil
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any
 
 import typer
@@ -34,6 +35,7 @@ class CheckResult:
     name: str
     status: str  # "pass", "warn", "fail"
     message: str
+    is_critical: bool = field(default=False)
 
     @property
     def icon(self) -> str:
@@ -54,18 +56,20 @@ def check_gcp_auth(settings: Any) -> CheckResult:
     try:
         import google.auth  # noqa: I001
 
-        credentials, project = google.auth.default()
+        _credentials, project = google.auth.default()
         effective_project = settings.gcp.project_id or project or "unknown"
         return CheckResult(
             name=name,
             status="pass",
             message=f"ADC valid, project: {effective_project}",
+            is_critical=True,
         )
     except Exception as exc:  # noqa: BLE001
         return CheckResult(
             name=name,
             status="fail",
             message=f"ADC not configured ({exc}). Run: gcloud auth application-default login",
+            is_critical=True,
         )
 
 
@@ -94,6 +98,7 @@ def check_vertex_ai(settings: Any) -> CheckResult:
             name=name,
             status="pass",
             message=f"{model_id} accessible",
+            is_critical=True,
         )
     except Exception as exc:  # noqa: BLE001
         model_id = settings.models.default
@@ -102,6 +107,7 @@ def check_vertex_ai(settings: Any) -> CheckResult:
             name=name,
             status="fail",
             message=f"{model_id} not reachable ({short_err})",
+            is_critical=True,
         )
 
 
@@ -171,7 +177,7 @@ def check_cloud_logging(settings: Any) -> CheckResult:
         from vaig.tools.gcloud_tools import _get_logging_client
 
         project = settings.gcp.project_id or None
-        client, err = _get_logging_client(project)
+        _, err = _get_logging_client(project)
         if err:
             return CheckResult(name=name, status="fail", message=err)
         return CheckResult(name=name, status="pass", message="API enabled, client ready")
@@ -189,7 +195,7 @@ def check_cloud_monitoring(settings: Any) -> CheckResult:
     try:
         from vaig.tools.gcloud_tools import _get_monitoring_client
 
-        client, err = _get_monitoring_client()
+        _, err = _get_monitoring_client()
         if err:
             return CheckResult(name=name, status="fail", message=err)
         return CheckResult(name=name, status="pass", message="API enabled, client ready")
@@ -358,7 +364,7 @@ def register(app: typer.Typer) -> None:
             str | None,
             typer.Option(
                 "--gke-project",
-                help="GKE project ID (overrides gke.project_id; defaults to --project if unset)",
+                help="GKE project ID (overrides gke.project_id)",
             ),
         ] = None,
         gke_location: Annotated[
@@ -408,16 +414,16 @@ def register(app: typer.Typer) -> None:
             # Run all checks sequentially — each is independent
             checks: list[CheckResult] = []
             check_functions: list[Callable[[], CheckResult]] = [
-                lambda: check_gcp_auth(settings),
-                lambda: check_vertex_ai(settings),
-                lambda: check_gke_connectivity(settings),
-                lambda: check_cloud_logging(settings),
-                lambda: check_cloud_monitoring(settings),
-                lambda: check_helm(settings),
-                lambda: check_argocd(settings),
-                lambda: check_datadog(settings),
-                lambda: check_optional_deps(),
-                lambda: check_mcp(settings),
+                functools.partial(check_gcp_auth, settings),
+                functools.partial(check_vertex_ai, settings),
+                functools.partial(check_gke_connectivity, settings),
+                functools.partial(check_cloud_logging, settings),
+                functools.partial(check_cloud_monitoring, settings),
+                functools.partial(check_helm, settings),
+                functools.partial(check_argocd, settings),
+                functools.partial(check_datadog, settings),
+                check_optional_deps,
+                functools.partial(check_mcp, settings),
             ]
 
             for check_fn in check_functions:
@@ -454,7 +460,7 @@ def register(app: typer.Typer) -> None:
             console.print()
 
             # Critical checks: GCP Auth and Vertex AI
-            critical_checks = [c for c in checks if c.name in {"GCP Authentication", "Vertex AI API"}]
+            critical_checks = [c for c in checks if c.is_critical]
             has_critical_failure = any(c.status == "fail" for c in critical_checks)
 
             if has_critical_failure:
