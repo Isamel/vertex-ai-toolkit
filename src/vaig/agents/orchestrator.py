@@ -227,6 +227,31 @@ class Orchestrator:
         # current (not creation-time) state when invoking nested agents.
         self._current_pipeline_state: PipelineState | None = None
 
+    # ── Language resolution (DRY helper) ────────────────────────
+    def _resolve_language(self, query: str) -> str:
+        """Resolve the output language from config override or query detection.
+
+        Logic:
+        1. Read ``settings.language`` and normalize (strip + lowercase).
+        2. If it starts with ``"en"`` (handles ``"en"``, ``"en-us"``,
+           ``"en-gb"``), treat as English → fall through to detection.
+        3. If set and NOT an English variant, use it as an override.
+        4. Otherwise, call ``detect_language(query)`` as fallback.
+        """
+        config_lang = self._settings.language
+        if config_lang:
+            config_lang = config_lang.strip().lower()
+
+        if config_lang and not config_lang.startswith("en"):
+            logger.info(
+                "Language override from config: %s (skipping query detection)",
+                config_lang,
+            )
+            return config_lang
+
+        lang = detect_language(query)
+        return lang
+
     def _build_previous_agent_summary(
         self,
         agent_role: str,
@@ -903,19 +928,7 @@ class Orchestrator:
             tool_call_store.start_run()
 
         # ── Dynamic language detection & injection ───────────
-        # If the user configured a preferred language (settings.language),
-        # use that as an override — this ensures commands like `vaig discover`
-        # (which auto-generate English queries) still produce output in the
-        # user's preferred language.  Otherwise, detect from the query text.
-        config_lang = self._settings.language
-        if config_lang and config_lang != "en":
-            lang = config_lang
-            logger.info(
-                "Language override from config: %s (skipping query detection)",
-                lang,
-            )
-        else:
-            lang = detect_language(query)
+        lang = self._resolve_language(query)
         agent_configs = skill.get_agents_config(
             namespace=gke_namespace,
             location=gke_location,
@@ -924,7 +937,7 @@ class Orchestrator:
         if lang != "en":
             inject_language_into_config(agent_configs, lang)
             logger.info(
-                "Language detected: %s — injected language instruction into %d agent(s)",
+                "Language resolved: %s — injected language instruction into %d agent(s)",
                 lang,
                 len(agent_configs),
             )
@@ -1976,19 +1989,7 @@ class Orchestrator:
             tool_call_store.start_run()
 
         # ── Dynamic language detection & injection ───────────
-        # If the user configured a preferred language (settings.language),
-        # use that as an override — this ensures commands like `vaig discover`
-        # (which auto-generate English queries) still produce output in the
-        # user's preferred language.  Otherwise, detect from the query text.
-        config_lang = self._settings.language
-        if config_lang and config_lang != "en":
-            lang = config_lang
-            logger.info(
-                "Language override from config: %s (skipping query detection)",
-                lang,
-            )
-        else:
-            lang = detect_language(query)
+        lang = self._resolve_language(query)
         agent_configs = skill.get_agents_config(
             namespace=gke_namespace,
             location=gke_location,
@@ -1997,7 +1998,7 @@ class Orchestrator:
         if lang != "en":
             inject_language_into_config(agent_configs, lang)
             logger.info(
-                "Language detected: %s — injected language instruction into %d agent(s)",
+                "Language resolved: %s — injected language instruction into %d agent(s)",
                 lang,
                 len(agent_configs),
             )

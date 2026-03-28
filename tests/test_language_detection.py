@@ -556,6 +556,112 @@ class TestOrchestratorLanguageIntegration:
 
 
 # ===========================================================================
+# Orchestrator._resolve_language — DRY helper unit tests
+# ===========================================================================
+
+
+class TestResolveLanguageHelper:
+    """Unit tests for Orchestrator._resolve_language DRY helper.
+
+    Tests normalization (strip/lower), English-variant detection, and
+    fallback to detect_language().
+    """
+
+    def _make_orchestrator(self, language: str) -> Any:
+        """Build an Orchestrator with a mocked settings.language value."""
+        from unittest.mock import MagicMock
+
+        from vaig.agents.orchestrator import Orchestrator
+
+        client = MagicMock()
+        settings = MagicMock()
+        settings.language = language
+        return Orchestrator(client, settings)
+
+    def test_non_english_override(self) -> None:
+        """Non-English config language is returned as override."""
+        orch = self._make_orchestrator("es")
+        assert orch._resolve_language("Check cluster health") == "es"
+
+    def test_english_falls_through_to_detection(self) -> None:
+        """Plain 'en' falls through to detect_language()."""
+        orch = self._make_orchestrator("en")
+        # English query → detect_language returns "en"
+        assert orch._resolve_language("Check cluster health") == "en"
+
+    def test_en_us_treated_as_english(self) -> None:
+        """'en-us' is an English variant → falls through to detection."""
+        orch = self._make_orchestrator("en-us")
+        assert orch._resolve_language("Check cluster health") == "en"
+
+    def test_en_gb_treated_as_english(self) -> None:
+        """'en-gb' is an English variant → falls through to detection."""
+        orch = self._make_orchestrator("en-gb")
+        assert orch._resolve_language("Check cluster health") == "en"
+
+    def test_en_us_uppercase_treated_as_english(self) -> None:
+        """'EN-US' with uppercase is normalized → treated as English."""
+        orch = self._make_orchestrator("EN-US")
+        assert orch._resolve_language("Check cluster health") == "en"
+
+    def test_whitespace_stripped(self) -> None:
+        """Leading/trailing whitespace is stripped before comparison."""
+        orch = self._make_orchestrator("  es  ")
+        assert orch._resolve_language("Check cluster health") == "es"
+
+    def test_uppercase_normalized(self) -> None:
+        """'ES' is lowercased to 'es'."""
+        orch = self._make_orchestrator("ES")
+        assert orch._resolve_language("Check cluster health") == "es"
+
+    def test_empty_string_falls_through(self) -> None:
+        """Empty string falls through to detect_language()."""
+        orch = self._make_orchestrator("")
+        assert orch._resolve_language("Check cluster health") == "en"
+
+    def test_spanish_query_detected_when_en(self) -> None:
+        """When config is 'en', a Spanish query should be detected as Spanish."""
+        orch = self._make_orchestrator("en")
+        assert orch._resolve_language("¿Cuál es el estado del cluster?") == "es"
+
+    def test_override_beats_query_language(self) -> None:
+        """Config 'ja' overrides even a Spanish-language query."""
+        orch = self._make_orchestrator("ja")
+        assert orch._resolve_language("¿Cuál es el estado del cluster?") == "ja"
+
+
+# ===========================================================================
+# Settings.language field_validator — normalization at config layer
+# ===========================================================================
+
+
+class TestSettingsLanguageValidator:
+    """Verify the Pydantic field_validator on Settings.language."""
+
+    def test_strips_whitespace(self) -> None:
+        from vaig.core.config import Settings
+
+        s = Settings(language="  es  ")
+        assert s.language == "es"
+
+    def test_lowercases(self) -> None:
+        from vaig.core.config import Settings
+
+        s = Settings(language="EN-US")
+        assert s.language == "en-us"
+
+    def test_default_is_en(self) -> None:
+        from vaig.core.config import Settings
+
+        s = Settings()
+        assert s.language == "en"
+
+    def test_mixed_case_with_whitespace(self) -> None:
+        from vaig.core.config import Settings
+
+        s = Settings(language="  Ja  ")
+        assert s.language == "ja"
+# ===========================================================================
 # Integration: ServiceHealthSkill + language detection
 # ===========================================================================
 

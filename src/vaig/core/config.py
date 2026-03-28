@@ -795,6 +795,14 @@ class Settings(BaseSettings):
         ),
     )
 
+    @field_validator("language", mode="before")
+    @classmethod
+    def _normalize_language(cls, v: Any) -> str:
+        """Strip whitespace and lowercase the language code."""
+        if isinstance(v, str):
+            return v.strip().lower()
+        return str(v)
+
     gcp: GCPConfig = Field(default_factory=GCPConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)

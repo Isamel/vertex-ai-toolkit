@@ -55,13 +55,19 @@ Complete ALL of the following steps using the available tools:
 6. **Pods in non-Running state** — List any pods NOT in Running/Succeeded state.
    Record: name, namespace, phase, reason, restarts, age.
 
-7. **Helm Releases** — Use `helm_list_releases` for each target namespace to identify
-   Helm-managed workloads. Record: release name, namespace, chart, status
-   (deployed, failed, pending-upgrade), app version, last deployed.
+7. **Helm Releases** — ONLY if the `helm_list_releases` tool is available, use it for
+   each target namespace to identify Helm-managed workloads. Record: release name,
+   namespace, chart, status (deployed, failed, pending-upgrade), app version, last
+   deployed. If the Helm tool is NOT available, explicitly state in the report that
+   Helm scanning was skipped because Helm tools are not available (do NOT assume or
+   imply there are no Helm releases).
 
-8. **ArgoCD Applications** — Use `argocd_list_applications` to identify GitOps-managed
-   workloads. Record: application name, sync status (Synced, OutOfSync, Unknown),
-   health status (Healthy, Degraded, Missing), repo URL.
+8. **ArgoCD Applications** — ONLY if the `argocd_list_applications` tool is available,
+   use it to identify GitOps-managed workloads. Record: application name, sync status
+   (Synced, OutOfSync, Unknown), health status (Healthy, Degraded, Missing), repo URL.
+   If the ArgoCD tool is NOT available, explicitly state in the report that ArgoCD
+   scanning was skipped because ArgoCD tools are not available (do NOT assume or imply
+   there are no ArgoCD applications).
 
 ## MANDATORY OUTPUT FORMAT
 
@@ -186,13 +192,21 @@ For EACH 🟡 Degraded or 🔴 Failing workload:
 4. **Resource Usage** — Check CPU/memory usage if metrics are available.
    Look for: pods near or exceeding limits, memory pressure, CPU throttling.
 
-5. **Helm Assessment** — For workloads managed by Helm (check for
-   `meta.helm.sh/release-name` annotation), use `helm_release_status` and
-   `helm_release_history` to check for failed upgrades or pending rollbacks.
+5. **Helm Assessment** — For workloads managed by Helm (check
+   `meta.helm.sh/release-name` annotation):
+   - IF Helm tools (for example, `helm_release_status` / `helm_release_history`) are
+     available, use them to check for failed upgrades or pending rollbacks.
+   - IF the workload appears Helm-managed but Helm tools are NOT available, explicitly
+     record that Helm investigation was skipped because Helm tools are unavailable in
+     this environment.
 
 6. **ArgoCD Assessment** — For ArgoCD-managed workloads (check for
-   `argocd.argoproj.io/managed-by` annotation), use `argocd_app_status` and
-   `argocd_app_diff` to detect sync drift or degraded health.
+   `argocd.argoproj.io/managed-by` annotation):
+   - IF ArgoCD tools (for example, `argocd_app_status` / `argocd_app_diff`) are
+     available, use them to detect sync drift or degraded health.
+   - IF the workload appears ArgoCD-managed but ArgoCD tools are NOT available,
+     explicitly record that ArgoCD investigation was skipped because ArgoCD tools are
+     unavailable in this environment.
 
 If there are NO degraded or failing workloads, report that explicitly and skip investigation.
 
