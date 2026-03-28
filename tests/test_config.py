@@ -11,6 +11,7 @@ from vaig.core.config import (
     AuthMode,
     BudgetConfig,
     ContextConfig,
+    DatadogAPIConfig,
     GCPConfig,
     GenerationConfig,
     LoggingConfig,
@@ -899,3 +900,37 @@ class TestSettingsLanguage:
         for code in ("pt", "ja", "de", "fr"):
             s = Settings(language=code)
             assert s.language == code
+
+
+# ── DatadogAPIConfig — cluster_name_override via YAML ─────────
+
+
+class TestDatadogAPIConfigYaml:
+    """Verify cluster_name_override round-trips through YAML config loading."""
+
+    def test_cluster_name_override_defaults_empty(self) -> None:
+        cfg = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        assert cfg.cluster_name_override == ""
+
+    def test_cluster_name_override_from_settings_yaml(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "datadog:\n"
+            "  enabled: true\n"
+            "  api_key: test-key\n"
+            "  app_key: test-app\n"
+            "  cluster_name_override: my-override-cluster\n"
+        )
+        s = Settings.load(config_file)
+        assert s.datadog.cluster_name_override == "my-override-cluster"
+
+    def test_cluster_name_override_absent_in_yaml_uses_default(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "datadog:\n"
+            "  enabled: true\n"
+            "  api_key: test-key\n"
+            "  app_key: test-app\n"
+        )
+        s = Settings.load(config_file)
+        assert s.datadog.cluster_name_override == ""
