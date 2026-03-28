@@ -895,7 +895,7 @@
     <div class="meta">
       <span><span style="color:var(--green)">●</span> &nbsp;47 read-only GKE &amp; GCP tools</span>
       <span><span style="color:var(--blue)">●</span> &nbsp;Multi-agent pipeline</span>
-      <span><span style="color:var(--yellow)">●</span> &nbsp;v0.9.0+</span>
+      <span><span style="color:var(--yellow)">●</span> &nbsp;v0.11.0</span>
     </div>
     <div class="tag-pill-row">
       <span class="tag-pill tag-pill-blue">Production-Ready</span>
@@ -913,7 +913,7 @@
     <h2>A Mature, Well-Tested, <span class="highlight">Comprehensive Platform</span></h2>
     <p class="metrics-intro">
       VAIG is backed by an extensive codebase with a <strong class="hl-green">1.5 : 1 test-to-source ratio</strong>,
-      6,226 passing tests, and 11 production AI agents — built and validated across 265 commits and 10 releases by the team.
+      6,438 passing tests, and 11 production AI agents — built and validated across 280 commits and 11 releases by the team.
     </p>
 
     <div class="metrics-groups">
@@ -925,23 +925,23 @@
         </div>
         <div class="metric-row">
           <span class="metric-label">Source Code</span>
-          <span class="metric-value mv-blue">61,868 lines</span>
+          <span class="metric-value mv-blue">64,475 lines</span>
         </div>
         <div class="metric-row">
           <span class="metric-label">Source Files</span>
-          <span class="metric-value mv-blue">207</span>
+          <span class="metric-value mv-blue">213</span>
         </div>
         <div class="metric-row">
           <span class="metric-label">Total Commits</span>
-          <span class="metric-value mv-teal">265</span>
+          <span class="metric-value mv-teal">280</span>
         </div>
         <div class="metric-row">
           <span class="metric-label">PRs Merged</span>
-          <span class="metric-value mv-teal">135</span>
+          <span class="metric-value mv-teal">150</span>
         </div>
         <div class="metric-row">
           <span class="metric-label">Releases</span>
-          <span class="metric-value mv-yellow">10 (v0.1–v0.10)</span>
+          <span class="metric-value mv-yellow">11 (v0.1–v0.11)</span>
         </div>
       </div>
 
@@ -953,15 +953,15 @@
         </div>
         <div class="metric-row">
           <span class="metric-label">Test Suite</span>
-          <span class="metric-value mv-green">92,375 lines</span>
+          <span class="metric-value mv-green">96,704 lines</span>
         </div>
         <div class="metric-row">
           <span class="metric-label">Test Files</span>
-          <span class="metric-value mv-green">140</span>
+          <span class="metric-value mv-green">146</span>
         </div>
         <div class="metric-row">
           <span class="metric-label">Total Tests</span>
-          <span class="metric-value mv-green">6,226</span>
+          <span class="metric-value mv-green">6,438</span>
         </div>
         <div class="metric-row">
           <span class="metric-label">Passing</span>
@@ -1004,11 +1004,11 @@
 
     <div class="metrics-headline-row">
       <div class="metrics-headline">
-        <div class="mh-val mv-blue">61,868</div>
+        <div class="mh-val mv-blue">64,475</div>
         <div class="mh-lbl">Lines of Production Code</div>
       </div>
       <div class="metrics-headline">
-        <div class="mh-val mv-green">6,226</div>
+        <div class="mh-val mv-green">6,438</div>
         <div class="mh-lbl">Tests — All Passing</div>
       </div>
       <div class="metrics-headline">
@@ -1016,8 +1016,8 @@
         <div class="mh-lbl">Tool Functions (47 GKE Live)</div>
       </div>
       <div class="metrics-headline">
-        <div class="mh-val mv-yellow">v0.10.0</div>
-        <div class="mh-lbl">10th Release — Upcoming</div>
+        <div class="mh-val mv-yellow">v0.11.0</div>
+        <div class="mh-lbl">11th Release — Latest</div>
       </div>
     </div>
 
@@ -1079,7 +1079,8 @@
           <li>47 read-only tools across GKE, Cloud Logging, Monitoring, ArgoCD, Helm &amp; Datadog</li>
           <li>Multi-agent pipeline with parallel gatherers and AI synthesis</li>
           <li>Structured HTML/JSON/Markdown reports exportable to any BI tool</li>
-          <li><code class="code-teal">--watch</code> mode for continuous polling (min 10s interval)</li>
+          <li><code class="code-teal">--watch</code> mode with change-diff tracking between iterations</li>
+          <li>Autonomous cluster discovery and environment health checks built in</li>
           <li>Skill routing — auto-selects the right specialist agent for the query</li>
         </ul>
       </div>
@@ -1111,8 +1112,8 @@
     <div class="features-grid">
       <div class="feature-card blue">
         <div class="icon"><span role="img" aria-label="Magnifying glass">🔍</span></div>
-        <div class="name">Real-Time Diagnostics</div>
-        <div class="desc">Inspect pods, nodes, events, and container states live. Get answers in seconds, not minutes.</div>
+        <div class="name">Discover &amp; Diagnose</div>
+        <div class="desc">Autonomous cluster scanning maps every workload automatically. Real-time diagnostics inspect pods, nodes, and events — answers in seconds.</div>
       </div>
       <div class="feature-card teal">
         <div class="icon"><span role="img" aria-label="Scroll">📜</span></div>
@@ -1136,18 +1137,18 @@
       </div>
       <div class="feature-card pink">
         <div class="icon"><span role="img" aria-label="Refresh arrows">🔄</span></div>
-        <div class="name">Watch Mode</div>
-        <div class="desc">Re-executes the investigation every N seconds. Monitors drift, catch regressions, alert on changes.</div>
+        <div class="name">Watch Mode + Diff</div>
+        <div class="desc">Re-executes every N seconds and highlights what changed between iterations — catch regressions the moment they appear.</div>
       </div>
       <div class="feature-card yellow">
         <div class="icon"><span role="img" aria-label="Document">📄</span></div>
         <div class="name">Export Reports</div>
-        <div class="desc">One-command HTML SPA dashboards, JSON for BI pipelines, or Markdown for incident tickets.</div>
+        <div class="desc">One-command HTML SPA dashboards (including full watch session history), JSON for BI pipelines, or Markdown for incident tickets.</div>
       </div>
       <div class="feature-card cyan">
         <div class="icon"><span role="img" aria-label="Shield">🛡️</span></div>
-        <div class="name">Read-Only Safety</div>
-        <div class="desc">Default toolset is read-only and safe for production. Live-mode Kubernetes write actions (scale/restart/label/annotate) are optional, explicit, and policy-gated.</div>
+        <div class="name">Safe &amp; Self-Healing</div>
+        <div class="desc">Read-only by default, safe for production. Built-in environment doctor validates configuration, credentials, and cluster connectivity before every run.</div>
       </div>
     </div>
     <div class="slide-num">05 / 10</div>

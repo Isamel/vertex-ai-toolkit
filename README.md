@@ -35,6 +35,10 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
 - **ToolCallStore** — per-tool-call result storage (JSONL) for post-run analysis, debugging, and auditing
 - **Configurable auth** — Application Default Credentials (ADC) for GKE, service account impersonation for local dev
 - **Automatic retry with exponential backoff** — two-layer retry strategy for Vertex AI API errors (SDK-level `HttpRetryOptions` + application-level typed exceptions); configurable max retries, backoff multiplier, and retryable status codes
+- **Watch mode diff** — `--watch` iterations show new, resolved, and severity-changed findings between each pass for easy delta tracking
+- **Watch session HTML export** — pressing Ctrl+C during a `--watch` session exports a self-contained HTML report with diff timeline
+- **ArgoCD management cluster support** — connect to ArgoCD via API server, separate kubeconfig context, or same-cluster mode
+- **Language override** — set `language: "es"` (or any BCP-47 code) in config YAML to produce all agent output in that language; auto-detected from query when set to `"en"` (default)
 - **Cross-platform** — UTF-8 enforcement on all file I/O; Rich console falls back to plain text on non-ANSI terminals (Windows-safe)
 
 ## Requirements
@@ -132,6 +136,68 @@ List available skills.
 ### `vaig skills info SKILL_NAME`
 
 Show detailed info about a skill, including its agents.
+
+### `vaig discover`
+
+Autonomously scan a Kubernetes cluster and discover workload health issues — no question needed.
+
+```bash
+vaig discover [OPTIONS]
+
+Options:
+  -c, --config PATH       Path to config YAML
+  -m, --model TEXT        Model to use
+  -n, --namespace TEXT    Kubernetes namespace to scan (default: config default)
+  -A, --all-namespaces    Scan all non-system namespaces
+  --skip-healthy          Omit healthy workloads — focus on issues only
+  -o, --output PATH       Save report to a file
+  --format TEXT           Export format: json, md, html
+  --cluster TEXT          GKE cluster name (overrides config)
+  -p, --project TEXT      GCP project ID (overrides config)
+  --gke-project TEXT      GKE project ID (overrides gke.project_id)
+  --location TEXT         GCP location (overrides config)
+  --summary               Show compact summary instead of full report
+  --detailed              Show every tool call as it happens
+  --no-bell               Suppress terminal bell after pipeline completes
+  -O, --open              Open HTML report in browser (requires --format html)
+```
+
+Examples:
+
+```bash
+# Scan a specific namespace
+vaig discover --namespace production --cluster my-cluster --gke-project my-project
+
+# Scan all non-system namespaces
+vaig discover --all-namespaces
+
+# Focus on issues only, export HTML
+vaig discover --namespace staging --skip-healthy --format html --open
+```
+
+### `vaig doctor`
+
+Run diagnostic checks on your VAIG environment.
+
+```bash
+vaig doctor [OPTIONS]
+
+Options:
+  -c, --config PATH       Path to config YAML
+  -p, --project TEXT      GCP project ID (overrides config)
+  --cluster TEXT          GKE cluster name (overrides config)
+  --location TEXT         GCP location (overrides config)
+  --gke-project TEXT      GKE project ID (overrides gke.project_id)
+  --gke-location TEXT     GKE cluster location (overrides gke.location)
+  -V, --verbose           Enable verbose logging
+  -d, --debug             Enable debug logging
+```
+
+Runs 10 checks: GCP Authentication, Vertex AI API, GKE Connectivity, Cloud Logging, Cloud Monitoring, Helm Integration (optional), ArgoCD Integration (optional), Datadog Integration (optional), Optional Dependencies, and MCP Servers (optional).
+
+```bash
+vaig doctor --cluster my-cluster --gke-project my-project
+```
 
 ### `vaig stats show`
 

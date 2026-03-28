@@ -145,6 +145,106 @@ vaig live "Check all pod resource utilization" \
   --cluster prod -o capacity-report.md --format md
 ```
 
+### `vaig discover`
+
+Autonomously scan a Kubernetes cluster and discover workload health issues. Unlike `vaig live` which takes a specific question, `vaig discover` auto-generates its investigation query and runs a 4-agent pipeline: Inventory Scanner → Triage Classifier → Deep Investigator → Cluster Reporter.
+
+```bash
+vaig discover [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--namespace` | `-n` | Kubernetes namespace to scan | Config default or `default` |
+| `--all-namespaces` | `-A` | Scan all non-system namespaces | `false` |
+| `--skip-healthy` | | Omit healthy workloads from the report — focus on issues only | `false` |
+| `--config` | `-c` | Path to config file | Auto-detected |
+| `--model` | `-m` | Model to use | `gemini-2.5-pro` |
+| `--output` | `-o` | Save report to a file | stdout |
+| `--format` | | Export format: `json`, `md`, `html` | — |
+| `--cluster` | | GKE cluster name | Config value |
+| `--project` | `-p` | GCP project ID override | Config value |
+| `--location` | | GCP location override | Config value |
+| `--gke-project` | | GKE project ID (overrides `gke.project_id`; defaults to `--project` if unset) | Config value |
+| `--gke-location` | | GKE cluster location (overrides `gke.location`) | Config value |
+| `--summary` | | Show compact summary instead of full report | `false` |
+| `--detailed` | | Show every tool call as it happens (verbose execution output) | `false` |
+| `--no-bell` | | Suppress terminal bell after pipeline completes | `false` |
+| `--open` | `-O` | Open HTML report in default browser (requires `--format html`) | `false` |
+| `--verbose` | `-V` | Enable verbose logging (INFO level) | `false` |
+| `--debug` | `-d` | Enable debug logging (DEBUG level) | `false` |
+
+**Examples:**
+
+```bash
+# Scan a specific namespace
+vaig discover --namespace production
+
+# Scan all non-system namespaces
+vaig discover --all-namespaces
+
+# Focus on issues, skip healthy workloads
+vaig discover --namespace staging --skip-healthy
+
+# Export as HTML and open in browser
+vaig discover --namespace production --format html --open
+
+# Export to markdown file
+vaig discover -A -o report.md
+
+# Target a specific cluster and project
+vaig discover --namespace default --cluster prod-cluster --gke-project my-gke-project
+```
+
+### `vaig doctor`
+
+Run diagnostic checks on your VAIG environment. Verifies GCP authentication, Vertex AI API access, Kubernetes connectivity, observability integrations, and optional dependencies.
+
+The command runs 10 sequential checks:
+1. **GCP Authentication** — validates Application Default Credentials
+2. **Vertex AI API** — verifies model accessibility via a lightweight `count_tokens` call
+3. **GKE Connectivity** — tests Kubernetes cluster connection and detects Autopilot/Standard mode
+4. **Cloud Logging** — checks Cloud Logging API availability
+5. **Cloud Monitoring** — checks Cloud Monitoring API availability
+6. **Helm Integration** (optional) — verifies Helm is enabled and binary is available
+7. **ArgoCD Integration** (optional) — checks ArgoCD configuration
+8. **Datadog Integration** (optional) — validates Datadog API key configuration
+9. **Optional Dependencies** — checks importability of kubernetes, cloud-logging, cloud-monitoring, datadog-api-client
+10. **MCP Servers** (optional) — verifies MCP server configuration
+
+```bash
+vaig doctor [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--config` | `-c` | Path to config file | Auto-detected |
+| `--project` | `-p` | GCP project ID override | Config value |
+| `--cluster` | | GKE cluster name override | Config value |
+| `--location` | | GCP location override | Config value |
+| `--gke-project` | | GKE project ID (overrides `gke.project_id`) | Config value |
+| `--gke-location` | | GKE cluster location (overrides `gke.location`) | Config value |
+| `--verbose` | `-V` | Enable verbose logging (INFO level) | `false` |
+| `--debug` | `-d` | Enable debug logging (DEBUG level) | `false` |
+
+**Examples:**
+
+```bash
+# Run all checks with default config
+vaig doctor
+
+# Target a specific project
+vaig doctor --project my-project
+
+# Use a custom config file
+vaig doctor --config ~/custom-config.yaml
+
+# Override cluster for GKE connectivity check
+vaig doctor --cluster prod-cluster --gke-project my-gke-project
+```
+
+Exit codes: `0` if all critical checks pass, `1` if any critical check (GCP Auth or Vertex AI API) fails.
+
 ### `vaig export`
 
 Export a past session to a file.

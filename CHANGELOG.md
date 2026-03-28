@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `vaig discover` command — autonomous cluster health scanning without requiring a question; auto-generates investigation queries and runs a 4-agent discovery pipeline ([#142](https://github.com/Isamel/vertex-ai-toolkit/pull/142))
+- `vaig doctor` command — environment healthcheck with 10 diagnostic checks: GCP auth, Vertex AI API, GKE connectivity, Cloud Logging, Cloud Monitoring, Helm, ArgoCD, Datadog, optional deps, and MCP servers ([#143](https://github.com/Isamel/vertex-ai-toolkit/pull/143))
+- Watch mode diff — `--watch` iterations now show new, resolved, and severity-changed findings between each pass ([#146](https://github.com/Isamel/vertex-ai-toolkit/pull/146))
+- Watch session HTML export — pressing Ctrl+C during a `--watch` session exports a self-contained HTML report with diff timeline ([#147](https://github.com/Isamel/vertex-ai-toolkit/pull/147))
+- ArgoCD management cluster support — 3 connection modes: API server (`server` + `token`), separate kubeconfig context, and same-cluster ([#149](https://github.com/Isamel/vertex-ai-toolkit/pull/149))
+- Datadog `cluster_name_override` config field and fallback metric guidance in agent prompts ([#148](https://github.com/Isamel/vertex-ai-toolkit/pull/148))
+- Language configuration override — set `language: "es"` (or any BCP-47 code) in config YAML to produce all agent output in that language ([#144](https://github.com/Isamel/vertex-ai-toolkit/pull/144))
+- Autopilot detection timeout (10s) and pre-warm discovery clients for faster startup ([#145](https://github.com/Isamel/vertex-ai-toolkit/pull/145))
+
+### Changed
+- CLI visual overhaul with Rich components — real-time agent tree, status spinners, and cleaner output formatting ([#139](https://github.com/Isamel/vertex-ai-toolkit/pull/139))
+- Cleaner CLI output with log-only noise suppression and real-time agent tree display ([#140](https://github.com/Isamel/vertex-ai-toolkit/pull/140))
+
+### Fixed
+- Restored per-tool breakdown in `--detailed` mode ([#141](https://github.com/Isamel/vertex-ai-toolkit/pull/141))
+- Fixed demo CLI output and removed PR delivery slide from C-Suite presentation ([#138](https://github.com/Isamel/vertex-ai-toolkit/pull/138))
+- Fixed language config override not applying and improved Helm/Argo discovery prompts ([#144](https://github.com/Isamel/vertex-ai-toolkit/pull/144))
+- Added timeout to autopilot detection preventing discovery from hanging ([#145](https://github.com/Isamel/vertex-ai-toolkit/pull/145))
+- Reused `_load_k8s_config` in doctor GKE connectivity check — fixed `ConnectTimeoutError` on unreachable clusters ([#150](https://github.com/Isamel/vertex-ai-toolkit/pull/150))
+
 ## [0.10.0] - 2026-03-27
 
 ### Changed
