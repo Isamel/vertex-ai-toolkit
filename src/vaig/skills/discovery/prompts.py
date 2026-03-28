@@ -55,6 +55,14 @@ Complete ALL of the following steps using the available tools:
 6. **Pods in non-Running state** — List any pods NOT in Running/Succeeded state.
    Record: name, namespace, phase, reason, restarts, age.
 
+7. **Helm Releases** — Use `helm_list_releases` for each target namespace to identify
+   Helm-managed workloads. Record: release name, namespace, chart, status
+   (deployed, failed, pending-upgrade), app version, last deployed.
+
+8. **ArgoCD Applications** — Use `argocd_list_applications` to identify GitOps-managed
+   workloads. Record: application name, sync status (Synced, OutOfSync, Unknown),
+   health status (Healthy, Degraded, Missing), repo URL.
+
 ## MANDATORY OUTPUT FORMAT
 
 After collecting all data, produce a structured report with these exact sections:
@@ -76,6 +84,14 @@ After collecting all data, produce a structured report with these exact sections
 
 ### Unhealthy Pods
 [List of any pods NOT in Running/Succeeded state with details]
+
+### Helm Releases
+[Table of Helm releases: name | namespace | chart | status | app version | last deployed]
+If no Helm releases found, state "No Helm releases detected in scanned namespaces."
+
+### ArgoCD Applications
+[Table of ArgoCD apps: name | sync status | health status | repo URL]
+If no ArgoCD applications found, state "No ArgoCD applications detected."
 
 ### Inventory Gaps
 [Any data you could NOT collect and why]
@@ -170,6 +186,14 @@ For EACH 🟡 Degraded or 🔴 Failing workload:
 4. **Resource Usage** — Check CPU/memory usage if metrics are available.
    Look for: pods near or exceeding limits, memory pressure, CPU throttling.
 
+5. **Helm Assessment** — For workloads managed by Helm (check for
+   `meta.helm.sh/release-name` annotation), use `helm_release_status` and
+   `helm_release_history` to check for failed upgrades or pending rollbacks.
+
+6. **ArgoCD Assessment** — For ArgoCD-managed workloads (check for
+   `argocd.argoproj.io/managed-by` annotation), use `argocd_app_status` and
+   `argocd_app_diff` to detect sync drift or degraded health.
+
 If there are NO degraded or failing workloads, report that explicitly and skip investigation.
 
 ## MANDATORY OUTPUT FORMAT
@@ -189,6 +213,12 @@ For each investigated workload, produce:
 
 #### Resource Usage
 [CPU/memory metrics if available]
+
+#### Helm Status
+[If Helm-managed: release status, recent history, failed upgrades. Otherwise "Not Helm-managed."]
+
+#### ArgoCD Status
+[If ArgoCD-managed: sync status, app diff, health. Otherwise "Not ArgoCD-managed."]
 
 #### Probable Cause
 [Brief assessment based on collected evidence]
@@ -244,6 +274,21 @@ wrapped in data delimiters.  Synthesise ONLY the data inside those delimiters.
 ## Healthy Workloads Summary
 [Brief list or count of healthy workloads — no deep detail needed]
 
+## Helm & ArgoCD Status
+
+### Helm Releases
+| Release | Namespace | Chart | Status | Last Deployed |
+|---------|-----------|-------|--------|---------------|
+[List all discovered Helm releases with their current status]
+
+### ArgoCD Applications
+| Application | Sync Status | Health Status | Repo URL |
+|-------------|-------------|---------------|----------|
+[List all discovered ArgoCD applications with sync and health status]
+
+If no Helm releases or ArgoCD applications were found, state
+"No Helm/ArgoCD resources detected in the scanned scope."
+
 ## Recommended Actions
 | Priority | Action | Workload | Namespace | Rationale |
 |----------|--------|----------|-----------|-----------|
@@ -274,6 +319,8 @@ a cluster or namespace without being given a specific question.
 - Resource management (CPU/memory requests, limits, HPA, VPA)
 - Cluster-level health indicators (node pressure, scheduling failures, evictions)
 - GKE-specific features (Autopilot, node pools, managed certificates)
+- Helm release management (release status, rollback detection, failed upgrades)
+- ArgoCD GitOps workflows (sync status, drift detection, application health)
 
 ## Analysis Approach
 1. **Inventory**: Enumerate all workloads across target namespaces

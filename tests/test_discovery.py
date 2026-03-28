@@ -369,3 +369,45 @@ class TestDiscoverQueryBuilder:
         query = _build_discover_query(namespace="production", all_namespaces=True)
         # all_namespaces takes precedence — should NOT mention specific namespace
         assert "ALL non-system namespaces" in query
+
+
+# ── Helm & ArgoCD prompt additions ────────────────────────────
+
+
+class TestDiscoveryHelmArgoPrompts:
+    """Verify Helm/ArgoCD tool references were added to discovery prompts."""
+
+    def test_inventory_scanner_has_helm_list_releases(self) -> None:
+        from vaig.skills.discovery.prompts import INVENTORY_SCANNER_PROMPT
+
+        assert "helm_list_releases" in INVENTORY_SCANNER_PROMPT
+
+    def test_inventory_scanner_has_argocd_list_applications(self) -> None:
+        from vaig.skills.discovery.prompts import INVENTORY_SCANNER_PROMPT
+
+        assert "argocd_list_applications" in INVENTORY_SCANNER_PROMPT
+
+    def test_deep_investigator_has_helm_release_status(self) -> None:
+        from vaig.skills.discovery.prompts import DEEP_INVESTIGATOR_PROMPT
+
+        assert "helm_release_status" in DEEP_INVESTIGATOR_PROMPT
+
+    def test_deep_investigator_has_argocd_app_status(self) -> None:
+        from vaig.skills.discovery.prompts import DEEP_INVESTIGATOR_PROMPT
+
+        assert "argocd_app_status" in DEEP_INVESTIGATOR_PROMPT
+
+    def test_system_instruction_mentions_helm(self) -> None:
+        from vaig.skills.discovery.prompts import SYSTEM_INSTRUCTION
+
+        assert "Helm" in SYSTEM_INSTRUCTION
+
+    def test_system_instruction_mentions_argocd(self) -> None:
+        from vaig.skills.discovery.prompts import SYSTEM_INSTRUCTION
+
+        assert "ArgoCD" in SYSTEM_INSTRUCTION
+
+    def test_cluster_reporter_has_helm_argocd_section(self) -> None:
+        from vaig.skills.discovery.prompts import CLUSTER_REPORTER_PROMPT
+
+        assert "Helm & ArgoCD Status" in CLUSTER_REPORTER_PROMPT

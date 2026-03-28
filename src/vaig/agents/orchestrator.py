@@ -903,10 +903,19 @@ class Orchestrator:
             tool_call_store.start_run()
 
         # ── Dynamic language detection & injection ───────────
-        # Detect the user's language and inject a language instruction
-        # into each agent's system prompt so the entire pipeline responds
-        # in the same language as the query.
-        lang = detect_language(query)
+        # If the user configured a preferred language (settings.language),
+        # use that as an override — this ensures commands like `vaig discover`
+        # (which auto-generate English queries) still produce output in the
+        # user's preferred language.  Otherwise, detect from the query text.
+        config_lang = self._settings.language
+        if config_lang and config_lang != "en":
+            lang = config_lang
+            logger.info(
+                "Language override from config: %s (skipping query detection)",
+                lang,
+            )
+        else:
+            lang = detect_language(query)
         agent_configs = skill.get_agents_config(
             namespace=gke_namespace,
             location=gke_location,
@@ -1967,7 +1976,19 @@ class Orchestrator:
             tool_call_store.start_run()
 
         # ── Dynamic language detection & injection ───────────
-        lang = detect_language(query)
+        # If the user configured a preferred language (settings.language),
+        # use that as an override — this ensures commands like `vaig discover`
+        # (which auto-generate English queries) still produce output in the
+        # user's preferred language.  Otherwise, detect from the query text.
+        config_lang = self._settings.language
+        if config_lang and config_lang != "en":
+            lang = config_lang
+            logger.info(
+                "Language override from config: %s (skipping query detection)",
+                lang,
+            )
+        else:
+            lang = detect_language(query)
         agent_configs = skill.get_agents_config(
             namespace=gke_namespace,
             location=gke_location,

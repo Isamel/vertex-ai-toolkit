@@ -420,6 +420,7 @@ class TestOrchestratorLanguageIntegration:
         settings.models.default = "gemini-2.5-pro"
         settings.budget.max_cost_per_run = 0.0
         settings.agents.max_failures_before_fallback = 0
+        settings.language = "en"  # let detect_language() decide
         orchestrator = Orchestrator(client, settings)
         registry = ToolRegistry()
 
@@ -495,6 +496,7 @@ class TestOrchestratorLanguageIntegration:
         settings.models.default = "gemini-2.5-pro"
         settings.budget.max_cost_per_run = 0.0
         settings.agents.max_failures_before_fallback = 0
+        settings.language = "en"  # let detect_language() decide
         orchestrator = Orchestrator(client, settings)
         registry = ToolRegistry()
 
@@ -720,3 +722,154 @@ class TestInjectAutopilotIntoConfig:
 
         assert original == prompts.HEALTH_GATHERER_PROMPT
         assert "GKE AUTOPILOT" not in prompts.HEALTH_GATHERER_PROMPT
+
+
+# ===========================================================================
+# Orchestrator: settings.language config override
+# ===========================================================================
+
+
+class TestOrchestratorLanguageConfigOverride:
+    """Test that settings.language overrides detect_language() when != 'en'."""
+
+    def test_config_language_overrides_detection(self) -> None:
+        """When settings.language='es', Spanish injection happens even for English query."""
+        from unittest.mock import MagicMock, patch
+
+        from vaig.agents.base import AgentResult
+        from vaig.agents.orchestrator import Orchestrator
+        from vaig.tools.base import ToolRegistry
+
+        client = MagicMock()
+        settings = MagicMock()
+        settings.models.default = "gemini-2.5-pro"
+        settings.budget.max_cost_per_run = 0.0
+        settings.agents.max_failures_before_fallback = 0
+        settings.language = "es"  # override — force Spanish output
+        orchestrator = Orchestrator(client, settings)
+        registry = ToolRegistry()
+
+        captured_configs: list[dict] = []
+
+        def mock_create(skill, tool_registry=None, *, agent_configs=None):
+            if agent_configs:
+                captured_configs.extend(agent_configs)
+            agent = MagicMock()
+            agent.name = "mock"
+            agent.role = "Mock"
+            agent.execute.return_value = AgentResult(
+                agent_name="mock",
+                content="OK",
+                success=True,
+                usage={},
+            )
+            return [agent]
+
+        from vaig.skills.base import BaseSkill, SkillMetadata
+
+        class StubSkill(BaseSkill):
+            def get_metadata(self) -> SkillMetadata:
+                return SkillMetadata(
+                    name="test",
+                    display_name="Test",
+                    description="Test",
+                )
+
+            def get_system_instruction(self) -> str:
+                return "Test instruction"
+
+            def get_phase_prompt(self, phase, context, user_input) -> str:
+                return "test"
+
+            def get_agents_config(self, **kwargs: Any) -> list[dict]:
+                return [
+                    {
+                        "name": "test-agent",
+                        "role": "Tester",
+                        "system_instruction": "You are a tester.",
+                        "requires_tools": True,
+                    },
+                ]
+
+        with patch.object(orchestrator, "create_agents_for_skill", side_effect=mock_create):
+            # English query — but config says "es", so language override should fire
+            orchestrator.execute_with_tools(
+                "Check the health of my cluster",
+                StubSkill(),
+                registry,
+            )
+
+        assert len(captured_configs) == 1
+        assert "LANGUAGE INSTRUCTION" in captured_configs[0]["system_instruction"]
+        assert "es" in captured_configs[0]["system_instruction"]
+
+    def test_config_language_en_falls_through_to_detection(self) -> None:
+        """When settings.language='en', detect_language() decides the output language."""
+        from unittest.mock import MagicMock, patch
+
+        from vaig.agents.base import AgentResult
+        from vaig.agents.orchestrator import Orchestrator
+        from vaig.tools.base import ToolRegistry
+
+        client = MagicMock()
+        settings = MagicMock()
+        settings.models.default = "gemini-2.5-pro"
+        settings.budget.max_cost_per_run = 0.0
+        settings.agents.max_failures_before_fallback = 0
+        settings.language = "en"  # default — let detect_language() work
+        orchestrator = Orchestrator(client, settings)
+        registry = ToolRegistry()
+
+        captured_configs: list[dict] = []
+
+        def mock_create(skill, tool_registry=None, *, agent_configs=None):
+            if agent_configs:
+                captured_configs.extend(agent_configs)
+            agent = MagicMock()
+            agent.name = "mock"
+            agent.role = "Mock"
+            agent.execute.return_value = AgentResult(
+                agent_name="mock",
+                content="OK",
+                success=True,
+                usage={},
+            )
+            return [agent]
+
+        from vaig.skills.base import BaseSkill, SkillMetadata
+
+        class StubSkill(BaseSkill):
+            def get_metadata(self) -> SkillMetadata:
+                return SkillMetadata(
+                    name="test",
+                    display_name="Test",
+                    description="Test",
+                )
+
+            def get_system_instruction(self) -> str:
+                return "Test instruction"
+
+            def get_phase_prompt(self, phase, context, user_input) -> str:
+                return "test"
+
+            def get_agents_config(self, **kwargs: Any) -> list[dict]:
+                return [
+                    {
+                        "name": "test-agent",
+                        "role": "Tester",
+                        "system_instruction": "You are a tester.",
+                        "requires_tools": True,
+                    },
+                ]
+
+        with patch.object(orchestrator, "create_agents_for_skill", side_effect=mock_create):
+            # English query + config "en" → detect_language returns "en" → no injection
+            orchestrator.execute_with_tools(
+                "Check the health of my cluster",
+                StubSkill(),
+                registry,
+            )
+
+        assert len(captured_configs) == 1
+        assert captured_configs[0]["system_instruction"] == "You are a tester."
+        assert "LANGUAGE INSTRUCTION" not in captured_configs[0]["system_instruction"]
