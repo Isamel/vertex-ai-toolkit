@@ -413,9 +413,18 @@ class AgentProgressDisplay:
 
                     bar = f"[{color}]██████████[/{color}]"
                     tool_str = f"{tools} tool{'s' if tools != 1 else ''}"
+
+                    # Per-tool-name breakdown (e.g. "kubectl_get ×4 | get_events ×2")
+                    # Only shown in --detailed mode to keep default output clean.
+                    breakdown_detail = ""
+                    if self._tool_logger.detailed:
+                        breakdown = self._tool_logger.format_tool_counts()
+                        if breakdown:
+                            breakdown_detail = f"\n          [dim]{breakdown}[/dim]"
+
                     console.print(
                         f"   {connector} {emoji} [bold]{agent_name}[/bold]  "
-                        f"{bar}  {tool_str} ({elapsed:.1f}s) {status_icon}"
+                        f"{bar}  {tool_str} ({elapsed:.1f}s) {status_icon}{breakdown_detail}"
                     )
                 except Exception:  # noqa: BLE001
                     # Graceful degradation: never crash the pipeline from
