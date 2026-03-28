@@ -209,7 +209,7 @@ The command runs 10 sequential checks:
 6. **Helm Integration** (optional) — verifies Helm is enabled and binary is available
 7. **ArgoCD Integration** (optional) — checks ArgoCD configuration
 8. **Datadog Integration** (optional) — validates Datadog API key configuration
-9. **Optional Dependencies** — checks importability of kubernetes, cloud-logging, cloud-monitoring, datadog-api-client
+9. **Optional Dependencies** — checks importability of kubernetes, google-cloud-logging, google-cloud-monitoring, datadog-api-client
 10. **MCP Servers** (optional) — verifies MCP server configuration
 
 ```bash
