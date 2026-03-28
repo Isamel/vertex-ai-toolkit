@@ -11,9 +11,23 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import yaml
-from requests import Session as RequestsSession
 
 from vaig.tools.base import ToolResult
+
+# ── Optional dependency: requests ─────────────────────────────
+# Required only for API-server mode (ArgoCDAPIClient).
+_REQUESTS_AVAILABLE = True
+_REQUESTS_IMPORT_ERROR: str | None = None
+
+try:
+    from requests import Session as RequestsSession  # noqa: WPS433
+except ImportError as _req_exc:
+    _REQUESTS_AVAILABLE = False
+    _REQUESTS_IMPORT_ERROR = (
+        "The 'requests' package is not installed. "
+        "Install it with: pip install requests"
+    )
+    RequestsSession = None
 
 if TYPE_CHECKING:
     from google.auth.credentials import Credentials
@@ -618,31 +632,51 @@ def _create_argocd_client(
     Raises:
         RuntimeError: If client creation fails.
     """
-    if not _K8S_AVAILABLE:
-        raise RuntimeError(_K8S_IMPORT_ERROR or "kubernetes SDK not available")
-
-    # Mode 1: API server — REST client wrapper
+    # Mode 1: API server — REST client wrapper (does NOT require kubernetes SDK)
     if server and token:
         client = ArgoCDAPIClient(server=server, token=token, verify_ssl=verify_ssl)
         return ("api", client)
 
+    # Modes 2 & 3 require the kubernetes SDK
+    if not _K8S_AVAILABLE:
+        raise RuntimeError(_K8S_IMPORT_ERROR or "kubernetes SDK not available")
+
     # Mode 2: Separate kubeconfig context
     if context:
         try:
-            k8s_config.load_kube_config(context=context)
-            api_client = k8s_client.ApiClient()
-            custom_api = k8s_client.CustomObjectsApi(api_client)
-            return ("context", custom_api)
+            with _suppress_stderr():
+                config = k8s_client.Configuration()
+                config.retries = False
+
+                # Proxy from environment (matching _load_k8s_config patterns)
+                env_proxy = (
+                    os.environ.get("HTTPS_PROXY")
+                    or os.environ.get("https_proxy")
+                    or os.environ.get("HTTP_PROXY")
+                    or os.environ.get("http_proxy")
+                )
+                if env_proxy:
+                    config.proxy = env_proxy
+
+                k8s_config.load_kube_config(context=context, client_configuration=config)
+                api_client = k8s_client.ApiClient(configuration=config)
+                custom_api = k8s_client.CustomObjectsApi(api_client)
+                return ("context", custom_api)
         except Exception as exc:
             raise RuntimeError(
                 f"Failed to create ArgoCD client with kubeconfig context '{context}': {exc}"
             ) from exc
 
-    # Mode 3: Same-cluster — build a CustomObjectsApi
+    # Mode 3: Same-cluster — load k8s config and build a CustomObjectsApi
     try:
-        api_client = k8s_client.ApiClient()
-        custom_api = k8s_client.CustomObjectsApi(api_client)
-        return ("cluster", custom_api)
+        with _suppress_stderr():
+            try:
+                k8s_config.load_incluster_config()
+            except k8s_config.ConfigException:
+                k8s_config.load_kube_config()
+            api_client = k8s_client.ApiClient()
+            custom_api = k8s_client.CustomObjectsApi(api_client)
+            return ("cluster", custom_api)
     except Exception as exc:
         raise RuntimeError(f"Failed to create same-cluster ArgoCD client: {exc}") from exc
 
@@ -662,7 +696,11 @@ class ArgoCDAPIClient:
     transformation.
     """
 
+    _DEFAULT_API_TIMEOUT: int = 30
+
     def __init__(self, *, server: str, token: str, verify_ssl: bool = True) -> None:
+        if not _REQUESTS_AVAILABLE:
+            raise RuntimeError(_REQUESTS_IMPORT_ERROR or "requests package not available")
         self._server = server.rstrip("/")
         self._session = RequestsSession()
         self._session.headers.update({
@@ -698,12 +736,12 @@ class ArgoCDAPIClient:
         Maps to ``GET /api/v1/applications``.
 
         When *namespace* is provided the response is filtered to only include
-        applications whose ``spec.destination.namespace`` or ``metadata.namespace``
+        applications whose ``metadata.namespace`` or ``spec.destination.namespace``
         matches.  ArgoCD's REST API does not have a per-namespace endpoint, so
         this is handled client-side.
         """
         url = f"{self._server}/api/v1/applications"
-        resp = self._session.get(url, timeout=30)
+        resp = self._session.get(url, timeout=self._DEFAULT_API_TIMEOUT)
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
 
@@ -712,7 +750,10 @@ class ArgoCDAPIClient:
             items = data.get("items") or []
             data["items"] = [
                 item for item in items
-                if item.get("metadata", {}).get("namespace") == namespace
+                if (
+                    item.get("metadata", {}).get("namespace") == namespace
+                    or item.get("spec", {}).get("destination", {}).get("namespace") == namespace
+                )
             ]
 
         return data
@@ -731,7 +772,7 @@ class ArgoCDAPIClient:
         Maps to ``GET /api/v1/applications/{name}``.
         """
         url = f"{self._server}/api/v1/applications/{name}"
-        resp = self._session.get(url, timeout=30)
+        resp = self._session.get(url, timeout=self._DEFAULT_API_TIMEOUT)
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
 
@@ -747,6 +788,6 @@ class ArgoCDAPIClient:
         Maps to ``GET /api/v1/applications`` (ArgoCD API is already cluster-scoped).
         """
         url = f"{self._server}/api/v1/applications"
-        resp = self._session.get(url, timeout=30)
+        resp = self._session.get(url, timeout=self._DEFAULT_API_TIMEOUT)
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
