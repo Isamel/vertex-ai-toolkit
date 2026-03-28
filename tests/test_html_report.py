@@ -263,17 +263,10 @@ class TestJsonInjection:
         """The JSON blob injected into the template must be valid JSON."""
         report = _make_minimal_report()
         result = render_health_report_html(report)
-        # Extract the JSON blob: find 'const REPORT_DATA = ' then the closing ';\n</script>' or ';</script>'
+        # Extract the JSON blob: find 'const REPORT_DATA = ' then the next ';\n'
         marker = "const REPORT_DATA = "
         start = result.index(marker) + len(marker)
-        # Use the closing pattern to avoid false-positive ';' inside JSON strings
-        for end_pattern in (";\n</script>", ";</script>"):
-            end_idx = result.find(end_pattern, start)
-            if end_idx != -1:
-                end = end_idx
-                break
-        else:
-            end = result.index(";", start)
+        end = result.index(";\n", start)
         json_blob = result[start:end]
         parsed = json.loads(json_blob)
         assert isinstance(parsed, dict)
@@ -285,14 +278,7 @@ class TestJsonInjection:
         result = render_health_report_html(report)
         marker = "const REPORT_DATA = "
         start = result.index(marker) + len(marker)
-        # Use the closing pattern to avoid false-positive ';' inside JSON strings
-        for end_pattern in (";\n</script>", ";</script>"):
-            end_idx = result.find(end_pattern, start)
-            if end_idx != -1:
-                end = end_idx
-                break
-        else:
-            end = result.index(";", start)
+        end = result.index(";\n", start)
         parsed = json.loads(result[start:end])
         assert parsed["executive_summary"]["overall_status"] == "CRITICAL"
         assert len(parsed["findings"]) == 5

@@ -4,12 +4,16 @@ Compares consecutive ``HealthReport`` iterations and produces a compact
 :class:`ReportDiff` showing new, resolved, unchanged findings and
 severity changes.  Used by ``_run_watch_loop`` in the ``live`` command
 to surface deltas between polling iterations.
+
+Also provides :class:`DiffTimelineEntry` and :class:`WatchSessionData`
+for accumulating a full diff timeline across all watch iterations,
+enabling HTML export of the complete watch session history.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from vaig.skills.service_health.schema import Finding, HealthReport
@@ -102,3 +106,77 @@ def compute_report_diff(current: HealthReport, previous: HealthReport) -> Report
         unchanged_findings=unchanged,
         severity_changes=severity_changes,
     )
+
+
+# ── Watch-session timeline ────────────────────────────────────
+
+
+@dataclass
+class DiffTimelineEntry:
+    """One iteration in the watch session diff timeline.
+
+    The first iteration is the *baseline* (``is_baseline=True``,
+    ``diff=None``).  Subsequent iterations carry the computed
+    :class:`ReportDiff` against the previous iteration.
+    """
+
+    iteration: int
+    timestamp: str  # ISO 8601 UTC
+    is_baseline: bool = False
+    diff: ReportDiff | None = None
+
+    # ── Serialisation helpers ────────────────────────────────
+
+    @staticmethod
+    def _diff_to_dict(diff: ReportDiff) -> dict[str, Any]:
+        """Serialise a *ReportDiff* to a JSON-safe dictionary."""
+        return {
+            "has_changes": diff.has_changes,
+            "summary_line": diff.summary_line,
+            "new_findings": [f.model_dump(mode="json") for f in diff.new_findings],
+            "resolved_findings": [f.model_dump(mode="json") for f in diff.resolved_findings],
+            "unchanged_count": len(diff.unchanged_findings),
+            "severity_changes": [
+                {
+                    "finding": sc.finding.model_dump(mode="json"),
+                    "previous_severity": sc.previous_severity,
+                    "current_severity": sc.current_severity,
+                }
+                for sc in diff.severity_changes
+            ],
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable dictionary of this entry."""
+        return {
+            "iteration": self.iteration,
+            "timestamp": self.timestamp,
+            "is_baseline": self.is_baseline,
+            "diff": self._diff_to_dict(self.diff) if self.diff is not None else None,
+        }
+
+
+@dataclass
+class WatchSessionData:
+    """Accumulated data for an entire ``--watch`` session.
+
+    Collected by the watch loop and passed to
+    :func:`~vaig.ui.html_report.render_watch_session_html` for
+    HTML export when the user presses Ctrl+C.
+    """
+
+    start_time: str  # ISO 8601 UTC
+    end_time: str  # ISO 8601 UTC
+    total_iterations: int
+    interval_seconds: int
+    diff_timeline: list[DiffTimelineEntry] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable dictionary of the full session."""
+        return {
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "total_iterations": self.total_iterations,
+            "interval_seconds": self.interval_seconds,
+            "diff_timeline": [entry.to_dict() for entry in self.diff_timeline],
+        }
