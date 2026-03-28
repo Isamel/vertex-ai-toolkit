@@ -28,6 +28,26 @@ export VAIG_CODING__MAX_TOOL_ITERATIONS=50
 
 ## Full Configuration Reference
 
+### `language` — Output Language
+
+```yaml
+language: en                           # BCP-47 language code (default: "en")
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `language` | string | `"en"` | Preferred output language as a BCP-47 code (e.g. `"es"`, `"pt"`, `"ja"`). When set to a non-`"en"` value, ALL agent output is produced in this language regardless of the query language. When `"en"` (the default), language is auto-detected from the user query at runtime. Override via `VAIG_LANGUAGE`. |
+
+**Examples:**
+
+```yaml
+# Produce all reports in Spanish
+language: "es"
+
+# Produce all reports in Japanese
+language: "ja"
+```
+
 ### `gcp` — Google Cloud Platform
 
 ```yaml
@@ -313,6 +333,8 @@ See [MCP Guide](mcp-guide.md) for detailed MCP configuration.
 
 ```yaml
 # vaig.yaml — Full configuration example
+
+language: en                             # Output language (BCP-47 code, e.g. "es" for Spanish)
 
 gcp:
   project_id: my-production-project
