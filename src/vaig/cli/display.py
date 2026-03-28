@@ -723,10 +723,17 @@ def print_watch_diff_summary(
 
     # ── New findings ──────────────────────────────────────────
     if diff.new_findings:
-        body.append("🆕 NEW", style="bold red")
+        # Header style: red if any finding is CRITICAL/HIGH, yellow otherwise.
+        _high_sevs = {"CRITICAL", "HIGH"}
+        _new_header_style = (
+            "bold red"
+            if any(f.severity.value in _high_sevs for f in diff.new_findings)
+            else "bold yellow"
+        )
+        body.append("🆕 NEW", style=_new_header_style)
         body.append(f" ({len(diff.new_findings)})\n")
         for f in diff.new_findings:
-            sev = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
+            sev = f.severity.value
             emoji, _label, style = _SEVERITY_DETAIL_STYLE.get(sev, ("⚪", sev, "dim"))
             body.append(f"   {emoji} ", style=style)
             body.append(f"{f.title}\n")
@@ -753,6 +760,10 @@ def print_watch_diff_summary(
     if diff.unchanged_findings:
         body.append("🔄 UNCHANGED", style="dim")
         body.append(f" ({len(diff.unchanged_findings)})\n", style="dim")
+
+    # Fallback when diff contains no findings at all
+    if not body.plain:
+        body.append("No findings in either report.", style="dim")
 
     # Choose panel style based on changes
     if diff.has_changes:
