@@ -71,7 +71,7 @@ class DiscoverySkill(BaseSkill):
         Warming the cache here ensures the client is fully constructed
         before concurrent execution begins.
 
-        This hook is **best-effort** — any failure is logged at debug
+        This hook is **best-effort** — any failure is logged at warning
         level and silently suppressed.
         """
         try:
@@ -80,7 +80,7 @@ class DiscoverySkill(BaseSkill):
             settings = get_settings()
             ensure_client_initialized(settings.gke)
         except Exception:  # noqa: BLE001
-            logger.debug(
+            logger.warning(
                 "K8s client pre-warm skipped (non-fatal): see ensure_client_initialized logs",
                 exc_info=True,
             )

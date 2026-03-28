@@ -58,13 +58,11 @@ def _k8s_unavailable() -> ToolResult:
 # ── Autopilot detection ──────────────────────────────────────
 
 
+# Timeout in seconds for the GKE ``get_cluster`` metadata API call.
+# Prevents ``detect_autopilot`` from hanging indefinitely when the GKE
+# Container API is unreachable.  10 seconds is generous for a lightweight
+# metadata-only RPC.
 _AUTOPILOT_TIMEOUT: int = 10
-"""Timeout in seconds for the GKE ``get_cluster`` metadata API call.
-
-Prevents ``detect_autopilot`` from hanging indefinitely when the GKE
-Container API is unreachable.  10 seconds is generous for a lightweight
-metadata-only RPC.
-"""
 
 
 def _query_autopilot_status(
@@ -119,8 +117,10 @@ def detect_autopilot(
             When ``None``, the client uses Application Default Credentials.
 
     Returns:
-        ``True`` if Autopilot, ``False`` if Standard, ``None`` if detection
-        failed (missing config, missing library, API error).
+        ``True`` if Autopilot, ``False`` if Standard **or** if detection
+        timed out (assumes Standard cluster to avoid blocking callers),
+        ``None`` if detection failed for other reasons (missing config,
+        missing library, non-timeout API error).
     """
     project = gke_config.project_id
     location = gke_config.location
@@ -152,9 +152,19 @@ def detect_autopilot(
         return None
 
     except Exception as exc:  # noqa: BLE001
-        # Provide a more specific log message when the API call timed out.
-        _exc_type = type(exc).__name__
-        if "DeadlineExceeded" in _exc_type or "Timeout" in _exc_type:
+        is_timeout = "Timeout" in type(exc).__name__
+        if not is_timeout:
+            try:
+                from google.api_core.exceptions import DeadlineExceeded  # noqa: WPS433
+
+                if isinstance(exc, DeadlineExceeded):
+                    is_timeout = True
+            except ImportError:
+                pass
+        if not is_timeout and "DeadlineExceeded" in type(exc).__name__:
+            is_timeout = True
+
+        if is_timeout:
             logger.warning(
                 "Autopilot detection timed out for %s (timeout=%ds): %s — "
                 "assuming Standard cluster (is_autopilot=False)",
