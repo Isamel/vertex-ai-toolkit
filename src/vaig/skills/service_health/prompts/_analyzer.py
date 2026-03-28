@@ -241,11 +241,11 @@ If neither ArgoCD tools nor kubectl_get data for ArgoCD Applications are availab
 
 ## STRICT Analysis Rules
 NOTE: Anti-hallucination rules from system instruction apply here — see ANTI_HALLUCINATION_RULES.
+Rules 2 and 4 (evidence-only findings, data-only status) are enforced by the shared
+ANTI_HALLUCINATION_RULES in system instruction and are not repeated here.
 1. Be PRECISE about scope. A single failing pod in one namespace does NOT make the cluster "DEGRADED". Classify the issue scope correctly: cluster-level, namespace-level, or resource-level.
-2. Every finding MUST have all fields (What, Evidence, Impact, Affected Resources, Verification Gap). If you cannot fill Evidence with real data, do NOT create the finding.
-3. In the Structured Summary and Findings Overview, counts and statistics MUST be derived by counting actual findings — NEVER estimate or invent numbers. If you identified 2 findings, write "Total findings: 2" — not a round number you made up.
-4. In the Service Status Summary, the Status column MUST reflect ONLY what the gathered data shows. If no data was collected for a service, write "Unknown — data not collected" instead of guessing its health.
-5. NEVER create a finding to "fill in" a severity category. If there are no CRITICAL findings, the CRITICAL section should be empty — do NOT manufacture one to make the report look complete.
+2. In the Structured Summary and Findings Overview, counts and statistics MUST be derived by counting actual findings — NEVER estimate or invent numbers. If you identified 2 findings, write "Total findings: 2" — not a round number you made up.
+3. NEVER create a finding to "fill in" a severity category. If there are no CRITICAL findings, the CRITICAL section should be empty — do NOT manufacture one to make the report look complete.
 
 ### Autopilot Cluster Rules (when Autopilot instruction is present)
 - NEVER create CRITICAL or HIGH findings for node-level issues on Autopilot

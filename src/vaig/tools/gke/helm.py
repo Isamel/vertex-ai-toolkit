@@ -42,6 +42,26 @@ _HELM_SECRET_NAME_PREFIX = "sh.helm.release.v1."
 
 _REDACTED = "[REDACTED]"
 
+# ── Value-based sensitive patterns ───────────────────────────
+# Detect credentials embedded in values (e.g. DATABASE_URL=postgres://user:pass@host)
+# regardless of the key name.
+_SENSITIVE_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # URIs with userinfo (scheme://user:password@host)
+    re.compile(r"[a-zA-Z][a-zA-Z0-9+\-.]*://[^@/\s]+:[^@/\s]+@", re.ASCII),
+    # PEM-encoded private keys
+    re.compile(r"-----BEGIN[A-Z ]*PRIVATE KEY-----"),
+    # JWT tokens (three base64url segments separated by dots)
+    re.compile(r"^eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$"),
+    # Bearer tokens (value starts with "Bearer " followed by a long opaque string)
+    re.compile(r"^Bearer\s+[A-Za-z0-9_\-/.+=]{20,}$"),
+)
+
+
+def _is_sensitive_value(value: str) -> bool:
+    """Return True if *value* contains an embedded credential pattern."""
+    return any(p.search(value) for p in _SENSITIVE_VALUE_PATTERNS)
+
+
 _DEFAULT_SENSITIVE_KEYS: tuple[str, ...] = (
     "password",
     "secret",
@@ -126,6 +146,11 @@ def _redact_recursive(data: Any, pattern: re.Pattern[str]) -> Any:
 
     if isinstance(data, list):
         return [_redact_recursive(item, pattern) for item in data]
+
+    # Value-based redaction: catch credentials embedded in string values
+    # (e.g. DATABASE_URL=postgres://user:pass@host) regardless of key name.
+    if isinstance(data, str) and _is_sensitive_value(data):
+        return _REDACTED
 
     return data
 

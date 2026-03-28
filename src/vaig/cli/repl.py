@@ -390,6 +390,21 @@ async def _async_repl_loop(prompt_session: PromptSession[str], state: REPLState)
         if not user_input:
             continue
 
+        # Multiline mode: collect lines between """ delimiters
+        if user_input == '"""':
+            multiline_result = await _collect_multiline_async(prompt_session)
+            if multiline_result is None:
+                continue
+            user_input = multiline_result
+        elif user_input.startswith('"""'):
+            # Opening delimiter with text on the same line
+            lines: list[str] = [user_input[3:]]
+            rest = await _collect_multiline_async(prompt_session)
+            if rest is None:
+                continue
+            lines.append(rest)
+            user_input = "\n".join(lines)
+
         # Handle slash commands (sync — they're lightweight)
         if user_input.startswith("/"):
             should_quit = _handle_command(state, user_input)
@@ -399,6 +414,29 @@ async def _async_repl_loop(prompt_session: PromptSession[str], state: REPLState)
 
         # Regular chat message (async)
         await _async_handle_chat(state, user_input)
+
+
+async def _collect_multiline_async(prompt_session: PromptSession[str]) -> str | None:
+    """Collect lines until a closing \"\"\" delimiter (async).
+
+    Returns the joined text, or ``None`` if the user cancels with Ctrl-C / Ctrl-D.
+    """
+    lines: list[str] = []
+    try:
+        while True:
+            line = await prompt_session.prompt_async("... ")
+            if line.rstrip() == '"""':
+                break
+            lines.append(line)
+    except (EOFError, KeyboardInterrupt):
+        console.print("[yellow]Multiline input cancelled.[/yellow]")
+        return None
+
+    result = "\n".join(lines).strip()
+    if not result:
+        console.print("[dim]Empty multiline input — skipped.[/dim]")
+        return None
+    return result
 
 
 async def _async_handle_chat(state: REPLState, user_input: str) -> None:
@@ -644,6 +682,21 @@ def _repl_loop(prompt_session: PromptSession[str], state: REPLState) -> None:
         if not user_input:
             continue
 
+        # Multiline mode: collect lines between """ delimiters
+        if user_input == '"""':
+            multiline_result = _collect_multiline_sync()
+            if multiline_result is None:
+                continue
+            user_input = multiline_result
+        elif user_input.startswith('"""'):
+            # Opening delimiter with text on the same line
+            lines: list[str] = [user_input[3:]]
+            rest = _collect_multiline_sync()
+            if rest is None:
+                continue
+            lines.append(rest)
+            user_input = "\n".join(lines)
+
         # Handle slash commands
         if user_input.startswith("/"):
             should_quit = _handle_command(state, user_input)
@@ -653,6 +706,29 @@ def _repl_loop(prompt_session: PromptSession[str], state: REPLState) -> None:
 
         # Regular chat message
         _handle_chat(state, user_input)
+
+
+def _collect_multiline_sync() -> str | None:
+    """Collect lines until a closing \"\"\" delimiter (sync).
+
+    Returns the joined text, or ``None`` if the user cancels with Ctrl-C / Ctrl-D.
+    """
+    lines: list[str] = []
+    try:
+        while True:
+            line = input("... ")
+            if line.rstrip() == '"""':
+                break
+            lines.append(line)
+    except (EOFError, KeyboardInterrupt):
+        console.print("[yellow]Multiline input cancelled.[/yellow]")
+        return None
+
+    result = "\n".join(lines).strip()
+    if not result:
+        console.print("[dim]Empty multiline input — skipped.[/dim]")
+        return None
+    return result
 
 
 def _handle_command(state: REPLState, raw_input: str) -> bool:
@@ -1636,7 +1712,7 @@ def _save_cost_data(state: REPLState) -> None:
 
 def _cmd_help() -> None:
     """Show help for all slash commands."""
-    help_text = """
+    help_text = '''
 [bold cyan]Chat Commands[/bold cyan]
   Just type your message to chat with the AI.
 
@@ -1667,11 +1743,12 @@ def _cmd_help() -> None:
   [cyan]/config[/cyan]          — Show current configuration snapshot
 
 [bold cyan]Tips[/bold cyan]
+  • Paste multi-line input (YAML, stack traces): type [dim]"""[/dim] then paste, then [dim]"""[/dim] to finish
   • Add files before asking questions: [dim]/add src/ logs.txt[/dim]
   • Use skills for specialized tasks: [dim]/skill rca[/dim] then describe the incident
   • Switch models anytime: [dim]/model gemini-2.5-flash[/dim]
   • Enable code mode for file operations: [dim]/code[/dim] then describe the task
   • Resume your last session: [dim]/resume[/dim] or [dim]vaig chat --resume[/dim]
   • Switch projects at runtime: [dim]/project my-other-project[/dim]
-"""
+'''
     console.print(Panel(help_text.strip(), title="📖 Help", border_style="bright_blue"))
