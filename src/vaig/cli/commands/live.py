@@ -299,6 +299,11 @@ class AgentProgressDisplay:
         # Per-agent error counts at start time — for accurate per-agent
         # error detection (avoids marking all agents ✗ after one failure).
         self._agent_start_errors: dict[str, int] = {}
+        # Per-agent tool name counts and cache hits at start time — for
+        # accurate per-agent breakdown in parallel execution (avoids showing
+        # cumulative counts from all running agents).
+        self._agent_start_tool_name_counts: dict[str, Counter[str]] = {}
+        self._agent_start_cache_hits: dict[str, int] = {}
         # Per-agent start timestamps for timing.
         self._agent_start_times: dict[str, float] = {}
         # Count of agents that have started but not yet ended.
@@ -361,6 +366,8 @@ class AgentProgressDisplay:
                 # overwriting each other's baseline before their "end" fires.
                 self._agent_start_counts[agent_name] = self._tool_logger.tool_count
                 self._agent_start_errors[agent_name] = self._tool_logger.errors
+                self._agent_start_tool_name_counts[agent_name] = self._tool_logger.tool_name_counts.copy()
+                self._agent_start_cache_hits[agent_name] = self._tool_logger.cache_hits
                 self._agent_start_times[agent_name] = time.perf_counter()
                 self._current_agent_name = agent_name
                 self._active_agents += 1
@@ -413,9 +420,28 @@ class AgentProgressDisplay:
 
                     bar = f"[{color}]██████████[/{color}]"
                     tool_str = f"{tools} tool{'s' if tools != 1 else ''}"
+
+                    # Per-tool-name breakdown (e.g. "kubectl_get ×4 | get_events ×2")
+                    # Only shown in --detailed mode to keep default output clean.
+                    # Uses per-agent delta counts for accuracy in parallel execution.
+                    # Always pop start snapshots to avoid memory leaks.
+                    start_tool_counts = self._agent_start_tool_name_counts.pop(agent_name, Counter())
+                    start_cache = self._agent_start_cache_hits.pop(agent_name, 0)
+                    breakdown_detail = ""
+                    if self._tool_logger.detailed:
+                        agent_tool_counts = self._tool_logger.tool_name_counts - start_tool_counts
+                        agent_cache = self._tool_logger.cache_hits - start_cache
+
+                        if agent_tool_counts:
+                            parts = [f"{name} ×{count}" for name, count in agent_tool_counts.most_common()]
+                            breakdown = " | ".join(parts)
+                            if agent_cache > 0:
+                                breakdown += f" ({agent_cache} cached)"
+                            breakdown_detail = f"\n          [dim]{breakdown}[/dim]"
+
                     console.print(
                         f"   {connector} {emoji} [bold]{agent_name}[/bold]  "
-                        f"{bar}  {tool_str} ({elapsed:.1f}s) {status_icon}"
+                        f"{bar}  {tool_str} ({elapsed:.1f}s) {status_icon}{breakdown_detail}"
                     )
                 except Exception:  # noqa: BLE001
                     # Graceful degradation: never crash the pipeline from
