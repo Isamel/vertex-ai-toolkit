@@ -156,9 +156,12 @@ Options:
   -p, --project TEXT      GCP project ID (overrides config)
   --gke-project TEXT      GKE project ID (overrides gke.project_id)
   --location TEXT         GCP location (overrides config)
+  --gke-location TEXT     GKE location (overrides gke.location)
   --summary               Show compact summary instead of full report
   --detailed              Show every tool call as it happens
   --no-bell               Suppress terminal bell after pipeline completes
+  -V, --verbose           Enable verbose logging
+  -d, --debug             Enable debug logging
   -O, --open              Open HTML report in browser (requires --format html)
 ```
 
