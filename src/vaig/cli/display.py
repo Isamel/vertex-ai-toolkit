@@ -15,6 +15,7 @@ from rich.text import Text
 
 if TYPE_CHECKING:
     from vaig.agents.base import AgentResult
+    from vaig.skills.service_health.diff import ReportDiff
     from vaig.skills.service_health.schema import HealthReport
 
 # Shared console instance — callers may pass their own via keyword arg.
@@ -686,3 +687,85 @@ def print_recommendations_table(
         table.add_row(str(rec.priority), action_text, cmd, risk)
 
     con.print(table)
+
+
+# ── Watch Mode Diff Summary ──────────────────────────────────
+
+
+def print_watch_diff_summary(
+    diff: ReportDiff,
+    iteration: int,
+    *,
+    console: Console | None = None,
+) -> None:
+    """Render a compact diff summary panel for watch mode iterations.
+
+    Shown AFTER the full health report on iteration 2+ to give an
+    immediate visual overview of what changed between consecutive
+    watch iterations.
+
+    Sections (only shown when non-empty):
+
+    - ``🆕 NEW`` — count and list with severity badge + title
+    - ``✅ RESOLVED`` — count and list
+    - ``⚠️  SEVERITY CHANGED`` — finding title with old → new severity
+    - ``🔄 UNCHANGED`` — count only (no list)
+
+    Args:
+        diff: A :class:`ReportDiff` computed from the current and
+            previous ``HealthReport`` instances.
+        iteration: The current watch iteration number (for the title).
+        console: Optional Rich Console; defaults to module-level instance.
+    """
+    con = console or _default_console
+
+    body = Text()
+
+    # ── New findings ──────────────────────────────────────────
+    if diff.new_findings:
+        body.append("🆕 NEW", style="bold red")
+        body.append(f" ({len(diff.new_findings)})\n")
+        for f in diff.new_findings:
+            sev = f.severity.value if hasattr(f.severity, "value") else str(f.severity)
+            emoji, _label, style = _SEVERITY_DETAIL_STYLE.get(sev, ("⚪", sev, "dim"))
+            body.append(f"   {emoji} ", style=style)
+            body.append(f"{f.title}\n")
+
+    # ── Resolved findings ─────────────────────────────────────
+    if diff.resolved_findings:
+        body.append("✅ RESOLVED", style="bold green")
+        body.append(f" ({len(diff.resolved_findings)})\n")
+        for f in diff.resolved_findings:
+            body.append(f"   • {f.title}\n", style="green")
+
+    # ── Severity changes ──────────────────────────────────────
+    if diff.severity_changes:
+        body.append("⚠️  SEVERITY CHANGED", style="bold yellow")
+        body.append(f" ({len(diff.severity_changes)})\n")
+        for sc in diff.severity_changes:
+            body.append(f"   {sc.finding.title}: ")
+            body.append(sc.previous_severity, style="bold")
+            body.append(" → ")
+            body.append(sc.current_severity, style="bold")
+            body.append("\n")
+
+    # ── Unchanged ─────────────────────────────────────────────
+    if diff.unchanged_findings:
+        body.append("🔄 UNCHANGED", style="dim")
+        body.append(f" ({len(diff.unchanged_findings)})\n", style="dim")
+
+    # Choose panel style based on changes
+    if diff.has_changes:
+        title = f"Changes Detected — Iteration #{iteration}"
+        border_style = "yellow"
+    else:
+        title = f"No Changes — Iteration #{iteration}"
+        border_style = "green"
+
+    panel = Panel(
+        body,
+        title=title,
+        border_style=border_style,
+        padding=(1, 2),
+    )
+    con.print(panel)
