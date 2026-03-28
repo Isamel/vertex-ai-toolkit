@@ -11,7 +11,7 @@ from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import typer
 from rich.columns import Columns
@@ -41,15 +41,18 @@ from vaig.cli.display import (
     print_recommendations_table,
     print_service_status_table,
     print_severity_detail_blocks,
+    print_watch_diff_summary,
 )
 from vaig.core.cache import ToolResultCache
 from vaig.core.tool_call_store import ToolCallStore
+from vaig.skills.service_health.diff import compute_report_diff
 
 if TYPE_CHECKING:
     from vaig.agents.orchestrator import OrchestratorResult
     from vaig.core.config import GKEConfig, Settings
     from vaig.core.protocols import GeminiClientProtocol
     from vaig.skills.base import BaseSkill, SkillMetadata
+    from vaig.skills.service_health.schema import HealthReport
     from vaig.tools.base import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -756,10 +759,15 @@ def register(app: typer.Typer) -> None:
             # and watch iterations overwrite entries via put() on each run.
             tool_result_cache = ToolResultCache()
 
-            def _run_once() -> None:
-                """Execute a single iteration of the live command."""
+            def _run_once() -> HealthReport | None:
+                """Execute a single iteration of the live command.
+
+                Returns the structured ``HealthReport`` when the
+                orchestrated-skill path produces one, otherwise ``None``
+                (e.g. the InfraAgent path).
+                """
                 if active_skill is not None:
-                    _execute_orchestrated_skill(
+                    return _execute_orchestrated_skill(
                         client,
                         settings,
                         gke_config,
@@ -775,22 +783,22 @@ def register(app: typer.Typer) -> None:
                         all_namespaces=all_namespaces,
                         detailed=detailed,
                     )
-                else:
-                    _execute_live_mode(
-                        client,
-                        gke_config,
-                        question,
-                        context_str,
-                        settings=settings,
-                        output=output if not watch else None,
-                        format_=format_ if not watch else None,
-                        skill_name=skill,
-                        model_id=model,
-                        tool_call_store=tool_call_store,
-                        tool_result_cache=tool_result_cache,
-                        open_browser=open_browser if not watch else False,
-                        detailed=detailed,
-                    )
+                _execute_live_mode(
+                    client,
+                    gke_config,
+                    question,
+                    context_str,
+                    settings=settings,
+                    output=output if not watch else None,
+                    format_=format_ if not watch else None,
+                    skill_name=skill,
+                    model_id=model,
+                    tool_call_store=tool_call_store,
+                    tool_result_cache=tool_result_cache,
+                    open_browser=open_browser if not watch else False,
+                    detailed=detailed,
+                )
+                return None
 
             if not watch:
                 # ── Single execution (default) ────────────────────
@@ -816,7 +824,7 @@ def register(app: typer.Typer) -> None:
 
 def _run_watch_loop(
     *,
-    run_fn: Callable[[], None],
+    run_fn: Callable[[], HealthReport | None],
     interval: int,
     question: str,
     output: Path | None = None,
@@ -827,12 +835,18 @@ def _run_watch_loop(
     Handles ``KeyboardInterrupt`` gracefully: stops the loop and prints
     a summary of iterations run and total elapsed time.
 
+    From iteration 2 onwards, if the run function returns a
+    :class:`~vaig.skills.service_health.schema.HealthReport`, a diff
+    summary panel is printed showing new, resolved, unchanged, and
+    severity-changed findings compared to the previous iteration.
+
     The *output* / *format_* args are only used on the **last** iteration
     (i.e. never — the caller passes ``None`` to *run_fn* for those during
     watch mode, and can export manually after the loop).
 
     Args:
-        run_fn: Zero-argument callable that executes one iteration.
+        run_fn: Zero-argument callable that executes one iteration and
+            returns an optional ``HealthReport``.
         interval: Seconds between iterations (already validated >= MINIMUM_WATCH_INTERVAL).
         question: Original query (shown in the header).
         output: Export path (informational — not used inside the loop).
@@ -840,6 +854,7 @@ def _run_watch_loop(
     """
     iteration = 0
     start_time = time.monotonic()
+    previous_report: HealthReport | None = None
 
     console.print(
         Panel.fit(
@@ -859,12 +874,21 @@ def _run_watch_loop(
             )
             console.print(f"{'=' * 60}\n")
 
+            current_report: HealthReport | None = None
             try:
-                run_fn()
+                current_report = run_fn()
             except (SystemExit, typer.Exit):
                 # Agent errors (MaxIterationsError etc.) raise typer.Exit —
                 # in watch mode we log and continue to the next iteration.
                 console.print(f"[yellow]Iteration #{iteration} exited with error — continuing watch...[/yellow]")
+
+            # ── Diff summary (iteration 2+) ───────────────────
+            if iteration >= 2 and current_report is not None and previous_report is not None:
+                diff = compute_report_diff(current_report, previous_report)
+                print_watch_diff_summary(diff, iteration, console=console)
+
+            if current_report is not None:
+                previous_report = current_report
 
             console.print(f"\n[dim]Next refresh in {interval}s (Ctrl+C to stop)...[/dim]")
             time.sleep(interval)
@@ -1455,13 +1479,16 @@ def _execute_orchestrated_skill(
     open_browser: bool = False,
     all_namespaces: bool = False,
     detailed: bool = False,
-) -> None:
+) -> HealthReport | None:
     """Execute a skill through the Orchestrator's tool-aware pipeline.
 
     Used when a skill has ``requires_live_tools=True``.  Instead of the
     simple context-prepend approach, this creates a ToolRegistry, populates
     it with GKE/GCloud tools, and delegates to
     ``Orchestrator.execute_with_tools()`` for the full multi-agent pipeline.
+
+    Returns:
+        The structured ``HealthReport`` if one was produced, else ``None``.
     """
     from vaig.agents.orchestrator import Orchestrator
     from vaig.core.exceptions import MaxIterationsError
@@ -1499,7 +1526,7 @@ def _execute_orchestrated_skill(
         console.print()
         console.print("[bold]Assistant response (offline mode):[/bold]")
         console.print(result.text)
-        return
+        return None
 
     _print_launch_header(
         skill_meta.display_name,
@@ -1605,6 +1632,8 @@ def _execute_orchestrated_skill(
 
         # Notify via terminal bell
         _emit_bell(no_bell=no_bell)
+
+        return cast("HealthReport | None", orch_result.structured_report)
 
     except MaxIterationsError as exc:
         err_console.print(
