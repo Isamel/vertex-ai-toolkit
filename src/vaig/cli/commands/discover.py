@@ -27,6 +27,7 @@ from vaig.cli.commands.live import (
     _create_tool_call_store,
     _execute_orchestrated_skill,
 )
+from vaig.core.prompt_defense import _sanitize_namespace
 from vaig.skills.discovery.prompts import SYSTEM_NAMESPACES_CSV
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,14 @@ def _build_discover_query(
         query = _QUERY_ALL_NS.format(system_ns=SYSTEM_NAMESPACES_CSV)
     else:
         ns = namespace or "default"
-        query = _QUERY_SINGLE_NS.format(namespace=ns)
+        safe_ns = _sanitize_namespace(ns)
+        if not safe_ns:
+            raise typer.BadParameter(
+                f"Invalid namespace name: {ns!r}. "
+                "Namespace must contain only lowercase alphanumeric characters or hyphens, "
+                "start and end with an alphanumeric character, and be at most 63 characters."
+            )
+        query = _QUERY_SINGLE_NS.format(namespace=safe_ns)
 
     if skip_healthy:
         query += _SKIP_HEALTHY_SUFFIX

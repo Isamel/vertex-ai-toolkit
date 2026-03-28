@@ -313,12 +313,14 @@ class TestDiscoveryPromptDefense:
 
         assert "ANTI-HALLUCINATION" in INVENTORY_SCANNER_PROMPT
 
-    def test_triage_has_delimiters(self) -> None:
-        from vaig.core.prompt_defense import DELIMITER_DATA_END, DELIMITER_DATA_START
+    def test_triage_references_raw_findings_section(self) -> None:
         from vaig.skills.discovery.prompts import TRIAGE_CLASSIFIER_PROMPT
 
-        assert DELIMITER_DATA_START in TRIAGE_CLASSIFIER_PROMPT
-        assert DELIMITER_DATA_END in TRIAGE_CLASSIFIER_PROMPT
+        # After removing literal {previous_output} placeholders, agent prompts
+        # instruct the model to read from the user message Context / Raw Findings
+        # section rather than embedding delimiters directly.
+        assert "Raw Findings" in TRIAGE_CLASSIFIER_PROMPT
+        assert "data delimiters" in TRIAGE_CLASSIFIER_PROMPT
 
     def test_system_namespaces_in_inventory_prompt(self) -> None:
         from vaig.skills.discovery.prompts import INVENTORY_SCANNER_PROMPT

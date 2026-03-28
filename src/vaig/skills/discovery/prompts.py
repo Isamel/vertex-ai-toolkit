@@ -107,9 +107,9 @@ For each workload (Deployment, StatefulSet, DaemonSet), assign one of:
 
 ## Input Data
 
-{DELIMITER_DATA_START}
-{{previous_output}}
-{DELIMITER_DATA_END}
+Use the inventory data provided in the user message Context / Raw Findings section as your
+input.  That section contains the output of the previous Inventory Scanner agent wrapped
+in data delimiters.  Analyse ONLY the data inside those delimiters.
 
 ## MANDATORY OUTPUT FORMAT
 
@@ -149,9 +149,10 @@ identified in the triage phase. Do NOT investigate healthy workloads.
 
 ## Investigation Targets
 
-{DELIMITER_DATA_START}
-{{previous_output}}
-{DELIMITER_DATA_END}
+Use the triage results provided in the user message Context / Raw Findings section as your
+input.  That section contains the output of the previous Triage Classifier agent wrapped
+in data delimiters.  Investigate ONLY the workloads classified as 🟡 Degraded or 🔴 Failing
+in that data.
 
 ## Investigation Checklist
 
@@ -214,9 +215,9 @@ Do NOT make tool calls — write the report from the data provided.
 
 ## Input Data
 
-{DELIMITER_DATA_START}
-{{previous_output}}
-{DELIMITER_DATA_END}
+Use the investigation findings provided in the user message Context / Raw Findings section
+as your input.  That section contains the accumulated output from previous pipeline agents
+wrapped in data delimiters.  Synthesise ONLY the data inside those delimiters.
 
 ## MANDATORY OUTPUT FORMAT
 
