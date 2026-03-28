@@ -9,6 +9,7 @@ Actual command implementations live in:
 - ``vaig.cli.commands.chat``        — interactive REPL
 - ``vaig.cli.commands.ask``         — single-shot question
 - ``vaig.cli.commands.live``        — GKE/GCP infrastructure investigation
+- ``vaig.cli.commands.discover``    — autonomous cluster health scanning
 - ``vaig.cli.commands.sessions``    — session management sub-commands
 - ``vaig.cli.commands.models``      — model listing sub-commands
 - ``vaig.cli.commands.skills``      — skill management sub-commands
@@ -164,6 +165,9 @@ from vaig.cli.commands import (
     chat as _chat_mod,
 )
 from vaig.cli.commands import (
+    discover as _discover_mod,
+)
+from vaig.cli.commands import (
     export_cmd as _export_mod,
 )
 from vaig.cli.commands import (
@@ -189,6 +193,7 @@ from vaig.cli.commands.cloud_cmd import cloud_app  # noqa: E402
 _chat_mod.register(app)
 _ask_mod.register(app)
 _live_mod.register(app)
+_discover_mod.register(app)
 _export_mod.register(app)
 app.add_typer(cloud_app, name="cloud")
 

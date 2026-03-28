@@ -208,6 +208,7 @@ class SkillsConfig(BaseModel):
             "network-review",
             "adr-generator",
             "service-health",
+            "discovery",
         ]
     )
     custom_dir: str | None = None
