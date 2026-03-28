@@ -163,7 +163,30 @@ class TestToolCallLogger:
 
     @patch("vaig.cli.commands.live.console")
     def test_call_prints_fail_for_error(self, mock_console: MagicMock) -> None:
+        """With detailed=False (default), failed calls go to logger.warning, NOT console."""
         logger = ToolCallLogger()
+        logger("kubectl_get", {}, 0.5, False)
+        # In non-detailed mode, failed tool calls are NOT printed to
+        # console — they are sent to logger.warning (file only).
+        mock_console.print.assert_not_called()
+        assert logger.errors == 1
+
+    @patch("vaig.cli.commands.live.logger")
+    def test_call_logs_warning_for_error_non_detailed(self, mock_logger: MagicMock) -> None:
+        """Failed tool calls in non-detailed mode should emit a logger.warning."""
+        logger_obj = ToolCallLogger(detailed=False)
+        logger_obj("kubectl_get", {"resource": "pods"}, 1.5, False, "connection refused")
+        mock_logger.warning.assert_called_once()
+        call_args = mock_logger.warning.call_args
+        # logger.warning uses %-formatting: first positional is the template
+        formatted = call_args[0][0] % call_args[0][1:]
+        assert "kubectl_get" in formatted
+        assert "connection refused" in formatted
+
+    @patch("vaig.cli.commands.live.console")
+    def test_call_prints_fail_for_error_detailed(self, mock_console: MagicMock) -> None:
+        """With detailed=True, failed calls ARE printed to console."""
+        logger = ToolCallLogger(detailed=True)
         logger("kubectl_get", {}, 0.5, False)
         output = mock_console.print.call_args[0][0]
         assert "FAIL" in output
@@ -224,8 +247,19 @@ class TestToolCallLogger:
 
     @patch("vaig.cli.commands.live.console")
     def test_error_message_displayed(self, mock_console: MagicMock) -> None:
-        """Error message is shown when tool fails with error_message."""
+        """In non-detailed mode, error message goes to logger.warning, not console."""
         logger = ToolCallLogger()
+        logger("kubectl_get", {}, 0.5, False, "AuthenticationError: token expired")
+        # Non-detailed: nothing printed to console
+        mock_console.print.assert_not_called()
+        assert logger.errors == 1
+        # Reason is still tracked internally for summary
+        assert "AuthenticationError" in logger._error_reasons[0]
+
+    @patch("vaig.cli.commands.live.console")
+    def test_error_message_displayed_detailed(self, mock_console: MagicMock) -> None:
+        """In detailed mode, error message IS shown on console."""
+        logger = ToolCallLogger(detailed=True)
         logger("kubectl_get", {}, 0.5, False, "AuthenticationError: token expired")
         output = mock_console.print.call_args[0][0]
         assert "AuthenticationError: token expired" in output
@@ -233,8 +267,8 @@ class TestToolCallLogger:
 
     @patch("vaig.cli.commands.live.console")
     def test_error_message_truncated(self, mock_console: MagicMock) -> None:
-        """Long error messages are truncated to ~80 chars."""
-        logger = ToolCallLogger()
+        """Long error messages are truncated to ~80 chars when displayed in detailed mode."""
+        logger = ToolCallLogger(detailed=True)
         long_error = "x" * 200
         logger("kubectl_get", {}, 0.5, False, long_error)
         output = mock_console.print.call_args[0][0]
@@ -1057,7 +1091,7 @@ class TestAgentProgressDisplay:
 
     @patch("vaig.cli.commands.live.console")
     def test_end_event_stops_spinner_and_prints_summary(self, mock_console: MagicMock) -> None:
-        """On 'end' event, spinner is stopped and a summary line is printed."""
+        """On 'end' event, spinner is stopped and a tree line is printed."""
         tool_logger = ToolCallLogger()
         display = AgentProgressDisplay(tool_logger)
 
@@ -1079,14 +1113,12 @@ class TestAgentProgressDisplay:
 
         # Spinner stopped
         mock_status.stop.assert_called_once()
-        # Summary line printed
-        mock_console.print.assert_called_once()
-        output = mock_console.print.call_args[0][0]
-        assert "1/3" in output
+        # Tree line printed (new real-time tree format)
+        output = mock_console.print.call_args_list[0][0][0]
         assert "health_gatherer" in output
-        assert "done" in output
-        assert "4 tools called" in output  # 3 kubectl_get + 1 get_events
-        assert "kubectl_get" in output
+        assert "4 tools" in output
+        assert "├──" in output  # Not last agent → branch connector
+        assert "██████████" in output  # Color bar
 
     @patch("vaig.cli.commands.live.console")
     def test_end_event_resets_tool_logger(self, mock_console: MagicMock) -> None:
@@ -1111,14 +1143,16 @@ class TestAgentProgressDisplay:
         tool_logger = ToolCallLogger()
         display = AgentProgressDisplay(tool_logger)
 
+        mock_console.status.return_value = MagicMock()
+
         # Should not raise
         display("analyzer", 1, 3, "end")
 
-        # Still prints the completion line
+        # Still prints the tree line
         mock_console.print.assert_called_once()
         output = mock_console.print.call_args[0][0]
         assert "analyzer" in output
-        assert "done" in output
+        assert "├──" in output  # Not last agent (index 1, total 3)
 
     @patch("vaig.cli.commands.live.console")
     def test_stop_cleans_up_running_spinner(self, mock_console: MagicMock) -> None:
@@ -1168,24 +1202,25 @@ class TestAgentProgressDisplay:
         tool_logger.tool_name_counts["kubectl_get"] = 1
         display = AgentProgressDisplay(tool_logger)
 
+        mock_console.status.return_value = MagicMock()
         display("single_agent", 0, 1, "end")
 
         output = mock_console.print.call_args[0][0]
-        assert "1 tool called" in output
-        assert "1 tools called" not in output
+        assert "1 tool" in output
+        assert "1 tools" not in output
 
     @patch("vaig.cli.commands.live.console")
     def test_no_breakdown_when_no_tools(self, mock_console: MagicMock) -> None:
-        """When no tools were called, no breakdown section appears."""
+        """When no tools were called, the tree line shows '0 tools'."""
         tool_logger = ToolCallLogger()
         display = AgentProgressDisplay(tool_logger)
 
+        mock_console.status.return_value = MagicMock()
         display("empty_agent", 0, 1, "end")
 
         output = mock_console.print.call_args[0][0]
-        assert "0 tools called" in output
-        # Should not have a breakdown section
-        assert "×" not in output
+        assert "0 tools" in output
+        assert "└──" in output  # Last (only) agent → end connector
 
     @patch("vaig.cli.commands.live.console")
     def test_multi_agent_sequential_flow(self, mock_console: MagicMock) -> None:
@@ -1339,11 +1374,11 @@ class TestAgentProgressDisplay:
 
         mock_status_2.stop.assert_called_once()
         assert display._status is None
-        # Print summary line was called
+        # Tree line was printed
         mock_console.print.assert_called_once()
         output = mock_console.print.call_args[0][0]
         assert "gatherer_b" in output
-        assert "done" in output
+        assert "└──" in output  # Last agent (index 1, total 2)
 
     @patch("vaig.cli.commands.live.console")
     def test_thread_safety_concurrent_starts(self, mock_console: MagicMock) -> None:
