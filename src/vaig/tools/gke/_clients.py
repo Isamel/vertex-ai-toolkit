@@ -58,6 +58,13 @@ def _k8s_unavailable() -> ToolResult:
 # ── Autopilot detection ──────────────────────────────────────
 
 
+# Timeout in seconds for the GKE ``get_cluster`` metadata API call.
+# Prevents ``detect_autopilot`` from hanging indefinitely when the GKE
+# Container API is unreachable.  10 seconds is generous for a lightweight
+# metadata-only RPC.
+_AUTOPILOT_TIMEOUT: int = 10
+
+
 def _query_autopilot_status(
     project: str,
     location: str,
@@ -78,7 +85,9 @@ def _query_autopilot_status(
 
     Raises:
         ImportError: If ``google-cloud-container`` is not installed.
-        Exception: On any API or network error.
+        Exception: On any API or network error (including
+            ``google.api_core.exceptions.DeadlineExceeded`` when the
+            request exceeds ``_AUTOPILOT_TIMEOUT``).
     """
     import google.cloud.container_v1 as container_v1  # noqa: WPS433
 
@@ -87,7 +96,7 @@ def _query_autopilot_status(
         kwargs["credentials"] = credentials
     client = container_v1.ClusterManagerClient(**kwargs)
     name = f"projects/{project}/locations/{location}/clusters/{cluster}"
-    cluster_obj = client.get_cluster(name=name)
+    cluster_obj = client.get_cluster(name=name, timeout=_AUTOPILOT_TIMEOUT)
     return bool(cluster_obj.autopilot and cluster_obj.autopilot.enabled)
 
 
@@ -108,8 +117,10 @@ def detect_autopilot(
             When ``None``, the client uses Application Default Credentials.
 
     Returns:
-        ``True`` if Autopilot, ``False`` if Standard, ``None`` if detection
-        failed (missing config, missing library, API error).
+        ``True`` if Autopilot, ``False`` if Standard **or** if detection
+        timed out (assumes Standard cluster to avoid blocking callers),
+        ``None`` if detection failed for other reasons (missing config,
+        missing library, non-timeout API error).
     """
     project = gke_config.project_id
     location = gke_config.location
@@ -141,6 +152,27 @@ def detect_autopilot(
         return None
 
     except Exception as exc:  # noqa: BLE001
+        is_timeout = "Timeout" in type(exc).__name__
+        if not is_timeout:
+            try:
+                from google.api_core.exceptions import DeadlineExceeded  # noqa: WPS433
+
+                if isinstance(exc, DeadlineExceeded):
+                    is_timeout = True
+            except ImportError:
+                pass
+        if not is_timeout and "DeadlineExceeded" in type(exc).__name__:
+            is_timeout = True
+
+        if is_timeout:
+            logger.warning(
+                "Autopilot detection timed out for %s (timeout=%ds): %s — "
+                "assuming Standard cluster (is_autopilot=False)",
+                cluster, _AUTOPILOT_TIMEOUT, exc,
+            )
+            _AUTOPILOT_CACHE[cache_key] = False
+            return False
+
         logger.warning("Autopilot detection failed for %s: %s", cluster, exc)
         _AUTOPILOT_CACHE[cache_key] = None
         return None

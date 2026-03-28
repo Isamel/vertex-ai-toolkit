@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
@@ -13,6 +14,9 @@ from vaig.skills.discovery.prompts import (
     SYSTEM_INSTRUCTION,
     TRIAGE_CLASSIFIER_PROMPT,
 )
+from vaig.tools.gke._clients import ensure_client_initialized
+
+logger = logging.getLogger(__name__)
 
 
 class DiscoverySkill(BaseSkill):
@@ -55,6 +59,31 @@ class DiscoverySkill(BaseSkill):
     def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
         template = PHASE_PROMPTS.get(phase.value, PHASE_PROMPTS["analyze"])
         return template.format(context=context, user_input=user_input)
+
+    def pre_execute_parallel(self, query: str) -> None:  # noqa: ARG002
+        """Pre-warm the K8s client cache before parallel agents launch.
+
+        Mirrors :meth:`ServiceHealthSkill.pre_execute_parallel`.  The
+        ``DiscoverySkill`` inventory scanner and deep investigator both
+        make K8s API calls in parallel threads.  The first-write to
+        ``_CLIENT_CACHE`` is not thread-safe (it mutates ``sys.stdout``
+        and OS fd 2 via :func:`~vaig.tools.gke._clients._suppress_stderr`).
+        Warming the cache here ensures the client is fully constructed
+        before concurrent execution begins.
+
+        This hook is **best-effort** — any failure is logged at warning
+        level and silently suppressed.
+        """
+        try:
+            from vaig.core.config import get_settings  # noqa: PLC0415
+
+            settings = get_settings()
+            ensure_client_initialized(settings.gke)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "K8s client pre-warm skipped (non-fatal): see ensure_client_initialized logs",
+                exc_info=True,
+            )
 
     def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
