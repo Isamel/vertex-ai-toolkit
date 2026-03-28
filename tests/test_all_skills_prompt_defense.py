@@ -34,6 +34,7 @@ ALL_SKILLS = [
     "cost_analysis",
     "db_review",
     "dependency_audit",
+    "discovery",
     "error_triage",
     "greenfield",
     "iac_review",
