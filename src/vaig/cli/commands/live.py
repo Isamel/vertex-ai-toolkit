@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from vaig.core.config import GKEConfig, Settings
     from vaig.core.protocols import GeminiClientProtocol
     from vaig.skills.base import BaseSkill, SkillMetadata
+    from vaig.skills.service_health.diff import ReportDiff
     from vaig.skills.service_health.schema import HealthReport
     from vaig.tools.base import ToolRegistry
 
@@ -812,6 +813,7 @@ def register(app: typer.Typer) -> None:
                 question=question,
                 output=output,
                 format_=format_,
+                html_output_path=str(output) if output else None,
             )
         except typer.Exit:
             raise  # Let typer exits pass through
@@ -829,11 +831,14 @@ def _run_watch_loop(
     question: str,
     output: Path | None = None,
     format_: str | None = None,
+    html_output_path: str | None = None,
 ) -> None:
     """Execute *run_fn* repeatedly every *interval* seconds.
 
-    Handles ``KeyboardInterrupt`` gracefully: stops the loop and prints
-    a summary of iterations run and total elapsed time.
+    Handles ``KeyboardInterrupt`` gracefully: stops the loop, prints a
+    summary of iterations run and total elapsed time, and optionally
+    exports a watch-session HTML report containing the last
+    ``HealthReport`` plus the accumulated diff timeline.
 
     From iteration 2 onwards, if the run function returns a
     :class:`~vaig.skills.service_health.schema.HealthReport`, a diff
@@ -851,10 +856,19 @@ def _run_watch_loop(
         question: Original query (shown in the header).
         output: Export path (informational — not used inside the loop).
         format_: Export format (informational — not used inside the loop).
+        html_output_path: Optional destination for a watch-session HTML
+            report when the loop is interrupted. If ``None``, an
+            auto-generated temporary path is used; any other non-empty
+            string or ``Path`` is treated as the literal output path.
     """
+    from vaig.skills.service_health.diff import DiffTimelineEntry, WatchSessionData
+
     iteration = 0
     start_time = time.monotonic()
+    session_start = datetime.now(tz=UTC)
     previous_report: HealthReport | None = None
+    last_report: HealthReport | None = None
+    diff_history: list[DiffTimelineEntry] = []
 
     console.print(
         Panel.fit(
@@ -868,6 +882,7 @@ def _run_watch_loop(
     try:
         while True:
             iteration += 1
+            iter_timestamp = datetime.now(tz=UTC).isoformat()
             console.print(f"\n{'=' * 60}")
             console.print(
                 f"[bold cyan]Watch iteration #{iteration} — {datetime.now().strftime('%H:%M:%S')}[/bold cyan]"
@@ -883,12 +898,24 @@ def _run_watch_loop(
                 console.print(f"[yellow]Iteration #{iteration} exited with error — continuing watch...[/yellow]")
 
             # ── Diff summary (iteration 2+) ───────────────────
+            diff: ReportDiff | None = None
             if iteration >= 2 and current_report is not None and previous_report is not None:
                 diff = compute_report_diff(current_report, previous_report)
                 print_watch_diff_summary(diff, iteration, console=console)
 
+            # ── Accumulate diff timeline entry ────────────────
+            diff_history.append(
+                DiffTimelineEntry(
+                    iteration=iteration,
+                    timestamp=iter_timestamp,
+                    is_baseline=(iteration == 1),
+                    diff=None if iteration == 1 else diff,
+                )
+            )
+
             if current_report is not None:
                 previous_report = current_report
+                last_report = current_report
 
             console.print(f"\n[dim]Next refresh in {interval}s (Ctrl+C to stop)...[/dim]")
             time.sleep(interval)
@@ -899,6 +926,36 @@ def _run_watch_loop(
             f"iteration{'s' if iteration != 1 else ''} "
             f"({elapsed:.0f}s elapsed)[/bold yellow]"
         )
+
+        # ── Export watch-session HTML ─────────────────────────
+        if last_report is not None and iteration >= 1:
+            session_end = datetime.now(tz=UTC)
+            session_data = WatchSessionData(
+                start_time=session_start.isoformat(),
+                end_time=session_end.isoformat(),
+                total_iterations=iteration,
+                interval_seconds=interval,
+                diff_timeline=diff_history,
+            )
+            try:
+                from vaig.ui.html_report import render_watch_session_html
+
+                html_content = render_watch_session_html(last_report, session_data)
+                if html_output_path:
+                    out_path = Path(html_output_path)
+                else:
+                    ts = session_end.strftime("%Y%m%d_%H%M%S")
+                    out_path = Path(f"vaig-watch-session-{ts}.html")
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_text(html_content, encoding="utf-8")
+                console.print(
+                    f"[bold green]✓ Watch session HTML report written:[/bold green] "
+                    f"[cyan]{out_path.resolve()}[/cyan]"
+                )
+            except Exception as exc:  # noqa: BLE001
+                console.print(
+                    f"[bold red]⚠ Failed to write watch session HTML report:[/bold red] {exc}"
+                )
 
 
 # ── Live mode helpers ─────────────────────────────────────────
