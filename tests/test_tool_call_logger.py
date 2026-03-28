@@ -171,6 +171,18 @@ class TestToolCallLogger:
         mock_console.print.assert_not_called()
         assert logger.errors == 1
 
+    @patch("vaig.cli.commands.live.logger")
+    def test_call_logs_warning_for_error_non_detailed(self, mock_logger: MagicMock) -> None:
+        """Failed tool calls in non-detailed mode should emit a logger.warning."""
+        logger_obj = ToolCallLogger(detailed=False)
+        logger_obj("kubectl_get", {"resource": "pods"}, 1.5, False, "connection refused")
+        mock_logger.warning.assert_called_once()
+        call_args = mock_logger.warning.call_args
+        # logger.warning uses %-formatting: first positional is the template
+        formatted = call_args[0][0] % call_args[0][1:]
+        assert "kubectl_get" in formatted
+        assert "connection refused" in formatted
+
     @patch("vaig.cli.commands.live.console")
     def test_call_prints_fail_for_error_detailed(self, mock_console: MagicMock) -> None:
         """With detailed=True, failed calls ARE printed to console."""

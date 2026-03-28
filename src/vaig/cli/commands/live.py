@@ -257,8 +257,8 @@ class AgentProgressDisplay:
     mutations so parallel gatherers cannot race on ``self._status`` and
     cause a Rich ``LiveError("Only one live display may be active at once")``.
 
-    After ALL agents complete, :meth:`print_tree` renders a tree-style
-    summary with emoji icons per role and completion bars.
+    Tree-style summary lines are rendered in real-time from ``__call__``
+    as each agent completes, using emoji icons per role and completion bars.
 
     Args:
         tool_logger: The :class:`ToolCallLogger` for the current pipeline.
@@ -296,6 +296,9 @@ class AgentProgressDisplay:
         # Avoids overwriting a single shared counter when parallel gatherers
         # fire "start" events before any "end" events arrive.
         self._agent_start_counts: dict[str, int] = {}
+        # Per-agent error counts at start time — for accurate per-agent
+        # error detection (avoids marking all agents ✗ after one failure).
+        self._agent_start_errors: dict[str, int] = {}
         # Per-agent start timestamps for timing.
         self._agent_start_times: dict[str, float] = {}
         # Count of agents that have started but not yet ended.
@@ -303,10 +306,9 @@ class AgentProgressDisplay:
         # so parallel gatherers don't clear shared counters mid-run.
         self._active_agents: int = 0
         self._lock = threading.Lock()
-        # Completed agent records for tree-style summary.
-        # Each entry: (name, role_hint, tools_used, elapsed_secs, success)
-        # success is initially None (unknown); reconciled after orch_result is available.
-        self._completed: list[tuple[str, str, int, float, bool | None]] = []
+        # Completed agent records for timing and tree-style summary.
+        # Each entry: (name, role_hint, tools_used, elapsed_secs)
+        self._completed: list[tuple[str, str, int, float]] = []
 
     def _stop_current(self) -> None:
         """Stop and discard the current spinner (if any).
@@ -358,6 +360,7 @@ class AgentProgressDisplay:
                 # single shared counter prevents parallel gatherers from
                 # overwriting each other's baseline before their "end" fires.
                 self._agent_start_counts[agent_name] = self._tool_logger.tool_count
+                self._agent_start_errors[agent_name] = self._tool_logger.errors
                 self._agent_start_times[agent_name] = time.perf_counter()
                 self._current_agent_name = agent_name
                 self._active_agents += 1
@@ -382,16 +385,16 @@ class AgentProgressDisplay:
                     self._stop_current()
                     self._current_agent_name = None
                 start_count = self._agent_start_counts.pop(agent_name, 0)
+                start_errors = self._agent_start_errors.pop(agent_name, 0)
                 elapsed = time.perf_counter() - self._agent_start_times.pop(agent_name, time.perf_counter())
                 tools = self._tool_logger.tool_count - start_count
 
-                # Track for tree-style summary (role_hint derived from name).
-                # success is None until reconciled with actual AgentResult.
-                self._completed.append((agent_name, agent_name, tools, elapsed, None))
+                # Track for timing summary (role_hint derived from name).
+                self._completed.append((agent_name, agent_name, tools, elapsed))
 
-                # ── Real-time tree line (Change 3/4/5) ────────────
-                # Render the tree line immediately as each agent completes
-                # instead of deferring to print_tree().
+                # ── Real-time tree line ────────────────────────────
+                # Render the tree line immediately as each agent completes.
+                is_last = False
                 try:
                     effective_idx = end_agent_index if end_agent_index is not None else agent_index
                     is_last = effective_idx == total_agents - 1
@@ -399,9 +402,10 @@ class AgentProgressDisplay:
                     emoji = self._emoji_for_role(agent_name)
                     color = _AGENT_COLORS[agent_index % len(_AGENT_COLORS)]
 
-                    # Use tool error count as heuristic for success at
-                    # callback time (actual success is unknown until reconcile).
-                    has_errors = self._tool_logger.errors > 0
+                    # Use per-agent error delta for accurate success marker.
+                    # The cumulative self._tool_logger.errors would mark ALL
+                    # agents ✗ after a single tool failure in an earlier agent.
+                    has_errors = self._tool_logger.errors > start_errors
                     if has_errors:
                         status_icon = "[red]✗[/red]"
                     else:
@@ -429,43 +433,11 @@ class AgentProgressDisplay:
                 # If more agents remain, restart spinner for the next one.
                 if not is_last and self._status is None:
                     try:
-                        next_label = (
-                            f"[bold cyan]\\[{_step_label()}][/bold cyan] "
-                            "[dim]waiting for next agent…[/dim]"
-                        )
+                        next_label = "[dim]waiting for next agent…[/dim]"
                         self._status = console.status(next_label, spinner="dots")
                         self._status.start()
                     except Exception:  # noqa: BLE001
                         logger.debug("AgentProgressDisplay: ignored spinner restart error", exc_info=True)
-
-    def reconcile_results(self, agent_results: list[Any]) -> None:
-        """Update success flags from actual AgentResult objects.
-
-        Called after the orchestrator returns, before :meth:`print_tree`,
-        so the tree renders actual success/failure instead of ``None``
-        (unknown).  Matches by agent name.
-
-        Thread-safe: acquires ``self._lock`` to mutate ``_completed``.
-
-        Args:
-            agent_results: List of :class:`~vaig.agents.base.AgentResult`
-                instances from the orchestrator.
-        """
-        if not agent_results:
-            return
-        # Build a lookup: agent_name → success bool
-        result_map: dict[str, bool] = {}
-        for ar in agent_results:
-            name = getattr(ar, "agent_name", None) or getattr(ar, "name", "")
-            success = getattr(ar, "success", None)
-            if name and success is not None:
-                result_map[name] = success
-
-        with self._lock:
-            self._completed = [
-                (name, role, tools, elapsed, result_map.get(name, success))
-                for name, role, tools, elapsed, success in self._completed
-            ]
 
     def get_agent_timings(self) -> dict[str, float]:
         """Return a mapping of agent_name → elapsed seconds.
@@ -473,19 +445,13 @@ class AgentProgressDisplay:
         Built from the ``_completed`` records.  Thread-safe.
         """
         with self._lock:
-            return {name: elapsed for name, _role, _tools, elapsed, _success in self._completed}
+            return {name: elapsed for name, _role, _tools, elapsed in self._completed}
 
     def stop(self) -> None:
         """Stop the spinner if it's still running (e.g. on error)."""
         with self._lock:
             self._stop_current()
 
-    def print_tree(self) -> None:
-        """No-op: tree lines are now rendered in real-time from ``__call__``.
-
-        Kept for backward compatibility with callers that invoke
-        ``progress_display.print_tree()`` after orchestration completes.
-        """
 
 
 def _emit_bell(*, no_bell: bool) -> None:
@@ -1555,8 +1521,6 @@ def _execute_orchestrated_skill(
             # Restore original handler levels (always, even on exception).
             for handler, original_level in _suppressed_handlers:
                 handler.setLevel(original_level)
-        progress_display.reconcile_results(orch_result.agent_results)
-        progress_display.print_tree()
         tool_logger.print_summary()
 
         # ── Health Report section ─────────────────────────────
@@ -2130,8 +2094,6 @@ async def _async_execute_orchestrated_skill(
             # Restore original handler levels (always, even on exception).
             for handler, original_level in _suppressed_handlers:
                 handler.setLevel(original_level)
-        progress_display.reconcile_results(orch_result.agent_results)
-        progress_display.print_tree()
         tool_logger.print_summary()
 
         # ── Health Report section ─────────────────────────────
