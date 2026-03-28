@@ -314,10 +314,11 @@ class TestDiscoveryPromptDefense:
         assert "ANTI-HALLUCINATION" in INVENTORY_SCANNER_PROMPT
 
     def test_triage_has_delimiters(self) -> None:
+        from vaig.core.prompt_defense import DELIMITER_DATA_END, DELIMITER_DATA_START
         from vaig.skills.discovery.prompts import TRIAGE_CLASSIFIER_PROMPT
 
-        assert "RAW FINDINGS" in TRIAGE_CLASSIFIER_PROMPT
-        assert "END RAW FINDINGS" in TRIAGE_CLASSIFIER_PROMPT
+        assert DELIMITER_DATA_START in TRIAGE_CLASSIFIER_PROMPT
+        assert DELIMITER_DATA_END in TRIAGE_CLASSIFIER_PROMPT
 
     def test_system_namespaces_in_inventory_prompt(self) -> None:
         from vaig.skills.discovery.prompts import INVENTORY_SCANNER_PROMPT

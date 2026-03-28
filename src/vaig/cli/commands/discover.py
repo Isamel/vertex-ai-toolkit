@@ -16,6 +16,12 @@ from vaig.cli._helpers import (
     handle_cli_error,
     track_command,
 )
+
+# NOTE: These private helpers from live.py are shared orchestration utilities
+# (GKE config building, tool-call persistence, skill execution).  They are
+# imported with their leading-underscore names intentionally — a future
+# refactor will move them to a shared module (e.g. _orchestration.py) so
+# both live.py and discover.py import from a common location.
 from vaig.cli.commands.live import (
     _build_gke_config,
     _create_tool_call_store,
