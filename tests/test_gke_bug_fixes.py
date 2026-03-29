@@ -404,3 +404,65 @@ class TestFormatCpu:
         from vaig.tools.gke._formatters import _format_cpu
 
         assert _format_cpu("500n") == "0.000 cores"
+
+
+# ── Bug 4: _age() crashes on string timestamps from CRD _DictItems ──
+
+
+class TestAgeFunctionStringTimestamps:
+    """_age() receives str timestamps from custom resources (Argo Rollouts).
+
+    The Kubernetes Python client returns ``datetime`` objects for native
+    resources, but CRDs fetched via ``CustomObjectsApi`` return raw JSON
+    where ``creationTimestamp`` is an ISO-8601 string.
+    """
+
+    def test_iso_string_with_z_suffix(self) -> None:
+        """'2025-11-23T05:49:49Z' should parse and return a valid age."""
+        from vaig.tools.gke._formatters import _age
+
+        result = _age("2025-11-23T05:49:49Z")
+        assert result.endswith(("s", "m", "h", "d"))
+
+    def test_iso_string_with_offset(self) -> None:
+        """ISO string with explicit UTC offset should also work."""
+        from vaig.tools.gke._formatters import _age
+
+        result = _age("2025-11-23T05:49:49+00:00")
+        assert result.endswith(("s", "m", "h", "d"))
+
+    def test_datetime_object_still_works(self) -> None:
+        """Existing datetime inputs must not break."""
+        from datetime import UTC, datetime
+
+        from vaig.tools.gke._formatters import _age
+
+        ts = datetime(2025, 1, 1, tzinfo=UTC)
+        result = _age(ts)
+        assert result.endswith(("s", "m", "h", "d"))
+
+    def test_datetime_naive_still_works(self) -> None:
+        """Naive datetime (no tzinfo) still works — gets UTC assumed."""
+        from datetime import datetime
+
+        from vaig.tools.gke._formatters import _age
+
+        ts = datetime(2025, 1, 1)
+        result = _age(ts)
+        assert result.endswith(("s", "m", "h", "d"))
+
+    def test_none_returns_unknown(self) -> None:
+        from vaig.tools.gke._formatters import _age
+
+        assert _age(None) == "<unknown>"
+
+    def test_garbage_string_returns_unknown(self) -> None:
+        """Unparseable strings should not crash — return '<unknown>'."""
+        from vaig.tools.gke._formatters import _age
+
+        assert _age("not-a-date") == "<unknown>"
+
+    def test_empty_string_returns_unknown(self) -> None:
+        from vaig.tools.gke._formatters import _age
+
+        assert _age("") == "<unknown>"
