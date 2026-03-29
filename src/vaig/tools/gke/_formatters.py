@@ -28,10 +28,19 @@ KNOWN_SIDECAR_NAMES: frozenset[str] = frozenset({
 _SIDECAR_NAMES = KNOWN_SIDECAR_NAMES
 
 
-def _age(creation_timestamp: datetime | None) -> str:
-    """Return a human-readable age string from a creation timestamp."""
+def _age(creation_timestamp: datetime | str | None) -> str:
+    """Return a human-readable age string from a creation timestamp.
+
+    Handles both ``datetime`` objects (native K8s client) and ISO-8601
+    strings (custom resources via ``_DictItem``).
+    """
     if creation_timestamp is None:
         return "<unknown>"
+    if isinstance(creation_timestamp, str):
+        try:
+            creation_timestamp = datetime.fromisoformat(creation_timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            return "<unknown>"
     now = datetime.now(UTC)
     delta = (
         now - creation_timestamp.replace(tzinfo=UTC) if creation_timestamp.tzinfo is None else now - creation_timestamp
