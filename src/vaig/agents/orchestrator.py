@@ -614,6 +614,9 @@ class Orchestrator:
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+            current_state = apply_state_patch(
+                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            )
             self._current_pipeline_state = current_state
 
             # ── Cost circuit breaker ──────────────────────────────────────
@@ -749,6 +752,9 @@ class Orchestrator:
         # Apply state patches sequentially (fanout order)
         for agent_result in result.agent_results:
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+            current_state = apply_state_patch(
+                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            )
         self._current_pipeline_state = current_state
 
         # Merge all agent outputs
@@ -1103,6 +1109,9 @@ class Orchestrator:
             # Apply state patches sequentially (fanout order)
             for agent_result in result.agent_results:
                 current_state = apply_state_patch(current_state, agent_result.state_patch)
+                current_state = apply_state_patch(
+                    current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+                )
 
             result.success = any(r.success for r in result.agent_results)
             result.synthesized_output = self._merge_agent_outputs(result.agent_results)
@@ -1126,6 +1135,9 @@ class Orchestrator:
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
                 current_state = apply_state_patch(current_state, agent_result.state_patch)
+                current_state = apply_state_patch(
+                    current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+                )
                 self._current_pipeline_state = current_state
                 result.success = agent_result.success
                 result.synthesized_output = agent_result.content
@@ -1191,6 +1203,9 @@ class Orchestrator:
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
                 current_state = apply_state_patch(current_state, agent_result.state_patch)
+                current_state = apply_state_patch(
+                    current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+                )
                 self._current_pipeline_state = current_state
                 # ── Cost circuit breaker ──────────────────────────────────
                 run_cost_usd += _compute_step_cost(agent_result, agent.model)
@@ -1751,6 +1766,9 @@ class Orchestrator:
         # Apply state patches sequentially (fanout order)
         for agent_result in result.agent_results:
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+            current_state = apply_state_patch(
+                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            )
         self._current_pipeline_state = current_state
 
         result.success = any(r.success for r in result.agent_results)
@@ -1820,6 +1838,9 @@ class Orchestrator:
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+            current_state = apply_state_patch(
+                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            )
             self._current_pipeline_state = current_state
 
             # ── Cost circuit breaker ──────────────────────────────────────
@@ -2169,6 +2190,9 @@ class Orchestrator:
             # Apply state patches sequentially (fanout order)
             for agent_result in result.agent_results:
                 current_state = apply_state_patch(current_state, agent_result.state_patch)
+                current_state = apply_state_patch(
+                    current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+                )
             self._current_pipeline_state = current_state
 
             result.success = any(r.success for r in result.agent_results)
@@ -2192,6 +2216,9 @@ class Orchestrator:
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
                 current_state = apply_state_patch(current_state, agent_result.state_patch)
+                current_state = apply_state_patch(
+                    current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+                )
                 self._current_pipeline_state = current_state
                 result.success = agent_result.success
                 result.synthesized_output = agent_result.content
@@ -2252,6 +2279,9 @@ class Orchestrator:
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
                 current_state = apply_state_patch(current_state, agent_result.state_patch)
+                current_state = apply_state_patch(
+                    current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+                )
                 self._current_pipeline_state = current_state
 
                 # ── Cost circuit breaker ──────────────────────────────────
@@ -2839,6 +2869,9 @@ class Orchestrator:
         # Apply state patches from parallel gatherers sequentially
         for agent_result in parallel_results:
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+            current_state = apply_state_patch(
+                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            )
         self._current_pipeline_state = current_state
 
         # ── Validate gatherer outputs (task 1.4) ─────────────────────────
@@ -2915,6 +2948,9 @@ class Orchestrator:
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+            current_state = apply_state_patch(
+                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            )
             self._current_pipeline_state = current_state
 
             # ── Cost circuit breaker ──────────────────────────────────────
@@ -3162,6 +3198,9 @@ class Orchestrator:
         # Apply state patches from parallel gatherers sequentially
         for agent_result in parallel_results:
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+            current_state = apply_state_patch(
+                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            )
         self._current_pipeline_state = current_state
 
         # ── Validate gatherer outputs (task 1.4) ─────────────────────────
@@ -3238,6 +3277,9 @@ class Orchestrator:
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
             current_state = apply_state_patch(current_state, agent_result.state_patch)
+            current_state = apply_state_patch(
+                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            )
             self._current_pipeline_state = current_state
 
             # ── Cost circuit breaker ──────────────────────────────────────
