@@ -7,6 +7,7 @@ generation, edge cases, and CLI integration via Typer's CliRunner.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -52,23 +53,16 @@ def _make_finding(
 
 
 def _make_action(*, command: str = "kubectl get pods") -> dict[str, Any]:
-    """Build a minimal RecommendedAction dict."""
+    """Build a minimal RecommendedAction dict matching the real schema.
+
+    The HealthReport schema stores ``recommendations`` as a flat list of
+    ``RecommendedAction`` dicts — each has a top-level ``command`` field.
+    """
     return {
         "title": "Fix it",
         "command": command,
         "priority": 1,
         "urgency": "immediate",
-    }
-
-
-def _make_recommendation(
-    *,
-    actions: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    """Build a minimal Recommendation dict."""
-    return {
-        "title": "Restart pod",
-        "actions": actions if actions is not None else [_make_action()],
     }
 
 
@@ -92,7 +86,7 @@ def _make_report(
         "recommendations": (
             recommendations
             if recommendations is not None
-            else [_make_recommendation()]
+            else [_make_action()]
         ),
         "timeline": timeline if timeline is not None else [{"event": "observed", "ts": "now"}],
         "metadata": {},
@@ -170,18 +164,15 @@ class TestReportStoreListRuns:
         """Runs are returned in reverse modification-time order."""
         store_dir = tmp_path / "reports"
         store_dir.mkdir(parents=True, exist_ok=True)
-        # Create files with deterministic order via explicit writes
+        # Create files with deterministic order via sleeps for distinct mtimes
         (store_dir / "old-run.jsonl").write_text("{}\n")
+        time.sleep(0.1)
         (store_dir / "new-run.jsonl").write_text("{}\n")
 
         store = ReportStore(base_dir=store_dir)
         runs = store.list_runs()
 
-        assert "old-run" in runs
-        assert "new-run" in runs
-        # newest (last-modified) first — both files written same instant so
-        # we just check both are present
-        assert len(runs) == 2
+        assert runs == ["new-run", "old-run"]
 
 
 class TestReportStoreReadReports:
@@ -260,11 +251,11 @@ class TestPromptTunerActionability:
 
     def test_low_actionability_fails(self) -> None:
         """Actions without commands lower the actionability score."""
-        recs = [_make_recommendation(actions=[
+        recs = [
             _make_action(command=""),
             _make_action(command=""),
             _make_action(command="kubectl get pods"),
-        ])]
+        ]
         records = [_wrap_record(_make_report(recommendations=recs))]
         tuner = PromptTuner()
         insights = tuner.analyze_quality(records)
@@ -338,7 +329,7 @@ class TestPromptTunerSuggestions:
         """Each failing signal produces exactly one suggestion."""
         # Create a report that fails hallucination, actionability, and completeness
         findings = [_make_finding(evidence=[])]
-        recs = [_make_recommendation(actions=[_make_action(command="")])]
+        recs = [_make_action(command="")]
         report = _make_report(
             findings=findings,
             recommendations=recs,

@@ -141,15 +141,19 @@ class PromptTuner:
 
     @staticmethod
     def _actionability(reports: list[dict[str, Any]]) -> QualitySignal:
-        """% of recommended_actions with a non-empty ``command``."""
+        """% of recommended actions with a non-empty ``command``.
+
+        The HealthReport schema stores ``recommendations`` as a flat list
+        of ``RecommendedAction`` dicts, each with a top-level ``command``
+        field — there is no nested ``actions`` list.
+        """
         total = 0
         actionable = 0
         for rpt in reports:
             for rec in rpt.get("recommendations", []):
-                for action in rec.get("actions", []):
-                    total += 1
-                    if action.get("command", "").strip():
-                        actionable += 1
+                total += 1
+                if rec.get("command", "").strip():
+                    actionable += 1
 
         rate = actionable / total if total else 1.0
         return QualitySignal(
