@@ -704,6 +704,16 @@ class ExportConfig(BaseModel):
         else:
             self.gcs_prefix = ""
 
+        if self.rag_chunk_size <= 0:
+            raise ValueError("rag_chunk_size must be a positive integer")
+        if self.rag_chunk_overlap < 0:
+            raise ValueError("rag_chunk_overlap must be non-negative")
+        if self.rag_chunk_overlap >= self.rag_chunk_size:
+            raise ValueError(
+                f"rag_chunk_overlap ({self.rag_chunk_overlap}) must be less "
+                f"than rag_chunk_size ({self.rag_chunk_size})"
+            )
+
         return self
 
     @property

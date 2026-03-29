@@ -488,21 +488,10 @@ class TestOrchestratorRAGContext:
         assert "historical data" in result
 
     def test_rag_import_error_returns_empty(self) -> None:
-        import sys
-
         orch = self._make_orchestrator(rag_enabled=True, corpus="corpus/1")
-        # Temporarily remove vaig.core.rag from sys.modules to force ImportError
-        saved = sys.modules.pop("vaig.core.rag", None)
-        sys.modules["vaig.core.rag"] = None  # type: ignore[assignment]
-        try:
+        with patch.dict("sys.modules", {"vaig.core.rag": None}):
             result = orch._retrieve_rag_context("query")
             assert result == ""
-        finally:
-            # Restore the real module
-            if saved is not None:
-                sys.modules["vaig.core.rag"] = saved
-            else:
-                sys.modules.pop("vaig.core.rag", None)
 
     @patch("vaig.core.rag._import_vertexai")
     @patch("vaig.core.rag._import_vertexai_rag")

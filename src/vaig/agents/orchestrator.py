@@ -287,7 +287,8 @@ class Orchestrator:
             if result.has_results:
                 formatted = result.format_context()
                 logger.info("RAG context injected: %d chunk(s)", len(result.chunks))
-                return f"## Historical Context from Past Reports\n\n{formatted}"
+                wrapped_formatted = wrap_untrusted_content(formatted)
+                return f"## Historical Context from Past Reports\n\n{wrapped_formatted}"
         except ImportError:
             logger.debug("vertexai not installed — RAG context injection skipped.")
         except Exception:
@@ -2205,7 +2206,7 @@ class Orchestrator:
             required_sections = skill.get_required_output_sections()
 
             # ── RAG historical context injection ─────────────────
-            rag_context = self._retrieve_rag_context(query)
+            rag_context = await asyncio.to_thread(self._retrieve_rag_context, query)
             if rag_context:
                 current_context = rag_context
                 context_chain.append(rag_context)

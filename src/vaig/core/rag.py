@@ -296,13 +296,20 @@ class RAGKnowledgeBase:
             chunks = [
                 RetrievedChunk(
                     text=str(ctx.text),
-                    score=float(ctx.distance) if hasattr(ctx, "distance") else 0.0,
-                    source=str(ctx.source_uri) if hasattr(ctx, "source_uri") else "",
+                    score=float(getattr(ctx, "distance", 0.0)),
+                    source=str(getattr(ctx, "source_uri", "")),
                 )
                 for ctx in (response.contexts.contexts if response.contexts else [])
             ]
-            logger.info("RAG retrieval: %d chunk(s) for query=%r", len(chunks), query[:80])
+            logger.info(
+                "RAG retrieval: %d chunk(s) for query of length %d",
+                len(chunks),
+                len(query),
+            )
             return RetrievalResult(chunks=chunks, query=query)
         except Exception:
-            logger.exception("RAG retrieval failed for query=%r", query[:80])
+            logger.exception(
+                "RAG retrieval failed for query of length %d",
+                len(query),
+            )
             return RetrievalResult(query=query)
