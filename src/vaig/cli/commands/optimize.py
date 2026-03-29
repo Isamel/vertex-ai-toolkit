@@ -1,7 +1,11 @@
-"""Optimize command — analyze tool call efficiency across runs.
+"""Optimize command — analyze tool call efficiency and report quality.
 
 Loads historical tool call records, computes per-tool statistics,
 detects redundant calls, and displays actionable suggestions.
+
+When invoked with ``--reports``, analyzes HealthReport quality
+instead — computing signals such as hallucination rate, evidence
+depth, actionability, and completeness.
 """
 
 from __future__ import annotations
@@ -33,6 +37,10 @@ def register(app: typer.Typer) -> None:
             int,
             typer.Option("--last", "-n", help="Number of recent runs to analyze", min=1),
         ] = 50,
+        reports: Annotated[
+            bool,
+            typer.Option("--reports", help="Analyze report quality instead of tool calls"),
+        ] = False,
         config: Annotated[
             str | None,
             typer.Option("--config", "-c", help="Path to config YAML"),
@@ -51,15 +59,24 @@ def register(app: typer.Typer) -> None:
         Scans recent run history for per-tool statistics, redundant calls,
         and performance patterns, then prints actionable suggestions.
 
+        Use ``--reports`` to switch to report quality analysis, which
+        computes hallucination rate, evidence depth, actionability, and
+        other quality signals from past HealthReports.
+
         Examples:
             vaig optimize
             vaig optimize --last 20
-            vaig optimize --last 100 --verbose
+            vaig optimize --reports
+            vaig optimize --reports --last 10
         """
         _apply_subcommand_log_flags(verbose=verbose, debug=debug)
 
         try:
             settings = _get_settings(config)
+
+            if reports:
+                _run_report_analysis(last=last)
+                return
 
             console.print()
             console.print("[bold cyan]vaig optimize[/bold cyan] — tool call analysis")
@@ -145,3 +162,60 @@ def register(app: typer.Typer) -> None:
             raise
         except Exception as exc:  # noqa: BLE001
             handle_cli_error(exc, debug=debug)
+
+    # ── Report quality analysis ───────────────────────────────
+
+    def _run_report_analysis(*, last: int) -> None:
+        """Analyze report quality and display results with Rich."""
+        from vaig.core.prompt_tuner import PromptTuner
+        from vaig.core.report_store import ReportStore
+
+        console.print()
+        console.print("[bold cyan]vaig optimize --reports[/bold cyan] — report quality analysis")
+        console.print()
+
+        store = ReportStore()
+        records = store.read_reports(last=last)
+        tuner = PromptTuner()
+        insights = tuner.analyze_quality(records)
+
+        console.print(
+            f"  Analyzed [bold]{insights.total_reports}[/bold] reports"
+        )
+        console.print()
+
+        if not insights.signals:
+            console.print("  No report data found. Run some analyses first.")
+            console.print()
+            return
+
+        # ── Signals table ─────────────────────────────────
+        table = Table(title="Quality Signals", show_lines=False)
+        table.add_column("Signal", style="cyan", no_wrap=True)
+        table.add_column("Value", justify="right")
+        table.add_column("Threshold", justify="right")
+        table.add_column("Status", justify="center")
+        table.add_column("Detail")
+
+        for signal in insights.signals:
+            status = "[green]PASS[/green]" if signal.passed else "[red]FAIL[/red]"
+            table.add_row(
+                signal.name,
+                f"{signal.value:.3f}" if isinstance(signal.value, float) else str(signal.value),
+                f"{signal.threshold:.2f}" if signal.threshold else "—",
+                status,
+                signal.detail,
+            )
+
+        console.print(table)
+        console.print()
+
+        # ── Suggestions ───────────────────────────────────
+        if insights.suggestions:
+            console.print("[bold green]Prompt Improvement Suggestions[/bold green]")
+            for suggestion in insights.suggestions:
+                console.print(f"  [green]→[/green] {suggestion}")
+            console.print()
+        else:
+            console.print("  [green]✓[/green] All quality signals healthy")
+            console.print()

@@ -1692,6 +1692,10 @@ def _execute_orchestrated_skill(
             run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
             save_last_run_id(run_id)
 
+        # Persist report locally for quality analysis (vaig optimize --reports).
+        # Uses its own run_id when export is disabled.
+        _persist_report_locally(orch_result, run_id=run_id)
+
         # Auto-export report if configured.
         # ADR-4: auto-export fires here for the health report only, immediately after the live
         # summary.  Telemetry and tool-calls are higher-volume and use the explicit CLI push
@@ -1776,6 +1780,32 @@ def _prompt_feedback(settings: Settings, *, run_id: str | None = None) -> None:
     thread.start()
     stars = "\u2605" * rating + "\u2606" * (5 - rating)
     console.print(f"  [green]\u2713[/green] Thanks for your feedback  {stars}")
+
+
+def _persist_report_locally(
+    orch_result: OrchestratorResult,
+    *,
+    run_id: str | None = None,
+) -> None:
+    """Save the structured report to the local ReportStore for quality analysis.
+
+    Works independently of the cloud export setting — always persists
+    when a structured report is available.  Generates its own ``run_id``
+    if one wasn't provided by the export path.
+
+    Errors are logged and swallowed so they never interrupt the CLI flow.
+    """
+    if orch_result.structured_report is None:
+        return
+    try:
+        from vaig.core.report_store import ReportStore
+
+        effective_run_id = run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        store = ReportStore()
+        store.save(effective_run_id, orch_result.structured_report.to_dict())
+        logger.debug("Persisted report locally for run %s", effective_run_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to persist report locally", exc_info=True)
 
 
 def _auto_export_report(
@@ -2352,6 +2382,10 @@ async def _async_execute_orchestrated_skill(
 
             run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
             save_last_run_id(run_id)
+
+        # Persist report locally for quality analysis (vaig optimize --reports).
+        # Uses its own run_id when export is disabled.
+        _persist_report_locally(orch_result, run_id=run_id)
 
         # Auto-export report if configured.
         # ADR-4: auto-export fires here for the health report only, immediately after the live
