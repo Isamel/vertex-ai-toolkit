@@ -175,6 +175,9 @@ from vaig.cli.commands import (
     export_cmd as _export_mod,
 )
 from vaig.cli.commands import (
+    feedback as _feedback_mod,
+)
+from vaig.cli.commands import (
     live as _live_mod,
 )
 from vaig.cli.commands import (
@@ -199,6 +202,7 @@ _ask_mod.register(app)
 _live_mod.register(app)
 _discover_mod.register(app)
 _doctor_mod.register(app)
+_feedback_mod.register(app)
 _export_mod.register(app)
 app.add_typer(cloud_app, name="cloud")
 

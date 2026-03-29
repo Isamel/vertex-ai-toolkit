@@ -1681,11 +1681,25 @@ def _execute_orchestrated_skill(
             agent_timings=progress_display.get_agent_timings(),
         )
 
+        # Generate a single run_id for this execution — used by both
+        # auto-export and feedback to ensure consistency (even when
+        # auto_export_reports is disabled, we still need a run_id for
+        # feedback if export.enabled is True).
+        run_id: str | None = None
+        if settings.export.enabled:
+            from vaig.core.export import save_last_run_id
+
+            run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            save_last_run_id(run_id)
+
         # Auto-export report if configured.
         # ADR-4: auto-export fires here for the health report only, immediately after the live
         # summary.  Telemetry and tool-calls are higher-volume and use the explicit CLI push
         # commands (vaig cloud push telemetry / tool-calls) so they are never auto-exported.
-        _auto_export_report(settings, orch_result, gke_config)
+        _auto_export_report(settings, orch_result, gke_config, run_id=run_id)
+
+        # Interactive feedback prompt (only when export is enabled)
+        _prompt_feedback(settings, run_id=run_id)
 
         # Notify via terminal bell
         _emit_bell(no_bell=no_bell)
@@ -1701,25 +1715,98 @@ def _execute_orchestrated_skill(
         raise typer.Exit(1)  # noqa: B904
 
 
+def _prompt_feedback(settings: Settings, *, run_id: str | None = None) -> None:
+    """Prompt the user for optional post-run feedback.
+
+    Only activates when export is enabled.  Reads a rating (1-5) from stdin;
+    pressing Enter (empty input) skips.  If a valid rating is entered, also
+    offers an optional comment prompt.  Feedback is exported to BigQuery on a
+    daemon thread so it never blocks exit.
+
+    Args:
+        settings: Application settings (checked for ``export.enabled``).
+        run_id: Pipeline run identifier for this execution.  When ``None``
+            a fallback timestamp is generated — but callers should always
+            provide the authoritative run_id from the current execution.
+    """
+    if not settings.export.enabled:
+        return
+
+    try:
+        raw = console.input(
+            "\n[dim]\U0001f4ca Was this analysis helpful? Rate 1-5 (Enter to skip):[/dim] "
+        )
+    except (EOFError, KeyboardInterrupt):
+        return
+
+    raw = raw.strip()
+    if not raw:
+        return
+
+    try:
+        rating = int(raw)
+    except ValueError:
+        return
+
+    if not 1 <= rating <= 5:
+        return
+
+    # Optional comment
+    comment = ""
+    try:
+        comment = console.input("[dim]   Comment (Enter to skip):[/dim] ").strip()
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+    # Export in background
+    from vaig.core.export import DataExporter
+
+    effective_run_id = run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+    def _do_export() -> None:
+        try:
+            exporter = DataExporter(settings.export)
+            exporter.export_feedback_to_bigquery(
+                rating=rating, comment=comment, run_id=effective_run_id,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("Post-run feedback export failed", exc_info=True)
+
+    thread = threading.Thread(target=_do_export, daemon=True, name="vaig-feedback-export")
+    thread.start()
+    stars = "\u2605" * rating + "\u2606" * (5 - rating)
+    console.print(f"  [green]\u2713[/green] Thanks for your feedback  {stars}")
+
+
 def _auto_export_report(
     settings: Settings,
     orch_result: OrchestratorResult,
     gke_config: GKEConfig,
+    *,
+    run_id: str | None = None,
 ) -> None:
     """Fire-and-forget auto-export of a health report if configured.
 
     Checks whether auto-export is enabled and a structured report exists, then
     delegates to :func:`vaig.core.export.auto_export_report` on a daemon thread.
+
+    Args:
+        settings: Application settings (checked for ``export.enabled`` and
+            ``export.auto_export_reports``).
+        orch_result: Orchestrator result containing the optional structured report.
+        gke_config: GKE configuration for cluster/namespace metadata.
+        run_id: Pipeline run identifier.  When provided it is used as-is;
+            when ``None`` a fallback timestamp is generated.
     """
     if not (settings.export.enabled and settings.export.auto_export_reports and orch_result.structured_report is not None):
         return
     from vaig.core.export import auto_export_report
 
-    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    effective_run_id = run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     auto_export_report(
         config=settings.export,
         report=orch_result.structured_report.to_dict(),
-        run_id=run_id,
+        run_id=effective_run_id,
         cluster_name=gke_config.cluster_name or "",
         namespace=gke_config.default_namespace or "",
     )
@@ -2255,11 +2342,25 @@ async def _async_execute_orchestrated_skill(
             agent_timings=progress_display.get_agent_timings(),
         )
 
+        # Generate a single run_id for this execution — used by both
+        # auto-export and feedback to ensure consistency (even when
+        # auto_export_reports is disabled, we still need a run_id for
+        # feedback if export.enabled is True).
+        run_id: str | None = None
+        if settings.export.enabled:
+            from vaig.core.export import save_last_run_id
+
+            run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            save_last_run_id(run_id)
+
         # Auto-export report if configured.
         # ADR-4: auto-export fires here for the health report only, immediately after the live
         # summary.  Telemetry and tool-calls are higher-volume and use the explicit CLI push
         # commands (vaig cloud push telemetry / tool-calls) so they are never auto-exported.
-        _auto_export_report(settings, orch_result, gke_config)
+        _auto_export_report(settings, orch_result, gke_config, run_id=run_id)
+
+        # Interactive feedback prompt (only when export is enabled)
+        _prompt_feedback(settings, run_id=run_id)
 
         # Notify via terminal bell
         _emit_bell(no_bell=no_bell)
