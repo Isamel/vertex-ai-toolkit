@@ -275,6 +275,86 @@ vaig export abc123 -f html -o report.html
 vaig export abc123
 ```
 
+### `vaig feedback`
+
+Submit quality feedback for a completed `vaig live` analysis run. Rate the analysis from 1 (poor) to 5 (excellent) and optionally include a text comment. Feedback is exported to the configured BigQuery `feedback` table for quality tracking.
+
+Requires either `--run-id` or `--last` to identify which run the feedback belongs to. These flags are mutually exclusive.
+
+```bash
+vaig feedback --rating RATING [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--rating` | `-r` | Rating from 1 (poor) to 5 (excellent) | **Required** |
+| `--run-id` | | Run ID to attach feedback to | — |
+| `--last` | | Use the most recent run ID | `false` |
+| `--comment` | `-m` | Free-text feedback comment | `""` |
+| `--config` | `-c` | Path to config file | Auto-detected |
+| `--verbose` | `-V` | Enable verbose logging (INFO level) | `false` |
+| `--debug` | `-d` | Enable debug logging (DEBUG level) | `false` |
+
+**Examples:**
+
+```bash
+# Rate the last run
+vaig feedback --rating 5 --last
+
+# Rate with a comment
+vaig feedback -r 4 -m "Great analysis" --last
+
+# Rate a specific run by ID
+vaig feedback -r 3 --run-id 20250601T120000Z
+```
+
+> **Note:** Export must be enabled in your configuration (`export.enabled=true`) for feedback to be saved.
+
+### `vaig optimize`
+
+Analyze tool call efficiency and suggest optimizations. Scans recent run history for per-tool statistics, redundant calls, and performance patterns, then prints actionable suggestions.
+
+Use `--reports` to switch to **report quality analysis**, which computes hallucination rate, evidence depth, actionability, and other quality signals from past HealthReports.
+
+```bash
+vaig optimize [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--last` | `-n` | Number of recent runs to analyze | `50` |
+| `--reports` | | Analyze report quality instead of tool calls | `false` |
+| `--config` | `-c` | Path to config file | Auto-detected |
+| `--verbose` | `-V` | Enable verbose logging (INFO level) | `false` |
+| `--debug` | `-d` | Enable debug logging (DEBUG level) | `false` |
+
+**Default mode (tool call analysis)** displays:
+- Summary — total runs, total calls, total duration, average calls per run
+- Per-tool statistics — call count, failures, fail %, avg/max duration, cache hits, unique arg combos
+- Redundant calls — same tool called multiple times with identical arguments in a single run
+- Suggestions — actionable optimization recommendations
+
+**Report mode** (`--reports`) displays:
+- Quality signals — hallucination rate, evidence depth, actionability, completeness
+- Each signal's value, threshold, and pass/fail status
+- Prompt improvement suggestions
+
+**Examples:**
+
+```bash
+# Analyze tool call efficiency (default — last 50 runs)
+vaig optimize
+
+# Analyze fewer runs
+vaig optimize --last 20
+
+# Analyze report quality
+vaig optimize --reports
+
+# Analyze report quality for recent runs
+vaig optimize --reports --last 10
+```
+
 ## Sub-Command Groups
 
 ### `vaig sessions`

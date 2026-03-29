@@ -2,21 +2,21 @@
 marp: true
 theme: default
 paginate: true
-header: "Vertex AI Toolkit (vaig) — v0.9.0"
+header: "Vertex AI Toolkit (vaig) — Post-v0.11.0"
 footer: "Confidential — Internal Use Only"
 ---
 
 <!-- _class: lead -->
 
 # Vertex AI Toolkit
-## vaig — v0.9.0
+## vaig — Post-v0.11.0
 
 **Multi-agent AI operations platform for GKE and GCP**
 
-*March 26, 2026*
+*March 29, 2026*
 
 <!-- Speaker notes:
-Welcome. This deck covers two things: what the team delivered in the v0.9.0 cycle, and why vaig should be adopted across the organization. The core thesis is simple — GCP operations are expensive and manual; vaig automates them with AI. Let the numbers speak.
+Welcome. This deck covers the full platform as of post-v0.11.0 — what the team has delivered across 7 releases, and why vaig should be adopted across the organization. The core thesis is simple — GCP operations are expensive and manual; vaig automates them with AI. Let the numbers speak.
 -->
 
 ---
@@ -49,8 +49,10 @@ vaig ask "Scaffold a new microservice for order processing" --code
 ```
 
 - Single CLI entry point for all GKE, Vertex AI, and GCP workflows
-- Extensible skill system — 31 specialized multi-agent workflows built in
+- Extensible skill system — 33 specialized multi-agent workflows built in
+- 62 tool functions across diagnostics, cost, security, and mutations
 - Pluggable architecture — add custom tools or MCP servers without code changes
+- 13 CLI commands: `ask`, `chat`, `live`, `discover`, `doctor`, `feedback`, `optimize`, `export` + `sessions`, `models`, `skills`, `stats`, `mcp`
 - Runs locally or in CI/CD pipelines
 
 <!-- Speaker notes:
@@ -97,7 +99,7 @@ Three layers: CLI, orchestration, execution. The skill orchestrator is the key �
 
 ---
 
-## Skills Ecosystem — 31 Specialized Workflows
+## Skills Ecosystem — 33 Specialized Workflows
 
 **Infrastructure & Reliability**
 `service-health` · `rca` · `anomaly` · `postmortem` · `slo-review` · `resilience-review` · `alert-tuning` · `toil-analysis`
@@ -114,8 +116,11 @@ Three layers: CLI, orchestration, execution. The skill orchestrator is the key �
 **Operations**
 `log-analysis` · `error-triage` · `config-audit` · `runbook-generator` · `incident-comms` · `network-review` · `pipeline-review` · `db-review` · `perf-analysis` · `migration`
 
+**New in v0.10–v0.11**
+`discover` · `optimize`
+
 <!-- Speaker notes:
-31 skills ship out of the box. Each skill is a multi-agent workflow — not a single prompt. They enforce structured reasoning, anti-hallucination rules, and output validation.
+33 skills ship out of the box. Each skill is a multi-agent workflow — not a single prompt. They enforce structured reasoning, anti-hallucination rules, and output validation.
 -->
 
 ---
@@ -131,7 +136,7 @@ Three layers: CLI, orchestration, execution. The skill orchestrator is the key �
 | **Platform** | gcloud CLI, kubectl, Cloud Container API |
 | **Extensions** | Datadog, MCP servers, custom Python plugins |
 
-**Tool surface:** 28 tool modules — diagnostics, discovery, scaling, security, mutations, cost estimation, mesh introspection
+**Tool surface:** 62 tool functions — diagnostics, discovery, scaling, security, mutations, cost estimation, mesh introspection
 
 <!-- Speaker notes:
 vaig is not a toy. It connects to the real GCP control plane via the same APIs your SREs use manually. The difference is that the process is AI-driven, structured, and repeatable.
@@ -141,29 +146,77 @@ vaig is not a toy. It connects to the real GCP control plane via the same APIs y
 
 <!-- _class: lead -->
 
-# v0.9.0 — What We Built
+# v0.9.0 → v0.11.0 — What We Built
 
-### 8 PRs · 4 capability blocks · 10-day delivery cycle
+### 161 PRs · 291 commits · 7 releases (v0.1.0 through v0.11.0)
 
 ---
 
-## Initiative Overview — v0.9.0
+## Release Highlights — v0.9.0 through v0.11.0
 
-| PR | Block | Capability |
-|----|-------|-----------|
-| #105 | Foundation | Refactor monolithic prompts into 9-file package |
-| #106 | Cost | GKE Autopilot workload cost estimation (basic) |
-| #107 | Cost | 32-region Autopilot pricing table |
-| #108 | Cost | Cost estimation v2 — usage metrics + namespace summaries |
-| #109 | Coding | CoT enforcement, text-delimited prompt defense, SPEC phase, `verify_completeness` |
-| #110 | Coding | `CodeMigrationSkill` — 6-phase language migration state machine |
-| #111 | Coding | `CodingSkillOrchestrator` (3-agent pipeline) + `GreenfieldSkill` |
-| #112 | Docs | Full documentation sync covering all v0.9.0 changes |
+| Release | Key Capabilities |
+|---------|-----------------|
+| v0.9.0 | Cost Estimation v2, CodeMigrationSkill, GreenfieldSkill, CodingSkillOrchestrator |
+| v0.10.0 | `vaig discover` (autonomous cluster scanning), `vaig doctor` (environment healthcheck), `vaig feedback` (bug reports & feature requests) |
+| v0.11.0 | `vaig optimize` (tool call analysis + report quality analysis with `--reports`), Watch mode diff + HTML export, RAG Engine integration, Shared Pipeline State, Adaptive Prompt Tuning, `/live` REPL command |
 
-**26 commits** merged. All changes covered by the existing test suite (5,938 tests).
+**291 commits** merged across **161 PRs**. All changes covered by the test suite (**6,631 tests passing**).
 
 <!-- Speaker notes:
-Four distinct blocks of work, each building on the previous. Cost estimation, coding skill evolution, quality hardening, and documentation. Shipped in 10 days.
+Seven releases from v0.1.0 through v0.11.0. The platform has grown from a prototype to a production-grade operations tool with 33 skills, 62 tool functions, and 13 CLI commands. The delivery cadence has been consistent and disciplined.
+-->
+
+---
+
+## New Commands — v0.10.0 & v0.11.0
+
+**`vaig discover`** — Autonomous Cluster Health Scanning
+- Scans entire cluster topology without a predefined question
+- Maps workloads, namespaces, resource utilization, and dependency graphs
+- Surfaces anomalies proactively — before they become incidents
+
+**`vaig doctor`** — Environment Healthcheck
+- Validates configuration, credentials, cluster connectivity, and tool availability
+- Pre-flight check before running live investigations
+
+**`vaig feedback`** — Bug Reports & Feature Requests
+- Submit structured feedback directly from the CLI
+- Streamlines issue creation for the development team
+
+**`vaig optimize`** — Tool Call Analysis & Report Quality
+- Analyzes tool call patterns to identify inefficiencies in agent execution
+- `--reports` flag: analyzes past report quality and suggests prompt improvements
+- Drives the Adaptive Prompt Tuning system
+
+<!-- Speaker notes:
+Four new commands since v0.9.0. Discover and doctor address the proactive monitoring gap — teams no longer wait for alerts. Feedback closes the loop with end users. Optimize turns the platform's own telemetry into self-improvement.
+-->
+
+---
+
+## Platform Intelligence — v0.11.0
+
+**RAG Engine Integration with Vertex AI**
+- Retrieval-Augmented Generation powered by Vertex AI embeddings
+- Skills can query indexed documentation, runbooks, and past incident reports
+- Reduces hallucination by grounding agent responses in real organizational data
+
+**Shared Pipeline State Across Agents**
+- Agents within a multi-agent pipeline share state — findings from one agent inform the next
+- Eliminates redundant tool calls and improves cross-agent coherence
+
+**Adaptive Prompt Tuning**
+- System learns from past report quality and user feedback
+- Automatically adjusts agent prompts based on analysis patterns
+- Driven by `vaig optimize --reports` telemetry
+
+**`/live` REPL Command**
+- Interactive Read-Eval-Print Loop for iterative investigations
+- Run follow-up queries without restarting the agent pipeline
+- Maintains conversation context across commands
+
+<!-- Speaker notes:
+These are architectural capabilities, not just features. RAG grounding, shared state, and adaptive tuning represent the platform evolving from a stateless tool into an intelligent system that gets better with use.
 -->
 
 ---
@@ -237,20 +290,22 @@ GreenfieldSkill is the developer productivity multiplier. New projects that used
 
 | Metric | Value |
 |--------|-------|
-| Test functions | **5,938** |
-| Test files | **135** |
-| Source files (`src/vaig/`) | **207** |
-| Lines of code | **~60,200** |
-| Total commits | **424** |
-| v0.9.0 commits | **26** |
-| Skills | **31** |
-| Agent modules | **7** |
-| Tool modules | **28** |
+| Test functions | **6,631** |
+| Test files | **151** |
+| Source files (`src/vaig/`) | **219** |
+| Lines of code | **66,732** |
+| Total commits | **291** |
+| Merged PRs | **161** |
+| Releases | **7** (v0.1.0–v0.11.0) |
+| Skills | **33** |
+| Tool functions | **62** |
+| Config classes | **29** |
+| CLI commands | **13** |
 
 CI pipeline enforces: ruff (lint), mypy (strict type checking), pytest (all tests)
 
 <!-- Speaker notes:
-Nearly 6,000 tests. Strict mypy type checking. Every PR is blocked by CI. The codebase is not a prototype — it is production-grade Python with the discipline of a typed, tested, linted codebase.
+Over 6,600 tests across 151 test files. Strict mypy type checking. Every PR is blocked by CI. The codebase is not a prototype — it is production-grade Python with the discipline of a typed, tested, linted codebase.
 -->
 
 ---
@@ -317,7 +372,7 @@ The coding skills are not replacing engineers — they are removing the mechanic
 
 **Type Safety and CI Enforcement**
 - 137 mypy strict type errors resolved; type checking is now a blocking CI gate
-- Every merge to `main` requires passing lint, types, and all 5,938 tests
+- Every merge to `main` requires passing lint, types, and all 6,631 tests
 
 **These are not optional safeguards — they are architectural properties of the system.**
 
@@ -405,13 +460,14 @@ vaig is not just a CLI tool — it is a platform. Teams can embed it in their pi
 
 ## What Comes Next
 
-The v0.9.0 cycle established the foundation. The trajectory is clear:
+The v0.11.0 cycle solidified the platform's intelligence layer. The trajectory is clear:
 
 - **Deeper cost intelligence** — cross-namespace budget alerts, trend analysis, and anomaly detection on spend
 - **Migration coverage expansion** — additional language pairs beyond Python→Go
 - **Agentic CI integration** — automated PR review, test generation, and greenfield standards enforcement
 - **Platform observability** — unified GKE health dashboard generated from vaig reports
 - **Broader GCP surface** — Cloud Run, Cloud SQL, Pub/Sub, and Artifact Registry integration
+- **Enhanced RAG** — deeper integration with organizational knowledge bases and incident history
 
 The skill framework is designed for extension. Adding a new workflow requires implementing a single skill class — the orchestration, tooling, and output formatting are inherited.
 
@@ -429,20 +485,20 @@ We are not committing to a roadmap here. We are communicating architectural read
 
 ## For Management — What the Team Delivered
 
-**In 10 days (v0.8.0 → v0.9.0):**
+**Across 7 releases (v0.1.0 → v0.11.0):**
 
-- 8 pull requests merged across 4 capability blocks
-- 26 commits, zero regression (5,938 tests passing)
-- 3 new major capabilities: cost estimation v2, CodeMigrationSkill, GreenfieldSkill
-- 4 quality improvements: CoT enforcement, text-delimited prompt defense, SPEC phase, verify_completeness
+- 161 pull requests merged across 291 commits
+- 6,631 tests passing — zero regressions
+- 33 specialized multi-agent skills, 62 tool functions, 13 CLI commands
+- Key capabilities: cost estimation, cluster discovery, environment healthcheck, report optimization, RAG engine, adaptive prompt tuning
 - Full documentation coverage synchronized with implementation
 
-**The codebase:** 207 source files, ~60,200 lines, 31 skills, 7 agent modules, 28 tool modules
+**The codebase:** 219 source files, 66,732 lines, 33 skills, 62 tool functions, 29 config classes
 
 This was delivered with discipline: strict type checking, comprehensive testing, and structured prompt engineering. The work is production-ready.
 
 <!-- Speaker notes:
-This is the accountability slide. The team shipped real, tested, documented capabilities in under two weeks. Not prototypes. Not demos. Production code with CI gates.
+This is the accountability slide. The team shipped real, tested, documented capabilities across seven releases. Not prototypes. Not demos. Production code with CI gates.
 -->
 
 ---
@@ -453,10 +509,12 @@ This is the accountability slide. The team shipped real, tested, documented capa
 GKE cost overruns, slow incident resolution, and high engineering overhead in GCP operations are measurable costs — in engineering hours and infrastructure spend.
 
 **vaig is the solution, already built:**
-- 31 specialized AI workflows ready to deploy today
+- 33 specialized AI workflows ready to deploy today
 - Cost estimation with per-container waste detection
+- Autonomous cluster discovery and environment healthcheck
 - Incident diagnosis in seconds instead of hours
 - Code migration and scaffolding at engineering scale
+- RAG-grounded responses and adaptive prompt tuning
 
 **The ask:**
 1. Approve internal adoption as the standard GCP operations tool
@@ -475,7 +533,7 @@ This is the close. The tool exists. The tests pass. The documentation is written
 
 # Thank You
 
-**Vertex AI Toolkit — v0.9.0**
+**Vertex AI Toolkit — Post-v0.11.0**
 
 Repository: `vertex-ai-toolkit`
 Documentation: `docs/`
