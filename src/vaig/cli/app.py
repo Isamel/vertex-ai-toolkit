@@ -187,6 +187,9 @@ from vaig.cli.commands import (
     models as _models_mod,
 )
 from vaig.cli.commands import (
+    optimize as _optimize_mod,
+)
+from vaig.cli.commands import (
     sessions as _sessions_mod,
 )
 from vaig.cli.commands import (
@@ -203,6 +206,7 @@ _live_mod.register(app)
 _discover_mod.register(app)
 _doctor_mod.register(app)
 _feedback_mod.register(app)
+_optimize_mod.register(app)
 _export_mod.register(app)
 app.add_typer(cloud_app, name="cloud")
 
