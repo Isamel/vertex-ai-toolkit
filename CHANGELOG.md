@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `/live` REPL command — run live mode analysis within an existing chat session ([#154](https://github.com/Isamel/vertex-ai-toolkit/pull/154))
-- `vaig feedback` command — submit bug reports and feature requests from the CLI (writes to `~/.vaig/feedback/`) ([#155](https://github.com/Isamel/vertex-ai-toolkit/pull/155))
+- `vaig feedback` command — collect rating/comment feedback and export it via the configured export pipeline (exports to BigQuery when `export.enabled=true`) ([#155](https://github.com/Isamel/vertex-ai-toolkit/pull/155))
 - `vaig optimize` command — analyze tool call patterns across runs and suggest efficiency improvements ([#156](https://github.com/Isamel/vertex-ai-toolkit/pull/156))
 - `ToolCallOptimizer` engine for tool call pattern analysis (`src/vaig/core/optimizer.py`) ([#156](https://github.com/Isamel/vertex-ai-toolkit/pull/156))
 - RAG integration with Vertex AI RAG Engine for enriching analyses with historical report context ([#157](https://github.com/Isamel/vertex-ai-toolkit/pull/157))
@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ReportStore` for local JSONL persistence of structured reports ([#160](https://github.com/Isamel/vertex-ai-toolkit/pull/160))
 - `vaig optimize --reports` flag to display quality insights and prompt improvement suggestions ([#160](https://github.com/Isamel/vertex-ai-toolkit/pull/160))
 - Automatic report persistence in `vaig live` sync and async paths ([#160](https://github.com/Isamel/vertex-ai-toolkit/pull/160))
-- Multiline input support in REPL via backslash continuation ([#153](https://github.com/Isamel/vertex-ai-toolkit/pull/153))
+- Multiline input support in REPL using triple-quote (`"""`) delimiters ([#153](https://github.com/Isamel/vertex-ai-toolkit/pull/153))
 - Priority-based deduplication for duplicate findings ([#153](https://github.com/Isamel/vertex-ai-toolkit/pull/153))
 
 ### Changed

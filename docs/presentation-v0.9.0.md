@@ -305,7 +305,7 @@ GreenfieldSkill is the developer productivity multiplier. New projects that used
 CI pipeline enforces: ruff (lint), mypy (strict type checking), pytest (all tests)
 
 <!-- Speaker notes:
-Over 6,600 tests across 151 test files. Strict mypy type checking. Every PR is blocked by CI. The codebase is not a prototype — it is production-grade Python with the discipline of a typed, tested, linted codebase.
+Over 6,631 tests across 151 test files. Strict mypy type checking. Every PR is blocked by CI. The codebase is not a prototype — it is production-grade Python with the discipline of a typed, tested, linted codebase.
 -->
 
 ---

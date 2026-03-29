@@ -39,14 +39,14 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
 - **Watch session HTML export** — pressing Ctrl+C during a `--watch` session exports a self-contained HTML report with diff timeline
 - **ArgoCD management cluster support** — connect to ArgoCD via API server, separate kubeconfig context, or same-cluster mode
 - **Language override** — set `language: "es"` (or any BCP-47 code) in config YAML to produce all agent output in that language; auto-detected from query when set to `"en"` (default)
-- **Feedback loop** — `vaig feedback` submits bug reports, feature requests, and quality ratings linked to specific pipeline runs
+- **Feedback loop** — `vaig feedback` records 1–5 quality ratings plus optional comments for specific pipeline runs, exported for analysis (e.g., to BigQuery)
 - **Optimize command** — `vaig optimize` analyzes tool call patterns and report quality (`--reports`) to identify inefficiencies and improvement opportunities
 - **Adaptive Prompt Tuning** — `PromptTuner` + `ReportStore` analyze past report quality signals and generate actionable prompt improvements automatically
 - **RAG Engine integration** — Vertex AI RAG corpus for historical context injection; past findings and reports enrich agent prompts via `RAGKnowledgeBase`
 - **Shared pipeline state** — `PipelineState` model propagated across agents during orchestration, enabling state-aware multi-agent workflows
 - **Anti-hallucination prompt rules** — structured `<anti_hallucination_rules>` blocks injected into skill system prompts to enforce evidence-based reasoning
 - **Credential redaction** — Helm values containing `DATABASE_URL`, passwords, tokens, and other sensitive patterns are automatically redacted before agent exposure
-- **Multiline REPL input** — enter multi-line prompts in the interactive REPL (backslash continuation); both async and sync input modes supported
+- **Multiline REPL input** — enter multi-line prompts in the interactive REPL (triple-quote delimiter: `"""`); both async and sync input modes supported
 - **Priority-based finding deduplication** — watch mode diff engine matches findings by stable ID, tracks severity changes across iterations, and surfaces only meaningful deltas
 - **Cross-platform** — UTF-8 enforcement on all file I/O; Rich console falls back to plain text on non-ANSI terminals (Windows-safe)
 
@@ -231,14 +231,14 @@ Delete telemetry events older than N days.
 
 ### `vaig feedback`
 
-Submit bug reports, feature requests, or quality ratings linked to a specific pipeline run.
+Submit quality feedback for a specific pipeline run.
 
 ```bash
 vaig feedback [OPTIONS]
 
 Options:
   -r, --rating INT       Quality rating (1–5)
-  -m, --message TEXT     Freeform feedback message
+  -m, --comment TEXT     Free-text feedback comment
   --last                 Attach feedback to the most recent pipeline run
   --run-id TEXT          Attach feedback to a specific run ID
 ```
@@ -264,7 +264,7 @@ Analyze tool call patterns and report quality to identify inefficiencies and imp
 vaig optimize [OPTIONS]
 
 Options:
-  --last INT             Number of recent runs to analyze (default: 10)
+  --last INT             Number of recent runs to analyze (default: 50)
   --reports              Enable report quality analysis (PromptTuner + ReportStore)
 ```
 
@@ -869,7 +869,7 @@ vertex-ai-toolkit/
 │   └── cli/
 │       ├── app.py          # Typer commands
 │       └── repl.py         # Interactive REPL (prompt-toolkit)
-├── tests/                  # 151 test files, 6,600+ tests
+├── tests/                  # 151 test files, 6,631 tests
 └── .github/workflows/
     ├── ci.yml              # Test + Lint + Type check on PR/push
     └── build.yml           # PyInstaller standalone binary builds
