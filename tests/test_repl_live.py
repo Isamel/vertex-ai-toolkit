@@ -205,7 +205,7 @@ class TestLiveCodeMutualExclusivity:
         assert repl_state.code_mode is False
 
     def test_code_is_independent_of_live(self, repl_state: MagicMock) -> None:
-        """/code does not check live mode (but /live checks /code)."""
+        """Enabling /code disables live mode (mutually exclusive)."""
         from vaig.cli.repl import _cmd_code
 
         repl_state.live_mode = True
@@ -213,8 +213,9 @@ class TestLiveCodeMutualExclusivity:
         with patch("vaig.cli.repl.console"):
             _cmd_code(repl_state)
 
-        # code toggles independently — live mode is NOT auto-disabled
+        # /code disables live mode (mutually exclusive)
         assert repl_state.code_mode is True
+        assert repl_state.live_mode is False
 
 
 # ══════════════════════════════════════════════════════════════
@@ -418,7 +419,21 @@ class TestLiveMissingDeps:
 
     def test_import_error_disables_live(self, repl_state: MagicMock) -> None:
         """If imports fail, live_mode should stay False."""
+        import builtins
+
         from vaig.cli.repl import _cmd_live
+
+        # Capture original import BEFORE patching to avoid brittleness
+
+        original_import = builtins.__import__
+
+        def _selective_import_error(
+            name: str, *args: object, **kwargs: object,
+        ) -> object:
+            """Raise ImportError only for live-mode-related imports."""
+            if "vaig.cli.commands.live" in name:
+                raise ImportError("No module named 'kubernetes'")
+            return original_import(name, *args, **kwargs)
 
         with (
             patch("vaig.cli.repl.console"),
@@ -427,7 +442,6 @@ class TestLiveMissingDeps:
                 {"vaig.cli.commands.live": None},
             ),
         ):
-            # Force ImportError by making the import fail
             with patch(
                 "builtins.__import__",
                 side_effect=_selective_import_error,
@@ -437,13 +451,7 @@ class TestLiveMissingDeps:
         assert repl_state.live_mode is False
 
 
-def _selective_import_error(
-    name: str, *args: object, **kwargs: object,
-) -> object:
-    """Raise ImportError only for live-mode-related imports."""
-    if "vaig.cli.commands.live" in name:
-        raise ImportError("No module named 'kubernetes'")
-    return __builtins__.__import__(name, *args, **kwargs)  # type: ignore[union-attr]
+# Module-level helper no longer needed — inlined in test above.
 
 
 # ══════════════════════════════════════════════════════════════
@@ -634,6 +642,7 @@ class TestHandleLiveSkillChat:
         mock_skill.get_metadata.return_value.requires_live_tools = True
         repl_state.active_skill = mock_skill
         repl_state.tool_registry = MagicMock()
+        repl_state.tool_result_cache = MagicMock()
         repl_state.gke_config = MagicMock()
         repl_state.gke_config.default_namespace = "default"
         repl_state.gke_config.location = "us-central1"

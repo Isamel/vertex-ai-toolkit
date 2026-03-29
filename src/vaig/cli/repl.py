@@ -28,7 +28,10 @@ from vaig.skills.registry import SkillRegistry
 
 if TYPE_CHECKING:
     from vaig.agents.base import AgentResult
+    from vaig.core.cache import ToolResultCache
+    from vaig.core.config import GKEConfig
     from vaig.core.protocols import GeminiClientProtocol
+    from vaig.tools.base import ToolRegistry
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -97,9 +100,9 @@ class REPLState:
         self.stream_enabled: bool = True
         self.code_mode: bool = False
         self.live_mode: bool = False
-        self.gke_config: Any = None  # GKEConfig when live_mode is active
-        self.tool_registry: Any = None  # ToolRegistry for orchestrated skill path
-        self.tool_result_cache: Any = None  # ToolResultCache for live sessions
+        self.gke_config: GKEConfig | None = None
+        self.tool_registry: ToolRegistry | None = None
+        self.tool_result_cache: ToolResultCache | None = None
         self.cost_tracker: CostTracker = CostTracker()
         self.debug: bool = debug
 
@@ -671,6 +674,13 @@ async def _async_handle_live_chat(state: REPLState, user_input: str, context: st
     if not _check_budget(state):
         return
 
+    if state.gke_config is None or state.tool_result_cache is None:
+        console.print(
+            "[bold red]Live mode is not properly initialized.[/bold red]\n"
+            "[yellow]Run /live to re-enable, or /clear to reset.[/yellow]"
+        )
+        return
+
     from vaig.agents.infra_agent import InfraAgent
     from vaig.core.exceptions import MaxIterationsError
 
@@ -709,24 +719,19 @@ async def _async_handle_live_chat(state: REPLState, user_input: str, context: st
     except Exception as e:
         console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Async live mode error")
-        try:
-            from vaig.core.event_bus import EventBus
-            from vaig.core.events import ErrorOccurred
-
-            EventBus.get().emit(
-                ErrorOccurred(
-                    error_type=type(e).__name__,
-                    error_message=str(e),
-                    source="async_live_chat",
-                )
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        _emit_error_event("async_live_chat", e)
 
 
 async def _async_handle_live_skill_chat(state: REPLState, user_input: str, context: str) -> None:
     """Async version of :func:`_handle_live_skill_chat`."""
     if not _check_budget(state):
+        return
+
+    if state.gke_config is None or state.tool_result_cache is None:
+        console.print(
+            "[bold red]Live mode is not properly initialized.[/bold red]\n"
+            "[yellow]Run /live to re-enable, or /clear to reset.[/yellow]"
+        )
         return
 
     from vaig.core.exceptions import MaxIterationsError
@@ -776,19 +781,7 @@ async def _async_handle_live_skill_chat(state: REPLState, user_input: str, conte
     except Exception as e:
         console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Async live skill mode error")
-        try:
-            from vaig.core.event_bus import EventBus
-            from vaig.core.events import ErrorOccurred
-
-            EventBus.get().emit(
-                ErrorOccurred(
-                    error_type=type(e).__name__,
-                    error_message=str(e),
-                    source="async_live_skill_chat",
-                )
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        _emit_error_event("async_live_skill_chat", e)
 
 
 async def _async_save_cost_data(state: REPLState) -> None:
@@ -1400,6 +1393,14 @@ def _cmd_code(state: REPLState) -> None:
     state.code_mode = not state.code_mode
 
     if state.code_mode:
+        # Disable live mode if active (mutually exclusive)
+        if state.live_mode:
+            state.live_mode = False
+            state.gke_config = None
+            state.tool_registry = None
+            state.tool_result_cache = None
+            console.print("[dim]Live mode disabled (mutually exclusive with code mode)[/dim]")
+
         workspace = Path(state.settings.coding.workspace_root).resolve()
         console.print(
             Panel.fit(
@@ -1425,14 +1426,15 @@ def _cmd_live(state: REPLState) -> None:
 
     Mutually exclusive with code mode — enabling live mode disables code mode.
     """
-    state.live_mode = not state.live_mode
-
     if state.live_mode:
-        # Disable code mode if active (mutually exclusive)
-        if state.code_mode:
-            state.code_mode = False
-            console.print("[dim]Code mode disabled (mutually exclusive with live mode)[/dim]")
-
+        # Already on — toggle OFF
+        state.live_mode = False
+        state.gke_config = None
+        state.tool_registry = None
+        state.tool_result_cache = None
+        console.print("[green]✓ Live mode OFF — back to normal chat[/green]")
+    else:
+        # Attempt to enable live mode
         try:
             from vaig.cli.commands.live import _build_gke_config, _register_live_tools
             from vaig.core.cache import ToolResultCache
@@ -1440,44 +1442,80 @@ def _cmd_live(state: REPLState) -> None:
             gke_config = _build_gke_config(state.settings)
             tool_registry = _register_live_tools(gke_config, settings=state.settings)
             tool_result_cache = ToolResultCache()
-
-            state.gke_config = gke_config
-            state.tool_registry = tool_registry
-            state.tool_result_cache = tool_result_cache
-
-            tool_count = len(tool_registry.list_tools())
-            console.print(
-                Panel.fit(
-                    "[bold green]🔍 Live Mode ON[/bold green]\n"
-                    f"[dim]Cluster: {gke_config.cluster_name or '(kubeconfig default)'}[/dim]\n"
-                    f"[dim]Namespace: {gke_config.default_namespace} | "
-                    f"Project: {gke_config.project_id or '(auto-detect)'}[/dim]\n"
-                    f"[dim]{tool_count} tools loaded[/dim]\n"
-                    "[dim]Chat messages are routed to the infrastructure agent.[/dim]",
-                    border_style="green",
-                )
-            )
         except ImportError:
-            state.live_mode = False
             console.print(
                 "[bold red]Cannot enable live mode — missing dependencies.[/bold red]\n"
                 "[yellow]Install optional dependencies:[/yellow]\n"
                 "  pip install vertex-ai-toolkit[live]       # GKE tools\n"
                 "  pip install google-cloud-logging google-cloud-monitoring  # GCP observability"
             )
-    else:
-        state.gke_config = None
-        state.tool_registry = None
-        state.tool_result_cache = None
-        console.print("[green]✓ Live mode OFF — back to normal chat[/green]")
+            return
+        except Exception as exc:
+            console.print(
+                f"[bold red]Cannot enable live mode — initialization failed.[/bold red]\n"
+                f"[dim]{exc}[/dim]\n"
+                "[yellow]Check your GKE/GCP configuration and try again, "
+                "or run /clear to reset.[/yellow]"
+            )
+            return
+
+        # Initialization succeeded — commit state changes
+        if state.code_mode:
+            state.code_mode = False
+            console.print("[dim]Code mode disabled (mutually exclusive with live mode)[/dim]")
+
+        state.live_mode = True
+        state.gke_config = gke_config
+        state.tool_registry = tool_registry
+        state.tool_result_cache = tool_result_cache
+
+        tool_count = len(tool_registry.list_tools())
+        console.print(
+            Panel.fit(
+                "[bold green]🔍 Live Mode ON[/bold green]\n"
+                f"[dim]Cluster: {gke_config.cluster_name or '(kubeconfig default)'}[/dim]\n"
+                f"[dim]Namespace: {gke_config.default_namespace} | "
+                f"Project: {gke_config.project_id or '(auto-detect)'}[/dim]\n"
+                f"[dim]{tool_count} tools loaded[/dim]\n"
+                "[dim]Chat messages are routed to the infrastructure agent.[/dim]",
+                border_style="green",
+            )
+        )
 
 
 # ── Live Mode Chat Handlers ──────────────────────────────────
 
 
+def _emit_error_event(source: str, error: Exception) -> None:
+    """Safely emit an ErrorOccurred event to the event bus.
+
+    Swallows all exceptions so it never disrupts the caller's error handling.
+    """
+    try:
+        from vaig.core.event_bus import EventBus
+        from vaig.core.events import ErrorOccurred
+
+        EventBus.get().emit(
+            ErrorOccurred(
+                error_type=type(error).__name__,
+                error_message=str(error),
+                source=source,
+            )
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _handle_live_chat(state: REPLState, user_input: str, context: str) -> None:
     """Handle chat in live mode — uses InfraAgent with tool-use loop."""
     if not _check_budget(state):
+        return
+
+    if state.gke_config is None or state.tool_result_cache is None:
+        console.print(
+            "[bold red]Live mode is not properly initialized.[/bold red]\n"
+            "[yellow]Run /live to re-enable, or /clear to reset.[/yellow]"
+        )
         return
 
     from vaig.agents.infra_agent import InfraAgent
@@ -1518,19 +1556,7 @@ def _handle_live_chat(state: REPLState, user_input: str, context: str) -> None:
     except Exception as e:
         console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Live mode error")
-        try:
-            from vaig.core.event_bus import EventBus
-            from vaig.core.events import ErrorOccurred
-
-            EventBus.get().emit(
-                ErrorOccurred(
-                    error_type=type(e).__name__,
-                    error_message=str(e),
-                    source="live_chat",
-                )
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        _emit_error_event("live_chat", e)
 
 
 def _handle_live_skill_chat(state: REPLState, user_input: str, context: str) -> None:
@@ -1540,6 +1566,13 @@ def _handle_live_skill_chat(state: REPLState, user_input: str, context: str) -> 
     ``requires_live_tools=True`` is active alongside live mode.
     """
     if not _check_budget(state):
+        return
+
+    if state.gke_config is None or state.tool_result_cache is None:
+        console.print(
+            "[bold red]Live mode is not properly initialized.[/bold red]\n"
+            "[yellow]Run /live to re-enable, or /clear to reset.[/yellow]"
+        )
         return
 
     from vaig.core.exceptions import MaxIterationsError
@@ -1589,19 +1622,7 @@ def _handle_live_skill_chat(state: REPLState, user_input: str, context: str) -> 
     except Exception as e:
         console.print(format_error_for_user(e, debug=state.debug))
         logger.exception("Live skill mode error")
-        try:
-            from vaig.core.event_bus import EventBus
-            from vaig.core.events import ErrorOccurred
-
-            EventBus.get().emit(
-                ErrorOccurred(
-                    error_type=type(e).__name__,
-                    error_message=str(e),
-                    source="live_skill_chat",
-                )
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        _emit_error_event("live_skill_chat", e)
 
 
 def _cmd_model(state: REPLState, args: str) -> None:
@@ -1881,7 +1902,7 @@ def _cmd_clear(state: REPLState) -> None:
     state.gke_config = None
     state.tool_registry = None
     state.tool_result_cache = None
-    console.print("[green]✓ Cleared context, history, agent states, cache, and code mode[/green]")
+    console.print("[green]✓ Cleared context, history, agent states, cache, code mode, and live mode[/green]")
 
 
 def _cmd_cache(state: REPLState, args: str) -> None:
@@ -2059,7 +2080,7 @@ def _cmd_help() -> None:
   [cyan]/cache [clear][/cyan]   — Show cache stats or clear the response cache
   [cyan]/code[/cyan]            — Toggle coding agent mode (read/write/edit files)
   [cyan]/cost[/cyan]            — Show session cost summary and budget status
-  [cyan]/live[/cyan]            — Toggle live infrastructure mode (GKE/GCP investigation)
+  [cyan]/live[/cyan]            — Toggle live infrastructure mode (GKE/GCP investigation + write tools)
   [cyan]/model [id][/cyan]      — Show or switch the current model
   [cyan]/skill [name][/cyan]    — Show, activate, or deactivate a skill (use 'off' to deactivate)
   [cyan]/phase [phase][/cyan]   — Show or switch the skill phase (analyze, plan, execute, validate, report)
@@ -2088,6 +2109,7 @@ def _cmd_help() -> None:
   • Switch models anytime: [dim]/model gemini-2.5-flash[/dim]
   • Enable code mode for file operations: [dim]/code[/dim] then describe the task
   • Enable live mode for infrastructure investigation: [dim]/live[/dim] then ask about your cluster
+  • [bold yellow]⚠ Live mode includes write tools[/bold yellow] (scale, restart, label, annotate) — use with caution
   • Resume your last session: [dim]/resume[/dim] or [dim]vaig chat --resume[/dim]
   • Switch projects at runtime: [dim]/project my-other-project[/dim]
 '''
