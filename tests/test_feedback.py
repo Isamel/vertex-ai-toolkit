@@ -383,7 +383,6 @@ class TestPromptFeedback:
 
         settings = _make_settings()
         with patch("vaig.cli.commands.live.console") as mock_console, \
-             patch("vaig.core.export.get_last_run_id", return_value="test-run-123"), \
              patch("vaig.core.export.DataExporter.export_feedback_to_bigquery") as mock_export, \
              patch("vaig.cli.commands.live.threading") as mock_threading:
             mock_console.input.side_effect = ["4", "Great work!"]
@@ -393,7 +392,7 @@ class TestPromptFeedback:
             mock_thread = MagicMock()
             mock_threading.Thread.return_value = mock_thread
 
-            _prompt_feedback(settings)
+            _prompt_feedback(settings, run_id="test-run-123")
 
             assert mock_console.input.call_count == 2
             mock_threading.Thread.assert_called_once()
@@ -405,7 +404,6 @@ class TestPromptFeedback:
 
         settings = _make_settings()
         with patch("vaig.cli.commands.live.console") as mock_console, \
-             patch("vaig.core.export.get_last_run_id", return_value="test-run"), \
              patch("vaig.cli.commands.live.threading") as mock_threading:
             mock_console.input.side_effect = ["5", ""]
             mock_console.print = MagicMock()
@@ -413,7 +411,7 @@ class TestPromptFeedback:
             mock_thread = MagicMock()
             mock_threading.Thread.return_value = mock_thread
 
-            _prompt_feedback(settings)
+            _prompt_feedback(settings, run_id="test-run")
 
             assert mock_console.input.call_count == 2
             mock_threading.Thread.assert_called_once()
@@ -423,23 +421,34 @@ class TestPromptFeedback:
 
 
 class TestAutoExportRunIdPersistence:
-    """Test that _auto_export_report saves the run_id."""
+    """Test that _auto_export_report forwards run_id to auto_export_report."""
 
-    def test_auto_export_saves_run_id(self) -> None:
-        """_auto_export_report persists run_id when export is enabled."""
+    def test_auto_export_forwards_run_id(self) -> None:
+        """_auto_export_report passes the provided run_id to auto_export_report."""
         from vaig.cli.commands.live import _auto_export_report
 
         settings = _make_settings()
         orch_result = SimpleNamespace(structured_report=SimpleNamespace(to_dict=lambda: {}))
         gke_config = SimpleNamespace(cluster_name="test", default_namespace="default")
 
-        with patch("vaig.core.export.auto_export_report") as mock_export, \
-             patch("vaig.core.export.save_last_run_id") as mock_save:
-            _auto_export_report(settings, orch_result, gke_config)
-            mock_save.assert_called_once()
-            saved_run_id = mock_save.call_args[0][0]
-            assert len(saved_run_id) > 0
+        with patch("vaig.core.export.auto_export_report") as mock_export:
+            _auto_export_report(settings, orch_result, gke_config, run_id="my-run-123")
             mock_export.assert_called_once()
+            assert mock_export.call_args[1]["run_id"] == "my-run-123"
+
+    def test_auto_export_generates_fallback_run_id(self) -> None:
+        """_auto_export_report generates a timestamp run_id when none is provided."""
+        from vaig.cli.commands.live import _auto_export_report
+
+        settings = _make_settings()
+        orch_result = SimpleNamespace(structured_report=SimpleNamespace(to_dict=lambda: {}))
+        gke_config = SimpleNamespace(cluster_name="test", default_namespace="default")
+
+        with patch("vaig.core.export.auto_export_report") as mock_export:
+            _auto_export_report(settings, orch_result, gke_config)
+            mock_export.assert_called_once()
+            generated_run_id = mock_export.call_args[1]["run_id"]
+            assert len(generated_run_id) > 0
 
     def test_auto_export_skips_when_disabled(self) -> None:
         """_auto_export_report does nothing when export is disabled."""
@@ -449,6 +458,6 @@ class TestAutoExportRunIdPersistence:
         orch_result = SimpleNamespace(structured_report=SimpleNamespace(to_dict=lambda: {}))
         gke_config = SimpleNamespace(cluster_name="test", default_namespace="default")
 
-        with patch("vaig.core.export.save_last_run_id") as mock_save:
+        with patch("vaig.core.export.auto_export_report") as mock_export:
             _auto_export_report(settings, orch_result, gke_config)
-            mock_save.assert_not_called()
+            mock_export.assert_not_called()

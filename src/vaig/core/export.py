@@ -706,8 +706,8 @@ class DataExporter:
         self,
         rating: int,
         comment: str = "",
-        run_id: str = "",
         *,
+        run_id: str,
         report_summary: str = "",
         auto_quality_score: float = 0.0,
         metadata: dict[str, Any] | None = None,
@@ -721,6 +721,7 @@ class DataExporter:
             rating: User rating (1–5).
             comment: Free-text feedback comment.
             run_id: Pipeline run identifier linking feedback to a specific run.
+                Required — callers must always provide a non-empty run_id.
             report_summary: Optional summary of the associated report.
             auto_quality_score: Optional automated quality score.
             metadata: Optional arbitrary metadata dict.
@@ -728,9 +729,14 @@ class DataExporter:
         Returns:
             ``True`` if the row was inserted successfully, ``False`` on failure.
         """
+        if not run_id:
+            logger.warning(
+                "export_feedback_to_bigquery: run_id is empty — skipping"
+            )
+            return False
         if not self._effective_project_id():
             logger.warning(
-                "export_feedback_to_bigquery: bigquery_project is not configured — skipping"
+                "export_feedback_to_bigquery: gcp_project_id is not configured — skipping"
             )
             return False
         try:
