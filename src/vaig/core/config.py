@@ -687,6 +687,9 @@ class ExportConfig(BaseModel):
         default="",
         validation_alias=AliasChoices("vertex_rag_corpus_id", "rag_corpus_name"),
     )
+    rag_enabled: bool = False
+    rag_chunk_size: int = 1024
+    rag_chunk_overlap: int = 200
 
     @model_validator(mode="after")
     def _normalize_export_fields(self) -> ExportConfig:
@@ -700,6 +703,16 @@ class ExportConfig(BaseModel):
             self.gcs_prefix = prefix.rstrip("/") + "/"
         else:
             self.gcs_prefix = ""
+
+        if self.rag_chunk_size <= 0:
+            raise ValueError("rag_chunk_size must be a positive integer")
+        if self.rag_chunk_overlap < 0:
+            raise ValueError("rag_chunk_overlap must be non-negative")
+        if self.rag_chunk_overlap >= self.rag_chunk_size:
+            raise ValueError(
+                f"rag_chunk_overlap ({self.rag_chunk_overlap}) must be less "
+                f"than rag_chunk_size ({self.rag_chunk_size})"
+            )
 
         return self
 
