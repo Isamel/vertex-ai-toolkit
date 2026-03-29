@@ -1,0 +1,308 @@
+"""Vertex AI RAG Engine integration — knowledge base wrapper.
+
+Provides a clean interface for creating, ingesting into, querying,
+and managing Vertex AI RAG corpora.  All ``vertexai`` imports are
+lazy (inside methods) so the module works without the optional
+dependency installed.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from vaig.core.config import ExportConfig
+
+logger = logging.getLogger(__name__)
+
+
+# ── Data models ───────────────────────────────────────────────
+
+
+@dataclass(slots=True)
+class RetrievedChunk:
+    """A single chunk returned by a RAG retrieval query."""
+
+    text: str
+    score: float = 0.0
+    source: str = ""
+
+
+@dataclass(slots=True)
+class RetrievalResult:
+    """Result of a RAG retrieval operation."""
+
+    chunks: list[RetrievedChunk] = field(default_factory=list)
+    query: str = ""
+
+    @property
+    def has_results(self) -> bool:
+        """Return True if any chunks were retrieved."""
+        return len(self.chunks) > 0
+
+    def format_context(self) -> str:
+        """Format retrieved chunks as a context string for injection."""
+        if not self.chunks:
+            return ""
+        parts: list[str] = []
+        for i, chunk in enumerate(self.chunks, 1):
+            source_info = f" (source: {chunk.source})" if chunk.source else ""
+            parts.append(f"[{i}]{source_info} {chunk.text}")
+        return "\n\n".join(parts)
+
+
+# ── Lazy import helpers ───────────────────────────────────────
+
+
+def _import_vertexai_rag() -> Any:
+    """Lazily import vertexai.preview.rag, raising ImportError if missing."""
+    try:
+        from vertexai.preview import rag
+
+        return rag
+    except ImportError:
+        raise ImportError(
+            "RAG Engine features require the vertexai SDK. "
+            "Install with: pip install google-cloud-aiplatform[rag]"
+        ) from None
+
+
+def _import_vertexai() -> Any:
+    """Lazily import the vertexai module."""
+    try:
+        import vertexai
+
+        return vertexai
+    except ImportError:
+        raise ImportError(
+            "RAG Engine features require the vertexai SDK. "
+            "Install with: pip install google-cloud-aiplatform[rag]"
+        ) from None
+
+
+# ── RAG Knowledge Base ────────────────────────────────────────
+
+
+class RAGKnowledgeBase:
+    """Wrapper around the Vertex AI RAG Engine API.
+
+    All Vertex AI SDK imports are lazy — they happen inside methods,
+    not at module level.  This allows the module to be imported even
+    when ``vertexai`` is not installed.
+
+    Parameters
+    ----------
+    config:
+        The :class:`ExportConfig` instance carrying RAG-related settings.
+    project:
+        GCP project ID.  Falls back to ``config.gcp_project_id``.
+    location:
+        GCP region.  Defaults to ``"us-central1"``.
+    """
+
+    def __init__(
+        self,
+        config: ExportConfig,
+        project: str = "",
+        location: str = "us-central1",
+    ) -> None:
+        self._config = config
+        self._project = project or config.gcp_project_id
+        self._location = location
+        self._initialized = False
+
+    # ── Properties ────────────────────────────────────────────
+
+    @property
+    def is_configured(self) -> bool:
+        """Return True if RAG is enabled and a corpus name is set."""
+        return bool(self._config.rag_enabled and self._config.rag_corpus_name)
+
+    @property
+    def corpus_name(self) -> str:
+        """Return the configured RAG corpus name/ID."""
+        return self._config.rag_corpus_name
+
+    # ── SDK initialisation ────────────────────────────────────
+
+    def _ensure_initialized(self) -> None:
+        """Initialize the Vertex AI SDK if not already done."""
+        if self._initialized:
+            return
+        vertexai = _import_vertexai()
+        vertexai.init(project=self._project, location=self._location)
+        self._initialized = True
+        logger.debug(
+            "Vertex AI SDK initialized: project=%s location=%s",
+            self._project,
+            self._location,
+        )
+
+    # ── Corpus management ─────────────────────────────────────
+
+    def create_corpus(self, display_name: str, description: str = "") -> str:
+        """Create a new RAG corpus and return its resource name.
+
+        Parameters
+        ----------
+        display_name:
+            Human-readable name for the corpus.
+        description:
+            Optional description.
+
+        Returns
+        -------
+        str
+            The full resource name of the created corpus.
+        """
+        self._ensure_initialized()
+        rag = _import_vertexai_rag()
+        corpus = rag.create_corpus(
+            display_name=display_name,
+            description=description,
+        )
+        logger.info("Created RAG corpus: %s", corpus.name)
+        return str(corpus.name)
+
+    def delete_corpus(self, corpus_name: str = "") -> bool:
+        """Delete a RAG corpus.
+
+        Parameters
+        ----------
+        corpus_name:
+            The resource name of the corpus.  Defaults to the configured
+            corpus name.
+
+        Returns
+        -------
+        bool
+            True if deletion succeeded.
+        """
+        target = corpus_name or self.corpus_name
+        if not target:
+            logger.warning("delete_corpus called but no corpus name configured.")
+            return False
+
+        self._ensure_initialized()
+        rag = _import_vertexai_rag()
+        try:
+            rag.delete_corpus(name=target)
+            logger.info("Deleted RAG corpus: %s", target)
+            return True
+        except Exception:
+            logger.exception("Failed to delete RAG corpus: %s", target)
+            return False
+
+    def list_corpora(self) -> list[dict[str, Any]]:
+        """List all RAG corpora in the current project.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            A list of dicts with ``name`` and ``display_name`` keys.
+        """
+        self._ensure_initialized()
+        rag = _import_vertexai_rag()
+        try:
+            corpora = rag.list_corpora()
+            return [
+                {"name": str(c.name), "display_name": str(c.display_name)}
+                for c in corpora
+            ]
+        except Exception:
+            logger.exception("Failed to list RAG corpora.")
+            return []
+
+    # ── Ingestion ─────────────────────────────────────────────
+
+    def ingest_reports(self, gcs_paths: list[str]) -> bool:
+        """Ingest GCS files into the configured RAG corpus.
+
+        Parameters
+        ----------
+        gcs_paths:
+            List of ``gs://`` URIs to import.
+
+        Returns
+        -------
+        bool
+            True if ingestion succeeded.
+        """
+        if not self.is_configured:
+            logger.debug("RAG not configured — skipping ingest.")
+            return False
+
+        if not gcs_paths:
+            logger.debug("No GCS paths provided — skipping ingest.")
+            return False
+
+        self._ensure_initialized()
+        rag = _import_vertexai_rag()
+        try:
+            rag.import_files(
+                corpus_name=self.corpus_name,
+                paths=gcs_paths,
+                chunk_size=self._config.rag_chunk_size,
+                chunk_overlap=self._config.rag_chunk_overlap,
+            )
+            logger.info(
+                "Ingested %d file(s) into corpus %s",
+                len(gcs_paths),
+                self.corpus_name,
+            )
+            return True
+        except Exception:
+            logger.exception("Failed to ingest reports into RAG corpus.")
+            return False
+
+    # ── Retrieval ─────────────────────────────────────────────
+
+    def retrieve(self, query: str, top_k: int = 5) -> RetrievalResult:
+        """Retrieve relevant chunks from the RAG corpus.
+
+        Parameters
+        ----------
+        query:
+            The search query.
+        top_k:
+            Maximum number of chunks to return.
+
+        Returns
+        -------
+        RetrievalResult
+            Contains the retrieved chunks, or empty if RAG is not
+            configured or the query fails.
+        """
+        if not self.is_configured:
+            logger.debug("RAG not configured — returning empty retrieval.")
+            return RetrievalResult(query=query)
+
+        if not query.strip():
+            logger.debug("Empty query — returning empty retrieval.")
+            return RetrievalResult(query=query)
+
+        self._ensure_initialized()
+        rag = _import_vertexai_rag()
+        try:
+            response = rag.retrieval_query(
+                rag_resources=[
+                    rag.RagResource(rag_corpus=self.corpus_name),
+                ],
+                text=query,
+                similarity_top_k=top_k,
+            )
+            chunks = [
+                RetrievedChunk(
+                    text=str(ctx.text),
+                    score=float(ctx.distance) if hasattr(ctx, "distance") else 0.0,
+                    source=str(ctx.source_uri) if hasattr(ctx, "source_uri") else "",
+                )
+                for ctx in (response.contexts.contexts if response.contexts else [])
+            ]
+            logger.info("RAG retrieval: %d chunk(s) for query=%r", len(chunks), query[:80])
+            return RetrievalResult(chunks=chunks, query=query)
+        except Exception:
+            logger.exception("RAG retrieval failed for query=%r", query[:80])
+            return RetrievalResult(query=query)

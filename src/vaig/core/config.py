@@ -687,6 +687,9 @@ class ExportConfig(BaseModel):
         default="",
         validation_alias=AliasChoices("vertex_rag_corpus_id", "rag_corpus_name"),
     )
+    rag_enabled: bool = False
+    rag_chunk_size: int = 1024
+    rag_chunk_overlap: int = 200
 
     @model_validator(mode="after")
     def _normalize_export_fields(self) -> ExportConfig:

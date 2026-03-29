@@ -269,6 +269,31 @@ class Orchestrator:
             f"{wrap_untrusted_content(tools_summary) if tools_summary else ''}"
         )
 
+    def _retrieve_rag_context(self, query: str) -> str:
+        """Retrieve historical context from the RAG corpus, if configured.
+
+        Returns a formatted context string to prepend to the agent pipeline,
+        or an empty string if RAG is not enabled or the query fails.
+        """
+        export_cfg = self._settings.export
+        if not export_cfg.rag_enabled or not export_cfg.rag_corpus_name:
+            return ""
+
+        try:
+            from vaig.core.rag import RAGKnowledgeBase
+
+            rag_kb = RAGKnowledgeBase(config=export_cfg, project=export_cfg.gcp_project_id)
+            result = rag_kb.retrieve(query)
+            if result.has_results:
+                formatted = result.format_context()
+                logger.info("RAG context injected: %d chunk(s)", len(result.chunks))
+                return f"## Historical Context from Past Reports\n\n{formatted}"
+        except ImportError:
+            logger.debug("vertexai not installed — RAG context injection skipped.")
+        except Exception:
+            logger.warning("RAG context retrieval failed — proceeding without.", exc_info=True)
+        return ""
+
     def create_agents_for_skill(
         self,
         skill: BaseSkill,
@@ -1112,6 +1137,12 @@ class Orchestrator:
             current_context = ""
             context_chain: list[str] = []
             required_sections = skill.get_required_output_sections()
+
+            # ── RAG historical context injection ─────────────────
+            rag_context = self._retrieve_rag_context(query)
+            if rag_context:
+                current_context = rag_context
+                context_chain.append(rag_context)
 
             # current_state already initialized above for all branches
 
@@ -2172,6 +2203,12 @@ class Orchestrator:
             current_context = ""
             context_chain: list[str] = []
             required_sections = skill.get_required_output_sections()
+
+            # ── RAG historical context injection ─────────────────
+            rag_context = self._retrieve_rag_context(query)
+            if rag_context:
+                current_context = rag_context
+                context_chain.append(rag_context)
 
             run_cost_usd: float = 0.0
             max_cost_per_run: float = self._settings.budget.max_cost_per_run
