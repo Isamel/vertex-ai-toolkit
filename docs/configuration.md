@@ -78,7 +78,31 @@ generation:
   max_output_tokens: 16384           # Maximum tokens in response
   top_p: 0.95                        # Nucleus sampling threshold
   top_k: 40                          # Top-k sampling
+  thinking:                          # Gemini thinking mode (nested)
+    enabled: false                   # Enable thinking mode
+    budget_tokens: null              # Token budget (null=model default, 0=disable, -1=auto)
+    include_thoughts: true           # Include thought content in response
 ```
+
+#### `generation.thinking` — Gemini Thinking Mode
+
+Controls Gemini's extended thinking capability. When enabled on a supported model (e.g. `gemini-2.5-flash`, `gemini-2.5-pro`), a `thinking_config` parameter is included in the `GenerateContentConfig` sent to the API. Thinking mode is **opt-in** — disabled by default — so existing behaviour is unchanged unless explicitly enabled.
+
+```yaml
+generation:
+  thinking:
+    enabled: false                   # Enable thinking mode (default: false)
+    budget_tokens: null              # Token budget for thinking (default: null)
+    include_thoughts: true           # Include thought parts in response (default: true)
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `false` | When `true` and the model supports thinking, the thinking config is sent with every request. |
+| `budget_tokens` | integer \| null | `null` | Token budget for the thinking phase. `null` = use model default. `0` = disable thinking. `-1` = automatic budget. Positive integer = fixed budget. |
+| `include_thoughts` | boolean | `true` | Whether to include thought content alongside the output in the response. |
+
+> **Note**: Thinking mode only activates on models that support it (`gemini-2.5-flash`, `gemini-2.5-pro` and their versioned variants). Enabling it on other models has no effect. Override via `VAIG_GENERATION__THINKING__ENABLED`, `VAIG_GENERATION__THINKING__BUDGET_TOKENS`, etc.
 
 ### `models` — Model Selection
 
@@ -346,6 +370,10 @@ auth:
 generation:
   temperature: 0.3                   # Lower for more deterministic output
   max_output_tokens: 32768
+  thinking:
+    enabled: true                    # Enable Gemini thinking mode
+    budget_tokens: null              # Use model default budget
+    include_thoughts: true
 
 models:
   default: gemini-2.5-pro
@@ -378,6 +406,15 @@ coding:
     - make
     - pytest
 
+context_window:
+  warn_threshold_pct: 80.0
+  error_threshold_pct: 95.0
+
+cache:
+  enabled: false                     # Enable for repeated stateless queries
+  max_size: 128
+  ttl_seconds: 300
+
 gke:
   cluster_name: production-cluster
   default_namespace: api
@@ -408,6 +445,14 @@ safety:
 telemetry:
   enabled: true
   buffer_size: 50
+
+export:
+  enabled: false
+  gcp_project_id: my-analytics-project
+  bigquery_dataset: vaig_analytics
+  gcs_bucket: my-vaig-exports
+  gcs_prefix: rag_data/
+  rag_enabled: false
 
 logging:
   level: INFO
@@ -489,6 +534,77 @@ plugins:
   # - ./plugins
   # - ~/.vaig/plugins
 ```
+
+### `context_window` — Context Window Monitoring
+
+Controls thresholds for warning and error states when the model's prompt token usage approaches the context window limit. This helps detect and diagnose situations where large prompts or long conversation histories are consuming most of the available context.
+
+```yaml
+context_window:
+  warn_threshold_pct: 80.0           # Warn when usage exceeds this % (default: 80.0)
+  error_threshold_pct: 95.0          # Error when usage exceeds this % (default: 95.0)
+  context_window_size: 1048576       # Default context window in tokens (default: 1048576)
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `warn_threshold_pct` | float | `80.0` | Percentage of context window usage that triggers a WARNING log. Must be between 0.0 and 100.0. |
+| `error_threshold_pct` | float | `95.0` | Percentage of context window usage that triggers an ERROR log. Must be between 0.0 and 100.0. |
+| `context_window_size` | integer | `1048576` | Default context window size in tokens. This is overridden per model when `models.available` entries specify a `context_window` value. |
+
+> **Note**: `warn_threshold_pct` must be ≤ `error_threshold_pct`. Override via `VAIG_CONTEXT_WINDOW__WARN_THRESHOLD_PCT`, etc.
+
+### `cache` — Response Caching
+
+Controls the in-memory LRU cache for non-streaming, non-tool-use Gemini API responses. **Disabled by default** because LLM responses often depend on conversation context — enable only when appropriate (e.g. repeated stateless queries).
+
+```yaml
+cache:
+  enabled: false                     # Enable response caching (default: false)
+  max_size: 128                      # Maximum cached entries (default: 128)
+  ttl_seconds: 300                   # Time-to-live per entry in seconds (default: 300)
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable the in-memory response cache. Only caches non-streaming, non-tool-use responses. |
+| `max_size` | integer | `128` | Maximum number of entries in the LRU cache. When full, the least-recently-used entry is evicted. |
+| `ttl_seconds` | integer | `300` | Time-to-live in seconds for each cached entry. Entries older than this are discarded. |
+
+### `export` — RAG Pipeline Export
+
+Controls export of VAIG telemetry, tool calls, and health reports to GCP (BigQuery and GCS). **Disabled by default** — enable explicitly with `export.enabled = true` in config or `VAIG_EXPORT__ENABLED=true`.
+
+```yaml
+export:
+  enabled: false                     # Enable RAG data export (default: false)
+  gcp_project_id: ""                 # GCP project for BigQuery/GCS
+  bigquery_dataset: vaig_analytics   # BigQuery dataset name (default: vaig_analytics)
+  gcs_bucket: ""                     # GCS bucket for exported data
+  gcs_prefix: "rag_data/"           # GCS object prefix (default: "rag_data/")
+  auto_export_reports: false         # Auto-export health reports (default: false)
+  auto_export_telemetry: false       # Auto-export telemetry data (default: false)
+  vertex_rag_corpus_id: ""           # Vertex AI RAG corpus ID
+  rag_enabled: false                 # Enable RAG corpus integration (default: false)
+  rag_chunk_size: 1024               # Chunk size for RAG documents (default: 1024)
+  rag_chunk_overlap: 200             # Overlap between chunks (default: 200)
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable export pipeline. |
+| `gcp_project_id` | string | `""` | GCP project ID for BigQuery and GCS operations. Also accepts the legacy alias `bigquery_project`. |
+| `bigquery_dataset` | string | `"vaig_analytics"` | BigQuery dataset name where telemetry and report tables are created. |
+| `gcs_bucket` | string | `""` | GCS bucket name for exported data (e.g. `"my-vaig-exports"`). |
+| `gcs_prefix` | string | `"rag_data/"` | Object key prefix inside the GCS bucket. Automatically normalized to end with `/`. |
+| `auto_export_reports` | boolean | `false` | When `true`, health reports are automatically exported after generation. |
+| `auto_export_telemetry` | boolean | `false` | When `true`, telemetry events are exported on flush. |
+| `vertex_rag_corpus_id` | string | `""` | Vertex AI RAG corpus resource ID for ingestion. Also accepts the legacy alias `rag_corpus_name`. |
+| `rag_enabled` | boolean | `false` | Enable RAG corpus integration (chunking + ingestion to Vertex AI RAG). |
+| `rag_chunk_size` | integer | `1024` | Chunk size in tokens for RAG document splitting. Must be a positive integer. |
+| `rag_chunk_overlap` | integer | `200` | Token overlap between adjacent chunks. Must be non-negative and less than `rag_chunk_size`. |
+
+> **Note**: Requires the `[rag]` optional dependency group: `pip install 'vertex-ai-toolkit[rag]'`. Override individual fields via `VAIG_EXPORT__GCP_PROJECT_ID`, `VAIG_EXPORT__RAG_ENABLED`, etc.
 
 ---
 

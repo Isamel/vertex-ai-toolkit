@@ -15,7 +15,7 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
   - **Code Migration** — migrate source code between programming languages (e.g., Python → Go) with YAML-driven idiom mappings
   - **Greenfield** — scaffold new projects from scratch with a 6-stage pipeline
   - **Service Health** — comprehensive GKE service diagnostics (4-agent pipeline with two-pass gathering)
-  - Plus 25+ built-in skills for SRE, DevOps, and platform engineering
+  - Plus 33 built-in skills for SRE, DevOps, and platform engineering
 - **CodingSkillOrchestrator** — 3-agent orchestration (Planner → Implementer → Verifier) for complex coding tasks; activate with `--pipeline` on `vaig ask --code`
 - **Multi-agent orchestration** — skills spawn specialized agents with different roles and models
 - **Async fanout** — true parallel agent execution via ThreadPoolExecutor for multi-agent workflows
@@ -39,6 +39,15 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
 - **Watch session HTML export** — pressing Ctrl+C during a `--watch` session exports a self-contained HTML report with diff timeline
 - **ArgoCD management cluster support** — connect to ArgoCD via API server, separate kubeconfig context, or same-cluster mode
 - **Language override** — set `language: "es"` (or any BCP-47 code) in config YAML to produce all agent output in that language; auto-detected from query when set to `"en"` (default)
+- **Feedback loop** — `vaig feedback` records 1–5 quality ratings plus optional comments for specific pipeline runs, exported for analysis (e.g., to BigQuery)
+- **Optimize command** — `vaig optimize` analyzes tool call patterns and report quality (`--reports`) to identify inefficiencies and improvement opportunities
+- **Adaptive Prompt Tuning** — `PromptTuner` + `ReportStore` analyze past report quality signals and generate actionable prompt improvements automatically
+- **RAG Engine integration** — Vertex AI RAG corpus for historical context injection; past findings and reports enrich agent prompts via `RAGKnowledgeBase`
+- **Shared pipeline state** — `PipelineState` model propagated across agents during orchestration, enabling state-aware multi-agent workflows
+- **Anti-hallucination prompt rules** — structured `<anti_hallucination_rules>` blocks injected into skill system prompts to enforce evidence-based reasoning
+- **Credential redaction** — Helm values containing `DATABASE_URL`, passwords, tokens, and other sensitive patterns are automatically redacted before agent exposure
+- **Multiline REPL input** — enter multi-line prompts in the interactive REPL (triple-quote delimiter: `"""`); both async and sync input modes supported
+- **Priority-based finding deduplication** — watch mode diff engine matches findings by stable ID, tracks severity changes across iterations, and surfaces only meaningful deltas
 - **Cross-platform** — UTF-8 enforcement on all file I/O; Rich console falls back to plain text on non-ANSI terminals (Windows-safe)
 
 ## Requirements
@@ -78,6 +87,12 @@ vaig ask "Investigate why API latency spiked" -s rca -f error.log
 
 # Use a specific model
 vaig chat --model gemini-2.5-flash
+
+# Submit feedback on the last run
+vaig feedback --rating 5 --last
+
+# Analyze tool call patterns and report quality
+vaig optimize --reports
 ```
 
 ## CLI Commands
@@ -213,6 +228,61 @@ Export telemetry events as JSONL or CSV. Supports `--type`, `--since`, `--format
 ### `vaig stats clear --days N --confirm`
 
 Delete telemetry events older than N days.
+
+### `vaig feedback`
+
+Submit quality feedback for a specific pipeline run.
+
+```bash
+vaig feedback [OPTIONS]
+
+Options:
+  -r, --rating INT       Quality rating (1–5)
+  -m, --comment TEXT     Free-text feedback comment
+  --last                 Attach feedback to the most recent pipeline run
+  --run-id TEXT          Attach feedback to a specific run ID
+```
+
+Examples:
+
+```bash
+# Rate the last run
+vaig feedback --rating 5 --last
+
+# Submit feedback with a message
+vaig feedback -r 4 -m "Great analysis" --last
+
+# Reference a specific run
+vaig feedback -r 3 --run-id 20250601T120000Z
+```
+
+### `vaig optimize`
+
+Analyze tool call patterns and report quality to identify inefficiencies and improvement opportunities.
+
+```bash
+vaig optimize [OPTIONS]
+
+Options:
+  --last INT             Number of recent runs to analyze (default: 50)
+  --reports              Enable report quality analysis (PromptTuner + ReportStore)
+```
+
+Examples:
+
+```bash
+# Analyze tool call patterns from recent runs
+vaig optimize
+
+# Analyze the last 20 runs
+vaig optimize --last 20
+
+# Include report quality analysis
+vaig optimize --reports
+
+# Both: last N + report quality
+vaig optimize --reports --last 10
+```
 
 ## REPL Slash Commands
 
@@ -748,6 +818,11 @@ vertex-ai-toolkit/
 │   │   ├── auth.py            # ADC + SA impersonation + dual-auth
 │   │   ├── client.py          # GeminiClient (streaming, multi-model)
 │   │   ├── cost_tracker.py    # Per-request cost tracking (SQLite)
+│   │   ├── models.py          # PipelineState + shared data models
+│   │   ├── prompt_tuner.py    # Adaptive prompt tuning from report quality signals
+│   │   ├── report_store.py    # Local report persistence for quality analysis
+│   │   ├── rag.py             # Vertex AI RAG Engine integration (RAGKnowledgeBase)
+│   │   ├── optimizer.py       # Tool call pattern analysis
 │   │   ├── prompt_defense.py  # wrap_untrusted_content() for prompt injection defense
 │   │   └── tool_call_store.py # ToolCallStore — per-tool-call JSONL recording
 │   ├── context/
@@ -766,7 +841,7 @@ vertex-ai-toolkit/
 │   │   ├── code_migration/ # Code Migration skill (language-to-language, e.g. Python → Go)
 │   │   │   └── idioms/     # YAML idiom + dependency mappings
 │   │   ├── greenfield/     # Greenfield project scaffolding (6-stage pipeline)
-│   │   └── ...             # 25+ additional built-in skills
+│   │   └── ...             # 33 built-in skills total
 │   ├── agents/
 │   │   ├── base.py            # AgentRole, AgentConfig, BaseAgent ABC
 │   │   ├── specialist.py      # SpecialistAgent (wraps GeminiClient)
@@ -794,7 +869,7 @@ vertex-ai-toolkit/
 │   └── cli/
 │       ├── app.py          # Typer commands
 │       └── repl.py         # Interactive REPL (prompt-toolkit)
-├── tests/                  # 60+ test files
+├── tests/                  # 151 test files, 6,631 tests
 └── .github/workflows/
     ├── ci.yml              # Test + Lint + Type check on PR/push
     └── build.yml           # PyInstaller standalone binary builds

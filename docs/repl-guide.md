@@ -57,6 +57,16 @@ Toggle coding agent mode. When enabled, the AI can read, write, and edit files i
 
 > **Note:** In coding mode, the AI has access to file tools (`read_file`, `write_file`, `edit_file`, `list_files`, `search_files`) and the `run_command` shell tool. All operations are sandboxed to the workspace directory.
 
+#### `/live`
+
+Toggle live infrastructure mode. When enabled, chat messages are routed to the infrastructure agent for tool-backed GKE/GCP investigation. If a skill with `requires_live_tools=True` is active, the orchestrated pipeline is used instead.
+
+```
+/live
+```
+
+> **Note:** Live mode is mutually exclusive with code mode — enabling `/live` automatically disables `/code`. Live mode includes **write tools** (scale, restart, label, annotate) — use with caution. Requires `vertex-ai-toolkit[live]` optional dependencies.
+
 ### Model & Skill Commands
 
 #### `/model [model_name]`
@@ -202,6 +212,9 @@ $ vaig chat -s rca -n "payment-outage"
 
 > We're seeing 503 errors on the payment-service since 14:30 UTC.
 > The service runs on GKE in the production namespace.
+
+> /live
+> Check pod status and recent events for payment-service
 
 > /code
 > Can you check the deployment manifest at k8s/payment-service.yaml?
