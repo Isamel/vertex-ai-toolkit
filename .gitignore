@@ -54,3 +54,12 @@ tool_results/
 
 # Ruff
 .ruff_cache/
+
+# Local notes (personal, not tracked)
+.local/
+
+# Watch session exports
+vaig-watch-session-*.html
+
+# Screenshots (accidental)
+*.png
