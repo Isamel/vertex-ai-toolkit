@@ -61,5 +61,6 @@ tool_results/
 # Watch session exports
 vaig-watch-session-*.html
 
-# Screenshots (accidental)
-*.png
+# Screenshots (accidental captures, not docs assets)
+Screenshot*.png
+Screen Shot *.png
