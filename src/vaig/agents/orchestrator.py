@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from pydantic import BaseModel
+
 from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
 from vaig.agents.mixins import OnToolCall
 from vaig.agents.specialist import SpecialistAgent
@@ -39,6 +41,31 @@ if TYPE_CHECKING:
     from vaig.core.tool_call_store import ToolCallStore
 
 logger = logging.getLogger(__name__)
+
+
+def _combine_state_patches(
+    agent_result_patch: dict[str, Any] | BaseModel | None,
+    agent_name: str,
+    agent_content: str,
+) -> dict[str, Any]:
+    """Combine agent state patch with agent_outputs into a single patch.
+
+    Merges the optional ``state_patch`` emitted by an agent with the
+    mandatory ``agent_outputs`` entry, allowing a single
+    :func:`apply_state_patch` call instead of two.
+    """
+    if agent_result_patch is None:
+        raw: dict[str, Any] = {}
+    elif isinstance(agent_result_patch, BaseModel):
+        raw = agent_result_patch.model_dump()
+    else:
+        raw = dict(agent_result_patch)
+    combined: dict[str, Any] = raw
+    existing_outputs = combined.get("agent_outputs", {})
+    if not isinstance(existing_outputs, dict):
+        existing_outputs = {}
+    combined["agent_outputs"] = {**existing_outputs, agent_name: agent_content}
+    return combined
 
 
 class OnAgentProgress(Protocol):
@@ -613,10 +640,10 @@ class Orchestrator:
 
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
-            current_state = apply_state_patch(current_state, agent_result.state_patch)
-            current_state = apply_state_patch(
-                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            combined_patch = _combine_state_patches(
+                agent_result.state_patch, agent_result.agent_name, agent_result.content
             )
+            current_state = apply_state_patch(current_state, combined_patch)
             self._current_pipeline_state = current_state
 
             # ── Cost circuit breaker ──────────────────────────────────────
@@ -751,10 +778,10 @@ class Orchestrator:
 
         # Apply state patches sequentially (fanout order)
         for agent_result in result.agent_results:
-            current_state = apply_state_patch(current_state, agent_result.state_patch)
-            current_state = apply_state_patch(
-                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            combined_patch = _combine_state_patches(
+                agent_result.state_patch, agent_result.agent_name, agent_result.content
             )
+            current_state = apply_state_patch(current_state, combined_patch)
         self._current_pipeline_state = current_state
 
         # Merge all agent outputs
@@ -1108,10 +1135,10 @@ class Orchestrator:
 
             # Apply state patches sequentially (fanout order)
             for agent_result in result.agent_results:
-                current_state = apply_state_patch(current_state, agent_result.state_patch)
-                current_state = apply_state_patch(
-                    current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+                combined_patch = _combine_state_patches(
+                    agent_result.state_patch, agent_result.agent_name, agent_result.content
                 )
+                current_state = apply_state_patch(current_state, combined_patch)
 
             result.success = any(r.success for r in result.agent_results)
             result.synthesized_output = self._merge_agent_outputs(result.agent_results)
@@ -1134,10 +1161,10 @@ class Orchestrator:
                     _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
-                current_state = apply_state_patch(current_state, agent_result.state_patch)
-                current_state = apply_state_patch(
-                    current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+                combined_patch = _combine_state_patches(
+                    agent_result.state_patch, agent_result.agent_name, agent_result.content
                 )
+                current_state = apply_state_patch(current_state, combined_patch)
                 self._current_pipeline_state = current_state
                 result.success = agent_result.success
                 result.synthesized_output = agent_result.content
@@ -1202,10 +1229,10 @@ class Orchestrator:
                     _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
-                current_state = apply_state_patch(current_state, agent_result.state_patch)
-                current_state = apply_state_patch(
-                    current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+                combined_patch = _combine_state_patches(
+                    agent_result.state_patch, agent_result.agent_name, agent_result.content
                 )
+                current_state = apply_state_patch(current_state, combined_patch)
                 self._current_pipeline_state = current_state
                 # ── Cost circuit breaker ──────────────────────────────────
                 run_cost_usd += _compute_step_cost(agent_result, agent.model)
@@ -1765,10 +1792,10 @@ class Orchestrator:
 
         # Apply state patches sequentially (fanout order)
         for agent_result in result.agent_results:
-            current_state = apply_state_patch(current_state, agent_result.state_patch)
-            current_state = apply_state_patch(
-                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            combined_patch = _combine_state_patches(
+                agent_result.state_patch, agent_result.agent_name, agent_result.content
             )
+            current_state = apply_state_patch(current_state, combined_patch)
         self._current_pipeline_state = current_state
 
         result.success = any(r.success for r in result.agent_results)
@@ -1837,10 +1864,10 @@ class Orchestrator:
 
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
-            current_state = apply_state_patch(current_state, agent_result.state_patch)
-            current_state = apply_state_patch(
-                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            combined_patch = _combine_state_patches(
+                agent_result.state_patch, agent_result.agent_name, agent_result.content
             )
+            current_state = apply_state_patch(current_state, combined_patch)
             self._current_pipeline_state = current_state
 
             # ── Cost circuit breaker ──────────────────────────────────────
@@ -2189,10 +2216,10 @@ class Orchestrator:
 
             # Apply state patches sequentially (fanout order)
             for agent_result in result.agent_results:
-                current_state = apply_state_patch(current_state, agent_result.state_patch)
-                current_state = apply_state_patch(
-                    current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+                combined_patch = _combine_state_patches(
+                    agent_result.state_patch, agent_result.agent_name, agent_result.content
                 )
+                current_state = apply_state_patch(current_state, combined_patch)
             self._current_pipeline_state = current_state
 
             result.success = any(r.success for r in result.agent_results)
@@ -2215,10 +2242,10 @@ class Orchestrator:
                     _fire_agent_progress(on_agent_progress, agents[0].name, 0, 1, "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
-                current_state = apply_state_patch(current_state, agent_result.state_patch)
-                current_state = apply_state_patch(
-                    current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+                combined_patch = _combine_state_patches(
+                    agent_result.state_patch, agent_result.agent_name, agent_result.content
                 )
+                current_state = apply_state_patch(current_state, combined_patch)
                 self._current_pipeline_state = current_state
                 result.success = agent_result.success
                 result.synthesized_output = agent_result.content
@@ -2278,10 +2305,10 @@ class Orchestrator:
                     _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
-                current_state = apply_state_patch(current_state, agent_result.state_patch)
-                current_state = apply_state_patch(
-                    current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+                combined_patch = _combine_state_patches(
+                    agent_result.state_patch, agent_result.agent_name, agent_result.content
                 )
+                current_state = apply_state_patch(current_state, combined_patch)
                 self._current_pipeline_state = current_state
 
                 # ── Cost circuit breaker ──────────────────────────────────
@@ -2868,10 +2895,10 @@ class Orchestrator:
 
         # Apply state patches from parallel gatherers sequentially
         for agent_result in parallel_results:
-            current_state = apply_state_patch(current_state, agent_result.state_patch)
-            current_state = apply_state_patch(
-                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            combined_patch = _combine_state_patches(
+                agent_result.state_patch, agent_result.agent_name, agent_result.content
             )
+            current_state = apply_state_patch(current_state, combined_patch)
         self._current_pipeline_state = current_state
 
         # ── Validate gatherer outputs (task 1.4) ─────────────────────────
@@ -2947,10 +2974,10 @@ class Orchestrator:
 
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
-            current_state = apply_state_patch(current_state, agent_result.state_patch)
-            current_state = apply_state_patch(
-                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            combined_patch = _combine_state_patches(
+                agent_result.state_patch, agent_result.agent_name, agent_result.content
             )
+            current_state = apply_state_patch(current_state, combined_patch)
             self._current_pipeline_state = current_state
 
             # ── Cost circuit breaker ──────────────────────────────────────
@@ -3197,10 +3224,10 @@ class Orchestrator:
 
         # Apply state patches from parallel gatherers sequentially
         for agent_result in parallel_results:
-            current_state = apply_state_patch(current_state, agent_result.state_patch)
-            current_state = apply_state_patch(
-                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            combined_patch = _combine_state_patches(
+                agent_result.state_patch, agent_result.agent_name, agent_result.content
             )
+            current_state = apply_state_patch(current_state, combined_patch)
         self._current_pipeline_state = current_state
 
         # ── Validate gatherer outputs (task 1.4) ─────────────────────────
@@ -3276,10 +3303,10 @@ class Orchestrator:
 
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
-            current_state = apply_state_patch(current_state, agent_result.state_patch)
-            current_state = apply_state_patch(
-                current_state, {"agent_outputs": {agent_result.agent_name: agent_result.content}}
+            combined_patch = _combine_state_patches(
+                agent_result.state_patch, agent_result.agent_name, agent_result.content
             )
+            current_state = apply_state_patch(current_state, combined_patch)
             self._current_pipeline_state = current_state
 
             # ── Cost circuit breaker ──────────────────────────────────────

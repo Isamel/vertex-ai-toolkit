@@ -62,15 +62,20 @@ class PipelineState(BaseModel):
         parts.append(f"Findings: {len(self.findings)}")
 
         if self.affected_resources:
-            parts.append(f"Affected resources: {', '.join(self.affected_resources)}")
+            parts.append(
+                f"Affected resources: {', '.join(str(r) for r in self.affected_resources if r is not None)}"
+            )
 
         if self.flags:
-            active = [k for k, v in sorted(self.flags.items()) if v]
+            active = [k for k, v in sorted(self.flags.items(), key=lambda kv: str(kv[0])) if v]
             if active:
                 parts.append(f"Flags: {', '.join(active)}")
 
         if self.management_context:
-            ctx_items = [f"{k}={v}" for k, v in sorted(self.management_context.items())]
+            ctx_items = [
+                f"{str(k)}={str(v)}"
+                for k, v in sorted(self.management_context.items(), key=lambda kv: str(kv[0]))
+            ]
             parts.append(f"Context: {'; '.join(ctx_items)}")
 
         if self.errors:
@@ -139,7 +144,9 @@ def apply_state_patch(
 
     raw_affected = patch_dict.get("affected_resources", ())
     if isinstance(raw_affected, (list, tuple)):
-        new_affected: tuple[str, ...] = tuple(state.affected_resources) + tuple(raw_affected)
+        new_affected: tuple[str, ...] = tuple(state.affected_resources) + tuple(
+            str(item) for item in raw_affected if item is not None
+        )
     else:
         new_affected = tuple(state.affected_resources)
 
