@@ -38,7 +38,11 @@ def _age(creation_timestamp: datetime | str | None) -> str:
         return "<unknown>"
     if isinstance(creation_timestamp, str):
         try:
-            creation_timestamp = datetime.fromisoformat(creation_timestamp.replace("Z", "+00:00"))
+            ts_to_parse = creation_timestamp
+            if ts_to_parse.endswith("Z"):
+                # Handle 'Z' suffix for UTC, which fromisoformat() only supports in Python 3.11+
+                ts_to_parse = ts_to_parse[:-1] + "+00:00"
+            creation_timestamp = datetime.fromisoformat(ts_to_parse)
         except ValueError:
             return "<unknown>"
     now = datetime.now(UTC)
