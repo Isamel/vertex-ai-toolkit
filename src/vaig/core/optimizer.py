@@ -19,6 +19,15 @@ from vaig.core.tool_call_store import ToolCallStore
 logger = logging.getLogger(__name__)
 
 
+# ── Suggestion thresholds ─────────────────────────────────────
+FAILURE_RATE_THRESHOLD = 0.8
+MIN_CALLS_FOR_ANALYSIS = 3
+SLOW_TOOL_DURATION_S = 10.0
+LOW_CACHE_HIT_RATE = 0.1
+MIN_CALLS_FOR_CACHE_ANALYSIS = 10
+REDUNDANT_CALL_THRESHOLD = 3
+
+
 # ── Data models ───────────────────────────────────────────────
 
 
@@ -92,8 +101,11 @@ class ToolCallOptimizer:
             A :class:`ToolInsights` with per-tool stats, redundant calls,
             and optimization suggestions.
         """
+        # Runs are ordered lexicographically by date directory name
+        # (YYYY-MM-DD), which is chronological at the day level but not
+        # necessarily within a single day.
         runs = self._store.list_runs()
-        selected_runs = runs[-last_n_runs:] if len(runs) > last_n_runs else runs
+        selected_runs = runs[-last_n_runs:]
 
         if not selected_runs:
             insights = ToolInsights(
@@ -107,14 +119,12 @@ class ToolCallOptimizer:
 
         # Collect all records from selected runs
         all_records: list[dict[str, Any]] = []
-        run_ids_seen: set[str] = set()
 
         for run_id, _date in selected_runs:
             records = self._store.read_records(run_id=run_id)
             all_records.extend(records)
-            run_ids_seen.add(run_id)
 
-        total_runs = len(run_ids_seen) if run_ids_seen else len(selected_runs)
+        total_runs = len(selected_runs)
         total_calls = len(all_records)
         total_duration = sum(
             float(r.get("duration_s", 0.0)) for r in all_records
@@ -200,7 +210,7 @@ class ToolCallOptimizer:
 
         for name, stats in insights.tools.items():
             # High failure rate
-            if stats.failure_rate > 0.8 and stats.call_count >= 3:
+            if stats.failure_rate > FAILURE_RATE_THRESHOLD and stats.call_count >= MIN_CALLS_FOR_ANALYSIS:
                 pct = round(stats.failure_rate * 100)
                 suggestions.append(
                     f"{name} fails {pct}% of the time "
@@ -209,7 +219,7 @@ class ToolCallOptimizer:
                 )
 
             # Slow tool
-            if stats.avg_duration_s > 10.0:
+            if stats.avg_duration_s > SLOW_TOOL_DURATION_S:
                 avg = round(stats.avg_duration_s, 1)
                 suggestions.append(
                     f"{name} averages {avg}s per call "
@@ -218,8 +228,8 @@ class ToolCallOptimizer:
 
             # Low cache hit rate with high volume
             if (
-                stats.cache_hit_rate < 0.1
-                and stats.call_count >= 10
+                stats.cache_hit_rate < LOW_CACHE_HIT_RATE
+                and stats.call_count >= MIN_CALLS_FOR_CACHE_ANALYSIS
                 and stats.cache_hit_count == 0
             ):
                 suggestions.append(
@@ -229,7 +239,7 @@ class ToolCallOptimizer:
 
         # Redundant calls
         for rc in insights.redundant_calls:
-            if rc.count > 3:
+            if rc.count > REDUNDANT_CALL_THRESHOLD:
                 suggestions.append(
                     f"{rc.tool_name} called {rc.count} times with "
                     f"same args in run {rc.run_id} — verify checklist"
@@ -242,7 +252,7 @@ class ToolCallOptimizer:
         records: list[dict[str, Any]],
     ) -> list[RedundantCall]:
         """Find tool calls repeated with identical args within the same run."""
-        # Key: (run_id, args_hash) → count
+        # Key: (run_id, tool_name, args_hash) → count
         call_counts: dict[tuple[str, str, str], int] = {}
 
         for rec in records:

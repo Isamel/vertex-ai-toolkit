@@ -159,43 +159,19 @@ def main(
 
 
 # ── Register commands from modules ────────────────────────────
-from vaig.cli.commands import (  # noqa: E402
+from vaig.cli.commands import (  # noqa: E402, I001
     ask as _ask_mod,
-)
-from vaig.cli.commands import (
     chat as _chat_mod,
-)
-from vaig.cli.commands import (
     discover as _discover_mod,
-)
-from vaig.cli.commands import (
     doctor as _doctor_mod,
-)
-from vaig.cli.commands import (
     export_cmd as _export_mod,
-)
-from vaig.cli.commands import (
     feedback as _feedback_mod,
-)
-from vaig.cli.commands import (
     live as _live_mod,
-)
-from vaig.cli.commands import (
     mcp as _mcp_mod,
-)
-from vaig.cli.commands import (
     models as _models_mod,
-)
-from vaig.cli.commands import (
     optimize as _optimize_mod,
-)
-from vaig.cli.commands import (
     sessions as _sessions_mod,
-)
-from vaig.cli.commands import (
     skills as _skills_mod,
-)
-from vaig.cli.commands import (
     stats as _stats_mod,
 )
 from vaig.cli.commands.cloud_cmd import cloud_app  # noqa: E402
