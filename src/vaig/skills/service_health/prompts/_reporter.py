@@ -208,11 +208,11 @@ Always state the scope in the observability finding's ``evidence`` field.
 #### Standalone APM Findings (no K8s correlation required)
 APM data from ``get_datadog_apm_services`` can generate findings INDEPENDENTLY of
 Kubernetes health. If the analyzer flagged APM metrics with CRITICAL or HIGH severity
-(using the APM severity thresholds from Section 5 of the analysis), you MUST include
+(using the APM severity thresholds from the APM / Datadog Metrics Evaluation), you MUST include
 those findings in the report even if all Kubernetes pods are healthy.
 
 - A 43% error rate is CRITICAL regardless of Kubernetes pod health.
-- A p50 latency > 5s is CRITICAL regardless of Kubernetes pod health.
+- An avg latency > 5s is CRITICAL regardless of Kubernetes pod health.
 - Throughput near zero when traffic is expected is CRITICAL regardless of K8s status.
 
 Create findings with ``category="apm"`` and the severity determined by the analyzer's

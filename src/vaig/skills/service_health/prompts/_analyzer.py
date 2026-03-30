@@ -60,7 +60,8 @@ Kubernetes findings.
 - **10% – 25%**: HIGH — severe error rate impacting users, requires immediate attention
 - **> 25%**: CRITICAL — catastrophic error rate, likely outage scenario
 
-#### Latency Thresholds (p50 / avg)
+#### Latency Thresholds (avg latency)
+Use the reported average latency values from Datadog APM for these thresholds:
 - **< 100ms**: HEALTHY — responsive service
 - **100ms – 500ms**: LOW — acceptable for most services
 - **500ms – 1s**: MEDIUM — degraded user experience
@@ -69,7 +70,7 @@ Kubernetes findings.
 
 #### Throughput Thresholds
 - **Steady or growing**: HEALTHY
-- **Drop > 20% vs expected baseline**: MEDIUM — potential issue
+- **Drop > 20% compared to the lookback window average**: MEDIUM — potential issue
 - **Drop > 50%**: HIGH — significant traffic loss, possible upstream failure
 - **Near zero when expected to have traffic**: CRITICAL — service may be down
 
@@ -93,6 +94,7 @@ Identify management context from gathered data (labels and annotations from kube
 
 Include this in every finding's metadata:
 - **Managed by**: [GitOps (ArgoCD) | GitOps (Flux) | Helm | Operator (<name>) | Manual | Unknown]
+- **Category**: [apm | management | scaling | observability]
 
 ### 7. Causal Mechanism Analysis (MANDATORY for every finding)
 
