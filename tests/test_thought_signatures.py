@@ -363,7 +363,7 @@ class TestSyncPathPreservesSignatures:
             name="my_tool",
             execute=tool_fn,
             cacheable=False,
-            parameters=[],
+            parameters=None,
         )
 
         mixin = ToolLoopMixin()
@@ -430,7 +430,7 @@ class TestAsyncPathPreservesSignatures:
             name="async_tool",
             execute=tool_fn,
             cacheable=False,
-            parameters=[],
+            parameters=None,
         )
 
         mixin = ToolLoopMixin()

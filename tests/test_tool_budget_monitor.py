@@ -55,7 +55,7 @@ def _make_registry_with_dummy_tool() -> ToolRegistry:
     tool = MagicMock()
     tool.name = "dummy_tool"
     tool.description = "A dummy tool"
-    tool.parameters = []
+    tool.parameters = None
     tool.cacheable = False
     from vaig.tools.base import ToolResult
     tool.execute.return_value = ToolResult(output="done", error=False)

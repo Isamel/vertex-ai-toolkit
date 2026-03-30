@@ -52,7 +52,7 @@ def _make_tool(name: str = "ping") -> ToolDef:
     return ToolDef(
         name=name,
         description=f"Tool {name}",
-        parameters=[],
+        parameters=None,
         execute=lambda **_kw: MagicMock(output="ok", error=False),
         cacheable=False,
     )

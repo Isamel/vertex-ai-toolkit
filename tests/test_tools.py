@@ -68,7 +68,7 @@ class TestToolDef:
         t = ToolDef(name="test", description="A test tool")
         assert t.name == "test"
         assert t.description == "A test tool"
-        assert t.parameters == []
+        assert t.parameters is None
 
     def test_default_execute_returns_empty(self) -> None:
         t = ToolDef(name="noop", description="no-op")
@@ -119,10 +119,17 @@ class TestToolDef:
         assert t.cacheable is False
         assert t.cache_ttl_seconds == 30
 
-    def test_parameters_default_factory_isolation(self) -> None:
-        """Each ToolDef gets its own parameters list."""
+    def test_parameters_default_is_none(self) -> None:
+        """Default parameters is None (no schema), not a shared mutable list."""
         t1 = ToolDef(name="a", description="d")
         t2 = ToolDef(name="b", description="d")
+        assert t1.parameters is None
+        assert t2.parameters is None
+
+    def test_parameters_list_isolation(self) -> None:
+        """When parameters is explicitly a list, each ToolDef has its own copy."""
+        t1 = ToolDef(name="a", description="d", parameters=[])
+        t2 = ToolDef(name="b", description="d", parameters=[])
         t1.parameters.append(ToolParam(name="x", type="string", description="d"))
         assert len(t2.parameters) == 0
 

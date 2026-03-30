@@ -19,9 +19,15 @@ from vaig.core.config import DEFAULT_CHARS_PER_TOKEN, DEFAULT_CONTEXT_WINDOW, DE
 from vaig.core.event_bus import EventBus
 from vaig.core.events import ContextWindowChecked
 from vaig.core.exceptions import ContextWindowExceededError, MaxIterationsError
+from vaig.core.output_redactor import redact_sensitive_output
 from vaig.core.prompt_defense import wrap_untrusted_content
 from vaig.session.summarizer import SUMMARIZATION_PROMPT, estimate_history_tokens
-from vaig.tools.base import ToolCallRecord, ToolRegistry, ToolResult
+from vaig.tools.base import ToolCallRecord, ToolDef, ToolRegistry, ToolResult
+
+# Maximum allowed length for any single string argument passed to a tool.
+# Defense-in-depth against LLM-generated payloads that could exhaust tool
+# resources (e.g. disk, network, or API quotas).
+MAX_TOOL_ARG_LENGTH: int = 50_000
 
 if TYPE_CHECKING:
     from vaig.core.cache import ToolResultCache
@@ -784,6 +790,68 @@ class ToolLoopMixin:
             " Please use one of the available tools listed above."
         )
 
+    # ── Tool arg pre-validation ────────────────────────────────
+
+    @staticmethod
+    def _pre_validate_tool_args(
+        tool: ToolDef,
+        args: dict[str, Any],
+    ) -> tuple[bool, str | None]:
+        """Validate tool arguments BEFORE execution (defense-in-depth).
+
+        Checks performed:
+        1. Reject unknown arg keys not declared in ``tool.parameters``.
+        2. Check required params are present (params with ``required=True``).
+        3. Enforce max string length per arg value (``MAX_TOOL_ARG_LENGTH``).
+
+        Returns:
+            ``(True, None)`` when valid, ``(False, error_message)`` otherwise.
+        """
+        # If tool has no parameter schema (None), skip schema checks but
+        # still enforce string length. An explicit empty list means the tool
+        # takes no arguments — reject any args in that case.
+        param_schema = getattr(tool, "parameters", None)
+        if param_schema is not None:
+            if not param_schema:
+                # Explicit "no-args" schema: reject any provided arguments.
+                if args:
+                    return (
+                        False,
+                        f"Tool '{tool.name}' does not take any arguments, "
+                        f"but received: {sorted(args)}",
+                    )
+            else:
+                declared_names = {p.name for p in param_schema}
+
+                # 1. Reject unknown arg keys
+                unknown = set(args) - declared_names
+                if unknown:
+                    return (
+                        False,
+                        f"Unknown argument(s) {sorted(unknown)} for tool '{tool.name}'. "
+                        f"Allowed parameters: {sorted(declared_names)}",
+                    )
+
+                # 2. Check required params are present
+                required_names = {p.name for p in param_schema if p.required}
+                missing = required_names - set(args)
+                if missing:
+                    return (
+                        False,
+                        f"Missing required argument(s) {sorted(missing)} for tool '{tool.name}'.",
+                    )
+
+        # 3. Enforce max string length (always — even without schema)
+        for key, value in args.items():
+            if isinstance(value, str) and len(value) > MAX_TOOL_ARG_LENGTH:
+                return (
+                    False,
+                    f"Argument '{key}' for tool '{tool.name}' exceeds maximum length "
+                    f"({len(value):,} chars > {MAX_TOOL_ARG_LENGTH:,} limit).",
+                )
+
+        return (True, None)
+
     # ── Tool execution (overridable) ─────────────────────────
 
     def _execute_single_tool(
@@ -812,6 +880,17 @@ class ToolLoopMixin:
             self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="UnknownTool")
             return result
 
+        # ── Pre-validate arguments (AI-SEC4) ──────────────────
+        is_valid, validation_error = self._pre_validate_tool_args(tool, tool_args)
+        if not is_valid:
+            logger.warning("Tool %s arg validation failed: %s", tool_name, validation_error)
+            result = ToolResult(output=validation_error or "Argument validation failed", error=True)
+            self._emit_tool_telemetry(
+                tool_name, tool_args, result, t0,
+                error_type="ValidationError", error_message=validation_error or "",
+            )
+            return result
+
         try:
             logger.debug("Executing tool: %s(%s)", tool_name, tool_args)
             result = tool.execute(**tool_args)
@@ -830,7 +909,7 @@ class ToolLoopMixin:
             logger.warning("Tool %s type error: %s", tool_name, exc)
             result = ToolResult(
                 output=f"Invalid arguments for {tool_name}: {exc}. "
-                f"Expected parameters: {', '.join(p.name for p in tool.parameters)}",
+                f"Expected parameters: {', '.join(p.name for p in (tool.parameters or []))}",
                 error=True,
             )
             self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="TypeError", error_message=str(exc))
@@ -1313,6 +1392,17 @@ class ToolLoopMixin:
             self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="UnknownTool")
             return result
 
+        # ── Pre-validate arguments (AI-SEC4) ──────────────────
+        is_valid, validation_error = self._pre_validate_tool_args(tool, tool_args)
+        if not is_valid:
+            logger.warning("Tool %s arg validation failed: %s", tool_name, validation_error)
+            result = ToolResult(output=validation_error or "Argument validation failed", error=True)
+            self._emit_tool_telemetry(
+                tool_name, tool_args, result, t0,
+                error_type="ValidationError", error_message=validation_error or "",
+            )
+            return result
+
         try:
             logger.debug("Async executing tool: %s(%s)", tool_name, tool_args)
 
@@ -1340,7 +1430,7 @@ class ToolLoopMixin:
             logger.warning("Tool %s type error: %s", tool_name, exc)
             result = ToolResult(
                 output=f"Invalid arguments for {tool_name}: {exc}. "
-                f"Expected parameters: {', '.join(p.name for p in tool.parameters)}",
+                f"Expected parameters: {', '.join(p.name for p in (tool.parameters or []))}",
                 error=True,
             )
             self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="TypeError", error_message=str(exc))
@@ -1437,11 +1527,16 @@ class ToolLoopMixin:
             from datetime import datetime
 
             err_msg_store = (tool_result.output or "")[:500] if tool_result.error else ""
+            raw_output = tool_result.output or ""
+            redacted_output, redaction_count = redact_sensitive_output(raw_output)
+            # Also redact the error message snippet
+            if err_msg_store:
+                err_msg_store, _ = redact_sensitive_output(err_msg_store)
             record = ToolCallRecord(
                 tool_name=tool_name,
                 tool_args=tool_args,
-                output=tool_result.output or "",
-                output_size_bytes=len((tool_result.output or "").encode("utf-8")),
+                output=redacted_output,
+                output_size_bytes=len(redacted_output.encode("utf-8")),
                 error=tool_result.error,
                 error_type="",
                 error_message=err_msg_store,
@@ -1451,6 +1546,7 @@ class ToolLoopMixin:
                 run_id=tool_call_store.run_id,
                 iteration=iteration,
                 cached=cached,
+                redactions=redaction_count,
             )
             tool_call_store.record(record)
         except Exception:  # noqa: BLE001

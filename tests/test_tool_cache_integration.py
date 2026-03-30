@@ -236,7 +236,7 @@ class TestSyncCacheIntegration:
         tool = ToolDef(
             name="flaky",
             description="Flaky tool",
-            parameters=[],
+            parameters=None,
             execute=flaky_tool,
             cacheable=True,
             cache_ttl_seconds=0,
@@ -272,7 +272,7 @@ class TestSyncCacheIntegration:
         tool = ToolDef(
             name="get_pods",
             description="Get pods",
-            parameters=[],
+            parameters=None,
             execute=counting_tool,
             cacheable=True,
         )
@@ -411,7 +411,7 @@ class TestAsyncCacheIntegration:
         tool = ToolDef(
             name="delete_pod",
             description="Delete a pod",
-            parameters=[],
+            parameters=None,
             execute=counting_tool,
             cacheable=False,
         )
@@ -449,7 +449,7 @@ class TestAsyncCacheIntegration:
         tool = ToolDef(
             name="flaky",
             description="Flaky",
-            parameters=[],
+            parameters=None,
             execute=flaky_tool,
             cacheable=True,
             cache_ttl_seconds=0,
@@ -486,7 +486,7 @@ class TestAsyncCacheIntegration:
         tool = ToolDef(
             name="get_pods",
             description="Get pods",
-            parameters=[],
+            parameters=None,
             execute=counting_tool,
             cacheable=True,
         )
@@ -648,7 +648,7 @@ class TestCachedFlagTelemetry:
         tool = ToolDef(
             name="get_pods",
             description="Get pods",
-            parameters=[],
+            parameters=None,
             execute=counting_tool,
             cacheable=True,
             cache_ttl_seconds=0,

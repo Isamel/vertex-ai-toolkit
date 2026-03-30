@@ -144,7 +144,7 @@ class TestAsyncExecuteSingleTool:
         tool = ToolDef(
             name="write_file",
             description="Writes a file",
-            parameters=[],
+            parameters=None,
             execute=failing_tool,
         )
         registry = _make_registry(tool)
@@ -287,7 +287,7 @@ class TestAsyncRunToolLoop:
             return ToolResult(output="ok")
 
         registry = _make_registry(
-            ToolDef(name="noop", description="No-op", parameters=[], execute=noop),
+            ToolDef(name="noop", description="No-op", parameters=None, execute=noop),
         )
 
         host = MixinHost()
@@ -455,7 +455,7 @@ class TestAsyncRunToolLoop:
             return ToolResult(output="ok")
 
         registry = _make_registry(
-            ToolDef(name="noop", description="No-op", parameters=[], execute=noop),
+            ToolDef(name="noop", description="No-op", parameters=None, execute=noop),
         )
 
         client = MagicMock()

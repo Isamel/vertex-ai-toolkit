@@ -48,6 +48,7 @@ def _make_agent_with_mixin() -> MagicMock:
     agent._build_unknown_tool_message = ToolLoopMixin._build_unknown_tool_message.__get__(
         agent, ToolLoopMixin
     )
+    agent._pre_validate_tool_args = ToolLoopMixin._pre_validate_tool_args
     # _emit_tool_telemetry is a side-effect we don't need in unit tests
     agent._emit_tool_telemetry = MagicMock()
     return agent
