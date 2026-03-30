@@ -351,7 +351,7 @@ def _detect_apm_operation(
                     op, service, env,
                 )
                 return op
-        except Exception:  # noqa: BLE001
+        except (urllib3.exceptions.MaxRetryError, OSError):
             logger.debug(
                 "Datadog APM: probe for '%s' failed for service=%s env=%s",
                 op, service, env, exc_info=True,
@@ -989,8 +989,8 @@ def get_datadog_apm_services(
             output=f"Failed to connect to Datadog after multiple retries: {exc}",
             error=True,
         )
-    except Exception:  # noqa: BLE001
-        logger.exception("Unexpected error in get_datadog_apm_services")
+    except (OSError, urllib3.exceptions.HTTPError) as exc:
+        logger.exception("Unexpected network error in get_datadog_apm_services: %s", exc)
         return ToolResult(output="Unexpected error retrieving APM trace metrics. See logs for details.", error=True)
 
 

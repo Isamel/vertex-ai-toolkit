@@ -2153,17 +2153,17 @@ class TestDatadogSSLConfig:
         assert "50.00%" in result.output
 
     def test_unexpected_exception_returns_error(self, dd_config: DatadogAPIConfig) -> None:
-        """When an unexpected exception occurs, returns error result."""
+        """When an unexpected network error occurs, returns error result."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        # Probe succeeds; the RuntimeError occurs on the actual metric query.
+        # Probe succeeds; the OSError occurs on the actual metric query.
         probe_resp = MagicMock()
         probe_series = MagicMock()
         probe_series.pointlist = [[1700000000, 42.0]]
         probe_resp.series = [probe_series]
 
         mock_api = MagicMock()
-        mock_api.query_metrics.side_effect = [probe_resp, RuntimeError("unexpected failure")]
+        mock_api.query_metrics.side_effect = [probe_resp, OSError("connection reset")]
 
         with patch.dict("sys.modules", _make_dd_modules()):
             result = get_datadog_apm_services(
@@ -2536,7 +2536,7 @@ class TestDetectApmOperation:
         assert result is None
 
     def test_probe_exception_continues_to_next_operation(self, dd_config: DatadogAPIConfig) -> None:
-        """If a probe raises an exception, the next operation is tried."""
+        """If a probe raises a network error, the next operation is tried."""
         from vaig.tools.gke.datadog_api import _detect_apm_operation
 
         hit_resp = MagicMock()
@@ -2545,8 +2545,8 @@ class TestDetectApmOperation:
         hit_resp.series = [hit_series]
 
         mock_api = MagicMock()
-        # First probe raises; second returns data.
-        mock_api.query_metrics.side_effect = [RuntimeError("timeout"), hit_resp]
+        # First probe raises a network error; second returns data.
+        mock_api.query_metrics.side_effect = [OSError("connection reset"), hit_resp]
 
         result = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
 
