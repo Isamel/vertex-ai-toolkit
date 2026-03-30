@@ -336,8 +336,11 @@ def _detect_apm_operation(
     now = int(time.time())
     start = now - 900  # last 15 minutes
 
+    service_key = config.labels.service
+    env_key = config.labels.env
+
     for op in _APM_OPERATION_PROBE_ORDER:
-        query = f"sum:trace.{op}.hits{{service:{service},env:{env}}}"
+        query = f"sum:trace.{op}.hits{{{service_key}:{service},{env_key}:{env}}}"
         try:
             response = api.query_metrics(_from=start, to=now, query=query)
             series = getattr(response, "series", []) or []
@@ -773,6 +776,100 @@ def get_datadog_service_catalog(
         return ToolResult(output="Unexpected error retrieving service catalog. See logs for details.", error=True)
 
 
+def _run_apm_queries(
+    api: Any,
+    service_name: str,
+    env: str,
+    tag_filter: str,
+    start: int,
+    now: int,
+    hours_back: float,
+    cache_key: str,
+    config: DatadogAPIConfig,
+) -> ToolResult:
+    """Execute APM operation detection and metric queries using the given API object.
+
+    Extracted so that both the ``_custom_api`` (testing) and real-client paths
+    share the same logic while keeping all API calls inside the context manager
+    when a real client is used.
+    """
+    # ── Detect APM operation name ────────────────────────
+    operation = _detect_apm_operation(api, service_name, env, config)
+    if operation is None:
+        probed = ", ".join(_APM_OPERATION_PROBE_ORDER)
+        return ToolResult(
+            output=(
+                f"No APM trace data found for service '{service_name}' in env '{env}'. "
+                f"Probed operations: {probed}. "
+                "Verify the service has APM instrumentation enabled, or set "
+                "datadog.apm_operation to the correct operation name in your config."
+            ),
+            error=False,
+        )
+
+    # ── Build and execute 3 metric queries ───────────────
+    queries = {
+        "hits": f"sum:trace.{operation}.hits{{{tag_filter}}}",
+        "errors": f"sum:trace.{operation}.errors{{{tag_filter}}}",
+        "duration": f"avg:trace.{operation}.duration{{{tag_filter}}}",
+    }
+
+    results: dict[str, float | None] = {}
+    for metric_key, query in queries.items():
+        response = api.query_metrics(_from=start, to=now, query=query)
+        series = getattr(response, "series", []) or []
+        if series:
+            points = getattr(series[0], "pointlist", []) or []
+            # Extract last non-null datapoint
+            last_val = None
+            for point in reversed(points):
+                if point[1] is not None:
+                    last_val = point[1]
+                    break
+            results[metric_key] = last_val
+        else:
+            results[metric_key] = None
+
+    # ── Compute derived metrics ──────────────────────────
+    hits = results.get("hits")
+    errors = results.get("errors")
+    duration = results.get("duration")
+
+    window_seconds = max(hours_back * 3600, 1)
+
+    if hits is not None:
+        throughput_str = f"{hits / window_seconds:.4f} req/s"
+    else:
+        throughput_str = "N/A"
+
+    if hits is not None and hits > 0 and errors is not None:
+        error_rate_str = f"{(errors / hits * 100):.2f}%"
+    elif hits is not None and hits == 0:
+        error_rate_str = "0.00%"
+    else:
+        error_rate_str = "N/A"
+
+    # Datadog returns duration in seconds; convert to ms for display
+    latency_str = f"{(duration * 1000):.2f} ms" if duration is not None else "N/A"
+
+    window_str = f"last {hours_back:.4g} hour{'s' if hours_back != 1 else ''}"
+
+    lines = [
+        "=== Datadog APM Trace Metrics ===",
+        f"Service:    {service_name}",
+        f"Env:        {env}",
+        f"Window:     {window_str}",
+        f"Operation:  {operation}",
+        "",
+        f"Throughput: {throughput_str}",
+        f"Error rate: {error_rate_str}",
+        f"Avg latency: {latency_str}",
+    ]
+    output = "\n".join(lines)
+    _cache._set_cache(cache_key, output)
+    return ToolResult(output=output, error=False)
+
+
 def get_datadog_apm_services(
     *,
     service_name: str = "",
@@ -862,89 +959,22 @@ def get_datadog_apm_services(
     now = int(time.time())
     start = int(now - hours_back * 3600)
 
+    # Build tag filter string using configurable tag key names
+    tag_filter, tag_err = _build_tag_filter(None, service_name, env, config)
+    if tag_err is not None:
+        return tag_err
+
     try:
         if _custom_api is not None:
-            api = _custom_api
-        else:
-            with _get_dd_api_client(config) as client:
-                api = MetricsApi(client)  # type: ignore[no-untyped-call]
-
-        # ── Detect APM operation name ────────────────────────
-        operation = _detect_apm_operation(api, service_name, env, config)
-        if operation is None:
-            probed = ", ".join(_APM_OPERATION_PROBE_ORDER)
-            return ToolResult(
-                output=(
-                    f"No APM trace data found for service '{service_name}' in env '{env}'. "
-                    f"Probed operations: {probed}. "
-                    "Verify the service has APM instrumentation enabled, or set "
-                    "datadog.apm_operation to the correct operation name in your config."
-                ),
-                error=False,
+            return _run_apm_queries(
+                _custom_api, service_name, env, tag_filter, start, now, hours_back, cache_key, config,
             )
 
-        # ── Build and execute 3 metric queries ───────────────
-        tag_filter = f"service:{service_name},env:{env}"
-        queries = {
-            "hits": f"sum:trace.{operation}.hits{{{tag_filter}}}",
-            "errors": f"sum:trace.{operation}.errors{{{tag_filter}}}",
-            "duration": f"avg:trace.{operation}.duration{{{tag_filter}}}",
-        }
-
-        results: dict[str, float | None] = {}
-        for metric_key, query in queries.items():
-            response = api.query_metrics(_from=start, to=now, query=query)
-            series = getattr(response, "series", []) or []
-            if series:
-                points = getattr(series[0], "pointlist", []) or []
-                # Extract last non-null datapoint
-                last_val = None
-                for point in reversed(points):
-                    if point[1] is not None:
-                        last_val = point[1]
-                        break
-                results[metric_key] = last_val
-            else:
-                results[metric_key] = None
-
-        # ── Compute derived metrics ──────────────────────────
-        hits = results.get("hits")
-        errors = results.get("errors")
-        duration = results.get("duration")
-
-        window_seconds = max(hours_back * 3600, 1)
-
-        if hits is not None:
-            throughput_str = f"{hits / window_seconds:.4f} req/s"
-        else:
-            throughput_str = "N/A"
-
-        if hits is not None and hits > 0 and errors is not None:
-            error_rate_str = f"{(errors / hits * 100):.2f}%"
-        elif hits is not None and hits == 0:
-            error_rate_str = "0.00%"
-        else:
-            error_rate_str = "N/A"
-
-        # Datadog returns duration in seconds; convert to ms for display
-        latency_str = f"{(duration * 1000):.2f} ms" if duration is not None else "N/A"
-
-        window_str = f"last {hours_back:.4g} hour{'s' if hours_back != 1 else ''}"
-
-        lines = [
-            "=== Datadog APM Trace Metrics ===",
-            f"Service:    {service_name}",
-            f"Env:        {env}",
-            f"Window:     {window_str}",
-            f"Operation:  {operation}",
-            "",
-            f"Throughput: {throughput_str}",
-            f"Error rate: {error_rate_str}",
-            f"Avg latency: {latency_str}",
-        ]
-        output = "\n".join(lines)
-        _cache._set_cache(cache_key, output)
-        return ToolResult(output=output, error=False)
+        with _get_dd_api_client(config) as client:
+            api = MetricsApi(client)  # type: ignore[no-untyped-call]
+            return _run_apm_queries(
+                api, service_name, env, tag_filter, start, now, hours_back, cache_key, config,
+            )
 
     except ApiException as exc:
         status = getattr(exc, "status", 0)
