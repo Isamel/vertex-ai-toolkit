@@ -164,7 +164,7 @@ If the tool IS available:
 PREREQUISITE: First check if `argocd_list_applications` is in your available tools list. If it is NOT available, SKIP this entire step and mark it as SKIPPED in the Investigation Checklist. Do NOT fabricate ArgoCD application data.
 
 ### ArgoCD Detection (via resource annotations — NOT namespace scanning)
-When inspecting deployment labels/annotations (from kubectl_get_labels output),
+When inspecting workload labels/annotations (from kubectl_get_labels output),
 look for these annotations that ArgoCD puts on EVERY resource it manages:
 - Annotation `argocd.argoproj.io/managed-by` → the ArgoCD namespace where the Application lives
 - Annotation `argocd.argoproj.io/tracking-id` → full tracking reference

@@ -329,7 +329,7 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
 4. For pods with restart count > 3: ``kubectl_logs(pod="<pod>", namespace="{ns}")``
 5. For CrashLoopBackOff pods: ``kubectl_describe(resource_type="pod", name="<pod>", namespace="{ns}")``
 
-### Step 4 — Deployment Deep-Dive
+### Step 4 — Workload Deep-Dive
 6. ``kubectl_get(resource="deployments", namespace="{ns}", output="wide")`` — all deployments
 7. ``get_rollout_status(name="<name>", namespace="{ns}")`` for each deployment
 8. For unhealthy deployments: ``kubectl_describe(resource_type="deployment", name="<name>", namespace="{ns}")``
@@ -339,11 +339,25 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
    OwnerReferences for operator-managed resources, ``.spec.template.metadata.annotations`` for
    webhook injection annotations) — report these management indicators for the reporter
 
-### Step 4b — Management Context Detection (extends Step 4; MANDATORY for ALL deployments)
-11. ``kubectl_get_labels(resource_type="deployments", namespace="{ns}")`` —
-    Get labels and annotations for ALL deployments. This is MANDATORY for detecting
-    management context (Helm, ArgoCD, operators). Do NOT skip this step even if all
-    deployments appear healthy — management context affects remediation recommendations.
+### Step 4b — Management Context Detection (extends Step 4; MANDATORY)
+11. Resolve which **workload controller types** are present from Step 2's pod
+    ``ownerReferences`` analysis.  Typical ownership chains:
+    - ``Pod → ReplicaSet → Deployment`` → the top-level owner is a **Deployment**
+    - ``Pod → ReplicaSet`` (no Deployment owner) → standalone **ReplicaSet**
+    - ``Pod → StatefulSet`` → **StatefulSet**
+    - ``Pod → DaemonSet`` → **DaemonSet**
+
+    Call ``kubectl_get_labels`` for **each distinct top-level workload type** found:
+    - ``kubectl_get_labels(resource_type="deployments", namespace="{ns}")`` — if Deployments exist
+    - ``kubectl_get_labels(resource_type="replicasets", namespace="{ns}")`` — if standalone ReplicaSets exist (not owned by a Deployment)
+    - ``kubectl_get_labels(resource_type="statefulsets", namespace="{ns}")`` — if StatefulSets exist
+    - ``kubectl_get_labels(resource_type="daemonsets", namespace="{ns}")`` — if DaemonSets exist
+
+    If Step 2 has not yet been analyzed or ownerReferences are unclear,
+    default to ``resource_type="deployments"`` first; if that returns no data,
+    fall back to ``"replicasets"``, ``"statefulsets"``, ``"daemonsets"`` in order.
+
+    From the output, look for these management indicators:
 
     Look for these Helm indicators:
     - Label ``app.kubernetes.io/managed-by: Helm`` → resource is Helm-managed
@@ -352,8 +366,8 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
     - Annotation ``meta.helm.sh/release-namespace`` → namespace of the release
 
     **``meta.helm.sh/release-name`` (CRITICAL — record explicitly)**:
-    If annotation ``meta.helm.sh/release-name`` is present on a deployment, record its
-    exact value as ``<helm_release_name>`` for that deployment. This value is used
+    If annotation ``meta.helm.sh/release-name`` is present on a workload, record its
+    exact value as ``<helm_release_name>`` for that workload. This value is used
     directly in Step 9 (Helm assessment) — it is the Helm release name and allows
     skipping ``helm_list_releases()``.
 
@@ -362,20 +376,20 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
     - Label ``app.kubernetes.io/instance`` → release/app instance name
 
     **Datadog labels (record for completeness)**:
-    Look for the following in deployment labels (from ``kubectl_get_labels`` output)
-    and in ``.spec.template.spec.containers[].env`` (from any deployment YAML retrieved
+    Look for the following in workload labels (from ``kubectl_get_labels`` output)
+    and in ``.spec.template.spec.containers[].env`` (from any workload YAML retrieved
     in Step 4 deep-dive):
     - Label ``tags.datadoghq.com/service`` or env var ``DD_SERVICE``
-      → If found, record its exact value as ``<dd_service>`` for that deployment.
+      → If found, record its exact value as ``<dd_service>`` for that workload.
     - Label ``tags.datadoghq.com/env`` or env var ``DD_ENV``
-      → If found, record its exact value as ``<dd_env>`` for that deployment.
+      → If found, record its exact value as ``<dd_env>`` for that workload.
     Record these prominently in the Management Indicators section — the
     ``datadog_gatherer`` (running in parallel) will use them for Datadog API
     correlation.
 
-    For each Helm-managed deployment, report in the Management Indicators section:
+    For each Helm-managed workload, report in the Management Indicators section:
     ``"Managed by: Helm (release: <release-name>, chart: <chart-name>)"``
-    For each ArgoCD-managed deployment, report:
+    For each ArgoCD-managed workload, report:
     ``"Managed by: ArgoCD (app: <app-name>)"``
 
 ### Step 4c — Pod Ownership Chain Tracing (MANDATORY for CrashLoopBackOff / Error pods)
@@ -686,7 +700,15 @@ access its output.  Resolve the Datadog service identity independently:
 
 1. Call ``kubectl_get_labels(resource_type="deployments", namespace="{ns}")``
    to retrieve labels and annotations for all deployments in the target namespace.
-2. From the output, identify the Datadog Unified Service Tagging values using
+2. **If no deployments are found** (empty output or "No deployments found"), the
+   namespace may use a different workload type.  Try each in order until you get
+   label data:
+   - ``kubectl_get_labels(resource_type="statefulsets", namespace="{ns}")``
+   - ``kubectl_get_labels(resource_type="daemonsets", namespace="{ns}")``
+   - ``kubectl_get_labels(resource_type="replicasets", namespace="{ns}")``
+   (ReplicaSets are tried last because they are usually owned by Deployments;
+   standalone ReplicaSets without a Deployment owner are uncommon.)
+3. From the output, identify the Datadog Unified Service Tagging values using
    this priority order (``kubectl_get_labels`` returns labels and annotations ONLY —
    container environment variables such as ``DD_SERVICE``/``DD_ENV`` are NOT available):
    - **Tier 1** — Datadog UST pod/deployment labels:
@@ -695,8 +717,8 @@ access its output.  Resolve the Datadog service identity independently:
    - **Tier 2** — Generic Kubernetes identity labels (if Tier 1 absent):
      - ``app.kubernetes.io/name`` → store as ``<dd_service>``
      - ``app`` → store as ``<dd_service>``
-     - Deployment name → store as ``<dd_service>`` (last resort)
-3. If ``kubectl_get_labels`` fails or returns no useful data, proceed with
+     - Workload name (deployment/statefulset/daemonset/replicaset name) → store as ``<dd_service>`` (last resort)
+4. If all ``kubectl_get_labels`` calls fail or return no useful data, proceed with
    cluster-wide Datadog queries (omit ``service=`` and ``env=`` parameters).
    Record the failure reason in Raw Findings.
 
@@ -901,9 +923,11 @@ PREREQUISITE: Check if ``helm_list_releases`` is in your available tools list. I
 available, SKIP Helm tool calls entirely and mark as SKIPPED.
 
 If Helm tools are available, look for ``<helm_release_name>`` values from
-``meta.helm.sh/release-name`` annotations by calling
-``kubectl_get_labels(resource_type="deployments", namespace="{ns}")`` to inspect
-deployment labels and annotations:
+``meta.helm.sh/release-name`` annotations.  Call ``kubectl_get_labels`` for the
+workload types present in the namespace (determined from earlier pod analysis):
+- ``kubectl_get_labels(resource_type="deployments", namespace="{ns}")`` — try first
+- If no deployments found, try ``"statefulsets"``, ``"daemonsets"``, ``"replicasets"`` in order.
+Inspect the returned labels and annotations:
 - If ``<helm_release_name>`` IS found in annotations: You MUST call
   ``helm_release_status(release_name="<helm_release_name>", namespace="{ns}")`` directly.
   Do NOT call ``helm_list_releases()`` first — the annotation already provides the
