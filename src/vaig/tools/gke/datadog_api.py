@@ -56,6 +56,23 @@ _APM_OPERATION_PROBE_ORDER: tuple[str, ...] = (
     "kafka.consume",
 )
 
+# ── Metric name aliases (fuzzy matching) ─────────────────────
+# Maps common short-hands and typos to canonical metric template keys.
+_METRIC_ALIASES: dict[str, str] = {
+    "request": "requests",
+    "req": "requests",
+    "throughput": "requests",
+    "error": "error_rate",
+    "err": "error_rate",
+    "errs": "errors",
+    "lat": "latency",
+    "net_in": "network_in",
+    "net_out": "network_out",
+    "disk": "disk_read",
+    "restart": "restarts",
+    "mem": "memory",
+}
+
 # ── Metric query templates ───────────────────────────────────
 # Templates use {filters} as a placeholder for the full tag filter string.
 # Example rendered: avg:kubernetes.cpu.usage.total{cluster_name:my-cluster,service:api,env:prod}
@@ -465,20 +482,6 @@ def query_datadog_metrics(
 
     # ── Fuzzy matching: try common aliases and singular/plural ────
     if template is None:
-        _METRIC_ALIASES: dict[str, str] = {
-            "request": "requests",
-            "req": "requests",
-            "throughput": "requests",
-            "error": "error_rate",
-            "err": "error_rate",
-            "errs": "errors",
-            "lat": "latency",
-            "net_in": "network_in",
-            "net_out": "network_out",
-            "disk": "disk_read",
-            "restart": "restarts",
-            "mem": "memory",
-        }
         resolved = _METRIC_ALIASES.get(metric)
         if resolved is None:
             # Try singular/plural: "requests" → "request" or "cpu" → "cpus"
@@ -512,7 +515,13 @@ def query_datadog_metrics(
 
     query = template.format(filters=filters)
 
-    def _execute_query(api: Any, q: str) -> ToolResult:
+    def _execute_query(api: Any, q: str) -> tuple[ToolResult, bool]:
+        """Run a single metrics query and return ``(result, has_data)``.
+
+        The boolean *has_data* is ``True`` when the response contained at
+        least one series, ``False`` otherwise.  Callers should use this
+        flag instead of inspecting the output text to decide on retries.
+        """
         response = api.query_metrics(
             _from=start,
             to=end,
@@ -521,9 +530,12 @@ def query_datadog_metrics(
 
         series = getattr(response, "series", []) or []
         if not series:
-            return ToolResult(
-                output=f"=== Datadog Metrics: {metric} ===\nCluster: {effective_cluster}\nNo data returned for the given time window.",
-                error=False,
+            return (
+                ToolResult(
+                    output=f"=== Datadog Metrics: {metric} ===\nCluster: {effective_cluster}\nNo data returned for the given time window.",
+                    error=False,
+                ),
+                False,
             )
 
         lines: list[str] = [
@@ -550,18 +562,15 @@ def query_datadog_metrics(
         lines.append("")
         lines.append(f"Total series: {len(series)}")
 
-        return ToolResult(output="\n".join(lines), error=False)
+        return (ToolResult(output="\n".join(lines), error=False), True)
 
     def _run_with_fallback(api: Any) -> ToolResult:
         """Execute the query and retry without custom labels on empty results."""
-        result = _execute_query(api, query)
+        result, has_data = _execute_query(api, query)
 
         # Retry without custom labels when the first query returned no data
         # and custom labels were included in the original filter.
-        if (
-            "No data returned" in result.output
-            and _had_custom_labels
-        ):
+        if not has_data and _had_custom_labels:
             fallback_filters, fb_err = _build_tag_filter(
                 effective_cluster, service, env, config, include_custom_labels=False,
             )
@@ -571,7 +580,7 @@ def query_datadog_metrics(
                     "No data with custom labels for '%s'; retrying without custom labels",
                     metric,
                 )
-                result = _execute_query(api, fallback_query)
+                result, _ = _execute_query(api, fallback_query)
 
         return result
 
