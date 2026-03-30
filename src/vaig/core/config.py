@@ -428,11 +428,12 @@ class DatadogAPIConfig(BaseModel):
     labels: DatadogLabelConfig = Field(default_factory=DatadogLabelConfig)
     detection: DatadogDetectionConfig = Field(default_factory=DatadogDetectionConfig)
     custom_metrics: dict[str, str] = Field(default_factory=dict)
-    metric_mode: Literal["k8s_agent", "apm"] = Field(
+    metric_mode: Literal["k8s_agent", "apm", "both"] = Field(
         default="k8s_agent",
         description=(
             "Metric source: 'k8s_agent' for kubernetes.* metrics (requires DaemonSet Agent), "
-            "'apm' for trace.* metrics (APM-only setups)"
+            "'apm' for trace.* metrics (APM-only setups), "
+            "'both' for combined kubernetes.* and trace.* metrics"
         ),
     )
     cluster_name_override: str = Field(

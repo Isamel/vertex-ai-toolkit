@@ -1003,7 +1003,53 @@ class TestConfigurableLabelsTagFilter:
         assert "team:platform" in tag_filter
 
 
-# ── Configurable labels — _build_metric_templates ────────────
+# ── _point_value helper ──────────────────────────────────────
+
+
+class TestPointValue:
+    """Tests for the _point_value helper that extracts values from SDK Point objects and plain lists."""
+
+    def test_plain_list(self) -> None:
+        """Plain [timestamp, value] lists work via index access."""
+        from vaig.tools.gke.datadog_api import _point_value
+
+        assert _point_value([1700000000, 42.5]) == 42.5
+
+    def test_plain_list_none_value(self) -> None:
+        """Returns None when the value element is None."""
+        from vaig.tools.gke.datadog_api import _point_value
+
+        assert _point_value([1700000000, None]) is None
+
+    def test_sdk_point_like_object(self) -> None:
+        """SDK Point objects expose .value = [timestamp, value]."""
+        from vaig.tools.gke.datadog_api import _point_value
+
+        class FakePoint:
+            value = [1700000000, 99.0]
+
+        assert _point_value(FakePoint()) == 99.0
+
+    def test_sdk_point_like_none_value(self) -> None:
+        """SDK Point with None value returns None."""
+        from vaig.tools.gke.datadog_api import _point_value
+
+        class FakePoint:
+            value = [1700000000, None]
+
+        assert _point_value(FakePoint()) is None
+
+    def test_empty_list_returns_none(self) -> None:
+        """Short list without index 1 returns None."""
+        from vaig.tools.gke.datadog_api import _point_value
+
+        assert _point_value([]) is None
+
+    def test_non_numeric_returns_none(self) -> None:
+        """Non-numeric value returns None (ValueError caught)."""
+        from vaig.tools.gke.datadog_api import _point_value
+
+        assert _point_value([1700000000, "not-a-number"]) is None
 
 
 class TestConfigurableLabelsMetricTemplates:
@@ -2342,6 +2388,238 @@ class TestBuildMetricTemplatesMode:
         templates = _build_metric_templates(config)
 
         assert templates["requests"] == custom_requests
+
+
+class TestBuildMetricTemplatesBothMode:
+    """Tests for metric_mode='both' in _build_metric_templates."""
+
+    def test_both_mode_includes_k8s_and_apm_templates(self) -> None:
+        """Both mode returns templates from BOTH k8s and APM sets."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="both")
+        templates = _build_metric_templates(config)
+
+        # k8s templates present
+        assert "cpu" in templates
+        assert "memory" in templates
+        assert "restarts" in templates
+        assert "kubernetes.cpu.usage.total" in templates["cpu"]
+        # APM templates present
+        assert "requests" in templates
+        assert "latency" in templates
+        assert "error_rate" in templates
+        assert "trace.http.request" in templates["requests"]
+
+    def test_both_mode_contains_all_expected_keys(self) -> None:
+        """Both mode includes keys from both k8s and APM sets."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="both")
+        templates = _build_metric_templates(config)
+
+        expected_keys = {"cpu", "memory", "restarts", "network_in", "network_out",
+                         "disk_read", "disk_write", "requests", "errors", "latency",
+                         "error_rate", "apdex"}
+        assert expected_keys.issubset(templates.keys())
+
+    def test_k8s_agent_mode_excludes_apm_keys(self) -> None:
+        """k8s_agent mode does NOT include APM keys like latency or requests."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="k8s_agent")
+        templates = _build_metric_templates(config)
+
+        assert "latency" not in templates
+        assert "requests" not in templates
+        assert "error_rate" not in templates
+        assert "apdex" not in templates
+
+    def test_apm_mode_excludes_k8s_keys(self) -> None:
+        """APM mode does NOT include k8s keys like cpu or memory."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="apm")
+        templates = _build_metric_templates(config)
+
+        assert "cpu" not in templates
+        assert "memory" not in templates
+        assert "restarts" not in templates
+        assert "network_in" not in templates
+
+    def test_both_mode_all_templates_have_filters_placeholder(self) -> None:
+        """All templates in both mode contain the required {filters} placeholder."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="both")
+        templates = _build_metric_templates(config)
+
+        for name, tmpl in templates.items():
+            assert "{filters}" in tmpl, f"Template '{name}' missing '{{filters}}' placeholder"
+
+    def test_both_mode_custom_metrics_merged(self) -> None:
+        """custom_metrics are merged into both-mode templates."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            metric_mode="both",
+            custom_metrics={"my_extra": "avg:custom.extra{{{filters}}} by {{pod_name}}"},
+        )
+        templates = _build_metric_templates(config)
+
+        assert "cpu" in templates
+        assert "requests" in templates
+        assert "my_extra" in templates
+
+
+class TestBothModePerMetricCustomLabels:
+    """Tests for per-metric include_custom_labels in 'both' mode.
+
+    When metric_mode='both', trace.* metrics must exclude custom labels while
+    kubernetes.* metrics must include them.
+    """
+
+    def test_both_mode_k8s_metric_includes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
+        """In both mode, querying a k8s metric (cpu) includes custom labels in the tag filter."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        dd_config.labels = DatadogLabelConfig(custom={"team": "platform"})
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="cpu",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        query_str = call_kwargs.get("query", "")
+        assert "team:platform" in query_str
+
+    def test_both_mode_apm_metric_excludes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
+        """In both mode, querying an APM metric (latency) excludes custom labels."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        dd_config.labels = DatadogLabelConfig(custom={"team": "platform"})
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="latency",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        query_str = call_kwargs.get("query", "")
+        assert "team:" not in query_str
+        assert "trace." in query_str
+
+    def test_both_mode_requests_metric_excludes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
+        """In both mode, querying 'requests' (trace.* metric) excludes custom labels."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        dd_config.labels = DatadogLabelConfig(custom={"team": "platform"})
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="requests",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        query_str = call_kwargs.get("query", "")
+        assert "team:" not in query_str
+
+    def test_both_mode_memory_metric_includes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
+        """In both mode, querying 'memory' (kubernetes.* metric) includes custom labels."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        dd_config.labels = DatadogLabelConfig(custom={"team": "platform"})
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="memory",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        query_str = call_kwargs.get("query", "")
+        assert "team:platform" in query_str
+
+    def test_pure_apm_mode_still_excludes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
+        """Pure APM mode continues to exclude custom labels (regression guard)."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "apm"
+        dd_config.labels = DatadogLabelConfig(custom={"team": "platform"})
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="latency",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        query_str = call_kwargs.get("query", "")
+        assert "team:" not in query_str
+
+    def test_pure_k8s_mode_still_includes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
+        """Pure k8s_agent mode continues to include custom labels (regression guard)."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "k8s_agent"
+        dd_config.labels = DatadogLabelConfig(custom={"team": "platform"})
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="cpu",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        query_str = call_kwargs.get("query", "")
+        assert "team:platform" in query_str
 
 
 # ── Problem 2: cluster_name_override ─────────────────────────
