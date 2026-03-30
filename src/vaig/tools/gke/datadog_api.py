@@ -20,6 +20,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _point_value(point: Any) -> float | None:
+    """Extract the numeric value from a Datadog ``Point`` or plain list.
+
+    The Datadog SDK v2 ``Point`` objects do NOT support index access
+    (``point[1]``).  They expose a ``.value`` attribute containing
+    ``[timestamp, value]``.  In tests, ``pointlist`` entries are plain
+    lists where ``point[1]`` works directly.  This helper handles both.
+    """
+    try:
+        pair = getattr(point, "value", point)
+        result = pair[1]  # type: ignore[index]
+        return float(result) if result is not None else None
+    except (IndexError, TypeError, KeyError):
+        return None
+
 # ── Error messages ───────────────────────────────────────────
 _ERR_NOT_INSTALLED = "datadog-api-client not installed. Install with: pip install 'vaig[live]'"
 _ERR_NOT_ENABLED = "Datadog API integration is disabled. Set datadog.enabled=true in config."
@@ -489,7 +505,7 @@ def query_datadog_metrics(
             scope = getattr(s, "scope", "")
             points = getattr(s, "pointlist", []) or []
             if points:
-                values = [p[1] for p in points if p[1] is not None]
+                values = [v for p in points if (v := _point_value(p)) is not None]
                 if values:
                     avg_val = sum(values) / len(values)
                     max_val = max(values)
@@ -841,8 +857,9 @@ def _run_apm_queries(
             # Extract last non-null datapoint
             last_val = None
             for point in reversed(points):
-                if point[1] is not None:
-                    last_val = point[1]
+                val = _point_value(point)
+                if val is not None:
+                    last_val = val
                     break
             results[metric_key] = last_val
         else:
