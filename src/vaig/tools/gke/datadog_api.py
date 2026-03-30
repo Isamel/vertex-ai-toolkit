@@ -191,6 +191,8 @@ def _build_tag_filter(
     service: str | None,
     env: str | None,
     config: DatadogAPIConfig | None = None,
+    *,
+    include_custom_labels: bool = True,
 ) -> tuple[str, ToolResult | None]:
     """Build a comma-separated Datadog tag filter string from the given tags.
 
@@ -200,14 +202,18 @@ def _build_tag_filter(
 
     Tag key names are read from ``config.labels`` when a config is provided,
     falling back to the Datadog standard names (``cluster_name``, ``service``,
-    ``env``) when ``config`` is ``None``.  Any ``config.labels.custom`` entries
-    are appended as additional ``key:value`` pairs.
+    ``env``) when ``config`` is ``None``.  When *include_custom_labels* is
+    ``True`` (default), any ``config.labels.custom`` entries are appended as
+    additional ``key:value`` pairs.  Set to ``False`` for APM ``trace.*``
+    queries that only carry ``service`` and ``env`` tags.
 
     Args:
         cluster_name: Optional cluster name tag value.
         service: Optional service tag value.
         env: Optional environment tag value.
         config: Optional ``DatadogAPIConfig`` used to resolve tag key names.
+        include_custom_labels: Whether to append ``config.labels.custom``
+            entries.  Defaults to ``True`` for backward compatibility.
 
     Returns:
         A tuple of ``(filter_string, error_result)``.  On success,
@@ -239,7 +245,7 @@ def _build_tag_filter(
         tag_parts.append(f"{tag_key}:{safe_value}")
 
     # Append custom labels from config (key=tag_key, value=tag_value)
-    if labels is not None:
+    if include_custom_labels and labels is not None:
         for custom_key, custom_value in labels.custom.items():
             if not custom_value:
                 continue
@@ -424,14 +430,20 @@ def query_datadog_metrics(
     # from the GKE cluster name (e.g. when the DD agent uses a different tag value).
     effective_cluster = getattr(config, "cluster_name_override", "") or cluster_name
 
-    # Build tag filter string: always include cluster_name; optionally service/env
-    filters, tag_err = _build_tag_filter(effective_cluster, service, env, config)
+    # Resolve metric mode early — APM trace.* metrics do not carry custom tags
+    mode = getattr(config, "metric_mode", "k8s_agent")
+    is_apm = mode == "apm"
+
+    # Build tag filter string: always include cluster_name; optionally service/env.
+    # Exclude custom labels for APM trace.* queries (they only carry service+env).
+    filters, tag_err = _build_tag_filter(
+        effective_cluster, service, env, config, include_custom_labels=not is_apm,
+    )
     if tag_err is not None:
         return tag_err
 
     # Resolve APM operation name when in apm mode
     resolved_operation = "http.request"
-    mode = getattr(config, "metric_mode", "k8s_agent")
     if mode == "apm":
         apm_op = getattr(config, "apm_operation", "auto")
         if apm_op != "auto":
@@ -450,13 +462,7 @@ def query_datadog_metrics(
         )
     query = template.format(filters=filters)
 
-    try:
-        if _custom_api is not None:
-            api = _custom_api
-        else:
-            with _get_dd_api_client(config) as client:
-                api = MetricsApi(client)  # type: ignore[no-untyped-call]
-
+    def _execute_query(api: Any) -> ToolResult:
         response = api.query_metrics(
             _from=start,
             to=end,
@@ -495,6 +501,14 @@ def query_datadog_metrics(
         lines.append(f"Total series: {len(series)}")
 
         return ToolResult(output="\n".join(lines), error=False)
+
+    try:
+        if _custom_api is not None:
+            return _execute_query(_custom_api)
+
+        with _get_dd_api_client(config) as client:
+            api = MetricsApi(client)  # type: ignore[no-untyped-call]
+            return _execute_query(api)
 
     except ApiException as exc:
         status = getattr(exc, "status", 0)
@@ -562,13 +576,7 @@ def get_datadog_monitors(
         return tag_err
     tag_filter = tag_filter_str if tag_filter_str else None
 
-    try:
-        if _custom_api is not None:
-            api = _custom_api
-        else:
-            with _get_dd_api_client(config) as client:
-                api = MonitorsApi(client)  # type: ignore[no-untyped-call]
-
+    def _execute_monitors(api: Any) -> ToolResult:
         kwargs: dict[str, Any] = {}
         if tag_filter:
             kwargs["monitor_tags"] = tag_filter
@@ -610,6 +618,14 @@ def get_datadog_monitors(
         lines.append(f"Monitors in '{state}' state: {len(matching)}")
 
         return ToolResult(output="\n".join(lines), error=False)
+
+    try:
+        if _custom_api is not None:
+            return _execute_monitors(_custom_api)
+
+        with _get_dd_api_client(config) as client:
+            api = MonitorsApi(client)  # type: ignore[no-untyped-call]
+            return _execute_monitors(api)
 
     except ApiException as exc:
         status = getattr(exc, "status", 0)
@@ -687,13 +703,7 @@ def get_datadog_service_catalog(
     if cached is not None:
         return ToolResult(output=cached, error=False)
 
-    try:
-        if _custom_api is not None:
-            api = _custom_api
-        else:
-            with _get_dd_api_client(config) as client:
-                api = ServiceDefinitionApi(client)  # type: ignore[no-untyped-call]
-
+    def _execute_catalog(api: Any) -> ToolResult:
         response = api.list_service_definitions()
 
         all_services = getattr(response, "data", []) or []
@@ -755,6 +765,14 @@ def get_datadog_service_catalog(
         output = "\n".join(lines)
         _cache._set_cache(cache_key, output)
         return ToolResult(output=output, error=False)
+
+    try:
+        if _custom_api is not None:
+            return _execute_catalog(_custom_api)
+
+        with _get_dd_api_client(config) as client:
+            api = ServiceDefinitionApi(client)  # type: ignore[no-untyped-call]
+            return _execute_catalog(api)
 
     except ApiException as exc:
         status = getattr(exc, "status", 0)
@@ -960,7 +978,7 @@ def get_datadog_apm_services(
     start = int(now - hours_back * 3600)
 
     # Build tag filter string using configurable tag key names
-    tag_filter, tag_err = _build_tag_filter(None, service_name, env, config)
+    tag_filter, tag_err = _build_tag_filter(None, service_name, env, config, include_custom_labels=False)
     if tag_err is not None:
         return tag_err
 
