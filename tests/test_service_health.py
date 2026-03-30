@@ -3433,3 +3433,210 @@ class TestWorkloadGathererRolloutEnrichmentInstructions:
         assert "ALWAYS normalize to" not in prompt, (
             "Normalization instruction must only appear when argo_rollouts_enabled=True."
         )
+
+
+# ═══════════════════════════════════════════════════════════════
+# APM Severity Thresholds — prompt content assertions
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestAPMSeverityThresholds:
+    """Validate that the APM severity threshold changes are present in the
+    analyzer, reporter, and shared priority hierarchy prompts.
+
+    Prevents regression of the bug where a 43.97% APM error rate was NOT
+    flagged as critical because the pipeline had no thresholds or evaluation
+    framework for APM data.
+    """
+
+    # ── Analyzer: APM thresholds section (Change 1) ────────────────────
+
+    def test_analyzer_contains_apm_evaluation_section(self) -> None:
+        """Analyzer prompt must contain the APM / Datadog Metrics Evaluation section."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "APM / Datadog Metrics Evaluation" in HEALTH_ANALYZER_PROMPT, (
+            "Analyzer prompt is missing '### 5. APM / Datadog Metrics Evaluation' section."
+        )
+
+    def test_analyzer_contains_error_rate_thresholds(self) -> None:
+        """Analyzer prompt must define Error Rate severity thresholds."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "Error Rate Thresholds" in HEALTH_ANALYZER_PROMPT, (
+            "Analyzer prompt is missing 'Error Rate Thresholds' subsection."
+        )
+        # Verify the CRITICAL boundary is present
+        assert "> 25%" in HEALTH_ANALYZER_PROMPT, (
+            "Analyzer Error Rate thresholds must include '> 25%' as the CRITICAL boundary."
+        )
+
+    def test_analyzer_contains_latency_thresholds(self) -> None:
+        """Analyzer prompt must define Latency severity thresholds."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "Latency Thresholds" in HEALTH_ANALYZER_PROMPT, (
+            "Analyzer prompt is missing 'Latency Thresholds' subsection."
+        )
+        assert "> 5s" in HEALTH_ANALYZER_PROMPT, (
+            "Analyzer Latency thresholds must include '> 5s' as the CRITICAL boundary."
+        )
+
+    def test_analyzer_contains_throughput_thresholds(self) -> None:
+        """Analyzer prompt must define Throughput severity thresholds."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "Throughput Thresholds" in HEALTH_ANALYZER_PROMPT, (
+            "Analyzer prompt is missing 'Throughput Thresholds' subsection."
+        )
+
+    def test_analyzer_apm_findings_are_independent(self) -> None:
+        """Analyzer prompt must state APM findings generate their OWN severity,
+        not subordinate to K8s findings."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "NOT subordinate to Kubernetes findings" in HEALTH_ANALYZER_PROMPT, (
+            "Analyzer prompt must explicitly state APM findings are 'NOT subordinate "
+            "to Kubernetes findings'."
+        )
+
+    def test_analyzer_references_43_percent_error_rate_example(self) -> None:
+        """Analyzer prompt must include the 43% error rate example as CRITICAL."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "43% error rate" in HEALTH_ANALYZER_PROMPT, (
+            "Analyzer prompt must include '43% error rate' as a CRITICAL example "
+            "to prevent regression of the original bug."
+        )
+
+    def test_analyzer_apm_category(self) -> None:
+        """Analyzer prompt must instruct creating findings with category='apm'."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert 'category="apm"' in HEALTH_ANALYZER_PROMPT, (
+            "Analyzer prompt must instruct creating findings with category=\"apm\"."
+        )
+
+    def test_analyzer_section_numbering_after_apm_insertion(self) -> None:
+        """After inserting APM as section 5, Correlation Analysis must be section 6
+        and Causal Mechanism Analysis must be section 7."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "### 6. Correlation Analysis" in HEALTH_ANALYZER_PROMPT, (
+            "After inserting APM section 5, 'Correlation Analysis' must be renumbered to 6."
+        )
+        assert "### 7. Causal Mechanism Analysis" in HEALTH_ANALYZER_PROMPT, (
+            "After inserting APM section 5, 'Causal Mechanism Analysis' must be renumbered to 7."
+        )
+
+    # ── Reporter: standalone APM findings (Change 2) ───────────────────
+
+    def test_reporter_allows_standalone_apm_findings(self) -> None:
+        """Reporter prompt (with Datadog enabled) must allow standalone APM findings
+        that are NOT correlated with K8s issues."""
+        from vaig.skills.service_health.prompts import build_reporter_prompt
+
+        prompt = build_reporter_prompt(datadog_api_enabled=True)
+        assert "Standalone APM Findings" in prompt, (
+            "Reporter prompt must contain 'Standalone APM Findings' section "
+            "when datadog_api_enabled=True."
+        )
+
+    def test_reporter_standalone_apm_not_in_default_prompt(self) -> None:
+        """The default reporter prompt (datadog disabled) must NOT contain standalone APM guidance."""
+        from vaig.skills.service_health.prompts import build_reporter_prompt
+
+        prompt = build_reporter_prompt(datadog_api_enabled=False)
+        assert "Standalone APM Findings" not in prompt, (
+            "Default reporter prompt (datadog disabled) must NOT contain "
+            "'Standalone APM Findings' guidance."
+        )
+
+    def test_reporter_references_43_percent_critical(self) -> None:
+        """Reporter prompt must include the 43% error rate is CRITICAL example."""
+        from vaig.skills.service_health.prompts import build_reporter_prompt
+
+        prompt = build_reporter_prompt(datadog_api_enabled=True)
+        assert "43% error rate is CRITICAL" in prompt, (
+            "Reporter prompt must state '43% error rate is CRITICAL regardless of "
+            "Kubernetes pod health'."
+        )
+
+    def test_reporter_apm_findings_alongside_k8s(self) -> None:
+        """Reporter prompt must instruct that APM findings appear alongside K8s findings."""
+        from vaig.skills.service_health.prompts import build_reporter_prompt
+
+        prompt = build_reporter_prompt(datadog_api_enabled=True)
+        assert "NOT second-class findings" in prompt, (
+            "Reporter prompt must state APM findings are 'NOT second-class findings'."
+        )
+
+    def test_reporter_apm_correlation_when_both_exist(self) -> None:
+        """Reporter prompt must instruct correlation when both K8s and APM findings exist."""
+        from vaig.skills.service_health.prompts import build_reporter_prompt
+
+        prompt = build_reporter_prompt(datadog_api_enabled=True)
+        assert "BOTH K8s and APM findings exist" in prompt, (
+            "Reporter prompt must include guidance for correlating K8s + APM findings."
+        )
+
+    def test_reporter_do_not_suppress_standalone_apm(self) -> None:
+        """Reporter prompt must explicitly say not to suppress APM findings when K8s is healthy."""
+        from vaig.skills.service_health.prompts import build_reporter_prompt
+
+        prompt = build_reporter_prompt(datadog_api_enabled=True)
+        assert "do NOT suppress it because K8s looks healthy" in prompt, (
+            "Reporter prompt must instruct to NOT suppress standalone APM findings."
+        )
+
+    # ── Shared: priority hierarchy (Change 3) ──────────────────────────
+
+    def test_priority_hierarchy_no_longer_says_never_determines(self) -> None:
+        """_PRIORITY_HIERARCHY must NOT contain 'NEVER determines' — the old wording
+        prevented APM data from generating independent findings."""
+        from vaig.skills.service_health.prompts import _PRIORITY_HIERARCHY
+
+        assert "NEVER determines" not in _PRIORITY_HIERARCHY, (
+            "_PRIORITY_HIERARCHY still contains 'NEVER determines deployment status' — "
+            "this prevents APM data from generating independent findings."
+        )
+
+    def test_priority_hierarchy_allows_independent_apm_findings(self) -> None:
+        """_PRIORITY_HIERARCHY must allow APM metrics to generate independent findings."""
+        from vaig.skills.service_health.prompts import _PRIORITY_HIERARCHY
+
+        assert "independent findings" in _PRIORITY_HIERARCHY, (
+            "_PRIORITY_HIERARCHY must state that APM metrics with CRITICAL or HIGH "
+            "severity generate 'independent findings'."
+        )
+
+    def test_priority_hierarchy_still_k8s_primary(self) -> None:
+        """_PRIORITY_HIERARCHY must still assert K8s as ABSOLUTE source of truth."""
+        from vaig.skills.service_health.prompts import _PRIORITY_HIERARCHY
+
+        assert "ABSOLUTE source of truth" in _PRIORITY_HIERARCHY, (
+            "_PRIORITY_HIERARCHY must still state K8s is the 'ABSOLUTE source of truth'."
+        )
+
+    def test_priority_hierarchy_still_prevents_false_not_deployed(self) -> None:
+        """_PRIORITY_HIERARCHY must still prevent concluding 'not deployed' from Datadog."""
+        from vaig.skills.service_health.prompts import _PRIORITY_HIERARCHY
+
+        assert "NEVER conclude a service is" in _PRIORITY_HIERARCHY, (
+            "_PRIORITY_HIERARCHY must still prevent false 'not deployed' conclusions."
+        )
+
+    def test_gatherer_prompt_inherits_updated_priority_hierarchy(self) -> None:
+        """The gatherer prompt (with Datadog enabled) must inherit the updated
+        priority hierarchy that allows independent APM findings."""
+        from vaig.skills.service_health.prompts import build_gatherer_prompt
+
+        prompt = build_gatherer_prompt(datadog_api_enabled=True)
+        assert "independent findings" in prompt, (
+            "Sequential gatherer prompt must inherit the updated _PRIORITY_HIERARCHY "
+            "that allows independent APM findings."
+        )
+        assert "NEVER determines" not in prompt, (
+            "Sequential gatherer prompt must NOT contain the old 'NEVER determines' "
+            "wording from the previous _PRIORITY_HIERARCHY."
+        )

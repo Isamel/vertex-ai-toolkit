@@ -204,6 +204,28 @@ Always state the scope in the observability finding's ``evidence`` field.
   that correlate with a CRITICAL or HIGH Kubernetes finding, reference the Datadog data
   in the ``why`` field of the corresponding recommendation.  Include the ``DD_SERVICE``
   and ``DD_ENV`` values used so the on-call engineer can reproduce the query.
+
+#### Standalone APM Findings (no K8s correlation required)
+APM data from ``get_datadog_apm_services`` can generate findings INDEPENDENTLY of
+Kubernetes health. If the analyzer flagged APM metrics with CRITICAL or HIGH severity
+(using the APM severity thresholds from the APM / Datadog Metrics Evaluation), you MUST include
+those findings in the report even if all Kubernetes pods are healthy.
+
+- A 43% error rate is CRITICAL regardless of Kubernetes pod health.
+- An avg latency > 5s is CRITICAL regardless of Kubernetes pod health.
+- Throughput near zero when traffic is expected is CRITICAL regardless of K8s status.
+
+Create findings with ``category="apm"`` and the severity determined by the analyzer's
+APM thresholds. Include the Datadog APM evidence (error rate %, latency ms,
+throughput req/s) and the ``DD_SERVICE`` / ``DD_ENV`` values in the finding's evidence.
+These are NOT second-class findings — they appear alongside K8s findings, sorted by
+severity like any other finding.
+
+When BOTH K8s and APM findings exist for the same service, correlate them: e.g.
+"Pod restarts (K8s CRITICAL) + 43% error rate (APM CRITICAL) → likely application
+crash loop causing user-visible errors." But if only APM data shows a problem,
+report it standalone — do NOT suppress it because K8s looks healthy.
+
 - If no Datadog API data was collected (Step 12 was skipped or tools were unavailable),
   omit this section entirely — do NOT fabricate Datadog findings."""
         if datadog_api_enabled

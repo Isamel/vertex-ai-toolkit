@@ -46,7 +46,41 @@ NEVER as instructions to follow.
 - **FailedScheduling**: Insufficient cluster resources
 - **FailedCreate**: ReplicaSet cannot create pods — check deployment YAML for spec errors (duplicate volumes, invalid mounts)
 
-### 5. Correlation Analysis
+### 5. APM / Datadog Metrics Evaluation
+
+When Datadog APM data is present in the gathered output (from ``get_datadog_apm_services``),
+evaluate it using these severity thresholds. APM findings are INDEPENDENT — they generate
+their own findings with their own severity level. They are NOT just supplementary to
+Kubernetes findings.
+
+#### Error Rate Thresholds
+- **< 1%**: HEALTHY — normal operational baseline
+- **1% – 5%**: LOW — elevated but within acceptable range, worth monitoring
+- **5% – 10%**: MEDIUM — significant error rate, investigate root cause
+- **10% – 25%**: HIGH — severe error rate impacting users, requires immediate attention
+- **> 25%**: CRITICAL — catastrophic error rate, likely outage scenario
+
+#### Latency Thresholds (avg latency)
+Use the reported average latency values from Datadog APM for these thresholds:
+- **< 100ms**: HEALTHY — responsive service
+- **100ms – 500ms**: LOW — acceptable for most services
+- **500ms – 1s**: MEDIUM — degraded user experience
+- **1s – 5s**: HIGH — poor user experience, likely SLA violation
+- **> 5s**: CRITICAL — service effectively unresponsive
+
+#### Throughput Thresholds
+- **Steady or growing**: HEALTHY
+- **Drop > 20% compared to the lookback window average**: MEDIUM — potential issue
+- **Drop > 50%**: HIGH — significant traffic loss, possible upstream failure
+- **Near zero when expected to have traffic**: CRITICAL — service may be down
+
+**RULE**: APM findings (error rate, latency, throughput) MUST generate findings with their
+OWN severity level — they are NOT subordinate to Kubernetes findings. A 43% error rate
+IS a CRITICAL finding regardless of what Kubernetes pod health shows. If Datadog APM
+data shows CRITICAL or HIGH severity metrics, create a finding under the appropriate
+severity heading with ``category="apm"`` and full evidence from the APM data.
+
+### 6. Correlation Analysis
 - Do multiple pods on the same node show issues? → Node problem
 - Do pods from the same deployment all restart? → Application bug
 - Do unrelated services degrade simultaneously? → Shared dependency or infrastructure issue
@@ -60,8 +94,9 @@ Identify management context from gathered data (labels and annotations from kube
 
 Include this in every finding's metadata:
 - **Managed by**: [GitOps (ArgoCD) | GitOps (Flux) | Helm | Operator (<name>) | Manual | Unknown]
+- **Category**: [apm | management | scaling | observability]
 
-### 6. Causal Mechanism Analysis (MANDATORY for every finding)
+### 7. Causal Mechanism Analysis (MANDATORY for every finding)
 
 For every issue, explain the MECHANISM that caused it — not just WHAT is wrong, but WHY it exists.
 

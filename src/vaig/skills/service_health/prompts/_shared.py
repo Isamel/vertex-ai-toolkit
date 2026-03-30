@@ -46,7 +46,7 @@ _DATADOG_API_TOOLS_TABLE = """\
 _PRIORITY_HIERARCHY = """\
 1. Kubernetes cluster data is the ABSOLUTE source of truth for deployment status.
 2. If K8s shows a service/deployment exists and is running, it IS deployed — regardless of Datadog results.
-3. Datadog monitoring data is SUPPLEMENTARY — it enriches the analysis but NEVER determines deployment status.
+3. While Kubernetes health is the primary signal, APM metrics with CRITICAL or HIGH severity (error rate > 5%, avg latency > 1s, throughput drops > 50%) generate independent findings that MUST be reported — even when K8s shows healthy pods.
 4. Empty Datadog results mean "monitoring not configured" NOT "service not deployed".
 5. NEVER conclude a service is "not deployed" or "doesn't exist" based on Datadog tool results."""
 

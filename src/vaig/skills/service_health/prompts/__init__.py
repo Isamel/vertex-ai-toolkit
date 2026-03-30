@@ -25,7 +25,7 @@ from ._reporter import (
     HEALTH_REPORTER_PROMPT,
     build_reporter_prompt,
 )
-from ._shared import _CORE_TOOLS_TABLE, _DATADOG_API_STEP
+from ._shared import _CORE_TOOLS_TABLE, _DATADOG_API_STEP, _PRIORITY_HIERARCHY
 from ._sub_gatherers import (
     build_datadog_gatherer_prompt,
     build_event_gatherer_prompt,
@@ -68,6 +68,7 @@ __all__ = [
     # shared internal (accessed by tests)
     "_CORE_TOOLS_TABLE",
     "_DATADOG_API_STEP",
+    "_PRIORITY_HIERARCHY",
     "_GATHERER_PROMPT_TEMPLATE",
     "_REMEDIATION_CORE_SECTION",
     "_REMEDIATION_GITOPS_SECTION",
