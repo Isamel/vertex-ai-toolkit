@@ -355,7 +355,7 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
 
     If Step 2 has not yet been analyzed or ownerReferences are unclear,
     default to ``resource_type="deployments"`` first; if that returns no data,
-    fall back to ``"replicasets"``, ``"statefulsets"``, ``"daemonsets"`` in order.
+    fall back to ``"statefulsets"``, ``"daemonsets"``, ``"replicasets"`` in order.
 
     From the output, look for these management indicators:
 
@@ -923,10 +923,13 @@ PREREQUISITE: Check if ``helm_list_releases`` is in your available tools list. I
 available, SKIP Helm tool calls entirely and mark as SKIPPED.
 
 If Helm tools are available, look for ``<helm_release_name>`` values from
-``meta.helm.sh/release-name`` annotations.  Call ``kubectl_get_labels`` for the
-workload types present in the namespace (determined from earlier pod analysis):
-- ``kubectl_get_labels(resource_type="deployments", namespace="{ns}")`` — try first
-- If no deployments found, try ``"statefulsets"``, ``"daemonsets"``, ``"replicasets"`` in order.
+``meta.helm.sh/release-name`` annotations.  Use ``kubectl_get_labels`` to discover
+workloads with relevant Helm annotations by calling it in this order:
+- ``kubectl_get_labels(resource_type="deployments", namespace="{ns}")`` — try deployments first.
+- If no relevant deployments are found, then try
+  ``kubectl_get_labels(resource_type="statefulsets", namespace="{ns}")``,
+  ``kubectl_get_labels(resource_type="daemonsets", namespace="{ns}")``, and
+  ``kubectl_get_labels(resource_type="replicasets", namespace="{ns}")`` in that order.
 Inspect the returned labels and annotations:
 - If ``<helm_release_name>`` IS found in annotations: You MUST call
   ``helm_release_status(release_name="<helm_release_name>", namespace="{ns}")`` directly.
