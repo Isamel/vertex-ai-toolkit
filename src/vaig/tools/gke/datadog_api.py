@@ -430,14 +430,20 @@ def query_datadog_metrics(
     # from the GKE cluster name (e.g. when the DD agent uses a different tag value).
     effective_cluster = getattr(config, "cluster_name_override", "") or cluster_name
 
-    # Build tag filter string: always include cluster_name; optionally service/env
-    filters, tag_err = _build_tag_filter(effective_cluster, service, env, config)
+    # Resolve metric mode early — APM trace.* metrics do not carry custom tags
+    mode = getattr(config, "metric_mode", "k8s_agent")
+    is_apm = mode == "apm"
+
+    # Build tag filter string: always include cluster_name; optionally service/env.
+    # Exclude custom labels for APM trace.* queries (they only carry service+env).
+    filters, tag_err = _build_tag_filter(
+        effective_cluster, service, env, config, include_custom_labels=not is_apm,
+    )
     if tag_err is not None:
         return tag_err
 
     # Resolve APM operation name when in apm mode
     resolved_operation = "http.request"
-    mode = getattr(config, "metric_mode", "k8s_agent")
     if mode == "apm":
         apm_op = getattr(config, "apm_operation", "auto")
         if apm_op != "auto":
