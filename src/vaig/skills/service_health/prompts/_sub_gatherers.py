@@ -741,13 +741,14 @@ You MUST call ``query_datadog_metrics(cluster_name="{cluster}", metric="memory")
   (only ``cluster_name`` and the same ``metric`` value).
 - If the tool supports a time-window parameter (for example, ``minutes``), you may
   widen the time window on a second retry to check for sparse or delayed data.
-- If you still receive no usable data **or** the tool reports that the requested
-  metric is unsupported in this environment, try APM trace-based metrics as a
-  fallback: call ``query_datadog_metrics(cluster_name="{cluster}", metric="requests",
-  service="<dd_service>", env="<dd_env>")`` and
-  ``query_datadog_metrics(cluster_name="{cluster}", metric="latency",
-  service="<dd_service>", env="<dd_env>")`` with the metric_mode set to ``"apm"``
-  in config, but ONLY if ``<dd_service>`` was resolved in Step 0.
+- ``query_datadog_metrics`` supports **both** infrastructure and APM metrics in a
+  single call.  Available metric names:
+  - **Infrastructure** (kubernetes.*): ``cpu``, ``memory``, ``restarts``,
+    ``network_in``, ``network_out``, ``disk_read``, ``disk_write``
+  - **APM** (trace.*): ``requests``, ``errors``, ``latency``, ``error_rate``,
+    ``apdex``
+  If infrastructure metrics return no data, try an APM metric such as ``requests``
+  or ``latency`` (with ``service`` and ``env`` set) as a fallback.
 - If APM metrics also return empty, call ``get_datadog_apm_services(service_name=
   "<dd_service>", env="<dd_env>")`` once to infer whether the service is receiving
   traffic and responding.

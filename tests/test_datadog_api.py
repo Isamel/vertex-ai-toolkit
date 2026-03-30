@@ -2483,7 +2483,7 @@ class TestBothModePerMetricCustomLabels:
     """
 
     def test_both_mode_k8s_metric_includes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
-        """In both mode, querying a k8s metric (cpu) includes custom labels in the tag filter."""
+        """In both mode, querying a k8s metric (cpu) includes custom labels in the FIRST tag filter."""
         from vaig.core.config import DatadogLabelConfig
         from vaig.tools.gke.datadog_api import query_datadog_metrics
 
@@ -2501,8 +2501,9 @@ class TestBothModePerMetricCustomLabels:
                 _custom_api=mock_api,
             )
 
-        call_kwargs = mock_api.query_metrics.call_args.kwargs
-        query_str = call_kwargs.get("query", "")
+        # Check the FIRST call includes custom labels (fallback may strip them)
+        first_call_kwargs = mock_api.query_metrics.call_args_list[0].kwargs
+        query_str = first_call_kwargs.get("query", "")
         assert "team:platform" in query_str
 
     def test_both_mode_apm_metric_excludes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
@@ -2553,7 +2554,7 @@ class TestBothModePerMetricCustomLabels:
         assert "team:" not in query_str
 
     def test_both_mode_memory_metric_includes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
-        """In both mode, querying 'memory' (kubernetes.* metric) includes custom labels."""
+        """In both mode, querying 'memory' (kubernetes.* metric) includes custom labels in first call."""
         from vaig.core.config import DatadogLabelConfig
         from vaig.tools.gke.datadog_api import query_datadog_metrics
 
@@ -2571,8 +2572,9 @@ class TestBothModePerMetricCustomLabels:
                 _custom_api=mock_api,
             )
 
-        call_kwargs = mock_api.query_metrics.call_args.kwargs
-        query_str = call_kwargs.get("query", "")
+        # Check the FIRST call includes custom labels (fallback may strip them)
+        first_call_kwargs = mock_api.query_metrics.call_args_list[0].kwargs
+        query_str = first_call_kwargs.get("query", "")
         assert "team:platform" in query_str
 
     def test_pure_apm_mode_still_excludes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
@@ -2599,7 +2601,7 @@ class TestBothModePerMetricCustomLabels:
         assert "team:" not in query_str
 
     def test_pure_k8s_mode_still_includes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
-        """Pure k8s_agent mode continues to include custom labels (regression guard)."""
+        """Pure k8s_agent mode continues to include custom labels in first call (regression guard)."""
         from vaig.core.config import DatadogLabelConfig
         from vaig.tools.gke.datadog_api import query_datadog_metrics
 
@@ -2617,8 +2619,9 @@ class TestBothModePerMetricCustomLabels:
                 _custom_api=mock_api,
             )
 
-        call_kwargs = mock_api.query_metrics.call_args.kwargs
-        query_str = call_kwargs.get("query", "")
+        # Check the FIRST call includes custom labels (fallback may strip them)
+        first_call_kwargs = mock_api.query_metrics.call_args_list[0].kwargs
+        query_str = first_call_kwargs.get("query", "")
         assert "team:platform" in query_str
 
 
@@ -3014,3 +3017,267 @@ class TestConfigDefaults:
         """DatadogAPIConfig.apm_operation accepts a custom operation name."""
         config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", apm_operation="servlet.request")
         assert config.apm_operation == "servlet.request"
+
+
+# ── Default metric_mode ──────────────────────────────────────
+
+
+class TestDefaultMetricModeConfig:
+    """Verify that metric_mode defaults to 'both'."""
+
+    def test_metric_mode_defaults_to_both(self) -> None:
+        """DatadogAPIConfig().metric_mode should default to 'both'."""
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        assert config.metric_mode == "both"
+
+    def test_metric_mode_can_be_overridden(self) -> None:
+        """metric_mode can still be set to k8s_agent or apm explicitly."""
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="k8s_agent")
+        assert config.metric_mode == "k8s_agent"
+
+        config_apm = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="apm")
+        assert config_apm.metric_mode == "apm"
+
+
+# ── Fuzzy template matching ──────────────────────────────────
+
+
+class TestMetricTemplateFuzzyMatch:
+    """Tests for fuzzy metric template matching (aliases + singular/plural)."""
+
+    def test_exact_match_takes_priority(self, dd_config: DatadogAPIConfig) -> None:
+        """Exact metric name should resolve without fuzzy matching."""
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="cpu",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        mock_api.query_metrics.assert_called_once()
+
+    def test_singular_to_plural_fuzzy_match(self, dd_config: DatadogAPIConfig) -> None:
+        """'request' (singular) should fuzzy-match to 'requests' (plural)."""
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="request",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        assert "trace." in call_kwargs["query"]
+
+    def test_alias_error_to_error_rate(self, dd_config: DatadogAPIConfig) -> None:
+        """Alias 'error' should resolve to 'error_rate'."""
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="error",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        assert "trace." in call_kwargs["query"]
+
+    def test_alias_throughput_to_requests(self, dd_config: DatadogAPIConfig) -> None:
+        """Alias 'throughput' should resolve to 'requests'."""
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="throughput",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        call_kwargs = mock_api.query_metrics.call_args.kwargs
+        assert "trace." in call_kwargs["query"]
+
+    def test_unknown_metric_shows_available_keys(self, dd_config: DatadogAPIConfig) -> None:
+        """Completely unknown metric should return error with available keys."""
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        mock_api = MagicMock()
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="totally_bogus_metric",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is True
+        assert "Unknown metric template" in result.output
+        assert "Available:" in result.output
+        assert "cpu" in result.output
+        assert "requests" in result.output
+
+
+# ── Tag filter fallback ──────────────────────────────────────
+
+
+class TestTagFilterFallback:
+    """Tests for retry-without-custom-labels on empty results."""
+
+    def test_no_retry_on_successful_query(self, dd_config: DatadogAPIConfig) -> None:
+        """When data is returned on the first call, no retry should happen."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        dd_config.labels = DatadogLabelConfig(custom={"team": "platform"})
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(
+            series=[_make_series(scope="cluster_name:my-cluster")]
+        )
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="cpu",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        assert "No data returned" not in result.output
+        # Should only be called once — no retry
+        assert mock_api.query_metrics.call_count == 1
+
+    def test_retry_without_custom_labels_on_no_data(self, dd_config: DatadogAPIConfig) -> None:
+        """When first query returns no data with custom labels, retry without them."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        dd_config.labels = DatadogLabelConfig(custom={"team": "platform"})
+
+        # First call: no data; second call: data
+        mock_api = MagicMock()
+        mock_api.query_metrics.side_effect = [
+            MagicMock(series=[]),  # first call: empty
+            MagicMock(series=[_make_series(scope="cluster_name:my-cluster")]),  # retry: data
+        ]
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="cpu",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        assert "No data returned" not in result.output
+        # Should be called twice: original + fallback
+        assert mock_api.query_metrics.call_count == 2
+
+        # First call should include custom labels, second should not
+        first_query = mock_api.query_metrics.call_args_list[0].kwargs["query"]
+        second_query = mock_api.query_metrics.call_args_list[1].kwargs["query"]
+        assert "team:platform" in first_query
+        assert "team:" not in second_query
+
+    def test_still_no_data_returns_no_data_message(self, dd_config: DatadogAPIConfig) -> None:
+        """When retry also returns no data, the original 'No data' message is returned."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        dd_config.labels = DatadogLabelConfig(custom={"team": "platform"})
+
+        # Both calls: no data
+        mock_api = MagicMock()
+        mock_api.query_metrics.side_effect = [
+            MagicMock(series=[]),  # first call: empty
+            MagicMock(series=[]),  # retry: still empty
+        ]
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="cpu",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        assert "No data returned" in result.output
+        # Should still be called twice
+        assert mock_api.query_metrics.call_count == 2
+
+    def test_no_retry_for_trace_metrics(self, dd_config: DatadogAPIConfig) -> None:
+        """trace.* metrics never have custom labels, so no retry should happen."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        dd_config.labels = DatadogLabelConfig(custom={"team": "platform"})
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="requests",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        # trace.* metrics already exclude custom labels, so no retry
+        assert mock_api.query_metrics.call_count == 1
+
+    def test_no_retry_when_no_custom_labels_configured(self, dd_config: DatadogAPIConfig) -> None:
+        """When config has no custom labels, no retry should occur."""
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        # default labels — no custom labels
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="cpu",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert mock_api.query_metrics.call_count == 1
