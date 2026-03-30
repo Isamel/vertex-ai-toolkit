@@ -462,6 +462,34 @@ def query_datadog_metrics(
 
     metric_templates = _build_metric_templates(config, operation=resolved_operation)
     template = metric_templates.get(metric)
+
+    # ── Fuzzy matching: try common aliases and singular/plural ────
+    if template is None:
+        _METRIC_ALIASES: dict[str, str] = {
+            "request": "requests",
+            "req": "requests",
+            "throughput": "requests",
+            "error": "error_rate",
+            "err": "error_rate",
+            "errs": "errors",
+            "lat": "latency",
+            "net_in": "network_in",
+            "net_out": "network_out",
+            "disk": "disk_read",
+            "restart": "restarts",
+            "mem": "memory",
+        }
+        resolved = _METRIC_ALIASES.get(metric)
+        if resolved is None:
+            # Try singular/plural: "requests" → "request" or "cpu" → "cpus"
+            if metric.endswith("s"):
+                resolved = metric[:-1]
+            else:
+                resolved = metric + "s"
+        template = metric_templates.get(resolved)
+        if template is not None:
+            logger.debug("Fuzzy-matched metric '%s' → '%s'", metric, resolved)
+
     if template is None:
         available = ", ".join(sorted(metric_templates.keys()))
         return ToolResult(
@@ -473,6 +501,9 @@ def query_datadog_metrics(
     # carry service+env tags, so custom labels would cause empty results.
     # In "both" mode the decision depends on the resolved template.
     _is_trace_metric = "trace." in template
+    _had_custom_labels = not _is_trace_metric and bool(
+        config.labels.custom if config is not None else False
+    )
     filters, tag_err = _build_tag_filter(
         effective_cluster, service, env, config, include_custom_labels=not _is_trace_metric,
     )
@@ -481,11 +512,11 @@ def query_datadog_metrics(
 
     query = template.format(filters=filters)
 
-    def _execute_query(api: Any) -> ToolResult:
+    def _execute_query(api: Any, q: str) -> ToolResult:
         response = api.query_metrics(
             _from=start,
             to=end,
-            query=query,
+            query=q,
         )
 
         series = getattr(response, "series", []) or []
@@ -498,7 +529,7 @@ def query_datadog_metrics(
         lines: list[str] = [
             f"=== Datadog Metrics: {metric} ===",
             f"Cluster: {effective_cluster}",
-            f"Query: {query}",
+            f"Query: {q}",
             f"Window: {start} → {end}",
             "",
         ]
@@ -521,13 +552,36 @@ def query_datadog_metrics(
 
         return ToolResult(output="\n".join(lines), error=False)
 
+    def _run_with_fallback(api: Any) -> ToolResult:
+        """Execute the query and retry without custom labels on empty results."""
+        result = _execute_query(api, query)
+
+        # Retry without custom labels when the first query returned no data
+        # and custom labels were included in the original filter.
+        if (
+            "No data returned" in result.output
+            and _had_custom_labels
+        ):
+            fallback_filters, fb_err = _build_tag_filter(
+                effective_cluster, service, env, config, include_custom_labels=False,
+            )
+            if fb_err is None:
+                fallback_query = template.format(filters=fallback_filters)
+                logger.debug(
+                    "No data with custom labels for '%s'; retrying without custom labels",
+                    metric,
+                )
+                result = _execute_query(api, fallback_query)
+
+        return result
+
     try:
         if _custom_api is not None:
-            return _execute_query(_custom_api)
+            return _run_with_fallback(_custom_api)
 
         with _get_dd_api_client(config) as client:
             api = MetricsApi(client)  # type: ignore[no-untyped-call]
-            return _execute_query(api)
+            return _run_with_fallback(api)
 
     except ApiException as exc:
         status = getattr(exc, "status", 0)
