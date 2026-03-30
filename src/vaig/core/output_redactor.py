@@ -84,8 +84,11 @@ def redact_sensitive_output(output: str) -> tuple[str, int]:
         def _replacer(match: re.Match[str]) -> str:
             nonlocal redaction_count
             redaction_count += 1
-            # Keep the prefix/label, redact the secret value
-            return match.group(1) + _REDACTED
+            # Keep all captured groups (prefix, suffix, etc.), redact between them.
+            groups = [g for g in match.groups() if g is not None]
+            if len(groups) > 1:
+                return _REDACTED.join(groups)
+            return groups[0] + _REDACTED if groups else _REDACTED
 
         result = pattern.sub(_replacer, result)
 

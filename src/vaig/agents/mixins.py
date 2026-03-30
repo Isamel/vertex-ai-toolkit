@@ -807,28 +807,39 @@ class ToolLoopMixin:
         Returns:
             ``(True, None)`` when valid, ``(False, error_message)`` otherwise.
         """
-        # If tool has no parameter schema, skip schema checks but still
-        # enforce string length.
-        if tool.parameters:
-            declared_names = {p.name for p in tool.parameters}
+        # If tool has no parameter schema (None), skip schema checks but
+        # still enforce string length. An explicit empty list means the tool
+        # takes no arguments — reject any args in that case.
+        param_schema = getattr(tool, "parameters", None)
+        if param_schema is not None:
+            if not param_schema:
+                # Explicit "no-args" schema: reject any provided arguments.
+                if args:
+                    return (
+                        False,
+                        f"Tool '{tool.name}' does not take any arguments, "
+                        f"but received: {sorted(args)}",
+                    )
+            else:
+                declared_names = {p.name for p in param_schema}
 
-            # 1. Reject unknown arg keys
-            unknown = set(args) - declared_names
-            if unknown:
-                return (
-                    False,
-                    f"Unknown argument(s) {sorted(unknown)} for tool '{tool.name}'. "
-                    f"Allowed parameters: {sorted(declared_names)}",
-                )
+                # 1. Reject unknown arg keys
+                unknown = set(args) - declared_names
+                if unknown:
+                    return (
+                        False,
+                        f"Unknown argument(s) {sorted(unknown)} for tool '{tool.name}'. "
+                        f"Allowed parameters: {sorted(declared_names)}",
+                    )
 
-            # 2. Check required params are present
-            required_names = {p.name for p in tool.parameters if p.required}
-            missing = required_names - set(args)
-            if missing:
-                return (
-                    False,
-                    f"Missing required argument(s) {sorted(missing)} for tool '{tool.name}'.",
-                )
+                # 2. Check required params are present
+                required_names = {p.name for p in param_schema if p.required}
+                missing = required_names - set(args)
+                if missing:
+                    return (
+                        False,
+                        f"Missing required argument(s) {sorted(missing)} for tool '{tool.name}'.",
+                    )
 
         # 3. Enforce max string length (always — even without schema)
         for key, value in args.items():
@@ -898,7 +909,7 @@ class ToolLoopMixin:
             logger.warning("Tool %s type error: %s", tool_name, exc)
             result = ToolResult(
                 output=f"Invalid arguments for {tool_name}: {exc}. "
-                f"Expected parameters: {', '.join(p.name for p in tool.parameters)}",
+                f"Expected parameters: {', '.join(p.name for p in (tool.parameters or []))}",
                 error=True,
             )
             self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="TypeError", error_message=str(exc))
@@ -1419,7 +1430,7 @@ class ToolLoopMixin:
             logger.warning("Tool %s type error: %s", tool_name, exc)
             result = ToolResult(
                 output=f"Invalid arguments for {tool_name}: {exc}. "
-                f"Expected parameters: {', '.join(p.name for p in tool.parameters)}",
+                f"Expected parameters: {', '.join(p.name for p in (tool.parameters or []))}",
                 error=True,
             )
             self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="TypeError", error_message=str(exc))
@@ -1517,13 +1528,15 @@ class ToolLoopMixin:
 
             err_msg_store = (tool_result.output or "")[:500] if tool_result.error else ""
             raw_output = tool_result.output or ""
-            original_size = len(raw_output.encode("utf-8"))
             redacted_output, redaction_count = redact_sensitive_output(raw_output)
+            # Also redact the error message snippet
+            if err_msg_store:
+                err_msg_store, _ = redact_sensitive_output(err_msg_store)
             record = ToolCallRecord(
                 tool_name=tool_name,
                 tool_args=tool_args,
                 output=redacted_output,
-                output_size_bytes=original_size,
+                output_size_bytes=len(redacted_output.encode("utf-8")),
                 error=tool_result.error,
                 error_type="",
                 error_message=err_msg_store,

@@ -57,8 +57,9 @@ COT_INSTRUCTION = (
 )
 
 
-# Regex matching 5 or more consecutive ═ (U+2550) characters
-_DELIMITER_CHAR_RUN_RE = re.compile("═{5,}")
+# Regex matching 5 or more consecutive ═ (U+2550) characters or
+# runs of other box-drawing characters used in delimiter injection.
+_DELIMITER_CHAR_RUN_RE = re.compile("[═╔╗╚╝║]{5,}")
 
 # All delimiter strings to check for in untrusted content
 _DELIMITER_STRINGS: tuple[str, ...] = (
@@ -70,21 +71,32 @@ _DELIMITER_STRINGS: tuple[str, ...] = (
 
 
 def _neutralize_delimiters(content: str) -> str:
-    """Replace box-drawing ═ (U+2550) chars with regular ``=`` if the content
-    contains delimiter-like sequences.
+    """Replace box-drawing characters (═ ╔ ╗ ╚ ╝ ║, U+2550-U+2551 etc.)
+    with their ASCII equivalents if the content contains delimiter-like
+    sequences.
 
     This is defense-in-depth against attempts to inject our own delimiter
     markers into untrusted content.  The primary defense is Gemini's native
     ``system_instruction`` parameter.
     """
     # Check for exact delimiter strings OR runs of 5+ ═ chars
-    needs_neutralization = any(d in content for d in _DELIMITER_STRINGS) or _DELIMITER_CHAR_RUN_RE.search(content)
+    needs_neutralization = any(d in content for d in _DELIMITER_STRINGS) or (
+        _DELIMITER_CHAR_RUN_RE.search(content) is not None
+    )
 
     if not needs_neutralization:
         return content
 
     logger.warning("Potential delimiter injection detected in untrusted content, neutralized")
-    return content.replace("═", "=")
+    return (
+        content
+        .replace("═", "=")
+        .replace("╔", "+")
+        .replace("╗", "+")
+        .replace("╚", "+")
+        .replace("╝", "+")
+        .replace("║", "|")
+    )
 
 
 def wrap_untrusted_content(content: str) -> str:

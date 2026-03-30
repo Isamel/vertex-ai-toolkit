@@ -654,7 +654,7 @@ class TestToolCallHook:
 
         mock_tool = MagicMock()
         mock_tool.execute.return_value = ToolResult(output="ok", error=False)
-        mock_tool.parameters = []  # Satisfy _pre_validate_tool_args schema check
+        mock_tool.parameters = None  # None = no schema, skip arg validation
 
         mock_registry = MagicMock()
         mock_registry.get.return_value = mock_tool
@@ -735,7 +735,7 @@ class TestToolCallHook:
 
         mock_tool = MagicMock()
         mock_tool.execute.side_effect = RuntimeError("connection timeout")
-        mock_tool.parameters = []  # Satisfy _pre_validate_tool_args schema check
+        mock_tool.parameters = None  # None = no schema, skip arg validation
 
         mock_registry = MagicMock()
         mock_registry.get.return_value = mock_tool

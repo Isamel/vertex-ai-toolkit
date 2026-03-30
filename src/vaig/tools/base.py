@@ -89,7 +89,7 @@ class ToolDef:
 
     name: str
     description: str
-    parameters: list[ToolParam] = field(default_factory=list)
+    parameters: list[ToolParam] | None = None
     execute: Callable[..., ToolResult] = field(default=lambda **_: ToolResult(output=""))
     cacheable: bool = True
     cache_ttl_seconds: int = 0
@@ -154,13 +154,14 @@ class ToolRegistry:
         """Convert registered tools to google-genai FunctionDeclaration objects."""
         declarations: list[types.FunctionDeclaration] = []
         for tool in self._tools.values():
+            params = tool.parameters or []
             schema: dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     param.name: {"type": param.type, "description": param.description}
-                    for param in tool.parameters
+                    for param in params
                 },
-                "required": [p.name for p in tool.parameters if p.required],
+                "required": [p.name for p in params if p.required],
             }
             declarations.append(
                 types.FunctionDeclaration(
