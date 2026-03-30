@@ -945,6 +945,63 @@ class TestConfigurableLabelsTagFilter:
         assert "service:my-svc" in tag_filter
         assert "env:prod" in tag_filter
 
+    def test_include_custom_labels_false_excludes_custom(self) -> None:
+        """When include_custom_labels=False, config.labels.custom entries are not appended."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import _build_tag_filter
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            labels=DatadogLabelConfig(custom={"team": "platform", "region": "us-east"}),
+        )
+        tag_filter, err = _build_tag_filter(
+            "my-cluster", "my-svc", "prod", config, include_custom_labels=False,
+        )
+
+        assert err is None
+        assert "cluster_name:my-cluster" in tag_filter
+        assert "service:my-svc" in tag_filter
+        assert "env:prod" in tag_filter
+        assert "team:" not in tag_filter
+        assert "region:" not in tag_filter
+
+    def test_include_custom_labels_true_includes_custom(self) -> None:
+        """When include_custom_labels=True (default), custom entries are appended."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import _build_tag_filter
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            labels=DatadogLabelConfig(custom={"team": "platform"}),
+        )
+        tag_filter, err = _build_tag_filter(
+            "my-cluster", None, None, config, include_custom_labels=True,
+        )
+
+        assert err is None
+        assert "team:platform" in tag_filter
+
+    def test_include_custom_labels_default_is_true(self) -> None:
+        """Calling without include_custom_labels behaves like True (backward compat)."""
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import _build_tag_filter
+
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            labels=DatadogLabelConfig(custom={"team": "platform"}),
+        )
+        # No include_custom_labels argument — should default to True
+        tag_filter, err = _build_tag_filter("my-cluster", None, None, config)
+
+        assert err is None
+        assert "team:platform" in tag_filter
+
 
 # ── Configurable labels — _build_metric_templates ────────────
 
