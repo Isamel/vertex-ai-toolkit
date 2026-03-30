@@ -268,10 +268,10 @@ class TestExecuteTool:
         )
         agent._registry.register(tool)
 
-        # Call without required arg — should be caught as TypeError
+        # Call without required arg — caught by pre-validation or TypeError
         result = agent._execute_tool("bad_tool", {})
         assert result.error is True
-        assert "Invalid arguments" in result.output
+        assert "Invalid arguments" in result.output or "Missing required" in result.output
 
     @patch("vaig.agents.infra_agent.InfraAgent._register_tools")
     def test_tool_unexpected_error(self, mock_register: MagicMock) -> None:

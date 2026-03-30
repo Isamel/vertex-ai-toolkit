@@ -17,7 +17,10 @@ appear in legitimate Kubernetes or GCP output.
 
 from __future__ import annotations
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 # ── Delimiter constants ─────────────────────────────────────────────────
 DELIMITER_SYSTEM_START = "═══════════ SYSTEM INSTRUCTIONS (TRUSTED) ═══════════"
@@ -54,6 +57,36 @@ COT_INSTRUCTION = (
 )
 
 
+# Regex matching 5 or more consecutive ═ (U+2550) characters
+_DELIMITER_CHAR_RUN_RE = re.compile("═{5,}")
+
+# All delimiter strings to check for in untrusted content
+_DELIMITER_STRINGS: tuple[str, ...] = (
+    DELIMITER_SYSTEM_START,
+    DELIMITER_SYSTEM_END,
+    DELIMITER_DATA_START,
+    DELIMITER_DATA_END,
+)
+
+
+def _neutralize_delimiters(content: str) -> str:
+    """Replace box-drawing ═ (U+2550) chars with regular ``=`` if the content
+    contains delimiter-like sequences.
+
+    This is defense-in-depth against attempts to inject our own delimiter
+    markers into untrusted content.  The primary defense is Gemini's native
+    ``system_instruction`` parameter.
+    """
+    # Check for exact delimiter strings OR runs of 5+ ═ chars
+    needs_neutralization = any(d in content for d in _DELIMITER_STRINGS) or _DELIMITER_CHAR_RUN_RE.search(content)
+
+    if not needs_neutralization:
+        return content
+
+    logger.warning("Potential delimiter injection detected in untrusted content, neutralized")
+    return content.replace("═", "=")
+
+
 def wrap_untrusted_content(content: str) -> str:
     """Wrap raw data in untrusted-data delimiters for prompt injection defense.
 
@@ -61,6 +94,10 @@ def wrap_untrusted_content(content: str) -> str:
     or any other external content before passing it as context to an LLM
     agent.  The delimiters signal to the agent that the enclosed content
     is DATA to analyse, not instructions to follow.
+
+    Before wrapping, the content is scanned for our own delimiter markers
+    or sequences of ``═`` characters — if found they are neutralized by
+    replacing ``═`` with regular ``=`` (defense-in-depth).
 
     Args:
         content: Raw text from external/untrusted sources (tool outputs,
@@ -70,7 +107,8 @@ def wrap_untrusted_content(content: str) -> str:
         The content wrapped between ``DELIMITER_DATA_START`` and
         ``DELIMITER_DATA_END`` markers.
     """
-    return f"{DELIMITER_DATA_START}\n{content}\n{DELIMITER_DATA_END}"
+    safe_content = _neutralize_delimiters(content)
+    return f"{DELIMITER_DATA_START}\n{safe_content}\n{DELIMITER_DATA_END}"
 
 
 # ── K8s namespace validation ─────────────────────────────────────────────

@@ -672,7 +672,8 @@ class TestCodingAgentExecute:
 
         assert result.success is True
         assert result.metadata["tools_executed"][0]["error"] is True
-        assert "Invalid arguments" in result.metadata["tools_executed"][0]["output"]
+        tool_output = result.metadata["tools_executed"][0]["output"]
+        assert "Unknown argument" in tool_output or "Invalid arguments" in tool_output
 
     @patch("vaig.agents.coding.create_shell_tools", return_value=[])
     @patch("vaig.agents.coding.create_file_tools", return_value=[])

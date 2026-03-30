@@ -49,6 +49,7 @@ class ToolCallRecord:
     run_id: str                    # UUID for the execution run
     iteration: int                 # Which iteration of the tool loop
     cached: bool = False           # True when result came from ToolResultCache
+    redactions: int = 0            # Number of sensitive values redacted from output
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for JSON storage."""
@@ -66,6 +67,7 @@ class ToolCallRecord:
             "run_id": self.run_id,
             "iteration": self.iteration,
             "cached": self.cached,
+            "redactions": self.redactions,
         }
 
 
