@@ -8,7 +8,6 @@ import ssl
 import time
 from typing import TYPE_CHECKING, Any
 
-import requests  # type: ignore[import-untyped]
 import urllib3.exceptions  # type: ignore[import-untyped]
 
 from vaig.core.config import DatadogAPIConfig
@@ -28,17 +27,25 @@ _ERR_AUTH = "Authentication failed. Check your Datadog API key and application k
 _ERR_FORBIDDEN = "Insufficient permissions. Check your Datadog API/app key scopes."
 _ERR_RATE_LIMIT = "Rate limit exceeded. Try again later."
 
-# ── Datadog APM Spans Events Search v2 endpoints ─────────────
-_DD_SPANS_BASE_URL = "https://api.{site}"
-_DD_SPANS_POST_PATH = "/api/v2/spans/events/search"
-_DD_SPANS_GET_PATH = "/api/v2/apm/traces/search"
+# ── Datadog APM operation probe order ────────────────────────
+# Ordered by prevalence: Java/Spring → generic HTTP → gRPC → Python → Ruby → messaging.
+_APM_OPERATION_PROBE_ORDER: tuple[str, ...] = (
+    "servlet.request",
+    "http.request",
+    "grpc.server",
+    "flask.request",
+    "web.request",
+    "rack.request",
+    "grpc.client",
+    "kafka.consume",
+)
 
 # ── Metric query templates ───────────────────────────────────
 # Templates use {filters} as a placeholder for the full tag filter string.
 # Example rendered: avg:kubernetes.cpu.usage.total{cluster_name:my-cluster,service:api,env:prod}
 
 
-def _build_metric_templates(config: DatadogAPIConfig) -> dict[str, str]:
+def _build_metric_templates(config: DatadogAPIConfig, operation: str = "http.request") -> dict[str, str]:
     """Build the metric query template dict from config.
 
     The ``by {pod_name}`` grouping dimension is read from
@@ -46,6 +53,8 @@ def _build_metric_templates(config: DatadogAPIConfig) -> dict[str, str]:
 
     When ``config.metric_mode`` is ``"apm"``, APM-native ``trace.*`` metric
     templates are returned instead of the default ``kubernetes.*`` templates.
+    The *operation* parameter controls which APM operation name is inserted
+    into the ``trace.{operation}.*`` template keys (default ``http.request``).
     Use ``"apm"`` mode for setups that only have APM instrumentation and no
     Datadog Agent DaemonSet with the kubelet check enabled.
 
@@ -65,18 +74,23 @@ def _build_metric_templates(config: DatadogAPIConfig) -> dict[str, str]:
 
     mode = getattr(config, "metric_mode", "k8s_agent")
     if mode == "apm":
+        # NOTE: triple braces {{{filters}}} in a regular string produce a
+        # literal "{" + the .format() placeholder {filters} + literal "}".
+        # Using an f-string for {operation} would conflict with the .format()
+        # placeholder, so we use %-style or concatenation instead.
+        _op = operation
         templates: dict[str, str] = {
-            "requests": "sum:trace.http.request.hits{{{filters}}} by " + _by,
-            "errors": "sum:trace.http.request.errors{{{filters}}} by " + _by,
-            "latency": "avg:trace.http.request.duration{{{filters}}} by " + _by,
+            "requests": "sum:trace." + _op + ".hits{{{filters}}} by " + _by,
+            "errors": "sum:trace." + _op + ".errors{{{filters}}} by " + _by,
+            "latency": "avg:trace." + _op + ".duration{{{filters}}} by " + _by,
             "error_rate": (
-                "( sum:trace.http.request.errors{{{filters}}} by "
+                "( sum:trace." + _op + ".errors{{{filters}}} by "
                 + _by
-                + " / sum:trace.http.request.hits{{{filters}}} by "
+                + " / sum:trace." + _op + ".hits{{{filters}}} by "
                 + _by
                 + " ) * 100"
             ),
-            "apdex": "avg:trace.http.request.apdex{{{filters}}} by " + _by,
+            "apdex": "avg:trace." + _op + ".apdex{{{filters}}} by " + _by,
         }
     else:
         # Default: k8s_agent mode — kubernetes.* metrics via DaemonSet Agent
@@ -294,6 +308,60 @@ def _ssl_error_result(context: str, exc: Exception) -> ToolResult:
 # ── Public Tool Functions ────────────────────────────────────
 
 
+def _detect_apm_operation(
+    api: Any,
+    service: str,
+    env: str,
+    config: DatadogAPIConfig,
+) -> str | None:
+    """Probe ``trace.{op}.hits`` metrics to find the active APM operation name.
+
+    Checks the discovery cache first (TTL 300 s).  When
+    ``config.apm_operation`` is not ``"auto"``, the configured value is
+    returned immediately without any API calls.
+
+    Returns the first operation with non-empty timeseries data, or
+    ``None`` if every probe comes back empty.
+    """
+    # Fast path: explicit configuration — skip probing entirely.
+    configured = getattr(config, "apm_operation", "auto")
+    if configured != "auto":
+        return configured
+
+    cache_key = _cache._cache_key_discovery("apm_op", service, env)
+    cached = _cache._get_cached(cache_key, ttl=300)
+    if cached is not None:
+        return cached
+
+    now = int(time.time())
+    start = now - 900  # last 15 minutes
+
+    for op in _APM_OPERATION_PROBE_ORDER:
+        query = f"sum:trace.{op}.hits{{service:{service},env:{env}}}"
+        try:
+            response = api.query_metrics(_from=start, to=now, query=query)
+            series = getattr(response, "series", []) or []
+            if series:
+                _cache._set_cache(cache_key, op, ttl=300)
+                logger.info(
+                    "Datadog APM: detected operation '%s' for service=%s env=%s",
+                    op, service, env,
+                )
+                return op
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "Datadog APM: probe for '%s' failed for service=%s env=%s",
+                op, service, env, exc_info=True,
+            )
+            continue
+
+    logger.warning(
+        "Datadog APM: no operation found for service=%s env=%s (probed: %s)",
+        service, env, ", ".join(_APM_OPERATION_PROBE_ORDER),
+    )
+    return None
+
+
 def query_datadog_metrics(
     *,
     cluster_name: str,
@@ -358,7 +426,18 @@ def query_datadog_metrics(
     if tag_err is not None:
         return tag_err
 
-    metric_templates = _build_metric_templates(config)
+    # Resolve APM operation name when in apm mode
+    resolved_operation = "http.request"
+    mode = getattr(config, "metric_mode", "k8s_agent")
+    if mode == "apm":
+        apm_op = getattr(config, "apm_operation", "auto")
+        if apm_op != "auto":
+            resolved_operation = apm_op
+        # NOTE: auto-detection is not run here because query_datadog_metrics
+        # doesn't have service/env guaranteed; _detect_apm_operation is used
+        # by get_datadog_apm_services which always has those values.
+
+    metric_templates = _build_metric_templates(config, operation=resolved_operation)
     template = metric_templates.get(metric)
     if template is None:
         available = ", ".join(sorted(metric_templates.keys()))
@@ -700,16 +779,14 @@ def get_datadog_apm_services(
     env: str = "production",
     hours_back: float | None = None,
     config: DatadogAPIConfig | None = None,
-    _custom_session: Any = None,
+    _custom_api: Any = None,
 ) -> ToolResult:
-    """Fetch live APM trace metrics for a specific service using the Spans Events Search v2 API.
+    """Fetch live APM trace metrics for a specific service using the Metrics v1 Timeseries API.
 
-    Queries Datadog spans data (throughput, error rate, latency) for the given
-    service and environment.  Uses a fallback chain:
-
-    1. **Primary**: POST ``/api/v2/spans/events/search`` (Spans Events Search v2)
-    2. **Fallback 1**: GET ``/api/v2/apm/traces/search`` (APM Traces Search v2)
-    3. **Fallback 2**: Return empty result with warning (no crash)
+    Queries Datadog ``trace.{operation}.*`` metrics (throughput, error rate,
+    latency) for the given service and environment.  The APM operation name
+    is auto-detected by probing common ``trace.{op}.hits`` metrics unless
+    ``config.apm_operation`` is explicitly set.
 
     Results are cached for 60 seconds per (service_name, env, hours_back) combination.
 
@@ -724,8 +801,14 @@ def get_datadog_apm_services(
             value from ``config.default_lookback_hours`` is used (default 4h).
             Use fractional values for sub-hour windows (e.g. ``0.5`` for 30 min).
         config: Optional ``DatadogAPIConfig`` (for testing / injection).
-        _custom_session: Optional pre-configured ``requests.Session`` (for testing).
+        _custom_api: Optional pre-configured Datadog ``MetricsApi`` (for testing).
     """
+    try:
+        from datadog_api_client.exceptions import ApiException  # noqa: WPS433
+        from datadog_api_client.v1.api.metrics_api import MetricsApi  # noqa: WPS433
+    except ImportError:
+        return ToolResult(output=_ERR_NOT_INSTALLED, error=True)
+
     if config is None:
         from vaig.core.config import get_settings  # noqa: WPS433
 
@@ -767,11 +850,9 @@ def get_datadog_apm_services(
         logger.warning("hours_back=%s is not positive — clamping to config default %sh", hours_back, lookback)
 
     # Cache check (TTL = 60s) — key includes service+env+window in whole seconds
-    # Normalising to int seconds prevents duplicate entries for equivalent float values
-    # like hours_back=1.0 vs hours_back=1.00.
     cache_key_window = int(hours_back * 3600)
     cache_key = _cache._cache_key_discovery(
-        "dd_apm_spans_v2", service_name, env, str(cache_key_window)
+        "dd_apm_metrics", service_name, env, str(cache_key_window)
     )
     cached = _cache._get_cached(cache_key)
     if cached is not None:
@@ -781,160 +862,73 @@ def get_datadog_apm_services(
     now = int(time.time())
     start = int(now - hours_back * 3600)
 
-    # Build Datadog headers
-    headers = {
-        "DD-API-KEY": config.api_key,
-        "DD-APPLICATION-KEY": config.app_key,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-    base_url = _DD_SPANS_BASE_URL.format(site=config.site)
-    service_label = config.labels.service if config.labels else "service"
-    env_label = config.labels.env if config.labels else "env"
-
-    # Validate config-provided tag key names — a misconfigured label key would
-    # silently corrupt filter queries (e.g. "my:service:svc" is invalid syntax).
     try:
-        _validate_tag_key(service_label)
-        _validate_tag_key(env_label)
-    except ValueError as exc:
-        return ToolResult(output=str(exc), error=True)
+        if _custom_api is not None:
+            api = _custom_api
+        else:
+            with _get_dd_api_client(config) as client:
+                api = MetricsApi(client)  # type: ignore[no-untyped-call]
 
-    filter_query = f"{service_label}:{service_name} {env_label}:{env}"
-
-    def _try_spans_post(session: Any) -> tuple[dict[str, Any] | None, str]:
-        """POST to /api/v2/spans/events/search. Returns (data, error_msg)."""
-        url = base_url + _DD_SPANS_POST_PATH
-        payload = {
-            "data": {
-                "attributes": {
-                    "filter": {
-                        "query": filter_query,
-                        "from": f"{start}000",  # milliseconds as string
-                        "to": f"{now}000",
-                    },
-                    "page": {"limit": 100},
-                    "sort": "-timestamp",
-                },
-                "type": "search_request",
-            }
-        }
-        try:
-            resp = session.post(url, json=payload, headers=headers, timeout=config.timeout)
-            if resp.status_code == 200:
-                logger.info("Datadog APM: Spans Events Search v2 POST succeeded for service=%s env=%s", service_name, env)
-                return resp.json(), ""
-            logger.warning(
-                "Datadog APM: Spans Events Search v2 POST failed (HTTP %s) for service=%s",
-                resp.status_code, service_name,
+        # ── Detect APM operation name ────────────────────────
+        operation = _detect_apm_operation(api, service_name, env, config)
+        if operation is None:
+            probed = ", ".join(_APM_OPERATION_PROBE_ORDER)
+            return ToolResult(
+                output=(
+                    f"No APM trace data found for service '{service_name}' in env '{env}'. "
+                    f"Probed operations: {probed}. "
+                    "Verify the service has APM instrumentation enabled, or set "
+                    "datadog.apm_operation to the correct operation name in your config."
+                ),
+                error=False,
             )
-            return None, f"POST /api/v2/spans/events/search returned HTTP {resp.status_code}"
-        except requests.exceptions.SSLError:
-            # Re-raise so the outer SSLError handler can surface a helpful message
-            raise
-        except requests.RequestException as exc:
-            logger.warning("Datadog APM: Spans Events Search v2 POST request error: %s", exc)
-            return None, f"POST /api/v2/spans/events/search request error: {exc}"
 
-    def _try_spans_get(session: Any) -> tuple[dict[str, Any] | None, str]:
-        """GET /api/v2/apm/traces/search fallback. Returns (data, error_msg)."""
-        url = base_url + _DD_SPANS_GET_PATH
-        params = {
-            "filter[query]": filter_query,
-            "filter[from]": str(start * 1000),  # milliseconds
-            "filter[to]": str(now * 1000),
-            "page[limit]": "100",
-            "sort": "-timestamp",
-        }
-        # Remove Content-Type for GET (no body)
-        get_headers = {k: v for k, v in headers.items() if k != "Content-Type"}
-        try:
-            resp = session.get(url, params=params, headers=get_headers, timeout=config.timeout)
-            if resp.status_code == 200:
-                logger.info("Datadog APM: APM Traces Search v2 GET succeeded for service=%s env=%s", service_name, env)
-                return resp.json(), ""
-            logger.warning(
-                "Datadog APM: APM Traces Search v2 GET failed (HTTP %s) for service=%s",
-                resp.status_code, service_name,
-            )
-            return None, f"GET /api/v2/apm/traces/search returned HTTP {resp.status_code}"
-        except requests.exceptions.SSLError:
-            # Re-raise so the outer SSLError handler can surface a helpful message
-            raise
-        except requests.RequestException as exc:
-            logger.warning("Datadog APM: APM Traces Search v2 GET request error: %s", exc)
-            return None, f"GET /api/v2/apm/traces/search request error: {exc}"
-
-    def _parse_spans_response(data: dict[str, Any]) -> dict[str, float | None]:
-        """Parse spans data to extract aggregate metrics.
-
-        Iterates over spans and computes throughput (spans/s), error rate,
-        and average latency from ``duration`` attributes.
-        """
-        spans = data.get("data", []) or []
-        if not spans:
-            return {"hits": None, "errors": None, "duration": None}
-
-        total_spans = len(spans)
-        error_count = 0
-        durations: list[float] = []
-
-        for span in spans:
-            attrs = span.get("attributes", {}) or {}
-            resource_attrs = attrs.get("attributes", {}) or {}
-            # error flag
-            if resource_attrs.get("error", "0") in ("1", 1, True, "true"):
-                error_count += 1
-            # duration in nanoseconds
-            dur_ns = attrs.get("duration")
-            if dur_ns is not None:
-                try:
-                    durations.append(float(dur_ns) / 1e9)  # convert ns → seconds
-                except (TypeError, ValueError):
-                    pass
-
-        window_seconds = max(hours_back * 3600, 1)
-        hits_per_sec = total_spans / window_seconds
-        errors_per_sec = error_count / window_seconds
-        avg_duration = sum(durations) / len(durations) if durations else None
-
-        # Flag when the result set hit the API page limit (100 spans).
-        # In that case throughput is a lower bound — the true rate may be higher.
-        PAGE_LIMIT = 100
-        at_page_limit = total_spans >= PAGE_LIMIT
-
-        return {
-            "hits": hits_per_sec,
-            "errors": errors_per_sec,
-            "duration": avg_duration,
-            "at_page_limit": at_page_limit,
+        # ── Build and execute 3 metric queries ───────────────
+        tag_filter = f"service:{service_name},env:{env}"
+        queries = {
+            "hits": f"sum:trace.{operation}.hits{{{tag_filter}}}",
+            "errors": f"sum:trace.{operation}.errors{{{tag_filter}}}",
+            "duration": f"avg:trace.{operation}.duration{{{tag_filter}}}",
         }
 
-    def _format_apm_output(
-        results: dict[str, float | None], source: str
-    ) -> str:
-        """Format APM metrics results into a human-readable text block."""
+        results: dict[str, float | None] = {}
+        for metric_key, query in queries.items():
+            response = api.query_metrics(_from=start, to=now, query=query)
+            series = getattr(response, "series", []) or []
+            if series:
+                points = getattr(series[0], "pointlist", []) or []
+                # Extract last non-null datapoint
+                last_val = None
+                for point in reversed(points):
+                    if point[1] is not None:
+                        last_val = point[1]
+                        break
+                results[metric_key] = last_val
+            else:
+                results[metric_key] = None
+
+        # ── Compute derived metrics ──────────────────────────
         hits = results.get("hits")
         errors = results.get("errors")
         duration = results.get("duration")
 
-        at_page_limit = bool(results.get("at_page_limit", False))
-        # NOTE: throughput is derived from len(spans) which is capped at the API page
-        # limit (100). When the result set hits that limit, throughput is a lower bound.
-        if hits is not None and at_page_limit:
-            throughput_str = f"≥{hits:.4f} req/s (page limit reached — actual rate may be higher)"
-        elif hits is not None:
-            throughput_str = f"{hits:.4f} req/s"
+        window_seconds = max(hours_back * 3600, 1)
+
+        if hits is not None:
+            throughput_str = f"{hits / window_seconds:.4f} req/s"
         else:
             throughput_str = "N/A"
+
         if hits is not None and hits > 0 and errors is not None:
             error_rate_str = f"{(errors / hits * 100):.2f}%"
         elif hits is not None and hits == 0:
             error_rate_str = "0.00%"
         else:
             error_rate_str = "N/A"
+
+        # Datadog returns duration in seconds; convert to ms for display
         latency_str = f"{(duration * 1000):.2f} ms" if duration is not None else "N/A"
+
         window_str = f"last {hours_back:.4g} hour{'s' if hours_back != 1 else ''}"
 
         lines = [
@@ -942,76 +936,29 @@ def get_datadog_apm_services(
             f"Service:    {service_name}",
             f"Env:        {env}",
             f"Window:     {window_str}",
-            f"Source:     {source}",
+            f"Operation:  {operation}",
             "",
             f"Throughput: {throughput_str}",
             f"Error rate: {error_rate_str}",
             f"Avg latency: {latency_str}",
         ]
-        return "\n".join(lines)
+        output = "\n".join(lines)
+        _cache._set_cache(cache_key, output)
+        return ToolResult(output=output, error=False)
 
-    try:
-        # ── Fallback chain ────────────────────────────────────
-        errors_seen: list[str] = []
-
-        # Primary: POST Spans Events Search v2
-        # Use caller-provided session or create one with a context manager to ensure
-        # the socket is released when we're done, even on exceptions.
-        def _run_with_session(sess: Any) -> ToolResult | None:
-            nonlocal errors_seen
-            post_data, post_err = _try_spans_post(sess)
-            if post_data is not None:
-                spans = post_data.get("data", []) or []
-                if spans:
-                    results = _parse_spans_response(post_data)
-                    output = _format_apm_output(results, "Spans Events Search v2 (POST)")
-                    _cache._set_cache(cache_key, output)
-                    return ToolResult(output=output, error=False)
-                # 200 but no spans — try fallback anyway
-                logger.info(
-                    "Datadog APM: Spans Events Search v2 returned 0 spans for service=%s, trying GET fallback",
-                    service_name,
-                )
-            if post_err:
-                errors_seen.append(post_err)
-
-            # Fallback 1: GET APM Traces Search v2
-            get_data, get_err = _try_spans_get(sess)
-            if get_data is not None:
-                spans = get_data.get("data", []) or []
-                if spans:
-                    results = _parse_spans_response(get_data)
-                    output = _format_apm_output(results, "APM Traces Search v2 (GET fallback)")
-                    _cache._set_cache(cache_key, output)
-                    return ToolResult(output=output, error=False)
-            if get_err:
-                errors_seen.append(get_err)
-            return None
-
-        if _custom_session is not None:
-            early_result = _run_with_session(_custom_session)
-        else:
-            with requests.Session() as _owned_session:
-                _owned_session.verify = config.ssl_verify  # type: ignore[assignment]
-                early_result = _run_with_session(_owned_session)
-
-        if early_result is not None:
-            return early_result
-
-        # Fallback 2: return empty result with warning
-        tried = "; ".join(errors_seen) if errors_seen else "all APIs returned 0 spans"
-        no_data_msg = (
-            f"No APM trace data found for service '{service_name}' in env '{env}' "
-            f"over the last {hours_back:.4g} hour(s). "
-            f"APIs tried: {tried}. "
-            "Verify the service_name matches the Datadog APM service tag and "
-            "that APM instrumentation is active for this service."
+    except ApiException as exc:
+        status = getattr(exc, "status", 0)
+        msg = _dd_error_message(status)
+        logger.warning("Datadog APM metrics API error (HTTP %s): %s", status, exc)
+        return ToolResult(output=msg, error=True)
+    except urllib3.exceptions.MaxRetryError as exc:
+        if isinstance(getattr(exc, "reason", None), ssl.SSLError):
+            return _ssl_error_result("APM", exc)
+        logger.error("Datadog APM: connection failed after retries: %s", exc)
+        return ToolResult(
+            output=f"Failed to connect to Datadog after multiple retries: {exc}",
+            error=True,
         )
-        logger.warning("Datadog APM: no span data found for service=%s env=%s. %s", service_name, env, tried)
-        return ToolResult(output=no_data_msg, error=False)
-
-    except requests.exceptions.SSLError as exc:
-        return _ssl_error_result("APM", exc)
     except Exception:  # noqa: BLE001
         logger.exception("Unexpected error in get_datadog_apm_services")
         return ToolResult(output="Unexpected error retrieving APM trace metrics. See logs for details.", error=True)

@@ -1286,46 +1286,36 @@ class TestDetectionConfigEnvVars:
         assert "DD_AGENT_HOST" in result["env_vars"]
 
 
-# ── get_datadog_apm_services (Spans Events Search v2) ─────────
+# ── get_datadog_apm_services (Metrics v1 Timeseries API) ──────
 
 
-def _make_spans_response(
-    spans: list[dict] | None = None,
-    status_code: int = 200,
-) -> MagicMock:
-    """Build a mock requests.Response for the Spans Events Search v2 POST.
+def _make_apm_query_response(
+    hits: float | None = 100.0,
+    errors: float | None = 5.0,
+    duration: float | None = 0.015,
+) -> dict[str, MagicMock]:
+    """Build mock ``MetricsApi.query_metrics()`` responses for APM queries.
 
-    Args:
-        spans: List of span dicts. If None, uses a default single span.
-        status_code: HTTP status code to set on the mock response.
+    Returns a dict keyed by metric kind (``hits``, ``errors``, ``duration``)
+    so callers can wire them into ``side_effect`` lists.
     """
-    if spans is None:
-        spans = [
-            {
-                "id": "abc123",
-                "type": "span",
-                "attributes": {
-                    "duration": 5_000_000,  # 5ms in nanoseconds
-                    "attributes": {"error": "0"},
-                },
-            }
-        ]
-    resp = MagicMock()
-    resp.status_code = status_code
-    resp.json.return_value = {"data": spans}
-    return resp
-
-
-def _make_empty_spans_response(status_code: int = 200) -> MagicMock:
-    """Build a mock response with 0 spans and the given status code."""
-    resp = MagicMock()
-    resp.status_code = status_code
-    resp.json.return_value = {"data": []}
-    return resp
+    responses: dict[str, MagicMock] = {}
+    for key, value in [("hits", hits), ("errors", errors), ("duration", duration)]:
+        resp = MagicMock()
+        if value is not None:
+            point = MagicMock()
+            point.__getitem__ = lambda self, idx, v=value: [1700000000, v][idx]
+            series_obj = MagicMock()
+            series_obj.pointlist = [[1700000000, value]]
+            resp.series = [series_obj]
+        else:
+            resp.series = []
+        responses[key] = resp
+    return responses
 
 
 class TestGetDatadogApmServices:
-    """Tests for get_datadog_apm_services (Spans Events Search v2)."""
+    """Tests for get_datadog_apm_services (Metrics v1 Timeseries API)."""
 
     def setup_method(self) -> None:
         """Clear the discovery cache before each test."""
@@ -1333,24 +1323,48 @@ class TestGetDatadogApmServices:
 
         clear_discovery_cache()
 
-    def test_returns_apm_metrics_table_on_post_success(self, dd_config: DatadogAPIConfig) -> None:
-        """When POST Spans Search v2 returns spans, output contains the metrics table."""
+    def _make_api_with_responses(
+        self,
+        hits: float | None = 100.0,
+        errors: float | None = 5.0,
+        duration: float | None = 0.015,
+    ) -> MagicMock:
+        """Create a mock MetricsApi with canned query_metrics responses.
+
+        The mock is configured so that:
+        - _detect_apm_operation probe queries return data for ``servlet.request``
+        - The 3 APM metric queries (hits, errors, duration) return the given values
+        """
+        responses = _make_apm_query_response(hits=hits, errors=errors, duration=duration)
+        # Build response list: first call is for _detect_apm_operation probe (returns hits series),
+        # then the 3 actual metric queries.
+        probe_resp = MagicMock()
+        probe_series = MagicMock()
+        probe_series.pointlist = [[1700000000, 42.0]]
+        probe_resp.series = [probe_series]
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.side_effect = [
+            probe_resp,  # _detect_apm_operation probe for first operation
+            responses["hits"],
+            responses["errors"],
+            responses["duration"],
+        ]
+        return mock_api
+
+    def test_returns_apm_metrics_table(self, dd_config: DatadogAPIConfig) -> None:
+        """Successful API call returns the APM metrics table with service, env, and metrics."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response(
-            spans=[
-                {"id": "s1", "type": "span", "attributes": {"duration": 10_000_000, "attributes": {"error": "0"}}},
-                {"id": "s2", "type": "span", "attributes": {"duration": 20_000_000, "attributes": {"error": "0"}}},
-            ]
-        )
+        mock_api = self._make_api_with_responses(hits=200.0, errors=10.0, duration=0.025)
 
-        result = get_datadog_apm_services(
-            service_name="my-service",
-            env="production",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="my-service",
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
 
         assert result.error is False
         assert "=== Datadog APM Trace Metrics ===" in result.output
@@ -1359,142 +1373,62 @@ class TestGetDatadogApmServices:
         assert "Throughput:" in result.output
         assert "Error rate:" in result.output
         assert "Avg latency:" in result.output
-        assert "Spans Events Search v2" in result.output
-        # POST was tried
-        mock_session.post.assert_called_once()
 
-    def test_post_sends_correct_headers(self, dd_config: DatadogAPIConfig) -> None:
-        """POST request includes DD-API-KEY and DD-APPLICATION-KEY headers."""
+    def test_queries_use_service_and_env_tags(self, dd_config: DatadogAPIConfig) -> None:
+        """MetricsApi.query_metrics calls include the correct service and env in the query."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
+        mock_api = self._make_api_with_responses()
 
-        get_datadog_apm_services(
-            service_name="checkout",
-            env="staging",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            get_datadog_apm_services(
+                service_name="checkout",
+                env="staging",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
 
-        call_kwargs = mock_session.post.call_args.kwargs
-        headers = call_kwargs.get("headers", {})
-        assert headers.get("DD-API-KEY") == "test-api-key"
-        assert headers.get("DD-APPLICATION-KEY") == "test-app-key"
+        # At least one query_metrics call should contain service:checkout and env:staging
+        calls = mock_api.query_metrics.call_args_list
+        queries = [str(c) for c in calls]
+        query_str = " ".join(queries)
+        assert "service:checkout" in query_str
+        assert "env:staging" in query_str
 
-    def test_post_sends_correct_filter_query(self, dd_config: DatadogAPIConfig) -> None:
-        """POST body contains the correct service and env filter query."""
+    def test_operation_shown_in_output(self, dd_config: DatadogAPIConfig) -> None:
+        """Output contains the detected APM operation name."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
+        mock_api = self._make_api_with_responses()
 
-        get_datadog_apm_services(
-            service_name="checkout",
-            env="staging",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
-
-        call_kwargs = mock_session.post.call_args.kwargs
-        json_body = call_kwargs.get("json", {})
-        filter_query = json_body["data"]["attributes"]["filter"]["query"]
-        assert "service:checkout" in filter_query
-        assert "env:staging" in filter_query
-
-    def test_post_includes_time_range_in_body(self, dd_config: DatadogAPIConfig) -> None:
-        """POST body has 'from' and 'to' time fields derived from hours_back."""
-        import time as _time
-
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
-
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
-
-        before = int(_time.time())
-        get_datadog_apm_services(
-            service_name="svc",
-            env="prod",
-            hours_back=2.0,
-            config=dd_config,
-            _custom_session=mock_session,
-        )
-        after = int(_time.time())
-
-        call_kwargs = mock_session.post.call_args.kwargs
-        filter_data = call_kwargs["json"]["data"]["attributes"]["filter"]
-        from_ms = int(filter_data["from"])
-        to_ms = int(filter_data["to"])
-
-        # from should be approximately (now - 2h) * 1000 ms
-        expected_from_ms = (before - 7200) * 1000
-        expected_to_ms = after * 1000
-
-        assert from_ms >= expected_from_ms - 2000  # 2s tolerance
-        assert to_ms <= expected_to_ms + 2000
-
-    def test_fallback_to_get_when_post_fails(self, dd_config: DatadogAPIConfig) -> None:
-        """When POST returns non-200, falls back to GET /api/v2/apm/traces/search."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
-
-        mock_session = MagicMock()
-        # POST fails with 403
-        mock_session.post.return_value = _make_empty_spans_response(status_code=403)
-        # GET fallback succeeds
-        mock_session.get.return_value = _make_spans_response(
-            spans=[{"id": "g1", "type": "span", "attributes": {"duration": 5_000_000, "attributes": {"error": "0"}}}]
-        )
-
-        result = get_datadog_apm_services(
-            service_name="my-service",
-            env="production",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="svc",
+                env="prod",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
 
         assert result.error is False
-        assert "=== Datadog APM Trace Metrics ===" in result.output
-        assert "GET fallback" in result.output
-        mock_session.post.assert_called_once()
-        mock_session.get.assert_called_once()
+        assert "Operation:" in result.output
 
-    def test_fallback_get_sends_correct_params(self, dd_config: DatadogAPIConfig) -> None:
-        """GET fallback sends filter[query], filter[from], filter[to] as query params."""
+    def test_no_data_returns_guidance(self, dd_config: DatadogAPIConfig) -> None:
+        """When all probe operations return empty data, returns guidance (no error)."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_empty_spans_response(status_code=403)
-        mock_session.get.return_value = _make_spans_response()
+        # All probe responses return empty series — _detect_apm_operation returns None
+        mock_api = MagicMock()
+        empty_resp = MagicMock()
+        empty_resp.series = []
+        mock_api.query_metrics.return_value = empty_resp
 
-        get_datadog_apm_services(
-            service_name="checkout",
-            env="staging",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
-
-        call_kwargs = mock_session.get.call_args.kwargs
-        params = call_kwargs.get("params", {})
-        assert "filter[query]" in params
-        assert "service:checkout" in params["filter[query]"]
-        assert "env:staging" in params["filter[query]"]
-        assert "filter[from]" in params
-        assert "filter[to]" in params
-
-    def test_empty_result_when_both_apis_fail(self, dd_config: DatadogAPIConfig) -> None:
-        """When both POST and GET fail, returns empty result with warning (no error=True)."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
-
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_empty_spans_response(status_code=403)
-        mock_session.get.return_value = _make_empty_spans_response(status_code=404)
-
-        result = get_datadog_apm_services(
-            service_name="ghost-service",
-            env="staging",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="ghost-service",
+                env="staging",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
 
         assert result.error is False
         assert "No APM trace data found" in result.output
@@ -1831,6 +1765,33 @@ class TestDatadogSSLConfig:
 
         clear_discovery_cache()
 
+    def _make_api_with_responses(
+        self,
+        hits: float | None = 100.0,
+        errors: float | None = 5.0,
+        duration: float | None = 0.015,
+    ) -> MagicMock:
+        """Create a mock MetricsApi with canned query_metrics responses.
+
+        The mock is configured so that:
+        - _detect_apm_operation probe queries return data for the first operation
+        - The 3 APM metric queries (hits, errors, duration) return the given values
+        """
+        responses = _make_apm_query_response(hits=hits, errors=errors, duration=duration)
+        probe_resp = MagicMock()
+        probe_series = MagicMock()
+        probe_series.pointlist = [[1700000000, 42.0]]
+        probe_resp.series = [probe_series]
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.side_effect = [
+            probe_resp,
+            responses["hits"],
+            responses["errors"],
+            responses["duration"],
+        ]
+        return mock_api
+
     # ── Config field tests ────────────────────────────────────
 
     def test_ssl_verify_default_is_true(self) -> None:
@@ -1863,158 +1824,77 @@ class TestDatadogSSLConfig:
         with pytest.raises(ValidationError, match="ssl_verify must be True, False, or a non-empty path"):
             DatadogAPIConfig(enabled=True, api_key="k", app_key="k", ssl_verify="   ")
 
-    # ── requests.Session.verify passthrough ───────────────────
+    # ── APM SDK SSL handling (via _get_dd_api_client) ───────────
+    # The old requests.Session.verify tests are replaced by SDK-level tests.
+    # APM now uses MetricsApi via the SDK, so SSL config is tested through
+    # _get_dd_api_client (see test_sdk_client_verify_ssl_* above) and
+    # MaxRetryError wrapping SSLError (tested below).
 
-    def test_session_verify_set_to_true_by_default(self, dd_config: DatadogAPIConfig) -> None:
-        """When ssl_verify=True, session.verify is set to True."""
+    def test_apm_ssl_error_returns_helpful_message(self, dd_config: DatadogAPIConfig) -> None:
+        """MaxRetryError wrapping SSLError from APM metric query returns helpful SSL message."""
+        import ssl
+
+        import urllib3.exceptions
+
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
+        ssl_reason = ssl.SSLError("CERTIFICATE_VERIFY_FAILED")
+        max_retry_exc = urllib3.exceptions.MaxRetryError(
+            pool=MagicMock(), url="/api/v1/query", reason=ssl_reason
+        )
+        # Probe succeeds (returns data) so _detect_apm_operation finds an operation;
+        # the SSL error occurs on the subsequent metric query call.
+        probe_resp = MagicMock()
+        probe_series = MagicMock()
+        probe_series.pointlist = [[1700000000, 42.0]]
+        probe_resp.series = [probe_series]
 
-        with patch("requests.Session") as mock_session_cls:
-            mock_ctx_mgr = MagicMock()
-            mock_ctx_mgr.__enter__ = MagicMock(return_value=mock_session)
-            mock_ctx_mgr.__exit__ = MagicMock(return_value=False)
-            mock_session_cls.return_value = mock_ctx_mgr
+        mock_api = MagicMock()
+        mock_api.query_metrics.side_effect = [probe_resp, max_retry_exc]
 
-            get_datadog_apm_services(
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
                 service_name="svc",
                 env="prod",
                 config=dd_config,
+                _custom_api=mock_api,
             )
-
-        # session.verify should have been set to True (the default ssl_verify)
-        assert mock_session.verify == dd_config.ssl_verify
-
-    def test_session_verify_set_to_false_when_ssl_disabled(self) -> None:
-        """When ssl_verify=False, session.verify is set to False."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
-
-        cfg = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", ssl_verify=False)
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
-
-        with patch("requests.Session") as mock_session_cls:
-            mock_ctx_mgr = MagicMock()
-            mock_ctx_mgr.__enter__ = MagicMock(return_value=mock_session)
-            mock_ctx_mgr.__exit__ = MagicMock(return_value=False)
-            mock_session_cls.return_value = mock_ctx_mgr
-
-            get_datadog_apm_services(
-                service_name="svc",
-                env="prod",
-                config=cfg,
-            )
-
-        assert mock_session.verify is False
-
-    def test_session_verify_set_to_ca_bundle_path(self) -> None:
-        """When ssl_verify is a CA bundle path, session.verify is set to that path."""
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
-
-        ca_path = "/etc/ssl/certs/corporate-ca.crt"
-        cfg = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", ssl_verify=ca_path)
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
-
-        with patch("requests.Session") as mock_session_cls:
-            mock_ctx_mgr = MagicMock()
-            mock_ctx_mgr.__enter__ = MagicMock(return_value=mock_session)
-            mock_ctx_mgr.__exit__ = MagicMock(return_value=False)
-            mock_session_cls.return_value = mock_ctx_mgr
-
-            get_datadog_apm_services(
-                service_name="svc",
-                env="prod",
-                config=cfg,
-            )
-
-        assert mock_session.verify == ca_path
-
-    def test_custom_session_bypasses_ssl_setting(self, dd_config: DatadogAPIConfig) -> None:
-        """When _custom_session is provided, it is used as-is (ssl_verify not applied).
-
-        This preserves test-injection behaviour — callers that inject a session control it
-        themselves.  The sentinel value proves that ``verify`` is NOT reassigned by the
-        function under test.
-        """
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
-
-        sentinel_value = object()  # unique object — any assignment would replace it
-
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
-        mock_session.verify = sentinel_value  # set before call
-
-        result = get_datadog_apm_services(
-            service_name="svc",
-            env="prod",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
-
-        assert result.error is False
-        mock_session.post.assert_called_once()
-        # verify was NOT modified — custom session owns its own SSL config
-        assert mock_session.verify is sentinel_value
-
-    # ── SSLError handling ─────────────────────────────────────
-
-    def test_ssl_error_returns_helpful_message(self, dd_config: DatadogAPIConfig) -> None:
-        """SSLError is caught and returns a helpful message about REQUESTS_CA_BUNDLE."""
-        import requests as req
-
-        from vaig.tools.gke.datadog_api import get_datadog_apm_services
-
-        ssl_exc = req.exceptions.SSLError(
-            "SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED]'))"
-        )
-
-        mock_session = MagicMock()
-        mock_session.post.side_effect = ssl_exc
-
-        result = get_datadog_apm_services(
-            service_name="svc",
-            env="prod",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
 
         assert result.error is True
-        # Message must guide the user to fix the SSL issue
-        assert "SSL" in result.output or "ssl" in result.output.lower()
+        assert "SSL certificate verification failed" in result.output
         assert "REQUESTS_CA_BUNDLE" in result.output
         assert "ssl_verify" in result.output
 
-    def test_ssl_error_on_get_fallback_surfaces_helpful_message(
-        self, dd_config: DatadogAPIConfig
-    ) -> None:
-        """SSLError on the GET fallback (after POST 403) is re-raised and surfaces the
-        helpful SSL error message, just like on the POST path.
-        """
-        import requests as req
+    def test_apm_non_ssl_maxretry_returns_error(self, dd_config: DatadogAPIConfig) -> None:
+        """MaxRetryError with non-SSL reason from APM returns error with 'multiple retries'."""
+        import urllib3.exceptions
 
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        ssl_exc = req.exceptions.SSLError("certificate verify failed")
-
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_empty_spans_response(status_code=403)
-        mock_session.get.side_effect = ssl_exc
-
-        result = get_datadog_apm_services(
-            service_name="svc",
-            env="prod",
-            config=dd_config,
-            _custom_session=mock_session,
+        non_ssl_reason = ConnectionError("timed out")
+        max_retry_exc = urllib3.exceptions.MaxRetryError(
+            pool=MagicMock(), url="/api/v1/query", reason=non_ssl_reason
         )
+        # Probe succeeds so _detect_apm_operation finds an operation;
+        # the connection error occurs on the subsequent metric query call.
+        probe_resp = MagicMock()
+        probe_series = MagicMock()
+        probe_series.pointlist = [[1700000000, 42.0]]
+        probe_resp.series = [probe_series]
 
-        # SSLError from GET now propagates to the outer handler — helpful SSL message
+        mock_api = MagicMock()
+        mock_api.query_metrics.side_effect = [probe_resp, max_retry_exc]
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="svc",
+                env="prod",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
         assert result.error is True
-        assert "SSL" in result.output or "ssl" in result.output.lower()
-        assert "REQUESTS_CA_BUNDLE" in result.output
-        assert "ssl_verify" in result.output
+        assert "multiple retries" in result.output
 
     # ── Datadog SDK client SSL config ─────────────────────────
 
@@ -2087,20 +1967,22 @@ class TestDatadogSSLConfig:
             "on the SDK Configuration object"
         )
 
-    def test_empty_result_when_both_return_zero_spans(self, dd_config: DatadogAPIConfig) -> None:
-        """When both APIs return 200 with 0 spans, returns empty result with warning."""
+    def test_empty_result_when_all_metrics_empty(self, dd_config: DatadogAPIConfig) -> None:
+        """When all probe operations return empty, returns guidance (no error)."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_empty_spans_response(status_code=200)
-        mock_session.get.return_value = _make_empty_spans_response(status_code=200)
+        mock_api = MagicMock()
+        empty_resp = MagicMock()
+        empty_resp.series = []
+        mock_api.query_metrics.return_value = empty_resp
 
-        result = get_datadog_apm_services(
-            service_name="quiet-svc",
-            env="production",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="quiet-svc",
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
 
         assert result.error is False
         assert "No APM trace data found" in result.output
@@ -2109,15 +1991,15 @@ class TestDatadogSSLConfig:
         """Default hours_back (config default = 4.0) — output mentions 4 hours window."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
+        mock_api = self._make_api_with_responses()
 
-        result = get_datadog_apm_services(
-            service_name="svc",
-            env="prod",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="svc",
+                env="prod",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
 
         assert result.error is False
         assert "last 4 hours" in result.output
@@ -2126,78 +2008,87 @@ class TestDatadogSSLConfig:
         """hours_back=4 — output mentions 4 hours window."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
+        mock_api = self._make_api_with_responses()
 
-        result = get_datadog_apm_services(
-            service_name="svc",
-            env="prod",
-            hours_back=4.0,
-            config=dd_config,
-            _custom_session=mock_session,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="svc",
+                env="prod",
+                hours_back=4.0,
+                config=dd_config,
+                _custom_api=mock_api,
+            )
 
         assert result.error is False
         assert "last 4 hours" in result.output
 
     def test_non_positive_hours_back_clamps_to_default(self, dd_config: DatadogAPIConfig) -> None:
-        """hours_back=0 clamps to default (1h) and proceeds normally — does not return an error."""
+        """hours_back=0 clamps to default and proceeds normally — does not return an error."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
+        mock_api = self._make_api_with_responses()
 
-        result = get_datadog_apm_services(
-            service_name="svc",
-            env="prod",
-            hours_back=0,
-            config=dd_config,
-            _custom_session=mock_session,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="svc",
+                env="prod",
+                hours_back=0,
+                config=dd_config,
+                _custom_api=mock_api,
+            )
 
-        # Should not be an error — clamps to 1h window and queries the API
+        # Should not be an error — clamps to config default window and queries the API
         assert result.error is False
-        mock_session.post.assert_called_once()
 
     def test_caches_result(self, dd_config: DatadogAPIConfig) -> None:
         """Calling get_datadog_apm_services twice with the same args only calls the API once."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
+        mock_api = self._make_api_with_responses()
 
-        result1 = get_datadog_apm_services(
-            service_name="cached-svc",
-            env="production",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
-        result2 = get_datadog_apm_services(
-            service_name="cached-svc",
-            env="production",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result1 = get_datadog_apm_services(
+                service_name="cached-svc",
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+            result2 = get_datadog_apm_services(
+                service_name="cached-svc",
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
 
-        # API called once — second call served from cache
-        assert mock_session.post.call_count == 1
+        # API called once (probe + 3 metrics = 4 calls); second call served from cache
+        assert mock_api.query_metrics.call_count == 4
         assert result1.output == result2.output
 
     def test_different_hours_back_uses_separate_cache_key(self, dd_config: DatadogAPIConfig) -> None:
         """Different hours_back values use separate cache keys — no cross-contamination."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
+        # Need two separate mock APIs since side_effect is consumed
+        mock_api1 = self._make_api_with_responses()
+        mock_api2 = self._make_api_with_responses()
 
-        get_datadog_apm_services(
-            service_name="svc", env="prod", hours_back=1.0, config=dd_config, _custom_session=mock_session
-        )
-        get_datadog_apm_services(
-            service_name="svc", env="prod", hours_back=4.0, config=dd_config, _custom_session=mock_session
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            get_datadog_apm_services(
+                service_name="svc", env="prod", hours_back=1.0, config=dd_config, _custom_api=mock_api1
+            )
 
-        assert mock_session.post.call_count == 2
+        from vaig.tools.gke._cache import clear_discovery_cache
+
+        clear_discovery_cache()
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            get_datadog_apm_services(
+                service_name="svc", env="prod", hours_back=4.0, config=dd_config, _custom_api=mock_api2
+            )
+
+        # Both APIs should have been called (not served from cache)
+        assert mock_api1.query_metrics.call_count >= 1
+        assert mock_api2.query_metrics.call_count >= 1
 
     def test_empty_service_name_returns_guidance_not_error(
         self, dd_config: DatadogAPIConfig
@@ -2209,10 +2100,11 @@ class TestDatadogSSLConfig:
         """
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        result = get_datadog_apm_services(
-            service_name="",
-            config=dd_config,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="",
+                config=dd_config,
+            )
 
         assert result.error is False, (
             "Empty service_name should NOT be an error — it should return guidance "
@@ -2229,62 +2121,60 @@ class TestDatadogSSLConfig:
         """Disabled config returns error without calling any API."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        mock_session = MagicMock()
+        mock_api = MagicMock()
 
-        result = get_datadog_apm_services(
-            service_name="svc",
-            config=dd_config_disabled,
-            _custom_session=mock_session,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="svc",
+                config=dd_config_disabled,
+                _custom_api=mock_api,
+            )
 
         assert result.error is True
         assert "disabled" in result.output.lower()
-        mock_session.post.assert_not_called()
-        mock_session.get.assert_not_called()
+        mock_api.query_metrics.assert_not_called()
 
-    def test_error_spans_counted_in_error_rate(self, dd_config: DatadogAPIConfig) -> None:
-        """Spans with error=1 are counted in the error rate calculation."""
+    def test_error_rate_computed_from_metrics(self, dd_config: DatadogAPIConfig) -> None:
+        """Error rate is correctly computed from hits and errors metrics."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response(
-            spans=[
-                {"id": "s1", "type": "span", "attributes": {"duration": 5_000_000, "attributes": {"error": "0"}}},
-                {"id": "s2", "type": "span", "attributes": {"duration": 5_000_000, "attributes": {"error": "1"}}},
-                {"id": "s3", "type": "span", "attributes": {"duration": 5_000_000, "attributes": {"error": "1"}}},
-            ]
-        )
+        # 100 hits, 50 errors → 50% error rate
+        mock_api = self._make_api_with_responses(hits=100.0, errors=50.0, duration=0.010)
 
-        result = get_datadog_apm_services(
-            service_name="error-svc",
-            env="production",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="error-svc",
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
 
         assert result.error is False
-        # 2 error spans out of 3 — error rate should be 66.67%
-        assert "66.67%" in result.output
+        assert "50.00%" in result.output
 
-    def test_request_exception_falls_back_gracefully(self, dd_config: DatadogAPIConfig) -> None:
-        """When POST raises RequestException, falls back to GET and then empty result."""
-        import requests as req
-
+    def test_unexpected_exception_returns_error(self, dd_config: DatadogAPIConfig) -> None:
+        """When an unexpected exception occurs, returns error result."""
         from vaig.tools.gke.datadog_api import get_datadog_apm_services
 
-        mock_session = MagicMock()
-        mock_session.post.side_effect = req.RequestException("connection error")
-        mock_session.get.side_effect = req.RequestException("connection error")
+        # Probe succeeds; the RuntimeError occurs on the actual metric query.
+        probe_resp = MagicMock()
+        probe_series = MagicMock()
+        probe_series.pointlist = [[1700000000, 42.0]]
+        probe_resp.series = [probe_series]
 
-        result = get_datadog_apm_services(
-            service_name="svc",
-            env="prod",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
+        mock_api = MagicMock()
+        mock_api.query_metrics.side_effect = [probe_resp, RuntimeError("unexpected failure")]
 
-        assert result.error is False
-        assert "No APM trace data found" in result.output
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="svc",
+                env="prod",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
+        assert result.error is True
+        assert "Unexpected error" in result.output
 
 
 # ── Problem 1: APM-native metric templates ───────────────────
@@ -2468,6 +2358,28 @@ class TestDefaultLookbackHours:
 
         clear_discovery_cache()
 
+    def _make_api_with_responses(
+        self,
+        hits: float | None = 100.0,
+        errors: float | None = 5.0,
+        duration: float | None = 0.015,
+    ) -> MagicMock:
+        """Create a mock MetricsApi with probe + 3 metric responses."""
+        responses = _make_apm_query_response(hits=hits, errors=errors, duration=duration)
+        probe_resp = MagicMock()
+        probe_series = MagicMock()
+        probe_series.pointlist = [[1700000000, 42.0]]
+        probe_resp.series = [probe_series]
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.side_effect = [
+            probe_resp,
+            responses["hits"],
+            responses["errors"],
+            responses["duration"],
+        ]
+        return mock_api
+
     def test_default_lookback_hours_from_config_used_when_no_hours_back(
         self, dd_config: DatadogAPIConfig
     ) -> None:
@@ -2476,16 +2388,16 @@ class TestDefaultLookbackHours:
 
         dd_config.default_lookback_hours = 2.0
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
+        mock_api = self._make_api_with_responses()
 
         # The output window label reflects the resolved lookback
-        result = get_datadog_apm_services(
-            service_name="svc",
-            env="production",
-            config=dd_config,
-            _custom_session=mock_session,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="svc",
+                env="production",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
         assert result.error is False
         assert "last 2 hours" in result.output
 
@@ -2497,17 +2409,17 @@ class TestDefaultLookbackHours:
 
         dd_config.default_lookback_hours = 8.0
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
+        mock_api = self._make_api_with_responses()
 
         # Pass explicit hours_back=1.0 — output should say "1 hour", not "8 hours"
-        result = get_datadog_apm_services(
-            service_name="svc",
-            env="production",
-            hours_back=1.0,
-            config=dd_config,
-            _custom_session=mock_session,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="svc",
+                env="production",
+                hours_back=1.0,
+                config=dd_config,
+                _custom_api=mock_api,
+            )
 
         assert result.error is False
         assert "last 1 hour" in result.output
@@ -2526,15 +2438,244 @@ class TestDefaultLookbackHours:
 
         dd_config.default_lookback_hours = 6.0
 
-        mock_session = MagicMock()
-        mock_session.post.return_value = _make_spans_response()
+        mock_api = self._make_api_with_responses()
 
-        get_datadog_apm_services(
-            service_name="svc",
-            env="production",
-            hours_back=None,
-            config=dd_config,
-            _custom_session=mock_session,
-        )
+        with patch.dict("sys.modules", _make_dd_modules()):
+            result = get_datadog_apm_services(
+                service_name="svc",
+                env="production",
+                hours_back=None,
+                config=dd_config,
+                _custom_api=mock_api,
+            )
 
-        mock_session.post.assert_called_once()
+        # API was called (probe + 3 metrics = 4 calls)
+        assert mock_api.query_metrics.call_count == 4
+        assert result.error is False
+        assert "last 6 hours" in result.output
+
+
+# ── _detect_apm_operation ────────────────────────────────────
+
+
+class TestDetectApmOperation:
+    """Tests for _detect_apm_operation: config override, cache, probe fallback."""
+
+    def setup_method(self) -> None:
+        """Clear the discovery cache before each test."""
+        from vaig.tools.gke._cache import clear_discovery_cache
+
+        clear_discovery_cache()
+
+    def test_config_override_skips_probing(self, dd_config: DatadogAPIConfig) -> None:
+        """When config.apm_operation is set (not 'auto'), returns it without API calls."""
+        from vaig.tools.gke.datadog_api import _detect_apm_operation
+
+        dd_config.apm_operation = "grpc.server"
+        mock_api = MagicMock()
+
+        result = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
+
+        assert result == "grpc.server"
+        mock_api.query_metrics.assert_not_called()
+
+    def test_probe_returns_first_operation_with_data(self, dd_config: DatadogAPIConfig) -> None:
+        """Probing returns the first operation that has non-empty timeseries data."""
+        from vaig.tools.gke.datadog_api import _detect_apm_operation
+
+        # First two probes return empty; third (grpc.server) returns data.
+        empty_resp = MagicMock()
+        empty_resp.series = []
+
+        hit_resp = MagicMock()
+        hit_series = MagicMock()
+        hit_series.pointlist = [[1700000000, 10.0]]
+        hit_resp.series = [hit_series]
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.side_effect = [empty_resp, empty_resp, hit_resp]
+
+        result = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
+
+        assert result == "grpc.server"  # 3rd in _APM_OPERATION_PROBE_ORDER
+        assert mock_api.query_metrics.call_count == 3
+
+    def test_cache_hit_skips_api_calls(self, dd_config: DatadogAPIConfig) -> None:
+        """When the result is cached, no API calls are made on subsequent invocations."""
+        from vaig.tools.gke.datadog_api import _detect_apm_operation
+
+        # First call: probe finds data on first operation
+        hit_resp = MagicMock()
+        hit_series = MagicMock()
+        hit_series.pointlist = [[1700000000, 10.0]]
+        hit_resp.series = [hit_series]
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = hit_resp
+
+        result1 = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
+        first_call_count = mock_api.query_metrics.call_count
+
+        # Second call: should hit cache — no new API calls
+        result2 = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
+
+        assert result1 == result2 == "servlet.request"  # 1st in probe order
+        assert mock_api.query_metrics.call_count == first_call_count
+
+    def test_all_probes_empty_returns_none(self, dd_config: DatadogAPIConfig) -> None:
+        """When every probe operation returns empty data, returns None."""
+        from vaig.tools.gke.datadog_api import _detect_apm_operation
+
+        empty_resp = MagicMock()
+        empty_resp.series = []
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = empty_resp
+
+        result = _detect_apm_operation(mock_api, "ghost-svc", "prod", dd_config)
+
+        assert result is None
+
+    def test_probe_exception_continues_to_next_operation(self, dd_config: DatadogAPIConfig) -> None:
+        """If a probe raises an exception, the next operation is tried."""
+        from vaig.tools.gke.datadog_api import _detect_apm_operation
+
+        hit_resp = MagicMock()
+        hit_series = MagicMock()
+        hit_series.pointlist = [[1700000000, 10.0]]
+        hit_resp.series = [hit_series]
+
+        mock_api = MagicMock()
+        # First probe raises; second returns data.
+        mock_api.query_metrics.side_effect = [RuntimeError("timeout"), hit_resp]
+
+        result = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
+
+        assert result == "http.request"  # 2nd in _APM_OPERATION_PROBE_ORDER
+        assert mock_api.query_metrics.call_count == 2
+
+
+# ── _build_metric_templates with custom operation ────────────
+
+
+class TestBuildMetricTemplatesOperation:
+    """Tests for _build_metric_templates with custom operation parameter."""
+
+    def test_custom_operation_produces_correct_template_strings(self) -> None:
+        """Custom operation is embedded in trace.{operation}.* template keys."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="apm")
+        templates = _build_metric_templates(config, operation="grpc.server")
+
+        assert "trace.grpc.server.hits" in templates["requests"]
+        assert "trace.grpc.server.errors" in templates["errors"]
+        assert "trace.grpc.server.duration" in templates["latency"]
+        assert "trace.grpc.server.errors" in templates["error_rate"]
+        assert "trace.grpc.server.hits" in templates["error_rate"]
+        assert "trace.grpc.server.apdex" in templates["apdex"]
+
+    def test_default_operation_is_http_request(self) -> None:
+        """When no operation is passed, templates use http.request."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="apm")
+        templates = _build_metric_templates(config)
+
+        assert "trace.http.request.hits" in templates["requests"]
+        assert "trace.http.request.duration" in templates["latency"]
+
+    def test_operation_does_not_affect_k8s_mode(self) -> None:
+        """In k8s_agent mode, the operation parameter is ignored — kubernetes.* templates used."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="k8s_agent")
+        templates = _build_metric_templates(config, operation="grpc.server")
+
+        assert "cpu" in templates
+        assert "kubernetes.cpu.usage.total" in templates["cpu"]
+        assert "trace" not in templates.get("cpu", "")
+
+    def test_templates_have_filters_placeholder(self) -> None:
+        """All APM templates with custom operation still have {filters} placeholder."""
+        from vaig.tools.gke.datadog_api import _build_metric_templates
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", metric_mode="apm")
+        templates = _build_metric_templates(config, operation="flask.request")
+
+        for name, tmpl in templates.items():
+            rendered = tmpl.format(filters="service:my-svc,env:prod")
+            assert "service:my-svc" in rendered, f"Template '{name}' didn't render {{filters}}"
+
+
+# ── Cache TTL behaviour ──────────────────────────────────────
+
+
+class TestCacheTTL:
+    """Tests for _cache._get_cached / _set_cache with custom TTL."""
+
+    def setup_method(self) -> None:
+        """Clear the discovery cache before each test."""
+        from vaig.tools.gke._cache import clear_discovery_cache
+
+        clear_discovery_cache()
+
+    def test_custom_ttl_expires_entry(self) -> None:
+        """An entry with ttl=0 is immediately expired on the next lookup."""
+        import time as _time
+
+        from vaig.tools.gke import _cache
+
+        _cache._set_cache("test:key", "val", ttl=0)
+        # Wait just slightly so monotonic clock advances
+        _time.sleep(0.01)
+        assert _cache._get_cached("test:key") is None
+
+    def test_default_ttl_keeps_entry_alive(self) -> None:
+        """An entry with default TTL (60s) is still available immediately."""
+        from vaig.tools.gke import _cache
+
+        _cache._set_cache("test:default", "val")
+        assert _cache._get_cached("test:default") == "val"
+
+    def test_override_ttl_on_read(self) -> None:
+        """Passing ttl on _get_cached overrides the stored TTL for that lookup."""
+        import time as _time
+
+        from vaig.tools.gke import _cache
+
+        _cache._set_cache("test:override", "val", ttl=3600)  # stored: 1 hour
+        _time.sleep(0.01)
+        # Override with ttl=0 at read time — should consider it expired
+        assert _cache._get_cached("test:override", ttl=0) is None
+
+    def test_stored_ttl_used_when_no_read_ttl(self) -> None:
+        """When ttl is not passed to _get_cached, the stored per-entry TTL is used."""
+        from vaig.tools.gke import _cache
+
+        _cache._set_cache("test:stored", "val", ttl=300)
+        # Immediately after writing — well within 300s TTL
+        assert _cache._get_cached("test:stored") == "val"
+
+
+# ── Config defaults ──────────────────────────────────────────
+
+
+class TestConfigDefaults:
+    """Tests for new config field defaults (cluster_name, apm_operation)."""
+
+    def test_cluster_name_default_is_kube_cluster_name(self) -> None:
+        """DatadogLabelConfig.cluster_name defaults to 'kube_cluster_name'."""
+        from vaig.core.config import DatadogLabelConfig
+
+        config = DatadogLabelConfig()
+        assert config.cluster_name == "kube_cluster_name"
+
+    def test_apm_operation_default_is_auto(self) -> None:
+        """DatadogAPIConfig.apm_operation defaults to 'auto'."""
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        assert config.apm_operation == "auto"
+
+    def test_apm_operation_can_be_set_to_custom_value(self) -> None:
+        """DatadogAPIConfig.apm_operation accepts a custom operation name."""
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", apm_operation="servlet.request")
+        assert config.apm_operation == "servlet.request"

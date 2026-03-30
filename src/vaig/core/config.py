@@ -367,7 +367,7 @@ class DatadogLabelConfig(BaseModel):
     integration tag names shipped by the Datadog agent.
     """
 
-    cluster_name: str = "cluster_name"
+    cluster_name: str = "kube_cluster_name"
     service: str = "service"
     env: str = "env"
     version: str = "version"
@@ -447,6 +447,14 @@ class DatadogAPIConfig(BaseModel):
         description=(
             "Default lookback window (hours) for APM trace queries. "
             "Increase for low-traffic services."
+        ),
+    )
+    apm_operation: str = Field(
+        default="auto",
+        description=(
+            "APM operation name for trace.* metrics (e.g. 'servlet.request', "
+            "'grpc.server'). When set to 'auto' (default), the system probes "
+            "common operation names to find the one with data."
         ),
     )
 
