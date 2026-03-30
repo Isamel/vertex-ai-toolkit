@@ -33,7 +33,7 @@ def _point_value(point: Any) -> float | None:
         pair = getattr(point, "value", point)
         result = pair[1]  # type: ignore[index]
         return float(result) if result is not None else None
-    except (IndexError, TypeError, KeyError):
+    except (IndexError, TypeError, KeyError, ValueError):
         return None
 
 # ── Error messages ───────────────────────────────────────────
@@ -67,12 +67,11 @@ def _build_metric_templates(config: DatadogAPIConfig, operation: str = "http.req
     The ``by {pod_name}`` grouping dimension is read from
     ``config.labels.pod_name`` so it can be overridden per environment.
 
-    When ``config.metric_mode`` is ``"apm"``, APM-native ``trace.*`` metric
-    templates are returned instead of the default ``kubernetes.*`` templates.
-    The *operation* parameter controls which APM operation name is inserted
-    into the ``trace.{operation}.*`` template keys (default ``http.request``).
-    Use ``"apm"`` mode for setups that only have APM instrumentation and no
-    Datadog Agent DaemonSet with the kubelet check enabled.
+    ``config.metric_mode`` controls which built-in templates are included:
+
+    * ``"k8s_agent"`` — kubernetes.* metrics (DaemonSet Agent).
+    * ``"apm"`` — trace.* metrics (APM instrumentation only).
+    * ``"both"`` — kubernetes.* **and** trace.* metrics combined.
 
     Any entries in ``config.custom_metrics`` are merged in after the
     built-in templates — the caller may provide additional metric names
@@ -83,42 +82,44 @@ def _build_metric_templates(config: DatadogAPIConfig, operation: str = "http.req
             ``{filters}`` placeholder.
     """
     pod_name = config.labels.pod_name
-    # Templates use {filters} as a Python .format() placeholder filled at query time.
-    # The "by {<tag>}" grouping uses {{ }} so .format() leaves them as literal braces
-    # in the final Datadog query string (e.g. "by {pod_name}").
     _by = "{{" + pod_name + "}}"
 
     mode = getattr(config, "metric_mode", "k8s_agent")
+
+    # ── k8s_agent (infrastructure) templates ─────────────
+    k8s_templates: dict[str, str] = {
+        "cpu": "avg:kubernetes.cpu.usage.total{{{filters}}} by " + _by,
+        "memory": "avg:kubernetes.memory.usage{{{filters}}} by " + _by,
+        "restarts": "sum:kubernetes.containers.restarts{{{filters}}} by " + _by,
+        "network_in": "avg:kubernetes.network.rx_bytes{{{filters}}} by " + _by,
+        "network_out": "avg:kubernetes.network.tx_bytes{{{filters}}} by " + _by,
+        "disk_read": "avg:kubernetes.io.read_bytes{{{filters}}} by " + _by,
+        "disk_write": "avg:kubernetes.io.write_bytes{{{filters}}} by " + _by,
+    }
+
+    # ── APM (trace.*) templates ──────────────────────────
+    _op = operation
+    apm_templates: dict[str, str] = {
+        "requests": "sum:trace." + _op + ".hits{{{filters}}} by " + _by,
+        "errors": "sum:trace." + _op + ".errors{{{filters}}} by " + _by,
+        "latency": "avg:trace." + _op + ".duration{{{filters}}} by " + _by,
+        "error_rate": (
+            "( sum:trace." + _op + ".errors{{{filters}}} by "
+            + _by
+            + " / sum:trace." + _op + ".hits{{{filters}}} by "
+            + _by
+            + " ) * 100"
+        ),
+        "apdex": "avg:trace." + _op + ".apdex{{{filters}}} by " + _by,
+    }
+
+    # ── Select templates by mode ─────────────────────────
     if mode == "apm":
-        # NOTE: triple braces {{{filters}}} in a regular string produce a
-        # literal "{" + the .format() placeholder {filters} + literal "}".
-        # Using an f-string for {operation} would conflict with the .format()
-        # placeholder, so we use %-style or concatenation instead.
-        _op = operation
-        templates: dict[str, str] = {
-            "requests": "sum:trace." + _op + ".hits{{{filters}}} by " + _by,
-            "errors": "sum:trace." + _op + ".errors{{{filters}}} by " + _by,
-            "latency": "avg:trace." + _op + ".duration{{{filters}}} by " + _by,
-            "error_rate": (
-                "( sum:trace." + _op + ".errors{{{filters}}} by "
-                + _by
-                + " / sum:trace." + _op + ".hits{{{filters}}} by "
-                + _by
-                + " ) * 100"
-            ),
-            "apdex": "avg:trace." + _op + ".apdex{{{filters}}} by " + _by,
-        }
+        templates: dict[str, str] = apm_templates
+    elif mode == "both":
+        templates = {**k8s_templates, **apm_templates}
     else:
-        # Default: k8s_agent mode — kubernetes.* metrics via DaemonSet Agent
-        templates = {
-            "cpu": "avg:kubernetes.cpu.usage.total{{{filters}}} by " + _by,
-            "memory": "avg:kubernetes.memory.usage{{{filters}}} by " + _by,
-            "restarts": "sum:kubernetes.containers.restarts{{{filters}}} by " + _by,
-            "network_in": "avg:kubernetes.network.rx_bytes{{{filters}}} by " + _by,
-            "network_out": "avg:kubernetes.network.tx_bytes{{{filters}}} by " + _by,
-            "disk_read": "avg:kubernetes.io.read_bytes{{{filters}}} by " + _by,
-            "disk_write": "avg:kubernetes.io.write_bytes{{{filters}}} by " + _by,
-        }
+        templates = k8s_templates
 
     for key, tmpl in config.custom_metrics.items():
         if "{filters}" not in tmpl:
@@ -446,21 +447,12 @@ def query_datadog_metrics(
     # from the GKE cluster name (e.g. when the DD agent uses a different tag value).
     effective_cluster = getattr(config, "cluster_name_override", "") or cluster_name
 
-    # Resolve metric mode early — APM trace.* metrics do not carry custom tags
+    # Resolve metric mode — APM trace.* metrics do not carry custom tags
     mode = getattr(config, "metric_mode", "k8s_agent")
-    is_apm = mode == "apm"
 
-    # Build tag filter string: always include cluster_name; optionally service/env.
-    # Exclude custom labels for APM trace.* queries (they only carry service+env).
-    filters, tag_err = _build_tag_filter(
-        effective_cluster, service, env, config, include_custom_labels=not is_apm,
-    )
-    if tag_err is not None:
-        return tag_err
-
-    # Resolve APM operation name when in apm mode
+    # Resolve APM operation name when in apm or both mode
     resolved_operation = "http.request"
-    if mode == "apm":
+    if mode in ("apm", "both"):
         apm_op = getattr(config, "apm_operation", "auto")
         if apm_op != "auto":
             resolved_operation = apm_op
@@ -476,6 +468,17 @@ def query_datadog_metrics(
             output=f"Unknown metric template '{metric}'. Available: {available}",
             error=True,
         )
+
+    # Determine include_custom_labels per-metric: APM trace.* metrics only
+    # carry service+env tags, so custom labels would cause empty results.
+    # In "both" mode the decision depends on the resolved template.
+    _is_trace_metric = "trace." in template
+    filters, tag_err = _build_tag_filter(
+        effective_cluster, service, env, config, include_custom_labels=not _is_trace_metric,
+    )
+    if tag_err is not None:
+        return tag_err
+
     query = template.format(filters=filters)
 
     def _execute_query(api: Any) -> ToolResult:
