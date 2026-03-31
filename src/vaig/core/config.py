@@ -912,6 +912,63 @@ class Settings(BaseSettings):
         # Merge env vars over yaml (pydantic-settings handles env automatically)
         return cls(**yaml_data)
 
+    @classmethod
+    def from_overrides(cls, base_path: str | Path | None = None, **overrides: Any) -> Settings:
+        """Load base config and overlay keyword overrides for web requests.
+
+        Uses :meth:`load` for the layered YAML loading, then maps
+        well-known shorthand keys to their nested config paths and
+        returns a copy with overrides applied.
+
+        - ``project`` → ``gcp.project_id``
+        - ``model`` → ``models.default``
+        - ``temperature`` → ``generation.temperature``
+        - ``region`` → ``gcp.location``
+
+        Any unknown ``**overrides`` are silently ignored so that callers
+        can forward form data without pre-filtering.
+
+        Args:
+            base_path: Optional explicit YAML config path (same as ``load()``).
+            **overrides: Shorthand key-value pairs from a web form.
+
+        Returns:
+            A fresh :class:`Settings` instance with overrides applied.
+        """
+        # 1. Reuse the canonical layered loader
+        base = cls.load(base_path)
+
+        # 2. Map shorthand overrides → nested model updates
+        _OVERRIDE_MAP: dict[str, tuple[str, str]] = {
+            "project": ("gcp", "project_id"),
+            "model": ("models", "default"),
+            "temperature": ("generation", "temperature"),
+            "region": ("gcp", "location"),
+        }
+
+        # Build a dict of nested model updates: {"gcp": {"project_id": "..."}, ...}
+        nested_updates: dict[str, dict[str, Any]] = {}
+        for key, value in overrides.items():
+            if value is None or (isinstance(value, str) and not value.strip()):
+                continue
+            mapping = _OVERRIDE_MAP.get(key)
+            if mapping is not None:
+                section, field_name = mapping
+                if section not in nested_updates:
+                    nested_updates[section] = {}
+                nested_updates[section][field_name] = value
+
+        if not nested_updates:
+            return base
+
+        # 3. Apply overrides via model_copy (Pydantic v2 pattern)
+        top_level_updates: dict[str, Any] = {}
+        for section, fields in nested_updates.items():
+            current_sub_model = getattr(base, section)
+            top_level_updates[section] = current_sub_model.model_copy(update=fields)
+
+        return base.model_copy(update=top_level_updates)
+
     @property
     def db_path_resolved(self) -> Path:
         """Resolve the session DB path (expand ~)."""
