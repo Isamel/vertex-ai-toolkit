@@ -1,0 +1,47 @@
+# VAIG Web — Multi-stage Dockerfile for Cloud Run deployment
+# Build: docker build -f Dockerfile.web -t vaig-web .
+# Run:   docker run -p 8080:8080 vaig-web
+
+# ── Builder stage ─────────────────────────────────────────────
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+# Install build dependencies
+RUN pip install --no-cache-dir --upgrade pip hatchling
+
+# Copy only what's needed for dependency resolution first (cache layer)
+COPY pyproject.toml README.md ./
+COPY src/ src/
+
+# Build wheel and install with web extras
+RUN pip install --no-cache-dir ".[web]" \
+    && pip install --no-cache-dir . \
+    && pip wheel --no-cache-dir --wheel-dir=/wheels ".[web]"
+
+# ── Runtime stage ─────────────────────────────────────────────
+FROM python:3.12-slim AS runtime
+
+# Security: run as non-root
+RUN groupadd -r vaig && useradd -r -g vaig -d /app -s /sbin/nologin vaig
+
+WORKDIR /app
+
+# Install wheels from builder
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir /wheels/*.whl \
+    && rm -rf /wheels
+
+# Cloud Run uses PORT env var (default 8080)
+ENV PORT=8080
+
+# Switch to non-root user
+USER vaig
+
+EXPOSE 8080
+
+# Health check for container orchestrators
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')" || exit 1
+
+CMD ["vaig", "web", "--host", "0.0.0.0", "--port", "8080"]
