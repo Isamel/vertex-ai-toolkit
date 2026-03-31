@@ -11,6 +11,7 @@ This module uses **lazy imports** for ``google-cloud-storage`` so that the
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -101,6 +102,9 @@ class QuotaChecker:
         # Per-user daily counters: composite_key → DailyUsage
         self._usage: dict[str, DailyUsage] = {}
 
+        # Thread-safety lock for counter updates
+        self._lock = threading.Lock()
+
     # ── Public API ───────────────────────────────────────────
 
     def check_and_consume(
@@ -123,43 +127,48 @@ class QuotaChecker:
             QuotaExceededError: If any dimension would be exceeded.
         """
         policy = self._get_policy()
-        usage = self._get_or_create_usage(user_key)
-        limits = self._resolve_limits(user_key, policy)
 
-        # Check all three dimensions BEFORE consuming
-        new_requests = usage.requests + 1
-        new_tokens = usage.tokens + estimated_tokens
-        new_executions = usage.executions + (1 if is_execution else 0)
+        with self._lock:
+            usage = self._get_or_create_usage(user_key)
+            limits = self._resolve_limits(user_key, policy)
 
-        if new_requests > limits["requests_per_day"]:
-            raise QuotaExceededError(
-                dimension="requests_per_day",
-                used=new_requests,
-                limit=limits["requests_per_day"],
-                user_key=user_key,
-            )
+            # Check all three dimensions BEFORE consuming
+            new_requests = usage.requests + 1
+            new_tokens = usage.tokens + estimated_tokens
+            new_executions = usage.executions + (1 if is_execution else 0)
 
-        if new_tokens > limits["tokens_per_day"]:
-            raise QuotaExceededError(
-                dimension="tokens_per_day",
-                used=new_tokens,
-                limit=limits["tokens_per_day"],
-                user_key=user_key,
-            )
+            if new_requests > limits["requests_per_day"]:
+                self._emit_quota_exceeded(user_key, "requests_per_day", new_requests, limits["requests_per_day"])
+                raise QuotaExceededError(
+                    dimension="requests_per_day",
+                    used=new_requests,
+                    limit=limits["requests_per_day"],
+                    user_key=user_key,
+                )
 
-        if is_execution and new_executions > limits["executions_per_day"]:
-            raise QuotaExceededError(
-                dimension="executions_per_day",
-                used=new_executions,
-                limit=limits["executions_per_day"],
-                user_key=user_key,
-            )
+            if new_tokens > limits["tokens_per_day"]:
+                self._emit_quota_exceeded(user_key, "tokens_per_day", new_tokens, limits["tokens_per_day"])
+                raise QuotaExceededError(
+                    dimension="tokens_per_day",
+                    used=new_tokens,
+                    limit=limits["tokens_per_day"],
+                    user_key=user_key,
+                )
 
-        # All checks passed — consume
-        usage.requests = new_requests
-        usage.tokens = new_tokens
-        if is_execution:
-            usage.executions = new_executions
+            if is_execution and new_executions > limits["executions_per_day"]:
+                self._emit_quota_exceeded(user_key, "executions_per_day", new_executions, limits["executions_per_day"])
+                raise QuotaExceededError(
+                    dimension="executions_per_day",
+                    used=new_executions,
+                    limit=limits["executions_per_day"],
+                    user_key=user_key,
+                )
+
+            # All checks passed — consume
+            usage.requests = new_requests
+            usage.tokens = new_tokens
+            if is_execution:
+                usage.executions = new_executions
 
     # ── Policy loading ───────────────────────────────────────
 
@@ -237,9 +246,9 @@ class QuotaChecker:
             raise ValueError(msg)
 
         policy = QuotaPolicy(
-            default_requests_per_day=int(defaults.get("requests_per_day", 500)),
-            default_tokens_per_day=int(defaults.get("tokens_per_day", 2_000_000)),
-            default_executions_per_day=int(defaults.get("executions_per_day", 50)),
+            default_requests_per_day=int(defaults.get("requests_per_day") or 500),
+            default_tokens_per_day=int(defaults.get("tokens_per_day") or 2_000_000),
+            default_executions_per_day=int(defaults.get("executions_per_day") or 50),
         )
 
         # User overrides
@@ -299,3 +308,16 @@ class QuotaChecker:
             self._usage[user_key] = usage
 
         return usage
+
+    @staticmethod
+    def _emit_quota_exceeded(user_key: str, dimension: str, used: int, limit: int) -> None:
+        """Emit a QuotaExceeded event on the EventBus (best-effort)."""
+        try:
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import QuotaExceeded
+
+            EventBus.get().emit(
+                QuotaExceeded(user_key=user_key, dimension=dimension, used=used, limit=limit)
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to emit QuotaExceeded event", exc_info=True)

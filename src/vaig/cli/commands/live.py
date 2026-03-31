@@ -659,6 +659,7 @@ def register(app: typer.Typer) -> None:
             # Eagerly initialize the telemetry collector and wire the
             # TelemetrySubscriber so events are forwarded to the SQLite store.
             _helpers._init_telemetry(settings)
+            _helpers._init_audit(settings)
 
             # Apply --project / --project-id: mutate ONLY gcp.project_id
             # The GKE fallback chain (gke.project_id or gcp.project_id) handles single-project setups.

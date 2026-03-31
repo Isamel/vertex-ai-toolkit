@@ -85,8 +85,12 @@ def build_container(settings: Settings) -> ServiceContainer:
             logger.info("QuotaChecker enabled — GCS policy from %s/%s",
                         settings.rate_limit.policy_gcs_bucket,
                         settings.rate_limit.policy_gcs_path)
-        except Exception:  # noqa: BLE001
-            logger.warning("Failed to create QuotaChecker — rate limiting disabled")
+        except Exception as exc:  # noqa: BLE001
+            msg = (
+                "Rate limiting is enabled but QuotaChecker failed to initialize. "
+                "Check GCS connectivity and [audit] extras installation."
+            )
+            raise RuntimeError(msg) from exc
 
     gemini_client = GeminiClient(settings, quota_checker=quota_checker)
     event_bus = EventBus.get()

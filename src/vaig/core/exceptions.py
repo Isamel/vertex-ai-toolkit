@@ -157,7 +157,7 @@ class QuotaExceededError(VAIGError):
     """Raised when a user exceeds their rate-limit quota for a dimension.
 
     Attributes:
-        dimension: Which quota was exceeded (``"requests"``, ``"tokens"``, ``"executions"``).
+        dimension: Which quota was exceeded (``"requests_per_day"``, ``"tokens_per_day"``, ``"executions_per_day"``).
         used: Current usage count at the time of rejection.
         limit: The configured limit for this dimension.
         user_key: The composite user key that was rate-limited.

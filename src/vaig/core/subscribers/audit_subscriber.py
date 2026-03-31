@@ -132,6 +132,9 @@ class AuditSubscriber:
         # Table creation tracking
         self._table_ensured = False
 
+        # Periodic flush timer
+        self._flush_timer: threading.Timer | None = None
+
         # Subscribe to events
         self._unsubscribers: list[Callable[[], None]] = []
         self._subscribe_all()
@@ -153,10 +156,39 @@ class AuditSubscriber:
 
     def unsubscribe_all(self) -> None:
         """Detach all handlers and flush remaining buffer."""
+        self._cancel_flush_timer()
         self._flush()
         for unsub in self._unsubscribers:
             unsub()
         self._unsubscribers.clear()
+
+    # ── Periodic flush timer ─────────────────────────────────
+
+    def _start_flush_timer(self) -> None:
+        """Start (or restart) the periodic flush timer if not already running."""
+        if self._flush_timer is not None and self._flush_timer.is_alive():
+            return
+        interval = self._settings.audit.flush_interval_seconds
+        if interval <= 0:
+            return
+        self._flush_timer = threading.Timer(interval, self._periodic_flush)
+        self._flush_timer.daemon = True
+        self._flush_timer.start()
+
+    def _cancel_flush_timer(self) -> None:
+        """Cancel the periodic flush timer if running."""
+        if self._flush_timer is not None:
+            self._flush_timer.cancel()
+            self._flush_timer = None
+
+    def _periodic_flush(self) -> None:
+        """Called by the timer — flush and reschedule if buffer is non-empty."""
+        self._flush()
+        # Reschedule only if there are still records buffered
+        with self._lock:
+            has_records = bool(self._buffer)
+        if has_records:
+            self._start_flush_timer()
 
     # ── Audit record construction ────────────────────────────
 
@@ -198,12 +230,22 @@ class AuditSubscriber:
     def _append_record(self, record: dict[str, Any]) -> None:
         """Append a record to the buffer and flush if threshold reached."""
         with self._lock:
-            if len(self._buffer) < _MAX_BUFFER_CAP:
+            if len(self._buffer) >= _MAX_BUFFER_CAP:
+                logger.warning(
+                    "AuditSubscriber: buffer at capacity (%d) — triggering emergency flush",
+                    _MAX_BUFFER_CAP,
+                )
+                at_cap = True
+            else:
                 self._buffer.append(record)
-            should_flush = len(self._buffer) >= self._settings.audit.buffer_size
+                at_cap = False
+            should_flush = at_cap or len(self._buffer) >= self._settings.audit.buffer_size
 
         if should_flush:
             self._flush()
+
+        # Start periodic flush timer on first record
+        self._start_flush_timer()
 
     # ── Event handlers ───────────────────────────────────────
 
@@ -349,8 +391,11 @@ class AuditSubscriber:
 
             # Auto-create table if needed
             if not self._table_ensured:
-                self._ensure_bq_table(client, project_id, dataset, table_name)
-                self._table_ensured = True
+                try:
+                    self._ensure_bq_table(client, project_id, dataset, table_name)
+                    self._table_ensured = True
+                except Exception:  # noqa: BLE001
+                    logger.warning("AuditSubscriber: BQ table creation failed — will retry next flush", exc_info=True)
 
             errors = client.insert_rows_json(table_ref, records)
             if errors:

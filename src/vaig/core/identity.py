@@ -87,7 +87,10 @@ def resolve_identity(
     os_user = resolve_os_user()
     gcp_user = resolve_gcp_user(credentials)
     result = (os_user, gcp_user, build_composite_key(os_user, gcp_user))
-    _cached_identity = result
+    # Only cache if GCP user was actually resolved — future calls with
+    # credentials should get a chance to resolve properly.
+    if gcp_user != UNKNOWN_GCP_USER:
+        _cached_identity = result
     return result
 
 

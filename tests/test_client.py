@@ -1778,7 +1778,11 @@ class TestQuotaIntegration:
         quota_checker = MagicMock()
         client = GeminiClient(settings, quota_checker=quota_checker)
 
-        parts = [MagicMock(__str__=lambda _: "a" * 100), MagicMock(__str__=lambda _: "b" * 100)]
+        part_a = MagicMock()
+        part_a.__str__ = lambda self: "a" * 100
+        part_b = MagicMock()
+        part_b.__str__ = lambda self: "b" * 100
+        parts = [part_a, part_b]
         with patch("vaig.core.identity.resolve_identity", return_value=("u", "u@co.com", "1.0")):
             with patch("vaig.core.identity.build_composite_key", return_value="u:u@co.com"):
                 client._check_quota(parts)

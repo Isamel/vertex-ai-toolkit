@@ -39,6 +39,8 @@ from vaig.core.exceptions import (
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 
+    from google.auth.credentials import Credentials
+
     from vaig.core.config import Settings
     from vaig.core.quota import QuotaChecker
 
@@ -273,6 +275,8 @@ class GeminiClient:
 
         # Rate-limit quota enforcement — None when disabled.
         self._quota_checker = quota_checker
+        # Store credentials for identity resolution in _check_quota.
+        self._credentials: Credentials | None = None
 
         # Response cache — disabled by default (opt-in via config).
         try:
@@ -320,7 +324,7 @@ class GeminiClient:
 
         try:
             credentials = get_credentials(self._settings)
-
+            self._credentials = credentials
             self._client = genai.Client(
                 vertexai=True,
                 project=self._settings.gcp.project_id,
@@ -372,6 +376,7 @@ class GeminiClient:
 
         try:
             credentials = await asyncio.to_thread(get_credentials, self._settings)
+            self._credentials = credentials
 
             self._client = genai.Client(
                 vertexai=True,
@@ -1264,7 +1269,7 @@ class GeminiClient:
 
     # ── Internal helpers ──────────────────────────────────────
 
-    def _check_quota(self, prompt: str | list[types.Part]) -> None:
+    def _check_quota(self, prompt: str | list[types.Part], *, is_execution: bool = False) -> None:
         """Enforce rate-limit quota if a QuotaChecker is configured.
 
         Estimates token count from the prompt (``len(str) // 4`` heuristic)
@@ -1285,9 +1290,9 @@ class GeminiClient:
 
         from vaig.core.identity import build_composite_key, resolve_identity
 
-        os_user, gcp_email, _ = resolve_identity()
+        os_user, gcp_email, _ = resolve_identity(self._credentials)
         user_key = build_composite_key(os_user, gcp_email)
-        self._quota_checker.check_and_consume(user_key, estimated_tokens)
+        self._quota_checker.check_and_consume(user_key, estimated_tokens, is_execution=is_execution)
 
     @staticmethod
     def _warn_if_history_large(
@@ -1362,7 +1367,7 @@ class GeminiClient:
         the sync ``generate()`` method, including cache support.
         """
         await self._async_ensure_initialized()
-        self._check_quota(prompt)
+        await asyncio.to_thread(self._check_quota, prompt)
 
         mid = model_id or self._current_model_id
         logger.debug("async_generate() → model=%s, has_history=%s", mid, bool(history))
@@ -1434,7 +1439,7 @@ class GeminiClient:
         matching the sync ``generate_stream()`` behaviour.
         """
         await self._async_ensure_initialized()
-        self._check_quota(prompt)
+        await asyncio.to_thread(self._check_quota, prompt)
 
         mid = model_id or self._current_model_id
         logger.debug("async_generate_stream() → model=%s, has_history=%s", mid, bool(history))
@@ -1483,7 +1488,7 @@ class GeminiClient:
         the sync ``generate_with_tools()`` method.
         """
         await self._async_ensure_initialized()
-        self._check_quota(prompt)
+        await asyncio.to_thread(self._check_quota, prompt)
 
         mid = model_id or self._current_model_id
         logger.debug(

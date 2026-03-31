@@ -62,8 +62,9 @@ class TestFeatureWithoutExtras:
         from vaig.core.quota import QuotaChecker
 
         settings = MagicMock()
-        settings.rate_limit.gcs_policy_uri = "gs://bucket/policy.yaml"
-        settings.rate_limit.policy_ttl_seconds = 300
+        settings.rate_limit.policy_gcs_bucket = "bucket"
+        settings.rate_limit.policy_gcs_path = "policy.yaml"
+        settings.rate_limit.cache_ttl_seconds = 300
 
         with patch.dict("sys.modules", {"google.cloud.storage": None}):
             with pytest.raises(ImportError, match="pip install 'vertex-ai-toolkit\\[audit\\]'"):
@@ -77,7 +78,7 @@ class TestFeatureWithoutExtras:
 
         settings = MagicMock()
         settings.audit.bigquery_table = "project.dataset.table"
-        settings.audit.cloud_logging_log = "audit-log"
+        settings.audit.cloud_logging_log_name = "audit-log"
         settings.audit.buffer_size = 20
 
         with patch.dict("sys.modules", {"google.cloud.bigquery": None}):

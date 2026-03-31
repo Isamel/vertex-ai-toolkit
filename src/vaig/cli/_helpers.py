@@ -63,9 +63,11 @@ def _init_audit(settings: Settings) -> None:
         return
     try:
         if _audit_subscriber is None:
+            from vaig.core.auth import get_credentials
             from vaig.core.subscribers.audit_subscriber import AuditSubscriber
 
-            _audit_subscriber = AuditSubscriber(settings)
+            credentials = get_credentials(settings)
+            _audit_subscriber = AuditSubscriber(settings, credentials)
             logger.info("AuditSubscriber initialized")
     except Exception:  # noqa: BLE001
         logger.warning("Failed to initialize AuditSubscriber — audit logging disabled")
