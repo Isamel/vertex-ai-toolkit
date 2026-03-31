@@ -923,6 +923,7 @@ class Settings(BaseSettings):
         - ``project`` → ``gcp.project_id``
         - ``model`` → ``models.default``
         - ``temperature`` → ``generation.temperature``
+        - ``max_tokens`` → ``generation.max_output_tokens``
         - ``region`` → ``gcp.location``
 
         Any unknown ``**overrides`` are silently ignored so that callers
@@ -943,6 +944,7 @@ class Settings(BaseSettings):
             "project": ("gcp", "project_id"),
             "model": ("models", "default"),
             "temperature": ("generation", "temperature"),
+            "max_tokens": ("generation", "max_output_tokens"),
             "region": ("gcp", "location"),
         }
 
