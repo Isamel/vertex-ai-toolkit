@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Home{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <h1>VAIG Web</h1>
+    <p class="subtitle">Multi-agent AI toolkit for SRE &amp; infrastructure diagnostics</p>
+    <p class="description">
+        Powered by Vertex AI Gemini — ask questions about your GKE clusters,
+        diagnose infrastructure issues, and investigate incidents from your browser.
+    </p>
+
+    <div class="status-badge" hx-get="/health" hx-trigger="load" hx-swap="innerHTML" hx-target="#health-status">
+        <span id="health-status">Checking...</span>
+    </div>
+</section>
+
+<section class="features">
+    <div class="feature-card">
+        <h2>Ask</h2>
+        <p>Single-shot questions about your infrastructure with streaming responses.</p>
+    </div>
+    <div class="feature-card">
+        <h2>Chat</h2>
+        <p>Multi-turn conversations with persistent session history.</p>
+    </div>
+    <div class="feature-card">
+        <h2>Settings</h2>
+        <p>Configure project, model, and parameters per session.</p>
+    </div>
+</section>
+{% endblock %}

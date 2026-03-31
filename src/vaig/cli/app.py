@@ -173,6 +173,7 @@ from vaig.cli.commands import (  # noqa: E402, I001
     sessions as _sessions_mod,
     skills as _skills_mod,
     stats as _stats_mod,
+    web as _web_mod,
 )
 from vaig.cli.commands.cloud_cmd import cloud_app  # noqa: E402
 
@@ -184,6 +185,7 @@ _doctor_mod.register(app)
 _feedback_mod.register(app)
 _optimize_mod.register(app)
 _export_mod.register(app)
+_web_mod.register(app)
 app.add_typer(cloud_app, name="cloud")
 
 _sessions_mod.register(sessions_app)

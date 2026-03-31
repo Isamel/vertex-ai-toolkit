@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}VAIG{% endblock %} — Vertex AI Toolkit</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/htmx-ext-sse@2.2.2" integrity="sha384-fw+eTlCc7suMV9djDGPnMHEGOxBCKsfHmDlSx3mEBMI8GfEsPONPnYAvZRMQgmfR" crossorigin="anonymous"></script>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">VAIG</a>
+            <span class="nav-tagline">Vertex AI Toolkit</span>
+            <div class="nav-links">
+                <a href="/" class="nav-link">Home</a>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer>
+        <p>VAIG — Vertex AI Gemini Toolkit</p>
+    </footer>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>
