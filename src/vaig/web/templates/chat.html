@@ -296,6 +296,18 @@
         cursor: not-allowed;
     }
 
+    .btn-send .send-spinner {
+        display: none;
+    }
+
+    .btn-send.loading .send-text {
+        display: none;
+    }
+
+    .btn-send.loading .send-spinner {
+        display: inline-block;
+    }
+
     /* Alert for errors */
     .alert-error {
         background: rgba(248, 81, 73, 0.1);
@@ -307,13 +319,26 @@
         margin-bottom: 1rem;
     }
 
-    @media (max-width: 640px) {
+    @media (max-width: 767px) {
         .message {
             max-width: 95%;
         }
 
         .chat-container {
             height: calc(100vh - 140px);
+        }
+
+        .chat-header {
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .chat-header h1 {
+            font-size: 1.1rem;
+        }
+
+        .chat-input textarea {
+            font-size: 16px; /* Prevents zoom on iOS */
         }
     }
 </style>
@@ -366,7 +391,10 @@
             rows="1"
             required
         ></textarea>
-        <button type="submit" class="btn-send" id="send-btn">Send</button>
+        <button type="submit" class="btn-send" id="send-btn">
+            <span class="send-text">Send</span>
+            <span class="send-spinner spinner"></span>
+        </button>
     </form>
 </div>
 {% endblock %}
@@ -420,6 +448,7 @@
         input.value = '';
         input.style.height = 'auto';
         sendBtn.disabled = true;
+        sendBtn.classList.add('loading');
         streamingIndicator.classList.add('active');
         scrollToBottom();
 
@@ -568,6 +597,7 @@
 
     function onStreamEnd() {
         sendBtn.disabled = false;
+        sendBtn.classList.remove('loading');
         streamingIndicator.classList.remove('active');
         input.focus();
         scrollToBottom();

@@ -96,26 +96,16 @@
         cursor: not-allowed;
     }
 
-    .btn-submit .spinner {
+    .btn-submit .btn-spinner {
         display: none;
-        width: 16px;
-        height: 16px;
-        border: 2px solid rgba(255, 255, 255, 0.3);
-        border-top-color: #fff;
-        border-radius: 50%;
-        animation: spin 0.6s linear infinite;
     }
 
-    .btn-submit.loading .spinner {
+    .btn-submit.loading .btn-spinner {
         display: inline-block;
     }
 
     .btn-submit.loading .btn-text {
         display: none;
-    }
-
-    @keyframes spin {
-        to { transform: rotate(360deg); }
     }
 
     /* Response area */
@@ -223,9 +213,13 @@
         color: var(--text-secondary);
     }
 
-    @media (max-width: 640px) {
+    @media (max-width: 767px) {
         .form-row {
             grid-template-columns: 1fr;
+        }
+
+        .ask-form {
+            padding: 1rem;
         }
     }
 </style>
@@ -267,7 +261,7 @@
 
         <button type="submit" class="btn-submit" id="submit-btn">
             <span class="btn-text">Ask</span>
-            <span class="spinner"></span>
+            <span class="btn-spinner spinner"></span>
         </button>
     </form>
 </section>
