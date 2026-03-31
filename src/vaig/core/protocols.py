@@ -25,6 +25,7 @@ __all__ = [
     "GCPClientProvider",
     "GeminiClientProtocol",
     "K8sClientProvider",
+    "SessionStoreProtocol",
 ]
 
 
@@ -243,4 +244,67 @@ class GCPClientProvider(Protocol):
 
     def clear_cache(self) -> None:
         """Clear cached GCP clients."""
+        ...
+
+
+# ══════════════════════════════════════════════════════════════
+# A4. SessionStore Protocol
+# ══════════════════════════════════════════════════════════════
+
+
+@runtime_checkable
+class SessionStoreProtocol(Protocol):
+    """Structural protocol for session persistence backends.
+
+    Matches the async public methods of
+    :class:`~vaig.session.store.SessionStore` (SQLite) so that alternative
+    implementations (e.g. Firestore) can be swapped in via the same
+    interface.
+
+    Only the *async* subset used by the web layer is included.
+    """
+
+    async def async_create_session(
+        self,
+        name: str,
+        model: str,
+        skill: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        *,
+        user: str = "",
+    ) -> str:
+        """Create a new session. Returns the session ID."""
+        ...
+
+    async def async_add_message(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        model: str | None = None,
+        token_count: int = 0,
+    ) -> None:
+        """Add a message to a session."""
+        ...
+
+    async def async_get_messages(
+        self, session_id: str, *, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Get all messages for a session, ordered by creation time."""
+        ...
+
+    async def async_list_sessions(
+        self, *, limit: int = 20, user: str | None = None
+    ) -> list[dict[str, Any]]:
+        """List recent sessions."""
+        ...
+
+    async def async_get_session(
+        self, session_id: str
+    ) -> dict[str, Any] | None:
+        """Get session details by ID."""
+        ...
+
+    async def async_delete_session(self, session_id: str) -> bool:
+        """Delete a session and all its messages."""
         ...
