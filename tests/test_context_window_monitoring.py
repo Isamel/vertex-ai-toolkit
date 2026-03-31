@@ -148,7 +148,12 @@ class TestContextWindowCheckedEvent:
         assert emitted[0].status == "warning"
 
     def test_event_status_error_at_95_percent(self) -> None:
-        """Status is 'error' when prompt tokens >= 95% of context window."""
+        """Status is 'error' when prompt tokens >= 95% of context window.
+
+        The circuit breaker (CONTEXT_CIRCUIT_BREAKER_PCT = 95%) also fires
+        at this level, so the tool loop raises ContextWindowExceededError
+        after emitting the event.
+        """
         mixin = _ConcreteLoopMixin()
         client = _make_mock_client()
         client.generate_with_tools.return_value = _make_text_result(prompt_tokens=960_000)
@@ -161,14 +166,15 @@ class TestContextWindowCheckedEvent:
             mock_get.return_value = mock_bus
             mock_bus.emit.side_effect = lambda e: emitted.append(e) if isinstance(e, ContextWindowChecked) else None
 
-            mixin._run_tool_loop(
-                client=client,
-                prompt="hello",
-                tool_registry=registry,
-                system_instruction="test",
-                history=[],
-                context_window=1_000_000,
-            )
+            with pytest.raises(ContextWindowExceededError):
+                mixin._run_tool_loop(
+                    client=client,
+                    prompt="hello",
+                    tool_registry=registry,
+                    system_instruction="test",
+                    history=[],
+                    context_window=1_000_000,
+                )
 
         assert emitted[0].status == "error"
 

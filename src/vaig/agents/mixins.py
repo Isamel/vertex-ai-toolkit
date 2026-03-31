@@ -12,6 +12,7 @@ from datetime import UTC
 from typing import TYPE_CHECKING, Any, Protocol
 
 from google.api_core.exceptions import InvalidArgument
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from vaig.core.async_utils import to_async
@@ -38,6 +39,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 BUDGET_WARNING_THRESHOLD = 0.8
+
+# Percentage of context window at which the circuit breaker fires.
+# This is the LAST LINE OF DEFENSE — upstream truncation (merge/summary)
+# should prevent hitting this.  Set slightly below 100% so we abort before
+# the API rejects the request outright.
+CONTEXT_CIRCUIT_BREAKER_PCT = 95.0
 
 # Keywords (case-insensitive) that identify a context/token-limit error from the API.
 # Defined at module level to avoid duplication between sync and async tool loops.
@@ -276,9 +283,11 @@ class ToolLoopMixin:
                     **gen_kwargs,
                 )
             except Exception as _api_exc:
+                _msg_lower = str(_api_exc).lower()
+                _is_ctx_error = any(kw in _msg_lower for kw in _CONTEXT_ERROR_KEYWORDS)
+
                 if isinstance(_api_exc, InvalidArgument):
-                    _msg_lower = str(_api_exc).lower()
-                    if any(kw in _msg_lower for kw in _CONTEXT_ERROR_KEYWORDS):
+                    if _is_ctx_error:
                         raise ContextWindowExceededError(
                             f"Context window exceeded (HTTP 400 InvalidArgument): {_api_exc}",
                             context_pct=peak_context_pct,
@@ -290,6 +299,15 @@ class ToolLoopMixin:
                         _api_exc,
                     )
                     raise
+
+                # google-genai SDK ClientError(400) — same error, different type.
+                if isinstance(_api_exc, genai_errors.ClientError) and _api_exc.code == 400 and _is_ctx_error:
+                    raise ContextWindowExceededError(
+                        f"Context window exceeded (genai ClientError 400): {_api_exc}",
+                        context_pct=peak_context_pct,
+                        usage=dict(total_usage),
+                    ) from _api_exc
+
                 logger.exception(
                     "ToolLoopMixin API call failed on iteration %d",
                     iteration,
@@ -483,6 +501,12 @@ class ToolLoopMixin:
         event via :class:`EventBus`.  Bus failures are silently swallowed so
         they never interrupt the tool loop.
 
+        When the estimated usage exceeds ``CONTEXT_CIRCUIT_BREAKER_PCT`` (or
+        *error_threshold*, whichever is higher), a
+        :class:`ContextWindowExceededError` is raised as a **last line of
+        defense** — upstream truncation should prevent this from firing
+        under normal conditions.
+
         Args:
             result: The ``ToolCallResult`` from this iteration.
             context_window: Total context window size in tokens.
@@ -494,6 +518,10 @@ class ToolLoopMixin:
 
         Returns:
             Updated *peak_context_pct* (max of prior value and current).
+
+        Raises:
+            ContextWindowExceededError: When usage exceeds the circuit-breaker
+                threshold.
         """
         _prompt_tokens = result.usage.get("prompt_tokens", 0)
         _context_pct = (_prompt_tokens / context_window * 100) if context_window > 0 else 0.0
@@ -532,6 +560,16 @@ class ToolLoopMixin:
             )
         except Exception:  # noqa: BLE001
             pass
+
+        # Circuit breaker — last line of defense against token explosion.
+        _breaker_threshold = max(error_threshold, CONTEXT_CIRCUIT_BREAKER_PCT)
+        if _context_pct >= _breaker_threshold:
+            raise ContextWindowExceededError(
+                f"Context circuit breaker tripped at {_context_pct:.1f}% "
+                f"({_prompt_tokens}/{context_window} tokens) on iteration {iteration}",
+                context_pct=_context_pct,
+                usage={"prompt_tokens": _prompt_tokens, "completion_tokens": 0, "total_tokens": _prompt_tokens},
+            )
 
         return peak_context_pct
 
@@ -1044,9 +1082,11 @@ class ToolLoopMixin:
                     **gen_kwargs,
                 )
             except Exception as _api_exc:
+                _msg_lower = str(_api_exc).lower()
+                _is_ctx_error = any(kw in _msg_lower for kw in _CONTEXT_ERROR_KEYWORDS)
+
                 if isinstance(_api_exc, InvalidArgument):
-                    _msg_lower = str(_api_exc).lower()
-                    if any(kw in _msg_lower for kw in _CONTEXT_ERROR_KEYWORDS):
+                    if _is_ctx_error:
                         raise ContextWindowExceededError(
                             f"Context window exceeded (HTTP 400 InvalidArgument): {_api_exc}",
                             context_pct=peak_context_pct,
@@ -1058,6 +1098,15 @@ class ToolLoopMixin:
                         _api_exc,
                     )
                     raise
+
+                # google-genai SDK ClientError(400) — same error, different type.
+                if isinstance(_api_exc, genai_errors.ClientError) and _api_exc.code == 400 and _is_ctx_error:
+                    raise ContextWindowExceededError(
+                        f"Context window exceeded (genai ClientError 400): {_api_exc}",
+                        context_pct=peak_context_pct,
+                        usage=dict(total_usage),
+                    ) from _api_exc
+
                 logger.exception(
                     "ToolLoopMixin async API call failed on iteration %d",
                     iteration,
