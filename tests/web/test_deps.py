@@ -17,6 +17,8 @@ pytest.importorskip(
     reason="FastAPI not available; install the 'web' extra to run web tests.",
 )
 
+from fastapi import HTTPException
+
 from vaig.web.deps import get_container, get_current_user, get_settings
 
 # ── get_current_user ─────────────────────────────────────────
@@ -52,21 +54,34 @@ class TestGetCurrentUser:
         )
         assert get_current_user(request) == "user@direct.com"
 
-    @patch.dict("os.environ", {"VAIG_WEB_DEV_USER": "test-dev@local"})
+    @patch.dict(
+        "os.environ",
+        {"VAIG_WEB_DEV_USER": "test-dev@local", "VAIG_WEB_DEV_MODE": "true"},
+    )
     def test_falls_back_to_env_var(self) -> None:
-        """Should use VAIG_WEB_DEV_USER when no IAP header present."""
+        """Should use VAIG_WEB_DEV_USER when no IAP header and dev mode on."""
         request = self._make_request({})
         assert get_current_user(request) == "test-dev@local"
 
-    @patch.dict("os.environ", {}, clear=True)
+    @patch.dict("os.environ", {"VAIG_WEB_DEV_MODE": "true"}, clear=True)
     def test_falls_back_to_default(self) -> None:
-        """Should use dev@localhost when no header and no env var."""
-        # Also need to remove the env var if it exists
+        """Should use dev@localhost when no header, no env var, but dev mode on."""
         import os
 
         os.environ.pop("VAIG_WEB_DEV_USER", None)
         request = self._make_request({})
         assert get_current_user(request) == "dev@localhost"
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_raises_401_without_dev_mode(self) -> None:
+        """Should raise HTTP 401 when no IAP header and dev mode is off."""
+        import os
+
+        os.environ.pop("VAIG_WEB_DEV_MODE", None)
+        request = self._make_request({})
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_user(request)
+        assert exc_info.value.status_code == 401
 
 
 # ── get_settings ─────────────────────────────────────────────

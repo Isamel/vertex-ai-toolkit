@@ -75,11 +75,20 @@ async def ask_stream(request: Request) -> EventSourceResponse:
     # Per-request asyncio.Queue for EventBus → SSE bridge
     event_queue: asyncio.Queue[Event | None] = asyncio.Queue()
 
+    # Capture the running loop so the handler can safely enqueue from any thread.
+    # EventBus dispatches handlers synchronously on the emitting thread (which
+    # may be a worker thread via asyncio.to_thread()), but asyncio.Queue is NOT
+    # thread-safe — call_soon_threadsafe bridges the gap.
+    loop = asyncio.get_running_loop()
+
+    def _threadsafe_handler(event: Event, *, _loop: asyncio.AbstractEventLoop = loop, _queue: asyncio.Queue[Event | None] = event_queue) -> None:
+        _loop.call_soon_threadsafe(_queue.put_nowait, event)
+
     # Subscribe to relevant event types
     bus = container.event_bus
     unsub_fns: list[Any] = []
     for event_type in _SUBSCRIBED_EVENTS:
-        unsub = bus.subscribe(event_type, event_queue.put_nowait)
+        unsub = bus.subscribe(event_type, _threadsafe_handler)
         unsub_fns.append(unsub)
 
     async def _generate() -> AsyncGenerator[ServerSentEvent, None]:
@@ -96,6 +105,8 @@ async def ask_stream(request: Request) -> EventSourceResponse:
             async for sse_event in stream_to_sse(stream_result, event_queue):
                 yield sse_event
         except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
             logger.exception("Ask stream error for user=%s", user)
             yield ServerSentEvent(
                 data=json.dumps(

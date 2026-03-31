@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from vaig.core.config import Settings
 from vaig.core.container import ServiceContainer, build_container
@@ -30,6 +30,8 @@ _IAP_PREFIX = "accounts.google.com:"
 # Fallback env var for local development
 _DEV_USER_ENV = "VAIG_WEB_DEV_USER"
 _DEV_USER_DEFAULT = "dev@localhost"
+# Explicit dev-mode flag — must be set for dev fallback to activate
+_DEV_MODE_ENV = "VAIG_WEB_DEV_MODE"
 
 
 def get_current_user(request: Request) -> str:
@@ -39,7 +41,9 @@ def get_current_user(request: Request) -> str:
     with the format ``accounts.google.com:user@example.com``.
 
     In local development, falls back to the ``VAIG_WEB_DEV_USER``
-    environment variable (default: ``dev@localhost``).
+    environment variable (default: ``dev@localhost``) **only** when
+    ``VAIG_WEB_DEV_MODE=true`` is set.  Otherwise raises HTTP 401 to
+    prevent silent bypass when deployed without IAP.
     """
     header_value = request.headers.get(_IAP_USER_HEADER, "")
     if header_value:
@@ -48,7 +52,14 @@ def get_current_user(request: Request) -> str:
             return header_value[len(_IAP_PREFIX):]
         return header_value
 
-    return os.environ.get(_DEV_USER_ENV, _DEV_USER_DEFAULT)
+    # Only fall back to dev identity when dev mode is explicitly enabled
+    if os.environ.get(_DEV_MODE_ENV, "").lower() in ("true", "1", "yes"):
+        return os.environ.get(_DEV_USER_ENV, _DEV_USER_DEFAULT)
+
+    raise HTTPException(
+        status_code=401,
+        detail="Missing IAP authentication header. Set VAIG_WEB_DEV_MODE=true for local development.",
+    )
 
 
 async def get_settings(request: Request) -> Settings:

@@ -916,8 +916,9 @@ class Settings(BaseSettings):
     def from_overrides(cls, base_path: str | Path | None = None, **overrides: Any) -> Settings:
         """Load base config and overlay keyword overrides for web requests.
 
-        Uses the same layered YAML loading as :meth:`load`, then maps
-        well-known shorthand keys to their nested config paths:
+        Uses :meth:`load` for the layered YAML loading, then maps
+        well-known shorthand keys to their nested config paths and
+        returns a copy with overrides applied.
 
         - ``project`` → ``gcp.project_id``
         - ``model`` → ``models.default``
@@ -934,25 +935,10 @@ class Settings(BaseSettings):
         Returns:
             A fresh :class:`Settings` instance with overrides applied.
         """
-        # 1. Layered YAML loading (same as load())
-        paths_by_priority: list[Path | None] = [
-            Path.cwd() / "config" / "default.yaml",
-            Path.home() / ".vaig" / "config.yaml",
-            Path.cwd() / "vaig.yaml",
-            Path(base_path).expanduser() if base_path is not None else None,
-        ]
+        # 1. Reuse the canonical layered loader
+        base = cls.load(base_path)
 
-        yaml_data: dict[str, Any] = {}
-        for p in paths_by_priority:
-            if p is not None:
-                resolved = Path(p).expanduser()
-                if resolved.exists():
-                    file_data = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
-                    yaml_data = _deep_merge(yaml_data, file_data)
-
-        yaml_data = _strip_empty_strings(yaml_data)
-
-        # 2. Map shorthand overrides → nested config paths
+        # 2. Map shorthand overrides → nested model updates
         _OVERRIDE_MAP: dict[str, tuple[str, str]] = {
             "project": ("gcp", "project_id"),
             "model": ("models", "default"),
@@ -960,17 +946,28 @@ class Settings(BaseSettings):
             "region": ("gcp", "location"),
         }
 
+        # Build a dict of nested model updates: {"gcp": {"project_id": "..."}, ...}
+        nested_updates: dict[str, dict[str, Any]] = {}
         for key, value in overrides.items():
             if value is None or (isinstance(value, str) and not value.strip()):
                 continue
             mapping = _OVERRIDE_MAP.get(key)
             if mapping is not None:
                 section, field_name = mapping
-                if section not in yaml_data:
-                    yaml_data[section] = {}
-                yaml_data[section][field_name] = value
+                if section not in nested_updates:
+                    nested_updates[section] = {}
+                nested_updates[section][field_name] = value
 
-        return cls(**yaml_data)
+        if not nested_updates:
+            return base
+
+        # 3. Apply overrides via model_copy (Pydantic v2 pattern)
+        top_level_updates: dict[str, Any] = {}
+        for section, fields in nested_updates.items():
+            current_sub_model = getattr(base, section)
+            top_level_updates[section] = current_sub_model.model_copy(update=fields)
+
+        return base.model_copy(update=top_level_updates)
 
     @property
     def db_path_resolved(self) -> Path:

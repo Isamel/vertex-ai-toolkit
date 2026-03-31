@@ -297,6 +297,16 @@
     const doneStats = document.getElementById('done-stats');
 
     let fullText = '';
+    let markdownRenderScheduled = false;
+
+    function scheduleMarkdownRender() {
+        if (markdownRenderScheduled) return;
+        markdownRenderScheduled = true;
+        requestAnimationFrame(function() {
+            responseText.innerHTML = renderMarkdown(fullText);
+            markdownRenderScheduled = false;
+        });
+    }
 
     form.addEventListener('submit', function(e) {
         e.preventDefault();
@@ -375,7 +385,7 @@
             case 'chunk':
                 if (data.text) {
                     fullText += data.text;
-                    responseText.innerHTML = renderMarkdown(fullText);
+                    scheduleMarkdownRender();
                 }
                 break;
 
@@ -441,8 +451,11 @@
         html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
         html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
 
-        // Line breaks
-        html = html.replace(/\n/g, '<br>');
+        // Line breaks — only outside <pre> blocks so code formatting is preserved
+        html = html.split(/(<pre[\s\S]*?<\/pre>)/g).map(function(segment, index) {
+            if (index % 2 === 1) return segment; // <pre> block — leave unchanged
+            return segment.replace(/\n/g, '<br>');
+        }).join('');
 
         return html;
     }
