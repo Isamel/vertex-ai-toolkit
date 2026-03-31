@@ -34,10 +34,12 @@ def create_app() -> FastAPI:
     app.state.templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
     # Register routes
+    from vaig.web.routes.ask import router as ask_router
     from vaig.web.routes.health import router as health_router
     from vaig.web.routes.pages import router as pages_router
 
     app.include_router(health_router)
     app.include_router(pages_router)
+    app.include_router(ask_router)
 
     return app

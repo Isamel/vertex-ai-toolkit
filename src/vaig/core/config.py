@@ -912,6 +912,66 @@ class Settings(BaseSettings):
         # Merge env vars over yaml (pydantic-settings handles env automatically)
         return cls(**yaml_data)
 
+    @classmethod
+    def from_overrides(cls, base_path: str | Path | None = None, **overrides: Any) -> Settings:
+        """Load base config and overlay keyword overrides for web requests.
+
+        Uses the same layered YAML loading as :meth:`load`, then maps
+        well-known shorthand keys to their nested config paths:
+
+        - ``project`` → ``gcp.project_id``
+        - ``model`` → ``models.default``
+        - ``temperature`` → ``generation.temperature``
+        - ``region`` → ``gcp.location``
+
+        Any unknown ``**overrides`` are silently ignored so that callers
+        can forward form data without pre-filtering.
+
+        Args:
+            base_path: Optional explicit YAML config path (same as ``load()``).
+            **overrides: Shorthand key-value pairs from a web form.
+
+        Returns:
+            A fresh :class:`Settings` instance with overrides applied.
+        """
+        # 1. Layered YAML loading (same as load())
+        paths_by_priority: list[Path | None] = [
+            Path.cwd() / "config" / "default.yaml",
+            Path.home() / ".vaig" / "config.yaml",
+            Path.cwd() / "vaig.yaml",
+            Path(base_path).expanduser() if base_path is not None else None,
+        ]
+
+        yaml_data: dict[str, Any] = {}
+        for p in paths_by_priority:
+            if p is not None:
+                resolved = Path(p).expanduser()
+                if resolved.exists():
+                    file_data = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
+                    yaml_data = _deep_merge(yaml_data, file_data)
+
+        yaml_data = _strip_empty_strings(yaml_data)
+
+        # 2. Map shorthand overrides → nested config paths
+        _OVERRIDE_MAP: dict[str, tuple[str, str]] = {
+            "project": ("gcp", "project_id"),
+            "model": ("models", "default"),
+            "temperature": ("generation", "temperature"),
+            "region": ("gcp", "location"),
+        }
+
+        for key, value in overrides.items():
+            if value is None or (isinstance(value, str) and not value.strip()):
+                continue
+            mapping = _OVERRIDE_MAP.get(key)
+            if mapping is not None:
+                section, field_name = mapping
+                if section not in yaml_data:
+                    yaml_data[section] = {}
+                yaml_data[section][field_name] = value
+
+        return cls(**yaml_data)
+
     @property
     def db_path_resolved(self) -> Path:
         """Resolve the session DB path (expand ~)."""
