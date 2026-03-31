@@ -42,6 +42,7 @@ class ServiceContainer:
         k8s_provider: Kubernetes client provider. Can be ``None`` if not required (e.g., in tests).
         gcp_provider: GCP observability client provider. Can be ``None`` if not required (e.g., in tests).
         event_bus: Process-wide event bus for domain events.
+        quota_checker: Rate-limit quota enforcer. ``None`` when rate limiting is disabled.
     """
 
     settings: Settings
@@ -49,6 +50,7 @@ class ServiceContainer:
     k8s_provider: K8sClientProvider | None
     gcp_provider: GCPClientProvider | None
     event_bus: EventBus
+    quota_checker: object | None = None
 
 
 def build_container(settings: Settings) -> ServiceContainer:
@@ -71,7 +73,26 @@ def build_container(settings: Settings) -> ServiceContainer:
     from vaig.tools.gcloud_tools import DefaultGCPClientProvider
     from vaig.tools.gke._clients import DefaultK8sClientProvider
 
-    gemini_client = GeminiClient(settings)
+    # ── Optional: rate-limit quota checker ────────────────────
+    quota_checker = None
+    if settings.rate_limit.enabled:
+        try:
+            from vaig.core.auth import get_credentials
+            from vaig.core.quota import QuotaChecker
+
+            credentials = get_credentials(settings)
+            quota_checker = QuotaChecker(settings, credentials)
+            logger.info("QuotaChecker enabled — GCS policy from %s/%s",
+                        settings.rate_limit.policy_gcs_bucket,
+                        settings.rate_limit.policy_gcs_path)
+        except Exception as exc:  # noqa: BLE001
+            msg = (
+                "Rate limiting is enabled but QuotaChecker failed to initialize. "
+                "Check GCS connectivity and [audit] extras installation."
+            )
+            raise RuntimeError(msg) from exc
+
+    gemini_client = GeminiClient(settings, quota_checker=quota_checker)
     event_bus = EventBus.get()
     k8s_provider = DefaultK8sClientProvider()
     gcp_provider = DefaultGCPClientProvider()
@@ -84,4 +105,5 @@ def build_container(settings: Settings) -> ServiceContainer:
         k8s_provider=k8s_provider,
         gcp_provider=gcp_provider,
         event_bus=event_bus,
+        quota_checker=quota_checker,
     )

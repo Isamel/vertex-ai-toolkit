@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Keep a module-level reference so the subscriber isn't garbage-collected.
 _telemetry_subscriber: object | None = None
+_audit_subscriber: object | None = None
 
 
 def _init_telemetry(settings: Settings) -> None:
@@ -49,6 +50,27 @@ def _init_telemetry(settings: Settings) -> None:
             _telemetry_subscriber = TelemetrySubscriber(collector)
     except Exception:  # noqa: BLE001
         pass
+
+
+def _init_audit(settings: Settings) -> None:
+    """Initialize the AuditSubscriber if audit logging is enabled.
+
+    Safe to call multiple times — the subscriber is created only once
+    (guarded by ``_audit_subscriber``).  Mirrors :func:`_init_telemetry`.
+    """
+    global _audit_subscriber  # noqa: PLW0603
+    if not settings.audit.enabled:
+        return
+    try:
+        if _audit_subscriber is None:
+            from vaig.core.auth import get_credentials
+            from vaig.core.subscribers.audit_subscriber import AuditSubscriber
+
+            credentials = get_credentials(settings)
+            _audit_subscriber = AuditSubscriber(settings, credentials)
+            logger.info("AuditSubscriber initialized")
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to initialize AuditSubscriber — audit logging disabled")
 
 
 # ── Telemetry decorator ───────────────────────────────────────

@@ -350,3 +350,21 @@ context_window:
   warn_threshold_pct: 80.0          # Percentage at which a WARNING is logged (default: 80%)
   error_threshold_pct: 95.0         # Percentage at which an ERROR is logged (default: 95%)
   context_window_size: 1048576      # Default context window size in tokens
+
+# Audit logging — sends usage events to BigQuery and Cloud Logging
+audit:
+  enabled: false
+  bigquery_dataset: "vaig_audit"
+  bigquery_table: "audit_events"
+  cloud_logging_log_name: "vaig-audit"
+  buffer_size: 20
+  flush_interval_seconds: 30
+
+# Rate limiting — daily quota per user, policy loaded from GCS
+# NOTE: Quota limits are NOT configured here (to prevent user manipulation).
+# Set limits in the GCS quota policy file instead.
+rate_limit:
+  enabled: false
+  policy_gcs_bucket: ""
+  policy_gcs_path: "vaig/quota-policy.yaml"
+  cache_ttl_seconds: 300

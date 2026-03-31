@@ -39,6 +39,11 @@ rag = [
     "google-cloud-storage>=2.16.0",
     "google-cloud-aiplatform>=1.60.0",
 ]
+audit = [
+    "google-cloud-bigquery>=3.20.0",
+    "google-cloud-storage>=2.16.0",
+    "google-cloud-logging>=3.11.0",
+]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",

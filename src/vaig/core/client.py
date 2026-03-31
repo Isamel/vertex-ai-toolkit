@@ -39,7 +39,10 @@ from vaig.core.exceptions import (
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 
+    from google.auth.credentials import Credentials
+
     from vaig.core.config import Settings
+    from vaig.core.quota import QuotaChecker
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +259,12 @@ class GeminiClient:
     Uses the ``google-genai`` SDK (``google.genai.Client``) with ``vertexai=True``.
     """
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        quota_checker: QuotaChecker | None = None,
+    ) -> None:
         self._settings = settings
         self._initialized = False
         self._client: genai.Client | None = None
@@ -264,6 +272,11 @@ class GeminiClient:
         self._active_location: str = settings.gcp.location
         self._using_fallback: bool = False
         self._fallback_lock = threading.Lock()
+
+        # Rate-limit quota enforcement — None when disabled.
+        self._quota_checker = quota_checker
+        # Store credentials for identity resolution in _check_quota.
+        self._credentials: Credentials | None = None
 
         # Response cache — disabled by default (opt-in via config).
         try:
@@ -311,7 +324,7 @@ class GeminiClient:
 
         try:
             credentials = get_credentials(self._settings)
-
+            self._credentials = credentials
             self._client = genai.Client(
                 vertexai=True,
                 project=self._settings.gcp.project_id,
@@ -363,6 +376,7 @@ class GeminiClient:
 
         try:
             credentials = await asyncio.to_thread(get_credentials, self._settings)
+            self._credentials = credentials
 
             self._client = genai.Client(
                 vertexai=True,
@@ -942,6 +956,7 @@ class GeminiClient:
             **gen_kwargs: Override generation config params.
         """
         self._ensure_initialized()
+        self._check_quota(prompt)
 
         mid = model_id or self._current_model_id
         logger.debug("generate() → model=%s, has_history=%s", mid, bool(history))
@@ -1038,6 +1053,7 @@ class GeminiClient:
             **gen_kwargs: Override generation config params.
         """
         self._ensure_initialized()
+        self._check_quota(prompt)
 
         mid = model_id or self._current_model_id
         logger.debug("generate_stream() → model=%s, has_history=%s", mid, bool(history))
@@ -1097,6 +1113,7 @@ class GeminiClient:
             **gen_kwargs: Override generation config params.
         """
         self._ensure_initialized()
+        self._check_quota(prompt)
 
         mid = model_id or self._current_model_id
         logger.debug(
@@ -1252,6 +1269,31 @@ class GeminiClient:
 
     # ── Internal helpers ──────────────────────────────────────
 
+    def _check_quota(self, prompt: str | list[types.Part], *, is_execution: bool = False) -> None:
+        """Enforce rate-limit quota if a QuotaChecker is configured.
+
+        Estimates token count from the prompt (``len(str) // 4`` heuristic)
+        and delegates to :meth:`QuotaChecker.check_and_consume`.  If the
+        checker is ``None`` (rate-limiting disabled), this is a no-op.
+
+        Raises:
+            QuotaExceededError: If any quota dimension would be exceeded.
+        """
+        if self._quota_checker is None:
+            return
+
+        # Rough token estimate — same 4-chars-per-token heuristic used elsewhere.
+        if isinstance(prompt, str):
+            estimated_tokens = max(len(prompt) // 4, 1)
+        else:
+            estimated_tokens = max(sum(len(str(p)) for p in prompt) // 4, 1)
+
+        from vaig.core.identity import build_composite_key, resolve_identity
+
+        os_user, gcp_email, _ = resolve_identity(self._credentials)
+        user_key = build_composite_key(os_user, gcp_email)
+        self._quota_checker.check_and_consume(user_key, estimated_tokens, is_execution=is_execution)
+
     @staticmethod
     def _warn_if_history_large(
         history: list[ChatMessage],
@@ -1325,6 +1367,7 @@ class GeminiClient:
         the sync ``generate()`` method, including cache support.
         """
         await self._async_ensure_initialized()
+        await asyncio.to_thread(self._check_quota, prompt)
 
         mid = model_id or self._current_model_id
         logger.debug("async_generate() → model=%s, has_history=%s", mid, bool(history))
@@ -1396,6 +1439,7 @@ class GeminiClient:
         matching the sync ``generate_stream()`` behaviour.
         """
         await self._async_ensure_initialized()
+        await asyncio.to_thread(self._check_quota, prompt)
 
         mid = model_id or self._current_model_id
         logger.debug("async_generate_stream() → model=%s, has_history=%s", mid, bool(history))
@@ -1444,6 +1488,7 @@ class GeminiClient:
         the sync ``generate_with_tools()`` method.
         """
         await self._async_ensure_initialized()
+        await asyncio.to_thread(self._check_quota, prompt)
 
         mid = model_id or self._current_model_id
         logger.debug(
