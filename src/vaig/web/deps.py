@@ -67,9 +67,30 @@ async def get_settings(request: Request) -> Settings:
 
     Reads well-known override keys from form data or query parameters
     and passes them to ``Settings.from_overrides()``.
+
+    When a ``session_id`` query parameter is present and the app has a
+    session store with config support, the stored per-session config is
+    loaded first.  Explicit form/query overrides take precedence over
+    stored values.
     """
     overrides: dict[str, Any] = {}
 
+    # ── 1. Load session config (lowest priority) ─────────────
+    session_id = (
+        request.query_params.get("session_id")
+        or request.query_params.get("session")
+        or request.path_params.get("session_id")
+        or request.path_params.get("session")
+    )
+    if session_id:
+        store = getattr(request.app.state, "session_store", None)
+        if store is not None and hasattr(store, "async_get_config"):
+            user = get_current_user(request)
+            session_config = await store.async_get_config(session_id, user)
+            if session_config:
+                overrides.update(session_config)
+
+    # ── 2. Explicit form/query overrides (highest priority) ──
     # Try form data first (POST), fall back to query params (GET)
     content_type = request.headers.get("content-type", "")
     if "form" in content_type or "multipart" in content_type:
@@ -79,16 +100,22 @@ async def get_settings(request: Request) -> Settings:
         form_dict = dict(request.query_params)
 
     # Map form fields to override keys
-    _FORM_KEYS = ("project", "model", "temperature", "region")
+    _FORM_KEYS = ("project", "model", "temperature", "max_tokens", "region")
     for key in _FORM_KEYS:
         value = form_dict.get(key)
         if value is not None and str(value).strip():
-            # Convert temperature to float
             if key == "temperature":
                 try:
                     overrides[key] = float(value)
                 except (ValueError, TypeError):
                     continue
+            elif key == "max_tokens":
+                try:
+                    max_tokens = int(value)
+                except (ValueError, TypeError):
+                    continue
+                if max_tokens > 0:
+                    overrides[key] = max_tokens
             else:
                 overrides[key] = str(value).strip()
 

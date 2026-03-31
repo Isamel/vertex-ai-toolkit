@@ -38,11 +38,13 @@ def create_app() -> FastAPI:
     from vaig.web.routes.chat import router as chat_router
     from vaig.web.routes.health import router as health_router
     from vaig.web.routes.pages import router as pages_router
+    from vaig.web.routes.settings import router as settings_router
 
     app.include_router(health_router)
     app.include_router(pages_router)
     app.include_router(ask_router)
     app.include_router(chat_router)
+    app.include_router(settings_router)
 
     # Session store — lazily initialised on first use by chat routes.
     # The store is set to ``None`` here; a concrete implementation

@@ -188,6 +188,78 @@ class FirestoreSessionStore:
         data["id"] = doc.id
         return data
 
+    # ── Config ─────────────────────────────────────────────────
+
+    async def async_save_config(
+        self,
+        session_id: str,
+        config: dict[str, Any],
+        user: str,
+    ) -> bool:
+        """Persist per-session configuration overrides.
+
+        Stores the ``config`` dict in the ``config`` field of the session
+        document.  Only the session owner may write.
+
+        Args:
+            session_id: The session to update.
+            config: Override dict — keys like ``project``, ``model``,
+                ``temperature``, ``max_tokens``, ``region``,
+                ``system_instructions``.
+            user: The email of the requesting user (ownership check).
+
+        Returns:
+            ``True`` if the write succeeded, ``False`` if the session
+            does not exist or the caller is not the owner.
+        """
+        doc_ref = self._client.collection(_COLLECTION).document(session_id)
+        doc = await doc_ref.get()
+        if not doc.exists:
+            return False
+
+        data: dict[str, Any] = doc.to_dict() or {}
+        if data.get("user") != user:
+            return False
+
+        now = datetime.now(UTC).isoformat()
+        await doc_ref.update({"config": config, "updated_at": now})
+        logger.info("Saved config for session %s", session_id[:8])
+        return True
+
+    async def async_get_config(
+        self,
+        session_id: str,
+        user: str,
+    ) -> dict[str, Any] | None:
+        """Load per-session configuration overrides.
+
+        Returns ``None`` when the session does not exist, the caller is
+        not the owner, or no config has been saved yet.
+
+        Args:
+            session_id: The session to read from.
+            user: The email of the requesting user (ownership check).
+
+        Returns:
+            The config dict, or ``None``.
+        """
+        doc_ref = self._client.collection(_COLLECTION).document(session_id)
+        doc = await doc_ref.get()
+        if not doc.exists:
+            return None
+
+        data: dict[str, Any] = doc.to_dict() or {}
+        if data.get("user") != user:
+            return None
+
+        cfg = data.get("config")
+        if cfg is None or not isinstance(cfg, dict):
+            return None
+        result: dict[str, Any] = cfg
+        return result
+
+    # ── Delete ───────────────────────────────────────────────
+
     async def async_delete_session(self, session_id: str) -> bool:
         """Delete a session and cascade-delete all its messages.
 
