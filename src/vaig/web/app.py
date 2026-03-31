@@ -76,11 +76,22 @@ async def _not_found_handler(request: Request, exc: Exception) -> Response:
 
 async def _server_error_handler(request: Request, exc: Exception) -> Response:
     """Render a styled 500 error page — no tracebacks unless debug mode."""
-    logger.exception("Internal server error on %s %s", request.method, request.url.path)
+    is_debug = getattr(request.app, "debug", False)
+
+    if is_debug:
+        logger.exception("Internal server error on %s %s", request.method, request.url.path)
+    else:
+        logger.error(
+            "Internal server error on %s %s: %s",
+            request.method,
+            request.url.path,
+            exc,
+            exc_info=False,
+        )
 
     # Only include debug info when app is in debug mode
     debug_info: str | None = None
-    if getattr(request.app, "debug", False):
+    if is_debug:
         tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
         debug_info = "".join(tb_lines)
 

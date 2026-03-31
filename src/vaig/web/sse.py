@@ -24,8 +24,6 @@ from vaig.core.events import (
 
 __all__ = [
     "stream_to_sse",
-    "_friendly_error_message",
-    "_is_retriable",
 ]
 
 logger = logging.getLogger(__name__)
@@ -240,7 +238,6 @@ _RETRIABLE_ERROR_TYPES: tuple[str, ...] = (
     "Unavailable",
     "ConnectionError",
     "TimeoutError",
-    "asyncio.TimeoutError",
 )
 
 

@@ -26,17 +26,7 @@ gcloud services enable \
 
 ## 2. Build & Push Docker Image
 
-Use Cloud Build to build and push the container image directly:
-
-```bash
-# From the repository root
-gcloud builds submit \
-  --tag gcr.io/$PROJECT_ID/vaig-web:latest \
-  --dockerfile Dockerfile.web \
-  .
-```
-
-Alternatively, use Artifact Registry (recommended):
+Use Cloud Build to build and push the container image to Artifact Registry:
 
 ```bash
 # Create an Artifact Registry repo (one-time)
@@ -44,23 +34,27 @@ gcloud artifacts repositories create vaig \
   --repository-format=docker \
   --location=$REGION
 
-# Build and push
+# Build and push from the repository root
 gcloud builds submit \
   --tag $REGION-docker.pkg.dev/$PROJECT_ID/vaig/vaig-web:latest \
   --dockerfile Dockerfile.web \
   .
 ```
 
+> **Note**: The legacy `gcr.io` container registry is deprecated. Use Artifact Registry
+> (`REGION-docker.pkg.dev/PROJECT/REPO/IMAGE:TAG`) for all new deployments.
+
 ## 3. Deploy to Cloud Run
 
 ```bash
-# Using the service.yaml config
-gcloud run services replace deploy/service.yaml \
-  --region $REGION
+# Using the service.yaml config — first replace the image placeholder:
+export IMAGE_TAG="$REGION-docker.pkg.dev/$PROJECT_ID/vaig/vaig-web:latest"
+sed "s|IMAGE_PLACEHOLDER|${IMAGE_TAG}|g" deploy/service.yaml | \
+  gcloud run services replace - --region $REGION
 
 # Or deploy directly with gcloud
 gcloud run deploy vaig-web \
-  --image gcr.io/$PROJECT_ID/vaig-web:latest \
+  --image $REGION-docker.pkg.dev/$PROJECT_ID/vaig/vaig-web:latest \
   --region $REGION \
   --platform managed \
   --port 8080 \
@@ -105,6 +99,10 @@ gcloud services enable iap.googleapis.com
 4. Name: `VAIG Web IAP`
 5. Authorized redirect URIs: `https://iap.googleapis.com/v1/oauth/clientIds/CLIENT_ID:handleRedirect`
 6. Save the **Client ID** and **Client Secret**
+
+> **Important**: You MUST replace `CLIENT_ID` in the redirect URI above with your
+> actual OAuth Client ID from the Google Cloud Console (e.g.,
+> `123456789.apps.googleusercontent.com`). The URI will not work with the placeholder value.
 
 ### 4.4 Enable IAP for Cloud Run
 
@@ -159,7 +157,7 @@ Set environment variables during deployment:
 
 ```bash
 gcloud run deploy vaig-web \
-  --image gcr.io/$PROJECT_ID/vaig-web:latest \
+  --image $REGION-docker.pkg.dev/$PROJECT_ID/vaig/vaig-web:latest \
   --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,VAIG_REGION=$REGION" \
   --no-allow-unauthenticated
 ```
@@ -174,7 +172,9 @@ SERVICE_URL=$(gcloud run services describe vaig-web \
 
 echo "Service URL: $SERVICE_URL"
 
-# Health check (bypasses IAP)
+# Health check — note: if IAP is enabled, unauthenticated curl will get 403.
+# Use this command only before enabling IAP, or authenticate first:
+#   curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" "$SERVICE_URL/health"
 curl -s "$SERVICE_URL/health" | python -m json.tool
 
 # Open in browser (IAP will prompt for Google login)
