@@ -17,12 +17,14 @@ Each message document stores: ``role``, ``content``, ``model``,
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from google.cloud.firestore import AsyncClient
+if TYPE_CHECKING:
+    from google.cloud.firestore import AsyncClient
 
 __all__ = [
     "FirestoreSessionStore",
@@ -44,6 +46,13 @@ class FirestoreSessionStore:
     """
 
     def __init__(self, client: AsyncClient) -> None:
+        import importlib.util
+
+        if importlib.util.find_spec("google.cloud.firestore") is None:
+            raise ImportError(
+                "google-cloud-firestore is required for FirestoreSessionStore. "
+                "Install it with: pip install google-cloud-firestore"
+            )
         self._client = client
 
     # ── Create ───────────────────────────────────────────────
@@ -74,6 +83,7 @@ class FirestoreSessionStore:
                 "skill": skill or "",
                 "created_at": now,
                 "updated_at": now,
+                "message_count": 0,
                 "metadata": metadata or {},
             }
         )
@@ -105,8 +115,16 @@ class FirestoreSessionStore:
                 "created_at": now,
             }
         )
-        # Touch the session's updated_at
-        await session_ref.update({"updated_at": now})
+        # Touch the session's updated_at and increment message_count
+        try:
+            from google.cloud.firestore_v1 import Increment
+
+            await session_ref.update(
+                {"updated_at": now, "message_count": Increment(1)}
+            )
+        except ImportError:
+            # Fallback: just update updated_at without atomic increment
+            await session_ref.update({"updated_at": now})
 
     async def async_get_messages(
         self,
@@ -139,8 +157,12 @@ class FirestoreSessionStore:
         query = self._client.collection(_COLLECTION).order_by(
             "updated_at", direction="DESCENDING"
         )
-        if user:
-            query = query.where(filter=_field_filter("user", "==", user))
+        if user is not None:
+            try:
+                query = query.where(filter=_field_filter("user", "==", user))
+            except TypeError:
+                # Fallback for older SDK versions that don't support filter= kwarg
+                query = query.where("user", "==", user)
         query = query.limit(limit)
 
         sessions: list[dict[str, Any]] = []
@@ -148,12 +170,9 @@ class FirestoreSessionStore:
             data: dict[str, Any] = doc.to_dict() or {}
             data["id"] = doc.id
 
-            # Count messages in subcollection
-            msg_count = 0
-            msgs_ref = doc.reference.collection(_MESSAGES_SUBCOLLECTION)
-            async for _msg in msgs_ref.stream():
-                msg_count += 1
-            data["message_count"] = msg_count
+            # Read message_count from session doc (maintained by async_add_message)
+            if "message_count" not in data:
+                data["message_count"] = 0
             sessions.append(data)
         return sessions
 
@@ -180,10 +199,13 @@ class FirestoreSessionStore:
         if not doc.exists:
             return False
 
-        # Delete all messages in the subcollection first
+        # Delete all messages in the subcollection first (in parallel)
         msgs_ref = doc_ref.collection(_MESSAGES_SUBCOLLECTION)
+        delete_tasks: list[Any] = []
         async for msg_doc in msgs_ref.stream():
-            await msg_doc.reference.delete()
+            delete_tasks.append(msg_doc.reference.delete())
+        if delete_tasks:
+            await asyncio.gather(*delete_tasks)
 
         # Delete the session document
         await doc_ref.delete()

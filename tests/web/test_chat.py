@@ -57,7 +57,8 @@ class _FakeSessionStore:
         model: str,
         skill: str | None = None,
         metadata: dict | None = None,
-        **kwargs,
+        *,
+        user: str = "",
     ) -> str:
         sid = "test-session-001"
         self.sessions[sid] = {
@@ -65,7 +66,7 @@ class _FakeSessionStore:
             "name": name,
             "model": model,
             "skill": skill,
-            **kwargs,
+            "user": user,
         }
         self.messages[sid] = []
         return sid
@@ -84,7 +85,7 @@ class _FakeSessionStore:
             {"role": role, "content": content, "model": model}
         )
 
-    async def async_get_messages(self, session_id: str) -> list[dict]:
+    async def async_get_messages(self, session_id: str, **kwargs) -> list[dict]:
         return self.messages.get(session_id, [])
 
     async def async_list_sessions(self, **kwargs) -> list[dict]:
@@ -208,6 +209,7 @@ async def test_chat_resume_existing_session_returns_200() -> None:
         "id": "sess-123",
         "name": "Test Chat",
         "model": "gemini-2.0-flash",
+        "user": "test@test.com",
     }
     store.messages["sess-123"] = [
         {"role": "user", "content": "Hello"},
@@ -293,6 +295,7 @@ async def test_session_delete_returns_200() -> None:
         "id": "del-me",
         "name": "To Delete",
         "model": "gemini-2.0-flash",
+        "user": "test@test.com",
     }
     app.state.session_store = store
 
@@ -346,7 +349,7 @@ async def test_chat_message_returns_sse_content_type() -> None:
     """POST /chat/{id}/message should return text/event-stream."""
     app = create_app()
     store = _FakeSessionStore()
-    store.sessions["s1"] = {"id": "s1", "name": "Test", "model": "gemini-2.0-flash"}
+    store.sessions["s1"] = {"id": "s1", "name": "Test", "model": "gemini-2.0-flash", "user": "test@test.com"}
     store.messages["s1"] = []
     app.state.session_store = store
 
@@ -387,7 +390,7 @@ async def test_chat_message_contains_session_and_chunk_events() -> None:
     """POST /chat/{id}/message should contain session and chunk SSE events."""
     app = create_app()
     store = _FakeSessionStore()
-    store.sessions["s2"] = {"id": "s2", "name": "Test", "model": "gemini-2.0-flash"}
+    store.sessions["s2"] = {"id": "s2", "name": "Test", "model": "gemini-2.0-flash", "user": "test@test.com"}
     store.messages["s2"] = []
     app.state.session_store = store
 
@@ -497,3 +500,132 @@ async def test_nav_contains_chat_and_sessions_links(client) -> None:
     assert ">Chat<" in body
     assert 'href="/sessions"' in body
     assert ">Sessions<" in body
+
+
+# ── Ownership Checks ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_chat_resume_wrong_user_returns_404() -> None:
+    """GET /chat/{id} returns 404 when session belongs to a different user."""
+    app = create_app()
+    store = _FakeSessionStore()
+    store.sessions["sess-123"] = {
+        "id": "sess-123",
+        "name": "Private Chat",
+        "model": "gemini-2.0-flash",
+        "user": "owner@test.com",
+    }
+    app.state.session_store = store
+
+    with patch(
+        "vaig.web.routes.chat.get_current_user", return_value="intruder@test.com"
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/chat/sess-123")
+            assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_session_delete_wrong_user_returns_404() -> None:
+    """DELETE /sessions/{id} returns 404 when session belongs to a different user."""
+    app = create_app()
+    store = _FakeSessionStore()
+    store.sessions["del-me"] = {
+        "id": "del-me",
+        "name": "Protected",
+        "model": "gemini-2.0-flash",
+        "user": "owner@test.com",
+    }
+    app.state.session_store = store
+
+    with patch(
+        "vaig.web.routes.chat.get_current_user", return_value="intruder@test.com"
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.delete("/sessions/del-me")
+            assert resp.status_code == 404
+            # Session should NOT be deleted
+            assert "del-me" in store.sessions
+
+
+# ── Ephemeral UUID ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_chat_message_new_without_store_generates_uuid() -> None:
+    """POST /chat/new/message without store should generate an ephemeral UUID, not 'new'."""
+    app = create_app()
+    # session_store is None — no persistence
+
+    mock_stream = _MockStream(["OK"])
+    mock_orchestrator = MagicMock()
+    mock_orchestrator.async_execute_single = AsyncMock(return_value=mock_stream)
+
+    with (
+        patch("vaig.web.routes.chat.get_current_user", return_value="test@test.com"),
+        patch(
+            "vaig.web.deps.Settings.from_overrides",
+            return_value=MagicMock(models=MagicMock(default="gemini-2.0-flash")),
+        ),
+        patch(
+            "vaig.web.deps.build_container",
+            return_value=MagicMock(
+                event_bus=MagicMock(subscribe=MagicMock(return_value=lambda: None)),
+                gemini_client=MagicMock(),
+            ),
+        ),
+        patch(
+            "vaig.agents.orchestrator.Orchestrator",
+            return_value=mock_orchestrator,
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/chat/new/message",
+                data={"message": "Hello ephemeral"},
+            )
+            assert resp.status_code == 200
+            body = resp.text
+            # The session event should contain a UUID, not "new"
+            assert "event: session" in body
+            assert '"new"' not in body.split("event: session")[1].split("event:")[0]
+
+
+# ── Session Validation on Message ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_chat_message_nonexistent_session_returns_error() -> None:
+    """POST /chat/{id}/message with nonexistent session returns error SSE."""
+    app = create_app()
+    store = _FakeSessionStore()
+    app.state.session_store = store
+
+    with (
+        patch("vaig.web.routes.chat.get_current_user", return_value="test@test.com"),
+        patch(
+            "vaig.web.deps.Settings.from_overrides",
+            return_value=MagicMock(models=MagicMock(default="gemini-2.0-flash")),
+        ),
+        patch(
+            "vaig.web.deps.build_container",
+            return_value=MagicMock(
+                event_bus=MagicMock(subscribe=MagicMock(return_value=lambda: None)),
+                gemini_client=MagicMock(),
+            ),
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/chat/nonexistent-session/message",
+                data={"message": "Hello?"},
+            )
+            assert resp.status_code == 200
+            body = resp.text
+            assert "event: error" in body
+            assert "not found" in body.lower()

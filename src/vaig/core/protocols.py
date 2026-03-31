@@ -270,6 +270,8 @@ class SessionStoreProtocol(Protocol):
         model: str,
         skill: str | None = None,
         metadata: dict[str, Any] | None = None,
+        *,
+        user: str = "",
     ) -> str:
         """Create a new session. Returns the session ID."""
         ...
@@ -292,7 +294,7 @@ class SessionStoreProtocol(Protocol):
         ...
 
     async def async_list_sessions(
-        self, *, limit: int = 20
+        self, *, limit: int = 20, user: str | None = None
     ) -> list[dict[str, Any]]:
         """List recent sessions."""
         ...

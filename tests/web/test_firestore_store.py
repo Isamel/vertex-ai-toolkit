@@ -3,10 +3,11 @@
 Covers:
 - Session creation with correct Firestore writes
 - Message add/get with ordering
-- Session listing (with user filter)
-- Session deletion with cascade
+- Session listing (with user filter, message_count from session doc)
+- Session deletion with parallel cascade
 - Data shapes match SessionStoreProtocol expectations
 - Protocol compliance check
+- Lazy import validation
 
 All Firestore interactions are mocked — no real Firestore needed.
 """
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -138,6 +139,7 @@ async def test_create_session_writes_to_firestore(
     assert written_data["skill"] == "rca"
     assert written_data["user"] == "test@example.com"
     assert written_data["metadata"] == {"key": "value"}
+    assert written_data["message_count"] == 0
     assert "created_at" in written_data
     assert "updated_at" in written_data
 
@@ -237,20 +239,15 @@ async def test_get_messages_with_limit(
 async def test_list_sessions_returns_sessions_with_count(
     store: FirestoreSessionStore, mock_client: MagicMock
 ) -> None:
-    """async_list_sessions must return session dicts with message_count."""
-    # Session doc mock
+    """async_list_sessions must return session dicts with message_count from doc."""
+    # Session doc mock — message_count stored directly on the document
     sess_doc = _MockDocSnapshot("s1", {
         "user": "test@test.com",
         "name": "my-session",
         "model": "gemini-2.5-pro",
         "updated_at": "2026-01-01",
+        "message_count": 5,
     })
-    # Make the subcollection stream return 2 messages
-    msg_sub_col = MagicMock()
-    msg1 = _MockDocSnapshot("m1", {})
-    msg2 = _MockDocSnapshot("m2", {})
-    msg_sub_col.stream = MagicMock(return_value=_async_iter([msg1, msg2]))
-    sess_doc.reference.collection = MagicMock(return_value=msg_sub_col)
 
     # Wire up the query chain
     collection_ref = mock_client.collection.return_value
@@ -264,7 +261,30 @@ async def test_list_sessions_returns_sessions_with_count(
     assert len(sessions) == 1
     assert sessions[0]["id"] == "s1"
     assert sessions[0]["name"] == "my-session"
-    assert sessions[0]["message_count"] == 2
+    assert sessions[0]["message_count"] == 5
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_defaults_message_count_when_missing(
+    store: FirestoreSessionStore, mock_client: MagicMock
+) -> None:
+    """async_list_sessions must default message_count to 0 for legacy docs."""
+    sess_doc = _MockDocSnapshot("s1", {
+        "user": "test@test.com",
+        "name": "old-session",
+        "model": "gemini-2.5-pro",
+        "updated_at": "2026-01-01",
+    })
+
+    collection_ref = mock_client.collection.return_value
+    query = MagicMock()
+    query.where = MagicMock(return_value=query)
+    query.limit = MagicMock(return_value=query)
+    query.stream = MagicMock(return_value=_async_iter([sess_doc]))
+    collection_ref.order_by = MagicMock(return_value=query)
+
+    sessions = await store.async_list_sessions(user="test@test.com")
+    assert sessions[0]["message_count"] == 0
 
 
 # ── Get Session ──────────────────────────────────────────────
@@ -300,21 +320,23 @@ async def test_get_session_not_found(
 
 
 @pytest.mark.asyncio
-async def test_delete_session_cascades_messages(
+async def test_delete_session_cascades_messages_in_parallel(
     store: FirestoreSessionStore, mock_client: MagicMock
 ) -> None:
-    """async_delete_session must delete all messages before the session."""
+    """async_delete_session must delete all messages (in parallel) before the session."""
     session_doc = _MockDocSnapshot("s1", {"name": "test"})
-    msg_doc = _MockDocSnapshot("m1", {"role": "user"})
-    msg_doc.reference.delete = AsyncMock()
+    msg_doc1 = _MockDocSnapshot("m1", {"role": "user"})
+    msg_doc1.reference.delete = AsyncMock()
+    msg_doc2 = _MockDocSnapshot("m2", {"role": "assistant"})
+    msg_doc2.reference.delete = AsyncMock()
 
     doc_ref = AsyncMock()
     doc_ref.get = AsyncMock(return_value=session_doc)
     doc_ref.delete = AsyncMock()
 
-    # subcollection with one message
+    # subcollection with two messages
     msgs_col = MagicMock()
-    msgs_col.stream = MagicMock(return_value=_async_iter([msg_doc]))
+    msgs_col.stream = MagicMock(return_value=_async_iter([msg_doc1, msg_doc2]))
     doc_ref.collection = MagicMock(return_value=msgs_col)
 
     mock_client.collection.return_value.document.return_value = doc_ref
@@ -322,8 +344,9 @@ async def test_delete_session_cascades_messages(
     result = await store.async_delete_session("s1")
     assert result is True
 
-    # Message should be deleted first
-    msg_doc.reference.delete.assert_called_once()
+    # Both messages should be deleted
+    msg_doc1.reference.delete.assert_called_once()
+    msg_doc2.reference.delete.assert_called_once()
     # Then the session document
     doc_ref.delete.assert_called_once()
 
@@ -340,3 +363,49 @@ async def test_delete_session_not_found(
 
     result = await store.async_delete_session("nonexistent")
     assert result is False
+
+
+# ── Lazy Import ──────────────────────────────────────────────
+
+
+def test_lazy_import_raises_when_missing() -> None:
+    """FirestoreSessionStore raises ImportError when google-cloud-firestore is missing."""
+    with patch("importlib.util.find_spec", return_value=None):
+        with pytest.raises(ImportError, match="google-cloud-firestore is required"):
+            FirestoreSessionStore(MagicMock())
+    # Since google-cloud-firestore IS installed in this test env,
+    # verify the constructor works normally
+    store = FirestoreSessionStore(MagicMock())
+    assert store is not None
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_user_none_skips_filter(
+    store: FirestoreSessionStore, mock_client: MagicMock
+) -> None:
+    """async_list_sessions with user=None should NOT add a where filter."""
+    collection_ref = mock_client.collection.return_value
+    query = MagicMock()
+    query.where = MagicMock(return_value=query)
+    query.limit = MagicMock(return_value=query)
+    query.stream = MagicMock(return_value=_async_iter([]))
+    collection_ref.order_by = MagicMock(return_value=query)
+
+    await store.async_list_sessions(user=None)
+    query.where.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_empty_string_user_applies_filter(
+    store: FirestoreSessionStore, mock_client: MagicMock
+) -> None:
+    """async_list_sessions with user='' should apply filter (anonymous sessions)."""
+    collection_ref = mock_client.collection.return_value
+    query = MagicMock()
+    query.where = MagicMock(return_value=query)
+    query.limit = MagicMock(return_value=query)
+    query.stream = MagicMock(return_value=_async_iter([]))
+    collection_ref.order_by = MagicMock(return_value=query)
+
+    await store.async_list_sessions(user="")
+    query.where.assert_called_once()

@@ -479,12 +479,15 @@
                     case 'session':
                         // New session created — update the session ID and URL
                         if (data.session_id) {
+                            var previousSessionId = sessionId;
                             sessionId = data.session_id;
                             window.history.replaceState(null, '', '/chat/' + sessionId);
-                            // Update header info
-                            var infoEl = document.querySelector('.session-info');
-                            if (infoEl) {
-                                infoEl.textContent = sessionId.substring(0, 12);
+                            // Only update header info when a NEW session is created
+                            if (previousSessionId === null) {
+                                var infoEl = document.querySelector('.session-info');
+                                if (infoEl) {
+                                    infoEl.textContent = sessionId.substring(0, 12);
+                                }
                             }
                         }
                         break;
@@ -495,10 +498,17 @@
                                 var els = addAssistantMessage();
                                 assistantBubble = els.bubble;
                                 eventContainer = els.events;
+                                assistantBubble.renderPending = false;
                             }
                             assistantText += data.text;
-                            assistantBubble.innerHTML = renderMarkdown(assistantText);
-                            scrollToBottom();
+                            if (!assistantBubble.renderPending) {
+                                assistantBubble.renderPending = true;
+                                requestAnimationFrame(function() {
+                                    assistantBubble.innerHTML = renderMarkdown(assistantText);
+                                    scrollToBottom();
+                                    assistantBubble.renderPending = false;
+                                });
+                            }
                         }
                         break;
 
@@ -617,14 +627,24 @@
     function renderMarkdown(text) {
         var html = escapeHtml(text);
 
-        // Fenced code blocks
+        // Extract fenced code blocks first, replace with placeholders
+        var codeBlocks = [];
         html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(m, lang, code) {
-            return '<pre><code class="language-' + lang + '">' + code +
-                '</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>';
+            var placeholder = '%%%CODEBLOCK_' + codeBlocks.length + '%%%';
+            codeBlocks.push(
+                '<pre><code class="language-' + lang + '">' + code +
+                '</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>'
+            );
+            return placeholder;
         });
 
-        // Inline code
-        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+        // Inline code (protect from further formatting)
+        var inlineCodes = [];
+        html = html.replace(/`([^`]+)`/g, function(m, code) {
+            var placeholder = '%%%INLINECODE_' + inlineCodes.length + '%%%';
+            inlineCodes.push('<code>' + code + '</code>');
+            return placeholder;
+        });
 
         // Bold
         html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
@@ -640,11 +660,18 @@
             return '<ul>' + m + '</ul>';
         });
 
-        // Line breaks — outside <pre> blocks
-        html = html.split(/(<pre[\s\S]*?<\/pre>)/g).map(function(segment, index) {
-            if (index % 2 === 1) return segment;
-            return segment.replace(/\n/g, '<br>');
-        }).join('');
+        // Line breaks
+        html = html.replace(/\n/g, '<br>');
+
+        // Restore inline code
+        for (var j = 0; j < inlineCodes.length; j++) {
+            html = html.replace('%%%INLINECODE_' + j + '%%%', inlineCodes[j]);
+        }
+
+        // Restore code blocks
+        for (var k = 0; k < codeBlocks.length; k++) {
+            html = html.replace('%%%CODEBLOCK_' + k + '%%%', codeBlocks[k]);
+        }
 
         return html;
     }

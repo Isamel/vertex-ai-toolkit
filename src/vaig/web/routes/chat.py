@@ -13,6 +13,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Request
 from sse_starlette import EventSourceResponse, ServerSentEvent
@@ -62,13 +63,18 @@ async def sessions_list(request: Request) -> Response:
 @router.delete("/sessions/{session_id}")
 async def session_delete(request: Request, session_id: str) -> JSONResponse:
     """Delete a session by ID."""
-    get_current_user(request)  # Auth check
+    user = get_current_user(request)  # Auth check
     store = _get_session_store(request)
 
     if store is None:
         return JSONResponse(
             {"error": "Session store not configured"}, status_code=503
         )
+
+    # Verify session ownership before deleting
+    session_data = await store.async_get_session(session_id)
+    if session_data is None or session_data.get("user") != user:
+        return JSONResponse({"error": "Session not found"}, status_code=404)
 
     deleted = await store.async_delete_session(session_id)
     if not deleted:
@@ -94,7 +100,7 @@ async def chat_new(request: Request) -> Response:
 @router.get("/chat/{session_id}")
 async def chat_resume(request: Request, session_id: str) -> Response:
     """Load an existing chat session with its message history."""
-    get_current_user(request)  # Auth check
+    user = get_current_user(request)  # Auth check
     store = _get_session_store(request)
 
     session_data: dict[str, Any] | None = None
@@ -102,6 +108,9 @@ async def chat_resume(request: Request, session_id: str) -> Response:
 
     if store is not None:
         session_data = await store.async_get_session(session_id)
+        # Verify session belongs to the current user
+        if session_data is not None and session_data.get("user") != user:
+            session_data = None  # Treat as not found
         if session_data is not None:
             messages = await store.async_get_messages(session_id)
 
@@ -146,13 +155,25 @@ async def chat_message(request: Request, session_id: str) -> EventSourceResponse
 
     # Create a new session if requested
     actual_session_id = session_id
-    if session_id == "new" and store is not None:
-        session_name = str(form.get("session_name", "Chat")).strip() or "Chat"
-        actual_session_id = await store.async_create_session(
-            name=session_name,
-            model=settings.models.default,
-            user=user,
-        )
+    if session_id == "new":
+        if store is not None:
+            session_name = str(form.get("session_name", "Chat")).strip() or "Chat"
+            actual_session_id = await store.async_create_session(
+                name=session_name,
+                model=settings.models.default,
+                user=user,
+            )
+        else:
+            # Generate an ephemeral UUID even without persistence
+            actual_session_id = str(uuid4())
+
+    # Validate existing session exists before proceeding
+    if session_id != "new" and store is not None:
+        existing = await store.async_get_session(actual_session_id)
+        if existing is None:
+            return EventSourceResponse(
+                _error_generator(f"Session {actual_session_id[:12]} not found.")
+            )
 
     # Store the user message
     if store is not None:
