@@ -10,7 +10,7 @@ structured JSON report (rendered to Markdown).
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic import ValidationError
 
@@ -41,8 +41,26 @@ logger = logging.getLogger(__name__)
 # from K8s workload objects.
 
 _DD_SERVICE_LABEL = "tags.datadoghq.com/service"
+_DD_ENV_LABEL = "tags.datadoghq.com/env"
 _K8S_NAME_LABEL = "app.kubernetes.io/name"
 _APP_LABEL = "app"
+
+
+class DDResolutionResult(NamedTuple):
+    """Result of pre-resolving Datadog identity from K8s workload labels.
+
+    Returned by :meth:`ServiceHealthSkill._resolve_dd_service_name`.
+
+    Attributes:
+        dd_service_name: Resolved Datadog service name (empty if unresolved).
+        dd_env: Resolved ``tags.datadoghq.com/env`` value (empty if unresolved).
+        dd_resource_type: The K8s resource type the winning workload came from
+            (e.g. ``"deployments"``, ``"statefulsets"``).  Empty if unresolved.
+    """
+
+    dd_service_name: str = ""
+    dd_env: str = ""
+    dd_resource_type: str = ""
 
 
 def _extract_dd_service(item: Any) -> str:
@@ -88,6 +106,39 @@ def _extract_dd_service(item: Any) -> str:
     return getattr(getattr(item, "metadata", None), "name", "") or ""
 
 
+def _extract_dd_env(item: Any) -> str:
+    """Extract the Datadog environment tag from a K8s workload object.
+
+    Follows the same label priority as ``_extract_dd_service`` but only
+    looks for ``tags.datadoghq.com/env``:
+
+    1. Pod template labels ``tags.datadoghq.com/env``
+    2. Workload-level labels ``tags.datadoghq.com/env``
+
+    Returns an empty string when the label is not found.
+    """
+    # --- Pod template labels (spec.template.metadata.labels) ---
+    pod_labels: dict[str, str] = {}
+    try:
+        _tmpl = getattr(item.spec, "template", None)
+        _tmpl_meta = getattr(_tmpl, "metadata", None) if _tmpl else None
+        _tmpl_labels = getattr(_tmpl_meta, "labels", None) if _tmpl_meta else None
+        pod_labels = _tmpl_labels or {}
+    except Exception:  # noqa: BLE001
+        pod_labels = {}
+
+    if _DD_ENV_LABEL in pod_labels:
+        return pod_labels[_DD_ENV_LABEL]
+
+    # --- Workload-level labels (metadata.labels) ---
+    wl_labels: dict[str, str] = getattr(getattr(item, "metadata", None), "labels", None) or {}
+
+    if _DD_ENV_LABEL in wl_labels:
+        return wl_labels[_DD_ENV_LABEL]
+
+    return ""
+
+
 class ServiceHealthSkill(BaseSkill):
     """Service health assessment skill using live Kubernetes tools.
 
@@ -129,11 +180,11 @@ class ServiceHealthSkill(BaseSkill):
         # that inspecting the config (dry-run, ``vaig skills info``) does
         # NOT trigger live K8s API calls — only the execution path does.
         self._prefetched_metrics: dict[str, str] = {"pods": "", "nodes": ""}
-        # Pre-resolved Datadog service name.  Populated by
-        # ``pre_execute_parallel()`` via ``_resolve_dd_service_name()``.
-        # Empty string means resolution failed or was not attempted —
+        # Pre-resolved Datadog service identity.  Populated by
+        # ``get_parallel_agents_config()`` via ``_resolve_dd_service_name()``.
+        # Empty result means resolution failed or was not attempted —
         # the prompt builder falls back to LLM-based Step 0 resolution.
-        self._prefetched_dd_service_name: str = ""
+        self._prefetched_dd_resolution: DDResolutionResult = DDResolutionResult()
 
     def get_metadata(self) -> SkillMetadata:
         return SkillMetadata(
@@ -226,27 +277,6 @@ class ServiceHealthSkill(BaseSkill):
         except Exception:  # noqa: BLE001
             logger.debug(
                 "kubectl_top pre-fetch skipped (non-fatal)",
-                exc_info=True,
-            )
-
-        # ── Pre-resolve Datadog service name ─────────────────────────────
-        # Programmatically queries K8s workload labels to determine the DD
-        # service name.  This removes the dependency on LLM non-determinism
-        # for Step 0 of the datadog_gatherer prompt.
-        try:
-            from vaig.core.config import get_settings  # noqa: PLC0415
-
-            settings = get_settings()
-            if settings.datadog.enabled:
-                effective_gke = settings.gke
-                self._prefetched_dd_service_name = self._resolve_dd_service_name(
-                    gke_config=effective_gke,
-                    namespace=effective_gke.default_namespace,
-                    user_query=query,
-                )
-        except Exception:  # noqa: BLE001
-            logger.debug(
-                "Datadog service name pre-resolution skipped (non-fatal)",
                 exc_info=True,
             )
 
@@ -348,13 +378,12 @@ class ServiceHealthSkill(BaseSkill):
         gke_config: Any,
         namespace: str,
         user_query: str,
-    ) -> str:
-        """Pre-resolve the Datadog service name from K8s workload labels.
+    ) -> DDResolutionResult:
+        """Pre-resolve Datadog identity from K8s workload labels.
 
         Queries the Kubernetes API directly via :func:`_list_resource` to
-        discover workload labels and extract the Datadog service identity.
-        This removes the dependency on LLM non-determinism for Step 0 of
-        the ``datadog_gatherer`` prompt.
+        discover workload labels and extract the Datadog service identity,
+        environment tag, and the resource type of the winning workload.
 
         **Workload probe order** — deployments → statefulsets → daemonsets →
         replicasets (standalone only — deployment-managed RS are skipped).
@@ -379,23 +408,28 @@ class ServiceHealthSkill(BaseSkill):
                 multiple workloads are found.
 
         Returns:
-            The resolved Datadog service name, or an empty string when
-            resolution fails (the prompt builder falls back to LLM-based
+            A :class:`DDResolutionResult` with the resolved service name,
+            environment tag, and resource type.  All fields are empty strings
+            when resolution fails (the prompt builder falls back to LLM-based
             Step 0).
         """
         from vaig.tools.gke._clients import _create_k8s_clients  # noqa: PLC0415
         from vaig.tools.gke._resources import _list_resource  # noqa: PLC0415
 
+        _empty = DDResolutionResult()
+
         clients = _create_k8s_clients(gke_config)
         if isinstance(clients, ToolResult):
             logger.debug("DD service resolution skipped — K8s clients unavailable: %s", clients)
-            return ""
+            return _empty
 
         core_v1, apps_v1, custom_api, _api_client = clients
         ns = namespace or "default"
 
-        # Collect workload_name → dd_service_name for all workloads.
-        workload_services: dict[str, str] = {}
+        # Collect workload_name → (dd_service, dd_env, resource_type).
+        # First-hit semantics: if the same workload name appears in multiple
+        # resource types, keep the first one found (probe order wins).
+        workload_services: dict[str, tuple[str, str, str]] = {}
         resource_types = ("deployments", "statefulsets", "daemonsets", "replicasets")
 
         for resource_type in resource_types:
@@ -429,32 +463,36 @@ class ServiceHealthSkill(BaseSkill):
                 if not workload_name:
                     continue
 
-                dd_service = _extract_dd_service(item)
-                workload_services[workload_name] = dd_service
+                # First-hit semantics — keep the first result per workload name.
+                if workload_name not in workload_services:
+                    dd_service = _extract_dd_service(item)
+                    dd_env = _extract_dd_env(item)
+                    workload_services[workload_name] = (dd_service, dd_env, resource_type)
 
         if not workload_services:
-            return ""
+            return _empty
 
         # Single workload → return directly.
         if len(workload_services) == 1:
-            return next(iter(workload_services.values()))
+            svc, env, rtype = next(iter(workload_services.values()))
+            return DDResolutionResult(dd_service_name=svc, dd_env=env, dd_resource_type=rtype)
 
         # Multiple workloads → match against user_query.
         query_lower = user_query.lower()
 
         # Pass 1: exact match on workload name.
-        for wl_name, dd_service in workload_services.items():
+        for wl_name, (svc, env, rtype) in workload_services.items():
             if wl_name.lower() == query_lower:
-                return dd_service
+                return DDResolutionResult(dd_service_name=svc, dd_env=env, dd_resource_type=rtype)
 
         # Pass 2: substring containment (workload name in query or query in workload name).
-        for wl_name, dd_service in workload_services.items():
+        for wl_name, (svc, env, rtype) in workload_services.items():
             wl_lower = wl_name.lower()
             if wl_lower in query_lower or query_lower in wl_lower:
-                return dd_service
+                return DDResolutionResult(dd_service_name=svc, dd_env=env, dd_resource_type=rtype)
 
         # No match — return empty so the prompt falls back to LLM-based resolution.
-        return ""
+        return _empty
 
     def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         """Return the default pipeline configuration — the parallel pipeline config.
@@ -485,10 +523,12 @@ class ServiceHealthSkill(BaseSkill):
         namespace: str = kwargs.get("namespace", "")
         location: str = kwargs.get("location", "")
         cluster_name: str = kwargs.get("cluster_name", "")
+        user_query: str = kwargs.get("user_query", "")
         return self.get_parallel_agents_config(
             namespace=namespace,
             location=location,
             cluster_name=cluster_name,
+            user_query=user_query,
         )
 
     def get_sequential_agents_config(
@@ -620,6 +660,7 @@ class ServiceHealthSkill(BaseSkill):
         namespace: str = "",
         location: str = "",
         cluster_name: str = "",
+        **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Return the parallel-then-sequential pipeline configuration.
 
@@ -684,6 +725,26 @@ class ServiceHealthSkill(BaseSkill):
         # call), the dict defaults to empty strings — prompts simply omit
         # the pre-gathered section and agents call kubectl_top themselves.
         prefetched = self._prefetched_metrics
+
+        # ── Pre-resolve Datadog service identity ─────────────────────────
+        # Uses the effective_gke (with CLI overrides) so that --namespace,
+        # --cluster, --location flags are respected.  Resolution happens
+        # here (not in pre_execute_parallel) because CLI overrides are only
+        # available at this point.
+        dd_resolution = self._prefetched_dd_resolution
+        if settings.datadog.enabled and not dd_resolution.dd_service_name:
+            try:
+                dd_resolution = self._resolve_dd_service_name(
+                    gke_config=effective_gke,
+                    namespace=effective_namespace,
+                    user_query=kwargs.get("user_query", ""),
+                )
+                self._prefetched_dd_resolution = dd_resolution
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "Datadog service identity pre-resolution skipped (non-fatal)",
+                    exc_info=True,
+                )
 
         # Resolve the 3-state Argo Rollouts flag:
         #   None  → auto-detect via CRD probe (lazy, cached per process)
@@ -832,7 +893,9 @@ class ServiceHealthSkill(BaseSkill):
                         namespace=effective_namespace,
                         cluster_name=effective_gke.cluster_name,
                         datadog_api_enabled=True,
-                        dd_service_name=self._prefetched_dd_service_name,
+                        dd_service_name=dd_resolution.dd_service_name,
+                        dd_env=dd_resolution.dd_env,
+                        dd_resource_type=dd_resolution.dd_resource_type,
                     ),
                     "model": "gemini-2.5-flash",
                     "temperature": 0.0,

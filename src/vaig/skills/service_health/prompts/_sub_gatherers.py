@@ -595,6 +595,8 @@ def build_datadog_gatherer_prompt(
     cluster_name: str = "",
     datadog_api_enabled: bool = False,
     dd_service_name: str = "",
+    dd_env: str = "",
+    dd_resource_type: str = "",
 ) -> str:
     """Build the system instruction for the ``datadog_gatherer`` sub-agent.
 
@@ -609,8 +611,8 @@ def build_datadog_gatherer_prompt(
     making any Datadog API calls.
 
     When ``dd_service_name`` is provided (pre-resolved programmatically in
-    ``pre_execute_parallel``), Step 0 is replaced with a directive that uses
-    the pre-resolved name directly — eliminating LLM non-determinism.
+    ``get_parallel_agents_config``), Step 0 is replaced with a directive that
+    uses the pre-resolved name directly — eliminating LLM non-determinism.
 
     **Scope** — Datadog API correlation only:
 
@@ -639,6 +641,12 @@ def build_datadog_gatherer_prompt(
         dd_service_name: Pre-resolved Datadog service name from
             ``_resolve_dd_service_name``.  When non-empty, Step 0 is replaced
             with a directive to use this value directly.
+        dd_env: Pre-resolved ``tags.datadoghq.com/env`` value.  When both
+            ``dd_service_name`` and ``dd_env`` are pre-resolved, Step 0 tells
+            the LLM to skip ``kubectl_get_labels`` entirely.
+        dd_resource_type: The K8s resource type the winning workload came from
+            (e.g. ``"deployments"``).  Used in the Step 0 fallback when only
+            ``dd_service_name`` is pre-resolved but ``dd_env`` is not.
 
     Returns:
         A formatted system-instruction string, or an empty string when Datadog
@@ -659,31 +667,43 @@ def build_datadog_gatherer_prompt(
     # correct calls.  Fall back to the generic placeholder when not supplied.
     cluster = cluster_name if cluster_name else "<cluster>"
 
-    # Build a focused tool reference table.  When the DD service name is
-    # pre-resolved we exclude kubectl_get_labels (Step 0 is skipped).
-    if dd_service_name:
-        tool_reference_table = (
-            "| Tool | Required Parameters | Optional Parameters |\n"
-            "|------|---------------------|---------------------|\n"
-            + _DATADOG_API_TOOLS_TABLE
-        )
-    else:
-        tool_reference_table = (
-            "| Tool | Required Parameters | Optional Parameters |\n"
-            "|------|---------------------|---------------------|\n"
-            '| `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |\n'
-            + _DATADOG_API_TOOLS_TABLE
-        )
+    # Build a focused tool reference table.  kubectl_get_labels is ALWAYS
+    # included — even when the DD service name is pre-resolved, the LLM may
+    # still need it for dd_env resolution or other label lookups.
+    tool_reference_table = (
+        "| Tool | Required Parameters | Optional Parameters |\n"
+        "|------|---------------------|---------------------|\n"
+        '| `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |\n'
+        + _DATADOG_API_TOOLS_TABLE
+    )
 
-    # ── Step 0 block: pre-resolved vs LLM-based ─────────────────────────
-    if dd_service_name:
+    # ── Step 0 block: fully pre-resolved / partially pre-resolved / LLM-based ──
+    if dd_service_name and dd_env:
+        # Both service and env pre-resolved → skip kubectl_get_labels entirely.
+        step_0_block = f"""### Step 0 — Service Identity (PRE-RESOLVED)
+
+The Datadog service name AND environment have been pre-resolved programmatically
+from Kubernetes workload labels.  Do NOT call ``kubectl_get_labels`` to resolve
+the service name or environment — use these values directly:
+
+- ``<dd_service>``: **{dd_service_name}**
+- ``<dd_env>``: **{dd_env}**
+
+Use ``<dd_service>`` = ``{dd_service_name}`` and ``<dd_env>`` = ``{dd_env}``
+in ALL subsequent Datadog API calls (Calls 1–5) as the ``service`` and ``env``
+parameters respectively."""
+    elif dd_service_name:
+        # Service pre-resolved but env is not — need kubectl_get_labels for env only.
+        # Use the correct resource_type from resolution instead of hardcoded "deployments".
+        env_resource = dd_resource_type or "deployments"
         step_0_block = f"""### Step 0 — Service Identity (PRE-RESOLVED)
 
 The Datadog service name has been pre-resolved programmatically from Kubernetes
-workload labels.  Do NOT call ``kubectl_get_labels`` — use this value directly:
+workload labels.  Do NOT call ``kubectl_get_labels`` to resolve the service name
+— use this value directly:
 
 - ``<dd_service>``: **{dd_service_name}**
-- ``<dd_env>``: Not pre-resolved — call ``kubectl_get_labels(resource_type="deployments", namespace="{ns}")``
+- ``<dd_env>``: Not pre-resolved — call ``kubectl_get_labels(resource_type="{env_resource}", namespace="{ns}")``
   ONLY to resolve ``tags.datadoghq.com/env``.  If the call fails, omit the ``env`` parameter.
 
 Use ``<dd_service>`` = ``{dd_service_name}`` in ALL subsequent Datadog API calls
