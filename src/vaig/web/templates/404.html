@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}Not Found{% endblock %}
+
+{% block content %}
+<section class="error-page">
+    <div class="error-icon">&#128269;</div>
+    <h1>404</h1>
+    <p class="error-title">Page Not Found</p>
+    <p class="error-detail">
+        The page you&rsquo;re looking for doesn&rsquo;t exist.
+        It might have been moved or the URL may be incorrect.
+    </p>
+    <a href="/" class="btn-home">Go Home</a>
+</section>
+
+<style>
+    .error-page {
+        text-align: center;
+        padding: 4rem 1.5rem;
+        max-width: 600px;
+        margin: 0 auto;
+    }
+
+    .error-icon {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+        opacity: 0.6;
+    }
+
+    .error-page h1 {
+        font-family: var(--font-mono);
+        font-size: 4rem;
+        font-weight: 700;
+        color: var(--warning);
+        margin-bottom: 0.5rem;
+    }
+
+    .error-title {
+        font-size: 1.25rem;
+        color: var(--text-primary);
+        margin-bottom: 0.75rem;
+    }
+
+    .error-detail {
+        color: var(--text-secondary);
+        font-size: 0.95rem;
+        margin-bottom: 2rem;
+        line-height: 1.6;
+    }
+
+    .btn-home {
+        display: inline-block;
+        padding: 0.6rem 1.5rem;
+        background: var(--accent);
+        color: #fff;
+        text-decoration: none;
+        border-radius: calc(var(--radius) / 2);
+        font-size: 0.9rem;
+        font-weight: 500;
+        transition: background 0.2s;
+    }
+
+    .btn-home:hover {
+        background: var(--accent-hover);
+    }
+</style>
+{% endblock %}

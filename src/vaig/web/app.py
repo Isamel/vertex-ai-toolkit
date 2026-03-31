@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import logging
+import traceback
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.responses import HTMLResponse, Response
 
 from vaig import __version__
 
 _WEB_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _WEB_DIR / "templates"
 _STATIC_DIR = _WEB_DIR / "static"
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -52,4 +57,53 @@ def create_app() -> FastAPI:
     # a startup event when running in production.
     app.state.session_store = None
 
+    # Custom error handlers
+    app.add_exception_handler(404, _not_found_handler)
+    app.add_exception_handler(500, _server_error_handler)
+
     return app
+
+
+async def _not_found_handler(request: Request, exc: Exception) -> Response:
+    """Render a styled 404 page instead of default JSON."""
+    templates: Jinja2Templates = request.app.state.templates
+    return templates.TemplateResponse(
+        request=request,
+        name="404.html",
+        status_code=404,
+    )
+
+
+async def _server_error_handler(request: Request, exc: Exception) -> Response:
+    """Render a styled 500 error page — no tracebacks unless debug mode."""
+    logger.exception("Internal server error on %s %s", request.method, request.url.path)
+
+    # Only include debug info when app is in debug mode
+    debug_info: str | None = None
+    if getattr(request.app, "debug", False):
+        tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
+        debug_info = "".join(tb_lines)
+
+    templates: Jinja2Templates = request.app.state.templates
+    try:
+        return templates.TemplateResponse(
+            request=request,
+            name="error.html",
+            context={
+                "status_code": 500,
+                "error_title": "Internal Server Error",
+                "error_detail": "Something went wrong. Please try again later.",
+                "debug_info": debug_info,
+            },
+            status_code=500,
+        )
+    except Exception:  # noqa: BLE001
+        # Last resort — if template rendering itself fails, return plain HTML
+        return HTMLResponse(
+            content=(
+                "<h1>500 — Internal Server Error</h1>"
+                "<p>Something went wrong. Please try again later.</p>"
+                '<p><a href="/">Go Home</a></p>'
+            ),
+            status_code=500,
+        )

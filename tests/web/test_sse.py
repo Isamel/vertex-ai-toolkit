@@ -173,7 +173,7 @@ class TestStreamToSSE:
         assert "done" in event_types
 
         error_data = json.loads([e for e in events if e.event == "error"][0].data)
-        assert "connection lost" in error_data["message"]
+        assert "Connection error" in error_data["message"]
         assert error_data["error_type"] == "RuntimeError"
 
     @pytest.mark.asyncio
