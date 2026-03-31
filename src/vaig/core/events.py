@@ -22,6 +22,7 @@ __all__ = [
     "Event",
     "OrchestratorPhaseCompleted",
     "OrchestratorToolsCompleted",
+    "QuotaExceeded",
     "SessionEnded",
     "SessionStarted",
     "SkillUsed",
@@ -267,3 +268,21 @@ class ContextWindowChecked(Event):
     context_pct: float = 0.0
     iteration: int = 0
     status: str = ""
+
+
+@dataclass(frozen=True)
+class QuotaExceeded(Event):
+    """Emitted when a user exceeds their rate-limit quota.
+
+    Attributes:
+        user_key: Composite key identifying the rate-limited user.
+        dimension: Which quota dimension was exceeded (``"requests"``, ``"tokens"``, ``"executions"``).
+        used: Current usage count at the time of rejection.
+        limit: The configured limit for this dimension.
+    """
+
+    event_type: str = field(default="quota.exceeded", init=False)
+    user_key: str = ""
+    dimension: str = ""
+    used: int = 0
+    limit: int = 0

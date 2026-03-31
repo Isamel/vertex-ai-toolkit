@@ -671,6 +671,26 @@ class TelemetryConfig(BaseModel):
     buffer_size: int = 50
 
 
+class AuditConfig(BaseModel):
+    """Audit logging configuration — sends events to BigQuery + Cloud Logging."""
+
+    enabled: bool = False
+    bigquery_dataset: str = "vaig_audit"
+    bigquery_table: str = "audit_events"
+    cloud_logging_log_name: str = "vaig-audit"
+    buffer_size: int = 20
+    flush_interval_seconds: int = 30
+
+
+class RateLimitConfig(BaseModel):
+    """Rate limiting configuration — quota policy loaded from GCS."""
+
+    enabled: bool = False
+    policy_gcs_bucket: str = ""
+    policy_gcs_path: str = "vaig/quota-policy.yaml"
+    cache_ttl_seconds: int = 300
+
+
 class ExportConfig(BaseModel):
     """RAG data pipeline export configuration.
 
@@ -849,6 +869,8 @@ class Settings(BaseSettings):
     cache: CacheConfig = Field(default_factory=CacheConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)
+    audit: AuditConfig = Field(default_factory=AuditConfig)
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> Settings:

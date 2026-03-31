@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from vaig.core.config import (
+    AuditConfig,
     AuthConfig,
     AuthMode,
     BudgetConfig,
@@ -20,6 +21,7 @@ from vaig.core.config import (
     ModelsConfig,
     PluginConfig,
     ProjectEntry,
+    RateLimitConfig,
     SafetyConfig,
     SafetySettingConfig,
     Settings,
@@ -934,3 +936,208 @@ class TestDatadogAPIConfigYaml:
         )
         s = Settings.load(config_file)
         assert s.datadog.cluster_name_override == ""
+
+
+# ══════════════════════════════════════════════════════════════
+# AuditConfig
+# ══════════════════════════════════════════════════════════════
+
+
+class TestAuditConfig:
+    """Tests for AuditConfig model — audit logging configuration."""
+
+    def test_defaults(self) -> None:
+        cfg = AuditConfig()
+        assert cfg.enabled is False
+        assert cfg.bigquery_dataset == "vaig_audit"
+        assert cfg.bigquery_table == "audit_events"
+        assert cfg.cloud_logging_log_name == "vaig-audit"
+        assert cfg.buffer_size == 20
+        assert cfg.flush_interval_seconds == 30
+
+    def test_enabled_flag(self) -> None:
+        cfg = AuditConfig(enabled=True)
+        assert cfg.enabled is True
+
+    def test_custom_bigquery_dataset(self) -> None:
+        cfg = AuditConfig(bigquery_dataset="custom_audit")
+        assert cfg.bigquery_dataset == "custom_audit"
+
+    def test_custom_bigquery_table(self) -> None:
+        cfg = AuditConfig(bigquery_table="my_events")
+        assert cfg.bigquery_table == "my_events"
+
+    def test_custom_cloud_logging_log_name(self) -> None:
+        cfg = AuditConfig(cloud_logging_log_name="my-custom-log")
+        assert cfg.cloud_logging_log_name == "my-custom-log"
+
+    def test_custom_buffer_size(self) -> None:
+        cfg = AuditConfig(buffer_size=50)
+        assert cfg.buffer_size == 50
+
+    def test_custom_flush_interval(self) -> None:
+        cfg = AuditConfig(flush_interval_seconds=60)
+        assert cfg.flush_interval_seconds == 60
+
+    def test_buffer_size_is_int(self) -> None:
+        cfg = AuditConfig(buffer_size=10)
+        assert isinstance(cfg.buffer_size, int)
+
+    def test_flush_interval_is_int(self) -> None:
+        cfg = AuditConfig(flush_interval_seconds=15)
+        assert isinstance(cfg.flush_interval_seconds, int)
+
+    def test_audit_in_settings_defaults(self) -> None:
+        settings = Settings()
+        assert hasattr(settings, "audit")
+        assert isinstance(settings.audit, AuditConfig)
+        assert settings.audit.enabled is False
+
+    def test_audit_from_yaml_data(self) -> None:
+        settings = Settings(
+            audit={  # type: ignore[arg-type]
+                "enabled": True,
+                "bigquery_dataset": "prod_audit",
+                "buffer_size": 50,
+            },
+        )
+        assert settings.audit.enabled is True
+        assert settings.audit.bigquery_dataset == "prod_audit"
+        assert settings.audit.buffer_size == 50
+        # Non-overridden fields keep defaults
+        assert settings.audit.bigquery_table == "audit_events"
+        assert settings.audit.cloud_logging_log_name == "vaig-audit"
+
+    def test_audit_from_yaml_file(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "audit:\n"
+            "  enabled: true\n"
+            "  bigquery_dataset: file_audit\n"
+            "  buffer_size: 100\n"
+        )
+        s = Settings.load(config_file)
+        assert s.audit.enabled is True
+        assert s.audit.bigquery_dataset == "file_audit"
+        assert s.audit.buffer_size == 100
+        assert s.audit.flush_interval_seconds == 30  # default preserved
+
+    def test_audit_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VAIG_AUDIT__ENABLED", "true")
+        s = Settings()
+        assert s.audit.enabled is True
+
+    def test_backward_compat_without_audit(self) -> None:
+        """Existing configs without audit section should use defaults."""
+        settings = Settings()
+        assert settings.audit.enabled is False
+        assert settings.audit.bigquery_dataset == "vaig_audit"
+
+    def test_full_config(self) -> None:
+        cfg = AuditConfig(
+            enabled=True,
+            bigquery_dataset="custom_ds",
+            bigquery_table="custom_tbl",
+            cloud_logging_log_name="custom-log",
+            buffer_size=100,
+            flush_interval_seconds=120,
+        )
+        assert cfg.enabled is True
+        assert cfg.bigquery_dataset == "custom_ds"
+        assert cfg.bigquery_table == "custom_tbl"
+        assert cfg.cloud_logging_log_name == "custom-log"
+        assert cfg.buffer_size == 100
+        assert cfg.flush_interval_seconds == 120
+
+
+# ══════════════════════════════════════════════════════════════
+# RateLimitConfig
+# ══════════════════════════════════════════════════════════════
+
+
+class TestRateLimitConfig:
+    """Tests for RateLimitConfig model — rate limiting configuration."""
+
+    def test_defaults(self) -> None:
+        cfg = RateLimitConfig()
+        assert cfg.enabled is False
+        assert cfg.policy_gcs_bucket == ""
+        assert cfg.policy_gcs_path == "vaig/quota-policy.yaml"
+        assert cfg.cache_ttl_seconds == 300
+
+    def test_enabled_flag(self) -> None:
+        cfg = RateLimitConfig(enabled=True)
+        assert cfg.enabled is True
+
+    def test_custom_policy_gcs_bucket(self) -> None:
+        cfg = RateLimitConfig(policy_gcs_bucket="my-bucket")
+        assert cfg.policy_gcs_bucket == "my-bucket"
+
+    def test_custom_policy_gcs_path(self) -> None:
+        cfg = RateLimitConfig(policy_gcs_path="custom/path.yaml")
+        assert cfg.policy_gcs_path == "custom/path.yaml"
+
+    def test_custom_cache_ttl(self) -> None:
+        cfg = RateLimitConfig(cache_ttl_seconds=600)
+        assert cfg.cache_ttl_seconds == 600
+
+    def test_cache_ttl_is_int(self) -> None:
+        cfg = RateLimitConfig(cache_ttl_seconds=120)
+        assert isinstance(cfg.cache_ttl_seconds, int)
+
+    def test_rate_limit_in_settings_defaults(self) -> None:
+        settings = Settings()
+        assert hasattr(settings, "rate_limit")
+        assert isinstance(settings.rate_limit, RateLimitConfig)
+        assert settings.rate_limit.enabled is False
+
+    def test_rate_limit_from_yaml_data(self) -> None:
+        settings = Settings(
+            rate_limit={  # type: ignore[arg-type]
+                "enabled": True,
+                "policy_gcs_bucket": "prod-quota-bucket",
+                "cache_ttl_seconds": 600,
+            },
+        )
+        assert settings.rate_limit.enabled is True
+        assert settings.rate_limit.policy_gcs_bucket == "prod-quota-bucket"
+        assert settings.rate_limit.cache_ttl_seconds == 600
+        # Non-overridden fields keep defaults
+        assert settings.rate_limit.policy_gcs_path == "vaig/quota-policy.yaml"
+
+    def test_rate_limit_from_yaml_file(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "rate_limit:\n"
+            "  enabled: true\n"
+            "  policy_gcs_bucket: my-bucket\n"
+            "  cache_ttl_seconds: 120\n"
+        )
+        s = Settings.load(config_file)
+        assert s.rate_limit.enabled is True
+        assert s.rate_limit.policy_gcs_bucket == "my-bucket"
+        assert s.rate_limit.cache_ttl_seconds == 120
+        assert s.rate_limit.policy_gcs_path == "vaig/quota-policy.yaml"  # default preserved
+
+    def test_rate_limit_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VAIG_RATE_LIMIT__ENABLED", "true")
+        s = Settings()
+        assert s.rate_limit.enabled is True
+
+    def test_backward_compat_without_rate_limit(self) -> None:
+        """Existing configs without rate_limit section should use defaults."""
+        settings = Settings()
+        assert settings.rate_limit.enabled is False
+        assert settings.rate_limit.policy_gcs_bucket == ""
+
+    def test_full_config(self) -> None:
+        cfg = RateLimitConfig(
+            enabled=True,
+            policy_gcs_bucket="my-quota-bucket",
+            policy_gcs_path="custom/quota.yaml",
+            cache_ttl_seconds=900,
+        )
+        assert cfg.enabled is True
+        assert cfg.policy_gcs_bucket == "my-quota-bucket"
+        assert cfg.policy_gcs_path == "custom/quota.yaml"
+        assert cfg.cache_ttl_seconds == 900

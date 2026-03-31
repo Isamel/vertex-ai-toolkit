@@ -1645,3 +1645,143 @@ class TestAsyncRetryWithBackoff:
 
         with pytest.raises(ValueError, match="bad input"):
             await client._async_retry_with_backoff(_fn)
+
+
+# ══════════════════════════════════════════════════════════════
+# Quota integration — GeminiClient + QuotaChecker
+# ══════════════════════════════════════════════════════════════
+
+
+class TestQuotaIntegration:
+    """Tests that GeminiClient calls QuotaChecker before API calls."""
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    def test_generate_calls_check_and_consume(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        settings: Settings,
+    ) -> None:
+        """check_and_consume is called before the API call in generate()."""
+        mock_get_creds.return_value = MagicMock()
+        mock_sdk = MagicMock()
+        mock_genai_client_cls.return_value = mock_sdk
+        mock_sdk.models.generate_content.return_value = _make_mock_response()
+
+        quota_checker = MagicMock()
+        client = GeminiClient(settings, quota_checker=quota_checker)
+
+        with patch("vaig.core.identity.resolve_identity", return_value=("alice", "alice@co.com", "1.0")):
+            with patch("vaig.core.identity.build_composite_key", return_value="alice:alice@co.com"):
+                client.generate("Hello")
+
+        quota_checker.check_and_consume.assert_called_once()
+        call_args = quota_checker.check_and_consume.call_args
+        assert call_args[0][0] == "alice:alice@co.com"  # user_key
+        assert call_args[0][1] > 0  # estimated_tokens > 0
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    def test_generate_propagates_quota_exceeded(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        settings: Settings,
+    ) -> None:
+        """QuotaExceededError propagates to the caller."""
+        mock_get_creds.return_value = MagicMock()
+
+        from vaig.core.exceptions import QuotaExceededError
+
+        quota_checker = MagicMock()
+        quota_checker.check_and_consume.side_effect = QuotaExceededError(
+            dimension="requests_per_day", used=501, limit=500, user_key="alice:alice@co.com"
+        )
+        client = GeminiClient(settings, quota_checker=quota_checker)
+
+        with patch("vaig.core.identity.resolve_identity", return_value=("alice", "alice@co.com", "1.0")):
+            with patch("vaig.core.identity.build_composite_key", return_value="alice:alice@co.com"):
+                with pytest.raises(QuotaExceededError, match="requests_per_day"):
+                    client.generate("Hello")
+
+    def test_no_check_when_quota_checker_is_none(self, settings: Settings) -> None:
+        """No quota check when quota_checker is None (disabled)."""
+        client = GeminiClient(settings)
+        assert client._quota_checker is None
+        # _check_quota should be a no-op — no error raised
+        client._check_quota("test prompt")
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    def test_generate_stream_calls_quota_check(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        settings: Settings,
+    ) -> None:
+        """check_and_consume is called in generate_stream() too."""
+        mock_get_creds.return_value = MagicMock()
+        mock_sdk = MagicMock()
+        mock_genai_client_cls.return_value = mock_sdk
+        mock_sdk.models.generate_content_stream.return_value = iter(
+            _make_mock_stream_chunks(["Hello"])
+        )
+
+        quota_checker = MagicMock()
+        client = GeminiClient(settings, quota_checker=quota_checker)
+
+        with patch("vaig.core.identity.resolve_identity", return_value=("bob", "bob@co.com", "1.0")):
+            with patch("vaig.core.identity.build_composite_key", return_value="bob:bob@co.com"):
+                client.generate_stream("Streaming prompt")
+
+        quota_checker.check_and_consume.assert_called_once()
+
+    @patch("vaig.core.client.genai.Client")
+    @patch("vaig.core.client.get_credentials")
+    def test_generate_with_tools_calls_quota_check(
+        self,
+        mock_get_creds: MagicMock,
+        mock_genai_client_cls: MagicMock,
+        settings: Settings,
+    ) -> None:
+        """check_and_consume is called in generate_with_tools() too."""
+        mock_get_creds.return_value = MagicMock()
+        mock_sdk = MagicMock()
+        mock_genai_client_cls.return_value = mock_sdk
+        mock_sdk.models.generate_content.return_value = _make_mock_response()
+
+        quota_checker = MagicMock()
+        client = GeminiClient(settings, quota_checker=quota_checker)
+
+        with patch("vaig.core.identity.resolve_identity", return_value=("carol", "carol@co.com", "1.0")):
+            with patch("vaig.core.identity.build_composite_key", return_value="carol:carol@co.com"):
+                client.generate_with_tools("Tool prompt", tool_declarations=[])
+
+        quota_checker.check_and_consume.assert_called_once()
+
+    def test_check_quota_estimates_string_tokens(self, settings: Settings) -> None:
+        """_check_quota estimates tokens from string prompt length."""
+        quota_checker = MagicMock()
+        client = GeminiClient(settings, quota_checker=quota_checker)
+
+        # "Hello world" = 11 chars → 11 // 4 = 2 tokens
+        with patch("vaig.core.identity.resolve_identity", return_value=("u", "u@co.com", "1.0")):
+            with patch("vaig.core.identity.build_composite_key", return_value="u:u@co.com"):
+                client._check_quota("Hello world")
+
+        call_args = quota_checker.check_and_consume.call_args
+        assert call_args[0][1] == 2  # 11 // 4 = 2
+
+    def test_check_quota_estimates_list_tokens(self, settings: Settings) -> None:
+        """_check_quota estimates tokens from list of Parts."""
+        quota_checker = MagicMock()
+        client = GeminiClient(settings, quota_checker=quota_checker)
+
+        parts = [MagicMock(__str__=lambda _: "a" * 100), MagicMock(__str__=lambda _: "b" * 100)]
+        with patch("vaig.core.identity.resolve_identity", return_value=("u", "u@co.com", "1.0")):
+            with patch("vaig.core.identity.build_composite_key", return_value="u:u@co.com"):
+                client._check_quota(parts)
+
+        call_args = quota_checker.check_and_consume.call_args
+        assert call_args[0][1] == 50  # 200 // 4 = 50

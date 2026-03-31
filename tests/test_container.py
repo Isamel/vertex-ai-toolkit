@@ -131,7 +131,7 @@ class TestServiceContainerFields:
     def test_container_has_expected_field_names(self) -> None:
         """ServiceContainer dataclass has exactly the expected fields."""
         field_names = {f.name for f in dataclasses.fields(ServiceContainer)}
-        expected = {"settings", "gemini_client", "k8s_provider", "gcp_provider", "event_bus"}
+        expected = {"settings", "gemini_client", "k8s_provider", "gcp_provider", "event_bus", "quota_checker"}
         assert field_names == expected
 
 
@@ -202,3 +202,44 @@ class TestContainerExports:
         assert "ServiceContainer" in mod.__all__
         assert "build_container" in mod.__all__
         assert len(mod.__all__) == 2
+
+
+# ══════════════════════════════════════════════════════════════
+# Quota checker wiring
+# ══════════════════════════════════════════════════════════════
+
+
+class TestQuotaCheckerWiring:
+    """Tests that QuotaChecker is wired correctly based on settings."""
+
+    def test_quota_checker_none_when_disabled(self) -> None:
+        """quota_checker is None when rate_limit.enabled is False (default)."""
+        settings = Settings()
+        container = build_container(settings)
+        assert container.quota_checker is None
+
+    def test_quota_checker_default_in_mock_container(self) -> None:
+        """ServiceContainer accepts quota_checker=None by default."""
+        settings = Settings()
+        container = ServiceContainer(
+            settings=settings,
+            gemini_client=MagicMock(spec=GeminiClientProtocol),
+            k8s_provider=None,
+            gcp_provider=None,
+            event_bus=EventBus.get(),
+        )
+        assert container.quota_checker is None
+
+    def test_quota_checker_can_be_injected(self) -> None:
+        """ServiceContainer accepts a mock quota_checker."""
+        settings = Settings()
+        mock_checker = MagicMock()
+        container = ServiceContainer(
+            settings=settings,
+            gemini_client=MagicMock(spec=GeminiClientProtocol),
+            k8s_provider=None,
+            gcp_provider=None,
+            event_bus=EventBus.get(),
+            quota_checker=mock_checker,
+        )
+        assert container.quota_checker is mock_checker

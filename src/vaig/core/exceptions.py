@@ -153,6 +153,33 @@ class K8sAuthError(VaigAuthError):
     """Kubernetes authentication/authorization error."""
 
 
+class QuotaExceededError(VAIGError):
+    """Raised when a user exceeds their rate-limit quota for a dimension.
+
+    Attributes:
+        dimension: Which quota was exceeded (``"requests"``, ``"tokens"``, ``"executions"``).
+        used: Current usage count at the time of rejection.
+        limit: The configured limit for this dimension.
+        user_key: The composite user key that was rate-limited.
+    """
+
+    def __init__(
+        self,
+        *,
+        dimension: str,
+        used: int,
+        limit: int,
+        user_key: str,
+    ) -> None:
+        self.dimension = dimension
+        self.used = used
+        self.limit = limit
+        self.user_key = user_key
+        super().__init__(
+            f"Quota exceeded for '{user_key}': {dimension} usage {used:,}/{limit:,} per day"
+        )
+
+
 class TokenBudgetError(VAIGError):
     """Raised when the token budget cannot be computed or is invalid.
 
