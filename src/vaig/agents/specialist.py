@@ -8,13 +8,21 @@ from typing import TYPE_CHECKING, Any
 
 from vaig.agents.base import AgentConfig, AgentResult, BaseAgent
 from vaig.core.client import ChatMessage
-from vaig.core.exceptions import GeminiConnectionError, GeminiRateLimitError
+from vaig.core.exceptions import ContextWindowExceededError, GeminiConnectionError, GeminiRateLimitError
 from vaig.core.models import PipelineState
 
 if TYPE_CHECKING:
     from vaig.core.protocols import GeminiClientProtocol
 
 logger = logging.getLogger(__name__)
+
+# Graceful degradation message used when a context window overflow is caught.
+# Defined once to avoid repetition across sync, async, and streaming paths.
+_CONTEXT_WINDOW_DEGRADATION_MSG = (
+    "Analysis could not be completed — the accumulated context "
+    "exceeded the model's token limit. The available findings "
+    "from earlier phases are included below."
+)
 
 
 class SpecialistAgent(BaseAgent):
@@ -99,6 +107,24 @@ class SpecialistAgent(BaseAgent):
                 metadata={"error": str(e), "error_type": "connection"},
             )
 
+        except ContextWindowExceededError as e:
+            logger.warning(
+                "Agent %s context window exceeded (%.1f%%): %s",
+                self.name,
+                e.context_pct,
+                e,
+            )
+            return AgentResult(
+                agent_name=self.name,
+                content=(
+                    f"{_CONTEXT_WINDOW_DEGRADATION_MSG}\n\n"
+                    f"[Context window exceeded: {e}]"
+                ),
+                success=False,
+                usage=e.usage,
+                metadata={"error": str(e), "error_type": "context_window_exceeded"},
+            )
+
         except Exception as e:
             logger.exception("Agent %s failed", self.name)
             return AgentResult(
@@ -143,6 +169,12 @@ class SpecialistAgent(BaseAgent):
         except GeminiConnectionError as e:
             logger.warning("Agent %s streaming connection error after %d retries", self.name, e.retries_attempted)
             yield f"\n[Connection error (retried {e.retries_attempted}x): {e}]"
+
+        except ContextWindowExceededError as e:
+            logger.warning("Agent %s streaming context window exceeded: %s", self.name, e)
+            yield (
+                f"\n[{_CONTEXT_WINDOW_DEGRADATION_MSG}]"
+            )
 
         except Exception as e:
             logger.exception("Agent %s streaming failed", self.name)
@@ -228,6 +260,24 @@ class SpecialistAgent(BaseAgent):
                 metadata={"error": str(e), "error_type": "connection"},
             )
 
+        except ContextWindowExceededError as e:
+            logger.warning(
+                "Agent %s async context window exceeded (%.1f%%): %s",
+                self.name,
+                e.context_pct,
+                e,
+            )
+            return AgentResult(
+                agent_name=self.name,
+                content=(
+                    f"{_CONTEXT_WINDOW_DEGRADATION_MSG}\n\n"
+                    f"[Context window exceeded: {e}]"
+                ),
+                success=False,
+                usage=e.usage,
+                metadata={"error": str(e), "error_type": "context_window_exceeded"},
+            )
+
         except Exception as e:
             logger.exception("Agent %s async failed", self.name)
             return AgentResult(
@@ -283,6 +333,12 @@ class SpecialistAgent(BaseAgent):
                 e.retries_attempted,
             )
             yield f"\n[Connection error (retried {e.retries_attempted}x): {e}]"
+
+        except ContextWindowExceededError as e:
+            logger.warning("Agent %s async streaming context window exceeded: %s", self.name, e)
+            yield (
+                f"\n[{_CONTEXT_WINDOW_DEGRADATION_MSG}]"
+            )
 
         except Exception as e:
             logger.exception("Agent %s async streaming failed", self.name)

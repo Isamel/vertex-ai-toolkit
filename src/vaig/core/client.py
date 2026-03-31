@@ -27,6 +27,8 @@ from google.genai import types
 from vaig.core.auth import get_credentials
 from vaig.core.cache import CacheStats, ResponseCache, _make_cache_key
 from vaig.core.exceptions import (
+    CONTEXT_WINDOW_ERROR_KEYWORDS,
+    ContextWindowExceededError,
     GCPAuthError,
     GCPPermissionError,
     GeminiClientError,
@@ -56,6 +58,21 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
 # Used in the genai_errors.APIError handler to distinguish retryable (SDK
 # already handled) from non-retryable (propagate immediately).
 _RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+
+# Re-export for backward compatibility (tests import from here).
+_CONTEXT_WINDOW_ERROR_KEYWORDS = CONTEXT_WINDOW_ERROR_KEYWORDS
+
+
+def _is_context_window_error(exc: genai_errors.APIError) -> bool:
+    """Return ``True`` if *exc* is a 400-family error caused by context overflow.
+
+    Checks the error code and message keywords so we can convert the generic
+    ``genai_errors.ClientError`` into :class:`ContextWindowExceededError`.
+    """
+    if exc.code not in (400, 413):
+        return False
+    msg_lower = str(exc).lower()
+    return any(kw in msg_lower for kw in CONTEXT_WINDOW_ERROR_KEYWORDS)
 
 
 def _safe_int(value: Any) -> int:
@@ -670,6 +687,11 @@ class GeminiClient:
                         except Exception as fallback_exc:  # noqa: BLE001
                             last_exception = fallback_exc
                     break  # fall through to exhaustion handler
+                # Convert context-window 400 errors to ContextWindowExceededError.
+                if _is_context_window_error(exc):
+                    raise ContextWindowExceededError(
+                        f"Context window exceeded (API {exc.code}): {exc}",
+                    ) from exc
                 raise  # Non-retryable (400, 403, etc.) — propagate immediately.
             except Exception as exc:
                 if _is_ssl_or_connection_error(exc) and not self._using_fallback:
@@ -789,6 +811,11 @@ class GeminiClient:
                         except Exception as fallback_exc:  # noqa: BLE001
                             last_exception = fallback_exc
                     break  # fall through to exhaustion handler
+                # Convert context-window 400 errors to ContextWindowExceededError.
+                if _is_context_window_error(exc):
+                    raise ContextWindowExceededError(
+                        f"Context window exceeded (API {exc.code}): {exc}",
+                    ) from exc
                 raise  # Non-retryable (400, 403, etc.) — propagate immediately.
             except Exception as exc:
                 if _is_ssl_or_connection_error(exc) and not self._using_fallback:
