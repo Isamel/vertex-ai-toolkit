@@ -1,0 +1,670 @@
+{% extends "base.html" %}
+
+{% block title %}Chat{% endblock %}
+
+{% block head %}
+<style>
+    .chat-container {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 160px);
+        min-height: 400px;
+    }
+
+    .chat-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.75rem 0;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 0.75rem;
+    }
+
+    .chat-header h1 {
+        font-family: var(--font-mono);
+        font-size: 1.25rem;
+    }
+
+    .chat-header .session-info {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+    }
+
+    .chat-header .header-actions {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+    }
+
+    .btn-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.4rem 0.75rem;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) / 2);
+        color: var(--text-secondary);
+        text-decoration: none;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: border-color 0.2s, color 0.2s;
+    }
+
+    .btn-link:hover {
+        border-color: var(--accent);
+        color: var(--text-primary);
+    }
+
+    /* Messages area */
+    .messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0.5rem 0;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .message {
+        display: flex;
+        gap: 0.75rem;
+        max-width: 85%;
+    }
+
+    .message.user {
+        align-self: flex-end;
+        flex-direction: row-reverse;
+    }
+
+    .message.assistant {
+        align-self: flex-start;
+    }
+
+    .message-avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        font-weight: 600;
+        flex-shrink: 0;
+    }
+
+    .message.user .message-avatar {
+        background: var(--accent);
+        color: #fff;
+    }
+
+    .message.assistant .message-avatar {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        color: var(--accent);
+    }
+
+    .message-bubble {
+        padding: 0.75rem 1rem;
+        border-radius: var(--radius);
+        font-size: 0.9rem;
+        line-height: 1.6;
+    }
+
+    .message.user .message-bubble {
+        background: var(--accent);
+        color: #fff;
+    }
+
+    .message.assistant .message-bubble {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+    }
+
+    /* Markdown rendering inside assistant messages */
+    .message-bubble code {
+        background: var(--bg-primary);
+        padding: 0.15rem 0.4rem;
+        border-radius: 3px;
+        font-family: var(--font-mono);
+        font-size: 0.85em;
+    }
+
+    .message.user .message-bubble code {
+        background: rgba(255, 255, 255, 0.15);
+    }
+
+    .message-bubble pre {
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) / 2);
+        padding: 0.75rem;
+        overflow-x: auto;
+        margin: 0.5rem 0;
+        position: relative;
+    }
+
+    .message.user .message-bubble pre {
+        background: rgba(0, 0, 0, 0.2);
+        border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .message-bubble pre code {
+        background: none;
+        padding: 0;
+    }
+
+    .copy-btn {
+        position: absolute;
+        top: 0.4rem;
+        right: 0.4rem;
+        padding: 0.2rem 0.5rem;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        color: var(--text-secondary);
+        font-size: 0.7rem;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.2s;
+    }
+
+    .message-bubble pre:hover .copy-btn {
+        opacity: 1;
+    }
+
+    .copy-btn:hover {
+        color: var(--text-primary);
+        border-color: var(--accent);
+    }
+
+    /* Streaming indicator */
+    .streaming-indicator {
+        display: none;
+        align-self: flex-start;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+    }
+
+    .streaming-indicator.active {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .streaming-dots span {
+        animation: streaming-dot 1.4s infinite ease-in-out;
+        display: inline-block;
+    }
+    .streaming-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .streaming-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes streaming-dot {
+        0%, 80%, 100% { opacity: 0.3; }
+        40% { opacity: 1; }
+    }
+
+    /* Event badges in stream */
+    .stream-events {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+        margin-bottom: 0.3rem;
+    }
+
+    .tool-badge, .phase-badge {
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        padding: 0.15rem 0.5rem;
+        border-radius: 3px;
+        display: inline-block;
+    }
+
+    .tool-badge {
+        background: rgba(79, 143, 247, 0.1);
+        color: var(--accent);
+        border: 1px solid rgba(79, 143, 247, 0.2);
+    }
+
+    .phase-badge {
+        background: rgba(63, 185, 80, 0.1);
+        color: var(--success);
+        border: 1px solid rgba(63, 185, 80, 0.2);
+    }
+
+    .error-badge {
+        background: rgba(248, 81, 73, 0.1);
+        color: var(--error);
+        border: 1px solid rgba(248, 81, 73, 0.2);
+        padding: 0.3rem 0.6rem;
+        border-radius: calc(var(--radius) / 2);
+        font-size: 0.8rem;
+        margin-bottom: 0.3rem;
+    }
+
+    /* Input area */
+    .chat-input {
+        display: flex;
+        gap: 0.75rem;
+        padding: 0.75rem 0;
+        border-top: 1px solid var(--border);
+        margin-top: auto;
+    }
+
+    .chat-input textarea {
+        flex: 1;
+        padding: 0.6rem 0.75rem;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) / 2);
+        color: var(--text-primary);
+        font-family: var(--font-sans);
+        font-size: 0.9rem;
+        resize: none;
+        min-height: 44px;
+        max-height: 120px;
+        transition: border-color 0.2s;
+    }
+
+    .chat-input textarea:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+
+    .btn-send {
+        padding: 0.6rem 1.25rem;
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        border-radius: calc(var(--radius) / 2);
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background 0.2s;
+        align-self: flex-end;
+    }
+
+    .btn-send:hover {
+        background: var(--accent-hover);
+    }
+
+    .btn-send:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    /* Alert for errors */
+    .alert-error {
+        background: rgba(248, 81, 73, 0.1);
+        border: 1px solid rgba(248, 81, 73, 0.3);
+        border-radius: calc(var(--radius) / 2);
+        padding: 0.75rem 1rem;
+        color: var(--error);
+        font-size: 0.85rem;
+        margin-bottom: 1rem;
+    }
+
+    @media (max-width: 640px) {
+        .message {
+            max-width: 95%;
+        }
+
+        .chat-container {
+            height: calc(100vh - 140px);
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="chat-container">
+    <div class="chat-header">
+        <div>
+            <h1>Chat</h1>
+            {% if session %}
+            <span class="session-info">{{ session.name }} &mdash; {{ session.id[:12] }}</span>
+            {% else %}
+            <span class="session-info">New conversation</span>
+            {% endif %}
+        </div>
+        <div class="header-actions">
+            <a href="/sessions" class="btn-link">Sessions</a>
+            <a href="/chat" class="btn-link">+ New</a>
+        </div>
+    </div>
+
+    {% if error is defined and error %}
+    <div class="alert-error">{{ error }}</div>
+    {% endif %}
+
+    <div class="messages" id="messages">
+        {% for msg in messages %}
+        <div class="message {{ msg.role }}">
+            <div class="message-avatar">
+                {% if msg.role == 'user' %}U{% else %}AI{% endif %}
+            </div>
+            <div class="message-bubble" {% if msg.role == 'assistant' %}data-markdown="true"{% endif %}>
+                {{ msg.content }}
+            </div>
+        </div>
+        {% endfor %}
+
+        <div class="streaming-indicator" id="streaming-indicator">
+            <span>Thinking</span>
+            <span class="streaming-dots"><span>.</span><span>.</span><span>.</span></span>
+        </div>
+    </div>
+
+    <form class="chat-input" id="chat-form">
+        <textarea
+            id="message-input"
+            name="message"
+            placeholder="Type your message..."
+            rows="1"
+            required
+        ></textarea>
+        <button type="submit" class="btn-send" id="send-btn">Send</button>
+    </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    var form = document.getElementById('chat-form');
+    var input = document.getElementById('message-input');
+    var sendBtn = document.getElementById('send-btn');
+    var messagesDiv = document.getElementById('messages');
+    var streamingIndicator = document.getElementById('streaming-indicator');
+
+    // Current session ID — either from server-rendered data or set after first message
+    var sessionId = {{ (session.id | tojson) if session else 'null' }};
+
+    // Auto-resize textarea
+    input.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+    });
+
+    // Submit on Enter (Shift+Enter for newline)
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            form.dispatchEvent(new Event('submit'));
+        }
+    });
+
+    // Scroll to bottom
+    function scrollToBottom() {
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    // Render markdown on existing assistant messages
+    document.querySelectorAll('.message-bubble[data-markdown="true"]').forEach(function(el) {
+        el.innerHTML = renderMarkdown(el.textContent);
+    });
+
+    scrollToBottom();
+
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        var message = input.value.trim();
+        if (!message) return;
+
+        // Add user message to UI
+        addMessage('user', message);
+        input.value = '';
+        input.style.height = 'auto';
+        sendBtn.disabled = true;
+        streamingIndicator.classList.add('active');
+        scrollToBottom();
+
+        // Determine the endpoint
+        var targetId = sessionId || 'new';
+        var formData = new FormData();
+        formData.append('message', message);
+
+        // Use fetch + ReadableStream for SSE via POST
+        fetch('/chat/' + targetId + '/message', {
+            method: 'POST',
+            body: formData,
+        }).then(function(response) {
+            if (!response.ok) {
+                throw new Error('Server returned ' + response.status);
+            }
+            var reader = response.body.getReader();
+            var decoder = new TextDecoder();
+            var buffer = '';
+            var assistantText = '';
+            var assistantBubble = null;
+            var eventContainer = null;
+
+            function processChunk(result) {
+                if (result.done) {
+                    onStreamEnd();
+                    return;
+                }
+
+                buffer += decoder.decode(result.value, { stream: true });
+                var lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                var currentEvent = '';
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i];
+                    if (line.startsWith('event:')) {
+                        currentEvent = line.substring(6).trim();
+                    } else if (line.startsWith('data:')) {
+                        var dataStr = line.substring(5).trim();
+                        if (dataStr) {
+                            try {
+                                var data = JSON.parse(dataStr);
+                                handleEvent(currentEvent, data);
+                            } catch(err) {
+                                // Non-JSON, ignore
+                            }
+                        }
+                    }
+                }
+
+                return reader.read().then(processChunk);
+            }
+
+            function handleEvent(eventType, data) {
+                switch (eventType) {
+                    case 'session':
+                        // New session created — update the session ID and URL
+                        if (data.session_id) {
+                            sessionId = data.session_id;
+                            window.history.replaceState(null, '', '/chat/' + sessionId);
+                            // Update header info
+                            var infoEl = document.querySelector('.session-info');
+                            if (infoEl) {
+                                infoEl.textContent = sessionId.substring(0, 12);
+                            }
+                        }
+                        break;
+
+                    case 'chunk':
+                        if (data.text) {
+                            if (!assistantBubble) {
+                                var els = addAssistantMessage();
+                                assistantBubble = els.bubble;
+                                eventContainer = els.events;
+                            }
+                            assistantText += data.text;
+                            assistantBubble.innerHTML = renderMarkdown(assistantText);
+                            scrollToBottom();
+                        }
+                        break;
+
+                    case 'tool_call':
+                        if (!eventContainer) {
+                            var els = addAssistantMessage();
+                            assistantBubble = els.bubble;
+                            eventContainer = els.events;
+                        }
+                        var badge = document.createElement('span');
+                        badge.className = 'tool-badge';
+                        badge.textContent = '\u2699 ' + (data.tool || 'tool') +
+                            (data.duration_ms ? ' (' + Math.round(data.duration_ms) + 'ms)' : '') +
+                            (data.error ? ' \u2718' : ' \u2714');
+                        eventContainer.appendChild(badge);
+                        scrollToBottom();
+                        break;
+
+                    case 'phase':
+                        if (!eventContainer) {
+                            var els = addAssistantMessage();
+                            assistantBubble = els.bubble;
+                            eventContainer = els.events;
+                        }
+                        var pBadge = document.createElement('span');
+                        pBadge.className = 'phase-badge';
+                        pBadge.textContent = '\u25B6 ' + (data.phase || data.skill || 'phase');
+                        eventContainer.appendChild(pBadge);
+                        scrollToBottom();
+                        break;
+
+                    case 'error':
+                        if (!eventContainer) {
+                            var els = addAssistantMessage();
+                            assistantBubble = els.bubble;
+                            eventContainer = els.events;
+                        }
+                        var errEl = document.createElement('div');
+                        errEl.className = 'error-badge';
+                        errEl.textContent = '\u26A0 ' + (data.message || 'Unknown error');
+                        eventContainer.appendChild(errEl);
+                        scrollToBottom();
+                        break;
+
+                    case 'done':
+                        onStreamEnd();
+                        break;
+                }
+            }
+
+            return reader.read().then(processChunk);
+        }).catch(function(err) {
+            addMessage('assistant', 'Connection error: ' + err.message);
+            onStreamEnd();
+        });
+    });
+
+    function onStreamEnd() {
+        sendBtn.disabled = false;
+        streamingIndicator.classList.remove('active');
+        input.focus();
+        scrollToBottom();
+    }
+
+    function addMessage(role, text) {
+        var msgDiv = document.createElement('div');
+        msgDiv.className = 'message ' + role;
+
+        var avatar = document.createElement('div');
+        avatar.className = 'message-avatar';
+        avatar.textContent = role === 'user' ? 'U' : 'AI';
+
+        var bubble = document.createElement('div');
+        bubble.className = 'message-bubble';
+        if (role === 'assistant') {
+            bubble.innerHTML = renderMarkdown(text);
+        } else {
+            bubble.textContent = text;
+        }
+
+        msgDiv.appendChild(avatar);
+        msgDiv.appendChild(bubble);
+
+        // Insert before the streaming indicator
+        messagesDiv.insertBefore(msgDiv, streamingIndicator);
+    }
+
+    function addAssistantMessage() {
+        var msgDiv = document.createElement('div');
+        msgDiv.className = 'message assistant';
+
+        var avatar = document.createElement('div');
+        avatar.className = 'message-avatar';
+        avatar.textContent = 'AI';
+
+        var wrapper = document.createElement('div');
+        wrapper.style.display = 'flex';
+        wrapper.style.flexDirection = 'column';
+        wrapper.style.gap = '0.25rem';
+
+        var events = document.createElement('div');
+        events.className = 'stream-events';
+
+        var bubble = document.createElement('div');
+        bubble.className = 'message-bubble';
+
+        wrapper.appendChild(events);
+        wrapper.appendChild(bubble);
+        msgDiv.appendChild(avatar);
+        msgDiv.appendChild(wrapper);
+
+        messagesDiv.insertBefore(msgDiv, streamingIndicator);
+        return { bubble: bubble, events: events };
+    }
+
+    function renderMarkdown(text) {
+        var html = escapeHtml(text);
+
+        // Fenced code blocks
+        html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(m, lang, code) {
+            return '<pre><code class="language-' + lang + '">' + code +
+                '</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>';
+        });
+
+        // Inline code
+        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+        // Bold
+        html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+        // Headers
+        html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+        html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+        html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+        // Unordered lists
+        html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+        html = html.replace(/(<li>.*<\/li>\n?)+/g, function(m) {
+            return '<ul>' + m + '</ul>';
+        });
+
+        // Line breaks — outside <pre> blocks
+        html = html.split(/(<pre[\s\S]*?<\/pre>)/g).map(function(segment, index) {
+            if (index % 2 === 1) return segment;
+            return segment.replace(/\n/g, '<br>');
+        }).join('');
+
+        return html;
+    }
+
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+})();
+
+// Global function for copy buttons in code blocks
+function copyCode(btn) {
+    var code = btn.parentElement.querySelector('code');
+    if (code) {
+        navigator.clipboard.writeText(code.textContent).then(function() {
+            btn.textContent = 'Copied!';
+            setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+        });
+    }
+}
+</script>
+{% endblock %}
