@@ -594,6 +594,9 @@ def build_datadog_gatherer_prompt(
     namespace: str = "",
     cluster_name: str = "",
     datadog_api_enabled: bool = False,
+    dd_service_name: str = "",
+    dd_env: str = "",
+    dd_resource_type: str = "",
 ) -> str:
     """Build the system instruction for the ``datadog_gatherer`` sub-agent.
 
@@ -606,6 +609,10 @@ def build_datadog_gatherer_prompt(
     from ``workload_gatherer``.  It resolves ``dd_service`` / ``dd_env``
     labels independently by calling ``kubectl_get_labels`` as Step 0 before
     making any Datadog API calls.
+
+    When ``dd_service_name`` is provided (pre-resolved programmatically in
+    ``get_parallel_agents_config``), Step 0 is replaced with a directive that
+    uses the pre-resolved name directly — eliminating LLM non-determinism.
 
     **Scope** — Datadog API correlation only:
 
@@ -631,6 +638,15 @@ def build_datadog_gatherer_prompt(
             and ``get_datadog_monitors``).
         datadog_api_enabled: When ``False``, returns an empty string so the
             caller can gate the agent on the runtime Datadog setting.
+        dd_service_name: Pre-resolved Datadog service name from
+            ``_resolve_dd_service_name``.  When non-empty, Step 0 is replaced
+            with a directive to use this value directly.
+        dd_env: Pre-resolved ``tags.datadoghq.com/env`` value.  When both
+            ``dd_service_name`` and ``dd_env`` are pre-resolved, Step 0 tells
+            the LLM to skip ``kubectl_get_labels`` entirely.
+        dd_resource_type: The K8s resource type the winning workload came from
+            (e.g. ``"deployments"``).  Used in the Step 0 fallback when only
+            ``dd_service_name`` is pre-resolved but ``dd_env`` is not.
 
     Returns:
         A formatted system-instruction string, or an empty string when Datadog
@@ -651,16 +667,76 @@ def build_datadog_gatherer_prompt(
     # correct calls.  Fall back to the generic placeholder when not supplied.
     cluster = cluster_name if cluster_name else "<cluster>"
 
-    # Build a focused tool reference table: only kubectl_get_labels (for Step 0 label
-    # resolution) plus the Datadog API tools.  Including the full _CORE_TOOLS_TABLE
-    # (kubectl_logs, get_events, etc.) would confuse the LLM — those tools belong to
-    # other gatherers and are irrelevant to this agent's scope.
+    # Build a focused tool reference table.  kubectl_get_labels is ALWAYS
+    # included — even when the DD service name is pre-resolved, the LLM may
+    # still need it for dd_env resolution or other label lookups.
     tool_reference_table = (
         "| Tool | Required Parameters | Optional Parameters |\n"
         "|------|---------------------|---------------------|\n"
         '| `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |\n'
         + _DATADOG_API_TOOLS_TABLE
     )
+
+    # ── Step 0 block: fully pre-resolved / partially pre-resolved / LLM-based ──
+    if dd_service_name and dd_env:
+        # Both service and env pre-resolved → skip kubectl_get_labels entirely.
+        step_0_block = f"""### Step 0 — Service Identity (PRE-RESOLVED)
+
+The Datadog service name AND environment have been pre-resolved programmatically
+from Kubernetes workload labels.  Do NOT call ``kubectl_get_labels`` to resolve
+the service name or environment — use these values directly:
+
+- ``<dd_service>``: **{dd_service_name}**
+- ``<dd_env>``: **{dd_env}**
+
+Use ``<dd_service>`` = ``{dd_service_name}`` and ``<dd_env>`` = ``{dd_env}``
+in ALL subsequent Datadog API calls (Calls 1–5) as the ``service`` and ``env``
+parameters respectively."""
+    elif dd_service_name:
+        # Service pre-resolved but env is not — need kubectl_get_labels for env only.
+        # Use the correct resource_type from resolution instead of hardcoded "deployments".
+        env_resource = dd_resource_type or "deployments"
+        step_0_block = f"""### Step 0 — Service Identity (PRE-RESOLVED)
+
+The Datadog service name has been pre-resolved programmatically from Kubernetes
+workload labels.  Do NOT call ``kubectl_get_labels`` to resolve the service name
+— use this value directly:
+
+- ``<dd_service>``: **{dd_service_name}**
+- ``<dd_env>``: Not pre-resolved — call ``kubectl_get_labels(resource_type="{env_resource}", namespace="{ns}")``
+  ONLY to resolve ``tags.datadoghq.com/env``.  If the call fails, omit the ``env`` parameter.
+
+Use ``<dd_service>`` = ``{dd_service_name}`` in ALL subsequent Datadog API calls
+(Calls 1–5) as the ``service`` parameter."""
+    else:
+        step_0_block = f"""### Step 0 — Independent Label Resolution (MANDATORY — do this FIRST)
+
+Because this agent runs in parallel with the workload_gatherer, you CANNOT
+access its output.  Resolve the Datadog service identity independently:
+
+1. Call ``kubectl_get_labels(resource_type="deployments", namespace="{ns}")``
+   to retrieve labels and annotations for all deployments in the target namespace.
+2. **If no deployments are found** (empty output or "No deployments found"), the
+   namespace may use a different workload type.  Try each in order until you get
+   label data:
+   - ``kubectl_get_labels(resource_type="statefulsets", namespace="{ns}")``
+   - ``kubectl_get_labels(resource_type="daemonsets", namespace="{ns}")``
+   - ``kubectl_get_labels(resource_type="replicasets", namespace="{ns}")``
+   (ReplicaSets are tried last because they are usually owned by Deployments;
+   standalone ReplicaSets without a Deployment owner are uncommon.)
+3. From the output, identify the Datadog Unified Service Tagging values using
+   this priority order (``kubectl_get_labels`` returns labels and annotations ONLY —
+   container environment variables such as ``DD_SERVICE``/``DD_ENV`` are NOT available):
+   - **Tier 1** — Datadog UST pod/deployment labels:
+     - ``tags.datadoghq.com/service`` → store as ``<dd_service>``
+     - ``tags.datadoghq.com/env``     → store as ``<dd_env>``
+   - **Tier 2** — Generic Kubernetes identity labels (if Tier 1 absent):
+     - ``app.kubernetes.io/name`` → store as ``<dd_service>``
+     - ``app`` → store as ``<dd_service>``
+     - Workload name (deployment/statefulset/daemonset/replicaset name) → store as ``<dd_service>`` (last resort)
+4. If all ``kubectl_get_labels`` calls fail or return no useful data, proceed with
+   cluster-wide Datadog queries (omit ``service=`` and ``env=`` parameters).
+   Record the failure reason in Raw Findings."""
 
     prompt = f"""{ANTI_INJECTION_RULE}
 
@@ -693,34 +769,7 @@ You MUST complete all 5 calls (1–5).  Step 0 is mandatory preparation — do N
 
 ## Data Collection Procedure
 
-### Step 0 — Independent Label Resolution (MANDATORY — do this FIRST)
-
-Because this agent runs in parallel with the workload_gatherer, you CANNOT
-access its output.  Resolve the Datadog service identity independently:
-
-1. Call ``kubectl_get_labels(resource_type="deployments", namespace="{ns}")``
-   to retrieve labels and annotations for all deployments in the target namespace.
-2. **If no deployments are found** (empty output or "No deployments found"), the
-   namespace may use a different workload type.  Try each in order until you get
-   label data:
-   - ``kubectl_get_labels(resource_type="statefulsets", namespace="{ns}")``
-   - ``kubectl_get_labels(resource_type="daemonsets", namespace="{ns}")``
-   - ``kubectl_get_labels(resource_type="replicasets", namespace="{ns}")``
-   (ReplicaSets are tried last because they are usually owned by Deployments;
-   standalone ReplicaSets without a Deployment owner are uncommon.)
-3. From the output, identify the Datadog Unified Service Tagging values using
-   this priority order (``kubectl_get_labels`` returns labels and annotations ONLY —
-   container environment variables such as ``DD_SERVICE``/``DD_ENV`` are NOT available):
-   - **Tier 1** — Datadog UST pod/deployment labels:
-     - ``tags.datadoghq.com/service`` → store as ``<dd_service>``
-     - ``tags.datadoghq.com/env``     → store as ``<dd_env>``
-   - **Tier 2** — Generic Kubernetes identity labels (if Tier 1 absent):
-     - ``app.kubernetes.io/name`` → store as ``<dd_service>``
-     - ``app`` → store as ``<dd_service>``
-     - Workload name (deployment/statefulset/daemonset/replicaset name) → store as ``<dd_service>`` (last resort)
-4. If all ``kubectl_get_labels`` calls fail or return no useful data, proceed with
-   cluster-wide Datadog queries (omit ``service=`` and ``env=`` parameters).
-   Record the failure reason in Raw Findings.
+{step_0_block}
 
 ### Calls 1–2 — Datadog Metrics (CPU and Memory)
 

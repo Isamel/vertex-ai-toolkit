@@ -3640,3 +3640,726 @@ class TestAPMSeverityThresholds:
             "Sequential gatherer prompt must NOT contain the old 'NEVER determines' "
             "wording from the previous _PRIORITY_HIERARCHY."
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Tests for _extract_dd_service helper and _resolve_dd_service_name
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class _FakeMeta:
+    """Minimal K8s ObjectMeta stand-in for testing."""
+
+    def __init__(
+        self,
+        name: str = "",
+        labels: dict[str, str] | None = None,
+        owner_references: list[object] | None = None,
+    ) -> None:
+        self.name = name
+        self.labels = labels
+        self.owner_references = owner_references
+
+
+class _FakeOwnerRef:
+    """Minimal K8s OwnerReference stand-in."""
+
+    def __init__(self, kind: str = "") -> None:
+        self.kind = kind
+
+
+class _FakePodTemplateMeta:
+    def __init__(self, labels: dict[str, str] | None = None) -> None:
+        self.labels = labels
+
+
+class _FakePodTemplateSpec:
+    def __init__(self, metadata: _FakePodTemplateMeta | None = None) -> None:
+        self.metadata = metadata
+
+
+class _FakeSpec:
+    def __init__(self, template: _FakePodTemplateSpec | None = None) -> None:
+        self.template = template
+
+
+class _FakeItem:
+    """Minimal K8s workload item (Deployment/StatefulSet/etc.) stand-in."""
+
+    def __init__(
+        self,
+        metadata: _FakeMeta | None = None,
+        spec: _FakeSpec | None = None,
+    ) -> None:
+        self.metadata = metadata
+        self.spec = spec
+
+
+class _FakeListResult:
+    """Minimal K8s list result stand-in with .items."""
+
+    def __init__(self, items: list[_FakeItem] | None = None) -> None:
+        self.items = items or []
+
+
+class TestExtractDdService:
+    """Unit tests for the _extract_dd_service helper function."""
+
+    def test_tier1_pod_template_dd_label(self) -> None:
+        """Tier 1a: tags.datadoghq.com/service on pod template takes top priority."""
+        from vaig.skills.service_health.skill import _extract_dd_service
+
+        item = _FakeItem(
+            metadata=_FakeMeta(name="my-deploy", labels={"app": "legacy-name"}),
+            spec=_FakeSpec(
+                template=_FakePodTemplateSpec(
+                    metadata=_FakePodTemplateMeta(
+                        labels={
+                            "tags.datadoghq.com/service": "dd-pod-svc",
+                            "app.kubernetes.io/name": "k8s-name",
+                            "app": "legacy-app",
+                        }
+                    )
+                )
+            ),
+        )
+        assert _extract_dd_service(item) == "dd-pod-svc"
+
+    def test_tier1_workload_level_dd_label(self) -> None:
+        """Tier 1b: tags.datadoghq.com/service on workload metadata (no pod template DD label)."""
+        from vaig.skills.service_health.skill import _extract_dd_service
+
+        item = _FakeItem(
+            metadata=_FakeMeta(
+                name="my-deploy",
+                labels={"tags.datadoghq.com/service": "dd-wl-svc"},
+            ),
+            spec=_FakeSpec(
+                template=_FakePodTemplateSpec(
+                    metadata=_FakePodTemplateMeta(labels={"app": "legacy-app"})
+                )
+            ),
+        )
+        assert _extract_dd_service(item) == "dd-wl-svc"
+
+    def test_tier2_k8s_name_label(self) -> None:
+        """Tier 2: app.kubernetes.io/name when no DD labels exist."""
+        from vaig.skills.service_health.skill import _extract_dd_service
+
+        item = _FakeItem(
+            metadata=_FakeMeta(name="my-deploy"),
+            spec=_FakeSpec(
+                template=_FakePodTemplateSpec(
+                    metadata=_FakePodTemplateMeta(
+                        labels={"app.kubernetes.io/name": "k8s-name-svc"}
+                    )
+                )
+            ),
+        )
+        assert _extract_dd_service(item) == "k8s-name-svc"
+
+    def test_tier3_app_label(self) -> None:
+        """Tier 3: legacy 'app' label when no DD or K8s name labels exist."""
+        from vaig.skills.service_health.skill import _extract_dd_service
+
+        item = _FakeItem(
+            metadata=_FakeMeta(name="my-deploy"),
+            spec=_FakeSpec(
+                template=_FakePodTemplateSpec(
+                    metadata=_FakePodTemplateMeta(labels={"app": "legacy-svc"})
+                )
+            ),
+        )
+        assert _extract_dd_service(item) == "legacy-svc"
+
+    def test_tier4_metadata_name_fallback(self) -> None:
+        """Tier 4: metadata.name as last resort when no labels match."""
+        from vaig.skills.service_health.skill import _extract_dd_service
+
+        item = _FakeItem(
+            metadata=_FakeMeta(name="fallback-deploy"),
+            spec=_FakeSpec(
+                template=_FakePodTemplateSpec(
+                    metadata=_FakePodTemplateMeta(labels={})
+                )
+            ),
+        )
+        assert _extract_dd_service(item) == "fallback-deploy"
+
+    def test_no_template_falls_to_metadata_name(self) -> None:
+        """When spec.template is None, falls back to metadata.name."""
+        from vaig.skills.service_health.skill import _extract_dd_service
+
+        item = _FakeItem(
+            metadata=_FakeMeta(name="no-template-deploy"),
+            spec=_FakeSpec(template=None),
+        )
+        assert _extract_dd_service(item) == "no-template-deploy"
+
+
+class TestResolveDdServiceName:
+    """Tests for ServiceHealthSkill._resolve_dd_service_name (static method)."""
+
+    def test_single_deployment_returns_service(self) -> None:
+        """Single deployment → returns DDResolutionResult with service, env, and resource type."""
+        from unittest.mock import patch
+
+        from vaig.skills.service_health.skill import DDResolutionResult, ServiceHealthSkill
+
+        deploy = _FakeItem(
+            metadata=_FakeMeta(name="api-server"),
+            spec=_FakeSpec(
+                template=_FakePodTemplateSpec(
+                    metadata=_FakePodTemplateMeta(
+                        labels={
+                            "tags.datadoghq.com/service": "api-svc",
+                            "tags.datadoghq.com/env": "production",
+                        }
+                    )
+                )
+            ),
+        )
+
+        with (
+            patch(
+                "vaig.tools.gke._clients._create_k8s_clients",
+                return_value=("core", "apps", "custom", "api_client"),
+            ),
+            patch(
+                "vaig.tools.gke._resources._list_resource",
+                side_effect=lambda _c, _a, _cu, res, ns, **kw: (
+                    _FakeListResult([deploy]) if res == "deployments" else _FakeListResult([])
+                ),
+            ),
+        ):
+            result = ServiceHealthSkill._resolve_dd_service_name(
+                gke_config="fake",
+                namespace="prod",
+                user_query="diagnose api-server",
+            )
+        assert isinstance(result, DDResolutionResult)
+        assert result.dd_service_name == "api-svc"
+        assert result.dd_env == "production"
+        assert result.dd_resource_type == "deployments"
+
+    def test_multiple_workloads_exact_match(self) -> None:
+        """Multiple workloads → exact match on workload name wins."""
+        from unittest.mock import patch
+
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        deploys = _FakeListResult([
+            _FakeItem(
+                metadata=_FakeMeta(name="frontend"),
+                spec=_FakeSpec(
+                    template=_FakePodTemplateSpec(
+                        metadata=_FakePodTemplateMeta(
+                            labels={"tags.datadoghq.com/service": "frontend-svc"}
+                        )
+                    )
+                ),
+            ),
+            _FakeItem(
+                metadata=_FakeMeta(name="backend"),
+                spec=_FakeSpec(
+                    template=_FakePodTemplateSpec(
+                        metadata=_FakePodTemplateMeta(
+                            labels={"tags.datadoghq.com/service": "backend-svc"}
+                        )
+                    )
+                ),
+            ),
+        ])
+
+        with (
+            patch(
+                "vaig.tools.gke._clients._create_k8s_clients",
+                return_value=("core", "apps", "custom", "api_client"),
+            ),
+            patch(
+                "vaig.tools.gke._resources._list_resource",
+                side_effect=lambda _c, _a, _cu, res, ns, **kw: (
+                    deploys if res == "deployments" else _FakeListResult([])
+                ),
+            ),
+        ):
+            result = ServiceHealthSkill._resolve_dd_service_name(
+                gke_config="fake",
+                namespace="prod",
+                user_query="backend",
+            )
+        assert result.dd_service_name == "backend-svc"
+        assert result.dd_resource_type == "deployments"
+
+    def test_multiple_workloads_substring_match(self) -> None:
+        """Multiple workloads → substring containment when no exact match."""
+        from unittest.mock import patch
+
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        deploys = _FakeListResult([
+            _FakeItem(
+                metadata=_FakeMeta(name="payment-api"),
+                spec=_FakeSpec(
+                    template=_FakePodTemplateSpec(
+                        metadata=_FakePodTemplateMeta(
+                            labels={"tags.datadoghq.com/service": "payment-svc"}
+                        )
+                    )
+                ),
+            ),
+            _FakeItem(
+                metadata=_FakeMeta(name="order-api"),
+                spec=_FakeSpec(
+                    template=_FakePodTemplateSpec(
+                        metadata=_FakePodTemplateMeta(
+                            labels={"tags.datadoghq.com/service": "order-svc"}
+                        )
+                    )
+                ),
+            ),
+        ])
+
+        with (
+            patch(
+                "vaig.tools.gke._clients._create_k8s_clients",
+                return_value=("core", "apps", "custom", "api_client"),
+            ),
+            patch(
+                "vaig.tools.gke._resources._list_resource",
+                side_effect=lambda _c, _a, _cu, res, ns, **kw: (
+                    deploys if res == "deployments" else _FakeListResult([])
+                ),
+            ),
+        ):
+            result = ServiceHealthSkill._resolve_dd_service_name(
+                gke_config="fake",
+                namespace="prod",
+                user_query="diagnose payment-api issues",
+            )
+        assert result.dd_service_name == "payment-svc"
+        assert result.dd_resource_type == "deployments"
+
+    def test_multiple_workloads_no_match_returns_empty(self) -> None:
+        """Multiple workloads → no query match returns empty string."""
+        from unittest.mock import patch
+
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        deploys = _FakeListResult([
+            _FakeItem(
+                metadata=_FakeMeta(name="frontend"),
+                spec=_FakeSpec(
+                    template=_FakePodTemplateSpec(
+                        metadata=_FakePodTemplateMeta(
+                            labels={"tags.datadoghq.com/service": "frontend-svc"}
+                        )
+                    )
+                ),
+            ),
+            _FakeItem(
+                metadata=_FakeMeta(name="backend"),
+                spec=_FakeSpec(
+                    template=_FakePodTemplateSpec(
+                        metadata=_FakePodTemplateMeta(
+                            labels={"tags.datadoghq.com/service": "backend-svc"}
+                        )
+                    )
+                ),
+            ),
+        ])
+
+        with (
+            patch(
+                "vaig.tools.gke._clients._create_k8s_clients",
+                return_value=("core", "apps", "custom", "api_client"),
+            ),
+            patch(
+                "vaig.tools.gke._resources._list_resource",
+                side_effect=lambda _c, _a, _cu, res, ns, **kw: (
+                    deploys if res == "deployments" else _FakeListResult([])
+                ),
+            ),
+        ):
+            result = ServiceHealthSkill._resolve_dd_service_name(
+                gke_config="fake",
+                namespace="prod",
+                user_query="unrelated query",
+            )
+        assert result.dd_service_name == ""
+
+    def test_no_workloads_returns_empty(self) -> None:
+        """No workloads in namespace → returns empty string."""
+        from unittest.mock import patch
+
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        with (
+            patch(
+                "vaig.tools.gke._clients._create_k8s_clients",
+                return_value=("core", "apps", "custom", "api_client"),
+            ),
+            patch(
+                "vaig.tools.gke._resources._list_resource",
+                return_value=_FakeListResult([]),
+            ),
+        ):
+            result = ServiceHealthSkill._resolve_dd_service_name(
+                gke_config="fake",
+                namespace="empty-ns",
+                user_query="diagnose something",
+            )
+        assert result.dd_service_name == ""
+
+    def test_k8s_client_failure_returns_empty(self) -> None:
+        """When K8s client creation fails, returns empty string gracefully."""
+        from unittest.mock import patch
+
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+        from vaig.tools.base import ToolResult
+
+        with patch(
+            "vaig.tools.gke._clients._create_k8s_clients",
+            return_value=ToolResult(output="Connection refused", error=True),
+        ):
+            result = ServiceHealthSkill._resolve_dd_service_name(
+                gke_config="fake",
+                namespace="prod",
+                user_query="diagnose api",
+            )
+        assert result.dd_service_name == ""
+
+    def test_replicaset_with_deployment_owner_is_skipped(self) -> None:
+        """ReplicaSets owned by Deployments are skipped; standalone RS kept."""
+        from unittest.mock import patch
+
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        # Deployment-managed RS (should be skipped)
+        managed_rs = _FakeItem(
+            metadata=_FakeMeta(
+                name="api-server-abc123",
+                labels={"tags.datadoghq.com/service": "wrong-svc"},
+                owner_references=[_FakeOwnerRef(kind="Deployment")],
+            ),
+            spec=_FakeSpec(
+                template=_FakePodTemplateSpec(
+                    metadata=_FakePodTemplateMeta(
+                        labels={"tags.datadoghq.com/service": "wrong-svc"}
+                    )
+                )
+            ),
+        )
+        # Standalone RS (e.g. from Argo Rollouts — should be kept)
+        standalone_rs = _FakeItem(
+            metadata=_FakeMeta(
+                name="canary-rs",
+                labels={"tags.datadoghq.com/service": "canary-svc"},
+                owner_references=[_FakeOwnerRef(kind="Rollout")],
+            ),
+            spec=_FakeSpec(
+                template=_FakePodTemplateSpec(
+                    metadata=_FakePodTemplateMeta(
+                        labels={"tags.datadoghq.com/service": "canary-svc"}
+                    )
+                )
+            ),
+        )
+
+        def fake_list(_c: object, _a: object, _cu: object, res: str, ns: str, **kw: object) -> _FakeListResult:
+            if res == "replicasets":
+                return _FakeListResult([managed_rs, standalone_rs])
+            return _FakeListResult([])
+
+        with (
+            patch(
+                "vaig.tools.gke._clients._create_k8s_clients",
+                return_value=("core", "apps", "custom", "api_client"),
+            ),
+            patch(
+                "vaig.tools.gke._resources._list_resource",
+                side_effect=fake_list,
+            ),
+        ):
+            result = ServiceHealthSkill._resolve_dd_service_name(
+                gke_config="fake",
+                namespace="prod",
+                user_query="canary-rs",
+            )
+        assert result.dd_service_name == "canary-svc"
+        assert result.dd_resource_type == "replicasets"
+
+    def test_list_resource_exception_is_non_fatal(self) -> None:
+        """Exception from _list_resource for one resource type doesn't crash."""
+        from unittest.mock import patch
+
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        call_count = 0
+
+        def fake_list(_c: object, _a: object, _cu: object, res: str, ns: str, **kw: object) -> _FakeListResult:
+            nonlocal call_count
+            call_count += 1
+            if res == "deployments":
+                raise ConnectionError("API unreachable")
+            if res == "statefulsets":
+                return _FakeListResult([
+                    _FakeItem(
+                        metadata=_FakeMeta(name="db-sts"),
+                        spec=_FakeSpec(
+                            template=_FakePodTemplateSpec(
+                                metadata=_FakePodTemplateMeta(
+                                    labels={"tags.datadoghq.com/service": "db-svc"}
+                                )
+                            )
+                        ),
+                    )
+                ])
+            return _FakeListResult([])
+
+        with (
+            patch(
+                "vaig.tools.gke._clients._create_k8s_clients",
+                return_value=("core", "apps", "custom", "api_client"),
+            ),
+            patch(
+                "vaig.tools.gke._resources._list_resource",
+                side_effect=fake_list,
+            ),
+        ):
+            result = ServiceHealthSkill._resolve_dd_service_name(
+                gke_config="fake",
+                namespace="prod",
+                user_query="db-sts",
+            )
+        assert result.dd_service_name == "db-svc"
+        assert result.dd_resource_type == "statefulsets"
+        assert call_count >= 2, "Should have tried at least deployments and statefulsets"
+
+
+class TestExtractDdEnv:
+    """Unit tests for the _extract_dd_env helper function."""
+
+    def test_pod_template_env_label(self) -> None:
+        """Pod template tags.datadoghq.com/env takes priority."""
+        from vaig.skills.service_health.skill import _extract_dd_env
+
+        item = _FakeItem(
+            metadata=_FakeMeta(name="api", labels={"tags.datadoghq.com/env": "staging"}),
+            spec=_FakeSpec(
+                template=_FakePodTemplateSpec(
+                    metadata=_FakePodTemplateMeta(
+                        labels={"tags.datadoghq.com/env": "production"}
+                    )
+                )
+            ),
+        )
+        assert _extract_dd_env(item) == "production"
+
+    def test_workload_level_env_label(self) -> None:
+        """Workload-level tags.datadoghq.com/env used when pod template has none."""
+        from vaig.skills.service_health.skill import _extract_dd_env
+
+        item = _FakeItem(
+            metadata=_FakeMeta(name="api", labels={"tags.datadoghq.com/env": "staging"}),
+            spec=_FakeSpec(
+                template=_FakePodTemplateSpec(
+                    metadata=_FakePodTemplateMeta(labels={})
+                )
+            ),
+        )
+        assert _extract_dd_env(item) == "staging"
+
+    def test_no_env_label_returns_empty(self) -> None:
+        """No env label anywhere → returns empty string."""
+        from vaig.skills.service_health.skill import _extract_dd_env
+
+        item = _FakeItem(
+            metadata=_FakeMeta(name="api"),
+            spec=_FakeSpec(
+                template=_FakePodTemplateSpec(
+                    metadata=_FakePodTemplateMeta(labels={"app": "my-app"})
+                )
+            ),
+        )
+        assert _extract_dd_env(item) == ""
+
+    def test_no_template_returns_empty(self) -> None:
+        """When spec.template is None, returns empty string."""
+        from vaig.skills.service_health.skill import _extract_dd_env
+
+        item = _FakeItem(
+            metadata=_FakeMeta(name="api"),
+            spec=_FakeSpec(template=None),
+        )
+        assert _extract_dd_env(item) == ""
+
+
+class TestFirstHitSemantics:
+    """Test that _resolve_dd_service_name uses first-hit semantics (Fix 4).
+
+    When the same workload name appears in multiple resource types, the first
+    one found (per probe order: deployments → statefulsets → ...) wins.
+    """
+
+    def test_same_name_in_deployments_and_statefulsets_keeps_first(self) -> None:
+        """Same workload name in deployments and statefulsets → deployments wins."""
+        from unittest.mock import patch
+
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        deploy = _FakeItem(
+            metadata=_FakeMeta(name="my-app"),
+            spec=_FakeSpec(
+                template=_FakePodTemplateSpec(
+                    metadata=_FakePodTemplateMeta(
+                        labels={
+                            "tags.datadoghq.com/service": "deploy-svc",
+                            "tags.datadoghq.com/env": "prod",
+                        }
+                    )
+                )
+            ),
+        )
+        sts = _FakeItem(
+            metadata=_FakeMeta(name="my-app"),
+            spec=_FakeSpec(
+                template=_FakePodTemplateSpec(
+                    metadata=_FakePodTemplateMeta(
+                        labels={
+                            "tags.datadoghq.com/service": "sts-svc",
+                            "tags.datadoghq.com/env": "staging",
+                        }
+                    )
+                )
+            ),
+        )
+
+        def fake_list(_c: object, _a: object, _cu: object, res: str, ns: str, **kw: object) -> _FakeListResult:
+            if res == "deployments":
+                return _FakeListResult([deploy])
+            if res == "statefulsets":
+                return _FakeListResult([sts])
+            return _FakeListResult([])
+
+        with (
+            patch(
+                "vaig.tools.gke._clients._create_k8s_clients",
+                return_value=("core", "apps", "custom", "api_client"),
+            ),
+            patch(
+                "vaig.tools.gke._resources._list_resource",
+                side_effect=fake_list,
+            ),
+        ):
+            result = ServiceHealthSkill._resolve_dd_service_name(
+                gke_config="fake",
+                namespace="prod",
+                user_query="my-app",
+            )
+        # First hit (deployments) wins — NOT overwritten by statefulsets.
+        assert result.dd_service_name == "deploy-svc"
+        assert result.dd_env == "prod"
+        assert result.dd_resource_type == "deployments"
+
+
+class TestDatadogPromptPreResolution:
+    """Tests for dd_service_name / dd_env / dd_resource_type in build_datadog_gatherer_prompt."""
+
+    def test_partially_pre_resolved_name_in_prompt(self) -> None:
+        """When only dd_service_name is provided (no dd_env), Step 0 uses partial PRE-RESOLVED."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        prompt = build_datadog_gatherer_prompt(
+            namespace="prod",
+            cluster_name="my-cluster",
+            datadog_api_enabled=True,
+            dd_service_name="my-api-service",
+        )
+        assert "PRE-RESOLVED" in prompt
+        assert "my-api-service" in prompt
+        # kubectl_get_labels is ALWAYS in the tool reference table (Fix 2)
+        assert "kubectl_get_labels" in prompt.split("## Data Collection Procedure")[0]
+        # Partial resolution — should still mention env resolution via kubectl_get_labels
+        assert "Not pre-resolved" in prompt
+
+    def test_fully_pre_resolved_skips_kubectl_labels(self) -> None:
+        """When both dd_service_name AND dd_env are provided, Step 0 skips kubectl_get_labels entirely."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        prompt = build_datadog_gatherer_prompt(
+            namespace="prod",
+            cluster_name="my-cluster",
+            datadog_api_enabled=True,
+            dd_service_name="my-api-service",
+            dd_env="production",
+        )
+        assert "PRE-RESOLVED" in prompt
+        assert "my-api-service" in prompt
+        assert "production" in prompt
+        # Fully resolved — should NOT contain "Independent Label Resolution"
+        assert "Independent Label Resolution" not in prompt
+        # Fully resolved — should say to NOT call kubectl_get_labels for service OR environment
+        assert "Do NOT call" in prompt
+        assert "use these values directly" in prompt
+
+    def test_resource_type_in_partial_resolution(self) -> None:
+        """When dd_resource_type is 'statefulsets', Step 0 uses that instead of 'deployments'."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        prompt = build_datadog_gatherer_prompt(
+            namespace="prod",
+            cluster_name="my-cluster",
+            datadog_api_enabled=True,
+            dd_service_name="my-sts-service",
+            dd_resource_type="statefulsets",
+        )
+        assert "PRE-RESOLVED" in prompt
+        assert "my-sts-service" in prompt
+        # Step 0 should use the correct resource type for env lookup
+        assert 'resource_type="statefulsets"' in prompt
+        # Should NOT use the hardcoded default "deployments" for env lookup
+        assert 'resource_type="deployments"' not in prompt
+
+    def test_empty_name_uses_llm_resolution(self) -> None:
+        """When dd_service_name is empty, Step 0 uses LLM-based label resolution."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        prompt = build_datadog_gatherer_prompt(
+            namespace="prod",
+            cluster_name="my-cluster",
+            datadog_api_enabled=True,
+            dd_service_name="",
+        )
+        assert "PRE-RESOLVED" not in prompt
+        assert "Independent Label Resolution" in prompt
+        # kubectl_get_labels is ALWAYS in tool reference (Fix 2)
+        assert "kubectl_get_labels" in prompt
+
+    def test_default_is_empty_string(self) -> None:
+        """Default dd_service_name is empty — backward compatible."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        # Call without dd_service_name (default)
+        prompt = build_datadog_gatherer_prompt(
+            namespace="prod",
+            cluster_name="my-cluster",
+            datadog_api_enabled=True,
+        )
+        assert "Independent Label Resolution" in prompt
+        assert "PRE-RESOLVED" not in prompt
+
+    def test_kubectl_get_labels_always_in_tool_reference(self) -> None:
+        """Fix 2: kubectl_get_labels is ALWAYS in the tool reference table, even when pre-resolved."""
+        from vaig.skills.service_health.prompts import build_datadog_gatherer_prompt
+
+        # Even with full pre-resolution, kubectl_get_labels must be in tool reference
+        prompt = build_datadog_gatherer_prompt(
+            namespace="prod",
+            cluster_name="my-cluster",
+            datadog_api_enabled=True,
+            dd_service_name="svc",
+            dd_env="prod",
+        )
+        tool_ref_section = prompt.split("## Data Collection Procedure")[0]
+        assert "kubectl_get_labels" in tool_ref_section
