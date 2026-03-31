@@ -36,6 +36,57 @@ from vaig.utils.json_cleaner import clean_llm_json
 
 logger = logging.getLogger(__name__)
 
+# ── Label priority for Datadog service name resolution ───────────────────
+# Used by ``_resolve_dd_service_name`` to extract the DD service identity
+# from K8s workload objects.
+
+_DD_SERVICE_LABEL = "tags.datadoghq.com/service"
+_K8S_NAME_LABEL = "app.kubernetes.io/name"
+_APP_LABEL = "app"
+
+
+def _extract_dd_service(item: Any) -> str:
+    """Extract the Datadog service name from a K8s workload object.
+
+    Follows the label priority order defined in the exploration:
+    1. Pod template labels ``tags.datadoghq.com/service``
+    2. Workload-level labels ``tags.datadoghq.com/service``
+    3. Pod template labels ``app.kubernetes.io/name``
+    4. Pod template labels ``app``
+    5. ``metadata.name`` (workload name — last resort)
+    """
+    # --- Pod template labels (spec.template.metadata.labels) ---
+    pod_labels: dict[str, str] = {}
+    try:
+        _tmpl = getattr(item.spec, "template", None)
+        _tmpl_meta = getattr(_tmpl, "metadata", None) if _tmpl else None
+        _tmpl_labels = getattr(_tmpl_meta, "labels", None) if _tmpl_meta else None
+        pod_labels = _tmpl_labels or {}
+    except Exception:  # noqa: BLE001
+        pod_labels = {}
+
+    # Tier 1a: DD UST label on pod template
+    if _DD_SERVICE_LABEL in pod_labels:
+        return pod_labels[_DD_SERVICE_LABEL]
+
+    # --- Workload-level labels (metadata.labels) ---
+    wl_labels: dict[str, str] = getattr(getattr(item, "metadata", None), "labels", None) or {}
+
+    # Tier 1b: DD UST label on workload
+    if _DD_SERVICE_LABEL in wl_labels:
+        return wl_labels[_DD_SERVICE_LABEL]
+
+    # Tier 2: standard K8s name label (pod template)
+    if _K8S_NAME_LABEL in pod_labels:
+        return pod_labels[_K8S_NAME_LABEL]
+
+    # Tier 3: legacy app label (pod template)
+    if _APP_LABEL in pod_labels:
+        return pod_labels[_APP_LABEL]
+
+    # Tier 4: workload name as last resort
+    return getattr(getattr(item, "metadata", None), "name", "") or ""
+
 
 class ServiceHealthSkill(BaseSkill):
     """Service health assessment skill using live Kubernetes tools.
@@ -78,6 +129,11 @@ class ServiceHealthSkill(BaseSkill):
         # that inspecting the config (dry-run, ``vaig skills info``) does
         # NOT trigger live K8s API calls — only the execution path does.
         self._prefetched_metrics: dict[str, str] = {"pods": "", "nodes": ""}
+        # Pre-resolved Datadog service name.  Populated by
+        # ``pre_execute_parallel()`` via ``_resolve_dd_service_name()``.
+        # Empty string means resolution failed or was not attempted —
+        # the prompt builder falls back to LLM-based Step 0 resolution.
+        self._prefetched_dd_service_name: str = ""
 
     def get_metadata(self) -> SkillMetadata:
         return SkillMetadata(
@@ -118,7 +174,7 @@ class ServiceHealthSkill(BaseSkill):
         template = PHASE_PROMPTS.get(phase.value, PHASE_PROMPTS["analyze"])
         return template.format(context=context, user_input=user_input)
 
-    def pre_execute_parallel(self, query: str) -> None:  # noqa: ARG002
+    def pre_execute_parallel(self, query: str) -> None:
         """Pre-warm the K8s client cache and pre-fetch kubectl_top metrics.
 
         This hook runs **once**, sequentially, before any parallel gatherer
@@ -170,6 +226,27 @@ class ServiceHealthSkill(BaseSkill):
         except Exception:  # noqa: BLE001
             logger.debug(
                 "kubectl_top pre-fetch skipped (non-fatal)",
+                exc_info=True,
+            )
+
+        # ── Pre-resolve Datadog service name ─────────────────────────────
+        # Programmatically queries K8s workload labels to determine the DD
+        # service name.  This removes the dependency on LLM non-determinism
+        # for Step 0 of the datadog_gatherer prompt.
+        try:
+            from vaig.core.config import get_settings  # noqa: PLC0415
+
+            settings = get_settings()
+            if settings.datadog.enabled:
+                effective_gke = settings.gke
+                self._prefetched_dd_service_name = self._resolve_dd_service_name(
+                    gke_config=effective_gke,
+                    namespace=effective_gke.default_namespace,
+                    user_query=query,
+                )
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "Datadog service name pre-resolution skipped (non-fatal)",
                 exc_info=True,
             )
 
@@ -265,6 +342,119 @@ class ServiceHealthSkill(BaseSkill):
                 result["nodes"] = f"[kubectl_top nodes unavailable: {exc}]"
 
         return result
+
+    @staticmethod
+    def _resolve_dd_service_name(
+        gke_config: Any,
+        namespace: str,
+        user_query: str,
+    ) -> str:
+        """Pre-resolve the Datadog service name from K8s workload labels.
+
+        Queries the Kubernetes API directly via :func:`_list_resource` to
+        discover workload labels and extract the Datadog service identity.
+        This removes the dependency on LLM non-determinism for Step 0 of
+        the ``datadog_gatherer`` prompt.
+
+        **Workload probe order** — deployments → statefulsets → daemonsets →
+        replicasets (standalone only — deployment-managed RS are skipped).
+
+        **Label priority** (per workload):
+
+        1. ``spec.template.metadata.labels["tags.datadoghq.com/service"]``
+        2. ``metadata.labels["tags.datadoghq.com/service"]``
+        3. ``spec.template.metadata.labels["app.kubernetes.io/name"]``
+        4. ``spec.template.metadata.labels["app"]``
+        5. ``metadata.name`` (workload name — last resort)
+
+        When multiple workloads are found the method matches against
+        ``user_query`` — exact match first, then substring containment.
+        If a single workload exists it is returned directly.
+
+        Args:
+            gke_config: Effective :class:`~vaig.core.config.GKEConfig` with
+                CLI overrides already applied.
+            namespace: Target namespace to probe.
+            user_query: Original user query, used to disambiguate when
+                multiple workloads are found.
+
+        Returns:
+            The resolved Datadog service name, or an empty string when
+            resolution fails (the prompt builder falls back to LLM-based
+            Step 0).
+        """
+        from vaig.tools.gke._clients import _create_k8s_clients  # noqa: PLC0415
+        from vaig.tools.gke._resources import _list_resource  # noqa: PLC0415
+
+        clients = _create_k8s_clients(gke_config)
+        if isinstance(clients, ToolResult):
+            logger.debug("DD service resolution skipped — K8s clients unavailable: %s", clients)
+            return ""
+
+        core_v1, apps_v1, custom_api, _api_client = clients
+        ns = namespace or "default"
+
+        # Collect workload_name → dd_service_name for all workloads.
+        workload_services: dict[str, str] = {}
+        resource_types = ("deployments", "statefulsets", "daemonsets", "replicasets")
+
+        for resource_type in resource_types:
+            try:
+                result = _list_resource(core_v1, apps_v1, custom_api, resource_type, ns)
+            except Exception:  # noqa: BLE001
+                logger.debug("DD service resolution: failed to list %s (non-fatal)", resource_type)
+                continue
+
+            # ToolResult means the resource type is not supported or API error.
+            if isinstance(result, ToolResult):
+                continue
+
+            items = getattr(result, "items", None)
+            if not items:
+                continue
+
+            for item in items:
+                metadata = getattr(item, "metadata", None)
+                if not metadata:
+                    continue
+
+                # Skip deployment-managed ReplicaSets — only keep standalone
+                # ones (e.g. from Argo Rollouts).
+                if resource_type == "replicasets":
+                    owner_refs = getattr(metadata, "owner_references", None) or []
+                    if any(getattr(ref, "kind", "") == "Deployment" for ref in owner_refs):
+                        continue
+
+                workload_name: str = getattr(metadata, "name", "") or ""
+                if not workload_name:
+                    continue
+
+                dd_service = _extract_dd_service(item)
+                workload_services[workload_name] = dd_service
+
+        if not workload_services:
+            return ""
+
+        # Single workload → return directly.
+        if len(workload_services) == 1:
+            return next(iter(workload_services.values()))
+
+        # Multiple workloads → match against user_query.
+        query_lower = user_query.lower()
+
+        # Pass 1: exact match on workload name.
+        for wl_name, dd_service in workload_services.items():
+            if wl_name.lower() == query_lower:
+                return dd_service
+
+        # Pass 2: substring containment (workload name in query or query in workload name).
+        for wl_name, dd_service in workload_services.items():
+            wl_lower = wl_name.lower()
+            if wl_lower in query_lower or query_lower in wl_lower:
+                return dd_service
+
+        # No match — return empty so the prompt falls back to LLM-based resolution.
+        return ""
 
     def get_agents_config(self, **kwargs: Any) -> list[dict[str, Any]]:
         """Return the default pipeline configuration — the parallel pipeline config.
@@ -642,6 +832,7 @@ class ServiceHealthSkill(BaseSkill):
                         namespace=effective_namespace,
                         cluster_name=effective_gke.cluster_name,
                         datadog_api_enabled=True,
+                        dd_service_name=self._prefetched_dd_service_name,
                     ),
                     "model": "gemini-2.5-flash",
                     "temperature": 0.0,
