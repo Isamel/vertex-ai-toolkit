@@ -61,6 +61,7 @@ dev = [
     "types-PyYAML>=6.0.0",
     "vertex-ai-toolkit[live]",
     "vertex-ai-toolkit[rag]",
+    "vertex-ai-toolkit[web]",
 ]
 
 [project.scripts]

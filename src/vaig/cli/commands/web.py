@@ -6,7 +6,6 @@ Requires web extras: ``pip install vertex-ai-toolkit[web]``
 
 from __future__ import annotations
 
-import logging
 from typing import Annotated
 
 import typer
@@ -15,8 +14,6 @@ from vaig.cli._helpers import (
     console,
     err_console,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def register(app: typer.Typer) -> None:
@@ -30,7 +27,7 @@ def register(app: typer.Typer) -> None:
         ] = "0.0.0.0",  # noqa: S104
         port: Annotated[
             int,
-            typer.Option("--port", "-p", help="Bind port"),
+            typer.Option("--port", "-p", help="Bind port", envvar="PORT"),
         ] = 8080,
         reload: Annotated[
             bool,

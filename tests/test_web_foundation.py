@@ -13,6 +13,10 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+
+# Skip entire module if web extras are not installed
+pytest.importorskip("fastapi", reason="FastAPI not available; install the 'web' extra to run web tests.")
+
 from httpx import ASGITransport, AsyncClient
 
 from vaig.web.app import create_app
