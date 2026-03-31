@@ -76,7 +76,12 @@ async def get_settings(request: Request) -> Settings:
     overrides: dict[str, Any] = {}
 
     # ── 1. Load session config (lowest priority) ─────────────
-    session_id = request.query_params.get("session_id") or request.query_params.get("session")
+    session_id = (
+        request.query_params.get("session_id")
+        or request.query_params.get("session")
+        or request.path_params.get("session_id")
+        or request.path_params.get("session")
+    )
     if session_id:
         store = getattr(request.app.state, "session_store", None)
         if store is not None and hasattr(store, "async_get_config"):
@@ -106,9 +111,11 @@ async def get_settings(request: Request) -> Settings:
                     continue
             elif key == "max_tokens":
                 try:
-                    overrides[key] = int(value)
+                    max_tokens = int(value)
                 except (ValueError, TypeError):
                     continue
+                if max_tokens > 0:
+                    overrides[key] = max_tokens
             else:
                 overrides[key] = str(value).strip()
 

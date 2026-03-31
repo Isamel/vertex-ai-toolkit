@@ -30,31 +30,36 @@ _VALID_CONFIG_KEYS = frozenset(
 def _validate_config(form_data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """Validate and normalise form data into a config dict.
 
+    Only keys present in ``_VALID_CONFIG_KEYS`` are considered; unknown
+    keys are silently dropped.
+
     Returns:
         A tuple of ``(config, errors)``.  *config* contains only valid,
         type-coerced values.  *errors* is a list of human-readable
         validation messages (empty on success).
     """
+    # Filter to known keys only
+    filtered = {k: v for k, v in form_data.items() if k in _VALID_CONFIG_KEYS}
     config: dict[str, Any] = {}
     errors: list[str] = []
 
     # project — non-empty string
-    project = str(form_data.get("project", "")).strip()
+    project = str(filtered.get("project", "")).strip()
     if project:
         config["project"] = project
 
     # region — non-empty string
-    region = str(form_data.get("region", "")).strip()
+    region = str(filtered.get("region", "")).strip()
     if region:
         config["region"] = region
 
     # model — non-empty string
-    model = str(form_data.get("model", "")).strip()
+    model = str(filtered.get("model", "")).strip()
     if model:
         config["model"] = model
 
     # temperature — float in [0.0, 2.0]
-    temp_raw = form_data.get("temperature")
+    temp_raw = filtered.get("temperature")
     if temp_raw is not None and str(temp_raw).strip():
         try:
             temp = float(temp_raw)
@@ -66,7 +71,7 @@ def _validate_config(form_data: dict[str, Any]) -> tuple[dict[str, Any], list[st
             errors.append("Temperature must be a number.")
 
     # max_tokens — positive integer
-    mt_raw = form_data.get("max_tokens")
+    mt_raw = filtered.get("max_tokens")
     if mt_raw is not None and str(mt_raw).strip():
         try:
             mt = int(mt_raw)
@@ -78,7 +83,7 @@ def _validate_config(form_data: dict[str, Any]) -> tuple[dict[str, Any], list[st
             errors.append("Max tokens must be an integer.")
 
     # system_instructions — free-form text
-    si = str(form_data.get("system_instructions", "")).strip()
+    si = str(filtered.get("system_instructions", "")).strip()
     if si:
         config["system_instructions"] = si
 
@@ -107,7 +112,10 @@ def _defaults_from_settings() -> dict[str, Any]:
             "max_tokens": base.generation.max_output_tokens,
             "system_instructions": "",
         }
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception:  # noqa: BLE001
+        logger.warning("Failed to load base settings, using hard-coded defaults", exc_info=True)
         return {
             "project": "",
             "region": "us-central1",
@@ -138,13 +146,19 @@ async def settings_form(request: Request) -> Response:
     error: str | None = None
 
     # Overlay session config if available
-    if session_id and store is not None and hasattr(store, "async_get_config"):
+    if (
+        session_id
+        and store is not None
+        and hasattr(store, "async_get_session")
+        and hasattr(store, "async_get_config")
+    ):
         session_data = await store.async_get_session(session_id)
         if session_data is None or session_data.get("user") != user:
             error = f"Session {session_id[:12]} not found."
         else:
-            session_config = await store.async_get_config(session_id, user)
-            if session_config:
+            # Extract config directly from session doc (avoids redundant read)
+            session_config = session_data.get("config")
+            if isinstance(session_config, dict):
                 form_values.update(session_config)
 
     templates = request.app.state.templates
@@ -178,32 +192,16 @@ async def settings_save(request: Request) -> Response:
     # Validate
     config, errors = _validate_config(form_dict)
 
-    if errors:
-        # Re-render with errors
-        form_values = _defaults_from_settings()
-        form_values.update(form_dict)
-        templates = request.app.state.templates
-        return templates.TemplateResponse(  # type: ignore[no-any-return]
-            request=request,
-            name="settings.html",
-            context={
-                "form_values": form_values,
-                "session_id": session_id,
-                "user": user,
-                "error": None,
-                "errors": errors,
-            },
-        )
-
-    # Persist
-    if not session_id:
-        errors.append("No session selected.")
-    elif store is None or not hasattr(store, "async_save_config"):
-        errors.append("Session store not configured.")
-    else:
-        saved = await store.async_save_config(session_id, config, user)
-        if not saved:
-            errors.append("Session not found or access denied.")
+    if not errors:
+        # Persist
+        if not session_id:
+            errors.append("No session selected.")
+        elif store is None or not hasattr(store, "async_save_config"):
+            errors.append("Session store not configured.")
+        else:
+            saved = await store.async_save_config(session_id, config, user)
+            if not saved:
+                errors.append("Session not found or access denied.")
 
     if errors:
         form_values = _defaults_from_settings()

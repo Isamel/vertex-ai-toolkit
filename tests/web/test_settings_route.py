@@ -96,6 +96,8 @@ class _FakeSessionStore:
         session = self.sessions.get(session_id)
         if session is None or session.get("user") != user:
             return False
+        # Mirror Firestore behaviour: store config inside the session doc
+        session["config"] = config
         self.configs[session_id] = config
         return True
 
@@ -122,17 +124,19 @@ def app_with_store():
     """Create app with fake session store pre-populated."""
     application = create_app()
     store = _FakeSessionStore()
+    config_data = {
+        "project": "stored-project",
+        "model": "gemini-2.5-flash",
+        "temperature": 0.3,
+    }
     store.sessions["sess-1"] = {
         "id": "sess-1",
         "name": "My Chat",
         "model": "gemini-2.5-pro",
         "user": "test@test.com",
+        "config": config_data,
     }
-    store.configs["sess-1"] = {
-        "project": "stored-project",
-        "model": "gemini-2.5-flash",
-        "temperature": 0.3,
-    }
+    store.configs["sess-1"] = config_data
     application.state.session_store = store
     return application
 

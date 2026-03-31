@@ -96,6 +96,7 @@ class TestGetSettings:
         request = MagicMock()
         request.headers = {"content-type": "application/x-www-form-urlencoded"}
         request.query_params = {}
+        request.path_params = {}
         form_data = {"project": "test-proj", "model": "gemini-2.0-flash"}
         request.form = AsyncMock(return_value=form_data)
 
@@ -110,6 +111,7 @@ class TestGetSettings:
         request = MagicMock()
         request.headers = {"content-type": "text/html"}
         request.query_params = {"project": "query-proj"}
+        request.path_params = {}
 
         with patch("vaig.web.deps.Settings.from_overrides") as mock_from:
             mock_from.return_value = MagicMock()
@@ -122,6 +124,7 @@ class TestGetSettings:
         request = MagicMock()
         request.headers = {"content-type": "application/x-www-form-urlencoded"}
         request.query_params = {}
+        request.path_params = {}
         form_data = {"project": "", "model": "  ", "temperature": "0.5"}
         request.form = AsyncMock(return_value=form_data)
 
@@ -136,6 +139,7 @@ class TestGetSettings:
         request = MagicMock()
         request.headers = {"content-type": "application/x-www-form-urlencoded"}
         request.query_params = {}
+        request.path_params = {}
         form_data = {"temperature": "0.7"}
         request.form = AsyncMock(return_value=form_data)
 
@@ -150,6 +154,7 @@ class TestGetSettings:
         request = MagicMock()
         request.headers = {"content-type": "application/x-www-form-urlencoded"}
         request.query_params = {}
+        request.path_params = {}
         form_data = {"temperature": "not-a-number", "project": "valid-proj"}
         request.form = AsyncMock(return_value=form_data)
 
