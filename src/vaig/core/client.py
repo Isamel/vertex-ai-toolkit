@@ -27,6 +27,7 @@ from google.genai import types
 from vaig.core.auth import get_credentials
 from vaig.core.cache import CacheStats, ResponseCache, _make_cache_key
 from vaig.core.exceptions import (
+    CONTEXT_WINDOW_ERROR_KEYWORDS,
     ContextWindowExceededError,
     GCPAuthError,
     GCPPermissionError,
@@ -58,21 +59,8 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
 # already handled) from non-retryable (propagate immediately).
 _RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 
-# Keywords (case-insensitive) that identify a context/token-limit 400 error
-# from the google-genai SDK.  Used to convert generic ClientError(400) into
-# ContextWindowExceededError before it propagates up the stack.
-_CONTEXT_WINDOW_ERROR_KEYWORDS: tuple[str, ...] = (
-    "context window",
-    "token limit",
-    "max tokens",
-    "maximum tokens",
-    "prompt is too long",
-    "too many tokens",
-    "exceeds the maximum",
-    "content too large",
-    "resource_exhausted",
-    "request payload size exceeds",
-)
+# Re-export for backward compatibility (tests import from here).
+_CONTEXT_WINDOW_ERROR_KEYWORDS = CONTEXT_WINDOW_ERROR_KEYWORDS
 
 
 def _is_context_window_error(exc: genai_errors.APIError) -> bool:
@@ -84,7 +72,7 @@ def _is_context_window_error(exc: genai_errors.APIError) -> bool:
     if exc.code not in (400, 413):
         return False
     msg_lower = str(exc).lower()
-    return any(kw in msg_lower for kw in _CONTEXT_WINDOW_ERROR_KEYWORDS)
+    return any(kw in msg_lower for kw in CONTEXT_WINDOW_ERROR_KEYWORDS)
 
 
 def _safe_int(value: Any) -> int:

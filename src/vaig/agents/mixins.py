@@ -19,7 +19,7 @@ from vaig.core.async_utils import to_async
 from vaig.core.config import DEFAULT_CHARS_PER_TOKEN, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, get_settings
 from vaig.core.event_bus import EventBus
 from vaig.core.events import ContextWindowChecked
-from vaig.core.exceptions import ContextWindowExceededError, MaxIterationsError
+from vaig.core.exceptions import CONTEXT_WINDOW_ERROR_KEYWORDS, ContextWindowExceededError, MaxIterationsError
 from vaig.core.output_redactor import redact_sensitive_output
 from vaig.core.prompt_defense import wrap_untrusted_content
 from vaig.session.summarizer import SUMMARIZATION_PROMPT, estimate_history_tokens
@@ -46,17 +46,8 @@ BUDGET_WARNING_THRESHOLD = 0.8
 # the API rejects the request outright.
 CONTEXT_CIRCUIT_BREAKER_PCT = 95.0
 
-# Keywords (case-insensitive) that identify a context/token-limit error from the API.
-# Defined at module level to avoid duplication between sync and async tool loops.
-_CONTEXT_ERROR_KEYWORDS: tuple[str, ...] = (
-    "context window",
-    "token limit",
-    "max tokens",
-    "maximum tokens",
-    "prompt is too long",
-    "too many tokens",
-    "exceeds the maximum allowed size",
-)
+# Re-export under the old name for backward compatibility.
+_CONTEXT_ERROR_KEYWORDS = CONTEXT_WINDOW_ERROR_KEYWORDS
 
 
 class OnToolCall(Protocol):
@@ -283,6 +274,11 @@ class ToolLoopMixin:
                     **gen_kwargs,
                 )
             except Exception as _api_exc:
+                # If it's already a ContextWindowExceededError (e.g. from circuit breaker),
+                # re-raise immediately — don't let the broad except swallow it.
+                if isinstance(_api_exc, ContextWindowExceededError):
+                    raise
+
                 _msg_lower = str(_api_exc).lower()
                 _is_ctx_error = any(kw in _msg_lower for kw in _CONTEXT_ERROR_KEYWORDS)
 
@@ -300,10 +296,10 @@ class ToolLoopMixin:
                     )
                     raise
 
-                # google-genai SDK ClientError(400) — same error, different type.
-                if isinstance(_api_exc, genai_errors.ClientError) and _api_exc.code == 400 and _is_ctx_error:
+                # google-genai SDK ClientError(400/413) — same error, different type.
+                if isinstance(_api_exc, genai_errors.ClientError) and _api_exc.code in (400, 413) and _is_ctx_error:
                     raise ContextWindowExceededError(
-                        f"Context window exceeded (genai ClientError 400): {_api_exc}",
+                        f"Context window exceeded (genai ClientError {_api_exc.code}): {_api_exc}",
                         context_pct=peak_context_pct,
                         usage=dict(total_usage),
                     ) from _api_exc
@@ -1082,6 +1078,11 @@ class ToolLoopMixin:
                     **gen_kwargs,
                 )
             except Exception as _api_exc:
+                # If it's already a ContextWindowExceededError (e.g. from circuit breaker),
+                # re-raise immediately — don't let the broad except swallow it.
+                if isinstance(_api_exc, ContextWindowExceededError):
+                    raise
+
                 _msg_lower = str(_api_exc).lower()
                 _is_ctx_error = any(kw in _msg_lower for kw in _CONTEXT_ERROR_KEYWORDS)
 
@@ -1099,10 +1100,10 @@ class ToolLoopMixin:
                     )
                     raise
 
-                # google-genai SDK ClientError(400) — same error, different type.
-                if isinstance(_api_exc, genai_errors.ClientError) and _api_exc.code == 400 and _is_ctx_error:
+                # google-genai SDK ClientError(400/413) — same error, different type.
+                if isinstance(_api_exc, genai_errors.ClientError) and _api_exc.code in (400, 413) and _is_ctx_error:
                     raise ContextWindowExceededError(
-                        f"Context window exceeded (genai ClientError 400): {_api_exc}",
+                        f"Context window exceeded (genai ClientError {_api_exc.code}): {_api_exc}",
                         context_pct=peak_context_pct,
                         usage=dict(total_usage),
                     ) from _api_exc

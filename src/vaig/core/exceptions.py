@@ -7,6 +7,25 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from vaig.agents.chunked import ChunkResult
 
+# ── Shared context-window error keywords ─────────────────────
+# Canonical list of keywords (case-insensitive) that identify a context /
+# token-limit error from the Gemini API.  Imported by both ``client.py``
+# (low-level retry layer) and ``mixins.py`` (tool-loop layer) so the
+# detection logic stays in one place.
+CONTEXT_WINDOW_ERROR_KEYWORDS: tuple[str, ...] = (
+    "context window",
+    "token limit",
+    "max tokens",
+    "maximum tokens",
+    "prompt is too long",
+    "too many tokens",
+    "exceeds the maximum",
+    "exceeds the maximum allowed size",
+    "content too large",
+    "resource_exhausted",
+    "request payload size exceeds",
+)
+
 
 class VAIGError(Exception):
     """Base exception for all VAIG errors."""

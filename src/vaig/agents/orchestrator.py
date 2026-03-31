@@ -301,13 +301,14 @@ class Orchestrator:
         """
         content = prev_result.content
         if len(content) > max_chars:
+            marker = "\n\n[TRUNCATED — output exceeded context budget]"
             logger.warning(
                 "Previous agent '%s' output (%d chars) exceeds budget (%d chars) — truncating",
                 agent_role,
                 len(content),
                 max_chars,
             )
-            content = content[:max_chars] + "\n\n[TRUNCATED — output exceeded context budget]"
+            content = content[: max_chars - len(marker)] + marker
 
         tools_summary = _build_tools_summary(agent_role, prev_result.metadata)
         return (
@@ -3470,8 +3471,8 @@ class Orchestrator:
         see which gatherers failed without the pipeline crashing.
 
         When the combined output exceeds *max_chars* each section is
-        proportionally truncated so that every gatherer contributes an equal
-        share of the budget.  A ``[TRUNCATED]`` marker is inserted at the
+        truncated to an equal share of the budget so that every gatherer
+        contributes equally.  A ``[TRUNCATED]`` marker is inserted at the
         cut point.
 
         Args:
@@ -3498,9 +3499,9 @@ class Orchestrator:
         if len(merged) <= max_chars:
             return merged
 
-        # Budget exceeded — truncate each section proportionally.
+        # Budget exceeded — truncate each section to an equal share.
         logger.warning(
-            "Merged gatherer output (%d chars) exceeds budget (%d chars) — truncating proportionally",
+            "Merged gatherer output (%d chars) exceeds budget (%d chars) — truncating to equal shares",
             len(merged),
             max_chars,
         )
@@ -3510,19 +3511,26 @@ class Orchestrator:
 
         # Reserve space for separator overhead and truncation markers.
         separator = "\n\n"
+        marker = "\n\n[TRUNCATED — output exceeded context budget]"
         overhead = len(separator) * max(n - 1, 0)
-        usable = max(max_chars - overhead, n)  # at least 1 char per section
+        # Worst case: every section needs truncation, so reserve marker space.
+        marker_overhead = len(marker) * n
+        usable = max(max_chars - overhead - marker_overhead, n)  # at least 1 char per section
         per_section = usable // n
 
         truncated_sections: list[str] = []
         for section in sections:
             if len(section) > per_section:
                 truncated_sections.append(
-                    section[:per_section] + "\n\n[TRUNCATED — output exceeded context budget]"
+                    section[:per_section] + marker
                 )
             else:
                 truncated_sections.append(section)
-        return separator.join(truncated_sections)
+        result = separator.join(truncated_sections)
+        # Hard cap: guarantee we never exceed max_chars regardless of rounding.
+        if len(result) > max_chars:
+            result = result[:max_chars]
+        return result
 
     def _merge_agent_outputs(self, results: list[AgentResult]) -> str:
         """Merge outputs from multiple agents into a coherent summary."""

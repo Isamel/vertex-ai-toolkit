@@ -16,6 +16,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Graceful degradation message used when a context window overflow is caught.
+# Defined once to avoid repetition across sync, async, and streaming paths.
+_CONTEXT_WINDOW_DEGRADATION_MSG = (
+    "Analysis could not be completed — the accumulated context "
+    "exceeded the model's token limit. The available findings "
+    "from earlier phases are included below."
+)
+
 
 class SpecialistAgent(BaseAgent):
     """A specialist agent with a fixed role and system instruction.
@@ -109,9 +117,7 @@ class SpecialistAgent(BaseAgent):
             return AgentResult(
                 agent_name=self.name,
                 content=(
-                    "Analysis could not be completed — the accumulated context "
-                    "exceeded the model's token limit. The available findings "
-                    "from earlier phases are included below.\n\n"
+                    f"{_CONTEXT_WINDOW_DEGRADATION_MSG}\n\n"
                     f"[Context window exceeded: {e}]"
                 ),
                 success=False,
@@ -167,8 +173,7 @@ class SpecialistAgent(BaseAgent):
         except ContextWindowExceededError as e:
             logger.warning("Agent %s streaming context window exceeded: %s", self.name, e)
             yield (
-                "\n[Analysis could not be completed — the accumulated context "
-                "exceeded the model's token limit.]"
+                f"\n[{_CONTEXT_WINDOW_DEGRADATION_MSG}]"
             )
 
         except Exception as e:
@@ -265,9 +270,7 @@ class SpecialistAgent(BaseAgent):
             return AgentResult(
                 agent_name=self.name,
                 content=(
-                    "Analysis could not be completed — the accumulated context "
-                    "exceeded the model's token limit. The available findings "
-                    "from earlier phases are included below.\n\n"
+                    f"{_CONTEXT_WINDOW_DEGRADATION_MSG}\n\n"
                     f"[Context window exceeded: {e}]"
                 ),
                 success=False,
@@ -334,8 +337,7 @@ class SpecialistAgent(BaseAgent):
         except ContextWindowExceededError as e:
             logger.warning("Agent %s async streaming context window exceeded: %s", self.name, e)
             yield (
-                "\n[Analysis could not be completed — the accumulated context "
-                "exceeded the model's token limit.]"
+                f"\n[{_CONTEXT_WINDOW_DEGRADATION_MSG}]"
             )
 
         except Exception as e:
