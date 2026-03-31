@@ -8,8 +8,6 @@ Validates that:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from vaig.core.protocols import SessionStoreProtocol
