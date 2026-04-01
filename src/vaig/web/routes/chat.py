@@ -89,11 +89,16 @@ async def session_delete(request: Request, session_id: str) -> JSONResponse:
 @router.get("/chat")
 async def chat_new(request: Request) -> Response:
     """Render a new chat session page."""
+    settings = await get_settings(request)
     templates = request.app.state.templates
     return templates.TemplateResponse(  # type: ignore[no-any-return]
         request=request,
         name="chat.html",
-        context={"session": None, "messages": []},
+        context={
+            "session": None,
+            "messages": [],
+            "default_project": settings.gcp.project_id,
+        },
     )
 
 
@@ -114,6 +119,7 @@ async def chat_resume(request: Request, session_id: str) -> Response:
         if session_data is not None:
             messages = await store.async_get_messages(session_id)
 
+    settings = await get_settings(request)
     if session_data is None:
         templates = request.app.state.templates
         return templates.TemplateResponse(  # type: ignore[no-any-return]
@@ -123,6 +129,7 @@ async def chat_resume(request: Request, session_id: str) -> Response:
                 "session": None,
                 "messages": [],
                 "error": f"Session {session_id[:12]} not found.",
+                "default_project": settings.gcp.project_id,
             },
             status_code=404,
         )
@@ -131,7 +138,11 @@ async def chat_resume(request: Request, session_id: str) -> Response:
     return templates.TemplateResponse(  # type: ignore[no-any-return]
         request=request,
         name="chat.html",
-        context={"session": session_data, "messages": messages},
+        context={
+            "session": session_data,
+            "messages": messages,
+            "default_project": settings.gcp.project_id,
+        },
     )
 
 

@@ -7,7 +7,7 @@ progress events via Server-Sent Events.
 Production hardening:
 - **Concurrency limit**: a global ``asyncio.Semaphore`` restricts the
   number of pipelines running at once.  Configurable via the
-  ``VAIG_LIVE_MAX_CONCURRENT`` environment variable (default 3).
+  ``VAIG_LIVE_MAX_CONCURRENT`` environment variable (default 5).
 - **Client disconnect**: when the SSE client disconnects, the pipeline
   ``asyncio.Task`` is cancelled immediately (handled inside
   ``live_pipeline_to_sse()``), saving API quota.
@@ -48,11 +48,21 @@ _DEFAULT_SKILL = "service-health"
 # ── Concurrent execution limit ───────────────────────────────
 # Prevents resource exhaustion from too many parallel multi-agent
 # pipelines.  Each pipeline makes dozens of Vertex AI + GKE API calls.
-_DEFAULT_MAX_CONCURRENT = 3
-try:
-    _MAX_CONCURRENT = int(os.environ.get("VAIG_LIVE_MAX_CONCURRENT", str(_DEFAULT_MAX_CONCURRENT)))
-except (ValueError, TypeError):
-    _MAX_CONCURRENT = _DEFAULT_MAX_CONCURRENT
+_DEFAULT_MAX_CONCURRENT = 5
+
+
+def _parse_max_concurrent(default: int = _DEFAULT_MAX_CONCURRENT) -> int:
+    """Parse ``VAIG_LIVE_MAX_CONCURRENT`` from the environment.
+
+    Returns *default* when the variable is missing, empty, or non-numeric.
+    """
+    try:
+        return int(os.environ.get("VAIG_LIVE_MAX_CONCURRENT", str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
+_MAX_CONCURRENT = _parse_max_concurrent()
 _pipeline_semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
 
 
@@ -78,7 +88,7 @@ async def live_stream(request: Request) -> EventSourceResponse:
 
     Production guards:
     - Rejects requests when the concurrent pipeline limit is reached
-      (``VAIG_LIVE_MAX_CONCURRENT``, default 3).
+      (``VAIG_LIVE_MAX_CONCURRENT``, default 5).
     - Cancels the pipeline task when the SSE client disconnects,
       preventing wasted API quota on abandoned requests.
     """
