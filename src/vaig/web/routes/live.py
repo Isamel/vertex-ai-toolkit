@@ -48,7 +48,11 @@ _DEFAULT_SKILL = "service-health"
 # ── Concurrent execution limit ───────────────────────────────
 # Prevents resource exhaustion from too many parallel multi-agent
 # pipelines.  Each pipeline makes dozens of Vertex AI + GKE API calls.
-_MAX_CONCURRENT = int(os.environ.get("VAIG_LIVE_MAX_CONCURRENT", "3"))
+_DEFAULT_MAX_CONCURRENT = 3
+try:
+    _MAX_CONCURRENT = int(os.environ.get("VAIG_LIVE_MAX_CONCURRENT", str(_DEFAULT_MAX_CONCURRENT)))
+except (ValueError, TypeError):
+    _MAX_CONCURRENT = _DEFAULT_MAX_CONCURRENT
 _pipeline_semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
 
 
@@ -84,10 +88,13 @@ async def live_stream(request: Request) -> EventSourceResponse:
     container = get_container(settings)
 
     # ── Concurrency guard ────────────────────────────────────
-    # Fail-fast when all pipeline slots are occupied.  We test the
-    # semaphore value *before* entering the generator so the client
-    # gets an immediate SSE error instead of hanging.
-    if _pipeline_semaphore._value == 0:  # noqa: SLF001 — no public API for this
+    # Fail-fast when all pipeline slots are occupied.  Try to acquire
+    # the semaphore immediately; if it's fully held, return 429.
+    acquired = False
+    try:
+        await asyncio.wait_for(_pipeline_semaphore.acquire(), timeout=0)
+        acquired = True
+    except TimeoutError:
         logger.warning(
             "Live pipeline rejected — concurrency limit reached "
             "(max=%d, user=%s)",
@@ -102,6 +109,11 @@ async def live_stream(request: Request) -> EventSourceResponse:
             ),
             status_code=429,
         )
+    finally:
+        # Release immediately — the generator will re-acquire via
+        # ``async with _pipeline_semaphore`` for the actual run.
+        if acquired:
+            _pipeline_semaphore.release()
 
     # Extract form fields
     form = await request.form()
@@ -128,7 +140,9 @@ async def live_stream(request: Request) -> EventSourceResponse:
         project_id=gke_project,
         location=gke_location,
     )
-    tool_registry = register_live_tools(gke_config, settings=settings)
+    tool_registry = await asyncio.to_thread(
+        register_live_tools, gke_config, settings=settings
+    )
 
     # Resolve skill
     from vaig.skills.registry import SkillRegistry
@@ -215,6 +229,7 @@ def _progress_to_bus(
                     agent_name=agent_name,
                     agent_index=agent_index,
                     total_agents=total_agents,
+                    end_agent_index=end_agent_index,
                 )
             )
         elif event == "end":
@@ -223,6 +238,7 @@ def _progress_to_bus(
                     agent_name=agent_name,
                     agent_index=agent_index,
                     total_agents=total_agents,
+                    end_agent_index=end_agent_index,
                 )
             )
 

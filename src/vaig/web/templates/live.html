@@ -480,7 +480,7 @@
                 </button>
             </div>
         </div>
-        <iframe class="report-iframe" id="report-iframe" sandbox="allow-same-origin"></iframe>
+        <iframe class="report-iframe" id="report-iframe" sandbox="allow-scripts"></iframe>
     </div>
 </div>
 {% endblock %}
@@ -769,7 +769,10 @@
         if (reportHtml) {
             var blob = new Blob([reportHtml], { type: 'text/html' });
             var url = URL.createObjectURL(blob);
-            window.open(url, '_blank');
+            var newWin = window.open(url, '_blank', 'noopener,noreferrer');
+            if (newWin) { newWin.opener = null; }
+            // Revoke blob URL after a short delay to prevent memory leak
+            setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
         }
     });
 

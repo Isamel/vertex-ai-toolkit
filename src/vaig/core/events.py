@@ -303,12 +303,15 @@ class AgentProgressStarted(Event):
         agent_name: Display name of the agent (e.g. ``"kubernetes-gatherer"``).
         agent_index: Zero-based position in the execution pipeline.
         total_agents: Total number of agents in the pipeline.
+        end_agent_index: For grouped/parallel agents, the last index in the
+            range.  ``None`` when a single agent is running.
     """
 
     event_type: str = field(default="agent.progress.started", init=False)
     agent_name: str = ""
     agent_index: int = 0
     total_agents: int = 0
+    end_agent_index: int | None = None
 
 
 @dataclass(frozen=True)
@@ -319,9 +322,12 @@ class AgentProgressCompleted(Event):
         agent_name: Display name of the agent (e.g. ``"kubernetes-gatherer"``).
         agent_index: Zero-based position in the execution pipeline.
         total_agents: Total number of agents in the pipeline.
+        end_agent_index: For grouped/parallel agents, the last index in the
+            range.  ``None`` when a single agent is running.
     """
 
     event_type: str = field(default="agent.progress.completed", init=False)
     agent_name: str = ""
     agent_index: int = 0
     total_agents: int = 0
+    end_agent_index: int | None = None
