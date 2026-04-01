@@ -94,6 +94,20 @@ def build_container(settings: Settings) -> ServiceContainer:
             )
             raise RuntimeError(msg) from exc
 
+    # ── Optional: platform authentication manager ─────────────
+    platform_auth = None
+    if settings.platform.enabled and settings.platform.backend_url:
+        try:
+            from vaig.core.platform_auth import PlatformAuthManager
+
+            platform_auth = PlatformAuthManager(
+                backend_url=settings.platform.backend_url,
+                org_id=settings.platform.org_id,
+            )
+            logger.info("PlatformAuthManager enabled — backend=%s", settings.platform.backend_url)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("PlatformAuthManager failed to initialize: %s", exc)
+
     gemini_client = GeminiClient(settings, quota_checker=quota_checker)
     event_bus = EventBus.get()
     k8s_provider = DefaultK8sClientProvider()
@@ -108,4 +122,5 @@ def build_container(settings: Settings) -> ServiceContainer:
         gcp_provider=gcp_provider,
         event_bus=event_bus,
         quota_checker=quota_checker,
+        platform_auth=platform_auth,
     )

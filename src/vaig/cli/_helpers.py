@@ -440,6 +440,78 @@ def _show_coding_summary(result: object) -> None:
     show_tool_execution_summary(result, console=console)  # type: ignore[arg-type]
 
 
+# ── Platform auth helpers ─────────────────────────────────────
+
+# Module-level reference to the PlatformAuthManager instance used by
+# ``_check_platform_auth``.  Created lazily on first call and reused
+# for the remainder of the CLI invocation.
+_platform_auth_manager: object | None = None
+
+
+def _apply_enforced_config(settings: Settings, enforced: dict[str, Any]) -> None:
+    """Override ``settings`` fields with backend-enforced values.
+
+    ``enforced`` maps dotted field paths (e.g. ``"budget.max_cost_per_run"``)
+    to their enforced values.  This mutates ``settings`` in-place via
+    ``setattr`` on the appropriate nested model.
+    """
+    for dotted_key, value in enforced.items():
+        parts = dotted_key.split(".")
+        obj: Any = settings
+        try:
+            for part in parts[:-1]:
+                obj = getattr(obj, part)
+            setattr(obj, parts[-1], value)
+            logger.debug("Enforced config: %s = %r", dotted_key, value)
+        except (AttributeError, TypeError):
+            logger.warning("Cannot apply enforced field %r — path not found", dotted_key)
+
+
+def _check_platform_auth(settings: Settings) -> None:
+    """Validate platform auth and apply enforced config.
+
+    No-op when ``settings.platform.enabled`` is ``False``.  When enabled:
+
+    1. Creates (or reuses) a ``PlatformAuthManager``.
+    2. Checks authentication — exits if not authenticated.
+    3. Fetches a valid token — exits if session expired.
+    4. Fetches enforced config and applies it to ``settings``.
+
+    Raises ``typer.Exit(1)`` on auth failures so the calling command
+    never executes unauthenticated.
+    """
+    global _platform_auth_manager  # noqa: PLW0603
+
+    if not settings.platform.enabled:
+        return
+
+    import typer
+
+    from vaig.core.platform_auth import PlatformAuthManager
+
+    if _platform_auth_manager is None:
+        _platform_auth_manager = PlatformAuthManager(
+            backend_url=settings.platform.backend_url,
+            org_id=settings.platform.org_id,
+        )
+
+    manager: PlatformAuthManager = _platform_auth_manager  # type: ignore[assignment]
+
+    if not manager.is_authenticated():
+        err_console.print("[red]Not authenticated. Run: vaig login[/red]")
+        raise typer.Exit(code=1)
+
+    token = manager.get_token()
+    if token is None:
+        err_console.print("[red]Session expired. Run: vaig login[/red]")
+        raise typer.Exit(code=1)
+
+    # Fetch and apply enforced config (graceful degradation on failure)
+    enforced = manager.get_enforced_config()
+    if enforced:
+        _apply_enforced_config(settings, enforced)
+
+
 def handle_cli_error(exc: Exception, *, debug: bool = False) -> None:
     """Format and print a VAIG exception, then raise ``typer.Exit(1)``.
 
