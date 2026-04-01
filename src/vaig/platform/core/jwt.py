@@ -1,5 +1,9 @@
 """JWT service — issue and validate tokens using PyJWT with RS256.
 
+Uses lazy imports for ``PyJWT`` so that existing users who don't have
+it installed are not broken.  All JWT operations go through the
+``JWTService`` class.
+
 Signing keys are configurable via environment variables for the MVP:
   - ``PLATFORM_JWT_PRIVATE_KEY``: PEM-encoded RSA private key (for signing)
   - ``PLATFORM_JWT_PUBLIC_KEY``: PEM-encoded RSA public key (for validation)
@@ -14,8 +18,6 @@ import os
 import time
 from typing import Any
 
-import jwt
-
 from vaig.platform.models.auth import JWTClaims
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,18 @@ REFRESH_TOKEN_LIFETIME = 30 * 24 * 3600  # 30 days
 
 _ALGORITHM = "RS256"
 
+_INSTALL_MSG = "PyJWT is required for platform auth. Install with: pip install PyJWT cryptography"
+
+
+def _import_jwt() -> Any:
+    """Lazy-import the ``jwt`` package, raising a clear error if missing."""
+    try:
+        import jwt
+
+        return jwt
+    except ImportError:
+        raise ImportError(_INSTALL_MSG) from None
+
 
 class JWTError(Exception):
     """Raised when JWT operations fail."""
@@ -33,6 +47,9 @@ class JWTError(Exception):
 
 class JWTService:
     """Issue and validate JWT tokens using RS256.
+
+    Requires ``PyJWT`` and ``cryptography`` to be installed. If they are
+    not available, methods raise ``ImportError`` with install instructions.
 
     Args:
         private_key: PEM-encoded RSA private key (for signing).
@@ -83,6 +100,8 @@ class JWTService:
         Raises:
             JWTError: If the private key is missing or encoding fails.
         """
+        jwt = _import_jwt()
+
         if not self._private_key:
             raise JWTError("Private key not configured — cannot issue tokens")
 
@@ -121,6 +140,8 @@ class JWTService:
         Raises:
             JWTError: If validation fails (expired, bad signature, etc.).
         """
+        jwt = _import_jwt()
+
         if not self._public_key:
             raise JWTError("Public key not configured — cannot validate tokens")
 

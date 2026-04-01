@@ -14,6 +14,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+
+jwt = pytest.importorskip("jwt", reason="PyJWT not installed — skipping CLI management tests")
+
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient

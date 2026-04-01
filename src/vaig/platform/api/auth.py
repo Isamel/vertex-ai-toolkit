@@ -91,11 +91,12 @@ async def exchange_token(
         )
 
     # MVP: issue token directly. Production would validate PKCE code_verifier.
+    cli_id = f"cli-{uuid.uuid4().hex[:12]}"
     access_token = jwt_service.issue_token(
         sub="user@example.com",
         org_id="default-org",
         role="operator",
-        cli_id="",
+        cli_id=cli_id,
         lifetime=ACCESS_TOKEN_LIFETIME,
     )
     refresh_token = secrets.token_urlsafe(48)
@@ -105,6 +106,7 @@ async def exchange_token(
         refresh_token=refresh_token,
         token_type="bearer",
         expires_in=ACCESS_TOKEN_LIFETIME,
+        cli_id=cli_id,
     )
 
 

@@ -16,7 +16,6 @@ import json
 import logging
 import os
 import secrets
-import socket
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -99,13 +98,11 @@ class PlatformAuthManager:
             return None
 
     def _save_creds(self, creds: dict[str, Any]) -> None:
-        """Persist credentials to disk with ``0600`` permissions."""
+        """Persist credentials to disk with ``0600`` permissions (atomic)."""
         self._ensure_creds_dir()
-        self._creds_file.write_text(json.dumps(creds, indent=2), encoding="utf-8")
-        try:
-            os.chmod(self._creds_file, 0o600)
-        except OSError:
-            logger.warning("Could not set permissions on %s", self._creds_file)
+        fd = os.open(self._creds_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(creds, indent=2))
 
     def _delete_creds(self) -> None:
         """Delete the credentials file if it exists."""
@@ -186,13 +183,6 @@ class PlatformAuthManager:
         code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
         return code_verifier, code_challenge
 
-    @staticmethod
-    def _find_free_port() -> int:
-        """Find an available port on localhost."""
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            return int(s.getsockname()[1])
-
     # ── Login flow ────────────────────────────────────────────
 
     def login(self, *, force: bool = False) -> AuthResult:
@@ -228,22 +218,22 @@ class PlatformAuthManager:
         code_verifier, code_challenge = self._generate_pkce()
         state = secrets.token_urlsafe(32)
 
-        # Start local callback server
-        port = self._find_free_port()
-        redirect_uri = f"http://127.0.0.1:{port}/callback"
+        # Start local callback server — use port 0 to let the OS assign a free port
         auth_code: str | None = None
         received_state: str | None = None
         server_error: str | None = None
+        callback_received = False
 
         class CallbackHandler(BaseHTTPRequestHandler):
             """HTTP handler for OAuth redirect callback."""
 
             def do_GET(self) -> None:  # noqa: N802
-                nonlocal auth_code, received_state, server_error
+                nonlocal auth_code, received_state, server_error, callback_received
                 parsed = urlparse(self.path)
                 params = parse_qs(parsed.query)
 
                 if parsed.path == "/callback":
+                    callback_received = True
                     auth_code = params.get("code", [None])[0]
                     received_state = params.get("state", [None])[0]
                     error = params.get("error", [None])[0]
@@ -261,14 +251,18 @@ class PlatformAuthManager:
                             b"<h1>Login successful!</h1><p>You can close this window and return to the terminal.</p>"
                         )
                 else:
+                    # Ignore non-callback requests (e.g. favicon.ico)
                     self.send_response(404)
                     self.end_headers()
 
             def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
                 """Suppress default stderr logging."""
 
-        server = HTTPServer(("127.0.0.1", port), CallbackHandler)
+        server = HTTPServer(("127.0.0.1", 0), CallbackHandler)
+        port = server.server_address[1]
         server.timeout = _LOGIN_TIMEOUT_SECONDS
+
+        redirect_uri = f"http://127.0.0.1:{port}/callback"
 
         # Open browser
         auth_url = (
@@ -283,6 +277,7 @@ class PlatformAuthManager:
         try:
             self._client.get(f"{self._backend_url}/healthz", timeout=5.0)
         except httpx.HTTPError:
+            server.server_close()
             return AuthResult(
                 success=False,
                 error=f"Cannot reach platform backend at {self._backend_url}",
@@ -294,8 +289,17 @@ class PlatformAuthManager:
         except Exception:
             logger.warning("Could not open browser — please navigate to: %s", auth_url)
 
-        # Wait for callback (blocking with timeout)
-        server_thread = Thread(target=server.handle_request, daemon=True)
+        # Wait for callback — loop to handle non-callback requests (favicon, etc.)
+        def _serve_until_callback() -> None:
+            deadline = time.monotonic() + _LOGIN_TIMEOUT_SECONDS
+            while not callback_received:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                server.timeout = remaining
+                server.handle_request()
+
+        server_thread = Thread(target=_serve_until_callback, daemon=True)
         server_thread.start()
         server_thread.join(timeout=_LOGIN_TIMEOUT_SECONDS)
         server.server_close()

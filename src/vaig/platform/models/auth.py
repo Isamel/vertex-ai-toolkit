@@ -29,6 +29,7 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int = 3600
+    cli_id: str = ""
 
 
 class TokenRequest(BaseModel):

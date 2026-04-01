@@ -13,6 +13,9 @@ import asyncio
 from typing import Any
 
 import pytest
+
+jwt = pytest.importorskip("jwt", reason="PyJWT not installed — skipping config policy tests")
+
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
