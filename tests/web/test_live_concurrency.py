@@ -8,7 +8,7 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -20,6 +20,7 @@ pytest.importorskip(
 from httpx import ASGITransport, AsyncClient
 
 from vaig.web.app import create_app
+from vaig.web.routes.live import _parse_max_concurrent
 
 # ── Concurrency defaults ─────────────────────────────────────
 
@@ -34,47 +35,19 @@ def test_default_max_concurrent_is_five() -> None:
 def test_env_var_parsing_valid_integer() -> None:
     """VAIG_LIVE_MAX_CONCURRENT with a valid integer should be parsed."""
     with patch.dict("os.environ", {"VAIG_LIVE_MAX_CONCURRENT": "10"}):
-        # Re-evaluate the parsing logic directly
-        import os
-
-        default = 5
-        try:
-            result = int(
-                os.environ.get("VAIG_LIVE_MAX_CONCURRENT", str(default))
-            )
-        except (ValueError, TypeError):
-            result = default
-        assert result == 10
+        assert _parse_max_concurrent() == 10
 
 
 def test_env_var_parsing_non_numeric_falls_back() -> None:
     """VAIG_LIVE_MAX_CONCURRENT with non-numeric value should use default."""
     with patch.dict("os.environ", {"VAIG_LIVE_MAX_CONCURRENT": "not-a-number"}):
-        import os
-
-        default = 5
-        try:
-            result = int(
-                os.environ.get("VAIG_LIVE_MAX_CONCURRENT", str(default))
-            )
-        except (ValueError, TypeError):
-            result = default
-        assert result == default
+        assert _parse_max_concurrent() == 5
 
 
 def test_env_var_parsing_empty_string_falls_back() -> None:
     """VAIG_LIVE_MAX_CONCURRENT with empty string should use default."""
     with patch.dict("os.environ", {"VAIG_LIVE_MAX_CONCURRENT": ""}):
-        import os
-
-        default = 5
-        try:
-            result = int(
-                os.environ.get("VAIG_LIVE_MAX_CONCURRENT", str(default))
-            )
-        except (ValueError, TypeError):
-            result = default
-        assert result == default
+        assert _parse_max_concurrent() == 5
 
 
 # ── Live form gke_location field ─────────────────────────────
@@ -87,8 +60,8 @@ async def test_live_form_contains_gke_location_field() -> None:
 
     with patch(
         "vaig.web.routes.live.get_settings",
-        return_value=pytest.importorskip("unittest.mock").AsyncMock(
-            gcp=pytest.importorskip("unittest.mock").MagicMock(project_id="test-proj"),
+        return_value=AsyncMock(
+            gcp=MagicMock(project_id="test-proj"),
         ),
     ):
         transport = ASGITransport(app=app)

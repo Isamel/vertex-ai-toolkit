@@ -451,6 +451,7 @@
             <div class="settings-field">
                 <label for="chat-project">GCP Project ID</label>
                 <input type="text" id="chat-project" name="project"
+                       value="{{ default_project if default_project is defined else '' }}"
                        placeholder="Leave empty for default">
             </div>
             <div class="settings-field">

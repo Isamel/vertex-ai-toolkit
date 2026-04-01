@@ -49,10 +49,20 @@ _DEFAULT_SKILL = "service-health"
 # Prevents resource exhaustion from too many parallel multi-agent
 # pipelines.  Each pipeline makes dozens of Vertex AI + GKE API calls.
 _DEFAULT_MAX_CONCURRENT = 5
-try:
-    _MAX_CONCURRENT = int(os.environ.get("VAIG_LIVE_MAX_CONCURRENT", str(_DEFAULT_MAX_CONCURRENT)))
-except (ValueError, TypeError):
-    _MAX_CONCURRENT = _DEFAULT_MAX_CONCURRENT
+
+
+def _parse_max_concurrent(default: int = _DEFAULT_MAX_CONCURRENT) -> int:
+    """Parse ``VAIG_LIVE_MAX_CONCURRENT`` from the environment.
+
+    Returns *default* when the variable is missing, empty, or non-numeric.
+    """
+    try:
+        return int(os.environ.get("VAIG_LIVE_MAX_CONCURRENT", str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
+_MAX_CONCURRENT = _parse_max_concurrent()
 _pipeline_semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
 
 
