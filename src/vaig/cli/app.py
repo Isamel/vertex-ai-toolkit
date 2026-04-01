@@ -69,12 +69,12 @@ from vaig.cli.commands._code import (  # noqa: F401
 from vaig.cli.commands.live import (  # noqa: F401
     _async_execute_live_mode,
     _async_execute_orchestrated_skill,
-    _build_gke_config,
     _execute_live_mode,
     _execute_orchestrated_skill,
-    _register_live_tools,
     _show_orchestrated_summary,
 )
+from vaig.core.gke import build_gke_config as _build_gke_config  # noqa: F401
+from vaig.core.gke import register_live_tools as _register_live_tools  # noqa: F401
 
 # ── Main App ──────────────────────────────────────────────────
 app = typer.Typer(

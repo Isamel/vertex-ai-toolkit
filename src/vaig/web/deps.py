@@ -100,7 +100,7 @@ async def get_settings(request: Request) -> Settings:
         form_dict = dict(request.query_params)
 
     # Map form fields to override keys
-    _FORM_KEYS = ("project", "model", "temperature", "max_tokens", "region")
+    _FORM_KEYS = ("project", "model", "temperature", "max_tokens", "region", "cluster", "namespace", "gke_project", "gke_location")
     for key in _FORM_KEYS:
         value = form_dict.get(key)
         if value is not None and str(value).strip():

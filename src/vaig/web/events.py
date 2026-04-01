@@ -28,6 +28,8 @@ from typing import Any
 
 from vaig.core.event_bus import EventBus
 from vaig.core.events import (
+    AgentProgressCompleted,
+    AgentProgressStarted,
     ErrorOccurred,
     Event,
     OrchestratorPhaseCompleted,
@@ -45,6 +47,15 @@ _SUBSCRIBED_EVENTS: tuple[type[Event], ...] = (
     ToolExecuted,
     OrchestratorPhaseCompleted,
     ErrorOccurred,
+)
+
+# Extended event set for live mode (includes agent progress events)
+_LIVE_SUBSCRIBED_EVENTS: tuple[type[Event], ...] = (
+    ToolExecuted,
+    OrchestratorPhaseCompleted,
+    ErrorOccurred,
+    AgentProgressStarted,
+    AgentProgressCompleted,
 )
 
 

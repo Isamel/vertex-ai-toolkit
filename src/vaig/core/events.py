@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 __all__ = [
+    "AgentProgressCompleted",
+    "AgentProgressStarted",
     "ApiCalled",
     "BudgetChecked",
     "CliCommandTracked",
@@ -286,3 +288,40 @@ class QuotaExceeded(Event):
     dimension: str = ""
     used: int = 0
     limit: int = 0
+
+
+# ══════════════════════════════════════════════════════════════
+# Agent Progress Events (used by live mode SSE streaming)
+# ══════════════════════════════════════════════════════════════
+
+
+@dataclass(frozen=True)
+class AgentProgressStarted(Event):
+    """Emitted when an agent begins execution in a multi-agent pipeline.
+
+    Attributes:
+        agent_name: Display name of the agent (e.g. ``"kubernetes-gatherer"``).
+        agent_index: Zero-based position in the execution pipeline.
+        total_agents: Total number of agents in the pipeline.
+    """
+
+    event_type: str = field(default="agent.progress.started", init=False)
+    agent_name: str = ""
+    agent_index: int = 0
+    total_agents: int = 0
+
+
+@dataclass(frozen=True)
+class AgentProgressCompleted(Event):
+    """Emitted when an agent finishes execution in a multi-agent pipeline.
+
+    Attributes:
+        agent_name: Display name of the agent (e.g. ``"kubernetes-gatherer"``).
+        agent_index: Zero-based position in the execution pipeline.
+        total_agents: Total number of agents in the pipeline.
+    """
+
+    event_type: str = field(default="agent.progress.completed", init=False)
+    agent_name: str = ""
+    agent_index: int = 0
+    total_agents: int = 0
