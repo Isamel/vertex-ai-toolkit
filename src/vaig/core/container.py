@@ -20,6 +20,7 @@ from vaig.core.protocols import GCPClientProvider, GeminiClientProtocol, K8sClie
 
 if TYPE_CHECKING:
     from vaig.core.config import Settings
+    from vaig.core.protocols import PlatformAuthProtocol
 
 __all__ = [
     "ServiceContainer",
@@ -43,6 +44,7 @@ class ServiceContainer:
         gcp_provider: GCP observability client provider. Can be ``None`` if not required (e.g., in tests).
         event_bus: Process-wide event bus for domain events.
         quota_checker: Rate-limit quota enforcer. ``None`` when rate limiting is disabled.
+        platform_auth: Platform authentication manager. ``None`` when platform mode is disabled.
     """
 
     settings: Settings
@@ -51,6 +53,7 @@ class ServiceContainer:
     gcp_provider: GCPClientProvider | None
     event_bus: EventBus
     quota_checker: object | None = None
+    platform_auth: PlatformAuthProtocol | None = None
 
 
 def build_container(settings: Settings) -> ServiceContainer:
@@ -92,6 +95,20 @@ def build_container(settings: Settings) -> ServiceContainer:
             )
             raise RuntimeError(msg) from exc
 
+    # ── Optional: platform authentication manager ─────────────
+    platform_auth = None
+    if settings.platform.enabled and settings.platform.backend_url:
+        try:
+            from vaig.core.platform_auth import PlatformAuthManager
+
+            platform_auth = PlatformAuthManager(
+                backend_url=settings.platform.backend_url,
+                org_id=settings.platform.org_id,
+            )
+            logger.info("PlatformAuthManager enabled — backend=%s", settings.platform.backend_url)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("PlatformAuthManager failed to initialize: %s", exc)
+
     gemini_client = GeminiClient(settings, quota_checker=quota_checker)
     event_bus = EventBus.get()
     k8s_provider = DefaultK8sClientProvider()
@@ -106,4 +123,5 @@ def build_container(settings: Settings) -> ServiceContainer:
         gcp_provider=gcp_provider,
         event_bus=event_bus,
         quota_checker=quota_checker,
+        platform_auth=platform_auth,
     )

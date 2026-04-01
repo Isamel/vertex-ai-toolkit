@@ -36,10 +36,12 @@ from vaig import __version__
 #   app, track_command, _get_settings, _build_gke_config,
 #   _register_live_tools, _format_session_date, _resolve_session_id, ...
 from vaig.cli._helpers import (  # noqa: F401
+    _apply_enforced_config,
     _apply_subcommand_log_flags,
     _banner,
     _build_cost_markdown_section,
     _build_export_payload,
+    _check_platform_auth,
     _cli_confirm,
     _compute_cost_str,
     _format_session_date,
@@ -161,6 +163,7 @@ def main(
 # ── Register commands from modules ────────────────────────────
 from vaig.cli.commands import (  # noqa: E402, I001
     ask as _ask_mod,
+    auth as _auth_mod,
     chat as _chat_mod,
     discover as _discover_mod,
     doctor as _doctor_mod,
@@ -177,6 +180,7 @@ from vaig.cli.commands import (  # noqa: E402, I001
 )
 from vaig.cli.commands.cloud_cmd import cloud_app  # noqa: E402
 
+_auth_mod.register(app)
 _chat_mod.register(app)
 _ask_mod.register(app)
 _live_mod.register(app)

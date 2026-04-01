@@ -243,4 +243,5 @@ class TestProtocolExports:
         assert "K8sClientProvider" in mod.__all__
         assert "GCPClientProvider" in mod.__all__
         assert "SessionStoreProtocol" in mod.__all__
-        assert len(mod.__all__) == 4
+        assert "PlatformAuthProtocol" in mod.__all__
+        assert len(mod.__all__) == 5

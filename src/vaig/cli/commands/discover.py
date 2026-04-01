@@ -228,6 +228,7 @@ def register(app: typer.Typer) -> None:
             # Eagerly initialize telemetry
             _helpers._init_telemetry(settings)
             _helpers._init_audit(settings)
+            _helpers._check_platform_auth(settings)
 
             # Apply CLI overrides to settings
             effective_project = project

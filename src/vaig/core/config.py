@@ -635,6 +635,29 @@ class ContextWindowConfig(BaseModel):
         return self
 
 
+class PlatformConfig(BaseModel):
+    """Platform authentication and management configuration.
+
+    When ``enabled`` is True, the CLI operates in platform mode with
+    centralized auth, config enforcement, and admin management via a
+    backend API.  When False (the default), all platform features are
+    disabled and the CLI behaves as a standalone tool.
+    """
+
+    enabled: bool = False
+    backend_url: str = ""
+    org_id: str = ""
+
+    @model_validator(mode="after")
+    def _validate_backend_url_when_enabled(self) -> PlatformConfig:
+        """Require ``backend_url`` when platform mode is enabled."""
+        if self.enabled and not self.backend_url:
+            raise ValueError(
+                "platform.backend_url is required when platform.enabled is True"
+            )
+        return self
+
+
 class BudgetConfig(BaseModel):
     """Token budget tracking configuration.
 
@@ -877,6 +900,7 @@ class Settings(BaseSettings):
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     plugins: PluginConfig = Field(default_factory=PluginConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
+    platform: PlatformConfig = Field(default_factory=PlatformConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     context_window: ContextWindowConfig = Field(default_factory=ContextWindowConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
