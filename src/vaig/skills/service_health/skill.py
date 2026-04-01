@@ -949,6 +949,13 @@ class ServiceHealthSkill(BaseSkill):
         validates the JSON via ``HealthReport.model_validate_json()`` and
         renders it as Markdown via ``report.to_markdown()``.
 
+        After parsing, a **two-pass recommendation enrichment** step makes
+        focused LLM calls (one per recommendation) to replace the generic
+        ``expected_output`` and ``interpretation`` fields with specific,
+        expert-level debugging guidance — mimicking the quality of interactive
+        chat mode.  Enrichment is best-effort: if it fails for any
+        recommendation, the original values are preserved.
+
         Before parsing, the raw content is passed through
         :func:`~vaig.utils.json_cleaner.clean_llm_json` to strip common LLM
         artefacts such as markdown code fences or conversational preamble.
@@ -967,6 +974,17 @@ class ServiceHealthSkill(BaseSkill):
                     "This may indicate data was lost in the agent pipeline."
                 )
 
+            # Two-pass enrichment: enhance recommendations with focused LLM
+            # calls using the default model (gemini-2.5-pro) for higher quality.
+            if report.findings and report.recommendations:
+                try:
+                    report = self._enrich_report_recommendations(report)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "Recommendation enrichment failed, using original values",
+                        exc_info=True,
+                    )
+
             return report.to_markdown()
         except (ValueError, ValidationError):
             logger.warning(
@@ -979,3 +997,51 @@ class ServiceHealthSkill(BaseSkill):
                 "⚠️ Report parsing failed — showing raw output\n\n"
                 + content
             )
+
+    def _enrich_report_recommendations(
+        self,
+        report: HealthReport,
+        *,
+        overall_timeout: float = 120.0,
+    ) -> HealthReport:
+        """Run async recommendation enrichment from a synchronous context.
+
+        Creates a lightweight :class:`~vaig.core.client.GeminiClient` scoped to
+        this enrichment pass and delegates to :func:`enrich_recommendations`.
+        Uses a :class:`~concurrent.futures.ThreadPoolExecutor` with a hard
+        *overall_timeout* to guarantee the enrichment never blocks the report
+        pipeline — even when GCP auth probes hang (e.g. inside CI or
+        environments without credentials).
+
+        Args:
+            report: The parsed HealthReport to enrich.
+            overall_timeout: Maximum seconds to wait for the entire enrichment
+                pass.  Defaults to 120 s (enough for ~10 recommendations at
+                30 s each with concurrency).  Set lower in tests or CI.
+        """
+        import asyncio
+        import concurrent.futures
+
+        from vaig.core.client import GeminiClient
+        from vaig.core.config import get_settings
+        from vaig.skills.service_health.recommendation_enricher import (
+            enrich_recommendations,
+        )
+
+        settings = get_settings()
+        client = GeminiClient(settings)
+
+        logger.info(
+            "Starting two-pass recommendation enrichment for %d recommendations "
+            "using %s (timeout=%ss)",
+            len(report.recommendations),
+            settings.models.default,
+            overall_timeout,
+        )
+
+        # Run enrichment in a dedicated thread with a hard timeout so a
+        # hanging credential probe (GCE metadata, etc.) can never block the
+        # report pipeline.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, enrich_recommendations(report, client))
+            return future.result(timeout=overall_timeout)
