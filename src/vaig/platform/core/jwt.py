@@ -102,7 +102,8 @@ class JWTService:
             payload.update(extra)
 
         try:
-            return jwt.encode(payload, self._private_key, algorithm=_ALGORITHM)
+            token: str = jwt.encode(payload, self._private_key, algorithm=_ALGORITHM)
+            return token
         except Exception as exc:
             raise JWTError(f"Failed to encode JWT: {exc}") from exc
 
