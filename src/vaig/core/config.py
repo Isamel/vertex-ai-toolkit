@@ -546,6 +546,18 @@ class GKEConfig(BaseModel):
     argo_request_timeout: int = 10
 
 
+class OllamaConfig(BaseModel):
+    """Ollama-compatible proxy configuration.
+
+    When ``enabled`` is True, the Ollama-compatible API endpoints
+    (``/api/generate``, ``/api/chat``, ``/api/tags``) are registered
+    in the FastAPI application, allowing Ollama clients (VS Code
+    Continue, Cody, CLI tools) to use VAIG's Vertex AI backend.
+    """
+
+    enabled: bool = False
+
+
 class MCPServerConfig(BaseModel):
     """Configuration for a single MCP server."""
 
@@ -862,6 +874,7 @@ class Settings(BaseSettings):
     argocd: ArgoCDConfig = Field(default_factory=ArgoCDConfig)
     datadog: DatadogAPIConfig = Field(default_factory=DatadogAPIConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
+    ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     plugins: PluginConfig = Field(default_factory=PluginConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)

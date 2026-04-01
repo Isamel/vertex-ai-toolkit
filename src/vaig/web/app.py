@@ -51,6 +51,15 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(settings_router)
 
+    # Ollama-compatible proxy — conditionally enabled via config
+    from vaig.core.config import get_settings as _get_cfg
+
+    _cfg = _get_cfg()
+    if _cfg.ollama.enabled:
+        from vaig.web.routes.ollama import router as ollama_router
+
+        app.include_router(ollama_router)
+
     # Session store — lazily initialised on first use by chat routes.
     # The store is set to ``None`` here; a concrete implementation
     # (e.g. FirestoreSessionStore) can be attached via middleware or
