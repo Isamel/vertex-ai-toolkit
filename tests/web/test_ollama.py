@@ -5,8 +5,11 @@ Covers:
 - POST /api/generate (non-streaming + streaming)
 - POST /api/chat (non-streaming + streaming, role mapping)
 - GET /api/tags
-- Error translation (rate limit, client error)
-- Feature flag gating (disabled → 404)
+- Error translation (rate limit, client error, broad exception)
+- Auth enforcement on all Ollama endpoints
+- Validation: last chat message must be from 'user' role
+- Streaming chunks include created_at timestamps
+- Feature flag gating (disabled → JSON 404)
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ pytest.importorskip(
 
 from httpx import ASGITransport, AsyncClient
 
-from vaig.core.config import ModelInfo, Settings, reset_settings
+from vaig.core.config import ModelInfo, OllamaConfig, Settings, reset_settings
 from vaig.core.exceptions import GeminiClientError, GeminiRateLimitError
 from vaig.web.ollama_models import OllamaOptions
 from vaig.web.routes.ollama import _clean_model_name, _map_generation_kwargs
@@ -113,6 +116,19 @@ def _build_app_with_ollama(
     return app
 
 
+def _make_enabled_settings(
+    *,
+    available: list[dict[str, str]] | None = None,
+) -> Settings:
+    """Build a Settings object with ``ollama.enabled = True``."""
+    if available is None:
+        available = [{"id": "gemini-2.5-pro"}, {"id": "gemini-2.5-flash"}]
+    return Settings(
+        models={"default": "gemini-2.5-pro", "available": available},  # type: ignore[arg-type]
+        ollama=OllamaConfig(enabled=True),
+    )
+
+
 # ── Fixtures ─────────────────────────────────────────────────
 
 
@@ -135,10 +151,8 @@ def app(fake_client: _FakeGeminiClient) -> Any:
 
 @pytest.fixture()
 def _patch_deps(fake_client: _FakeGeminiClient) -> Any:
-    """Patch ``get_settings`` and ``get_container`` for route handlers."""
-    settings = Settings(
-        models={"default": "gemini-2.5-pro", "available": [{"id": "gemini-2.5-pro"}, {"id": "gemini-2.5-flash"}]},  # type: ignore[arg-type]
-    )
+    """Patch ``get_settings``, ``get_container``, and ``get_current_user`` for route handlers."""
+    settings = _make_enabled_settings()
 
     mock_container = type("C", (), {
         "gemini_client": fake_client,
@@ -148,6 +162,7 @@ def _patch_deps(fake_client: _FakeGeminiClient) -> Any:
     with (
         patch("vaig.web.routes.ollama.get_settings", new_callable=AsyncMock, return_value=settings),
         patch("vaig.web.routes.ollama.get_container", return_value=mock_container),
+        patch("vaig.web.routes.ollama.get_current_user", return_value="test@test.com"),
     ):
         yield
 
@@ -409,9 +424,7 @@ async def test_tags_returns_models(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_tags_empty_models() -> None:
     """GET /api/tags with no models configured returns empty list (task 3.8)."""
-    empty_settings = Settings(
-        models={"default": "gemini-2.5-pro", "available": []},  # type: ignore[arg-type]
-    )
+    empty_settings = _make_enabled_settings(available=[])
     mock_container = type("C", (), {"gemini_client": _FakeGeminiClient(), "settings": empty_settings})()
 
     test_app = _build_app_with_ollama()
@@ -419,6 +432,7 @@ async def test_tags_empty_models() -> None:
     with (
         patch("vaig.web.routes.ollama.get_settings", new_callable=AsyncMock, return_value=empty_settings),
         patch("vaig.web.routes.ollama.get_container", return_value=mock_container),
+        patch("vaig.web.routes.ollama.get_current_user", return_value="test@test.com"),
     ):
         transport = ASGITransport(app=test_app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -478,8 +492,52 @@ async def test_error_on_chat_endpoint(client: AsyncClient, fake_client: _FakeGem
 
 
 @pytest.mark.asyncio
-async def test_feature_flag_off() -> None:
-    """When ollama.enabled is False, /api/generate is not registered → 404 (task 3.10)."""
+async def test_feature_flag_off_returns_json_404() -> None:
+    """When ollama.enabled is False, endpoints return JSON 404 (not HTML)."""
+    disabled_settings = Settings(
+        models={"default": "gemini-2.5-pro", "available": []},  # type: ignore[arg-type]
+        ollama=OllamaConfig(enabled=False),
+    )
+    mock_container = type("C", (), {
+        "gemini_client": _FakeGeminiClient(),
+        "settings": disabled_settings,
+    })()
+
+    test_app = _build_app_with_ollama()
+
+    with (
+        patch("vaig.web.routes.ollama.get_settings", new_callable=AsyncMock, return_value=disabled_settings),
+        patch("vaig.web.routes.ollama.get_container", return_value=mock_container),
+        patch("vaig.web.routes.ollama.get_current_user", return_value="test@test.com"),
+    ):
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/api/generate",
+                json={"model": "gemini-2.5-pro", "prompt": "Hi", "stream": False},
+            )
+            assert resp.status_code == 404
+            assert resp.json()["error"] == "Ollama API is disabled"
+
+            resp = await ac.post(
+                "/api/chat",
+                json={
+                    "model": "gemini-2.5-pro",
+                    "messages": [{"role": "user", "content": "Hi"}],
+                    "stream": False,
+                },
+            )
+            assert resp.status_code == 404
+            assert resp.json()["error"] == "Ollama API is disabled"
+
+            resp = await ac.get("/api/tags")
+            assert resp.status_code == 404
+            assert resp.json()["error"] == "Ollama API is disabled"
+
+
+@pytest.mark.asyncio
+async def test_ollama_routes_always_registered() -> None:
+    """Ollama routes are always registered in the app (even when disabled)."""
     reset_settings()
     try:
         with patch("vaig.core.config.get_settings", return_value=Settings()):
@@ -487,10 +545,216 @@ async def test_feature_flag_off() -> None:
 
             test_app = create_app()
 
-        # The ollama routes should NOT be registered
         route_paths = [r.path for r in test_app.routes if hasattr(r, "path")]
-        assert "/api/generate" not in route_paths
-        assert "/api/chat" not in route_paths
-        assert "/api/tags" not in route_paths
+        assert "/api/generate" in route_paths
+        assert "/api/chat" in route_paths
+        assert "/api/tags" in route_paths
     finally:
         reset_settings()
+
+
+# ── Integration Tests: created_at in streaming chunks ────────
+
+
+@pytest.mark.asyncio
+async def test_generate_streaming_chunks_have_created_at(
+    client: AsyncClient, fake_client: _FakeGeminiClient,
+) -> None:
+    """All streaming generate chunks (not just final) must have created_at."""
+    import json
+
+    resp = await client.post(
+        "/api/generate",
+        json={"model": "gemini-2.5-pro", "prompt": "Hello", "stream": True},
+    )
+    lines = [json.loads(line) for line in resp.text.strip().split("\n") if line.strip()]
+
+    for i, line in enumerate(lines):
+        assert line["created_at"] != "", f"Chunk {i} has empty created_at"
+
+
+@pytest.mark.asyncio
+async def test_chat_streaming_chunks_have_created_at(
+    client: AsyncClient, fake_client: _FakeGeminiClient,
+) -> None:
+    """All streaming chat chunks (not just final) must have created_at."""
+    import json
+
+    resp = await client.post(
+        "/api/chat",
+        json={
+            "model": "gemini-2.5-pro",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": True,
+        },
+    )
+    lines = [json.loads(line) for line in resp.text.strip().split("\n") if line.strip()]
+
+    for i, line in enumerate(lines):
+        assert line["created_at"] != "", f"Chunk {i} has empty created_at"
+
+
+# ── Integration Tests: Chat last-message validation ──────────
+
+
+@pytest.mark.asyncio
+async def test_chat_last_message_not_user_returns_400(
+    client: AsyncClient, fake_client: _FakeGeminiClient,
+) -> None:
+    """Chat endpoint returns 400 when last non-system message isn't from user."""
+    resp = await client.post(
+        "/api/chat",
+        json={
+            "model": "gemini-2.5-pro",
+            "messages": [
+                {"role": "user", "content": "Hi"},
+                {"role": "assistant", "content": "Hello"},
+            ],
+            "stream": False,
+        },
+    )
+    assert resp.status_code == 400
+    assert "last message must be from the 'user' role" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_chat_only_system_messages_returns_400(
+    client: AsyncClient, fake_client: _FakeGeminiClient,
+) -> None:
+    """Chat endpoint returns 400 when only system messages are provided."""
+    resp = await client.post(
+        "/api/chat",
+        json={
+            "model": "gemini-2.5-pro",
+            "messages": [{"role": "system", "content": "Be brief"}],
+            "stream": False,
+        },
+    )
+    assert resp.status_code == 400
+    assert "last message must be from the 'user' role" in resp.json()["error"]
+
+
+# ── Integration Tests: Broad exception handling ──────────────
+
+
+@pytest.mark.asyncio
+async def test_generate_unexpected_exception_returns_json(
+    client: AsyncClient, fake_client: _FakeGeminiClient,
+) -> None:
+    """Unexpected exceptions in /api/generate return JSON, not HTML."""
+    fake_client.async_generate.side_effect = RuntimeError("unexpected kaboom")
+
+    resp = await client.post(
+        "/api/generate",
+        json={"model": "gemini-2.5-pro", "prompt": "Hi", "stream": False},
+    )
+    assert resp.status_code == 500
+    assert "unexpected kaboom" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_chat_unexpected_exception_returns_json(
+    client: AsyncClient, fake_client: _FakeGeminiClient,
+) -> None:
+    """Unexpected exceptions in /api/chat return JSON, not HTML."""
+    fake_client.async_generate.side_effect = ValueError("bad value")
+
+    resp = await client.post(
+        "/api/chat",
+        json={
+            "model": "gemini-2.5-pro",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": False,
+        },
+    )
+    assert resp.status_code == 500
+    assert "bad value" in resp.json()["error"]
+
+
+# ── Integration Tests: Auth enforcement ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_generate_requires_auth() -> None:
+    """POST /api/generate returns 401 when auth check fails."""
+    from fastapi import HTTPException
+
+    settings = _make_enabled_settings()
+    mock_container = type("C", (), {
+        "gemini_client": _FakeGeminiClient(),
+        "settings": settings,
+    })()
+
+    test_app = _build_app_with_ollama()
+
+    with (
+        patch("vaig.web.routes.ollama.get_settings", new_callable=AsyncMock, return_value=settings),
+        patch("vaig.web.routes.ollama.get_container", return_value=mock_container),
+        patch(
+            "vaig.web.routes.ollama.get_current_user",
+            side_effect=HTTPException(status_code=401, detail="Missing IAP authentication header."),
+        ),
+    ):
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/api/generate",
+                json={"model": "gemini-2.5-pro", "prompt": "Hi", "stream": False},
+            )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_chat_requires_auth() -> None:
+    """POST /api/chat returns 401 when auth check fails."""
+    from fastapi import HTTPException
+
+    settings = _make_enabled_settings()
+    mock_container = type("C", (), {
+        "gemini_client": _FakeGeminiClient(),
+        "settings": settings,
+    })()
+
+    test_app = _build_app_with_ollama()
+
+    with (
+        patch("vaig.web.routes.ollama.get_settings", new_callable=AsyncMock, return_value=settings),
+        patch("vaig.web.routes.ollama.get_container", return_value=mock_container),
+        patch(
+            "vaig.web.routes.ollama.get_current_user",
+            side_effect=HTTPException(status_code=401, detail="Missing IAP authentication header."),
+        ),
+    ):
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/api/chat",
+                json={
+                    "model": "gemini-2.5-pro",
+                    "messages": [{"role": "user", "content": "Hi"}],
+                    "stream": False,
+                },
+            )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_tags_requires_auth() -> None:
+    """GET /api/tags returns 401 when auth check fails."""
+    from fastapi import HTTPException
+
+    settings = _make_enabled_settings()
+
+    test_app = _build_app_with_ollama()
+
+    with (
+        patch("vaig.web.routes.ollama.get_settings", new_callable=AsyncMock, return_value=settings),
+        patch(
+            "vaig.web.routes.ollama.get_current_user",
+            side_effect=HTTPException(status_code=401, detail="Missing IAP authentication header."),
+        ),
+    ):
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/api/tags")
+    assert resp.status_code == 401

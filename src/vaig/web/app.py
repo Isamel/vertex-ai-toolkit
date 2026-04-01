@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from starlette.responses import HTMLResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from vaig import __version__
 
@@ -51,14 +51,11 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(settings_router)
 
-    # Ollama-compatible proxy — conditionally enabled via config
-    from vaig.core.config import get_settings as _get_cfg
+    # Ollama-compatible proxy — always registered so that Ollama
+    # clients receive a JSON 404 when disabled instead of HTML.
+    from vaig.web.routes.ollama import router as ollama_router
 
-    _cfg = _get_cfg()
-    if _cfg.ollama.enabled:
-        from vaig.web.routes.ollama import router as ollama_router
-
-        app.include_router(ollama_router)
+    app.include_router(ollama_router)
 
     # Session store — lazily initialised on first use by chat routes.
     # The store is set to ``None`` here; a concrete implementation
@@ -74,7 +71,11 @@ def create_app() -> FastAPI:
 
 
 async def _not_found_handler(request: Request, exc: Exception) -> Response:
-    """Render a styled 404 page instead of default JSON."""
+    """Render a styled 404 page, or JSON for API clients."""
+    # Ollama / API clients expect JSON, not HTML
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"error": "not found"}, status_code=404)
+
     templates: Jinja2Templates = request.app.state.templates
     return templates.TemplateResponse(
         request=request,

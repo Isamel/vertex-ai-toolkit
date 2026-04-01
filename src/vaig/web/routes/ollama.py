@@ -26,7 +26,7 @@ from vaig.core.exceptions import (
     GeminiConnectionError,
     GeminiRateLimitError,
 )
-from vaig.web.deps import get_container, get_settings
+from vaig.web.deps import get_container, get_current_user, get_settings
 from vaig.web.ollama_models import (
     OllamaChatRequest,
     OllamaChatResponse,
@@ -117,7 +117,9 @@ async def _stream_ndjson_generate(
 ) -> AsyncGenerator[bytes, None]:
     """Yield ndjson lines from a ``StreamResult`` for ``/api/generate``."""
     async for chunk in stream_result:
-        line = OllamaGenerateResponse(model=model, response=chunk, done=False)
+        line = OllamaGenerateResponse(
+            model=model, response=chunk, done=False, created_at=_now_iso(),
+        )
         yield line.model_dump_json().encode() + b"\n"
     # Final line with done=true
     final = OllamaGenerateResponse(
@@ -139,6 +141,7 @@ async def _stream_ndjson_chat(
             model=model,
             message=OllamaChatResponseMessage(content=chunk),
             done=False,
+            created_at=_now_iso(),
         )
         yield line.model_dump_json().encode() + b"\n"
     # Final line with done=true
@@ -158,6 +161,10 @@ async def _stream_ndjson_chat(
 async def ollama_generate(body: OllamaGenerateRequest, request: Request) -> Any:
     """Ollama-compatible text completion endpoint."""
     settings = await get_settings(request)
+    if not settings.ollama.enabled:
+        return JSONResponse({"error": "Ollama API is disabled"}, status_code=404)
+
+    get_current_user(request)  # Auth check — raises 401 if unauthenticated
     container = get_container(settings)
     client = container.gemini_client
 
@@ -197,12 +204,20 @@ async def ollama_generate(body: OllamaGenerateRequest, request: Request) -> Any:
         GeminiClientError,
     ) as exc:
         return _handle_gemini_error(exc)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:
+        return _handle_gemini_error(exc)
 
 
 @router.post("/api/chat")
 async def ollama_chat(body: OllamaChatRequest, request: Request) -> Any:
     """Ollama-compatible multi-turn chat endpoint."""
     settings = await get_settings(request)
+    if not settings.ollama.enabled:
+        return JSONResponse({"error": "Ollama API is disabled"}, status_code=404)
+
+    get_current_user(request)  # Auth check — raises 401 if unauthenticated
     container = get_container(settings)
     client = container.gemini_client
 
@@ -228,7 +243,10 @@ async def ollama_chat(body: OllamaChatRequest, request: Request) -> Any:
     if history and history[-1].role == "user":
         prompt = history.pop().content
     else:
-        prompt = ""
+        return JSONResponse(
+            status_code=400,
+            content={"error": "The last message must be from the 'user' role."},
+        )
 
     try:
         if body.stream:
@@ -265,12 +283,20 @@ async def ollama_chat(body: OllamaChatRequest, request: Request) -> Any:
         GeminiClientError,
     ) as exc:
         return _handle_gemini_error(exc)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:
+        return _handle_gemini_error(exc)
 
 
 @router.get("/api/tags")
-async def ollama_tags(request: Request) -> OllamaTagsResponse:
+async def ollama_tags(request: Request) -> Any:
     """List available models in Ollama tag format."""
     settings = await get_settings(request)
+    if not settings.ollama.enabled:
+        return JSONResponse({"error": "Ollama API is disabled"}, status_code=404)
+
+    get_current_user(request)  # Auth check — raises 401 if unauthenticated
     models = [
         OllamaTagModel(name=m.id, model=m.id)
         for m in settings.models.available
