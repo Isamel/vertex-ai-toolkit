@@ -1436,11 +1436,11 @@ def _cmd_live(state: REPLState) -> None:
     else:
         # Attempt to enable live mode
         try:
-            from vaig.cli.commands.live import _build_gke_config, _register_live_tools
             from vaig.core.cache import ToolResultCache
+            from vaig.core.gke import build_gke_config, register_live_tools
 
-            gke_config = _build_gke_config(state.settings)
-            tool_registry = _register_live_tools(gke_config, settings=state.settings)
+            gke_config = build_gke_config(state.settings)
+            tool_registry = register_live_tools(gke_config, settings=state.settings)
             tool_result_cache = ToolResultCache()
         except ImportError:
             console.print(

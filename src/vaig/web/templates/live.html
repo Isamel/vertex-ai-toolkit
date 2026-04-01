@@ -1,0 +1,786 @@
+{% extends "base.html" %}
+
+{% block title %}Live Diagnosis{% endblock %}
+
+{% block head %}
+<style>
+    .live-form {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .live-form h1 {
+        font-family: var(--font-mono);
+        font-size: 1.5rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .live-form .description {
+        color: var(--text-secondary);
+        font-size: 0.9rem;
+        margin-bottom: 1.5rem;
+        max-width: 100%;
+        text-align: left;
+    }
+
+    .form-group {
+        margin-bottom: 1rem;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 0.35rem;
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        font-weight: 500;
+    }
+
+    .form-group .required {
+        color: var(--error);
+    }
+
+    .form-group .hint {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        margin-top: 0.25rem;
+    }
+
+    .form-group input,
+    .form-group textarea,
+    .form-group select {
+        width: 100%;
+        padding: 0.6rem 0.75rem;
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) / 2);
+        color: var(--text-primary);
+        font-family: var(--font-sans);
+        font-size: 0.9rem;
+        transition: border-color 0.2s;
+    }
+
+    .form-group input:focus,
+    .form-group textarea:focus,
+    .form-group select:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+
+    .form-group select {
+        font-family: var(--font-mono);
+        cursor: pointer;
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+    }
+
+    .btn-submit {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.6rem 1.25rem;
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        border-radius: calc(var(--radius) / 2);
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .btn-submit:hover {
+        background: var(--accent-hover);
+    }
+
+    .btn-submit:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .btn-submit .btn-spinner {
+        display: none;
+    }
+
+    .btn-submit.loading .btn-spinner {
+        display: inline-block;
+    }
+
+    .btn-submit.loading .btn-text {
+        display: none;
+    }
+
+    /* ── Progress area ───────────────────────────────────── */
+    #progress-area {
+        margin-top: 1rem;
+    }
+
+    .progress-container {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1.5rem;
+        display: none;
+    }
+
+    .progress-container.visible {
+        display: block;
+    }
+
+    .progress-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1rem;
+        padding-bottom: 0.75rem;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .progress-header h2 {
+        font-family: var(--font-mono);
+        font-size: 1rem;
+        color: var(--accent);
+    }
+
+    .progress-status {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+    }
+
+    /* ── Agent timeline ──────────────────────────────────── */
+    .agent-timeline {
+        margin-bottom: 1rem;
+    }
+
+    .agent-entry {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        border-left: 2px solid var(--border);
+        margin-left: 0.5rem;
+        margin-bottom: 0.25rem;
+        font-family: var(--font-mono);
+        font-size: 0.85rem;
+        transition: border-color 0.3s, background 0.3s;
+    }
+
+    .agent-entry.running {
+        border-left-color: var(--accent);
+        background: rgba(79, 143, 247, 0.05);
+    }
+
+    .agent-entry.done {
+        border-left-color: var(--success);
+    }
+
+    .agent-icon {
+        width: 20px;
+        text-align: center;
+        flex-shrink: 0;
+    }
+
+    .agent-entry.running .agent-icon {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(79, 143, 247, 0.3);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+    }
+
+    .agent-name {
+        color: var(--text-primary);
+        flex: 1;
+    }
+
+    .agent-counter {
+        color: var(--text-secondary);
+        font-size: 0.75rem;
+    }
+
+    /* ── Tool events ─────────────────────────────────────── */
+    .tool-log {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+        margin-bottom: 1rem;
+    }
+
+    .tool-event {
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        padding: 0.2rem 0.5rem;
+        border-radius: 3px;
+        display: inline-block;
+        background: rgba(79, 143, 247, 0.1);
+        color: var(--accent);
+        border: 1px solid rgba(79, 143, 247, 0.2);
+    }
+
+    .tool-event.error {
+        background: rgba(248, 81, 73, 0.1);
+        color: var(--error);
+        border-color: rgba(248, 81, 73, 0.2);
+    }
+
+    .phase-event {
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        padding: 0.2rem 0.5rem;
+        border-radius: 3px;
+        display: inline-block;
+        background: rgba(63, 185, 80, 0.1);
+        color: var(--success);
+        border: 1px solid rgba(63, 185, 80, 0.2);
+    }
+
+    .error-event {
+        background: rgba(248, 81, 73, 0.1);
+        color: var(--error);
+        border: 1px solid rgba(248, 81, 73, 0.2);
+        padding: 0.5rem 0.75rem;
+        border-radius: calc(var(--radius) / 2);
+        font-size: 0.85rem;
+        margin-bottom: 0.5rem;
+    }
+
+    /* ── Progress bar ────────────────────────────────────── */
+    .progress-bar-container {
+        margin-bottom: 1rem;
+    }
+
+    .progress-bar-track {
+        width: 100%;
+        height: 6px;
+        background: var(--bg-primary);
+        border-radius: 3px;
+        overflow: hidden;
+    }
+
+    .progress-bar-fill {
+        height: 100%;
+        background: var(--accent);
+        border-radius: 3px;
+        width: 0%;
+        transition: width 0.5s ease;
+    }
+
+    .progress-bar-fill.complete {
+        background: var(--success);
+    }
+
+    .progress-bar-label {
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        margin-top: 0.3rem;
+        display: flex;
+        justify-content: space-between;
+    }
+
+    /* ── Report area ─────────────────────────────────────── */
+    .report-area {
+        margin-top: 1.5rem;
+        display: none;
+    }
+
+    .report-area.visible {
+        display: block;
+    }
+
+    .report-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.75rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .report-header h2 {
+        font-family: var(--font-mono);
+        font-size: 1rem;
+        color: var(--success);
+    }
+
+    .report-actions {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .btn-report {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.35rem 0.75rem;
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) / 2);
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+        cursor: pointer;
+        text-decoration: none;
+        transition: border-color 0.2s, color 0.2s;
+    }
+
+    .btn-report:hover {
+        border-color: var(--accent);
+        color: var(--text-primary);
+    }
+
+    .report-iframe {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) / 2);
+        background: #fff;
+        min-height: 500px;
+    }
+
+    /* ── Done stats ──────────────────────────────────────── */
+    .done-stats {
+        margin-top: 1rem;
+        padding-top: 0.75rem;
+        border-top: 1px solid var(--border);
+        font-family: var(--font-mono);
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        display: none;
+    }
+
+    .done-stats.visible {
+        display: block;
+    }
+
+    /* ── Animations ──────────────────────────────────────── */
+    @keyframes pulse-bg {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
+    }
+
+    .pulse {
+        animation: pulse-bg 2s ease-in-out infinite;
+    }
+
+    @media (max-width: 767px) {
+        .form-row {
+            grid-template-columns: 1fr;
+        }
+
+        .live-form {
+            padding: 1rem;
+        }
+
+        .report-iframe {
+            min-height: 350px;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="live-form" id="live-form-section">
+    <h1>Live Diagnosis</h1>
+    <p class="description">
+        Run a multi-agent infrastructure diagnosis on a GKE service. Agents gather
+        cluster state, logs, and metrics in parallel, then produce a structured
+        health report &mdash; all streamed live.
+    </p>
+
+    <form id="live-form" method="post">
+        <div class="form-group">
+            <label for="service_name">Service Name <span class="required">*</span></label>
+            <input type="text" id="service_name" name="service_name" required
+                   placeholder="e.g. my-api, frontend-server">
+        </div>
+
+        <div class="form-group">
+            <label for="question">Additional Context</label>
+            <input type="text" id="question" name="question"
+                   placeholder="e.g. pods are crash-looping, high latency (optional)">
+            <p class="hint">Optional — describe the symptom or narrow the investigation</p>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="namespace">Namespace</label>
+                <input type="text" id="namespace" name="namespace"
+                       placeholder="Leave empty for auto-detect">
+            </div>
+            <div class="form-group">
+                <label for="gke_project">GCP Project ID</label>
+                <input type="text" id="gke_project" name="gke_project"
+                       value="{{ default_project }}"
+                       placeholder="Leave empty for default">
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="model">Model</label>
+                <select id="model" name="model">
+                    <option value="gemini-2.5-pro" selected>gemini-2.5-pro</option>
+                    <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="cluster">Cluster</label>
+                <input type="text" id="cluster" name="cluster"
+                       placeholder="Leave empty for default">
+            </div>
+        </div>
+
+        <input type="hidden" name="skill" value="service-health">
+
+        <button type="submit" class="btn-submit" id="submit-btn">
+            <span class="btn-text">Start Diagnosis</span>
+            <span class="btn-spinner spinner"></span>
+        </button>
+    </form>
+</section>
+
+<div id="progress-area">
+    <div class="progress-container" id="progress-container">
+        <div class="progress-header">
+            <h2>Pipeline Progress</h2>
+            <span class="progress-status" id="progress-status">Initializing...</span>
+        </div>
+
+        <div class="progress-bar-container">
+            <div class="progress-bar-track">
+                <div class="progress-bar-fill" id="progress-bar"></div>
+            </div>
+            <div class="progress-bar-label">
+                <span id="progress-agent-label"></span>
+                <span id="progress-pct"></span>
+            </div>
+        </div>
+
+        <div class="agent-timeline" id="agent-timeline"></div>
+        <div class="tool-log" id="tool-log"></div>
+        <div id="error-log"></div>
+
+        <div class="done-stats" id="done-stats"></div>
+    </div>
+
+    <div class="report-area" id="report-area">
+        <div class="report-header">
+            <h2>Health Report</h2>
+            <div class="report-actions">
+                <button class="btn-report" id="btn-open-tab" title="Open in new tab">
+                    &#x2197; New Tab
+                </button>
+            </div>
+        </div>
+        <iframe class="report-iframe" id="report-iframe" sandbox="allow-scripts"></iframe>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    var form = document.getElementById('live-form');
+    var submitBtn = document.getElementById('submit-btn');
+    var progressContainer = document.getElementById('progress-container');
+    var progressStatus = document.getElementById('progress-status');
+    var progressBar = document.getElementById('progress-bar');
+    var progressAgentLabel = document.getElementById('progress-agent-label');
+    var progressPct = document.getElementById('progress-pct');
+    var agentTimeline = document.getElementById('agent-timeline');
+    var toolLog = document.getElementById('tool-log');
+    var errorLog = document.getElementById('error-log');
+    var doneStats = document.getElementById('done-stats');
+    var reportArea = document.getElementById('report-area');
+    var reportIframe = document.getElementById('report-iframe');
+    var btnOpenTab = document.getElementById('btn-open-tab');
+
+    // Track agent state for timeline rendering
+    var agentElements = {};
+    var totalAgents = 0;
+    var completedAgents = 0;
+    var toolCount = 0;
+    var reportHtml = null;
+
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        var serviceName = document.getElementById('service_name').value.trim();
+        if (!serviceName) return;
+
+        // Reset UI
+        resetUI();
+        progressContainer.classList.add('visible');
+        submitBtn.classList.add('loading');
+        submitBtn.disabled = true;
+        progressStatus.textContent = 'Connecting...';
+
+        var formData = new FormData(form);
+
+        // Use fetch + ReadableStream for SSE via POST
+        fetch('/live/stream', {
+            method: 'POST',
+            body: formData,
+        }).then(function(response) {
+            if (!response.ok) {
+                throw new Error('Server returned ' + response.status);
+            }
+
+            progressStatus.textContent = 'Pipeline running...';
+
+            var reader = response.body.getReader();
+            var decoder = new TextDecoder();
+            var buffer = '';
+
+            function processChunk(result) {
+                if (result.done) {
+                    onStreamEnd();
+                    return;
+                }
+
+                buffer += decoder.decode(result.value, { stream: true });
+                var lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                var currentEvent = '';
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i];
+                    if (line.startsWith('event:')) {
+                        currentEvent = line.substring(6).trim();
+                    } else if (line.startsWith('data:')) {
+                        var dataStr = line.substring(5).trim();
+                        if (dataStr) {
+                            try {
+                                var data = JSON.parse(dataStr);
+                                handleSSEEvent(currentEvent, data);
+                            } catch(err) {
+                                // Non-JSON data, ignore
+                            }
+                        }
+                    }
+                }
+
+                return reader.read().then(processChunk);
+            }
+
+            return reader.read().then(processChunk);
+        }).catch(function(err) {
+            progressStatus.textContent = 'Error';
+            var errEl = document.createElement('div');
+            errEl.className = 'error-event';
+            errEl.textContent = '\u26A0 Connection error: ' + err.message;
+            errorLog.appendChild(errEl);
+            onStreamEnd();
+        });
+    });
+
+    function handleSSEEvent(eventType, data) {
+        switch (eventType) {
+            case 'agent_start':
+                handleAgentStart(data);
+                break;
+
+            case 'agent_end':
+                handleAgentEnd(data);
+                break;
+
+            case 'tool_call':
+                handleToolCall(data);
+                break;
+
+            case 'phase':
+                handlePhase(data);
+                break;
+
+            case 'result':
+                handleResult(data);
+                break;
+
+            case 'report_html':
+                handleReportHtml(data);
+                break;
+
+            case 'error':
+                handleError(data);
+                break;
+
+            case 'done':
+                handleDone(data);
+                break;
+
+            case 'keepalive':
+                // Ignore heartbeats
+                break;
+        }
+    }
+
+    function handleAgentStart(data) {
+        var name = data.agent || 'agent';
+        var index = data.index || 0;
+        totalAgents = data.total || totalAgents;
+
+        progressStatus.textContent = 'Running agents (' + (completedAgents) + '/' + totalAgents + ')';
+
+        // Create or update agent entry
+        var key = name + '_' + index;
+        if (!agentElements[key]) {
+            var entry = document.createElement('div');
+            entry.className = 'agent-entry running';
+            entry.innerHTML =
+                '<span class="agent-icon"></span>' +
+                '<span class="agent-name">\uD83E\uDD16 ' + escapeHtml(name) + '</span>' +
+                '<span class="agent-counter">' + (index + 1) + '/' + totalAgents + '</span>';
+            agentTimeline.appendChild(entry);
+            agentElements[key] = entry;
+        }
+
+        updateProgressBar();
+    }
+
+    function handleAgentEnd(data) {
+        var name = data.agent || 'agent';
+        var index = data.index || 0;
+        totalAgents = data.total || totalAgents;
+        completedAgents++;
+
+        var key = name + '_' + index;
+        var entry = agentElements[key];
+        if (entry) {
+            entry.className = 'agent-entry done';
+            entry.querySelector('.agent-icon').className = 'agent-icon';
+            entry.querySelector('.agent-icon').textContent = '\u2714';
+        }
+
+        progressStatus.textContent = 'Running agents (' + completedAgents + '/' + totalAgents + ')';
+        updateProgressBar();
+    }
+
+    function handleToolCall(data) {
+        toolCount++;
+        var el = document.createElement('span');
+        el.className = 'tool-event' + (data.error ? ' error' : '');
+        var label = '\u2699 ' + (data.tool || 'tool');
+        if (data.duration_ms) {
+            label += ' (' + Math.round(data.duration_ms) + 'ms)';
+        }
+        label += data.error ? ' \u2718' : ' \u2714';
+        el.textContent = label;
+        toolLog.appendChild(el);
+    }
+
+    function handlePhase(data) {
+        var el = document.createElement('span');
+        el.className = 'phase-event';
+        el.textContent = '\u25B6 ' + (data.phase || data.skill || 'phase');
+        if (data.strategy) {
+            el.textContent += ' [' + data.strategy + ']';
+        }
+        toolLog.appendChild(el);
+    }
+
+    function handleResult(data) {
+        progressStatus.textContent = 'Report ready';
+        progressBar.style.width = '100%';
+        progressBar.classList.add('complete');
+
+        if (data.cost_usd) {
+            doneStats.classList.add('visible');
+            doneStats.textContent = 'Cost: $' + parseFloat(data.cost_usd).toFixed(4);
+            if (toolCount > 0) {
+                doneStats.textContent += ' \u2502 Tools: ' + toolCount;
+            }
+        }
+    }
+
+    function handleReportHtml(data) {
+        if (data.html) {
+            reportHtml = data.html;
+            reportArea.classList.add('visible');
+            reportIframe.srcdoc = data.html;
+        }
+    }
+
+    function handleError(data) {
+        var errEl = document.createElement('div');
+        errEl.className = 'error-event';
+        errEl.textContent = '\u26A0 ' + (data.message || 'Unknown error');
+        if (data.retriable) {
+            errEl.textContent += ' (retriable)';
+        }
+        errorLog.appendChild(errEl);
+    }
+
+    function handleDone(data) {
+        progressStatus.textContent = completedAgents > 0
+            ? 'Complete \u2014 ' + completedAgents + ' agents, ' + toolCount + ' tools'
+            : 'Complete';
+        progressBar.style.width = '100%';
+        progressBar.classList.add('complete');
+        onStreamEnd();
+    }
+
+    function updateProgressBar() {
+        if (totalAgents > 0) {
+            var pct = Math.round((completedAgents / totalAgents) * 100);
+            progressBar.style.width = pct + '%';
+            progressPct.textContent = pct + '%';
+            progressAgentLabel.textContent = completedAgents + '/' + totalAgents + ' agents';
+        }
+    }
+
+    function onStreamEnd() {
+        submitBtn.classList.remove('loading');
+        submitBtn.disabled = false;
+        if (progressStatus.textContent === 'Connecting...' ||
+            progressStatus.textContent === 'Pipeline running...') {
+            progressStatus.textContent = 'Complete';
+        }
+    }
+
+    function resetUI() {
+        agentTimeline.innerHTML = '';
+        toolLog.innerHTML = '';
+        errorLog.innerHTML = '';
+        doneStats.classList.remove('visible');
+        doneStats.textContent = '';
+        reportArea.classList.remove('visible');
+        reportIframe.srcdoc = '';
+        progressBar.style.width = '0%';
+        progressBar.classList.remove('complete');
+        progressPct.textContent = '';
+        progressAgentLabel.textContent = '';
+        agentElements = {};
+        totalAgents = 0;
+        completedAgents = 0;
+        toolCount = 0;
+        reportHtml = null;
+    }
+
+    // Open report in new tab
+    btnOpenTab.addEventListener('click', function() {
+        if (reportHtml) {
+            var blob = new Blob([reportHtml], { type: 'text/html' });
+            var url = URL.createObjectURL(blob);
+            var newWin = window.open(url, '_blank', 'noopener,noreferrer');
+            if (newWin) { newWin.opener = null; }
+            // Revoke blob URL after a short delay to prevent memory leak
+            setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+        }
+    });
+
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+})();
+</script>
+{% endblock %}

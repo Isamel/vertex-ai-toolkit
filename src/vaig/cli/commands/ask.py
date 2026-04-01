@@ -24,7 +24,8 @@ from vaig.cli._helpers import (
     track_command,
 )
 from vaig.cli.commands._code import _execute_code_mode, _try_chunked_ask
-from vaig.cli.commands.live import _build_gke_config, _execute_live_mode
+from vaig.cli.commands.live import _execute_live_mode
+from vaig.core.gke import build_gke_config as _build_gke_config
 
 
 def register(app: typer.Typer) -> None:

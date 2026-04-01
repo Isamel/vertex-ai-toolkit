@@ -127,11 +127,11 @@ class TestCmdLiveToggle:
         with (
             patch("vaig.cli.repl.console"),
             patch(
-                "vaig.cli.commands.live._build_gke_config",
+                "vaig.core.gke.build_gke_config",
                 return_value=mock_gke_config,
             ) as mock_build,
             patch(
-                "vaig.cli.commands.live._register_live_tools",
+                "vaig.core.gke.register_live_tools",
                 return_value=mock_registry,
             ) as mock_register,
             patch(
@@ -188,13 +188,13 @@ class TestLiveCodeMutualExclusivity:
         with (
             patch("vaig.cli.repl.console"),
             patch(
-                "vaig.cli.commands.live._build_gke_config",
+                "vaig.core.gke.build_gke_config",
                 return_value=MagicMock(
                     cluster_name="c", default_namespace="ns", project_id="p",
                 ),
             ),
             patch(
-                "vaig.cli.commands.live._register_live_tools",
+                "vaig.core.gke.register_live_tools",
                 return_value=mock_registry,
             ),
             patch("vaig.core.cache.ToolResultCache"),
@@ -265,13 +265,13 @@ class TestLiveInHandleCommand:
         with (
             patch("vaig.cli.repl.console"),
             patch(
-                "vaig.cli.commands.live._build_gke_config",
+                "vaig.core.gke.build_gke_config",
                 return_value=MagicMock(
                     cluster_name="c", default_namespace="ns", project_id="p",
                 ),
             ),
             patch(
-                "vaig.cli.commands.live._register_live_tools",
+                "vaig.core.gke.register_live_tools",
                 return_value=mock_registry,
             ),
             patch("vaig.core.cache.ToolResultCache"),
@@ -431,7 +431,7 @@ class TestLiveMissingDeps:
             name: str, *args: object, **kwargs: object,
         ) -> object:
             """Raise ImportError only for live-mode-related imports."""
-            if "vaig.cli.commands.live" in name:
+            if "vaig.core.gke" in name:
                 raise ImportError("No module named 'kubernetes'")
             return original_import(name, *args, **kwargs)
 
@@ -439,7 +439,7 @@ class TestLiveMissingDeps:
             patch("vaig.cli.repl.console"),
             patch.dict(
                 "sys.modules",
-                {"vaig.cli.commands.live": None},
+                {"vaig.core.gke": None},
             ),
         ):
             with patch(

@@ -23,10 +23,10 @@ from vaig.cli._helpers import (
 # refactor will move them to a shared module (e.g. _orchestration.py) so
 # both live.py and discover.py import from a common location.
 from vaig.cli.commands.live import (
-    _build_gke_config,
     _create_tool_call_store,
     _execute_orchestrated_skill,
 )
+from vaig.core.gke import build_gke_config as _build_gke_config
 from vaig.core.prompt_defense import _sanitize_namespace
 from vaig.skills.discovery.prompts import SYSTEM_NAMESPACES_CSV
 

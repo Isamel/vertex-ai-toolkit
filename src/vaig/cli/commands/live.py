@@ -54,7 +54,6 @@ if TYPE_CHECKING:
     from vaig.skills.base import BaseSkill, SkillMetadata
     from vaig.skills.service_health.diff import ReportDiff
     from vaig.skills.service_health.schema import HealthReport
-    from vaig.tools.base import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -962,51 +961,8 @@ def _run_watch_loop(
 # ── Live mode helpers ─────────────────────────────────────────
 
 
-def _build_gke_config(
-    settings: Settings,
-    *,
-    cluster: str | None = None,
-    namespace: str | None = None,
-    project_id: str | None = None,
-    location: str | None = None,
-) -> GKEConfig:
-    """Build a GKEConfig, applying CLI overrides on top of config file defaults.
-
-    Args:
-        settings: Application settings (contains gke section).
-        cluster: Optional cluster name override.
-        namespace: Optional default namespace override.
-        project_id: Optional GCP project ID override.
-        location: Optional GKE cluster location/zone/region override.
-
-    Returns:
-        GKEConfig with CLI overrides applied.
-    """
-    from vaig.core.config import GKEConfig
-
-    gke = settings.gke
-
-    return GKEConfig(
-        cluster_name=cluster or gke.cluster_name,
-        project_id=project_id or gke.project_id or settings.gcp.project_id,
-        default_namespace=namespace or gke.default_namespace,
-        location=location or gke.location,
-        kubeconfig_path=gke.kubeconfig_path,
-        context=gke.context,
-        log_limit=gke.log_limit,
-        metrics_interval_minutes=gke.metrics_interval_minutes,
-        proxy_url=gke.proxy_url,
-        impersonate_sa=gke.impersonate_sa,
-        exec_enabled=gke.exec_enabled,
-        # Helm / ArgoCD — merge Settings-level config into GKEConfig flags
-        helm_enabled=settings.helm.enabled,
-        argocd_enabled=settings.argocd.enabled,
-        argocd_server=settings.argocd.server,
-        argocd_token=settings.argocd.token,
-        argocd_context=settings.argocd.context,
-        argocd_namespace=settings.argocd.namespace,
-        argocd_verify_ssl=settings.argocd.verify_ssl,
-    )
+# _build_gke_config — delegated to vaig.core.gke.build_gke_config
+from vaig.core.gke import build_gke_config as _build_gke_config
 
 
 def _display_dry_run_plan(
@@ -1110,67 +1066,8 @@ def _display_dry_run_plan(
     console.print("[dim]Run without --dry-run to execute.[/dim]")
 
 
-def _register_live_tools(gke_config: GKEConfig, settings: Settings | None = None) -> ToolRegistry:
-    """Create a ToolRegistry and register GKE + GCloud + plugin tools.
-
-    Follows the same try/except ImportError pattern as InfraAgent._register_tools()
-    so missing optional dependencies degrade gracefully.
-
-    Args:
-        gke_config: GKE configuration for tool creation.
-        settings: Full application settings (used for plugin tool loading).
-
-    Returns:
-        Populated ToolRegistry (may be empty if no optional deps installed).
-    """
-    from vaig.tools.base import ToolRegistry
-
-    registry = ToolRegistry()
-
-    # Resolve GKE-specific credentials (SA impersonation or ADC)
-    gke_credentials = None
-    if settings is not None:
-        from vaig.core.auth import get_gke_credentials
-
-        gke_credentials = get_gke_credentials(settings)
-
-    # GKE tools — requires 'kubernetes' package
-    try:
-        from vaig.tools.gke_tools import create_gke_tools  # noqa: WPS433
-
-        for tool in create_gke_tools(gke_config):
-            registry.register(tool)
-    except ImportError as exc:
-        logger.warning("Could not load GKE tools: %s", exc)
-
-    # GCP observability tools — requires google-cloud-logging / google-cloud-monitoring
-    try:
-        from vaig.tools.gcloud_tools import create_gcloud_tools  # noqa: WPS433
-
-        for tool in create_gcloud_tools(
-            project=gke_config.project_id,
-            log_limit=gke_config.log_limit,
-            metrics_interval_minutes=gke_config.metrics_interval_minutes,
-            credentials=gke_credentials,
-        ):
-            registry.register(tool)
-    except ImportError as exc:
-        logger.warning("Could not load GCloud observability tools: %s", exc)
-
-    # Plugin tools — MCP auto-registration and Python module plugins
-    if settings is not None:
-        try:
-            from vaig.tools.plugin_loader import load_all_plugin_tools  # noqa: WPS433
-
-            for tool in load_all_plugin_tools(settings):
-                registry.register(tool)
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "Failed to load plugin tools for live mode. Skipping.",
-                exc_info=True,
-            )
-
-    return registry
+# _register_live_tools — delegated to vaig.core.gke.register_live_tools
+from vaig.core.gke import register_live_tools as _register_live_tools
 
 
 def _export_html_report(
