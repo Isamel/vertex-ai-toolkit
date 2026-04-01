@@ -11,6 +11,15 @@ warnings.filterwarnings(
     category=Warning,
 )
 
+# urllib3 InsecureRequestWarning when verify=False (common with internal GKE
+# endpoints behind custom CAs or skip-TLS proxies — safe to silence globally)
+import urllib3.exceptions  # noqa: E402
+
+warnings.filterwarnings(
+    "ignore",
+    category=urllib3.exceptions.InsecureRequestWarning,
+)
+
 # Single source of truth: pyproject.toml [project] version.
 # importlib.metadata reads it from the installed package metadata.
 # Fallback "0.0.0-dev" covers editable installs where metadata isn't available

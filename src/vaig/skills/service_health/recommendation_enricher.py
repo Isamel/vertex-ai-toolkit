@@ -75,8 +75,16 @@ Do NOT include any other text, markdown fences, or explanation outside the JSON.
 def _build_enrichment_prompt(
     finding: Finding,
     action: RecommendedAction,
+    context: dict[str, str] | None = None,
 ) -> str:
-    """Build the user prompt for enriching a single recommendation."""
+    """Build the user prompt for enriching a single recommendation.
+
+    Args:
+        finding: The related finding for this recommendation.
+        action: The recommendation to enrich.
+        context: Optional dict with report-level context keys:
+            ``namespace``, ``cluster_name``.
+    """
     evidence_text = (
         "\n".join(f"  - {e}" for e in finding.evidence)
         if finding.evidence
@@ -94,8 +102,29 @@ def _build_enrichment_prompt(
         else str(action.urgency)
     )
 
+    # ── Context section (service, category, namespace, cluster) ──
+    ctx = context or {}
+    context_lines: list[str] = []
+    if finding.service:
+        context_lines.append(f"- **Service**: {finding.service}")
+    if finding.category:
+        context_lines.append(f"- **Category**: {finding.category}")
+    if ctx.get("namespace"):
+        context_lines.append(f"- **Namespace**: {ctx['namespace']}")
+    if ctx.get("cluster_name"):
+        context_lines.append(f"- **Cluster**: {ctx['cluster_name']}")
+
+    context_section = ""
+    if context_lines:
+        context_section = "## Context\n" + "\n".join(context_lines) + "\n\n"
+
+    # ── Remediation line (if the reporter already provided one) ──
+    remediation_line = ""
+    if finding.remediation:
+        remediation_line = f"\n- **Existing Remediation**: {finding.remediation}"
+
     return f"""\
-## Finding
+{context_section}## Finding
 - **Title**: {finding.title}
 - **Severity**: {severity_val}
 - **Description**: {finding.description}
@@ -103,7 +132,7 @@ def _build_enrichment_prompt(
 - **Impact**: {finding.impact}
 - **Affected Resources**: {', '.join(finding.affected_resources) if finding.affected_resources else 'unknown'}
 - **Evidence**:
-{evidence_text}
+{evidence_text}{remediation_line}
 
 ## Recommendation to Enrich
 - **Title**: {action.title}
@@ -125,13 +154,14 @@ async def _enrich_one(
     model: str,
     semaphore: asyncio.Semaphore,
     timeout_per_call: float,
+    context: dict[str, str] | None = None,
 ) -> tuple[int, str, str] | None:
     """Enrich a single recommendation.
 
     Returns ``(index, expected_output, interpretation)`` on success, or
     ``None`` when enrichment fails or produces empty fields.
     """
-    prompt = _build_enrichment_prompt(finding, action)
+    prompt = _build_enrichment_prompt(finding, action, context=context)
 
     async with semaphore:
         try:
@@ -245,6 +275,22 @@ async def enrich_recommendations(
     # Build a finding lookup by ID for quick matching
     finding_by_id: dict[str, Finding] = {f.id: f for f in report.findings}
 
+    # ── Build report-level context for enrichment prompts ────────────
+    # Extract namespace from service statuses, matching finding.service
+    # to a ServiceStatus entry.  Fall back to the first service's
+    # namespace when no match is found.
+    service_ns_map: dict[str, str] = {}
+    fallback_namespace = ""
+    if report.service_statuses:
+        fallback_namespace = report.service_statuses[0].namespace or ""
+        for svc_status in report.service_statuses:
+            if svc_status.service and svc_status.namespace:
+                service_ns_map[svc_status.service] = svc_status.namespace
+
+    cluster_name = ""
+    if report.metadata and report.metadata.cluster_name:
+        cluster_name = report.metadata.cluster_name
+
     # Initialize the client once to avoid race conditions in concurrent tasks.
     # GeminiClient.async_initialize involves an `await asyncio.to_thread` for
     # credentials — if multiple tasks enter initialization simultaneously, they
@@ -268,6 +314,21 @@ async def enrich_recommendations(
         if related is None:
             continue
 
+        # Build per-finding context: resolve the namespace from the
+        # finding's service name, falling back to the first service's
+        # namespace if no match is found.
+        finding_namespace = ""
+        if related.service:
+            finding_namespace = service_ns_map.get(related.service, fallback_namespace)
+        else:
+            finding_namespace = fallback_namespace
+
+        enrichment_context: dict[str, str] = {}
+        if finding_namespace:
+            enrichment_context["namespace"] = finding_namespace
+        if cluster_name:
+            enrichment_context["cluster_name"] = cluster_name
+
         tasks.append(
             asyncio.ensure_future(
                 _enrich_one(
@@ -278,6 +339,7 @@ async def enrich_recommendations(
                     model=model,
                     semaphore=semaphore,
                     timeout_per_call=timeout_per_call,
+                    context=enrichment_context if enrichment_context else None,
                 )
             )
         )
