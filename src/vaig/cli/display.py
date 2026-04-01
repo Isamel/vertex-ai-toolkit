@@ -6,10 +6,11 @@ import re
 from typing import TYPE_CHECKING, Any
 
 import typer
-from rich.console import Console
+from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.rule import Rule
+from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
@@ -651,10 +652,11 @@ def print_recommendations_table(
     *,
     console: Console | None = None,
 ) -> None:
-    """Render recommended actions as a Rich Table.
+    """Render recommended actions as Rich Panels (one per recommendation).
 
-    Columns: ``#``, ``Action``, ``Command``, ``Risk``.
-    Only displayed when the report contains at least one recommendation.
+    Each panel displays the action's fields conditionally — empty fields
+    are silently omitted.  The panel border colour reflects urgency via
+    ``_URGENCY_STYLE``.
 
     Args:
         report: A parsed ``HealthReport`` instance.
@@ -664,29 +666,50 @@ def print_recommendations_table(
         return
 
     con = console or _default_console
-    table = Table(
-        title="📋 Recommended Actions",
-        show_lines=True,
-        title_style="bold",
-    )
-    table.add_column("#", style="bold", width=3, justify="right")
-    table.add_column("Action", style="cyan", max_width=50)
-    table.add_column("Command", style="green", max_width=50)
-    table.add_column("Risk", style="yellow", max_width=30)
+    con.print(Text("📋 Recommended Actions", style="bold"))
+    con.print()
 
     sorted_recs = sorted(report.recommendations, key=lambda r: r.priority)
     for rec in sorted_recs:
         urgency_style = _URGENCY_STYLE.get(rec.urgency.value, "")
-        action_text = Text(rec.title)
-        if urgency_style:
-            action_text.append(f" [{rec.urgency.value}]", style=urgency_style)
+        title_text = f"#{rec.priority} {rec.title} [{rec.urgency.value}]"
 
-        cmd = rec.command if rec.command else "—"
-        risk = rec.risk if rec.risk else "—"
+        body_parts: list[Text | Syntax] = []
 
-        table.add_row(str(rec.priority), action_text, cmd, risk)
+        if rec.description and rec.description.strip():
+            body_parts.append(Text(rec.description))
 
-    con.print(table)
+        if rec.command and rec.command.strip():
+            body_parts.append(Text(""))
+            body_parts.append(Text("Command:", style="bold"))
+            body_parts.append(
+                Syntax(rec.command, "bash", theme="monokai", word_wrap=True)
+            )
+
+        if rec.expected_output and rec.expected_output.strip():
+            body_parts.append(Text(""))
+            body_parts.append(Text("Expected output:", style="bold"))
+            body_parts.append(Text(rec.expected_output, style="dim"))
+
+        if rec.interpretation and rec.interpretation.strip():
+            body_parts.append(Text(""))
+            body_parts.append(Text("Interpretation:", style="bold"))
+            body_parts.append(Text(rec.interpretation, style="italic"))
+
+        if rec.why and rec.why.strip():
+            body_parts.append(Text(""))
+            body_parts.append(Text(f"Why: {rec.why}", style="cyan"))
+
+        if rec.risk and rec.risk.strip():
+            body_parts.append(Text(f"Risk: {rec.risk}", style="yellow"))
+
+        panel = Panel(
+            Group(*body_parts),
+            title=title_text,
+            border_style=urgency_style,
+            expand=True,
+        )
+        con.print(panel)
 
 
 # ── Watch Mode Diff Summary ──────────────────────────────────

@@ -492,6 +492,14 @@ class RecommendedAction(BaseModel):
         return _make_enum_coercer(Effort, Effort.MEDIUM)(v)
 
     command: str = Field(default="", description="Exact kubectl / gcloud command")
+    expected_output: str = Field(
+        default="",
+        description="What the command output looks like when healthy",
+    )
+    interpretation: str = Field(
+        default="",
+        description="How to read the output and decide next steps",
+    )
     why: str = Field(default="")
     risk: str = Field(default="")
     related_findings: list[str] = Field(
@@ -980,10 +988,16 @@ class HealthReport(BaseModel):
             parts.append(f"### {urgency_labels[urgency]}")
             for action in actions:
                 parts.append(f"{action.priority}. {action.title}")
+                if action.description and action.description.strip():
+                    parts.append(f"   {action.description}")
                 if action.command:
                     parts.append("   ```")
                     parts.append(f"   {action.command}")
                     parts.append("   ```")
+                if action.expected_output and action.expected_output.strip():
+                    parts.append(f"   - Expected output: {action.expected_output}")
+                if action.interpretation and action.interpretation.strip():
+                    parts.append(f"   - Interpretation: {action.interpretation}")
                 if action.why:
                     parts.append(f"   - Why: {action.why}")
                 if action.risk:

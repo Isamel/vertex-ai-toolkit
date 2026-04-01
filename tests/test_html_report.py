@@ -384,3 +384,53 @@ class TestEmptyReport:
         report = HealthReport(executive_summary=_make_executive_summary(status=status))
         result = render_health_report_html(report)
         assert status.value in result
+
+
+# ── Recommendation new-field tests ───────────────────────────────────────────
+
+
+class TestRecommendationNewFields:
+    """Verify expected_output and interpretation render in the HTML output."""
+
+    def test_new_fields_present_in_json_when_populated(self) -> None:
+        """expected_output and interpretation appear in the injected JSON."""
+        report = HealthReport(
+            executive_summary=_make_executive_summary(),
+            recommendations=[
+                RecommendedAction(
+                    priority=1,
+                    title="Restart payment-svc",
+                    urgency=ActionUrgency.IMMEDIATE,
+                    command="kubectl rollout restart deploy/payment-svc",
+                    expected_output="deployment.apps/payment-svc restarted",
+                    interpretation="Pods should show Running within 30s.",
+                ),
+            ],
+        )
+        result = render_health_report_html(report)
+        assert "deployment.apps/payment-svc restarted" in result
+        assert "Pods should show Running within 30s." in result
+
+    def test_empty_new_fields_not_rendered_as_labels(self) -> None:
+        """When expected_output/interpretation are empty, the SPA template skips them."""
+        report = HealthReport(
+            executive_summary=_make_executive_summary(),
+            recommendations=[
+                RecommendedAction(
+                    priority=1,
+                    title="Simple fix",
+                    urgency=ActionUrgency.IMMEDIATE,
+                    command="kubectl apply -f fix.yaml",
+                ),
+            ],
+        )
+        result = render_health_report_html(report)
+        # The template uses conditional rendering — empty values produce no label divs
+        # We verify the JSON has empty strings which the JS conditional will skip
+        marker = "const REPORT_DATA = "
+        start = result.index(marker) + len(marker)
+        end = result.index(";\n", start)
+        parsed = json.loads(result[start:end])
+        rec = parsed["recommendations"][0]
+        assert rec["expected_output"] == ""
+        assert rec["interpretation"] == ""
