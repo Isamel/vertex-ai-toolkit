@@ -181,6 +181,19 @@ async def test_chat_new_contains_form(client) -> None:
     assert "New conversation" in body
 
 
+@pytest.mark.asyncio
+async def test_chat_new_contains_settings_panel(client) -> None:
+    """GET /chat should contain the collapsible settings panel with project and model fields."""
+    resp = await client.get("/chat")
+    body = resp.text
+    assert 'id="settings-panel"' in body
+    assert 'id="settings-toggle"' in body
+    assert 'id="chat-project"' in body
+    assert 'id="chat-model"' in body
+    assert "gemini-2.5-pro" in body
+    assert "gemini-2.5-flash" in body
+
+
 # ── GET /chat/{session_id} ───────────────────────────────────
 
 

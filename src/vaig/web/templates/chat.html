@@ -245,6 +245,82 @@
         margin-bottom: 0.3rem;
     }
 
+    /* Settings panel */
+    .settings-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.4rem 0.75rem;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) / 2);
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: border-color 0.2s, color 0.2s;
+    }
+
+    .settings-toggle:hover {
+        border-color: var(--accent);
+        color: var(--text-primary);
+    }
+
+    .settings-toggle.active {
+        border-color: var(--accent);
+        color: var(--accent);
+    }
+
+    .settings-panel {
+        display: none;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) / 2);
+        padding: 0.75rem 1rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .settings-panel.visible {
+        display: block;
+    }
+
+    .settings-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.75rem;
+    }
+
+    .settings-field label {
+        display: block;
+        margin-bottom: 0.25rem;
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        font-weight: 500;
+    }
+
+    .settings-field input,
+    .settings-field select {
+        width: 100%;
+        padding: 0.45rem 0.6rem;
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) / 2);
+        color: var(--text-primary);
+        font-family: var(--font-sans);
+        font-size: 0.85rem;
+        transition: border-color 0.2s;
+    }
+
+    .settings-field input:focus,
+    .settings-field select:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+
+    .settings-field select {
+        font-family: var(--font-mono);
+        cursor: pointer;
+    }
+
     /* Input area */
     .chat-input {
         display: flex;
@@ -340,6 +416,10 @@
         .chat-input textarea {
             font-size: 16px; /* Prevents zoom on iOS */
         }
+
+        .settings-row {
+            grid-template-columns: 1fr;
+        }
     }
 </style>
 {% endblock %}
@@ -356,6 +436,7 @@
             {% endif %}
         </div>
         <div class="header-actions">
+            <button type="button" class="settings-toggle" id="settings-toggle" title="Settings">&#9881; Settings</button>
             <a href="/sessions" class="btn-link">Sessions</a>
             <a href="/chat" class="btn-link">+ New</a>
         </div>
@@ -364,6 +445,23 @@
     {% if error is defined and error %}
     <div class="alert-error">{{ error }}</div>
     {% endif %}
+
+    <div class="settings-panel" id="settings-panel">
+        <div class="settings-row">
+            <div class="settings-field">
+                <label for="chat-project">GCP Project ID</label>
+                <input type="text" id="chat-project" name="project"
+                       placeholder="Leave empty for default">
+            </div>
+            <div class="settings-field">
+                <label for="chat-model">Model</label>
+                <select id="chat-model" name="model">
+                    <option value="gemini-2.5-pro" selected>gemini-2.5-pro</option>
+                    <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+                </select>
+            </div>
+        </div>
+    </div>
 
     <div class="messages" id="messages">
         {% for msg in messages %}
@@ -407,9 +505,17 @@
     var sendBtn = document.getElementById('send-btn');
     var messagesDiv = document.getElementById('messages');
     var streamingIndicator = document.getElementById('streaming-indicator');
+    var settingsToggle = document.getElementById('settings-toggle');
+    var settingsPanel = document.getElementById('settings-panel');
 
     // Current session ID — either from server-rendered data or set after first message
     var sessionId = {{ (session.id | tojson) if session else 'null' }};
+
+    // Toggle settings panel
+    settingsToggle.addEventListener('click', function() {
+        settingsPanel.classList.toggle('visible');
+        settingsToggle.classList.toggle('active');
+    });
 
     // Auto-resize textarea
     input.addEventListener('input', function() {
@@ -456,6 +562,16 @@
         var targetId = sessionId || 'new';
         var formData = new FormData();
         formData.append('message', message);
+
+        // Include settings from the settings panel
+        var projectVal = document.getElementById('chat-project').value.trim();
+        var modelVal = document.getElementById('chat-model').value;
+        if (projectVal) {
+            formData.append('project', projectVal);
+        }
+        if (modelVal) {
+            formData.append('model', modelVal);
+        }
 
         // Use fetch + ReadableStream for SSE via POST
         fetch('/chat/' + targetId + '/message', {
