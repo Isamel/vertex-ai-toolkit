@@ -701,6 +701,7 @@ def print_recommendations_table(
             body_parts.append(Text(f"Why: {rec.why}", style="cyan"))
 
         if rec.risk and rec.risk.strip():
+            body_parts.append(Text(""))
             body_parts.append(Text(f"Risk: {rec.risk}", style="yellow"))
 
         panel = Panel(

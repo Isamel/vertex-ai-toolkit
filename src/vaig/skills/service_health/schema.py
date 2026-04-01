@@ -990,12 +990,17 @@ class HealthReport(BaseModel):
                 parts.append(f"{action.priority}. {action.title}")
                 if action.description and action.description.strip():
                     parts.append(f"   {action.description}")
-                if action.command:
+                command_str = action.command.strip() if action.command else ""
+                if command_str:
                     parts.append("   ```")
-                    parts.append(f"   {action.command}")
+                    parts.append(f"   {command_str}")
                     parts.append("   ```")
                 if action.expected_output and action.expected_output.strip():
-                    parts.append(f"   - Expected output: {action.expected_output}")
+                    parts.append("   - Expected output:")
+                    parts.append("     ```")
+                    for line in action.expected_output.strip().splitlines():
+                        parts.append(f"     {line}")
+                    parts.append("     ```")
                 if action.interpretation and action.interpretation.strip():
                     parts.append(f"   - Interpretation: {action.interpretation}")
                 if action.why:

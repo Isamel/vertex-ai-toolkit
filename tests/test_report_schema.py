@@ -726,7 +726,8 @@ class TestToMarkdown:
             ],
         )
         md = report.to_markdown()
-        assert "- Expected output: deployment.apps/app resource requirements updated" in md
+        assert "- Expected output:" in md
+        assert "deployment.apps/app resource requirements updated" in md
         assert "- Interpretation: Verify pods restart with new limits within 60s." in md
 
     def test_recommendations_omit_empty_new_fields(self) -> None:
