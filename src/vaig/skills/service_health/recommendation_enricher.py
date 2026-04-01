@@ -82,8 +82,10 @@ def _build_enrichment_prompt(
     Args:
         finding: The related finding for this recommendation.
         action: The recommendation to enrich.
-        context: Optional dict with report-level context keys:
-            ``namespace``, ``cluster_name``.
+        context: Optional dict with additional context for this finding's prompt.
+            Typically includes report-level metadata such as ``namespace`` and
+            ``cluster_name``; service, category, and remediation are taken from
+            the ``finding`` itself and do not need to be passed here.
     """
     evidence_text = (
         "\n".join(f"  - {e}" for e in finding.evidence)
@@ -317,11 +319,11 @@ async def enrich_recommendations(
         # Build per-finding context: resolve the namespace from the
         # finding's service name, falling back to the first service's
         # namespace if no match is found.
-        finding_namespace = ""
-        if related.service:
-            finding_namespace = service_ns_map.get(related.service, fallback_namespace)
-        else:
-            finding_namespace = fallback_namespace
+        finding_namespace = (
+            service_ns_map.get(related.service) or fallback_namespace
+            if related.service
+            else fallback_namespace
+        )
 
         enrichment_context: dict[str, str] = {}
         if finding_namespace:
