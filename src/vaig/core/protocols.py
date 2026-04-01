@@ -25,6 +25,7 @@ __all__ = [
     "GCPClientProvider",
     "GeminiClientProtocol",
     "K8sClientProvider",
+    "PlatformAuthProtocol",
     "SessionStoreProtocol",
 ]
 
@@ -307,4 +308,54 @@ class SessionStoreProtocol(Protocol):
 
     async def async_delete_session(self, session_id: str) -> bool:
         """Delete a session and all its messages."""
+        ...
+
+
+# ══════════════════════════════════════════════════════════════
+# A5. PlatformAuth Protocol
+# ══════════════════════════════════════════════════════════════
+
+
+@runtime_checkable
+class PlatformAuthProtocol(Protocol):
+    """Structural protocol for the platform authentication manager.
+
+    Defines the interface that ``PlatformAuthManager`` (or any mock)
+    must satisfy for CLI auth, token management, and enforced config
+    retrieval.  Used by the service container and auth middleware to
+    remain decoupled from the concrete implementation.
+    """
+
+    def login(self) -> Any:
+        """Run the OAuth PKCE login flow and return an ``AuthResult``."""
+        ...
+
+    def logout(self) -> None:
+        """Revoke the current token and delete local credentials."""
+        ...
+
+    def get_token(self) -> str | None:
+        """Return a valid access token, auto-refreshing if needed.
+
+        Returns ``None`` when no valid (or refreshable) credentials exist.
+        """
+        ...
+
+    def is_authenticated(self) -> bool:
+        """Return ``True`` if valid (non-expired or refreshable) credentials exist."""
+        ...
+
+    def get_user_info(self) -> dict[str, Any] | None:
+        """Decode JWT claims and return user info (email, org_id, role).
+
+        Returns ``None`` when not authenticated.
+        """
+        ...
+
+    def get_enforced_config(self) -> dict[str, Any]:
+        """Fetch the enforced config policy from the backend.
+
+        Returns a dict of field paths to enforced values.  Returns an
+        empty dict on network failure (graceful degradation).
+        """
         ...

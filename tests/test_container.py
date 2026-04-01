@@ -131,7 +131,7 @@ class TestServiceContainerFields:
     def test_container_has_expected_field_names(self) -> None:
         """ServiceContainer dataclass has exactly the expected fields."""
         field_names = {f.name for f in dataclasses.fields(ServiceContainer)}
-        expected = {"settings", "gemini_client", "k8s_provider", "gcp_provider", "event_bus", "quota_checker"}
+        expected = {"settings", "gemini_client", "k8s_provider", "gcp_provider", "event_bus", "quota_checker", "platform_auth"}
         assert field_names == expected
 
 

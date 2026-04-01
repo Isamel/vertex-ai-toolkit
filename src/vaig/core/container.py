@@ -43,6 +43,7 @@ class ServiceContainer:
         gcp_provider: GCP observability client provider. Can be ``None`` if not required (e.g., in tests).
         event_bus: Process-wide event bus for domain events.
         quota_checker: Rate-limit quota enforcer. ``None`` when rate limiting is disabled.
+        platform_auth: Platform authentication manager. ``None`` when platform mode is disabled.
     """
 
     settings: Settings
@@ -51,6 +52,7 @@ class ServiceContainer:
     gcp_provider: GCPClientProvider | None
     event_bus: EventBus
     quota_checker: object | None = None
+    platform_auth: object | None = None
 
 
 def build_container(settings: Settings) -> ServiceContainer:

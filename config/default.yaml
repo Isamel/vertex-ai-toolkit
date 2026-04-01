@@ -368,3 +368,11 @@ rate_limit:
   policy_gcs_bucket: ""
   policy_gcs_path: "vaig/quota-policy.yaml"
   cache_ttl_seconds: 300
+
+# Platform mode — centralized auth, config enforcement, admin management
+# When enabled, CLI authenticates against a backend API and receives
+# enforced configuration policies from the organization admin.
+# Disabled by default — standalone mode is unchanged.
+platform:
+  enabled: false
+  backend_url: ""
