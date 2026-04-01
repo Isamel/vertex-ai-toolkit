@@ -210,29 +210,37 @@ def _make_recommendation(
     *,
     priority: int = 1,
     title: str = "Restart pods",
+    description: str = "",
     command: str = "kubectl rollout restart deploy/nginx",
+    expected_output: str = "",
+    interpretation: str = "",
     risk: str = "Brief downtime",
+    why: str = "",
     urgency: ActionUrgency = ActionUrgency.IMMEDIATE,
     effort: Effort = Effort.LOW,
 ) -> RecommendedAction:
     return RecommendedAction(
         priority=priority,
         title=title,
+        description=description,
         command=command,
+        expected_output=expected_output,
+        interpretation=interpretation,
         risk=risk,
+        why=why,
         urgency=urgency,
         effort=effort,
     )
 
 
 class TestPrintRecommendationsTable:
-    """Tests for print_recommendations_table()."""
+    """Tests for print_recommendations_table() — Panel-based layout."""
 
     def test_empty_recommendations_is_silent(self) -> None:
         output = _capture_table(_make_report())
         assert output.strip() == ""
 
-    def test_single_recommendation_renders_table(self) -> None:
+    def test_single_recommendation_renders_panel(self) -> None:
         rec = _make_recommendation()
         report = _make_report(recommendations=[rec])
         output = _capture_table(report)
@@ -249,23 +257,53 @@ class TestPrintRecommendationsTable:
         ]
         report = _make_report(recommendations=recs)
         output = _capture_table(report)
-        # All three should appear
         assert "Immediate fix" in output
         assert "Short-term fix" in output
         assert "Long-term fix" in output
 
-    def test_missing_command_shows_dash(self) -> None:
-        rec = _make_recommendation(command="")
+    def test_panel_shows_description(self) -> None:
+        rec = _make_recommendation(description="Scale the deployment to 5 replicas.")
         report = _make_report(recommendations=[rec])
         output = _capture_table(report)
-        # The em dash should appear in place of empty command
-        assert "—" in output
+        assert "Scale the deployment to 5 replicas." in output
 
-    def test_missing_risk_shows_dash(self) -> None:
-        rec = _make_recommendation(risk="")
+    def test_panel_shows_expected_output(self) -> None:
+        rec = _make_recommendation(expected_output="deployment.apps/nginx restarted")
         report = _make_report(recommendations=[rec])
         output = _capture_table(report)
-        assert "—" in output
+        assert "Expected output" in output
+        assert "deployment.apps/nginx restarted" in output
+
+    def test_panel_shows_interpretation(self) -> None:
+        rec = _make_recommendation(interpretation="All pods should show Running within 30s.")
+        report = _make_report(recommendations=[rec])
+        output = _capture_table(report)
+        assert "Interpretation" in output
+        assert "All pods should show Running within 30s." in output
+
+    def test_panel_shows_why(self) -> None:
+        rec = _make_recommendation(why="OOMKilled is causing crash loops.")
+        report = _make_report(recommendations=[rec])
+        output = _capture_table(report)
+        assert "Why: OOMKilled is causing crash loops." in output
+
+    def test_panel_omits_empty_fields(self) -> None:
+        """Empty optional fields must not appear in panel output."""
+        rec = _make_recommendation(
+            description="",
+            command="",
+            expected_output="",
+            interpretation="",
+            risk="",
+            why="",
+        )
+        report = _make_report(recommendations=[rec])
+        output = _capture_table(report)
+        assert "Expected output" not in output
+        assert "Interpretation" not in output
+        assert "Why:" not in output
+        assert "Risk:" not in output
+        assert "Command:" not in output
 
     def test_urgency_immediate_displayed(self) -> None:
         rec = _make_recommendation(urgency=ActionUrgency.IMMEDIATE)

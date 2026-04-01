@@ -425,11 +425,30 @@ entire resource spec. Annotate problematic lines with inline comments where poss
 Each action includes:
 - ``priority``: Integer (1 = highest).
 - ``title``: Action description.
+- ``description``: One-sentence explanation of what the action does and why.
 - ``urgency``: IMMEDIATE, SHORT_TERM, or LONG_TERM.
 - ``command``: Exact kubectl/gcloud command — ready to copy-paste.
+- ``expected_output``: What the user should see when the command succeeds or the system is healthy. Show a realistic snippet (1-3 lines).
+- ``interpretation``: How to read the output and decide next steps. Explain what "good" vs "bad" looks like.
 - ``why``: Reason for the action.
 - ``risk``: Risk assessment string.
 - ``related_findings``: List of Finding.id values this action addresses.
+
+Example recommendation with all fields populated:
+```json
+{{
+  "priority": 1,
+  "title": "Restart payment-svc deployment",
+  "description": "Rolling restart to clear OOMKilled pods and restore service.",
+  "urgency": "IMMEDIATE",
+  "command": "kubectl rollout restart deployment/payment-svc -n production",
+  "expected_output": "deployment.apps/payment-svc restarted",
+  "interpretation": "If the output shows 'restarted', pods will recreate within 30s. Run 'kubectl get pods -n production -l app=payment-svc' after 60s — all pods should show 1/1 Running with 0 restarts.",
+  "why": "All 3 pods are OOMKilled and the service is fully down.",
+  "risk": "Brief 10-20s connectivity gap during rolling restart.",
+  "related_findings": ["crashloop-payment-svc"]
+}}
+```
 
 #### ``manual_investigations``
 For UNVERIFIABLE findings (verification tool call failed), list what needs manual

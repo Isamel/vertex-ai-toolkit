@@ -342,7 +342,29 @@ class TestModelCreation:
         assert a.urgency == ActionUrgency.SHORT_TERM
         assert a.effort == Effort.MEDIUM
         assert a.command == ""
+        assert a.expected_output == ""
+        assert a.interpretation == ""
         assert a.related_findings == []
+
+    def test_recommended_action_new_fields_roundtrip(self) -> None:
+        a = RecommendedAction(
+            priority=1,
+            title="Restart pods",
+            expected_output="deployment.apps/nginx restarted",
+            interpretation="All pods should show Running within 30s.",
+        )
+        data = a.model_dump()
+        restored = RecommendedAction.model_validate(data)
+        assert restored.expected_output == "deployment.apps/nginx restarted"
+        assert restored.interpretation == "All pods should show Running within 30s."
+
+    def test_old_json_without_new_fields(self) -> None:
+        """Old JSON payloads missing expected_output/interpretation still deserialize."""
+        payload = {"priority": 1, "title": "Fix it", "command": "kubectl apply -f fix.yaml"}
+        a = RecommendedAction.model_validate(payload)
+        assert a.expected_output == ""
+        assert a.interpretation == ""
+        assert a.command == "kubectl apply -f fix.yaml"
 
     def test_report_metadata_defaults(self) -> None:
         m = ReportMetadata()
@@ -681,6 +703,53 @@ class TestToMarkdown:
         report = _minimal_report()
         md = report.to_markdown()
         assert "No recommended actions at this time." in md
+
+    def test_recommendations_include_new_fields(self) -> None:
+        """expected_output and interpretation appear in markdown when populated."""
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issue.",
+            ),
+            recommendations=[
+                RecommendedAction(
+                    priority=1,
+                    title="Fix memory",
+                    urgency=ActionUrgency.IMMEDIATE,
+                    command="kubectl set resources deploy/app --limits=memory=512Mi",
+                    expected_output="deployment.apps/app resource requirements updated",
+                    interpretation="Verify pods restart with new limits within 60s.",
+                    why="OOMKilled",
+                    risk="Rolling restart",
+                ),
+            ],
+        )
+        md = report.to_markdown()
+        assert "- Expected output:" in md
+        assert "deployment.apps/app resource requirements updated" in md
+        assert "- Interpretation: Verify pods restart with new limits within 60s." in md
+
+    def test_recommendations_omit_empty_new_fields(self) -> None:
+        """Empty expected_output/interpretation produce no labels in markdown."""
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="Cluster-wide",
+                summary_text="Issue.",
+            ),
+            recommendations=[
+                RecommendedAction(
+                    priority=1,
+                    title="Fix memory",
+                    urgency=ActionUrgency.IMMEDIATE,
+                    command="kubectl apply -f fix.yaml",
+                ),
+            ],
+        )
+        md = report.to_markdown()
+        assert "Expected output" not in md
+        assert "Interpretation" not in md
 
     def test_manual_investigation_section(self) -> None:
         report = _full_report()
