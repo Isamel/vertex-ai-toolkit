@@ -428,7 +428,7 @@ Each action includes:
 - ``description``: One-sentence explanation of what the action does and why.
 - ``urgency``: IMMEDIATE, SHORT_TERM, or LONG_TERM.
 - ``command``: Exact kubectl/gcloud command — ready to copy-paste.
-- ``expected_output``: What the user should see when the command succeeds or the system is healthy. Show a realistic snippet (1-3 lines).
+- ``expected_output``: What the user should see when the command succeeds or the system is healthy. Show a realistic snippet (2-5 lines).
 - ``interpretation``: How to read the output and decide next steps. Explain what "good" vs "bad" looks like.
 - ``why``: Reason for the action.
 - ``risk``: Risk assessment string.

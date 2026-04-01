@@ -1042,6 +1042,17 @@ class ServiceHealthSkill(BaseSkill):
         # Run enrichment in a dedicated thread with a hard timeout so a
         # hanging credential probe (GCE metadata, etc.) can never block the
         # report pipeline.
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
             future = pool.submit(asyncio.run, enrich_recommendations(report, client))
             return future.result(timeout=overall_timeout)
+        except concurrent.futures.TimeoutError:
+            logger.warning(
+                "Recommendation enrichment exceeded hard timeout of %ss; "
+                "returning original report without enrichment.",
+                overall_timeout,
+            )
+            future.cancel()
+            return report
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)

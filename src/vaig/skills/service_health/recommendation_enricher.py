@@ -146,12 +146,35 @@ async def _enrich_one(
             )
 
             cleaned = clean_llm_json(result.text)
-            data = json.loads(cleaned)
+            try:
+                data = json.loads(cleaned)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Enrichment for recommendation %d (%s) returned invalid JSON",
+                    idx,
+                    action.title,
+                )
+                return None
 
-            new_expected: str = data.get("expected_output", "")
-            new_interpretation: str = data.get("interpretation", "")
+            if not isinstance(data, dict):
+                logger.warning(
+                    "Enrichment for recommendation %d (%s) returned non-object JSON: %r",
+                    idx,
+                    action.title,
+                    type(data).__name__,
+                )
+                return None
 
-            if new_expected and new_interpretation:
+            raw_expected = data.get("expected_output", "")
+            raw_interpretation = data.get("interpretation", "")
+
+            new_expected: str = "" if raw_expected is None else str(raw_expected)
+            new_interpretation: str = (
+                "" if raw_interpretation is None else str(raw_interpretation)
+            )
+
+            # Treat purely-whitespace values as empty
+            if new_expected.strip() and new_interpretation.strip():
                 logger.debug(
                     "Enriched recommendation %d (%s): "
                     "expected_output=%d chars, interpretation=%d chars",
@@ -221,6 +244,13 @@ async def enrich_recommendations(
 
     # Build a finding lookup by ID for quick matching
     finding_by_id: dict[str, Finding] = {f.id: f for f in report.findings}
+
+    # Initialize the client once to avoid race conditions in concurrent tasks.
+    # GeminiClient.async_initialize involves an `await asyncio.to_thread` for
+    # credentials — if multiple tasks enter initialization simultaneously, they
+    # can trigger a race condition.
+    if hasattr(client, "async_initialize"):
+        await client.async_initialize()
 
     semaphore = asyncio.Semaphore(max_concurrent)
     tasks: list[asyncio.Task[tuple[int, str, str] | None]] = []
