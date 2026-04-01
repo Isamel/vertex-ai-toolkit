@@ -428,27 +428,96 @@ Each action includes:
 - ``description``: One-sentence explanation of what the action does and why.
 - ``urgency``: IMMEDIATE, SHORT_TERM, or LONG_TERM.
 - ``command``: Exact kubectl/gcloud command — ready to copy-paste.
-- ``expected_output``: What the user should see when the command succeeds or the system is healthy. Show a realistic snippet (1-3 lines).
+- ``expected_output``: What the user should see when the command succeeds or the system is healthy. Show a realistic snippet (2-5 lines).
 - ``interpretation``: How to read the output and decide next steps. Explain what "good" vs "bad" looks like.
 - ``why``: Reason for the action.
 - ``risk``: Risk assessment string.
 - ``related_findings``: List of Finding.id values this action addresses.
 
-Example recommendation with all fields populated:
+#### Recommendation Quality Rules (CRITICAL)
+Your recommendations MUST match the quality of expert SRE guidance. For EVERY recommendation:
+
+1. **Be specific to THIS finding** — Reference the EXACT pod names, deployment names, namespaces, error messages, and metrics from the findings above. NEVER write generic advice that could apply to any cluster.
+
+2. **expected_output MUST show realistic output** — Show what the user will ACTUALLY see when they run the command. Include realistic pod names (from the findings), statuses, ages, and restart counts. Show 2-5 lines of realistic terminal output, not just "deployment restarted".
+
+3. **interpretation MUST be a debugging decision tree** — Don't just say "if healthy, pods show Running". Instead:
+   - What does GOOD output look like? (with specific values)
+   - What does BAD output look like? (with specific failure modes)
+   - What to do NEXT for each case (the next command to run)
+
+4. **Explain WHY this action helps** — Don't just say "restart the deployment". Explain the mechanism: "A rolling restart replaces pods one-by-one, clearing the OOMKilled state while maintaining availability because the PodDisruptionBudget allows max 1 unavailable."
+
+5. **Chain commands logically** — If a recommendation requires multiple steps, show them in order with the decision point between each: "Run command A → check output → if X, run command B; if Y, run command C."
+
+Example recommendations with all fields populated:
+
+**Example 1 — OOMKilled pods (IMMEDIATE urgency):**
 ```json
 {{
   "priority": 1,
-  "title": "Restart payment-svc deployment",
-  "description": "Rolling restart to clear OOMKilled pods and restore service.",
+  "title": "Investigate and fix OOMKilled pods in payment-svc",
+  "description": "Pods are being killed by the kernel OOM killer because container memory usage exceeds the limit. Need to identify the memory leak or increase limits.",
   "urgency": "IMMEDIATE",
-  "command": "kubectl rollout restart deployment/payment-svc -n production",
-  "expected_output": "deployment.apps/payment-svc restarted",
-  "interpretation": "If the output shows 'restarted', pods will recreate within 30s. Run 'kubectl get pods -n production -l app=payment-svc' after 60s — all pods should show 1/1 Running with 0 restarts.",
-  "why": "All 3 pods are OOMKilled and the service is fully down.",
-  "risk": "Brief 10-20s connectivity gap during rolling restart.",
-  "related_findings": ["crashloop-payment-svc"]
+  "command": "kubectl top pods -n production -l app=payment-svc --containers",
+  "expected_output": "POD                          NAME        CPU(cores)   MEMORY(bytes)\npayment-svc-7d4b8c6f5-x2k9m payment     150m         512Mi\npayment-svc-7d4b8c6f5-a3j7p payment     145m         498Mi\npayment-svc-7d4b8c6f5-q1w2e payment     2100m        1948Mi  ← approaching 2Gi limit",
+  "interpretation": "Look at the MEMORY column for each pod. If any pod shows memory above 90% of the limit (e.g., 1948Mi with a 2Gi limit), it is about to be OOMKilled. Next steps depend on the pattern:\n- ALL pods high memory → likely a memory leak in the application code. Run 'kubectl logs payment-svc-7d4b8c6f5-q1w2e -n production --tail=100' to check for memory-related errors.\n- ONE pod high, others normal → that specific pod hit a memory-intensive request. A restart may suffice.\n- If the limit itself is too low for normal operation, increase it: 'kubectl set resources deployment/payment-svc -n production -c payment --limits=memory=4Gi'.",
+  "why": "OOMKilled pods cause immediate service degradation. Kubernetes restarts them, but if the root cause is a memory leak, they will keep getting killed in a crash loop. Diagnosing whether this is a leak vs. insufficient limits determines the correct fix.",
+  "risk": "Increasing memory limits without understanding the cause may mask a memory leak that will eventually consume all available node resources.",
+  "effort": "LOW",
+  "related_findings": ["oomkill-payment-svc"]
 }}
 ```
+
+**Example 2 — CrashLoopBackOff (IMMEDIATE urgency):**
+```json
+{{
+  "priority": 2,
+  "title": "Diagnose CrashLoopBackOff in chatbot-odin",
+  "description": "Container is repeatedly crashing and Kubernetes is applying exponential backoff delays. Need to check logs from the most recent crash to identify the root cause.",
+  "urgency": "IMMEDIATE",
+  "command": "kubectl logs deployment/chatbot-odin -n production --previous --tail=50",
+  "expected_output": "2024-01-15T10:32:15Z INFO  Starting application server on :8080\n2024-01-15T10:32:16Z ERROR Failed to connect to database: connection refused\n2024-01-15T10:32:16Z ERROR dial tcp 10.0.4.23:5432: connect: connection refused\n2024-01-15T10:32:16Z FATAL Application startup failed, exiting with code 1",
+  "interpretation": "The --previous flag shows logs from the LAST crashed container (not the current one that may be in backoff). Read the logs bottom-up looking for ERROR or FATAL lines:\n- 'connection refused' to a database/service → the dependency is down, not the app itself. Check the target service: 'kubectl get svc -n production | grep postgres'.\n- 'OOMKilled' or signal 9 → memory issue, see memory investigation recommendation.\n- 'exec format error' or 'no such file' → bad container image. Check: 'kubectl describe pod -n production -l app=chatbot-odin | grep Image'.\n- No error, just exits → check if readiness/liveness probes are misconfigured: 'kubectl get deployment chatbot-odin -n production -o jsonpath=\"{{.spec.template.spec.containers[0].livenessProbe}}\"'.",
+  "why": "CrashLoopBackOff means Kubernetes has detected repeated container failures and is applying increasing restart delays (10s, 20s, 40s... up to 5min). Until the root cause is identified and fixed, the service will remain degraded with increasing downtime between restart attempts.",
+  "risk": "Low — reading logs is a non-destructive diagnostic step.",
+  "effort": "LOW",
+  "related_findings": ["crashloop-chatbot-odin"]
+}}
+```
+
+**Example 3 — HPA unable to fetch metrics (SHORT_TERM urgency):**
+```json
+{{
+  "priority": 3,
+  "title": "Investigate HPA metric fetching failure for api-gateway",
+  "description": "HorizontalPodAutoscaler cannot fetch custom metrics, preventing autoscaling. The service is running but cannot scale in response to load.",
+  "urgency": "SHORT_TERM",
+  "command": "kubectl describe hpa api-gateway -n production",
+  "expected_output": "Name:                          api-gateway\nReference:                     Deployment/api-gateway\nMetrics:                       ( current / target )\n  \"http_requests_per_second\":  <unknown> / 100 (avg)\nMin replicas:                  2\nMax replicas:                  10\nConditions:\n  AbleToScale    True    ReadyForNewScale\n  ScalingActive  False   FailedGetExternalMetric  unable to get external metric production/http_requests_per_second: no matching metrics found",
+  "interpretation": "Look at the Metrics section and Conditions:\n- If metric shows '<unknown>' and condition says 'FailedGetExternalMetric' → the metrics pipeline is broken. Check if the custom metrics adapter is running: 'kubectl get pods -n custom-metrics'.\n- If metric shows a value but HPA won't scale → check the ScalingActive condition for the reason.\n- If 'no matching metrics found' → verify the metric name exists in Cloud Monitoring: run 'gcloud monitoring time-series list --filter=\"metric.type=\\\"custom.googleapis.com/http_requests_per_second\\\"\" --interval-start-time=\"$(date -u -d \"-1 hour\" +%%Y-%%m-%%dT%%H:%%M:%%SZ)\" --limit=5' to check if data is flowing.\n- If the metric EXISTS in Cloud Monitoring but HPA can't see it → the Stackdriver adapter may need restarting or its RBAC config may be stale.",
+  "why": "Without functioning HPA metrics, the service is stuck at its current replica count. During traffic spikes, this means potential service degradation (too few pods), and during low traffic, wasted resources (too many pods).",
+  "risk": "No immediate risk from investigating. However, if you restart the metrics adapter, there will be a brief gap in autoscaling data.",
+  "effort": "MEDIUM",
+  "related_findings": ["hpa-metrics-api-gateway"]
+}}
+```
+
+**CRITICAL: Avoid Generic Recommendations**
+
+BAD expected_output (NEVER do this):
+  "deployment.apps/payment-svc restarted"
+
+GOOD expected_output (ALWAYS do this):
+  "POD                          NAME        CPU(cores)   MEMORY(bytes)\npayment-svc-7d4b8c6f5-x2k9m payment     150m         512Mi\npayment-svc-7d4b8c6f5-a3j7p payment     145m         498Mi"
+
+BAD interpretation (NEVER do this):
+  "If the output shows 'restarted', the pods will recreate."
+
+GOOD interpretation (ALWAYS do this):
+  "Look at the MEMORY column for each pod. If any pod shows memory above 90% of the limit (e.g., 1948Mi with a 2Gi limit), it is about to be OOMKilled. Next steps depend on the pattern:\n- ALL pods high → likely memory leak. Check logs.\n- ONE pod high → restart may suffice.\n- If the limit itself is too low, increase it."
+
+The difference is SPECIFICITY and DECISION TREES. Every interpretation must help the user DECIDE what to do next based on what they see.
 
 #### ``manual_investigations``
 For UNVERIFIABLE findings (verification tool call failed), list what needs manual

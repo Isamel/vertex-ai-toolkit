@@ -1,0 +1,217 @@
+"""Unit tests for the recommendation enrichment module.
+
+Tests cover successful enrichment, finding matching, invalid/empty responses,
+timeout handling, and early-return when there are no recommendations.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import dataclass
+from unittest.mock import AsyncMock
+
+import pytest
+
+from vaig.skills.service_health.recommendation_enricher import (
+    enrich_recommendations,
+)
+from vaig.skills.service_health.schema import (
+    ActionUrgency,
+    Confidence,
+    ExecutiveSummary,
+    Finding,
+    HealthReport,
+    RecommendedAction,
+    Severity,
+)
+
+
+@dataclass
+class FakeGenerateResult:
+    """Mimics the result from GeminiClient.async_generate."""
+
+    text: str
+
+
+def _make_stub_client(response_text: str) -> AsyncMock:
+    """Create a stub client that returns the given text from async_generate."""
+    client = AsyncMock()
+    client.async_generate = AsyncMock(
+        return_value=FakeGenerateResult(text=response_text)
+    )
+    # async_initialize should be a no-op
+    client.async_initialize = AsyncMock()
+    return client
+
+
+def _make_finding(
+    finding_id: str = "test-finding-1",
+    title: str = "Pod CrashLoopBackOff",
+    severity: Severity = Severity.HIGH,
+) -> Finding:
+    return Finding(
+        id=finding_id,
+        title=title,
+        severity=severity,
+        description="Pod is crash looping",
+        root_cause="Application startup failure",
+        evidence=["Error: connection refused to db:5432"],
+        confidence=Confidence.HIGH,
+        impact="Service degraded",
+        affected_resources=["production/deployment/api-gateway"],
+    )
+
+
+def _make_action(
+    related_findings: list[str] | None = None,
+) -> RecommendedAction:
+    return RecommendedAction(
+        priority=1,
+        title="Check pod logs",
+        description="Inspect logs for crash reason",
+        urgency=ActionUrgency.IMMEDIATE,
+        command="kubectl logs -n production deployment/api-gateway --previous --tail=50",
+        expected_output="original expected output",
+        interpretation="original interpretation",
+        why="To identify crash root cause",
+        risk="None — read-only",
+        related_findings=related_findings or ["test-finding-1"],
+    )
+
+
+def _make_report(
+    findings: list[Finding] | None = None,
+    recommendations: list[RecommendedAction] | None = None,
+) -> HealthReport:
+    """Create a minimal HealthReport for testing."""
+    return HealthReport(
+        executive_summary=ExecutiveSummary(
+            overall_status="DEGRADED",
+            scope="test",
+            summary_text="test summary",
+        ),
+        findings=findings if findings is not None else [_make_finding()],
+        recommendations=recommendations if recommendations is not None else [_make_action()],
+        root_cause_hypotheses=[],
+        timeline=[],
+        metadata={},
+    )
+
+
+class TestEnrichRecommendations:
+    @pytest.mark.asyncio
+    async def test_successful_enrichment(self):
+        """Stub client returns valid JSON — recommendations should be updated."""
+        response = json.dumps(
+            {
+                "expected_output": "NAME         READY   STATUS    RESTARTS\napi-gw-abc   0/1     CrashLoop 5",
+                "interpretation": "Look at STATUS column. If CrashLoopBackOff → check logs next.",
+            }
+        )
+        client = _make_stub_client(response)
+        report = _make_report()
+
+        result = await enrich_recommendations(report, client, model="test-model")
+
+        assert result.recommendations[0].expected_output.startswith("NAME")
+        assert "CrashLoop" in result.recommendations[0].expected_output
+        assert "STATUS column" in result.recommendations[0].interpretation
+
+    @pytest.mark.asyncio
+    async def test_related_findings_matching(self):
+        """The correct finding should be matched via related_findings IDs."""
+        finding1 = _make_finding(finding_id="f1", title="OOMKilled")
+        finding2 = _make_finding(finding_id="f2", title="CrashLoop")
+        action = _make_action(related_findings=["f2"])
+
+        response = json.dumps(
+            {
+                "expected_output": "enriched output",
+                "interpretation": "enriched interpretation",
+            }
+        )
+        client = _make_stub_client(response)
+        report = _make_report(
+            findings=[finding1, finding2], recommendations=[action]
+        )
+
+        await enrich_recommendations(report, client, model="test-model")
+
+        # Verify the prompt was built with finding2, not finding1
+        call_args = client.async_generate.call_args
+        prompt = call_args[0][0]
+        assert "CrashLoop" in prompt
+        assert "OOMKilled" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_preserves_original(self):
+        """Invalid JSON response should preserve original values."""
+        client = _make_stub_client("this is not valid json at all")
+        report = _make_report()
+
+        result = await enrich_recommendations(report, client, model="test-model")
+
+        assert result.recommendations[0].expected_output == "original expected output"
+        assert (
+            result.recommendations[0].interpretation == "original interpretation"
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_fields_preserves_original(self):
+        """Empty enrichment fields should preserve original values."""
+        response = json.dumps(
+            {
+                "expected_output": "",
+                "interpretation": "",
+            }
+        )
+        client = _make_stub_client(response)
+        report = _make_report()
+
+        result = await enrich_recommendations(report, client, model="test-model")
+
+        assert result.recommendations[0].expected_output == "original expected output"
+        assert (
+            result.recommendations[0].interpretation == "original interpretation"
+        )
+
+    @pytest.mark.asyncio
+    async def test_timeout_preserves_original(self):
+        """Timeout should preserve original values."""
+
+        async def slow_generate(*args, **kwargs):
+            await asyncio.sleep(10)
+            return FakeGenerateResult(text="{}")
+
+        client = AsyncMock()
+        client.async_generate = slow_generate
+        client.async_initialize = AsyncMock()
+        report = _make_report()
+
+        result = await enrich_recommendations(
+            report, client, model="test-model", timeout_per_call=0.1
+        )
+
+        assert result.recommendations[0].expected_output == "original expected output"
+
+    @pytest.mark.asyncio
+    async def test_no_recommendations_early_return(self):
+        """Report with no recommendations should return immediately."""
+        client = _make_stub_client("should not be called")
+        report = _make_report(recommendations=[])
+
+        result = await enrich_recommendations(report, client, model="test-model")
+
+        client.async_generate.assert_not_called()
+        assert result.recommendations == []
+
+    @pytest.mark.asyncio
+    async def test_non_dict_json_preserves_original(self):
+        """Non-dict JSON (e.g., array) should preserve original values."""
+        client = _make_stub_client("[1, 2, 3]")
+        report = _make_report()
+
+        result = await enrich_recommendations(report, client, model="test-model")
+
+        assert result.recommendations[0].expected_output == "original expected output"

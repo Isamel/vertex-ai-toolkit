@@ -1067,13 +1067,23 @@ class TestJsonToMarkdownRoundTrip:
 
     def test_full_report_via_skill_post_process(self) -> None:
         """A full report JSON processed through ServiceHealthSkill.post_process_report."""
+        from unittest.mock import patch
+
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         report = _full_report()
         json_str = report.model_dump_json()
 
         skill = ServiceHealthSkill()
-        md = skill.post_process_report(json_str)
+
+        # Mock enrichment — this test validates JSON→Markdown conversion,
+        # not the LLM enrichment (which requires real GCP credentials).
+        with patch.object(
+            skill,
+            "_enrich_report_recommendations",
+            side_effect=lambda r, **kw: r,
+        ):
+            md = skill.post_process_report(json_str)
 
         # Should be Markdown, not JSON
         assert md.startswith("# Service Health Report")
