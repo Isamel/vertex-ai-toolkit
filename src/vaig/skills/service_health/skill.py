@@ -1042,10 +1042,24 @@ class ServiceHealthSkill(BaseSkill):
         # Run enrichment in a dedicated thread with a hard timeout so a
         # hanging credential probe (GCE metadata, etc.) can never block the
         # report pipeline.
+        import sys  # noqa: PLC0415
+
+        from vaig.core.log import _make_console  # noqa: PLC0415
+
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
             future = pool.submit(asyncio.run, enrich_recommendations(report, client))
-            return future.result(timeout=overall_timeout)
+            if sys.stderr.isatty():
+                console = _make_console(stderr=True)
+                with console.status(
+                    "✨ Enriching recommendations with detailed context...",
+                    spinner="dots",
+                ):
+                    enriched_report = future.result(timeout=overall_timeout)
+            else:
+                logger.info("Enriching recommendations with detailed context...")
+                enriched_report = future.result(timeout=overall_timeout)
+            return enriched_report
         except concurrent.futures.TimeoutError:
             logger.warning(
                 "Recommendation enrichment exceeded hard timeout of %ss; "

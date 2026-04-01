@@ -6,6 +6,7 @@ import logging
 import re
 import ssl
 import time
+import warnings
 from typing import TYPE_CHECKING, Any
 
 import urllib3.exceptions  # type: ignore[import-untyped]
@@ -312,6 +313,12 @@ def _get_dd_api_client(config: DatadogAPIConfig) -> Any:
     #   str   = path to a custom CA bundle file
     if config.ssl_verify is False:
         configuration.verify_ssl = False
+        # Suppress InsecureRequestWarning only when SSL verification is
+        # deliberately disabled — avoids noisy warnings for expected configs
+        # (e.g. self-signed certs behind corporate proxy).
+        warnings.filterwarnings(
+            "ignore", category=urllib3.exceptions.InsecureRequestWarning,
+        )
     elif isinstance(config.ssl_verify, str):
         configuration.verify_ssl = True
         configuration.ssl_ca_cert = config.ssl_verify

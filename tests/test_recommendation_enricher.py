@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from vaig.skills.service_health.recommendation_enricher import (
+    _build_enrichment_prompt,
     enrich_recommendations,
 )
 from vaig.skills.service_health.schema import (
@@ -23,6 +24,8 @@ from vaig.skills.service_health.schema import (
     Finding,
     HealthReport,
     RecommendedAction,
+    ReportMetadata,
+    ServiceStatus,
     Severity,
 )
 
@@ -215,3 +218,101 @@ class TestEnrichRecommendations:
         result = await enrich_recommendations(report, client, model="test-model")
 
         assert result.recommendations[0].expected_output == "original expected output"
+
+
+class TestBuildEnrichmentPrompt:
+    """Tests for _build_enrichment_prompt — context wiring and prompt construction."""
+
+    def test_context_section_included_when_context_provided(self):
+        """Prompt should contain a '## Context' section with namespace and cluster."""
+        finding = _make_finding()
+        action = _make_action()
+        context = {"namespace": "production", "cluster_name": "gke-us-east1"}
+
+        prompt = _build_enrichment_prompt(finding, action, context=context)
+
+        assert "## Context" in prompt
+        assert "**Namespace**: production" in prompt
+        assert "**Cluster**: gke-us-east1" in prompt
+
+    def test_context_section_omitted_when_no_context(self):
+        """Prompt should NOT contain '## Context' when context is None."""
+        finding = _make_finding()
+        action = _make_action()
+
+        prompt = _build_enrichment_prompt(finding, action, context=None)
+
+        assert "## Context" not in prompt
+
+    def test_prompt_includes_service_category_remediation(self):
+        """Prompt should include service, category, and remediation from the finding."""
+        finding = Finding(
+            id="svc-finding",
+            title="High CPU",
+            severity=Severity.HIGH,
+            description="CPU usage is excessive",
+            root_cause="Inefficient loop",
+            evidence=["cpu at 95%"],
+            confidence=Confidence.HIGH,
+            impact="Latency increase",
+            affected_resources=["production/deployment/api"],
+            service="payment-service",
+            category="resource-usage",
+            remediation="Increase CPU limit or optimize code",
+        )
+        action = _make_action(related_findings=["svc-finding"])
+
+        prompt = _build_enrichment_prompt(finding, action, context=None)
+
+        assert "**Service**: payment-service" in prompt
+        assert "**Category**: resource-usage" in prompt
+        assert "Increase CPU limit or optimize code" in prompt
+
+    @pytest.mark.asyncio
+    async def test_namespace_resolved_from_service_with_fallback(self):
+        """Namespace should be resolved from finding.service via service_statuses,
+        falling back to the first service's namespace when there's no match."""
+        finding_matched = _make_finding(finding_id="f1", title="Matched")
+        finding_matched.service = "api-gateway"
+
+        finding_unmatched = _make_finding(finding_id="f2", title="Unmatched")
+        finding_unmatched.service = "unknown-service"
+
+        action_matched = _make_action(related_findings=["f1"])
+        action_unmatched = _make_action(related_findings=["f2"])
+
+        response = json.dumps({
+            "expected_output": "enriched",
+            "interpretation": "enriched",
+        })
+        client = _make_stub_client(response)
+
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status="DEGRADED",
+                scope="test",
+                summary_text="test",
+            ),
+            findings=[finding_matched, finding_unmatched],
+            recommendations=[action_matched, action_unmatched],
+            root_cause_hypotheses=[],
+            timeline=[],
+            metadata=ReportMetadata(cluster_name="test-cluster"),
+            service_statuses=[
+                ServiceStatus(service="frontend", namespace="web-ns"),
+                ServiceStatus(service="api-gateway", namespace="api-ns"),
+            ],
+        )
+
+        await enrich_recommendations(report, client, model="test-model")
+
+        # Two calls: one per recommendation
+        assert client.async_generate.call_count == 2
+
+        # First call should have api-ns (matched via service name)
+        first_prompt = client.async_generate.call_args_list[0][0][0]
+        assert "**Namespace**: api-ns" in first_prompt
+
+        # Second call should fallback to web-ns (first service's namespace)
+        second_prompt = client.async_generate.call_args_list[1][0][0]
+        assert "**Namespace**: web-ns" in second_prompt
