@@ -326,7 +326,7 @@ class PlatformAuthProtocol(Protocol):
     remain decoupled from the concrete implementation.
     """
 
-    def login(self) -> Any:
+    def login(self, *, force: bool = False) -> Any:
         """Run the OAuth PKCE login flow and return an ``AuthResult``."""
         ...
 

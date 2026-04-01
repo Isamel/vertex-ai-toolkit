@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 
 from vaig.platform.core.dependencies import (
     get_current_user,
@@ -25,6 +26,18 @@ from vaig.platform.models.organization import ConfigHistoryEntry, ConfigPolicy
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/config", tags=["config"])
+
+
+# ── Request models ────────────────────────────────────────────
+
+
+class ConfigPolicyUpdate(BaseModel):
+    """Typed request body for the ``PUT /config/policy`` endpoint."""
+
+    enforced_fields: dict[str, Any] = Field(default_factory=dict)
+    user_configurable_fields: list[str] = Field(default_factory=list)
+    blocked_fields: list[str] = Field(default_factory=list)
+    changelog: str = ""
 
 
 # ── GET /config/policy ────────────────────────────────────────
@@ -60,7 +73,7 @@ async def get_policy(
 
 @router.put("/policy")
 async def update_policy(
-    body: dict[str, Any],
+    body: ConfigPolicyUpdate,
     claims: Annotated[JWTClaims, Depends(require_admin)],
     repo: Annotated[AbstractRepository, Depends(get_repository)],
 ) -> dict[str, Any]:
@@ -69,9 +82,9 @@ async def update_policy(
     Creates a new config version and records it in config_history.
     """
     policy = ConfigPolicy(
-        enforced_fields=body.get("enforced_fields", {}),
-        user_configurable_fields=body.get("user_configurable_fields", []),
-        blocked_fields=body.get("blocked_fields", []),
+        enforced_fields=body.enforced_fields,
+        user_configurable_fields=body.user_configurable_fields,
+        blocked_fields=body.blocked_fields,
     )
     await repo.save_config_policy(claims.org_id, policy)
 
@@ -82,7 +95,7 @@ async def update_policy(
         pushed_by=claims.sub,
         pushed_at=datetime.now(UTC),
         config_policy=policy,
-        changelog=body.get("changelog", ""),
+        changelog=body.changelog,
     )
     await repo.add_config_history(claims.org_id, entry)
 

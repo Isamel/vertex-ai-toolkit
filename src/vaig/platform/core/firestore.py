@@ -128,6 +128,7 @@ class InMemoryRepository(AbstractRepository):
         self._users: dict[str, dict[str, User]] = {}  # org_id -> {email -> User}
         self._cli_instances: dict[str, dict[str, CLIInstance]] = {}  # org_id -> {cli_id -> CLI}
         self._config_history: dict[str, list[ConfigHistoryEntry]] = {}  # org_id -> [entries]
+        self._config_policies: dict[str, ConfigPolicy] = {}  # org_id -> ConfigPolicy (standalone)
 
     # ── Organization ──────────────────────────────────────────
 
@@ -173,10 +174,15 @@ class InMemoryRepository(AbstractRepository):
     # ── Config Policy ─────────────────────────────────────────
 
     async def get_config_policy(self, org_id: str) -> ConfigPolicy | None:
+        # Check standalone storage first, then fall back to org's embedded policy
+        if org_id in self._config_policies:
+            return self._config_policies[org_id]
         org = self._orgs.get(org_id)
         return org.config_policy if org else None
 
     async def save_config_policy(self, org_id: str, policy: ConfigPolicy) -> None:
+        # Always persist to standalone storage so saves succeed even without an org
+        self._config_policies[org_id] = policy
         org = self._orgs.get(org_id)
         if org:
             org.config_policy = policy

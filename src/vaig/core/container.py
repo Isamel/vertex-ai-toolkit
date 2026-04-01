@@ -20,6 +20,7 @@ from vaig.core.protocols import GCPClientProvider, GeminiClientProtocol, K8sClie
 
 if TYPE_CHECKING:
     from vaig.core.config import Settings
+    from vaig.core.protocols import PlatformAuthProtocol
 
 __all__ = [
     "ServiceContainer",
@@ -52,7 +53,7 @@ class ServiceContainer:
     gcp_provider: GCPClientProvider | None
     event_bus: EventBus
     quota_checker: object | None = None
-    platform_auth: object | None = None
+    platform_auth: PlatformAuthProtocol | None = None
 
 
 def build_container(settings: Settings) -> ServiceContainer:

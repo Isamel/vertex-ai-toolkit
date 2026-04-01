@@ -19,6 +19,7 @@ from vaig import __version__
 if TYPE_CHECKING:
     from vaig.cli.export import ExportPayload
     from vaig.core.config import Settings
+    from vaig.core.protocols import PlatformAuthProtocol
 
 console = Console()
 err_console = Console(stderr=True)
@@ -445,7 +446,7 @@ def _show_coding_summary(result: object) -> None:
 # Module-level reference to the PlatformAuthManager instance used by
 # ``_check_platform_auth``.  Created lazily on first call and reused
 # for the remainder of the CLI invocation.
-_platform_auth_manager: object | None = None
+_platform_auth_manager: PlatformAuthProtocol | None = None
 
 
 def _apply_enforced_config(settings: Settings, enforced: dict[str, Any]) -> None:

@@ -648,6 +648,15 @@ class PlatformConfig(BaseModel):
     backend_url: str = ""
     org_id: str = ""
 
+    @model_validator(mode="after")
+    def _validate_backend_url_when_enabled(self) -> PlatformConfig:
+        """Require ``backend_url`` when platform mode is enabled."""
+        if self.enabled and not self.backend_url:
+            raise ValueError(
+                "platform.backend_url is required when platform.enabled is True"
+            )
+        return self
+
 
 class BudgetConfig(BaseModel):
     """Token budget tracking configuration.

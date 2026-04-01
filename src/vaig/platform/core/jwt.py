@@ -9,6 +9,10 @@ Signing keys are configurable via environment variables for the MVP:
   - ``PLATFORM_JWT_PUBLIC_KEY``: PEM-encoded RSA public key (for validation)
 
 Production deployments should load keys from Secret Manager (future enhancement).
+
+Requires:
+  - ``PyJWT[crypto]`` (``pip install PyJWT cryptography``) for RS256 signing/validation.
+    This is an optional dependency — not in core ``pyproject.toml`` requirements.
 """
 
 from __future__ import annotations

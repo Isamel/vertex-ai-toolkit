@@ -434,8 +434,10 @@ class TestCheckPlatformAuth:
         from vaig.cli._helpers import _check_platform_auth
 
         settings = Settings()
-        settings.platform.enabled = True
-        settings.platform.backend_url = "https://api.example.com"
+        # Use object.__setattr__ to bypass the validator for testing the
+        # _check_platform_auth helper in isolation (it checks enabled first).
+        object.__setattr__(settings.platform, "enabled", True)
+        object.__setattr__(settings.platform, "backend_url", "https://api.example.com")
 
         # Mock PlatformAuthManager to return not authenticated
         mock_manager = MagicMock()
@@ -463,9 +465,9 @@ class TestBuildContainerPlatformAuth:
 
     def test_platform_auth_created_when_enabled(self) -> None:
         settings = Settings()
-        settings.platform.enabled = True
-        settings.platform.backend_url = "https://api.example.com"
-        settings.platform.org_id = "test-org"
+        object.__setattr__(settings.platform, "enabled", True)
+        object.__setattr__(settings.platform, "backend_url", "https://api.example.com")
+        object.__setattr__(settings.platform, "org_id", "test-org")
 
         from vaig.core.container import build_container
 
@@ -477,10 +479,15 @@ class TestBuildContainerPlatformAuth:
         assert isinstance(container.platform_auth, PlatformAuthManager)
 
     def test_platform_auth_none_when_no_backend_url(self) -> None:
-        """Platform enabled but no backend_url → don't create manager."""
+        """Platform enabled but no backend_url → don't create manager.
+
+        With the PlatformConfig validator, creating ``PlatformConfig(enabled=True)``
+        without ``backend_url`` now raises ``ValueError``.  We bypass the validator
+        via ``object.__setattr__`` to test the build_container guard independently.
+        """
         settings = Settings()
-        settings.platform.enabled = True
-        settings.platform.backend_url = ""
+        object.__setattr__(settings.platform, "enabled", True)
+        object.__setattr__(settings.platform, "backend_url", "")
 
         from vaig.core.container import build_container
 

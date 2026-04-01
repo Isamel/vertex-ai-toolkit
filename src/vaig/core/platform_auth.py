@@ -6,6 +6,10 @@ server, stores credentials in ``~/.vaig/credentials.json`` with restrictive
 file permissions (``0600`` / ``0700``).
 
 This module is only imported when ``settings.platform.enabled`` is ``True``.
+
+Requires:
+  - ``httpx`` (``pip install httpx``) for HTTP client operations.
+    This is an optional dependency — not in core ``pyproject.toml`` requirements.
 """
 
 from __future__ import annotations
@@ -21,12 +25,13 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from threading import Thread
-from typing import Any
-from urllib.parse import parse_qs, urlparse
-
-import httpx
+from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from vaig.platform.models.auth import AuthResult
+
+if TYPE_CHECKING:
+    import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +41,18 @@ _CREDENTIALS_DIR = Path.home() / ".vaig"
 _CREDENTIALS_FILE = _CREDENTIALS_DIR / "credentials.json"
 _LOGIN_TIMEOUT_SECONDS = 120
 _TOKEN_REFRESH_BUFFER_SECONDS = 60  # refresh if expires within 60s
+
+_HTTPX_INSTALL_MSG = "httpx is required for platform auth. Install with: pip install httpx"
+
+
+def _import_httpx() -> Any:
+    """Lazy-import the ``httpx`` package, raising a clear error if missing."""
+    try:
+        import httpx
+
+        return httpx
+    except ImportError:
+        raise ImportError(_HTTPX_INSTALL_MSG) from None
 
 
 class PlatformAuthManager:
@@ -65,9 +82,10 @@ class PlatformAuthManager:
         http_client: httpx.Client | None = None,
         credentials_dir: Path | None = None,
     ) -> None:
+        self._httpx = _import_httpx()
         self._backend_url = backend_url.rstrip("/")
         self._org_id = org_id
-        self._client = http_client or httpx.Client(timeout=30.0)
+        self._client = http_client or self._httpx.Client(timeout=30.0)
         self._owns_client = http_client is None
         self._creds_dir = credentials_dir or _CREDENTIALS_DIR
         self._creds_file = self._creds_dir / "credentials.json"
@@ -265,18 +283,19 @@ class PlatformAuthManager:
         redirect_uri = f"http://127.0.0.1:{port}/callback"
 
         # Open browser
-        auth_url = (
-            f"{self._backend_url}/auth/login"
-            f"?code_challenge={code_challenge}"
-            f"&code_challenge_method=S256"
-            f"&state={state}"
-            f"&redirect_uri={redirect_uri}"
-        )
+        query = urlencode({
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "state": state,
+            "redirect_uri": redirect_uri,
+        })
+        auth_url = f"{self._backend_url}/auth/login?{query}"
 
         # Check backend reachability
         try:
-            self._client.get(f"{self._backend_url}/healthz", timeout=5.0)
-        except httpx.HTTPError:
+            resp = self._client.get(f"{self._backend_url}/healthz", timeout=5.0)
+            resp.raise_for_status()
+        except self._httpx.HTTPError:
             server.server_close()
             return AuthResult(
                 success=False,
@@ -325,12 +344,12 @@ class PlatformAuthManager:
             )
             resp.raise_for_status()
             token_data = resp.json()
-        except httpx.HTTPStatusError as exc:
+        except self._httpx.HTTPStatusError as exc:
             return AuthResult(
                 success=False,
                 error=f"Token exchange failed: {exc.response.status_code}",
             )
-        except httpx.HTTPError as exc:
+        except self._httpx.HTTPError as exc:
             return AuthResult(success=False, error=f"Token exchange failed: {exc}")
 
         # Calculate expiry
@@ -387,7 +406,7 @@ class PlatformAuthManager:
             )
             resp.raise_for_status()
             token_data = resp.json()
-        except httpx.HTTPError as exc:
+        except self._httpx.HTTPError as exc:
             logger.warning("Token refresh failed: %s", exc)
             return None
 
@@ -413,7 +432,7 @@ class PlatformAuthManager:
                         headers={"Authorization": f"Bearer {access_token}"},
                         json={"refresh_token": creds.get("refresh_token", "")},
                     )
-                except httpx.HTTPError:
+                except self._httpx.HTTPError:
                     logger.debug("Token revocation failed (best-effort)")
 
         self._delete_creds()
@@ -446,10 +465,23 @@ class PlatformAuthManager:
                 self._enforced_config_cache = enforced
                 return enforced
             return {}
-        except httpx.HTTPError as exc:
+        except self._httpx.HTTPError as exc:
             logger.warning("Failed to fetch enforced config: %s", exc)
             return {}
 
     def clear_enforced_config_cache(self) -> None:
         """Clear the cached enforced config (called between commands)."""
         self._enforced_config_cache = None
+
+    # ── Resource management ───────────────────────────────────
+
+    def close(self) -> None:
+        """Close the underlying HTTP client if owned by this instance."""
+        if self._owns_client:
+            self._client.close()
+
+    def __enter__(self) -> PlatformAuthManager:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
