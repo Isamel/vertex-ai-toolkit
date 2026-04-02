@@ -8,6 +8,19 @@
     <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
     <script src="https://unpkg.com/htmx-ext-sse@2.2.2" integrity="sha384-fw+eTlCc7suMV9djDGPnMHEGOxBCKsfHmDlSx3mEBMI8GfEsPONPnYAvZRMQgmfR" crossorigin="anonymous"></script>
     {% block head %}{% endblock %}
+    <script>
+        // Apply theme BEFORE paint to prevent flash of wrong theme.
+        (function() {
+            try {
+                const stored = localStorage.getItem('vaig-theme');
+                if (stored === 'dark' || stored === 'light') {
+                    document.documentElement.setAttribute('data-theme', stored);
+                }
+            } catch (e) {
+                // localStorage unavailable (e.g. storage disabled) — fall back to OS preference.
+            }
+        })();
+    </script>
 </head>
 <body>
     <header>
@@ -21,6 +34,10 @@
                 <a href="/live" class="nav-link">Live</a>
                 <a href="/sessions" class="nav-link">Sessions</a>
                 <a href="/settings" class="nav-link">Settings</a>
+                <button type="button" class="theme-toggle" id="theme-toggle"
+                        aria-label="Toggle dark/light theme" title="Toggle theme">
+                    🌙
+                </button>
             </div>
         </nav>
     </header>
@@ -34,5 +51,59 @@
     </footer>
 
     {% block scripts %}{% endblock %}
+
+    <script>
+        // Theme toggle logic — runs after DOM is ready.
+        (function() {
+            const toggle = document.getElementById('theme-toggle');
+            if (!toggle) return;
+
+            function getStoredTheme() {
+                try { return localStorage.getItem('vaig-theme'); }
+                catch (e) { return null; }
+            }
+
+            function getEffectiveTheme() {
+                const stored = getStoredTheme();
+                if (stored === 'dark' || stored === 'light') return stored;
+                // Fall back to OS preference
+                if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+                    return 'light';
+                }
+                return 'dark';
+            }
+
+            function updateIcon() {
+                toggle.textContent = getEffectiveTheme() === 'dark' ? '🌙' : '☀️';
+            }
+
+            toggle.addEventListener('click', function() {
+                const current = getEffectiveTheme();
+                const next = current === 'dark' ? 'light' : 'dark';
+                document.documentElement.setAttribute('data-theme', next);
+                updateIcon();
+                try { localStorage.setItem('vaig-theme', next); }
+                catch (e) { /* Ignore persistence errors — toggle still works. */ }
+            });
+
+            // Sync icon on load
+            updateIcon();
+
+            // Listen for OS preference changes (only matters when no manual override)
+            if (window.matchMedia) {
+                const mql = window.matchMedia('(prefers-color-scheme: dark)');
+                const listener = function() {
+                    if (!getStoredTheme()) {
+                        updateIcon();
+                    }
+                };
+                if (typeof mql.addEventListener === 'function') {
+                    mql.addEventListener('change', listener);
+                } else if (typeof mql.addListener === 'function') {
+                    mql.addListener(listener);
+                }
+            }
+        })();
+    </script>
 </body>
 </html>
