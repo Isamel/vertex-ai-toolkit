@@ -668,18 +668,21 @@
         var endIndex = (data.end_index != null) ? data.end_index : index;
         totalAgents = data.total || totalAgents;
 
-        // Increment by the number of agents in the range
-        var rangeSize = endIndex - index + 1;
-        completedAgents += rangeSize;
-
-        // Mark all entries in the range as completed
+        // Mark all entries in the range as completed and increment counter
+        // only for new completions (idempotent against duplicate SSE events)
         for (var i = index; i <= endIndex; i++) {
             var key = name + '_' + i;
             var entry = agentElements[key];
             if (entry) {
-                entry.className = 'agent-entry done';
-                entry.querySelector('.agent-icon').className = 'agent-icon';
-                entry.querySelector('.agent-icon').textContent = '\u2714';
+                if (!entry.classList.contains('done')) {
+                    entry.className = 'agent-entry done';
+                    entry.querySelector('.agent-icon').className = 'agent-icon';
+                    entry.querySelector('.agent-icon').textContent = '\u2714';
+                    completedAgents++;
+                }
+            } else {
+                // Fallback for missing entries to ensure progress bar moves
+                completedAgents++;
             }
         }
 
