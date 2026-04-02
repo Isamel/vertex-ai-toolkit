@@ -87,6 +87,9 @@ def _build_metric_templates(config: DatadogAPIConfig, operation: str = "http.req
 
     ``config.metric_mode`` controls which built-in templates are included:
 
+    * ``"auto"`` — starts with kubernetes.* templates; at query time,
+      ``query_datadog_metrics`` falls back to trace.* APM templates when
+      the k8s queries return empty results.
     * ``"k8s_agent"`` — kubernetes.* metrics (DaemonSet Agent).
     * ``"apm"`` — trace.* metrics (APM instrumentation only).
     * ``"both"`` — kubernetes.* **and** trace.* metrics combined.
@@ -613,22 +616,10 @@ def query_datadog_metrics(
 
         # ── auto-mode fallback: k8s_agent → apm ─────────────
         if not has_data and mode == "auto":
-            # Build APM-only templates inline for the fallback attempt
-            apm_only: dict[str, str] = {}
-            _op_fb = resolved_operation
-            _by_fb = "{{" + config.labels.pod_name + "}}"
-            apm_only = {
-                "cpu": "avg:trace." + _op_fb + ".duration{{{filters}}} by " + _by_fb,
-                "requests": "sum:trace." + _op_fb + ".hits{{{filters}}} by " + _by_fb,
-                "errors": "sum:trace." + _op_fb + ".errors{{{filters}}} by " + _by_fb,
-                "latency": "avg:trace." + _op_fb + ".duration{{{filters}}} by " + _by_fb,
-                "error_rate": (
-                    "( sum:trace." + _op_fb + ".errors{{{filters}}} by " + _by_fb
-                    + " / sum:trace." + _op_fb + ".hits{{{filters}}} by " + _by_fb
-                    + " ) * 100"
-                ),
-                "apdex": "avg:trace." + _op_fb + ".apdex{{{filters}}} by " + _by_fb,
-            }
+            # Re-use _build_metric_templates with apm mode to avoid duplication.
+            # Copy config so we don't mutate the caller's object.
+            _fb_config = config.model_copy(update={"metric_mode": "apm"})
+            apm_only = _build_metric_templates(_fb_config, operation=resolved_operation)
             apm_template = apm_only.get(metric)
             if apm_template is not None:
                 # APM trace.* metrics don't carry custom labels — use minimal filter
@@ -1398,19 +1389,34 @@ def diagnose_datadog_metrics(
         "errors": [],
     }
 
+    # Build auth headers from config so raw HTTP requests include credentials.
+    _auth_headers: dict[str, str] = {
+        "DD-API-KEY": config.api_key,
+        "DD-APPLICATION-KEY": config.app_key,
+    }
+
     def _search_metrics(client_ctx: Any, query: str) -> list[str]:
         """Search Datadog for metrics matching a query prefix."""
         try:
+            import urllib.parse  # noqa: WPS433
+
             rest = getattr(client_ctx, "rest_client", client_ctx)
-            url = f"https://api.{config.site}/api/v1/search?q=metrics:{query}"
-            resp = rest.request("GET", url)
+            encoded_q = urllib.parse.quote_plus(f"metrics:{query}")
+            url = f"https://api.{config.site}/api/v1/search?q={encoded_q}"
+            resp = rest.request("GET", url, headers=_auth_headers)
             resp_status = getattr(resp, "status", 200)
             if resp_status and resp_status >= 400:  # noqa: PLR2004
                 diagnostic["errors"].append(f"Metric search '{query}' HTTP {resp_status}")
                 return []
-            data = _json.loads(resp.data) if hasattr(resp, "data") else {}
+            if hasattr(resp, "data"):
+                raw_data = resp.data
+                data = _json.loads(raw_data.decode("utf-8") if isinstance(raw_data, bytes) else raw_data)
+            else:
+                data = {}
             results = data.get("results", {})
             return results.get("metrics", [])  # type: ignore[no-any-return]
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception as exc:  # noqa: BLE001
             diagnostic["errors"].append(f"Metric search '{query}' failed: {exc}")
             return []
@@ -1420,14 +1426,20 @@ def diagnose_datadog_metrics(
         try:
             rest = getattr(client_ctx, "rest_client", client_ctx)
             url = f"https://api.{config.site}/api/v1/tags/hosts"
-            resp = rest.request("GET", url)
+            resp = rest.request("GET", url, headers=_auth_headers)
             resp_status = getattr(resp, "status", 200)
             if resp_status and resp_status >= 400:  # noqa: PLR2004
                 diagnostic["errors"].append(f"Tag discovery HTTP {resp_status}")
                 return []
-            data = _json.loads(resp.data) if hasattr(resp, "data") else {}
+            if hasattr(resp, "data"):
+                raw_data = resp.data
+                data = _json.loads(raw_data.decode("utf-8") if isinstance(raw_data, bytes) else raw_data)
+            else:
+                data = {}
             tags = data.get("tags", {})
             return sorted(tags.keys()) if isinstance(tags, dict) else []
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception as exc:  # noqa: BLE001
             diagnostic["errors"].append(f"Tag discovery failed: {exc}")
             return []
@@ -1512,6 +1524,8 @@ def diagnose_datadog_metrics(
         with _get_dd_api_client(config) as client:
             return _run_diagnostics(client)
 
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected error in diagnose_datadog_metrics")
         return ToolResult(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import ModuleType
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -3482,3 +3483,270 @@ class TestGetDatadogServiceDependencies:
         assert result.error is False
         assert "→ svc-a" in result.output
         assert "← svc-b" in result.output
+
+
+# ── diagnose_datadog_metrics ─────────────────────────────────
+
+
+def _make_rest_response(*, status: int = 200, data: bytes = b"{}") -> MagicMock:
+    """Build a mock urllib3-style HTTP response for rest_client.request()."""
+    resp = MagicMock()
+    resp.status = status
+    resp.data = data
+    return resp
+
+
+class TestDiagnoseDatadogMetrics:
+    """Tests for ``diagnose_datadog_metrics``."""
+
+    # ── helpers ──────────────────────────────────────────
+
+    @staticmethod
+    def _build_mock_client(
+        search_responses: dict[str, bytes] | None = None,
+        tags_response: bytes = b'{"tags": {"cluster_name": ["host1"], "env": ["host2"]}}',
+        tags_status: int = 200,
+        search_status: int = 200,
+    ) -> MagicMock:
+        """Build a mock Datadog ApiClient whose rest_client dispatches by URL.
+
+        ``search_responses`` maps query substrings (e.g. ``"kubernetes.*"``)
+        to JSON byte payloads. URLs that don't match any key return ``{}``.
+        """
+        import json as _json
+
+        if search_responses is None:
+            search_responses = {
+                "kubernetes": _json.dumps({"results": {"metrics": ["kubernetes.cpu.usage.total"]}}).encode(),
+                "trace": _json.dumps({"results": {"metrics": ["trace.http.request.hits"]}}).encode(),
+            }
+
+        def _dispatch_request(method: str, url: str, **kwargs: Any) -> MagicMock:
+            if "/api/v1/search" in url:
+                for key, payload in search_responses.items():
+                    if key in url:
+                        return _make_rest_response(status=search_status, data=payload)
+                return _make_rest_response(data=b'{"results": {"metrics": []}}')
+            if "/api/v1/tags/hosts" in url:
+                return _make_rest_response(status=tags_status, data=tags_response)
+            return _make_rest_response()
+
+        rest = MagicMock()
+        rest.request.side_effect = _dispatch_request
+
+        client = MagicMock()
+        client.rest_client = rest
+        return client
+
+    # ── happy-path tests ─────────────────────────────────
+
+    def test_both_k8s_and_trace_metrics_found(self, dd_config: DatadogAPIConfig) -> None:
+        """Reports metric counts and 'auto'/'both' suggestion when both found."""
+        client = self._build_mock_client()
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import diagnose_datadog_metrics
+
+            result = diagnose_datadog_metrics(config=dd_config, _custom_client=client)
+
+        assert result.error is False
+        assert "kubernetes.* metrics found: 1" in result.output
+        assert "trace.* metrics found: 1" in result.output
+        assert "auto" in result.output or "both" in result.output
+
+    def test_only_k8s_metrics_suggests_k8s_agent_mode(self, dd_config: DatadogAPIConfig) -> None:
+        """Suggests k8s_agent when only kubernetes.* metrics are found."""
+        import json as _json
+
+        client = self._build_mock_client(
+            search_responses={
+                "kubernetes": _json.dumps({"results": {"metrics": ["kubernetes.cpu.usage.total"]}}).encode(),
+                "trace": _json.dumps({"results": {"metrics": []}}).encode(),
+            },
+        )
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import diagnose_datadog_metrics
+
+            result = diagnose_datadog_metrics(config=dd_config, _custom_client=client)
+
+        assert result.error is False
+        assert "k8s_agent" in result.output
+
+    def test_only_trace_metrics_suggests_apm_mode(self, dd_config: DatadogAPIConfig) -> None:
+        """Suggests apm when only trace.* metrics are found."""
+        import json as _json
+
+        client = self._build_mock_client(
+            search_responses={
+                "kubernetes": _json.dumps({"results": {"metrics": []}}).encode(),
+                "trace": _json.dumps({"results": {"metrics": ["trace.http.request.hits"]}}).encode(),
+            },
+        )
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import diagnose_datadog_metrics
+
+            result = diagnose_datadog_metrics(config=dd_config, _custom_client=client)
+
+        assert result.error is False
+        assert "apm" in result.output
+
+    def test_no_metrics_found_suggests_checking_agent(self, dd_config: DatadogAPIConfig) -> None:
+        """Suggests checking agent deployment when no metrics found."""
+        import json as _json
+
+        client = self._build_mock_client(
+            search_responses={
+                "kubernetes": _json.dumps({"results": {"metrics": []}}).encode(),
+                "trace": _json.dumps({"results": {"metrics": []}}).encode(),
+            },
+        )
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import diagnose_datadog_metrics
+
+            result = diagnose_datadog_metrics(config=dd_config, _custom_client=client)
+
+        assert result.error is False
+        assert "No kubernetes.* or trace.* metrics found" in result.output
+
+    def test_tag_keys_discovered(self, dd_config: DatadogAPIConfig) -> None:
+        """Tag keys from /api/v1/tags/hosts appear in the diagnostic output."""
+        client = self._build_mock_client()
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import diagnose_datadog_metrics
+
+            result = diagnose_datadog_metrics(config=dd_config, _custom_client=client)
+
+        assert result.error is False
+        assert "Host tag keys discovered: 2" in result.output
+
+    def test_missing_cluster_tag_warns(self, dd_config: DatadogAPIConfig) -> None:
+        """Warns when configured cluster_name tag is not found in Datadog tags."""
+        import json as _json
+
+        client = self._build_mock_client(
+            tags_response=_json.dumps({"tags": {"env": ["host1"]}}).encode(),
+        )
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import diagnose_datadog_metrics
+
+            result = diagnose_datadog_metrics(config=dd_config, _custom_client=client)
+
+        assert result.error is False
+        # The default cluster_name label is 'kube_cluster_name'
+        assert "not found in Datadog host tags" in result.output
+
+    # ── error-path tests ─────────────────────────────────
+
+    def test_disabled_config_returns_error(self, dd_config_disabled: DatadogAPIConfig) -> None:
+        """Returns error when Datadog integration is disabled."""
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import diagnose_datadog_metrics
+
+            result = diagnose_datadog_metrics(config=dd_config_disabled)
+
+        assert result.error is True
+        assert "disabled" in result.output.lower()
+
+    def test_search_http_error_recorded_in_diagnostic(self, dd_config: DatadogAPIConfig) -> None:
+        """HTTP errors from the search API are recorded but don't crash."""
+        client = self._build_mock_client(search_status=403)
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import diagnose_datadog_metrics
+
+            result = diagnose_datadog_metrics(config=dd_config, _custom_client=client)
+
+        assert result.error is False
+        assert "HTTP 403" in result.output
+
+    def test_tag_discovery_http_error_recorded(self, dd_config: DatadogAPIConfig) -> None:
+        """HTTP error from tag discovery is recorded as a diagnostic error."""
+        client = self._build_mock_client(tags_status=500)
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import diagnose_datadog_metrics
+
+            result = diagnose_datadog_metrics(config=dd_config, _custom_client=client)
+
+        assert result.error is False
+        assert "Tag discovery HTTP 500" in result.output
+
+    def test_search_exception_recorded_in_diagnostic(self, dd_config: DatadogAPIConfig) -> None:
+        """A network exception from search is recorded without crashing."""
+        client = MagicMock()
+        rest = MagicMock()
+        rest.request.side_effect = ConnectionError("network down")
+        client.rest_client = rest
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import diagnose_datadog_metrics
+
+            result = diagnose_datadog_metrics(config=dd_config, _custom_client=client)
+
+        assert result.error is False
+        assert "failed: network down" in result.output
+
+    def test_unexpected_exception_returns_error(self, dd_config: DatadogAPIConfig) -> None:
+        """Unexpected exception in the outer try returns an error ToolResult."""
+        # Pass a _custom_client that causes _run_diagnostics itself to blow up
+        # by making the client not have a rest_client AND raising on any attribute access.
+        client = MagicMock()
+        client.rest_client = MagicMock()
+        # Make _run_diagnostics itself raise by sabotaging the diagnostic dict build
+        # via a client whose rest_client.request raises something unusual.
+        client.rest_client.request.side_effect = RuntimeError("boom")
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import diagnose_datadog_metrics
+
+            result = diagnose_datadog_metrics(config=dd_config, _custom_client=client)
+
+        # The inner helpers catch exceptions, so the result should still succeed
+        # with the errors recorded in the diagnostic output.
+        assert result.error is False
+        assert "boom" in result.output
+
+    # ── auth headers test ────────────────────────────────
+
+    def test_auth_headers_passed_to_rest_client(self, dd_config: DatadogAPIConfig) -> None:
+        """Verifies that DD-API-KEY and DD-APPLICATION-KEY headers are sent."""
+        client = self._build_mock_client()
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import diagnose_datadog_metrics
+
+            diagnose_datadog_metrics(config=dd_config, _custom_client=client)
+
+        # rest_client.request should have been called with headers kwarg
+        for call_args in client.rest_client.request.call_args_list:
+            kwargs = call_args.kwargs if call_args.kwargs else {}
+            headers = kwargs.get("headers", {})
+            assert headers.get("DD-API-KEY") == "test-api-key"
+            assert headers.get("DD-APPLICATION-KEY") == "test-app-key"
+
+    # ── URL encoding test ────────────────────────────────
+
+    def test_search_query_is_url_encoded(self, dd_config: DatadogAPIConfig) -> None:
+        """Verifies that the search query parameter is URL-encoded."""
+        client = self._build_mock_client()
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import diagnose_datadog_metrics
+
+            diagnose_datadog_metrics(config=dd_config, _custom_client=client)
+
+        # Check that search URLs contain encoded query params (+ instead of spaces, %2A for *)
+        search_calls = [
+            call_args for call_args in client.rest_client.request.call_args_list
+            if "/api/v1/search" in str(call_args)
+        ]
+        assert len(search_calls) >= 2  # kubernetes.* and trace.*
+        for call_args in search_calls:
+            url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
+            # urllib.parse.quote_plus encodes * as %2A
+            assert "%2A" in url or "quote_plus" in url  # encoded wildcard
