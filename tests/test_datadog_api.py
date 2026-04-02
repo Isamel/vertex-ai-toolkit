@@ -3023,12 +3023,12 @@ class TestConfigDefaults:
 
 
 class TestDefaultMetricModeConfig:
-    """Verify that metric_mode defaults to 'both'."""
+    """Verify that metric_mode defaults to 'auto'."""
 
-    def test_metric_mode_defaults_to_both(self) -> None:
-        """DatadogAPIConfig().metric_mode should default to 'both'."""
+    def test_metric_mode_defaults_to_auto(self) -> None:
+        """DatadogAPIConfig().metric_mode should default to 'auto'."""
         config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
-        assert config.metric_mode == "both"
+        assert config.metric_mode == "auto"
 
     def test_metric_mode_can_be_overridden(self) -> None:
         """metric_mode can still be set to k8s_agent or apm explicitly."""
