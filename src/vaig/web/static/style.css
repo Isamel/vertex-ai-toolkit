@@ -297,7 +297,7 @@ footer {
 }
 
 /* ── Light mode override (manual toggle) ─────────────────── */
-[data-theme="light"] {
+:root[data-theme="light"] {
     --bg: #f8f9fb;
     --bg-primary: #f8f9fb;
     --bg-secondary: #ffffff;
@@ -311,7 +311,7 @@ footer {
     --surface: #ffffff;
 }
 
-[data-theme="light"] .spinner {
+:root[data-theme="light"] .spinner {
     border-color: rgba(0, 0, 0, 0.15);
     border-top-color: var(--accent);
 }

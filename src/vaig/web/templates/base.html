@@ -11,12 +11,14 @@
     <script>
         // Apply theme BEFORE paint to prevent flash of wrong theme.
         (function() {
-            var stored = localStorage.getItem('vaig-theme');
-            if (stored === 'dark' || stored === 'light') {
-                document.documentElement.setAttribute('data-theme', stored);
+            try {
+                const stored = localStorage.getItem('vaig-theme');
+                if (stored === 'dark' || stored === 'light') {
+                    document.documentElement.setAttribute('data-theme', stored);
+                }
+            } catch (e) {
+                // localStorage unavailable (e.g. storage disabled) — fall back to OS preference.
             }
-            // If no stored preference, leave data-theme unset so
-            // @media (prefers-color-scheme) controls the theme.
         })();
     </script>
 </head>
@@ -53,11 +55,16 @@
     <script>
         // Theme toggle logic — runs after DOM is ready.
         (function() {
-            var toggle = document.getElementById('theme-toggle');
+            const toggle = document.getElementById('theme-toggle');
             if (!toggle) return;
 
+            function getStoredTheme() {
+                try { return localStorage.getItem('vaig-theme'); }
+                catch (e) { return null; }
+            }
+
             function getEffectiveTheme() {
-                var stored = localStorage.getItem('vaig-theme');
+                const stored = getStoredTheme();
                 if (stored === 'dark' || stored === 'light') return stored;
                 // Fall back to OS preference
                 if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
@@ -71,11 +78,12 @@
             }
 
             toggle.addEventListener('click', function() {
-                var current = getEffectiveTheme();
-                var next = current === 'dark' ? 'light' : 'dark';
-                localStorage.setItem('vaig-theme', next);
+                const current = getEffectiveTheme();
+                const next = current === 'dark' ? 'light' : 'dark';
                 document.documentElement.setAttribute('data-theme', next);
                 updateIcon();
+                try { localStorage.setItem('vaig-theme', next); }
+                catch (e) { /* Ignore persistence errors — toggle still works. */ }
             });
 
             // Sync icon on load
@@ -83,11 +91,17 @@
 
             // Listen for OS preference changes (only matters when no manual override)
             if (window.matchMedia) {
-                window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
-                    if (!localStorage.getItem('vaig-theme')) {
+                const mql = window.matchMedia('(prefers-color-scheme: dark)');
+                const listener = function() {
+                    if (!getStoredTheme()) {
                         updateIcon();
                     }
-                });
+                };
+                if (typeof mql.addEventListener === 'function') {
+                    mql.addEventListener('change', listener);
+                } else if (typeof mql.addListener === 'function') {
+                    mql.addListener(listener);
+                }
             }
         })();
     </script>
