@@ -12,6 +12,35 @@ Complete reference for all `vaig` CLI commands and options.
 
 ## Top-Level Commands
 
+### `vaig web`
+
+Start the VAIG web server. Launches a FastAPI web interface with the same toolkit features available in the CLI (ask, chat, live modes) plus a browser-based UI with SSE streaming and dark/light theme toggle.
+
+Requires web extras: `pip install vertex-ai-toolkit[web]`
+
+```bash
+vaig web [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--host` | `-h` | Bind address | `0.0.0.0` |
+| `--port` | `-p` | Bind port (also via `PORT` env var) | `8080` |
+| `--reload` | | Enable auto-reload for development | `false` |
+
+**Examples:**
+
+```bash
+# Start with defaults (0.0.0.0:8080)
+vaig web
+
+# Custom port
+vaig web --port 9090
+
+# Development mode with auto-reload
+vaig web --reload
+```
+
 ### `vaig ask`
 
 Send a single question to the AI and get a response. Supports file context, skills, and export.
@@ -557,6 +586,91 @@ vaig mcp call
 ```
 
 Interactively call an MCP tool for testing.
+
+### `vaig login`
+
+Authenticate with the platform backend using the OAuth PKCE flow. Opens a browser window for Google OAuth consent and stores tokens locally at `~/.vaig/credentials.json`.
+
+Requires `platform.enabled: true` in your configuration.
+
+```bash
+vaig login [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--config` | `-c` | Path to config file | Auto-detected |
+| `--force` | | Re-authenticate even if already logged in | `false` |
+
+**Examples:**
+
+```bash
+# Login to platform
+vaig login
+
+# Force re-authentication
+vaig login --force
+```
+
+### `vaig logout`
+
+Log out from the platform and clear local credentials.
+
+Requires `platform.enabled: true` in your configuration.
+
+```bash
+vaig logout [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--config` | `-c` | Path to config file | Auto-detected |
+
+**Examples:**
+
+```bash
+vaig logout
+```
+
+### `vaig whoami`
+
+Show the currently authenticated platform user, including email, organization, role, and CLI ID.
+
+Requires `platform.enabled: true` in your configuration.
+
+```bash
+vaig whoami [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--config` | `-c` | Path to config file | Auto-detected |
+
+**Examples:**
+
+```bash
+vaig whoami
+```
+
+### `vaig status`
+
+Show platform registration status. Displays authentication state, organization, role, CLI ID, and whether a config policy is enforced.
+
+Requires `platform.enabled: true` in your configuration.
+
+```bash
+vaig status [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--config` | `-c` | Path to config file | Auto-detected |
+
+**Examples:**
+
+```bash
+vaig status
+```
 
 ## Environment Variables
 

@@ -4,6 +4,7 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
 
 ## Features
 
+- **Web UI** — browser-based interface with ask, chat, and live diagnosis modes powered by FastAPI + HTMX with SSE streaming; dark/light theme toggle with OS preference detection + manual override; per-session config editor with Firestore persistence; Ollama-compatible proxy for VS Code integration; deploy to Cloud Run with IAP auth
 - **Interactive REPL** — chat with Gemini models in your terminal with slash commands
 - **Multi-model support** — switch between Gemini 2.5 Pro, Flash, and more on the fly
 - **Multimodal context** — attach code, PDFs, images, audio, and Pentaho ETL files
@@ -49,6 +50,7 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
 - **Multiline REPL input** — enter multi-line prompts in the interactive REPL (triple-quote delimiter: `"""`); both async and sync input modes supported
 - **Priority-based finding deduplication** — watch mode diff engine matches findings by stable ID, tracks severity changes across iterations, and surfaces only meaningful deltas
 - **Cross-platform** — UTF-8 enforcement on all file I/O; Rich console falls back to plain text on non-ANSI terminals (Windows-safe)
+- **Platform mode (opt-in)** — centralized auth with OAuth PKCE login (`vaig login`), JWT-based backend, Firestore user/org repository, admin API for CLI management and config policy enforcement
 
 ## Requirements
 
@@ -96,6 +98,21 @@ vaig optimize --reports
 ```
 
 ## CLI Commands
+
+### `vaig web`
+
+Start the VAIG web server (FastAPI + HTMX interface).
+
+```bash
+vaig web [OPTIONS]
+
+Options:
+  -h, --host TEXT    Bind address (default: 0.0.0.0)
+  -p, --port INT     Bind port (default: 8080, or PORT env var)
+  --reload           Enable auto-reload for development
+```
+
+Requires web extras: `pip install vertex-ai-toolkit[web]`. See [Web Deployment](docs/web-deployment.md) for Cloud Run deployment.
 
 ### `vaig chat`
 
@@ -284,6 +301,30 @@ vaig optimize --reports
 vaig optimize --reports --last 10
 ```
 
+### `vaig login`
+
+Authenticate against the platform backend via OAuth PKCE. Opens a browser for Google sign-in and stores credentials locally at `~/.vaig/credentials.json`. Requires `platform.enabled: true` in config.
+
+```bash
+vaig login [OPTIONS]
+
+Options:
+  -c, --config PATH   Path to config YAML
+  --force             Re-authenticate even if already logged in
+```
+
+### `vaig logout`
+
+Clear locally stored platform credentials.
+
+### `vaig whoami`
+
+Show the currently authenticated platform user (email, organization, role, CLI ID).
+
+### `vaig status`
+
+Show platform authentication details and whether a config policy is active.
+
 ## REPL Slash Commands
 
 Inside the interactive chat (`vaig chat`):
@@ -385,6 +426,22 @@ Note: Infrastructure tools will use the new cluster on next invocation.
 
 VAIG uses layered configuration: **environment variables > YAML config > defaults**.
 
+### Installation extras
+
+```bash
+# Core CLI only
+pip install -e .
+
+# With web UI (FastAPI, Jinja2, Uvicorn)
+pip install -e ".[web]"
+
+# With live infrastructure support (GKE, Cloud Logging, Cloud Monitoring)
+pip install -e ".[live]"
+
+# With dev dependencies (includes live + web deps + pytest, ruff, mypy)
+pip install -e ".[dev]"
+```
+
 ### Config file
 
 Default location: `config/default.yaml` or specify with `--config`.
@@ -450,6 +507,11 @@ datadog:
   cluster_name_override: ""  # Override auto-detected cluster name for Datadog tag matching
   default_lookback_hours: 4.0  # Default lookback for APM trace queries
   # ssl_verify: true          # true | false | "/path/to/ca-bundle.crt" (corporate proxies)
+
+# Platform mode (opt-in) — centralized auth and config enforcement
+platform:
+  enabled: false              # Set to true to enable vaig login / platform backend
+  backend_url: ""             # URL of the admin portal API
 ```
 
 ### Environment variables
@@ -868,8 +930,22 @@ vertex-ai-toolkit/
 │   │       └── security.py     # RBAC check + exec_command
 │   └── cli/
 │       ├── app.py          # Typer commands
+│       ├── commands/
+│       │   ├── auth.py     # vaig login/logout/whoami/status
+│       │   └── web.py      # vaig web (FastAPI server)
 │       └── repl.py         # Interactive REPL (prompt-toolkit)
-├── tests/                  # 151 test files, 6,631 tests
+│   ├── web/                # Web UI (FastAPI + HTMX + SSE)
+│   │   ├── app.py          # FastAPI application factory
+│   │   ├── routes/         # ask, chat, live, settings, health, ollama
+│   │   ├── templates/      # Jinja2 HTML templates (base, ask, chat, live)
+│   │   ├── static/         # CSS with dark/light theme support
+│   │   └── session/        # Firestore session persistence
+│   └── platform/           # Admin portal (opt-in)
+│       ├── app.py          # FastAPI admin API
+│       ├── api/            # Auth, CLI management, config policy endpoints
+│       ├── core/           # JWT, Firestore repository, dependencies
+│       └── models/         # Auth, organization data models
+├── tests/                  # 183 test files, 6,772 tests
 └── .github/workflows/
     ├── ci.yml              # Test + Lint + Type check on PR/push
     └── build.yml           # PyInstaller standalone binary builds

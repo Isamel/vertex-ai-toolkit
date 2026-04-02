@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Dark/light theme toggle in web UI with OS preference detection via `prefers-color-scheme`, manual override via toggle button, `localStorage` persistence, and FOUC prevention script ([#188](https://github.com/Isamel/vertex-ai-toolkit/pull/188))
+- CLI auth + admin portal — `vaig login` (PKCE), `vaig logout`, `vaig whoami`, `vaig status` commands; JWT-based backend authentication; Firestore user/org repository; FastAPI admin API for CLI management and config policy enforcement ([#186](https://github.com/Isamel/vertex-ai-toolkit/pull/186))
+- Platform config section (`platform.enabled`, `platform.backend_url`) for opt-in centralized auth and config enforcement ([#186](https://github.com/Isamel/vertex-ai-toolkit/pull/186))
+- Web UI: live mode diagnosis pipeline with real-time SSE progress ([#184](https://github.com/Isamel/vertex-ai-toolkit/pull/184)), per-session config editor with Firestore persistence ([#178](https://github.com/Isamel/vertex-ai-toolkit/pull/178)), chat mode with multi-turn UI and Firestore sessions ([#177](https://github.com/Isamel/vertex-ai-toolkit/pull/177)), ask mode with SSE streaming ([#176](https://github.com/Isamel/vertex-ai-toolkit/pull/176))
+- `vaig web` command — start a FastAPI/HTMX web server with ask, chat, and live modes ([#175](https://github.com/Isamel/vertex-ai-toolkit/pull/175))
+- Ollama-compatible proxy endpoint for VS Code Copilot integration ([#181](https://github.com/Isamel/vertex-ai-toolkit/pull/181))
+- Web UI: settings panel in chat mode, error handling, responsive CSS, Cloud Run deployment support ([#179](https://github.com/Isamel/vertex-ai-toolkit/pull/179), [#185](https://github.com/Isamel/vertex-ai-toolkit/pull/185))
+
+### Fixed
+- TOCTOU race condition in web live mode pipeline semaphore — replaced double-acquire pattern with single-acquire (locked() check + acquire) to eliminate 429 errors from concurrent requests stealing semaphore slots ([#187](https://github.com/Isamel/vertex-ai-toolkit/pull/187))
+
 ## [0.12.0] - 2026-03-29
 
 ### Added

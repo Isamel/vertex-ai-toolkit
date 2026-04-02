@@ -19,6 +19,7 @@
 | [Telemetry Guide](telemetry-guide.md) | Local-only usage telemetry, analytics, and event export |
 | [Architecture](architecture.md) | Mermaid diagrams: system overview, pipeline flow, tool structure, ArgoCD topologies |
 | [Advanced Usage](advanced.md) | Composite skills, chunked processing, custom skills, and workspace mode |
+| [Web Deployment](web-deployment.md) | Deploy the web UI to Cloud Run with IAP authentication |
 
 ## Architecture Overview
 
@@ -27,7 +28,10 @@ See [Architecture](architecture.md) for detailed Mermaid diagrams.
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                       CLI Layer                          │
-│  chat (REPL) │ ask (single-shot) │ live (infra) │ stats │
+│  chat (REPL) │ ask │ live │ web │ login/logout │ stats   │
+├──────────────────────────────────────────────────────────┤
+│                      Web Layer                           │
+│  FastAPI + HTMX + SSE │ ask/chat/live routes │ themes    │
 ├──────────────────────────────────────────────────────────┤
 │                     Agent Layer                          │
 │  Orchestrator │ CodingAgent │ CodingSkillOrchestrator │ InfraAgent │ Chunked │
@@ -41,6 +45,9 @@ See [Architecture](architecture.md) for detailed Mermaid diagrams.
 │                    Core Layer                            │
 │  GeminiClient │ Auth │ Cache │ CostTracker │ Telemetry   │
 ├──────────────────────────────────────────────────────────┤
+│                  Platform Layer                          │
+│  PlatformAuth (PKCE) │ JWT │ Firestore │ Config Policy   │
+├──────────────────────────────────────────────────────────┤
 │               Google Vertex AI (Gemini)                  │
 │  gemini-2.5-pro │ gemini-2.5-flash │ gemini-3.x         │
 └──────────────────────────────────────────────────────────┘
@@ -48,6 +55,7 @@ See [Architecture](architecture.md) for detailed Mermaid diagrams.
 
 ## Key Features
 
+- **Web UI** — Browser-based interface with FastAPI + HTMX + SSE streaming, ask/chat/live modes, dark/light theme toggle with OS preference detection
 - **Multi-agent orchestration** — Sequential, fan-out, and lead-delegate strategies
 - **Async-native** — Full async stack from CLI to API calls, with sync backward compat
 - **31 SRE/DevOps skills** — From root cause analysis to threat modeling, code migration, and greenfield generation
@@ -56,6 +64,7 @@ See [Architecture](architecture.md) for detailed Mermaid diagrams.
 - **Helm & ArgoCD integration** — Read release status, sync state, drift detection (opt-in)
 - **Istio/ASM mesh tools** — VirtualService, DestinationRule, sidecar introspection
 - **Coding agent** — Read, write, edit files and run shell commands
+- **Platform mode** — Centralized CLI fleet management with PKCE login, JWT auth, Firestore-backed config policy enforcement, and a FastAPI admin portal
 - **Session persistence** — SQLite-backed history with search and resume
 - **Response caching** — LRU + TTL cache for repeated queries (opt-in)
 - **Chunked processing** — Map-Reduce for files that exceed model context limits
@@ -77,4 +86,4 @@ See [Architecture](architecture.md) for detailed Mermaid diagrams.
 
 ---
 
-*VAIG v0.9.0 — MIT License*
+*VAIG — MIT License*
