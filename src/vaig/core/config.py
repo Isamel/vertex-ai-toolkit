@@ -946,6 +946,42 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
+class ScheduleTarget(BaseModel):
+    """A single GKE cluster/namespace to scan on a schedule."""
+
+    cluster_name: str
+    namespace: str = ""
+    all_namespaces: bool = False
+    skip_healthy: bool = True
+
+
+class ScheduleConfig(BaseModel):
+    """Scheduled health-scan configuration.
+
+    Auto-enables when ``targets`` is non-empty, following the same
+    pattern as :class:`WebhookServerConfig` and :class:`GoogleChatConfig`.
+    """
+
+    enabled: bool = False
+    default_interval_minutes: int = 30
+    cron_expression: str | None = None
+    targets: list[ScheduleTarget] = Field(default_factory=list)
+    alert_severity_threshold: str = "HIGH"
+    daily_max_analyses: int = 48
+    per_schedule_max_analyses: int | None = None
+    max_concurrent_scans: int = 1
+    store_results: bool = True
+    misfire_grace_time: int = 900
+    db_path: str = "~/.vaig/scheduler.db"
+
+    @model_validator(mode="after")
+    def _auto_enable(self) -> ScheduleConfig:
+        """Auto-enable when targets are configured."""
+        if self.targets and not self.enabled:
+            self.enabled = True
+        return self
+
+
 class Settings(BaseSettings):
     """Root application settings — merges env vars, YAML, and CLI overrides."""
 
@@ -1004,6 +1040,7 @@ class Settings(BaseSettings):
     webhook_server: WebhookServerConfig = Field(default_factory=WebhookServerConfig)
     pagerduty: PagerDutyConfig = Field(default_factory=PagerDutyConfig)
     google_chat: GoogleChatConfig = Field(default_factory=GoogleChatConfig)
+    schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> Settings:

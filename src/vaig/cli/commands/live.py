@@ -1446,31 +1446,16 @@ def _execute_orchestrated_skill(
     Returns:
         The structured ``HealthReport`` if one was produced, else ``None``.
     """
-    from vaig.agents.orchestrator import Orchestrator
     from vaig.core.exceptions import MaxIterationsError
+    from vaig.core.headless import execute_skill_headless
 
     skill_meta = skill.get_metadata()
 
-    # Build tool registry with live tools
+    # Build tool registry to get the tool count for the header.
+    # execute_skill_headless will build its own registry internally.
     tool_registry = _register_live_tools(gke_config, settings=settings)
-
-    # Detect Autopilot mode (result is cached from create_gke_tools)
-    # Pass GKE credentials so the Container API call uses the right SA.
-    gke_credentials = None
-    if settings is not None:
-        from vaig.core.auth import get_gke_credentials as _get_gke_creds
-
-        gke_credentials = _get_gke_creds(settings)
-
-    is_autopilot: bool | None = None
-    try:
-        from vaig.tools.gke_tools import detect_autopilot  # noqa: WPS433
-
-        is_autopilot = detect_autopilot(gke_config, credentials=gke_credentials)
-    except ImportError:
-        pass
-
     tool_count = len(tool_registry.list_tools())
+
     if tool_count == 0:
         context_str = _get_offline_fallback_context(skill_meta)
         prompt = f"{context_str}\n\n## Investigation Question\n\n{question}"
@@ -1492,18 +1477,12 @@ def _execute_orchestrated_skill(
         model_id=model_id,
     )
 
-    orchestrator = Orchestrator(client, settings)
-
     try:
         console.print(Rule("⏳ Pipeline Execution", style="bright_blue"))
         tool_logger = ToolCallLogger(detailed=detailed)
         progress_display = AgentProgressDisplay(tool_logger)
 
-        # ── Suppress console warnings during pipeline (Change 1) ──
-        # Unless --detailed is passed, raise console handler levels to
-        # ERROR so Python WARNING logs (e.g. gRPC, protobuf) don't
-        # clutter the real-time agent tree.  The file logger keeps
-        # capturing everything at DEBUG.
+        # ── Suppress console warnings during pipeline ──
         _suppressed_handlers: list[tuple[logging.Handler, int]] = []
         if not detailed:
             for h in logging.getLogger().handlers + logging.getLogger("vaig").handlers:
@@ -1512,22 +1491,17 @@ def _execute_orchestrated_skill(
                     h.setLevel(logging.ERROR)
 
         try:
-            orch_result = orchestrator.execute_with_tools(
-                query=question,
-                skill=skill,
-                tool_registry=tool_registry,
-                strategy="sequential",
-                is_autopilot=is_autopilot,
-                on_tool_call=tool_logger,
+            orch_result = execute_skill_headless(
+                settings,
+                skill,
+                question,
+                gke_config,
                 tool_call_store=tool_call_store,
+                on_tool_call=tool_logger,
                 on_agent_progress=progress_display,
-                gke_namespace=gke_config.default_namespace,
-                gke_location=gke_config.location,
-                gke_cluster_name=gke_config.cluster_name,
             )
         finally:
             progress_display.stop()
-            # Restore original handler levels (always, even on exception).
             for handler, original_level in _suppressed_handlers:
                 handler.setLevel(original_level)
         tool_logger.print_summary()

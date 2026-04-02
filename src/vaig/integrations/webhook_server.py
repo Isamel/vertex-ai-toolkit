@@ -380,12 +380,10 @@ async def run_analysis_background(
             namespace=namespace,
         )
 
-        # Try to import and run the orchestrator
+        # Try to import and run the orchestrator via headless runner
         try:
-            from vaig.agents.orchestrator import Orchestrator
-            from vaig.core.client import GeminiClient
             from vaig.core.config import GKEConfig
-            from vaig.core.gke import register_live_tools
+            from vaig.core.headless import execute_skill_headless
             from vaig.core.prompt_defense import _sanitize_namespace
             from vaig.skills.registry import SkillRegistry
 
@@ -402,32 +400,27 @@ async def run_analysis_background(
             if safe_cluster:
                 query += f" on cluster '{safe_cluster}'"
 
-            client = GeminiClient(settings)
-            orchestrator = Orchestrator(client, settings)
-
             # Resolve service-health skill from the registry
             skill_registry = SkillRegistry(settings)
             skill = skill_registry.get("service-health")
             if skill is None:
                 raise RuntimeError("service-health skill not found in registry")
 
-            # Build GKE config and tool registry for live tools
+            # Build GKE config for headless execution
             gke_config = GKEConfig(
                 cluster_name=cluster_name or "",
                 default_namespace=namespace or "",
             )
-            tool_registry = register_live_tools(gke_config, settings=settings)
 
-            # Run sync orchestrator call in a thread to avoid blocking the event loop,
-            # and enforce the configured analysis timeout.
+            # Run headless orchestrator in a thread to avoid blocking the
+            # event loop, and enforce the configured analysis timeout.
             orchestrator_result = await asyncio.wait_for(
                 asyncio.to_thread(
-                    orchestrator.execute_with_tools,
-                    query,
+                    execute_skill_headless,
+                    settings,
                     skill,
-                    tool_registry,
-                    gke_namespace=namespace or "",
-                    gke_cluster_name=cluster_name or "",
+                    query,
+                    gke_config,
                 ),
                 timeout=analysis_timeout,
             )
