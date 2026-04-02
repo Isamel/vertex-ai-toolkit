@@ -470,6 +470,25 @@ async def _emit_pipeline_result(
             logger.warning(
                 "Failed to render HTML report for live SSE", exc_info=True
             )
+            # Fallback: render raw synthesized output so the user still sees
+            # a report even when HTML rendering of the structured report fails.
+            raw_output = getattr(result, "synthesized_output", None) or ""
+            if raw_output.strip():
+                try:
+                    from markdown_it import MarkdownIt
+
+                    _md = MarkdownIt("commonmark", {"html": False}).enable(
+                        ["table", "strikethrough"]
+                    )
+                    body_html = _md.render(raw_output)
+                except Exception:  # noqa: BLE001
+                    body_html = (
+                        "<pre>" + _html_mod.escape(raw_output) + "</pre>"
+                    )
+                yield ServerSentEvent(
+                    data=json.dumps({"html": body_html}),
+                    event="report_html",
+                )
     else:
         # Fallback: render raw synthesized output as HTML so the user always
         # sees a report even when structured parsing fails.
