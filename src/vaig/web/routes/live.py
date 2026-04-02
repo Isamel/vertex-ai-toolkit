@@ -131,97 +131,118 @@ async def live_stream(request: Request) -> EventSourceResponse:
             status_code=429,
         )
     await _pipeline_semaphore.acquire()
-    # Semaphore is now held — _generate() releases it via finally block.
+    # Semaphore is now held.  The ``_generate()`` generator's finally block
+    # releases it when the pipeline completes or the client disconnects.
+    # If setup fails *before* we return the generator, the outer finally
+    # block releases it so we never leak a slot.
+    generator_owns_semaphore = False
+    try:
+        # Extract form fields
+        form = await request.form()
+        question = str(form.get("question", "")).strip()
+        service_name = str(form.get("service_name", "")).strip()
+        cluster = str(form.get("cluster", "")).strip() or None
+        namespace = str(form.get("namespace", "")).strip() or None
+        gke_project = str(form.get("gke_project", "")).strip() or None
+        gke_location = str(form.get("gke_location", "")).strip() or None
 
-    # Extract form fields
-    form = await request.form()
-    question = str(form.get("question", "")).strip()
-    service_name = str(form.get("service_name", "")).strip()
-    cluster = str(form.get("cluster", "")).strip() or None
-    namespace = str(form.get("namespace", "")).strip() or None
-    gke_project = str(form.get("gke_project", "")).strip() or None
-    gke_location = str(form.get("gke_location", "")).strip() or None
+        if not service_name:
+            return EventSourceResponse(
+                _error_generator("Service name is required.")
+            )
 
-    if not service_name:
-        return EventSourceResponse(_error_generator("Service name is required."))
+        # Build the prompt
+        prompt = f"Service: {service_name}"
+        if question:
+            prompt = f"{prompt}\n\n{question}"
 
-    # Build the prompt
-    prompt = f"Service: {service_name}"
-    if question:
-        prompt = f"{prompt}\n\n{question}"
-
-    # Build GKE config and register tools
-    gke_config = build_gke_config(
-        settings,
-        cluster=cluster,
-        namespace=namespace,
-        project_id=gke_project,
-        location=gke_location,
-    )
-    tool_registry = await asyncio.to_thread(
-        register_live_tools, gke_config, settings=settings
-    )
-
-    # Resolve skill
-    from vaig.skills.registry import SkillRegistry
-
-    skill_registry = SkillRegistry(settings)
-    skill = skill_registry.get(_DEFAULT_SKILL)
-
-    if skill is None:
-        return EventSourceResponse(
-            _error_generator(f"Skill '{_DEFAULT_SKILL}' not found or not enabled.")
+        # Build GKE config and register tools
+        gke_config = build_gke_config(
+            settings,
+            cluster=cluster,
+            namespace=namespace,
+            project_id=gke_project,
+            location=gke_location,
+        )
+        tool_registry = await asyncio.to_thread(
+            register_live_tools, gke_config, settings=settings
         )
 
-    # Subscribe to EventBus with live event types (includes agent progress)
-    bus = container.event_bus
-    bridge = EventQueueBridge(bus, event_types=_LIVE_SUBSCRIBED_EVENTS)
+        # Resolve skill
+        from vaig.skills.registry import SkillRegistry
 
-    async def _generate() -> AsyncGenerator[ServerSentEvent, None]:
-        """Run pipeline and stream SSE events.
+        skill_registry = SkillRegistry(settings)
+        skill = skill_registry.get(_DEFAULT_SKILL)
 
-        The concurrency semaphore is already acquired by the caller.
-        This generator releases it in the finally block when the pipeline
-        completes or the client disconnects (``CancelledError``).
-        """
-        from vaig.agents.orchestrator import Orchestrator
-
-        try:
-            async with bridge as event_queue:
-                orchestrator = Orchestrator(container.gemini_client, settings)
-
-                # Create the agent progress callback that bridges to EventBus
-                progress_callback = _progress_to_bus(bus)
-
-                # Build the pipeline coroutine
-                pipeline_coro = orchestrator.async_execute_with_tools(
-                    prompt,
-                    skill,
-                    tool_registry,
-                    on_agent_progress=progress_callback,
-                    gke_namespace=namespace or gke_config.default_namespace,
-                    gke_location=gke_location or gke_config.location,
-                    gke_cluster_name=cluster or gke_config.cluster_name,
+        if skill is None:
+            return EventSourceResponse(
+                _error_generator(
+                    f"Skill '{_DEFAULT_SKILL}' not found or not enabled."
                 )
-
-                async for sse_event in live_pipeline_to_sse(
-                    pipeline_coro, event_queue
-                ):
-                    yield sse_event
-        except asyncio.CancelledError:
-            # Client disconnected — pipeline task cancellation is
-            # handled by live_pipeline_to_sse's finally block.
-            # Log and re-raise so sse-starlette completes cleanup.
-            logger.info(
-                "Live SSE client disconnected (user=%s) — "
-                "pipeline cancelled",
-                user,
             )
-            raise
-        finally:
-            _pipeline_semaphore.release()
 
-    return EventSourceResponse(_generate())
+        # Subscribe to EventBus with live event types (includes agent progress)
+        bus = container.event_bus
+        bridge = EventQueueBridge(bus, event_types=_LIVE_SUBSCRIBED_EVENTS)
+
+        async def _generate() -> AsyncGenerator[ServerSentEvent, None]:
+            """Run pipeline and stream SSE events.
+
+            The concurrency semaphore is already acquired by the caller.
+            This generator releases it in the finally block when the
+            pipeline completes or the client disconnects
+            (``CancelledError``).
+            """
+            from vaig.agents.orchestrator import Orchestrator
+
+            try:
+                async with bridge as event_queue:
+                    orchestrator = Orchestrator(
+                        container.gemini_client, settings
+                    )
+
+                    # Create the agent progress callback
+                    progress_callback = _progress_to_bus(bus)
+
+                    # Build the pipeline coroutine
+                    pipeline_coro = orchestrator.async_execute_with_tools(
+                        prompt,
+                        skill,
+                        tool_registry,
+                        on_agent_progress=progress_callback,
+                        gke_namespace=(
+                            namespace or gke_config.default_namespace
+                        ),
+                        gke_location=(
+                            gke_location or gke_config.location
+                        ),
+                        gke_cluster_name=(
+                            cluster or gke_config.cluster_name
+                        ),
+                    )
+
+                    async for sse_event in live_pipeline_to_sse(
+                        pipeline_coro, event_queue
+                    ):
+                        yield sse_event
+            except asyncio.CancelledError:
+                # Client disconnected — log and re-raise so
+                # sse-starlette completes cleanup.
+                logger.info(
+                    "Live SSE client disconnected (user=%s) — "
+                    "pipeline cancelled",
+                    user,
+                )
+                raise
+            finally:
+                _pipeline_semaphore.release()
+
+        # Hand off semaphore ownership to the generator.
+        generator_owns_semaphore = True
+        return EventSourceResponse(_generate())
+    finally:
+        if not generator_owns_semaphore:
+            _pipeline_semaphore.release()
 
 
 def _progress_to_bus(

@@ -9,6 +9,7 @@ Covers:
 - Semaphore release after the generator completes normally (no leak)
 - Semaphore release on ``CancelledError`` (client disconnect)
 - Semaphore release even when the generator raises an unexpected error
+- Semaphore release when setup fails before generator is returned
 """
 
 from __future__ import annotations
@@ -172,15 +173,15 @@ async def test_semaphore_released_after_generator_completes() -> None:
 
         sse_response = await live_mod.live_stream(_mock_request())
 
-        # Semaphore acquired by the route
-        assert test_sem._value == 0  # noqa: SLF001
+        # Semaphore acquired by the route — counter is 0
+        assert test_sem.locked(), "Semaphore should be acquired after live_stream()"
 
         # Drain the generator — simulates normal SSE streaming to completion
         async for _ in sse_response.body_iterator:
             pass
 
         # The finally block should have released the semaphore
-        assert test_sem._value == 1, (  # noqa: SLF001
+        assert not test_sem.locked(), (
             "Semaphore was NOT released after generator completed — slot leak!"
         )
 
@@ -211,8 +212,8 @@ async def test_semaphore_released_on_cancelled_error() -> None:
 
         sse_response = await live_mod.live_stream(_mock_request())
 
-        # Semaphore acquired by the route
-        assert test_sem._value == 0  # noqa: SLF001
+        # Semaphore acquired by the route — counter is 0
+        assert test_sem.locked(), "Semaphore should be acquired after live_stream()"
 
         # Simulate client disconnect: wrap generator consumption in a task
         # and cancel it — this is what Starlette does on disconnect.
@@ -227,7 +228,7 @@ async def test_semaphore_released_on_cancelled_error() -> None:
             await task
 
         # The finally block should have released the semaphore
-        assert test_sem._value == 1, (  # noqa: SLF001
+        assert not test_sem.locked(), (
             "Semaphore NOT released after CancelledError — "
             "slot leak on client disconnect!"
         )
@@ -256,8 +257,8 @@ async def test_semaphore_released_on_unexpected_error() -> None:
 
         sse_response = await live_mod.live_stream(_mock_request())
 
-        # Semaphore acquired
-        assert test_sem._value == 0  # noqa: SLF001
+        # Semaphore acquired — counter is 0
+        assert test_sem.locked(), "Semaphore should be acquired after live_stream()"
 
         # Iterate the generator — should hit RuntimeError
         with pytest.raises(RuntimeError, match="Boom"):
@@ -265,7 +266,55 @@ async def test_semaphore_released_on_unexpected_error() -> None:
                 pass  # pragma: no cover
 
         # The finally block should still release the semaphore
-        assert test_sem._value == 1, (  # noqa: SLF001
+        assert not test_sem.locked(), (
             "Semaphore NOT released after RuntimeError — "
             "slot leak on unexpected errors!"
+        )
+
+
+# ── Semaphore release on setup failure ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_semaphore_released_on_setup_failure() -> None:
+    """Semaphore must be released when setup fails before generator is created.
+
+    If an exception occurs between ``acquire()`` and returning the generator
+    (e.g., ``register_live_tools`` throws), the outer ``try/finally`` in
+    ``live_stream`` must release the semaphore — otherwise the slot leaks
+    permanently.
+    """
+    test_sem = asyncio.Semaphore(1)
+
+    with (
+        patch("vaig.web.routes.live._pipeline_semaphore", test_sem),
+        patch("vaig.web.routes.live.get_current_user", return_value="test-user"),
+        patch("vaig.web.routes.live.get_settings", return_value=_mock_settings()),
+        patch(
+            "vaig.web.routes.live.get_container",
+            return_value=MagicMock(event_bus=MagicMock()),
+        ),
+        patch(
+            "vaig.web.routes.live.build_gke_config",
+            return_value=MagicMock(
+                default_namespace="default",
+                location="us-c1-a",
+                cluster_name="c1",
+            ),
+        ),
+        patch(
+            "vaig.web.routes.live.register_live_tools",
+            side_effect=RuntimeError("Tool registration failed"),
+        ),
+    ):
+        import vaig.web.routes.live as live_mod
+
+        with pytest.raises(RuntimeError, match="Tool registration failed"):
+            await live_mod.live_stream(_mock_request())
+
+        # The outer finally must release the semaphore even though
+        # _generate() was never created.
+        assert not test_sem.locked(), (
+            "Semaphore NOT released after setup failure — "
+            "permanent slot leak!"
         )
