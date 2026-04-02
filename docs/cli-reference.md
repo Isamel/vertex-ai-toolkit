@@ -654,7 +654,7 @@ vaig whoami
 
 ### `vaig status`
 
-Show platform registration status and config policy version. Displays authentication state, organization, role, CLI ID, and whether a config policy is enforced.
+Show platform registration status. Displays authentication state, organization, role, CLI ID, and whether a config policy is enforced.
 
 Requires `platform.enabled: true` in your configuration.
 

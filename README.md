@@ -310,6 +310,7 @@ vaig login [OPTIONS]
 
 Options:
   -c, --config PATH   Path to config YAML
+  --force             Re-authenticate even if already logged in
 ```
 
 ### `vaig logout`
@@ -318,11 +319,11 @@ Clear locally stored platform credentials.
 
 ### `vaig whoami`
 
-Show the currently authenticated platform user (email, display name, organization).
+Show the currently authenticated platform user (email, organization, role, CLI ID).
 
 ### `vaig status`
 
-Show platform authentication status and token expiration.
+Show platform authentication details and whether a config policy is active.
 
 ## REPL Slash Commands
 
