@@ -65,13 +65,23 @@ class TestPagerDutyConfigAutoEnable:
         config = PagerDutyConfig(enabled=True, routing_key="key")
         assert config.enabled is True
 
+    def test_explicit_disabled_with_routing_key_stays_disabled(self) -> None:
+        """Explicitly disabling should override auto-enable from routing_key."""
+        config = PagerDutyConfig(enabled=False, routing_key="key")
+        assert config.enabled is False
+
+    def test_enabled_without_routing_key_disables(self) -> None:
+        """enabled=True but no routing_key → warn and disable."""
+        config = PagerDutyConfig(enabled=True, routing_key="")
+        assert config.enabled is False
+
     def test_severity_mapping_defaults(self) -> None:
         config = PagerDutyConfig()
         assert config.severity_mapping == {
             "critical": "critical",
             "high": "error",
             "medium": "warning",
-            "low": "info",
+            "info": "info",
         }
 
     def test_api_token_not_in_repr(self) -> None:

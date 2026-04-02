@@ -11,6 +11,7 @@ from vaig.core.config import GoogleChatConfig
 from vaig.integrations.google_chat import (
     GoogleChatWebhook,
     _meets_threshold,
+    _normalize_notify_on,
     _status_to_severity,
 )
 
@@ -63,6 +64,11 @@ class TestGoogleChatConfigAutoEnable:
         config = GoogleChatConfig()
         assert config.enabled is False
 
+    def test_enabled_without_webhook_url_disables(self) -> None:
+        """enabled=True but no webhook_url → warn and disable."""
+        config = GoogleChatConfig(enabled=True, webhook_url="")
+        assert config.enabled is False
+
     def test_default_notify_on(self) -> None:
         config = GoogleChatConfig()
         assert config.notify_on == ["critical", "high"]
@@ -100,6 +106,35 @@ class TestSeverityThreshold:
 
     def test_empty_notify_on_blocks_all(self) -> None:
         assert _meets_threshold("CRITICAL", []) is False
+
+    def test_unknown_severity_in_notify_on_ignored(self) -> None:
+        """Typos in notify_on should fail safe (no alerts), not fail open."""
+        assert _meets_threshold("CRITICAL", ["critcal"]) is False
+
+    def test_unknown_severity_input_does_not_match(self) -> None:
+        """Unknown severity input should not pass threshold."""
+        assert _meets_threshold("BANANA", ["critical", "high"]) is False
+
+    def test_mixed_valid_invalid_notify_on(self) -> None:
+        """Valid entries still work even when mixed with typos."""
+        assert _meets_threshold("CRITICAL", ["typo", "critical"]) is True
+        assert _meets_threshold("MEDIUM", ["typo", "critical"]) is False
+
+
+class TestNormalizeNotifyOn:
+    """Tests for _normalize_notify_on helper."""
+
+    def test_valid_values_preserved(self) -> None:
+        result = _normalize_notify_on(["critical", "high", "medium"])
+        assert result == ["critical", "high", "medium"]
+
+    def test_invalid_values_dropped(self) -> None:
+        result = _normalize_notify_on(["critcal", "banana", "high"])
+        assert result == ["high"]
+
+    def test_empty_list(self) -> None:
+        result = _normalize_notify_on([])
+        assert result == []
 
 
 class TestStatusToSeverity:

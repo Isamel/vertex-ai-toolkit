@@ -279,6 +279,20 @@ class TestDispatchSeverityFiltering:
         assert result.google_chat_sent is False
         mock_gc_post.assert_not_called()
 
+    @patch("vaig.integrations.pagerduty.requests.post")
+    def test_healthy_report_skips_pagerduty(
+        self,
+        mock_pd_post: MagicMock,
+        pd_client: PagerDutyClient,
+    ) -> None:
+        """HEALTHY → INFO severity → PagerDuty should NOT be triggered."""
+        dispatcher = NotificationDispatcher(pagerduty=pd_client, google_chat=None)
+        report = _make_report(status="HEALTHY")
+        result = dispatcher.dispatch(report)
+
+        assert result.pagerduty_dedup_key is None
+        mock_pd_post.assert_not_called()
+
 
 # ── Error collection ─────────────────────────────────────────
 

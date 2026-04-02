@@ -7,17 +7,58 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from vaig.core.config import GoogleChatConfig, PagerDutyConfig
-from vaig.integrations.google_chat import (
-    GoogleChatWebhook,
-    _meets_threshold,
-    _status_to_severity,
-)
+from vaig.integrations.google_chat import GoogleChatWebhook
 from vaig.integrations.pagerduty import PagerDutyClient
 
 if TYPE_CHECKING:
     from vaig.skills.service_health.schema import HealthReport
 
 logger = logging.getLogger(__name__)
+
+# ── Severity helpers (shared across dispatch channels) ───────
+# These live here rather than in a specific integration module
+# to avoid tight coupling between the dispatcher and google_chat.
+
+_SEVERITY_ORDER: dict[str, int] = {
+    "critical": 4,
+    "high": 3,
+    "medium": 2,
+    "low": 1,
+    "info": 0,
+}
+
+
+def _status_to_severity(overall_status: str) -> str:
+    """Map OverallStatus to a severity string for threshold comparison."""
+    mapping: dict[str, str] = {
+        "CRITICAL": "CRITICAL",
+        "DEGRADED": "HIGH",
+        "HEALTHY": "INFO",
+        "UNKNOWN": "MEDIUM",
+    }
+    return mapping.get(overall_status.upper(), "MEDIUM")
+
+
+def _normalize_notify_on(notify_on: list[str]) -> list[str]:
+    """Return normalized valid severities from ``notify_on``."""
+    return [v.lower() for v in notify_on if v.lower() in _SEVERITY_ORDER]
+
+
+def _meets_threshold(severity: str, notify_on: list[str]) -> bool:
+    """Check if severity meets the minimum notification threshold."""
+    if not notify_on:
+        return False
+
+    severity_lower = severity.lower()
+    if severity_lower not in _SEVERITY_ORDER:
+        return False
+
+    valid_notify_on = _normalize_notify_on(notify_on)
+    if not valid_notify_on:
+        return False
+
+    min_threshold = min(_SEVERITY_ORDER[s] for s in valid_notify_on)
+    return _SEVERITY_ORDER[severity_lower] >= min_threshold
 
 
 @dataclass
@@ -115,7 +156,7 @@ class NotificationDispatcher:
         service_name = alert_context.service_name if alert_context else es.scope
 
         # ── PagerDuty ────────────────────────────────────────
-        if self.pagerduty is not None:
+        if self.pagerduty is not None and severity != "INFO":
             pd_severity = self.pagerduty.severity_mapping.get(
                 severity.lower(), "warning"
             )

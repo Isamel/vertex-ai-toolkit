@@ -377,6 +377,18 @@ platform:
   enabled: false
   backend_url: ""
 
+# Webhook server — receives Datadog alert webhooks and triggers vaig analysis
+# Requires: pip install vertex-ai-toolkit[webhook]  (fastapi + uvicorn)
+# Auto-enables when hmac_secret is set.
+webhook_server:
+  enabled: false
+  host: "0.0.0.0"                    # Bind address — override via VAIG_WEBHOOK_SERVER__HOST
+  port: 8080                          # Bind port — override via VAIG_WEBHOOK_SERVER__PORT or PORT env var
+  hmac_secret: ""                     # Datadog HMAC secret — or use VAIG_WEBHOOK_SERVER__HMAC_SECRET
+  max_analyses_per_day: 50            # Daily budget (cost protection against alert storms)
+  dedup_cooldown_seconds: 300         # Seconds before re-analyzing the same alert (5 min)
+  analysis_timeout_seconds: 600       # Maximum seconds per analysis (10 min)
+
 # PagerDuty integration — incident management via Events API v2 + REST API v2
 # Events API v2 uses routing_key for trigger/ack/resolve.
 # REST API v2 uses api_token for enrichment (notes, incident search).
@@ -391,7 +403,7 @@ pagerduty:
     critical: critical
     high: error
     medium: warning
-    low: info
+    info: info
 
 # Google Chat integration — incoming webhook for Card v2 notifications
 # Auto-enables when webhook_url is set.

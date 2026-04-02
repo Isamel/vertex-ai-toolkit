@@ -17,14 +17,6 @@ logger = logging.getLogger(__name__)
 # ── Constants ────────────────────────────────────────────────
 _DEFAULT_TIMEOUT = 30
 
-_SEVERITY_COLOR: dict[str, str] = {
-    "CRITICAL": "#D32F2F",  # red
-    "HIGH": "#E65100",  # orange
-    "MEDIUM": "#F9A825",  # yellow
-    "LOW": "#2E7D32",  # green
-    "INFO": "#1565C0",  # blue
-}
-
 _SEVERITY_ICON: dict[str, str] = {
     "CRITICAL": "🔴",
     "HIGH": "🟠",
@@ -43,21 +35,41 @@ _SEVERITY_ORDER: dict[str, int] = {
 }
 
 
+def _normalize_notify_on(notify_on: list[str]) -> list[str]:
+    """Return normalized valid severities from ``notify_on``.
+
+    Unknown values are silently dropped so misconfiguration fails safe
+    (no alerts) rather than fail open.
+    """
+    normalized: list[str] = []
+    for value in notify_on:
+        severity = value.lower()
+        if severity in _SEVERITY_ORDER:
+            normalized.append(severity)
+    return normalized
+
+
 def _meets_threshold(severity: str, notify_on: list[str]) -> bool:
     """Check if severity meets the minimum notification threshold.
 
-    The threshold is determined by the *lowest* severity in ``notify_on``.
-    Any severity at or above that threshold will pass.
+    The threshold is determined by the *lowest* valid severity in
+    ``notify_on``.  Any severity at or above that threshold will pass.
+    Invalid severities in ``notify_on`` are ignored so misconfiguration
+    fails safe (no alerts) rather than fail open.
     """
     if not notify_on:
         return False
 
     severity_lower = severity.lower()
-    min_threshold = min(
-        (_SEVERITY_ORDER.get(s.lower(), 0) for s in notify_on),
-        default=0,
-    )
-    return _SEVERITY_ORDER.get(severity_lower, 0) >= min_threshold
+    if severity_lower not in _SEVERITY_ORDER:
+        return False
+
+    valid_notify_on = _normalize_notify_on(notify_on)
+    if not valid_notify_on:
+        return False
+
+    min_threshold = min(_SEVERITY_ORDER[s] for s in valid_notify_on)
+    return _SEVERITY_ORDER[severity_lower] >= min_threshold
 
 
 class GoogleChatWebhook:

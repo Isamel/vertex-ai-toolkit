@@ -719,6 +719,33 @@ class AuditConfig(BaseModel):
     flush_interval_seconds: int = 30
 
 
+class WebhookServerConfig(BaseModel):
+    """Webhook server configuration — receives Datadog alert webhooks.
+
+    The webhook server runs as a FastAPI application that:
+    1. Receives Datadog Monitor webhook payloads
+    2. Runs vaig health analysis on affected services (background task)
+    3. Dispatches results via PagerDuty + Google Chat
+
+    Auto-enables when ``hmac_secret`` is provided.
+    """
+
+    enabled: bool = False
+    host: str = "0.0.0.0"  # noqa: S104
+    port: int = 8080
+    hmac_secret: str = Field(default="", repr=False)
+    max_analyses_per_day: int = 50
+    dedup_cooldown_seconds: int = 300
+    analysis_timeout_seconds: int = 600
+
+    @model_validator(mode="after")
+    def _auto_enable(self) -> WebhookServerConfig:
+        """Auto-enable when hmac_secret is provided."""
+        if self.hmac_secret and not self.enabled:
+            self.enabled = True
+        return self
+
+
 class PagerDutyConfig(BaseModel):
     """PagerDuty Events API v2 + REST API v2 integration configuration.
 
@@ -738,14 +765,22 @@ class PagerDutyConfig(BaseModel):
             "critical": "critical",
             "high": "error",
             "medium": "warning",
-            "low": "info",
+            "info": "info",
         }
     )
 
     @model_validator(mode="after")
     def _auto_enable(self) -> PagerDutyConfig:
-        """Auto-enable when routing_key is provided."""
-        if self.routing_key and not self.enabled:
+        """Auto-enable when routing_key is provided unless explicitly disabled."""
+        if self.enabled and not self.routing_key:
+            logger.warning(
+                "PagerDuty integration is enabled but no routing_key is configured; "
+                "disabling PagerDuty integration."
+            )
+            self.enabled = False
+            return self
+
+        if self.routing_key and "enabled" not in self.model_fields_set:
             self.enabled = True
         return self
 
@@ -763,9 +798,15 @@ class GoogleChatConfig(BaseModel):
 
     @model_validator(mode="after")
     def _auto_enable(self) -> GoogleChatConfig:
-        """Auto-enable when webhook_url is provided."""
+        """Normalize enabled state based on webhook_url presence."""
         if self.webhook_url and not self.enabled:
             self.enabled = True
+        elif self.enabled and not self.webhook_url:
+            logger.warning(
+                "Google Chat integration is enabled but webhook_url is empty; "
+                "disabling integration."
+            )
+            self.enabled = False
         return self
 
 
@@ -960,6 +1001,7 @@ class Settings(BaseSettings):
     export: ExportConfig = Field(default_factory=ExportConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
+    webhook_server: WebhookServerConfig = Field(default_factory=WebhookServerConfig)
     pagerduty: PagerDutyConfig = Field(default_factory=PagerDutyConfig)
     google_chat: GoogleChatConfig = Field(default_factory=GoogleChatConfig)
 
