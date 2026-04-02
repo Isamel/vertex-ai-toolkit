@@ -45,6 +45,7 @@ from .datadog_api import (
     get_datadog_apm_services,
     get_datadog_monitors,
     get_datadog_service_catalog,
+    get_datadog_service_dependencies,
     query_datadog_metrics,
 )
 from .helm import (
@@ -1687,6 +1688,35 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 execute=lambda service_name="", env="production", hours_back=1.0,
                         _dd=_dd_config: get_datadog_apm_services(
                     service_name=service_name, env=env, hours_back=hours_back, config=_dd,
+                ),
+            ),
+            ToolDef(
+                name="get_datadog_service_dependencies",
+                description=(
+                    "Fetch upstream and downstream service dependencies from the Datadog Service Dependencies v1 API. "
+                    "Returns which services this service calls (downstream) and which services call it (upstream). "
+                    "Requires service_name — resolve from Kubernetes pod labels before calling. "
+                    "Also emits structured DependencyEdge data for dependency graph rendering. "
+                    "Results are cached for 60 seconds. Read-only — does not modify any resources."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="service_name",
+                        type="string",
+                        description=(
+                            "Service name to look up dependencies for. Required — must match the "
+                            "'service' tag in Datadog APM. Resolve from Kubernetes pod labels: "
+                            "(1) tags.datadoghq.com/service, "
+                            "(2) app.kubernetes.io/name, "
+                            "(3) app label, "
+                            "(4) deployment or service name."
+                        ),
+                    ),
+                ],
+                categories=frozenset({DATADOG}),
+                execute=lambda service_name,
+                        _dd=_dd_config: get_datadog_service_dependencies(
+                    service_name=service_name, config=_dd,
                 ),
             ),
         ])

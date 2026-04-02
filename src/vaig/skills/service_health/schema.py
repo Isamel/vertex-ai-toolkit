@@ -683,6 +683,42 @@ class ReportMetadata(BaseModel):
     gke_cost: GKECostReport | None = Field(default=None, description="GKE workload cost estimation (Autopilot only)")
 
 
+# ── Dependency graph models ───────────────────────────────────
+
+
+class DependencyEdge(BaseModel):
+    """A single dependency relationship between two services."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    source: str = Field(description="Service that depends on target")
+    target: str = Field(description="Service being depended upon")
+    evidence: str = Field(default="", description="How this was discovered (e.g., 'env:DATABASE_URL', 'istio:VirtualService')")
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="0.0-1.0 confidence score")
+    method: str = Field(default="manual", description="Discovery method: 'env_var', 'istio', 'datadog', 'manual'")
+
+
+class DependencyNode(BaseModel):
+    """A node in the dependency graph (a service/resource)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = Field(description="Service or resource name")
+    node_type: str = Field(default="service", description="'service', 'database', 'external', 'cache', 'queue'")
+    namespace: str = Field(default="", description="Kubernetes namespace if applicable")
+
+
+class DependencyGraph(BaseModel):
+    """Complete dependency graph for a service ecosystem."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    nodes: list[DependencyNode] = Field(default_factory=list)
+    edges: list[DependencyEdge] = Field(default_factory=list)
+    root_service: str = Field(default="", description="The primary service being investigated")
+    generated_at: str = Field(default="", description="ISO 8601 timestamp")
+
+
 # ── Root model ───────────────────────────────────────────────
 
 
@@ -706,6 +742,7 @@ class HealthReport(BaseModel):
     recommendations: list[RecommendedAction] = Field(default_factory=list)
     manual_investigations: list[ManualInvestigation] = Field(default_factory=list)
     timeline: list[TimelineEvent] = Field(default_factory=list)
+    dependencies: DependencyGraph | None = Field(default=None, description="Structured dependency graph for the service ecosystem")
     metadata: ReportMetadata = Field(default_factory=ReportMetadata)
 
     # ── Serialisation helpers ────────────────────────────────

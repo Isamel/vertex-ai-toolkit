@@ -1102,6 +1102,187 @@ def get_datadog_apm_services(
         return ToolResult(output="Unexpected error retrieving APM trace metrics. See logs for details.", error=True)
 
 
+# ── Service Dependencies ─────────────────────────────────────
+
+
+def get_datadog_service_dependencies(
+    *,
+    service_name: str,
+    config: DatadogAPIConfig | None = None,
+    _custom_api: Any = None,
+) -> ToolResult:
+    """Fetch upstream and downstream service dependencies from the Datadog Service Dependencies v1 API.
+
+    Calls ``GET /api/v1/service_dependencies/{service}`` which returns
+    ``calls`` (downstream services this service depends on) and
+    ``called_by`` (upstream services that depend on this service).
+
+    The response is formatted as a human-readable text summary **and**
+    includes a structured ``STRUCTURED_DEPENDENCY_DATA`` JSON block
+    containing :class:`DependencyEdge` records for programmatic
+    consumption by the dependency graph renderer.
+
+    Args:
+        service_name: The Datadog service name to look up dependencies for.
+            Required — must match the ``service`` tag in Datadog APM.
+        config: Optional ``DatadogAPIConfig`` (for testing / injection).
+        _custom_api: Optional pre-configured API callable for testing.
+            When provided, should be a callable accepting ``(service_name)``
+            and returning a dict with ``calls`` and ``called_by`` keys.
+    """
+    import json as _json  # noqa: WPS433
+
+    try:
+        from datadog_api_client.exceptions import ApiException  # noqa: WPS433
+    except ImportError:
+        return ToolResult(output=_ERR_NOT_INSTALLED, error=True)
+
+    if config is None:
+        from vaig.core.config import get_settings  # noqa: WPS433
+
+        config = get_settings().datadog
+
+    if not config.enabled:
+        return ToolResult(output=_ERR_NOT_ENABLED, error=True)
+
+    # Validate service_name (required for this endpoint)
+    if not service_name:
+        return ToolResult(
+            output="service_name is required for get_datadog_service_dependencies.",
+            error=True,
+        )
+    try:
+        service_name = _sanitize_tag_value("service_name", service_name)
+    except ValueError as exc:
+        return ToolResult(output=str(exc), error=True)
+
+    # Cache check (TTL = 60s)
+    cache_key = _cache._cache_key_discovery("dd_service_deps", service_name)
+    cached = _cache._get_cached(cache_key)
+    if cached is not None:
+        return ToolResult(output=cached, error=False)
+
+    def _execute_deps(api: Any) -> ToolResult:
+        from vaig.skills.service_health.schema import DependencyEdge  # noqa: WPS433
+
+        # The SDK class for v1 service_dependencies may not exist (public beta).
+        # _custom_api is a callable for tests; real path uses the SDK client directly.
+        if callable(api) and _custom_api is not None:
+            response = api(service_name)
+        else:
+            # Use the API instance — GET /api/v1/service_dependencies/{service}
+            response = api.get_service_dependencies(service_name)
+
+        # Normalise response to dict
+        if hasattr(response, "to_dict"):
+            data = response.to_dict()
+        elif isinstance(response, dict):
+            data = response
+        else:
+            data = {}
+
+        calls: list[str] = data.get("calls", []) or []
+        called_by: list[str] = data.get("called_by", []) or []
+
+        # Build human-readable output
+        lines: list[str] = [
+            f"=== Datadog Service Dependencies: {service_name} ===",
+            "",
+        ]
+
+        lines.append(f"Downstream (calls): {len(calls)}")
+        if calls:
+            for svc in sorted(calls):
+                lines.append(f"  → {svc}")
+        else:
+            lines.append("  (none)")
+
+        lines.append("")
+        lines.append(f"Upstream (called_by): {len(called_by)}")
+        if called_by:
+            for svc in sorted(called_by):
+                lines.append(f"  ← {svc}")
+        else:
+            lines.append("  (none)")
+
+        # Build structured DependencyEdge data
+        edges: list[dict[str, Any]] = []
+        for downstream in calls:
+            edge = DependencyEdge(
+                source=service_name,
+                target=downstream,
+                evidence=f"datadog:service_dependencies:{service_name}",
+                confidence=0.9,
+                method="datadog",
+            )
+            edges.append(edge.model_dump())
+
+        for upstream in called_by:
+            edge = DependencyEdge(
+                source=upstream,
+                target=service_name,
+                evidence=f"datadog:service_dependencies:{service_name}",
+                confidence=0.9,
+                method="datadog",
+            )
+            edges.append(edge.model_dump())
+
+        lines.append("")
+        lines.append("--- STRUCTURED_DEPENDENCY_DATA ---")
+        lines.append(_json.dumps(edges, indent=2))
+        lines.append("--- END_STRUCTURED_DEPENDENCY_DATA ---")
+
+        output = "\n".join(lines)
+        _cache._set_cache(cache_key, output)
+        return ToolResult(output=output, error=False)
+
+    try:
+        if _custom_api is not None:
+            return _execute_deps(_custom_api)
+
+        with _get_dd_api_client(config) as client:
+            # The SDK class may or may not exist — try lazy import first
+            try:
+                from datadog_api_client.v1.api.service_dependencies_api import (  # noqa: WPS433
+                    ServiceDependenciesApi,
+                )
+                api = ServiceDependenciesApi(client)  # type: ignore[no-untyped-call]
+            except ImportError:
+                # SDK class doesn't exist yet (v1 public beta) — fall back to
+                # raw HTTP via the client's rest_client.
+                logger.info(
+                    "ServiceDependenciesApi SDK class not available; using raw HTTP fallback."
+                )
+                rest = getattr(client, "rest_client", client)
+                url = f"https://api.{config.site}/api/v1/service_dependencies/{service_name}"
+                resp = rest.request("GET", url)
+                import json as _json_inner  # noqa: WPS433
+
+                response_data: dict[str, Any] = _json_inner.loads(resp.data) if hasattr(resp, "data") else {}
+                return _execute_deps(lambda _sn: response_data)
+
+            return _execute_deps(api)
+
+    except ApiException as exc:
+        status = getattr(exc, "status", 0)
+        msg = _dd_error_message(status)
+        logger.warning("Datadog service dependencies API error (HTTP %s): %s", status, exc)
+        return ToolResult(output=msg, error=True)
+    except urllib3.exceptions.MaxRetryError as exc:
+        if isinstance(getattr(exc, "reason", None), ssl.SSLError):
+            return _ssl_error_result("service dependencies", exc)
+        logger.error("Datadog service dependencies: connection failed after retries: %s", exc)
+        return ToolResult(
+            output=f"Failed to connect to Datadog after multiple retries: {exc}",
+            error=True,
+        )
+    except ssl.SSLError as exc:
+        return _ssl_error_result("service dependencies", exc)
+    except Exception:  # noqa: BLE001
+        logger.exception("Unexpected error in get_datadog_service_dependencies")
+        return ToolResult(output="Unexpected error retrieving service dependencies. See logs for details.", error=True)
+
+
 # ── Async wrappers ───────────────────────────────────────────
 
 from vaig.core.async_utils import to_async  # noqa: E402
@@ -1110,3 +1291,4 @@ async_query_datadog_metrics = to_async(query_datadog_metrics)
 async_get_datadog_monitors = to_async(get_datadog_monitors)
 async_get_datadog_service_catalog = to_async(get_datadog_service_catalog)
 async_get_datadog_apm_services = to_async(get_datadog_apm_services)
+async_get_datadog_service_dependencies = to_async(get_datadog_service_dependencies)

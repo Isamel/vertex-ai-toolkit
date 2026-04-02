@@ -390,6 +390,42 @@
   .collapsed + .section-content { display: none; }
   .section-toggle.collapsed::after { transform: rotate(-90deg); }
 
+  /* ── Dependencies (Mermaid) ──────────────────────────────── */
+  .dep-graph-wrap {
+    background: var(--bg-base); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px;
+    overflow-x: auto; max-width: 100%;
+  }
+  .dep-graph-wrap .mermaid {
+    display: flex; justify-content: center; min-height: 120px;
+  }
+  .dep-graph-wrap .mermaid svg { max-width: 100%; height: auto; }
+  .dep-legend {
+    display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px;
+    padding: 10px 14px; background: var(--bg-surface);
+    border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  .dep-legend-item {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--text-dim);
+  }
+  .dep-legend-swatch {
+    width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0;
+  }
+  .dep-no-data {
+    font-size: 13px; color: var(--text-dim); font-style: italic;
+    padding: 20px; text-align: center;
+  }
+  .dep-meta {
+    display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px;
+  }
+  .dep-meta-item {
+    font-size: 12px; color: var(--text-dim);
+  }
+  .dep-meta-item strong {
+    color: var(--text-main); font-family: var(--font-mono);
+  }
+
   /* ── Responsive ──────────────────────────────────────────── */
   @media (max-width: 768px) {
     .sidebar { display: none; }
@@ -592,6 +628,9 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
       <span class="nav-icon">🔲</span> Services
       <span class="nav-count" id="nav-services-count"></span>
     </a>
+    <a class="nav-item" href="#section-dependencies" onclick="setActiveNav(this)" id="nav-deps-item" style="display:none">
+      <span class="nav-icon">🔗</span> Dependencies
+    </a>
     <a class="nav-item" href="#section-findings" onclick="setActiveNav(this)">
       <span class="nav-icon">🔍</span> Findings
       <span class="nav-count critical" id="nav-findings-count"></span>
@@ -660,6 +699,21 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
     <section id="section-services">
       <h2><span class="section-icon">🔲</span> Service Status</h2>
       <div class="service-grid" id="service-grid"></div>
+    </section>
+
+    <!-- Dependencies -->
+    <section id="section-dependencies" style="display:none">
+      <h2>
+        <span class="section-icon">🔗</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Service Dependencies</span>
+      </h2>
+      <div class="section-content">
+        <div class="dep-meta" id="dep-meta"></div>
+        <div class="dep-graph-wrap" id="dep-graph-wrap">
+          <div id="dep-mermaid-target"></div>
+        </div>
+        <div class="dep-legend" id="dep-legend" style="display:none"></div>
+      </div>
     </section>
 
     <!-- Findings -->
@@ -1389,6 +1443,168 @@ function toggleWatchEntry(id) {
   }
 }
 
+// ── Dependencies (Mermaid.js) ──────────────────────────────────────
+function renderDependencies() {
+  const deps = REPORT_DATA.dependencies;
+  if (!deps || !deps.edges || deps.edges.length === 0) {
+    // No dependency data — leave section hidden
+    return;
+  }
+
+  // Show the section and nav item
+  const section = document.getElementById('section-dependencies');
+  const navItem = document.getElementById('nav-deps-item');
+  if (section) section.style.display = '';
+  if (navItem) navItem.style.display = '';
+
+  // ── Meta info ────────────────────────────────────────────
+  const metaEl = document.getElementById('dep-meta');
+  const metaParts = [];
+  if (deps.root_service) metaParts.push({ label: 'Root Service', value: deps.root_service });
+  if (deps.nodes) metaParts.push({ label: 'Nodes', value: String(deps.nodes.length) });
+  metaParts.push({ label: 'Edges', value: String(deps.edges.length) });
+  if (deps.generated_at) metaParts.push({ label: 'Discovered', value: deps.generated_at.replace('T', ' ').replace('Z', ' UTC').slice(0, 19) });
+  metaEl.innerHTML = metaParts.map(m =>
+    `<div class="dep-meta-item">${esc(m.label)}: <strong>${esc(m.value)}</strong></div>`
+  ).join('');
+
+  // ── Node type colour map ──────────────────────────────────
+  const nodeTypeColors = {
+    service:  { fill: '#7aa2f7', stroke: '#5d7cbf', label: 'Service' },
+    database: { fill: '#9ece6a', stroke: '#7da854', label: 'Database' },
+    external: { fill: '#ff9e64', stroke: '#cc7e50', label: 'External' },
+    cache:    { fill: '#bb9af7', stroke: '#9578c5', label: 'Cache' },
+    queue:    { fill: '#e0af68', stroke: '#b38c53', label: 'Queue' },
+  };
+  const defaultColor = { fill: '#787c99', stroke: '#60647a', label: 'Unknown' };
+
+  // Build node lookup
+  const nodeMap = {};
+  (deps.nodes || []).forEach(n => { nodeMap[n.name] = n; });
+
+  // ── Build Mermaid flowchart string ──────────────────────────
+  const lines = ['flowchart LR'];
+
+  // Collect unique node names from edges + explicit nodes
+  const nodeNames = new Set();
+  deps.edges.forEach(e => { nodeNames.add(e.source); nodeNames.add(e.target); });
+  (deps.nodes || []).forEach(n => nodeNames.add(n.name));
+
+  // Sanitise node IDs for Mermaid (replace non-alphanumeric with _)
+  const sanitizeId = name => name.replace(/[^a-zA-Z0-9]/g, '_');
+
+  // Declare nodes with shapes (root uses stadium shape [[...]])
+  const usedTypes = new Set();
+  nodeNames.forEach(name => {
+    const id = sanitizeId(name);
+    const node = nodeMap[name];
+    const nType = node ? node.node_type : 'service';
+    usedTypes.add(nType);
+    const isRoot = deps.root_service && name === deps.root_service;
+    if (isRoot) {
+      lines.push(`  ${id}([["🎯 ${name}"`);
+      lines.push(`  ]])`);
+    } else if (nType === 'database') {
+      lines.push(`  ${id}[("${name}")]`);
+    } else if (nType === 'external') {
+      lines.push(`  ${id}>"${name}"]`);
+    } else {
+      lines.push(`  ${id}["${name}"]`);
+    }
+  });
+
+  // Declare edges
+  deps.edges.forEach(e => {
+    const srcId = sanitizeId(e.source);
+    const tgtId = sanitizeId(e.target);
+    const label = e.evidence ? e.evidence.replace(/"/g, "'") : '';
+    if (label) {
+      lines.push(`  ${srcId} --> |"${label}"| ${tgtId}`);
+    } else {
+      lines.push(`  ${srcId} --> ${tgtId}`);
+    }
+  });
+
+  // Style nodes by type
+  const styleGroups = {};
+  nodeNames.forEach(name => {
+    const id = sanitizeId(name);
+    const node = nodeMap[name];
+    const nType = node ? node.node_type : 'service';
+    if (!styleGroups[nType]) styleGroups[nType] = [];
+    styleGroups[nType].push(id);
+  });
+
+  Object.entries(styleGroups).forEach(([nType, ids]) => {
+    const color = nodeTypeColors[nType] || defaultColor;
+    lines.push(`  style ${ids.join(',')} fill:${color.fill},stroke:${color.stroke},color:#1a1b26,stroke-width:2px`);
+  });
+
+  // Highlight root node with thicker border
+  if (deps.root_service && nodeNames.has(deps.root_service)) {
+    const rootId = sanitizeId(deps.root_service);
+    const rootNode = nodeMap[deps.root_service];
+    const rootType = rootNode ? rootNode.node_type : 'service';
+    const rootColor = nodeTypeColors[rootType] || defaultColor;
+    lines.push(`  style ${rootId} fill:${rootColor.fill},stroke:#e1e3f4,color:#1a1b26,stroke-width:3px`);
+  }
+
+  const mermaidCode = lines.join('\n');
+
+  // ── Render legend ──────────────────────────────────────────
+  const legendEl = document.getElementById('dep-legend');
+  const legendHtml = [];
+  usedTypes.forEach(t => {
+    const color = nodeTypeColors[t] || defaultColor;
+    legendHtml.push(
+      `<div class="dep-legend-item">
+        <span class="dep-legend-swatch" style="background:${color.fill}"></span>
+        ${esc(color.label)}
+      </div>`
+    );
+  });
+  if (legendHtml.length) {
+    legendEl.innerHTML = legendHtml.join('');
+    legendEl.style.display = '';
+  }
+
+  // ── Render with Mermaid ────────────────────────────────────
+  const target = document.getElementById('dep-mermaid-target');
+  target.classList.add('mermaid');
+  target.textContent = mermaidCode;
+
+  // Initialize Mermaid after content is set
+  if (typeof mermaid !== 'undefined') {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      themeVariables: {
+        primaryColor: '#7aa2f7',
+        primaryTextColor: '#c0caf5',
+        primaryBorderColor: '#3b3f5c',
+        lineColor: '#787c99',
+        secondaryColor: '#24283b',
+        tertiaryColor: '#414868',
+        fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+        fontSize: '13px',
+      },
+      flowchart: {
+        htmlLabels: true,
+        curve: 'basis',
+        padding: 16,
+      },
+      securityLevel: 'loose',
+    });
+    mermaid.run({ nodes: [target] }).catch(function(err) {
+      target.classList.remove('mermaid');
+      target.innerHTML = '<div class="dep-no-data">⚠ Failed to render dependency graph: ' + esc(String(err)) + '</div>';
+    });
+  } else {
+    target.classList.remove('mermaid');
+    target.innerHTML = '<div class="dep-no-data">Mermaid.js library not available — dependency graph cannot render.</div>';
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────
 (function init() {
   renderHeader();
@@ -1403,9 +1619,45 @@ function toggleWatchEntry(id) {
   renderToolUsage();
   renderGKECost();
   renderWatchHistory();
+  renderDependencies();
   const _titleCluster = REPORT_DATA.metadata.cluster_name;
   const _titleStatus  = REPORT_DATA.executive_summary.overall_status;
   document.title = ['Health Report', _titleCluster, _titleStatus].filter(Boolean).join(' — ');
+})();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+// ── Deferred Mermaid rendering ─────────────────────────────────
+// Mermaid CDN loads asynchronously after the inline script. If
+// renderDependencies ran before the library loaded, re-attempt.
+(function retryMermaid() {
+  const target = document.getElementById('dep-mermaid-target');
+  if (!target) return;
+  // If it already has an SVG child, Mermaid already rendered — nothing to do.
+  if (target.querySelector('svg')) return;
+  // If the section is hidden (no data), skip.
+  const section = document.getElementById('section-dependencies');
+  if (section && section.style.display === 'none') return;
+  // Re-run Mermaid now that it should be loaded.
+  if (typeof mermaid !== 'undefined' && target.classList.contains('mermaid')) {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      themeVariables: {
+        primaryColor: '#7aa2f7',
+        primaryTextColor: '#c0caf5',
+        primaryBorderColor: '#3b3f5c',
+        lineColor: '#787c99',
+        secondaryColor: '#24283b',
+        tertiaryColor: '#414868',
+        fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+        fontSize: '13px',
+      },
+      flowchart: { htmlLabels: true, curve: 'basis', padding: 16 },
+      securityLevel: 'loose',
+    });
+    mermaid.run({ nodes: [target] });
+  }
 })();
 </script>
 </body>

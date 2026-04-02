@@ -3281,3 +3281,204 @@ class TestTagFilterFallback:
             )
 
         assert mock_api.query_metrics.call_count == 1
+
+
+# ── get_datadog_service_dependencies ─────────────────────────
+
+
+class TestGetDatadogServiceDependencies:
+    """Tests for ``get_datadog_service_dependencies``."""
+
+    def setup_method(self) -> None:
+        from vaig.tools.gke._cache import clear_discovery_cache
+
+        clear_discovery_cache()
+
+    def test_returns_not_installed_when_sdk_missing(self, dd_config: DatadogAPIConfig) -> None:
+        """Returns error when datadog-api-client is not installed."""
+        with patch.dict("sys.modules", {"datadog_api_client": None, "datadog_api_client.exceptions": None}):
+            from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
+
+            result = get_datadog_service_dependencies(service_name="my-api", config=dd_config)
+
+        assert result.error is True
+        assert "not installed" in result.output
+
+    def test_returns_not_enabled_when_disabled(self, dd_config_disabled: DatadogAPIConfig) -> None:
+        """Returns error when Datadog integration is disabled."""
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
+
+            result = get_datadog_service_dependencies(service_name="my-api", config=dd_config_disabled)
+
+        assert result.error is True
+        assert "disabled" in result.output
+
+    def test_requires_service_name(self, dd_config: DatadogAPIConfig) -> None:
+        """Returns error when service_name is empty."""
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
+
+            result = get_datadog_service_dependencies(service_name="", config=dd_config)
+
+        assert result.error is True
+        assert "required" in result.output.lower()
+
+    def test_invalid_service_name_rejected(self, dd_config: DatadogAPIConfig) -> None:
+        """Returns error when service_name contains invalid characters."""
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
+
+            result = get_datadog_service_dependencies(
+                service_name="my service; DROP TABLE", config=dd_config,
+            )
+
+        assert result.error is True
+        assert "Invalid" in result.output
+
+    def test_successful_response_with_calls_and_called_by(self, dd_config: DatadogAPIConfig) -> None:
+        """Returns formatted output with downstream and upstream services."""
+        mock_api = MagicMock()
+        mock_api.return_value = {
+            "calls": ["database-svc", "cache-svc"],
+            "called_by": ["frontend-svc"],
+        }
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
+
+            result = get_datadog_service_dependencies(
+                service_name="my-api", config=dd_config, _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        assert "=== Datadog Service Dependencies: my-api ===" in result.output
+        assert "Downstream (calls): 2" in result.output
+        assert "→ cache-svc" in result.output
+        assert "→ database-svc" in result.output
+        assert "Upstream (called_by): 1" in result.output
+        assert "← frontend-svc" in result.output
+
+    def test_structured_dependency_data_included(self, dd_config: DatadogAPIConfig) -> None:
+        """Output contains structured DependencyEdge JSON block."""
+        import json
+
+        mock_api = MagicMock()
+        mock_api.return_value = {
+            "calls": ["db"],
+            "called_by": ["web"],
+        }
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
+
+            result = get_datadog_service_dependencies(
+                service_name="my-api", config=dd_config, _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        assert "--- STRUCTURED_DEPENDENCY_DATA ---" in result.output
+        assert "--- END_STRUCTURED_DEPENDENCY_DATA ---" in result.output
+
+        # Extract and parse the structured data
+        start = result.output.index("--- STRUCTURED_DEPENDENCY_DATA ---") + len("--- STRUCTURED_DEPENDENCY_DATA ---")
+        end = result.output.index("--- END_STRUCTURED_DEPENDENCY_DATA ---")
+        edges = json.loads(result.output[start:end].strip())
+
+        assert len(edges) == 2
+
+        # Downstream edge: my-api → db
+        downstream = [e for e in edges if e["target"] == "db"]
+        assert len(downstream) == 1
+        assert downstream[0]["source"] == "my-api"
+        assert downstream[0]["method"] == "datadog"
+        assert downstream[0]["confidence"] == 0.9
+
+        # Upstream edge: web → my-api
+        upstream = [e for e in edges if e["source"] == "web"]
+        assert len(upstream) == 1
+        assert upstream[0]["target"] == "my-api"
+
+    def test_empty_dependencies(self, dd_config: DatadogAPIConfig) -> None:
+        """Handles service with no upstream or downstream dependencies."""
+        mock_api = MagicMock()
+        mock_api.return_value = {
+            "calls": [],
+            "called_by": [],
+        }
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
+
+            result = get_datadog_service_dependencies(
+                service_name="isolated-svc", config=dd_config, _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        assert "Downstream (calls): 0" in result.output
+        assert "(none)" in result.output
+        assert "Upstream (called_by): 0" in result.output
+
+    def test_result_is_cached(self, dd_config: DatadogAPIConfig) -> None:
+        """Second call returns cached result without hitting the API again."""
+        mock_api = MagicMock()
+        mock_api.return_value = {
+            "calls": ["db"],
+            "called_by": [],
+        }
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
+
+            result1 = get_datadog_service_dependencies(
+                service_name="my-api", config=dd_config, _custom_api=mock_api,
+            )
+            result2 = get_datadog_service_dependencies(
+                service_name="my-api", config=dd_config, _custom_api=mock_api,
+            )
+
+        assert result1.output == result2.output
+        # API should only be called once — second call served from cache
+        mock_api.assert_called_once()
+
+    def test_api_exception_returns_error(self, dd_config: DatadogAPIConfig) -> None:
+        """ApiException from the custom API is caught and reported."""
+        dd_modules = _make_dd_modules()
+        ApiException = dd_modules["datadog_api_client.exceptions"].ApiException  # type: ignore[union-attr]
+
+        mock_api = MagicMock()
+        exc = ApiException("forbidden")
+        exc.status = 403
+        mock_api.side_effect = exc
+
+        with patch.dict("sys.modules", dd_modules):
+            from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
+
+            result = get_datadog_service_dependencies(
+                service_name="my-api", config=dd_config, _custom_api=mock_api,
+            )
+
+        assert result.error is True
+        assert "permissions" in result.output.lower() or "403" in result.output
+
+    def test_response_with_to_dict_method(self, dd_config: DatadogAPIConfig) -> None:
+        """Handles SDK response objects that have a to_dict() method."""
+        mock_response = MagicMock()
+        mock_response.to_dict.return_value = {
+            "calls": ["svc-a"],
+            "called_by": ["svc-b"],
+        }
+
+        mock_api = MagicMock()
+        mock_api.return_value = mock_response
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            from vaig.tools.gke.datadog_api import get_datadog_service_dependencies
+
+            result = get_datadog_service_dependencies(
+                service_name="my-api", config=dd_config, _custom_api=mock_api,
+            )
+
+        assert result.error is False
+        assert "→ svc-a" in result.output
+        assert "← svc-b" in result.output
