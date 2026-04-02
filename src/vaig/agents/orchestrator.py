@@ -1563,7 +1563,10 @@ class Orchestrator:
                                 agent_result.content,
                             )
                         except Exception:  # noqa: BLE001
-                            pass  # best-effort
+                            logger.warning(
+                                "Failed to parse structured report from reporter agent",
+                                exc_info=True,
+                            )
 
                     # Post-process structured output (e.g. JSON → Markdown)
                     agent_result.content = skill.post_process_report(
@@ -1666,7 +1669,10 @@ class Orchestrator:
                                     schema_cls.model_validate_json(reporter_retry.content)
                                 )
                             except Exception:  # noqa: BLE001
-                                pass  # best-effort
+                                logger.warning(
+                                    "Failed to parse structured report from reporter retry",
+                                    exc_info=True,
+                                )
 
             if result.agent_results:
                 result.synthesized_output = result.agent_results[-1].content
@@ -2601,7 +2607,10 @@ class Orchestrator:
                                 agent_result.content,
                             )
                         except Exception:  # noqa: BLE001
-                            pass  # best-effort
+                            logger.warning(
+                                "Failed to parse structured report from reporter agent",
+                                exc_info=True,
+                            )
 
                     # Post-process structured output (e.g. JSON → Markdown)
                     agent_result.content = skill.post_process_report(
@@ -2705,7 +2714,10 @@ class Orchestrator:
                                     schema_cls.model_validate_json(reporter_retry.content)
                                 )
                             except Exception:  # noqa: BLE001
-                                pass  # best-effort
+                                logger.warning(
+                                    "Failed to parse structured report from reporter retry",
+                                    exc_info=True,
+                                )
 
             if result.agent_results:
                 result.synthesized_output = result.agent_results[-1].content
@@ -3101,7 +3113,10 @@ class Orchestrator:
                                 last_agent_result.content,
                             )
                         except Exception:  # noqa: BLE001
-                            pass  # best-effort — keep synthesized_output as-is
+                            logger.warning(
+                                "Failed to parse structured report from reporter agent",
+                                exc_info=True,
+                            )
 
                     # Post-process structured output (e.g. JSON → Markdown)
                     last_agent_result.content = skill.post_process_report(
@@ -3433,7 +3448,10 @@ class Orchestrator:
                                 last_agent_result.content,
                             )
                         except Exception:  # noqa: BLE001
-                            pass  # best-effort — keep synthesized_output as-is
+                            logger.warning(
+                                "Failed to parse structured report from reporter agent",
+                                exc_info=True,
+                            )
 
                     # Post-process structured output (e.g. JSON → Markdown)
                     last_agent_result.content = skill.post_process_report(
