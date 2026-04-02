@@ -1260,6 +1260,17 @@ def get_datadog_service_dependencies(
                 rest = getattr(client, "rest_client", client)
                 url = f"https://api.{config.site}/api/v1/service_dependencies/{service_name}"
                 resp = rest.request("GET", url)
+
+                # Check response status before parsing (API may return 4xx/5xx).
+                resp_status = getattr(resp, "status", 200)
+                if resp_status and resp_status >= 400:  # noqa: PLR2004
+                    msg = _dd_error_message(resp_status)
+                    logger.warning(
+                        "Datadog service dependencies raw HTTP error (HTTP %s)",
+                        resp_status,
+                    )
+                    return ToolResult(output=msg, error=True)
+
                 import json as _json_inner  # noqa: WPS433
 
                 response_data: dict[str, Any] = _json_inner.loads(resp.data) if hasattr(resp, "data") else {}
