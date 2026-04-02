@@ -141,6 +141,11 @@ def _fire_agent_progress(
 # ── Gatherer output validation constants ────────────────────────────────
 DEFAULT_MIN_CONTENT_CHARS = 200
 
+async def _post_process_report_async(skill: BaseSkill, content: str) -> str:
+    """Run blocking post_process_report in a separate thread to avoid blocking the event loop."""
+    return await asyncio.to_thread(skill.post_process_report, content)
+
+
 EMPTY_MARKERS: tuple[str, ...] = (
     "n/a",
     "data not available",
@@ -2614,14 +2619,10 @@ class Orchestrator:
                             )
 
                     # Post-process structured output (e.g. JSON → Markdown).
-                    # Offload to a thread because post_process_report may run
-                    # recommendation enrichment (up to 120 s of LLM calls).
-                    # Blocking the event loop here prevents SSE keepalives and
-                    # can cause the browser to drop the connection before the
-                    # report is delivered.
-                    agent_result.content = await asyncio.to_thread(
-                        skill.post_process_report,
-                        agent_result.content,
+                    # Offloaded to a thread to avoid blocking the event loop
+                    # during recommendation enrichment (up to 120 s of LLM calls).
+                    agent_result.content = await _post_process_report_async(
+                        skill, agent_result.content,
                     )
 
                     finish_reason = agent_result.metadata.get("finish_reason", "")
@@ -2706,16 +2707,10 @@ class Orchestrator:
                         )
                         # Re-run post-processing on retry result so callers
                         # always receive the processed (e.g. Markdown) form.
-                        # Offloaded to a thread to avoid blocking the event
-                        # loop during recommendation enrichment.
-                        if hasattr(skill, "post_process_report") and callable(
-                            skill.post_process_report
-                        ):
-                            reporter_retry.content = await asyncio.to_thread(
-                                skill.post_process_report,
-                                reporter_retry.content,
-                            )
-                            result.agent_results[-1] = reporter_retry
+                        reporter_retry.content = await _post_process_report_async(
+                            skill, reporter_retry.content,
+                        )
+                        result.agent_results[-1] = reporter_retry
                         if schema_cls is not None and hasattr(
                             schema_cls, "model_validate_json"
                         ):
@@ -3464,14 +3459,10 @@ class Orchestrator:
                             )
 
                     # Post-process structured output (e.g. JSON → Markdown).
-                    # Offload to a thread because post_process_report may run
-                    # recommendation enrichment (up to 120 s of LLM calls).
-                    # Blocking the event loop here prevents SSE keepalives and
-                    # can cause the browser to drop the connection before the
-                    # report is delivered.
-                    last_agent_result.content = await asyncio.to_thread(
-                        skill.post_process_report,
-                        last_agent_result.content,
+                    # Offloaded to a thread to avoid blocking the event loop
+                    # during recommendation enrichment (up to 120 s of LLM calls).
+                    last_agent_result.content = await _post_process_report_async(
+                        skill, last_agent_result.content,
                     )
 
             result.synthesized_output = result.agent_results[-1].content
