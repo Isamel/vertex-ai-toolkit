@@ -1118,7 +1118,7 @@ def get_datadog_service_dependencies(
     ``called_by`` (upstream services that depend on this service).
 
     The response is formatted as a human-readable text summary **and**
-    includes a structured ``STRUCTURED_DEPENDENCY_DATA`` JSON block
+    includes a structured ``STRUCTURED_DEPENDENCY_EDGES`` JSON block
     containing :class:`DependencyEdge` records for programmatic
     consumption by the dependency graph renderer.
 
@@ -1166,12 +1166,16 @@ def get_datadog_service_dependencies(
         from vaig.skills.service_health.schema import DependencyEdge  # noqa: WPS433
 
         # The SDK class for v1 service_dependencies may not exist (public beta).
-        # _custom_api is a callable for tests; real path uses the SDK client directly.
-        if callable(api) and _custom_api is not None:
+        # _custom_api is a callable for tests; the raw-HTTP fallback also
+        # passes a lambda (with _custom_api=None), so dispatch on the
+        # object's actual type rather than gating on _custom_api.
+        if callable(api):
             response = api(service_name)
-        else:
+        elif hasattr(api, "get_service_dependencies"):
             # Use the API instance — GET /api/v1/service_dependencies/{service}
             response = api.get_service_dependencies(service_name)
+        else:
+            raise TypeError(f"Unsupported Datadog service dependencies API object: {type(api)!r}")
 
         # Normalise response to dict
         if hasattr(response, "to_dict"):
@@ -1228,9 +1232,9 @@ def get_datadog_service_dependencies(
             edges.append(edge.model_dump())
 
         lines.append("")
-        lines.append("--- STRUCTURED_DEPENDENCY_DATA ---")
+        lines.append("--- STRUCTURED_DEPENDENCY_EDGES ---")
         lines.append(_json.dumps(edges, indent=2))
-        lines.append("--- END_STRUCTURED_DEPENDENCY_DATA ---")
+        lines.append("--- END_STRUCTURED_DEPENDENCY_EDGES ---")
 
         output = "\n".join(lines)
         _cache._set_cache(cache_key, output)

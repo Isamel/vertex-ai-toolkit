@@ -1490,8 +1490,27 @@ function renderDependencies() {
   deps.edges.forEach(e => { nodeNames.add(e.source); nodeNames.add(e.target); });
   (deps.nodes || []).forEach(n => nodeNames.add(n.name));
 
-  // Sanitise node IDs for Mermaid (replace non-alphanumeric with _)
-  const sanitizeId = name => name.replace(/[^a-zA-Z0-9]/g, '_');
+  // Sanitise node IDs for Mermaid (replace non-alphanumeric with _ + hash suffix for uniqueness)
+  const sanitizeId = name => {
+    const base = name.replace(/[^a-zA-Z0-9]/g, '_');
+    let hash = 5381;
+    for (let i = 0; i < name.length; i++) {
+      hash = ((hash << 5) + hash) ^ name.charCodeAt(i);
+    }
+    const suffix = Math.abs(hash >>> 0).toString(36);
+    return `n_${base}_${suffix}`;
+  };
+
+  // Escape values for safe use inside Mermaid labels
+  const sanitizeLabel = text => {
+    return String(text)
+      .replace(/"/g, "'")
+      .replace(/\[/g, '(')
+      .replace(/\]/g, ')')
+      .replace(/\|/g, '/')
+      .replace(/\n/g, ' ')
+      .replace(/\r/g, '');
+  };
 
   // Declare nodes with shapes (root uses stadium shape [[...]])
   const usedTypes = new Set();
@@ -1501,15 +1520,15 @@ function renderDependencies() {
     const nType = node ? node.node_type : 'service';
     usedTypes.add(nType);
     const isRoot = deps.root_service && name === deps.root_service;
+    const safeLabel = sanitizeLabel(name);
     if (isRoot) {
-      lines.push(`  ${id}([["🎯 ${name}"`);
-      lines.push(`  ]])`);
+      lines.push(`  ${id}([["🎯 ${safeLabel}"]])`);
     } else if (nType === 'database') {
-      lines.push(`  ${id}[("${name}")]`);
+      lines.push(`  ${id}[("${safeLabel}")]`);
     } else if (nType === 'external') {
-      lines.push(`  ${id}>"${name}"]`);
+      lines.push(`  ${id}>"${safeLabel}"]`);
     } else {
-      lines.push(`  ${id}["${name}"]`);
+      lines.push(`  ${id}["${safeLabel}"]`);
     }
   });
 
@@ -1517,7 +1536,7 @@ function renderDependencies() {
   deps.edges.forEach(e => {
     const srcId = sanitizeId(e.source);
     const tgtId = sanitizeId(e.target);
-    const label = e.evidence ? e.evidence.replace(/"/g, "'") : '';
+    const label = e.evidence ? sanitizeLabel(e.evidence) : '';
     if (label) {
       lines.push(`  ${srcId} --> |"${label}"| ${tgtId}`);
     } else {
@@ -1589,11 +1608,11 @@ function renderDependencies() {
         fontSize: '13px',
       },
       flowchart: {
-        htmlLabels: true,
+        htmlLabels: false,
         curve: 'basis',
         padding: 16,
       },
-      securityLevel: 'loose',
+      securityLevel: 'strict',
     });
     mermaid.run({ nodes: [target] }).catch(function(err) {
       target.classList.remove('mermaid');
@@ -1653,8 +1672,8 @@ function renderDependencies() {
         fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
         fontSize: '13px',
       },
-      flowchart: { htmlLabels: true, curve: 'basis', padding: 16 },
-      securityLevel: 'loose',
+      flowchart: { htmlLabels: false, curve: 'basis', padding: 16 },
+      securityLevel: 'strict',
     });
     mermaid.run({ nodes: [target] });
   }

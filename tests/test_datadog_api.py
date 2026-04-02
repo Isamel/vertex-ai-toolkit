@@ -3377,12 +3377,12 @@ class TestGetDatadogServiceDependencies:
             )
 
         assert result.error is False
-        assert "--- STRUCTURED_DEPENDENCY_DATA ---" in result.output
-        assert "--- END_STRUCTURED_DEPENDENCY_DATA ---" in result.output
+        assert "--- STRUCTURED_DEPENDENCY_EDGES ---" in result.output
+        assert "--- END_STRUCTURED_DEPENDENCY_EDGES ---" in result.output
 
         # Extract and parse the structured data
-        start = result.output.index("--- STRUCTURED_DEPENDENCY_DATA ---") + len("--- STRUCTURED_DEPENDENCY_DATA ---")
-        end = result.output.index("--- END_STRUCTURED_DEPENDENCY_DATA ---")
+        start = result.output.index("--- STRUCTURED_DEPENDENCY_EDGES ---") + len("--- STRUCTURED_DEPENDENCY_EDGES ---")
+        end = result.output.index("--- END_STRUCTURED_DEPENDENCY_EDGES ---")
         edges = json.loads(result.output[start:end].strip())
 
         assert len(edges) == 2
