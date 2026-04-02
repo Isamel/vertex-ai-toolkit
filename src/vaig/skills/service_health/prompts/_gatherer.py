@@ -27,9 +27,11 @@ IMPORTANT:
 ## EXECUTION ORDER — FOLLOW THIS EXACT SEQUENCE
 You MUST call tools in this order. Do NOT skip ahead to later steps until the current step is complete.
 
-Step 1 → Step 2 → Step 3 → Step 4 (conditional) → Step 5 (conditional) → Step 6 (conditional) → Step 7a → Step 7b → Step 8 (conditional) → Step 9 (conditional) → Step 10 (conditional) → Step 11 (conditional) → Step 12 (conditional, if Datadog API enabled)
+Step 1 → Step 2 → Step 3 → Step 13 (dependency mapping) → Step 4 (conditional) → Step 5 (conditional) → Step 6 (conditional) → Step 7a → Step 7b → Step 8 (conditional) → Step 9 (conditional) → Step 10 (conditional) → Step 11 (conditional) → Step 12 (conditional, if Datadog API enabled)
 
-After Step 3 (events), evaluate: Are there FailedCreate, CrashLoopBackOff, or unavailable replica events? If YES, Steps 4 and 5 become MANDATORY.
+After Step 3 (events), run Step 13 (dependency mapping) IMMEDIATELY — dependency topology is foundational context that informs all subsequent investigation steps.
+
+Then evaluate: Are there FailedCreate, CrashLoopBackOff, or unavailable replica events? If YES, Steps 4 and 5 become MANDATORY.
 
 IMPORTANT: Do NOT produce your final output until you have completed Steps 7a and 7b. These are the last mandatory logging steps. Steps 8-12 are conditional and run based on findings and enabled integrations.
 
@@ -225,16 +227,13 @@ If Datadog is NOT detected in Steps 4/5 output AND no relevant FailedCreate even
 - SKIP this step entirely and mark as SKIPPED in the Investigation Checklist
 
 {datadog_api_step}
-### Step 13 — Dependency Mapping (CONDITIONAL — when cascading failures are suspected)
+### Step 13 — Dependency Mapping (MANDATORY)
 
-PREREQUISITE: Check if `discover_dependencies` is in your available tools list. If it is NOT available, SKIP this step.
+PREREQUISITE: Check if `discover_dependencies` is in your available tools list. If it is NOT available, SKIP this step and mark as SKIPPED in the Investigation Checklist.
 
-If the tool IS available, run this step when ANY of the following is true:
-- Step 3 (warning events) shows connection refused, timeout, or upstream errors
-- Step 7 (Cloud Logging) shows dependency failures or DNS resolution errors
-- The service under investigation is suspected to be calling a failing upstream
+If the tool IS available, run this step for EVERY deployment/service found in Step 2. Dependency topology is foundational context — it reveals upstream/downstream relationships that inform root cause analysis in ALL subsequent steps.
 
-Call `discover_dependencies(service_name=<name>, namespace=<ns>)` to map the call graph.
+Call `discover_dependencies(service_name=<name>, namespace=<ns>)` for each service/deployment under investigation to map the call graph.
 This reveals:
 - Other services that this service calls (via env-var hostname extraction)
 - Upstream/downstream topology from Istio VirtualServices (if mesh is installed)
@@ -243,6 +242,7 @@ Use the dependency map to:
 - Identify if a failing downstream service is the root cause of this service's degradation
 - Recommend cascading failure analysis of the listed dependency hostnames
 - Cross-reference with Step 2 (kubectl_get services) and Step 7 error patterns
+- Inform Steps 4-6 investigations by understanding which services are upstream/downstream
 
 ## MINIMUM INVESTIGATION DEPTH
 You MUST make at least the following tool calls before producing your final output:
@@ -250,14 +250,15 @@ You MUST make at least the following tool calls before producing your final outp
 2. `kubectl_get("pods", namespace=<ns>)` — ALWAYS (Step 2)
 3. `kubectl_get("deployments", namespace=<ns>)` — ALWAYS (Step 2)
 4. `get_events(namespace=<ns>, event_type="Warning")` — ALWAYS (Step 3)
-5. `gcloud_logging_query(...severity>=ERROR...)` — ALWAYS (Step 7a)
+5. `discover_dependencies(service_name=<name>, namespace=<ns>)` — ALWAYS for each service (Step 13), unless tool is not available
+6. `gcloud_logging_query(...severity>=ERROR...)` — ALWAYS (Step 7a)
 
 If ANY deployment shows unavailable replicas, you MUST ALSO call:
-6. `kubectl_get("replicasets", namespace=<ns>)`
-7. `kubectl_describe(resource_type="replicaset", name=<rs>)` for the ACTIVE ReplicaSet
-8. `get_rollout_status(name=<deploy>)`
+7. `kubectl_get("replicasets", namespace=<ns>)`
+8. `kubectl_describe(resource_type="replicaset", name=<rs>)` for the ACTIVE ReplicaSet
+9. `get_rollout_status(name=<deploy>)`
 
-If you produce output without making calls 1-5, the output will be REJECTED and you will be asked to redo the investigation.
+If you produce output without making calls 1-6, the output will be REJECTED and you will be asked to redo the investigation.
 
 ## Data Collection Rules
 1. Record EVERY tool call result faithfully — do not summarize or skip data
@@ -305,7 +306,7 @@ ALL field values in the Service Status table MUST be in English — use 'Yes'/'N
 
 You MUST include this Investigation Checklist at the end of your output. Mark each step as [x] (completed) or [ ] (SKIPPED — reason: ...). 
 If a step is SKIPPED, you MUST provide the specific reason.
-Steps 1, 2, 3, 7a, and 7b are ALWAYS MANDATORY — they can NEVER be marked as SKIPPED.
+Steps 1, 2, 3, 7a, 7b, and 13 are ALWAYS MANDATORY — they can NEVER be marked as SKIPPED (except Step 13 when discover_dependencies tool is not available).
 Steps 4, 5, and 6 may be skipped ONLY if there is genuine evidence that they are not needed (e.g., "no deployments with unavailable replicas").
 Steps 9 and 10 MUST be marked as SKIPPED if the corresponding tools are not in your available tools list. Do NOT attempt to call tools that don't exist.
 
@@ -314,6 +315,7 @@ Steps 9 and 10 MUST be marked as SKIPPED if the corresponding tools are not in y
 - [x] Step 1: Node conditions checked
 - [x] Step 2: Pod/Deployment/HPA inventory collected  
 - [x] Step 3: Warning events collected
+- [x] Step 13: Dependency mapping completed
 - [ ] Step 4: Deployment deep-dive (SKIPPED — reason: no unhealthy deployments found)
 - [ ] Step 4g: Management context (labels/annotations for GitOps/Helm/Operator detection)
 - [x] Step 5: Pod investigation

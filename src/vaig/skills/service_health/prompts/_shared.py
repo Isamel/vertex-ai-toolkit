@@ -41,7 +41,8 @@ _DATADOG_API_TOOLS_TABLE = """\
 | `query_datadog_metrics` | `cluster_name` | `metric`, `from_ts`, `to_ts`, `service`, `env` |
 | `get_datadog_monitors` | | `cluster_name`, `state`, `service`, `env` |
 | `get_datadog_service_catalog` | | `env`, `cluster_name`, `service_name` |
-| `get_datadog_apm_services` | | `service_name` (optional — returns guidance if omitted), `env` — auto-tries web/gRPC/Kafka metric families |"""
+| `get_datadog_apm_services` | | `service_name` (optional — returns guidance if omitted), `env` — auto-tries web/gRPC/Kafka metric families |
+| `get_datadog_service_dependencies` | `service_name` | — returns upstream (called_by) and downstream (calls) services plus structured DependencyEdge data |"""
 
 _PRIORITY_HIERARCHY = """\
 1. Kubernetes cluster data is the ABSOLUTE source of truth for deployment status.

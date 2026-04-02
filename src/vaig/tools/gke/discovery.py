@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from vaig.skills.service_health.schema import (
+    DependencyEdge,
+    DependencyGraph,
+    DependencyNode,
+)
 from vaig.tools.base import ToolResult
 
 from . import _cache, _clients, _formatters, _resources
@@ -982,6 +988,117 @@ def _discover_istio_dependencies(
 
 # Phase 4: Main Tool
 
+# Confidence string → float mapping for DependencyEdge
+_CONFIDENCE_FLOAT: dict[str, float] = {"HIGH": 0.9, "MEDIUM": 0.6, "LOW": 0.3}
+
+# Hostname patterns for node-type classification
+_DB_PATTERNS: frozenset[str] = frozenset({
+    "postgres", "postgresql", "mysql", "mariadb", "mongo", "mongodb",
+    "cockroach", "cockroachdb", "alloydb", "cloudsql", "spanner",
+})
+_CACHE_PATTERNS: frozenset[str] = frozenset({
+    "redis", "memcached", "memcache", "valkey",
+})
+_QUEUE_PATTERNS: frozenset[str] = frozenset({
+    "rabbit", "rabbitmq", "kafka", "nats", "pubsub", "pulsar", "activemq",
+})
+
+
+def _classify_node_type(hostname: str) -> str:
+    """Classify a dependency hostname into a node type.
+
+    Returns one of ``"database"``, ``"cache"``, ``"queue"``, ``"external"``,
+    or ``"service"`` based on common patterns in the hostname.
+    """
+    lower = hostname.lower().split(".")[0].split(":")[0]
+    for pattern in _DB_PATTERNS:
+        if pattern in lower:
+            return "database"
+    for pattern in _CACHE_PATTERNS:
+        if pattern in lower:
+            return "cache"
+    for pattern in _QUEUE_PATTERNS:
+        if pattern in lower:
+            return "queue"
+    # External: does not end with .svc.cluster.local and contains a TLD-like dot
+    hostname_no_port = hostname.rsplit(":", 1)[0] if ":" in hostname else hostname
+    if not hostname_no_port.endswith(".svc.cluster.local") and "." in hostname_no_port:
+        parts = hostname_no_port.split(".")
+        if len(parts) >= 2 and len(parts[-1]) <= 6:
+            return "external"
+    return "service"
+
+
+def _build_dependency_graph(
+    service_name: str,
+    namespace: str,
+    env_deps: list[dict[str, str]],
+    upstreams: list[str],
+    downstreams: list[str],
+) -> DependencyGraph:
+    """Build a structured DependencyGraph from discovery results."""
+    nodes: dict[str, DependencyNode] = {}
+    edges: list[DependencyEdge] = []
+
+    root = service_name or namespace
+    nodes[root] = DependencyNode(name=root, node_type="service", namespace=namespace)
+
+    # Env-var dependencies: service_name → hostname
+    for dep in env_deps:
+        hostname = dep["hostname"]
+        if hostname not in nodes:
+            nodes[hostname] = DependencyNode(
+                name=hostname,
+                node_type=_classify_node_type(hostname),
+                namespace=namespace,
+            )
+        edges.append(DependencyEdge(
+            source=root,
+            target=hostname,
+            evidence=f"env:{dep['source_env']}",
+            confidence=_CONFIDENCE_FLOAT.get(dep["confidence"], 0.5),
+            method="env_var",
+        ))
+
+    # Istio upstreams: caller → service_name
+    for caller in upstreams:
+        if caller not in nodes:
+            nodes[caller] = DependencyNode(
+                name=caller,
+                node_type="service",
+                namespace=namespace,
+            )
+        edges.append(DependencyEdge(
+            source=caller,
+            target=root,
+            evidence="istio:VirtualService",
+            confidence=0.9,
+            method="istio",
+        ))
+
+    # Istio downstreams: service_name → target
+    for target in downstreams:
+        if target not in nodes:
+            nodes[target] = DependencyNode(
+                name=target,
+                node_type="service",
+                namespace=namespace,
+            )
+        edges.append(DependencyEdge(
+            source=root,
+            target=target,
+            evidence="istio:VirtualService",
+            confidence=0.9,
+            method="istio",
+        ))
+
+    return DependencyGraph(
+        nodes=list(nodes.values()),
+        edges=edges,
+        root_service=root,
+        generated_at=datetime.now(UTC).isoformat(),
+    )
+
 
 def _format_dependency_report(
     service_name: str,
@@ -1097,7 +1214,19 @@ def discover_dependencies(
             logger.debug("Istio dependency scan failed: %s", exc)
 
     # ── Format and cache ──────────────────────────────────────
-    output = _format_dependency_report(service_name or namespace, namespace, env_deps, upstreams, downstreams)
+    text_output = _format_dependency_report(service_name or namespace, namespace, env_deps, upstreams, downstreams)
+
+    # ── Build structured dependency graph ─────────────────────
+    graph = _build_dependency_graph(service_name or namespace, namespace, env_deps, upstreams, downstreams)
+    graph_json = graph.model_dump_json(indent=2)
+
+    output = (
+        f"{text_output}\n\n"
+        f"--- STRUCTURED_DEPENDENCY_DATA ---\n"
+        f"{graph_json}\n"
+        f"--- END_STRUCTURED_DEPENDENCY_DATA ---"
+    )
+
     _cache._set_cache(cache_key, output)
     return ToolResult(output=output, error=False)
 
