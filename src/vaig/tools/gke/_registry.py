@@ -42,6 +42,7 @@ from .argocd import (
 )
 from .datadog import get_datadog_config
 from .datadog_api import (
+    diagnose_datadog_metrics,
     get_datadog_apm_services,
     get_datadog_monitors,
     get_datadog_service_catalog,
@@ -1718,6 +1719,20 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                         _dd=_dd_config: get_datadog_service_dependencies(
                     service_name=service_name, config=_dd,
                 ),
+            ),
+            ToolDef(
+                name="diagnose_datadog_metrics",
+                description=(
+                    "Run a diagnostic probe against the Datadog API to discover available metrics "
+                    "and tag keys. Searches for kubernetes.* (infra) and trace.* (APM) metrics, "
+                    "discovers host tag keys, and provides suggestions for metric_mode configuration. "
+                    "Use this FIRST when Datadog metric queries return empty results — the diagnostic "
+                    "output explains what metrics exist and what tags are available. "
+                    "Read-only — does not modify any resources."
+                ),
+                parameters=[],
+                categories=frozenset({DATADOG}),
+                execute=lambda _dd=_dd_config: diagnose_datadog_metrics(config=_dd),
             ),
         ])
     else:

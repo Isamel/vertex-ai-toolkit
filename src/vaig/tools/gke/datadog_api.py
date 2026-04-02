@@ -87,6 +87,9 @@ def _build_metric_templates(config: DatadogAPIConfig, operation: str = "http.req
 
     ``config.metric_mode`` controls which built-in templates are included:
 
+    * ``"auto"`` — starts with kubernetes.* templates; at query time,
+      ``query_datadog_metrics`` falls back to trace.* APM templates when
+      the k8s queries return empty results.
     * ``"k8s_agent"`` — kubernetes.* metrics (DaemonSet Agent).
     * ``"apm"`` — trace.* metrics (APM instrumentation only).
     * ``"both"`` — kubernetes.* **and** trace.* metrics combined.
@@ -102,7 +105,7 @@ def _build_metric_templates(config: DatadogAPIConfig, operation: str = "http.req
     pod_name = config.labels.pod_name
     _by = "{{" + pod_name + "}}"
 
-    mode = getattr(config, "metric_mode", "k8s_agent")
+    mode = getattr(config, "metric_mode", "auto")
 
     # ── k8s_agent (infrastructure) templates ─────────────
     k8s_templates: dict[str, str] = {
@@ -132,11 +135,14 @@ def _build_metric_templates(config: DatadogAPIConfig, operation: str = "http.req
     }
 
     # ── Select templates by mode ─────────────────────────
+    # "auto" starts with k8s_agent templates; query_datadog_metrics handles
+    # the fallback to apm when all k8s queries return empty results.
     if mode == "apm":
         templates: dict[str, str] = apm_templates
     elif mode == "both":
         templates = {**k8s_templates, **apm_templates}
     else:
+        # k8s_agent and auto both use k8s_templates as initial set
         templates = k8s_templates
 
     for key, tmpl in config.custom_metrics.items():
@@ -472,7 +478,7 @@ def query_datadog_metrics(
     effective_cluster = getattr(config, "cluster_name_override", "") or cluster_name
 
     # Resolve metric mode — APM trace.* metrics do not carry custom tags
-    mode = getattr(config, "metric_mode", "k8s_agent")
+    mode = getattr(config, "metric_mode", "auto")
 
     # Resolve APM operation name when in apm or both mode
     resolved_operation = "http.request"
@@ -537,11 +543,26 @@ def query_datadog_metrics(
 
         series = getattr(response, "series", []) or []
         if not series:
+            diag_lines = [
+                f"=== Datadog Metrics: {metric} ===",
+                f"Cluster: {effective_cluster}",
+                "No data returned for the given time window.",
+                "",
+                "Diagnostic context:",
+                f"  metric_mode: {mode}",
+                f"  query: {q}",
+                f"  tag_filter: {filters}",
+                f"  time_window: {start} → {end} ({(end - start) // 60} min)",
+                f"  metrics_queried: {', '.join(sorted(metric_templates.keys()))}",
+                "",
+                "Possible causes:",
+                "  - Cluster or service tags may not match Datadog agent config",
+                "  - Time window may predate metric collection",
+                "  - If using k8s_agent mode, the Datadog DaemonSet Agent may not be installed",
+                "  - If APM-only setup: set metric_mode='apm' or 'auto' in config",
+            ]
             return (
-                ToolResult(
-                    output=f"=== Datadog Metrics: {metric} ===\nCluster: {effective_cluster}\nNo data returned for the given time window.",
-                    error=False,
-                ),
+                ToolResult(output="\n".join(diag_lines), error=False),
                 False,
             )
 
@@ -572,7 +593,11 @@ def query_datadog_metrics(
         return (ToolResult(output="\n".join(lines), error=False), True)
 
     def _run_with_fallback(api: Any) -> ToolResult:
-        """Execute the query and retry without custom labels on empty results."""
+        """Execute the query and retry without custom labels on empty results.
+
+        When ``mode == "auto"``, tries the k8s_agent template first.  If that
+        returns no data, rebuilds the query using APM templates and retries.
+        """
         result, has_data = _execute_query(api, query)
 
         # Retry without custom labels when the first query returned no data
@@ -587,7 +612,29 @@ def query_datadog_metrics(
                     "No data with custom labels for '%s'; retrying without custom labels",
                     metric,
                 )
-                result, _ = _execute_query(api, fallback_query)
+                result, has_data = _execute_query(api, fallback_query)
+
+        # ── auto-mode fallback: k8s_agent → apm ─────────────
+        if not has_data and mode == "auto":
+            # Re-use _build_metric_templates with apm mode to avoid duplication.
+            # Copy config so we don't mutate the caller's object.
+            _fb_config = config.model_copy(update={"metric_mode": "apm"})
+            apm_only = _build_metric_templates(_fb_config, operation=resolved_operation)
+            apm_template = apm_only.get(metric)
+            if apm_template is not None:
+                # APM trace.* metrics don't carry custom labels — use minimal filter
+                apm_filters, apm_err = _build_tag_filter(
+                    effective_cluster, service, env, config, include_custom_labels=False,
+                )
+                if apm_err is None:
+                    apm_query = apm_template.format(filters=apm_filters)
+                    logger.info(
+                        "auto mode: k8s_agent returned no data for '%s'; falling back to apm",
+                        metric,
+                    )
+                    result, has_data = _execute_query(api, apm_query)
+                    if has_data:
+                        logger.info("auto mode: apm fallback succeeded for '%s'", metric)
 
         return result
 
@@ -1298,6 +1345,195 @@ def get_datadog_service_dependencies(
         return ToolResult(output="Unexpected error retrieving service dependencies. See logs for details.", error=True)
 
 
+def diagnose_datadog_metrics(
+    *,
+    config: DatadogAPIConfig | None = None,
+    _custom_client: Any = None,
+) -> ToolResult:
+    """Probe Datadog to discover available metrics and tag keys.
+
+    Calls the Datadog search API to discover ``kubernetes.*`` and ``trace.*``
+    metrics, then calls the hosts API to discover available tag keys.  Returns
+    a structured diagnostic report that helps the LLM agent understand the
+    metric landscape and suggest the correct ``metric_mode`` configuration.
+
+    Args:
+        config: Optional ``DatadogAPIConfig`` (for testing / injection).
+        _custom_client: Optional pre-configured Datadog ApiClient (for testing).
+    """
+    import json as _json  # noqa: WPS433
+
+    if config is None:
+        from vaig.core.config import get_settings  # noqa: WPS433
+
+        config = get_settings().datadog
+
+    if not config.enabled:
+        return ToolResult(output=_ERR_NOT_ENABLED, error=True)
+
+    diagnostic: dict[str, Any] = {
+        "current_config": {
+            "metric_mode": getattr(config, "metric_mode", "auto"),
+            "site": config.site,
+            "apm_operation": getattr(config, "apm_operation", "auto"),
+            "cluster_name_override": getattr(config, "cluster_name_override", ""),
+            "labels": {
+                "cluster_name": config.labels.cluster_name,
+                "pod_name": config.labels.pod_name,
+            },
+        },
+        "kubernetes_metrics": [],
+        "trace_metrics": [],
+        "tag_keys": [],
+        "suggestions": [],
+        "errors": [],
+    }
+
+    # Build auth headers from config so raw HTTP requests include credentials.
+    _auth_headers: dict[str, str] = {
+        "DD-API-KEY": config.api_key,
+        "DD-APPLICATION-KEY": config.app_key,
+    }
+
+    def _search_metrics(client_ctx: Any, query: str) -> list[str]:
+        """Search Datadog for metrics matching a query prefix."""
+        try:
+            import urllib.parse  # noqa: WPS433
+
+            rest = getattr(client_ctx, "rest_client", client_ctx)
+            encoded_q = urllib.parse.quote_plus(f"metrics:{query}")
+            url = f"https://api.{config.site}/api/v1/search?q={encoded_q}"
+            resp = rest.request("GET", url, headers=_auth_headers)
+            resp_status = getattr(resp, "status", 200)
+            if resp_status and resp_status >= 400:  # noqa: PLR2004
+                diagnostic["errors"].append(f"Metric search '{query}' HTTP {resp_status}")
+                return []
+            if hasattr(resp, "data"):
+                raw_data = resp.data
+                data = _json.loads(raw_data.decode("utf-8") if isinstance(raw_data, bytes) else raw_data)
+            else:
+                data = {}
+            results = data.get("results", {})
+            return results.get("metrics", [])  # type: ignore[no-any-return]
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:  # noqa: BLE001
+            diagnostic["errors"].append(f"Metric search '{query}' failed: {exc}")
+            return []
+
+    def _get_tag_keys(client_ctx: Any) -> list[str]:
+        """Discover available host tag keys from Datadog."""
+        try:
+            rest = getattr(client_ctx, "rest_client", client_ctx)
+            url = f"https://api.{config.site}/api/v1/tags/hosts"
+            resp = rest.request("GET", url, headers=_auth_headers)
+            resp_status = getattr(resp, "status", 200)
+            if resp_status and resp_status >= 400:  # noqa: PLR2004
+                diagnostic["errors"].append(f"Tag discovery HTTP {resp_status}")
+                return []
+            if hasattr(resp, "data"):
+                raw_data = resp.data
+                data = _json.loads(raw_data.decode("utf-8") if isinstance(raw_data, bytes) else raw_data)
+            else:
+                data = {}
+            tags = data.get("tags", {})
+            return sorted(tags.keys()) if isinstance(tags, dict) else []
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:  # noqa: BLE001
+            diagnostic["errors"].append(f"Tag discovery failed: {exc}")
+            return []
+
+    def _run_diagnostics(client_ctx: Any) -> ToolResult:
+        k8s_metrics = _search_metrics(client_ctx, "kubernetes.*")
+        diagnostic["kubernetes_metrics"] = k8s_metrics[:50]  # cap for output size
+
+        trace_metrics = _search_metrics(client_ctx, "trace.*")
+        diagnostic["trace_metrics"] = trace_metrics[:50]
+
+        diagnostic["tag_keys"] = _get_tag_keys(client_ctx)
+
+        # ── Generate suggestions ─────────────────────────
+        has_k8s = bool(k8s_metrics)
+        has_trace = bool(trace_metrics)
+
+        if has_k8s and has_trace:
+            diagnostic["suggestions"].append(
+                "Both kubernetes.* and trace.* metrics found. "
+                "metric_mode='auto' or 'both' recommended."
+            )
+        elif has_k8s and not has_trace:
+            diagnostic["suggestions"].append(
+                "Only kubernetes.* metrics found (no trace.* APM metrics). "
+                "metric_mode='k8s_agent' recommended. "
+                "APM may not be enabled — check DD_APM_ENABLED on the Datadog agent."
+            )
+        elif has_trace and not has_k8s:
+            diagnostic["suggestions"].append(
+                "Only trace.* APM metrics found (no kubernetes.* infra metrics). "
+                "metric_mode='apm' recommended. "
+                "The Datadog DaemonSet Agent may not be deployed or may lack cluster-level checks."
+            )
+        else:
+            diagnostic["suggestions"].append(
+                "No kubernetes.* or trace.* metrics found. "
+                "Verify Datadog agent is deployed and sending metrics. "
+                "Check API key scopes and site configuration."
+            )
+
+        # Check if configured tag keys exist in Datadog
+        tag_keys = diagnostic["tag_keys"]
+        configured_cluster_tag = config.labels.cluster_name
+        if tag_keys and configured_cluster_tag not in tag_keys:
+            diagnostic["suggestions"].append(
+                f"Configured cluster_name tag '{configured_cluster_tag}' not found in Datadog host tags. "
+                f"Available tag keys: {', '.join(tag_keys[:20])}. "
+                "This may cause empty query results."
+            )
+
+        lines = [
+            "=== Datadog Metrics Diagnostic ===",
+            "",
+            f"kubernetes.* metrics found: {len(k8s_metrics)}",
+            f"trace.* metrics found: {len(trace_metrics)}",
+            f"Host tag keys discovered: {len(tag_keys)}",
+            "",
+        ]
+
+        if diagnostic["suggestions"]:
+            lines.append("Suggestions:")
+            for s in diagnostic["suggestions"]:
+                lines.append(f"  • {s}")
+            lines.append("")
+
+        if diagnostic["errors"]:
+            lines.append("Errors during diagnostic:")
+            for e in diagnostic["errors"]:
+                lines.append(f"  ⚠ {e}")
+            lines.append("")
+
+        lines.append("Full diagnostic (JSON):")
+        lines.append(_json.dumps(diagnostic, indent=2, default=str))
+
+        return ToolResult(output="\n".join(lines), error=False)
+
+    try:
+        if _custom_client is not None:
+            return _run_diagnostics(_custom_client)
+
+        with _get_dd_api_client(config) as client:
+            return _run_diagnostics(client)
+
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected error in diagnose_datadog_metrics")
+        return ToolResult(
+            output=f"Unexpected error running Datadog diagnostics: {exc}",
+            error=True,
+        )
+
+
 # ── Async wrappers ───────────────────────────────────────────
 
 from vaig.core.async_utils import to_async  # noqa: E402
@@ -1307,3 +1543,4 @@ async_get_datadog_monitors = to_async(get_datadog_monitors)
 async_get_datadog_service_catalog = to_async(get_datadog_service_catalog)
 async_get_datadog_apm_services = to_async(get_datadog_apm_services)
 async_get_datadog_service_dependencies = to_async(get_datadog_service_dependencies)
+async_diagnose_datadog_metrics = to_async(diagnose_datadog_metrics)
