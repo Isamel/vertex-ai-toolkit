@@ -719,6 +719,56 @@ class AuditConfig(BaseModel):
     flush_interval_seconds: int = 30
 
 
+class PagerDutyConfig(BaseModel):
+    """PagerDuty Events API v2 + REST API v2 integration configuration.
+
+    The ``routing_key`` is required for triggering incidents via the
+    Events API v2.  The ``api_token`` is optional and enables enrichment
+    features like adding incident notes and searching incidents.
+    """
+
+    enabled: bool = False
+    routing_key: str = Field(default="", repr=False)
+    api_token: str = Field(default="", repr=False)
+    service_id: str = ""
+    base_url: str = "https://api.pagerduty.com"
+    auto_create_incident: bool = True
+    severity_mapping: dict[str, str] = Field(
+        default_factory=lambda: {
+            "critical": "critical",
+            "high": "error",
+            "medium": "warning",
+            "low": "info",
+        }
+    )
+
+    @model_validator(mode="after")
+    def _auto_enable(self) -> PagerDutyConfig:
+        """Auto-enable when routing_key is provided."""
+        if self.routing_key and not self.enabled:
+            self.enabled = True
+        return self
+
+
+class GoogleChatConfig(BaseModel):
+    """Google Chat incoming webhook integration configuration.
+
+    When ``webhook_url`` is set, the integration auto-enables and will
+    send Card v2 notifications for severities listed in ``notify_on``.
+    """
+
+    enabled: bool = False
+    webhook_url: str = Field(default="", repr=False)
+    notify_on: list[str] = Field(default_factory=lambda: ["critical", "high"])
+
+    @model_validator(mode="after")
+    def _auto_enable(self) -> GoogleChatConfig:
+        """Auto-enable when webhook_url is provided."""
+        if self.webhook_url and not self.enabled:
+            self.enabled = True
+        return self
+
+
 class RateLimitConfig(BaseModel):
     """Rate limiting configuration — quota policy loaded from GCS."""
 
@@ -910,6 +960,8 @@ class Settings(BaseSettings):
     export: ExportConfig = Field(default_factory=ExportConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
+    pagerduty: PagerDutyConfig = Field(default_factory=PagerDutyConfig)
+    google_chat: GoogleChatConfig = Field(default_factory=GoogleChatConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> Settings:
