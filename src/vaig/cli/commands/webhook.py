@@ -2,7 +2,7 @@
 
 Launches a Uvicorn server running the FastAPI webhook endpoint that
 receives Datadog alert webhooks and triggers vaig health analyses.
-Requires webhook extras: ``pip install vertex-ai-toolkit[webhook]``
+Requires web extras: ``pip install vertex-ai-toolkit[web]``
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ def register(app: typer.Typer) -> None:
         vaig health analysis on affected services, and dispatches results
         to PagerDuty + Google Chat.
 
-        Requires: pip install vertex-ai-toolkit[webhook]
+        Requires: pip install vertex-ai-toolkit[web]
 
         Examples:
             vaig webhook-server
@@ -75,8 +75,8 @@ def register(app: typer.Typer) -> None:
             import uvicorn
         except ImportError:
             err_console.print(
-                "[red]Webhook extras not installed.[/red]\n"
-                "Run: [bold]pip install vertex-ai-toolkit\\[webhook][/bold]"
+                "[red]Web extras not installed.[/red]\n"
+                "Run: [bold]pip install vertex-ai-toolkit\\[web][/bold]"
             )
             raise typer.Exit(code=1) from None
 

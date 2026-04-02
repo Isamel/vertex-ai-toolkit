@@ -492,12 +492,12 @@ class TestWebhookServerConfig:
         cfg = WebhookServerConfig(hmac_secret="my-secret")
         assert cfg.enabled is True
 
-    def test_explicit_disable_stays_disabled(self) -> None:
-        """Explicit enabled=False should remain False even with hmac_secret."""
+    def test_hmac_secret_auto_enables_webhook_server(self) -> None:
+        """Providing hmac_secret should auto-enable the webhook server."""
         from vaig.core.config import WebhookServerConfig
 
-        # Note: auto_enable fires after init, setting enabled=True when secret is present.
-        # This is intentional — matches PagerDuty/Google Chat pattern.
+        # Auto-enable fires after init, setting enabled=True when secret is present.
+        # This is intentional and matches the current configuration behavior.
         cfg = WebhookServerConfig(hmac_secret="secret")
         assert cfg.enabled is True
 

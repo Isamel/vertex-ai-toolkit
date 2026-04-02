@@ -6,7 +6,7 @@ The webhook server:
 3. Runs a vaig health analysis on the affected service (background task)
 4. Dispatches results via NotificationDispatcher (PagerDuty + Google Chat)
 
-Requires: ``pip install 'vertex-ai-toolkit[webhook]'`` (fastapi + uvicorn)
+Requires: ``pip install 'vertex-ai-toolkit[web]'`` (fastapi + uvicorn)
 
 Deployment targets:
 - Cloud Run (stateless container with ``PORT`` env var)
@@ -16,10 +16,13 @@ Deployment targets:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
+import re
 import time
+from collections import OrderedDict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -38,7 +41,7 @@ try:
 except ImportError:
     raise ImportError(
         "FastAPI is required for the webhook server.\n"
-        "Install it with: pip install 'vertex-ai-toolkit[webhook]'\n"
+        "Install it with: pip install 'vertex-ai-toolkit[web]'\n"
         "Or: pip install fastapi uvicorn"
     ) from None
 
@@ -118,11 +121,15 @@ class DedupCache:
 
     Prevents re-analyzing the same alert within a cooldown window.
     Thread-safe for single-process use (GIL protects dict operations).
+    Uses an atomic ``try_record`` to prevent race conditions in async contexts.
+    Bounded to ``max_size`` entries to prevent memory leaks.
     """
 
-    def __init__(self, cooldown_seconds: int = 300) -> None:
+    def __init__(self, cooldown_seconds: int = 300, max_size: int = 10_000) -> None:
         self._cooldown = cooldown_seconds
+        self._max_size = max_size
         self._cache: dict[str, float] = {}  # key → expiry timestamp
+        self._lock = asyncio.Lock()
 
     def is_duplicate(self, key: str) -> bool:
         """Check if the key was seen within the cooldown window.
@@ -149,12 +156,33 @@ class DedupCache:
             key: Dedup key to record.
         """
         self._cache[key] = time.monotonic() + self._cooldown
+        self._evict_if_needed()
+
+    async def try_record(self, key: str) -> bool:
+        """Atomically check-and-record a dedup key.
+
+        Returns:
+            ``True`` if the key was NOT a duplicate and has been recorded.
+            ``False`` if the key is a duplicate (already in cooldown).
+        """
+        async with self._lock:
+            if self.is_duplicate(key):
+                return False
+            self.record(key)
+            return True
 
     def _cleanup(self, now: float) -> None:
         """Remove expired entries from the cache."""
         expired = [k for k, v in self._cache.items() if v <= now]
         for k in expired:
             del self._cache[k]
+
+    def _evict_if_needed(self) -> None:
+        """Evict oldest entries if cache exceeds max_size."""
+        while len(self._cache) > self._max_size:
+            # Remove the first (oldest) key
+            oldest_key = next(iter(self._cache))
+            del self._cache[oldest_key]
 
     @property
     def size(self) -> int:
@@ -176,6 +204,7 @@ class DailyBudgetCounter:
         self._max = max_per_day
         self._count: int = 0
         self._date: str = self._today()
+        self._lock = asyncio.Lock()
 
     def can_analyze(self) -> bool:
         """Check if budget allows another analysis.
@@ -195,6 +224,19 @@ class DailyBudgetCounter:
         self._maybe_reset()
         self._count += 1
         return self._count
+
+    async def try_increment(self) -> bool:
+        """Atomically check budget and increment if allowed.
+
+        Returns:
+            ``True`` if budget was available and has been consumed.
+            ``False`` if the daily budget is exhausted.
+        """
+        async with self._lock:
+            if not self.can_analyze():
+                return False
+            self.increment()
+            return True
 
     @property
     def count(self) -> int:
@@ -287,7 +329,7 @@ async def run_analysis_background(
     service_name: str,
     cluster_name: str,
     namespace: str,
-    results_store: dict[str, AnalysisResult],
+    results_store: OrderedDict[str, AnalysisResult],
     budget_counter: DailyBudgetCounter,
     analysis_timeout: int = 600,
 ) -> None:
@@ -306,16 +348,18 @@ async def run_analysis_background(
         service_name: Service to analyze.
         cluster_name: GKE cluster name.
         namespace: Kubernetes namespace.
-        results_store: Shared dict to track analysis progress.
+        results_store: Shared ordered dict to track analysis progress.
         budget_counter: Daily budget counter (already incremented).
         analysis_timeout: Maximum seconds to wait for analysis.
     """
-    result = results_store.get(alert_id, AnalysisResult(
-        alert_id=alert_id,
-        service_name=service_name,
-        cluster_name=cluster_name,
-        namespace=namespace,
-    ))
+    result = results_store.get(alert_id)
+    if result is None:
+        result = AnalysisResult(
+            alert_id=alert_id,
+            service_name=service_name,
+            cluster_name=cluster_name,
+            namespace=namespace,
+        )
     result.status = "running"
     result.started_at = datetime.now(UTC).isoformat()
     results_store[alert_id] = result
@@ -342,15 +386,21 @@ async def run_analysis_background(
             from vaig.core.client import GeminiClient
             from vaig.core.config import GKEConfig
             from vaig.core.gke import register_live_tools
+            from vaig.core.prompt_defense import _sanitize_namespace
             from vaig.skills.registry import SkillRegistry
 
+            # Sanitize external inputs before embedding in LLM prompt
+            safe_namespace = _sanitize_namespace(namespace) if namespace else ""
+            safe_service = re.sub(r"[^a-zA-Z0-9._-]", "", service_name)[:128]
+            safe_cluster = re.sub(r"[^a-zA-Z0-9._-]", "", cluster_name)[:128]
+
             query = (
-                f"Run a service health analysis for service '{service_name}'"
+                f"Run a service health analysis for service '{safe_service}'"
             )
-            if namespace:
-                query += f" in namespace '{namespace}'"
-            if cluster_name:
-                query += f" on cluster '{cluster_name}'"
+            if safe_namespace:
+                query += f" in namespace '{safe_namespace}'"
+            if safe_cluster:
+                query += f" on cluster '{safe_cluster}'"
 
             client = GeminiClient(settings)
             orchestrator = Orchestrator(client, settings)
@@ -368,12 +418,18 @@ async def run_analysis_background(
             )
             tool_registry = register_live_tools(gke_config, settings=settings)
 
-            orchestrator_result = orchestrator.execute_with_tools(
-                query,
-                skill,
-                tool_registry,
-                gke_namespace=namespace or "",
-                gke_cluster_name=cluster_name or "",
+            # Run sync orchestrator call in a thread to avoid blocking the event loop,
+            # and enforce the configured analysis timeout.
+            orchestrator_result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    orchestrator.execute_with_tools,
+                    query,
+                    skill,
+                    tool_registry,
+                    gke_namespace=namespace or "",
+                    gke_cluster_name=cluster_name or "",
+                ),
+                timeout=analysis_timeout,
             )
 
             # Try to extract HealthReport from the orchestrator result
@@ -481,7 +537,8 @@ def create_webhook_app(
     # Shared state
     dedup_cache = DedupCache(cooldown_seconds=dedup_cooldown_seconds)
     budget_counter = DailyBudgetCounter(max_per_day=max_analyses_per_day)
-    results_store: dict[str, AnalysisResult] = {}
+    results_store: OrderedDict[str, AnalysisResult] = OrderedDict()
+    _MAX_RESULTS = 1000  # Bounded store to prevent memory leaks
 
     # ── Health check ─────────────────────────────────────────
 
@@ -502,6 +559,8 @@ def create_webhook_app(
         Includes today's analysis count, remaining budget, and
         dedup cache size.
         """
+        # Snapshot recent items to avoid RuntimeError from concurrent dict mutation
+        recent_items = list(results_store.items())[-10:]
         return {
             "analyses_today": budget_counter.count,
             "budget_remaining": budget_counter.remaining,
@@ -514,7 +573,7 @@ def create_webhook_app(
                     "started_at": v.started_at,
                     "completed_at": v.completed_at,
                 }
-                for k, v in list(results_store.items())[-10:]
+                for k, v in recent_items
             },
         }
 
@@ -566,7 +625,7 @@ def create_webhook_app(
             logger.warning("Failed to parse Datadog webhook payload: %s", exc)
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid payload: {exc}",
+                detail="Invalid JSON payload",
             ) from exc
 
         # Extract service info from tags
@@ -588,8 +647,8 @@ def create_webhook_app(
             payload.alert_transition,
         )
 
-        # 3. Dedup check
-        if dedup_cache.is_duplicate(dedup_key):
+        # 3. Atomic dedup check-and-record
+        if not await dedup_cache.try_record(dedup_key):
             logger.info(
                 "Skipping duplicate alert %s for service %s (cooldown active)",
                 alert_id,
@@ -606,8 +665,8 @@ def create_webhook_app(
                 },
             )
 
-        # 4. Budget check
-        if not budget_counter.can_analyze():
+        # 4. Atomic budget check-and-increment
+        if not await budget_counter.try_increment():
             logger.warning(
                 "Daily analysis budget exhausted (%d/%d) — rejecting alert %s",
                 budget_counter.count,
@@ -626,11 +685,7 @@ def create_webhook_app(
                 },
             )
 
-        # 5. Record dedup and increment budget
-        dedup_cache.record(dedup_key)
-        budget_counter.increment()
-
-        # 6. Queue background analysis
+        # 5. Queue background analysis
         results_store[alert_id] = AnalysisResult(
             alert_id=alert_id,
             service_name=service_name,
@@ -638,6 +693,9 @@ def create_webhook_app(
             namespace=namespace,
             status="pending",
         )
+        # Evict oldest entries if results store exceeds max size
+        while len(results_store) > _MAX_RESULTS:
+            results_store.popitem(last=False)
 
         background_tasks.add_task(
             run_analysis_background,
