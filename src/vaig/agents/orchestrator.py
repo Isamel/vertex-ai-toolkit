@@ -141,6 +141,11 @@ def _fire_agent_progress(
 # ── Gatherer output validation constants ────────────────────────────────
 DEFAULT_MIN_CONTENT_CHARS = 200
 
+async def _post_process_report_async(skill: BaseSkill, content: str) -> str:
+    """Run blocking post_process_report in a separate thread to avoid blocking the event loop."""
+    return await asyncio.to_thread(skill.post_process_report, content)
+
+
 EMPTY_MARKERS: tuple[str, ...] = (
     "n/a",
     "data not available",
@@ -2585,8 +2590,9 @@ class Orchestrator:
                                 agent_result = json_retry_result
                                 result.agent_results[-1] = agent_result
                                 logger.info(
-                                    "Reporter %s JSON retry succeeded",
+                                    "Reporter %s JSON retry succeeded — tokens=%s",
                                     agent.name,
+                                    json_retry_result.usage.get("total_tokens", "?"),
                                 )
                             else:
                                 logger.warning(
@@ -2612,9 +2618,11 @@ class Orchestrator:
                                 exc_info=True,
                             )
 
-                    # Post-process structured output (e.g. JSON → Markdown)
-                    agent_result.content = skill.post_process_report(
-                        agent_result.content,
+                    # Post-process structured output (e.g. JSON → Markdown).
+                    # Offloaded to a thread to avoid blocking the event loop
+                    # during recommendation enrichment (up to 120 s of LLM calls).
+                    agent_result.content = await _post_process_report_async(
+                        skill, agent_result.content,
                     )
 
                     finish_reason = agent_result.metadata.get("finish_reason", "")
@@ -2699,13 +2707,10 @@ class Orchestrator:
                         )
                         # Re-run post-processing on retry result so callers
                         # always receive the processed (e.g. Markdown) form.
-                        if hasattr(skill, "post_process_report") and callable(
-                            skill.post_process_report
-                        ):
-                            reporter_retry.content = skill.post_process_report(
-                                reporter_retry.content
-                            )
-                            result.agent_results[-1] = reporter_retry
+                        reporter_retry.content = await _post_process_report_async(
+                            skill, reporter_retry.content,
+                        )
+                        result.agent_results[-1] = reporter_retry
                         if schema_cls is not None and hasattr(
                             schema_cls, "model_validate_json"
                         ):
@@ -3453,9 +3458,11 @@ class Orchestrator:
                                 exc_info=True,
                             )
 
-                    # Post-process structured output (e.g. JSON → Markdown)
-                    last_agent_result.content = skill.post_process_report(
-                        last_agent_result.content,
+                    # Post-process structured output (e.g. JSON → Markdown).
+                    # Offloaded to a thread to avoid blocking the event loop
+                    # during recommendation enrichment (up to 120 s of LLM calls).
+                    last_agent_result.content = await _post_process_report_async(
+                        skill, last_agent_result.content,
                     )
 
             result.synthesized_output = result.agent_results[-1].content
