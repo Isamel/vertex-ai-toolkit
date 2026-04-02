@@ -8,6 +8,7 @@ for ``sse-starlette``'s ``EventSourceResponse``.
 from __future__ import annotations
 
 import asyncio
+import html as _html_mod
 import json
 import logging
 from collections.abc import AsyncGenerator, Coroutine
@@ -63,17 +64,23 @@ def _event_to_sse_data(event: Event) -> dict[str, Any]:
             "source": event.source,
         }
     if isinstance(event, AgentProgressStarted):
-        return {
+        data: dict[str, Any] = {
             "agent": event.agent_name,
             "index": event.agent_index,
             "total": event.total_agents,
         }
+        if event.end_agent_index is not None:
+            data["end_index"] = event.end_agent_index
+        return data
     if isinstance(event, AgentProgressCompleted):
-        return {
+        data = {
             "agent": event.agent_name,
             "index": event.agent_index,
             "total": event.total_agents,
         }
+        if event.end_agent_index is not None:
+            data["end_index"] = event.end_agent_index
+        return data
     # Fallback for unknown event types
     return {"event_type": event.event_type}
 
@@ -462,6 +469,62 @@ async def _emit_pipeline_result(
         except Exception:  # noqa: BLE001
             logger.warning(
                 "Failed to render HTML report for live SSE", exc_info=True
+            )
+            # Fallback: render raw synthesized output so the user still sees
+            # a report even when HTML rendering of the structured report fails.
+            raw_output = getattr(result, "synthesized_output", None) or ""
+            if raw_output.strip():
+                try:
+                    from markdown_it import MarkdownIt
+
+                    _md = MarkdownIt("commonmark", {"html": False}).enable(
+                        ["table", "strikethrough"]
+                    )
+                    body_html = _md.render(raw_output)
+                except Exception:  # noqa: BLE001
+                    body_html = (
+                        "<pre>" + _html_mod.escape(raw_output) + "</pre>"
+                    )
+                yield ServerSentEvent(
+                    data=json.dumps({"html": body_html}),
+                    event="report_html",
+                )
+    else:
+        # Fallback: render raw synthesized output as HTML so the user always
+        # sees a report even when structured parsing fails.
+        raw_output = getattr(result, "synthesized_output", None) or ""
+        if raw_output.strip():
+            try:
+                from markdown_it import MarkdownIt
+
+                _md = MarkdownIt("commonmark", {"html": False}).enable(
+                    ["table", "strikethrough"]
+                )
+                body_html = _md.render(raw_output)
+            except Exception:  # noqa: BLE001
+                body_html = "<pre>" + _html_mod.escape(raw_output) + "</pre>"
+            fallback_html = (
+                "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+                "<style>"
+                "body{font-family:system-ui,sans-serif;padding:2rem;"
+                "max-width:900px;margin:0 auto;line-height:1.6}"
+                "pre{white-space:pre-wrap;word-break:break-word}"
+                "table{border-collapse:collapse;width:100%}"
+                "th,td{border:1px solid #ddd;padding:8px;text-align:left}"
+                "h1,h2,h3{margin-top:1.5em}"
+                ".fallback-banner{background:#fff3cd;border:1px solid #ffc107;"
+                "border-radius:6px;padding:0.75rem 1rem;margin-bottom:1.5rem;"
+                "font-size:0.9rem;color:#856404}"
+                "</style></head><body>"
+                '<div class="fallback-banner">'
+                "\u26A0\uFE0F Structured report parsing failed &mdash; "
+                "showing raw output</div>"
+                + body_html
+                + "</body></html>"
+            )
+            yield ServerSentEvent(
+                data=json.dumps({"html": fallback_html}),
+                event="report_html",
             )
 
     # Terminal event — only for complete results.  Partial results are
