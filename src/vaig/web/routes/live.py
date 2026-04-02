@@ -88,7 +88,9 @@ async def live_stream(request: Request) -> EventSourceResponse:
 
     Production guards:
     - Rejects requests when the concurrent pipeline limit is reached
-      (``VAIG_LIVE_MAX_CONCURRENT``, default 5).
+      (``VAIG_LIVE_MAX_CONCURRENT``, default 5).  The semaphore is
+      acquired once and held until the generator completes — no
+      TOCTOU race between check and use.
     - Cancels the pipeline task when the SSE client disconnects,
       preventing wasted API quota on abandoned requests.
     """
@@ -98,13 +100,22 @@ async def live_stream(request: Request) -> EventSourceResponse:
     container = get_container(settings)
 
     # ── Concurrency guard ────────────────────────────────────
-    # Fail-fast when all pipeline slots are occupied.  Try to acquire
-    # the semaphore immediately; if it's fully held, return 429.
-    acquired = False
-    try:
-        await asyncio.wait_for(_pipeline_semaphore.acquire(), timeout=0)
-        acquired = True
-    except TimeoutError:
+    # Fail-fast when all pipeline slots are occupied.  Acquire the
+    # semaphore ONCE here (non-blocking); the generator's finally block
+    # releases it when the pipeline finishes or the client disconnects.
+    #
+    # Previous approach had a TOCTOU race: acquire → release → re-acquire
+    # in the generator, allowing other requests to steal the slot between
+    # release and re-acquire.  Now we acquire once and hold.
+    #
+    # NOTE: ``asyncio.wait_for(sem.acquire(), timeout=0)`` does NOT work
+    # reliably in Python 3.12 — it always raises ``TimeoutError`` even
+    # when the semaphore is available.  Instead, we use ``locked()`` which
+    # returns ``True`` when the internal counter is zero.  The check-then-
+    # acquire is safe because asyncio is single-threaded: no other
+    # coroutine can run between the ``locked()`` check and the ``acquire()``.
+    if _pipeline_semaphore.locked():
+        # All slots occupied — reject immediately.
         logger.warning(
             "Live pipeline rejected — concurrency limit reached "
             "(max=%d, user=%s)",
@@ -119,11 +130,8 @@ async def live_stream(request: Request) -> EventSourceResponse:
             ),
             status_code=429,
         )
-    finally:
-        # Release immediately — the generator will re-acquire via
-        # ``async with _pipeline_semaphore`` for the actual run.
-        if acquired:
-            _pipeline_semaphore.release()
+    await _pipeline_semaphore.acquire()
+    # Semaphore is now held — _generate() releases it via finally block.
 
     # Extract form fields
     form = await request.form()
@@ -172,14 +180,13 @@ async def live_stream(request: Request) -> EventSourceResponse:
     async def _generate() -> AsyncGenerator[ServerSentEvent, None]:
         """Run pipeline and stream SSE events.
 
-        Acquires the concurrency semaphore for the duration of the
-        pipeline execution.  On client disconnect (``CancelledError``),
-        the semaphore is released and the pipeline task is cancelled
-        inside ``live_pipeline_to_sse()``.
+        The concurrency semaphore is already acquired by the caller.
+        This generator releases it in the finally block when the pipeline
+        completes or the client disconnects (``CancelledError``).
         """
         from vaig.agents.orchestrator import Orchestrator
 
-        async with _pipeline_semaphore:
+        try:
             async with bridge as event_queue:
                 orchestrator = Orchestrator(container.gemini_client, settings)
 
@@ -197,21 +204,22 @@ async def live_stream(request: Request) -> EventSourceResponse:
                     gke_cluster_name=cluster or gke_config.cluster_name,
                 )
 
-                try:
-                    async for sse_event in live_pipeline_to_sse(
-                        pipeline_coro, event_queue
-                    ):
-                        yield sse_event
-                except asyncio.CancelledError:
-                    # Client disconnected — pipeline task cancellation is
-                    # handled by live_pipeline_to_sse's finally block.
-                    # Log and re-raise so sse-starlette completes cleanup.
-                    logger.info(
-                        "Live SSE client disconnected (user=%s) — "
-                        "pipeline cancelled",
-                        user,
-                    )
-                    raise
+                async for sse_event in live_pipeline_to_sse(
+                    pipeline_coro, event_queue
+                ):
+                    yield sse_event
+        except asyncio.CancelledError:
+            # Client disconnected — pipeline task cancellation is
+            # handled by live_pipeline_to_sse's finally block.
+            # Log and re-raise so sse-starlette completes cleanup.
+            logger.info(
+                "Live SSE client disconnected (user=%s) — "
+                "pipeline cancelled",
+                user,
+            )
+            raise
+        finally:
+            _pipeline_semaphore.release()
 
     return EventSourceResponse(_generate())
 
