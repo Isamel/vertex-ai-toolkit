@@ -2585,8 +2585,9 @@ class Orchestrator:
                                 agent_result = json_retry_result
                                 result.agent_results[-1] = agent_result
                                 logger.info(
-                                    "Reporter %s JSON retry succeeded",
+                                    "Reporter %s JSON retry succeeded — tokens=%s",
                                     agent.name,
+                                    json_retry_result.usage.get("total_tokens", "?"),
                                 )
                             else:
                                 logger.warning(
@@ -2612,8 +2613,14 @@ class Orchestrator:
                                 exc_info=True,
                             )
 
-                    # Post-process structured output (e.g. JSON → Markdown)
-                    agent_result.content = skill.post_process_report(
+                    # Post-process structured output (e.g. JSON → Markdown).
+                    # Offload to a thread because post_process_report may run
+                    # recommendation enrichment (up to 120 s of LLM calls).
+                    # Blocking the event loop here prevents SSE keepalives and
+                    # can cause the browser to drop the connection before the
+                    # report is delivered.
+                    agent_result.content = await asyncio.to_thread(
+                        skill.post_process_report,
                         agent_result.content,
                     )
 
@@ -2699,11 +2706,14 @@ class Orchestrator:
                         )
                         # Re-run post-processing on retry result so callers
                         # always receive the processed (e.g. Markdown) form.
+                        # Offloaded to a thread to avoid blocking the event
+                        # loop during recommendation enrichment.
                         if hasattr(skill, "post_process_report") and callable(
                             skill.post_process_report
                         ):
-                            reporter_retry.content = skill.post_process_report(
-                                reporter_retry.content
+                            reporter_retry.content = await asyncio.to_thread(
+                                skill.post_process_report,
+                                reporter_retry.content,
                             )
                             result.agent_results[-1] = reporter_retry
                         if schema_cls is not None and hasattr(
@@ -3453,8 +3463,14 @@ class Orchestrator:
                                 exc_info=True,
                             )
 
-                    # Post-process structured output (e.g. JSON → Markdown)
-                    last_agent_result.content = skill.post_process_report(
+                    # Post-process structured output (e.g. JSON → Markdown).
+                    # Offload to a thread because post_process_report may run
+                    # recommendation enrichment (up to 120 s of LLM calls).
+                    # Blocking the event loop here prevents SSE keepalives and
+                    # can cause the browser to drop the connection before the
+                    # report is delivered.
+                    last_agent_result.content = await asyncio.to_thread(
+                        skill.post_process_report,
                         last_agent_result.content,
                     )
 
