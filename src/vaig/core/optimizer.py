@@ -12,6 +12,7 @@ import json
 import logging
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from vaig.core.tool_call_store import ToolCallStore
@@ -91,11 +92,13 @@ class ToolCallOptimizer:
     def __init__(self, store: ToolCallStore) -> None:
         self._store = store
 
-    def analyze(self, last_n_runs: int = 50) -> ToolInsights:
+    def analyze(self, last_n_runs: int = 50, date_from: datetime | None = None) -> ToolInsights:
         """Load last *N* runs, compute per-tool stats, detect redundancies.
 
         Args:
             last_n_runs: Maximum number of recent runs to include.
+            date_from: When provided, only include runs from this date
+                onward (based on the run's date directory name).
 
         Returns:
             A :class:`ToolInsights` with per-tool stats, redundant calls,
@@ -105,6 +108,12 @@ class ToolCallOptimizer:
         # (YYYY-MM-DD), which is chronological at the day level but not
         # necessarily within a single day.
         runs = self._store.list_runs()
+
+        # ── Optional lookback filter (apply BEFORE slicing) ───
+        if date_from is not None:
+            date_from = date_from.replace(hour=0, minute=0, second=0, microsecond=0)
+            runs = [(rid, d) for rid, d in runs if d >= date_from]
+
         selected_runs = runs[-last_n_runs:]
 
         if not selected_runs:

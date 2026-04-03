@@ -313,6 +313,19 @@ plugins:
   # - "./plugins"
   # - "~/.vaig/plugins"
 
+# Tool effectiveness learning — automatic tool scoring based on historical call data
+# When enabled, tools are scored and tiered (SKIP/DEPRIORITIZE/BOOST/ALLOW)
+# based on failure rate and duration from recent runs.
+effectiveness:
+  enabled: false                      # Set to true to enable tool effectiveness scoring
+  skip_threshold: 0.8                 # Failure rate above which a tool is skipped entirely
+  deprioritize_threshold: 0.5         # Failure rate above which a tool gets a warning
+  boost_threshold: 0.1                # Failure rate below which a reliable tool is boosted
+  slow_tool_threshold_s: 10.0         # Avg duration (seconds) above which a tool is deprioritized
+  min_calls_for_scoring: 3            # Minimum calls before scoring applies
+  lookback_days: 7                    # Days of history to consider
+  cache_ttl_seconds: 300              # Seconds to cache computed scores
+
 # RAG data pipeline export — stream telemetry, tool calls, and health reports to GCP
 # Requires: pip install 'vertex-ai-toolkit[rag]'  (google-cloud-bigquery + google-cloud-storage)
 export:

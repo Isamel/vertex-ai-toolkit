@@ -422,16 +422,17 @@ class ToolLoopMixin:
                 )
 
                 # Record tool call for metrics/feedback storage
-                self._record_tool_call(
-                    tool_call_store,
-                    tool_name,
-                    tool_args,
-                    tool_result,
-                    tool_duration,
-                    agent_name,
-                    iteration,
-                    cached=is_cached,
-                )
+                if not (tool_result.output or "").startswith("Tool skipped (effectiveness)"):
+                    self._record_tool_call(
+                        tool_call_store,
+                        tool_name,
+                        tool_args,
+                        tool_result,
+                        tool_duration,
+                        agent_name,
+                        iteration,
+                        cached=is_cached,
+                    )
 
                 tools_executed.append(
                     {
@@ -886,6 +887,36 @@ class ToolLoopMixin:
 
         return (True, None)
 
+    # ── Effectiveness pre-check ─────────────────────────────
+
+    @staticmethod
+    def _check_tool_effectiveness(tool_name: str, agent_name: str) -> ToolResult | None:
+        """Return a synthetic :class:`ToolResult` if *tool_name* should be skipped.
+
+        SKIP-tier tools get a synthetic result without execution.
+        DEPRIORITIZE-tier tools log a warning but return ``None`` (proceed).
+        ALLOW/BOOST and disabled service return ``None`` (proceed).
+        """
+        from vaig.core.effectiveness import EffectivenessTier, get_effectiveness_service
+
+        svc = get_effectiveness_service()
+        if svc is None:
+            return None
+
+        score = svc.get_tool_score(tool_name, agent_name)
+
+        if score.tier == EffectivenessTier.SKIP:
+            logger.info("Skipping tool %s: %s", tool_name, score.reason)
+            return ToolResult(
+                output=f"Tool skipped (effectiveness): {score.reason}",
+                error=True,
+            )
+
+        if score.tier == EffectivenessTier.DEPRIORITIZE:
+            logger.warning("Deprioritized tool %s: %s", tool_name, score.reason)
+
+        return None
+
     # ── Tool execution (overridable) ─────────────────────────
 
     def _execute_single_tool(
@@ -913,6 +944,11 @@ class ToolLoopMixin:
             )
             self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="UnknownTool")
             return result
+
+        # ── Effectiveness pre-check (R-EFF-06) ────────────────
+        skip_result = self._check_tool_effectiveness(tool_name, getattr(self, "name", ""))
+        if skip_result is not None:
+            return skip_result
 
         # ── Pre-validate arguments (AI-SEC4) ──────────────────
         is_valid, validation_error = self._pre_validate_tool_args(tool, tool_args)
@@ -1262,16 +1298,17 @@ class ToolLoopMixin:
                     )
 
                     # Record tool call for metrics/feedback storage
-                    self._record_tool_call(
-                        tool_call_store,
-                        tool_name,
-                        tool_args,
-                        tool_result,
-                        tool_duration,
-                        agent_name,
-                        iteration,
-                        cached=is_cached,
-                    )
+                    if not (tool_result.output or "").startswith("Tool skipped (effectiveness)"):
+                        self._record_tool_call(
+                            tool_call_store,
+                            tool_name,
+                            tool_args,
+                            tool_result,
+                            tool_duration,
+                            agent_name,
+                            iteration,
+                            cached=is_cached,
+                        )
 
                     tools_executed.append(
                         {
@@ -1358,16 +1395,17 @@ class ToolLoopMixin:
                     )
 
                     # Record tool call for metrics/feedback storage
-                    self._record_tool_call(
-                        tool_call_store,
-                        tool_name,
-                        tool_args,
-                        tool_result,
-                        tool_duration,
-                        agent_name,
-                        iteration,
-                        cached=is_cached,
-                    )
+                    if not (tool_result.output or "").startswith("Tool skipped (effectiveness)"):
+                        self._record_tool_call(
+                            tool_call_store,
+                            tool_name,
+                            tool_args,
+                            tool_result,
+                            tool_duration,
+                            agent_name,
+                            iteration,
+                            cached=is_cached,
+                        )
 
                     tools_executed.append(
                         {
@@ -1441,6 +1479,11 @@ class ToolLoopMixin:
             )
             self._emit_tool_telemetry(tool_name, tool_args, result, t0, error_type="UnknownTool")
             return result
+
+        # ── Effectiveness pre-check (R-EFF-06) ────────────────
+        skip_result = self._check_tool_effectiveness(tool_name, getattr(self, "name", ""))
+        if skip_result is not None:
+            return skip_result
 
         # ── Pre-validate arguments (AI-SEC4) ──────────────────
         is_valid, validation_error = self._pre_validate_tool_args(tool, tool_args)
