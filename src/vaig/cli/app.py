@@ -173,6 +173,7 @@ from vaig.cli.commands import (  # noqa: E402, I001
     mcp as _mcp_mod,
     models as _models_mod,
     optimize as _optimize_mod,
+    schedule as _schedule_mod,
     sessions as _sessions_mod,
     skills as _skills_mod,
     stats as _stats_mod,
@@ -192,6 +193,7 @@ _optimize_mod.register(app)
 _export_mod.register(app)
 _web_mod.register(app)
 _webhook_mod.register(app)
+_schedule_mod.register(app)
 app.add_typer(cloud_app, name="cloud")
 
 _sessions_mod.register(sessions_app)

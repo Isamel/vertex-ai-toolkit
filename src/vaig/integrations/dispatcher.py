@@ -63,13 +63,16 @@ def _meets_threshold(severity: str, notify_on: list[str]) -> bool:
 
 @dataclass
 class AlertContext:
-    """Context from a triggering alert (e.g., Datadog webhook)."""
+    """Context from a triggering alert (e.g., Datadog webhook, scheduler)."""
 
     alert_id: str
-    source: str  # "datadog", "manual", etc.
+    source: str  # "datadog", "scheduler", "manual", etc.
     service_name: str
     cluster_name: str = ""
     namespace: str = ""
+    schedule_id: str | None = None
+    run_number: int | None = None
+    is_scheduled: bool = False
 
 
 @dataclass

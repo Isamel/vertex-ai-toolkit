@@ -389,6 +389,22 @@ webhook_server:
   dedup_cooldown_seconds: 300         # Seconds before re-analyzing the same alert (5 min)
   analysis_timeout_seconds: 600       # Maximum seconds per analysis (10 min)
 
+# Scheduled health scans — runs `vaig discover` on a cron/interval schedule
+# and alerts when new issues are found above the severity threshold.
+# Auto-enables when targets are configured.
+schedule:
+  enabled: false
+  default_interval_minutes: 30          # Interval between scans (used when no cron expression is set)
+  cron_expression: ""                   # Cron expression (overrides interval when set)
+  targets: []                           # List of {cluster_name, namespace, all_namespaces, skip_healthy}
+  alert_severity_threshold: "HIGH"      # Only alert on findings >= this severity
+  daily_max_analyses: 48                # Daily budget across all schedules
+  per_schedule_max_analyses: null       # Per-schedule daily budget (null = unlimited)
+  max_concurrent_scans: 1              # Maximum concurrent scan executions
+  store_results: true                   # Store scan results for history/diffing
+  misfire_grace_time: 900               # Seconds to tolerate a missed job trigger (15 min)
+  db_path: "~/.vaig/scheduler.db"       # SQLite path for schedule metadata, budget tracking, and run history
+
 # PagerDuty integration — incident management via Events API v2 + REST API v2
 # Events API v2 uses routing_key for trigger/ack/resolve.
 # REST API v2 uses api_token for enrichment (notes, incident search).
