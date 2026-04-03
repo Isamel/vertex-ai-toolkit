@@ -13,6 +13,8 @@ Tests cover:
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from vaig.core.router import _tokenize, route_agents
@@ -476,3 +478,106 @@ class TestRouteAgentsRealWorldScenarios:
         assert "analyzer" in names
         assert "workload_gatherer" not in names
         assert "networking_gatherer" not in names
+
+
+# ── Effectiveness-aware routing (R-EFF-05) ────────────────────────────────────
+
+
+class TestRouteAgentsEffectiveness:
+    """Router filters gatherers whose tools are ALL SKIP tier."""
+
+    @staticmethod
+    def _mock_service(skip_tools: set[str]) -> Any:
+        """Create a mock ToolEffectivenessService that marks *skip_tools* as SKIP."""
+        from unittest.mock import MagicMock
+
+        from vaig.core.effectiveness import EffectivenessScore, EffectivenessTier
+
+        svc = MagicMock()
+
+        def _get_score(tool_name: str, agent_name: str | None = None) -> EffectivenessScore:
+            tier = EffectivenessTier.SKIP if tool_name in skip_tools else EffectivenessTier.ALLOW
+            return EffectivenessScore(
+                tool_name=tool_name,
+                tier=tier,
+                failure_rate=0.9 if tier == EffectivenessTier.SKIP else 0.1,
+                avg_duration_s=1.0,
+                call_count=10,
+                reason="test",
+            )
+
+        svc.get_tool_score.side_effect = _get_score
+        return svc
+
+    def test_all_skip_gatherer_filtered(self) -> None:
+        """Gatherer where ALL capabilities are SKIP is removed (R-EFF-05)."""
+        bad = _make_gatherer("bad_gatherer", ["tool_a", "tool_b"])
+        good = _make_gatherer("good_gatherer", ["tool_c"])
+        seq = _make_sequential("analyzer")
+        configs = [bad, good, seq]
+
+        svc = self._mock_service(skip_tools={"tool_a", "tool_b"})
+        result = route_agents("tool_a tool_b tool_c", configs, effectiveness_service=svc)
+
+        names = [c["name"] for c in result]
+        assert "bad_gatherer" not in names
+        assert "good_gatherer" in names
+        assert "analyzer" in names
+
+    def test_mixed_tier_gatherer_kept(self) -> None:
+        """Gatherer with SOME SKIP + SOME ALLOW tools is kept (R-EFF-05)."""
+        mixed = _make_gatherer("mixed_gatherer", ["tool_a", "tool_c"])
+        configs = [mixed]
+
+        svc = self._mock_service(skip_tools={"tool_a"})  # tool_c is ALLOW
+        result = route_agents("tool_a tool_c", configs, effectiveness_service=svc)
+
+        names = [c["name"] for c in result]
+        assert "mixed_gatherer" in names
+
+    def test_service_none_passthrough(self) -> None:
+        """When effectiveness_service is None, no filtering happens."""
+        bad = _make_gatherer("bad_gatherer", ["tool_a"])
+        configs = [bad]
+
+        result = route_agents("tool_a", configs, effectiveness_service=None)
+
+        names = [c["name"] for c in result]
+        assert "bad_gatherer" in names
+
+    def test_all_gatherers_skip_falls_back_to_all(self) -> None:
+        """If effectiveness removes ALL matched gatherers, safe-all fallback kicks in."""
+        bad1 = _make_gatherer("bad1", ["tool_a"])
+        bad2 = _make_gatherer("bad2", ["tool_b"])
+        seq = _make_sequential("analyzer")
+        configs = [bad1, bad2, seq]
+
+        svc = self._mock_service(skip_tools={"tool_a", "tool_b"})
+        result = route_agents("tool_a tool_b", configs, effectiveness_service=svc)
+
+        # Safe-all fallback — returns ALL original configs
+        assert len(result) == len(configs)
+
+    def test_boost_is_informational_only(self) -> None:
+        """BOOST-tier tools don't affect filtering — gatherer is kept."""
+        from unittest.mock import MagicMock
+
+        from vaig.core.effectiveness import EffectivenessScore, EffectivenessTier
+
+        svc = MagicMock()
+        svc.get_tool_score.return_value = EffectivenessScore(
+            tool_name="great_tool",
+            tier=EffectivenessTier.BOOST,
+            failure_rate=0.02,
+            avg_duration_s=1.0,
+            call_count=50,
+            reason="reliable",
+        )
+
+        boosted = _make_gatherer("boosted_gatherer", ["great_tool"])
+        configs = [boosted]
+
+        result = route_agents("great_tool", configs, effectiveness_service=svc)
+
+        names = [c["name"] for c in result]
+        assert "boosted_gatherer" in names

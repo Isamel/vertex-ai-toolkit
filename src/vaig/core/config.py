@@ -877,6 +877,35 @@ class RateLimitConfig(BaseModel):
     cache_ttl_seconds: int = 300
 
 
+class EffectivenessConfig(BaseModel):
+    """Tool effectiveness learning configuration.
+
+    When ``enabled`` is True, the system scores tools based on historical
+    call data and automatically skips, deprioritizes, or boosts tools
+    per configurable failure-rate and duration thresholds.
+
+    Disabled by default — enable explicitly with
+    ``effectiveness.enabled = true`` in config or
+    ``VAIG_EFFECTIVENESS__ENABLED=true``.
+    """
+
+    enabled: bool = False
+    skip_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    """Failure rate above which a tool is assigned SKIP tier (not executed)."""
+    deprioritize_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    """Failure rate above which a tool is assigned DEPRIORITIZE tier (warning logged)."""
+    boost_threshold: float = Field(default=0.1, ge=0.0, le=1.0)
+    """Failure rate below which a reliable tool is assigned BOOST tier."""
+    slow_tool_threshold_s: float = Field(default=10.0, ge=0.0)
+    """Average duration (seconds) above which a tool is DEPRIORITIZE tier."""
+    min_calls_for_scoring: int = Field(default=3, ge=1)
+    """Minimum historical calls required before a tool can be scored."""
+    lookback_days: int = Field(default=7, ge=1)
+    """Number of days of history to consider when computing scores."""
+    cache_ttl_seconds: int = Field(default=300, ge=0)
+    """Seconds to cache computed scores before recomputing."""
+
+
 class ExportConfig(BaseModel):
     """RAG data pipeline export configuration.
 
@@ -1092,6 +1121,7 @@ class Settings(BaseSettings):
     context_window: ContextWindowConfig = Field(default_factory=ContextWindowConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    effectiveness: EffectivenessConfig = Field(default_factory=EffectivenessConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)

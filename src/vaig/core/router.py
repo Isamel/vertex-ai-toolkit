@@ -28,8 +28,14 @@ Example::
 
 from __future__ import annotations
 
+import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from vaig.core.effectiveness import ToolEffectivenessService
+
+logger = logging.getLogger(__name__)
 
 # ── Tokenisation ─────────────────────────────────────────────────────────────
 # Matches runs of lowercase alphanumeric characters.  Punctuation, spaces, and
@@ -94,7 +100,11 @@ def _gatherer_matches(config: dict[str, Any], tokens: list[str]) -> bool:
     return any(cap in token or token in cap for token in tokens for cap in capabilities)
 
 
-def route_agents(query: str, configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def route_agents(
+    query: str,
+    configs: list[dict[str, Any]],
+    effectiveness_service: ToolEffectivenessService | None = None,
+) -> list[dict[str, Any]]:
     """Filter agent configs to those relevant to the given query.
 
     Only parallel gatherer configs (those with **both** ``parallel_group``
@@ -105,10 +115,17 @@ def route_agents(query: str, configs: list[dict[str, Any]]) -> list[dict[str, An
     configs are returned unchanged — this prevents accidentally skipping
     every agent.
 
+    When *effectiveness_service* is provided, matched gatherers whose
+    declared tools are ALL in SKIP tier are removed.  Gatherers with
+    mixed tiers (some SKIP, some non-SKIP) are kept.  This implements
+    R-EFF-05.
+
     Args:
         query:   The user's input query string.
         configs: List of agent configuration dicts as returned by
                  ``BaseSkill.get_agents_config()``.
+        effectiveness_service: Optional effectiveness scorer — when ``None``
+            (default) effectiveness filtering is skipped entirely.
 
     Returns:
         A filtered list of configs.  Never empty when *configs* is non-empty
@@ -144,7 +161,51 @@ def route_agents(query: str, configs: list[dict[str, Any]]) -> list[dict[str, An
     if not matched_gatherers:
         return configs
 
+    # ── Effectiveness filtering (R-EFF-05) ────────────────────
+    if effectiveness_service is not None:
+        matched_gatherers = _filter_skip_gatherers(matched_gatherers, effectiveness_service)
+        # If effectiveness removed ALL matched gatherers, fall back to all configs.
+        if not matched_gatherers:
+            return configs
+
     # Return matched gatherers + all pass-through configs (preserve original order).
     # Use id() for both sets to avoid O(N²) equality checks.
     matched_set = {id(g) for g in matched_gatherers} | {id(c) for c in pass_through}
     return [c for c in configs if id(c) in matched_set]
+
+
+def _filter_skip_gatherers(
+    gatherers: list[dict[str, Any]],
+    effectiveness_service: ToolEffectivenessService,
+) -> list[dict[str, Any]]:
+    """Remove gatherers whose declared tools are ALL in SKIP tier.
+
+    A gatherer's tools are inferred from its ``capabilities`` list.
+    Gatherers with at least one non-SKIP tool are kept.
+    """
+    from vaig.core.effectiveness import EffectivenessTier
+
+    kept: list[dict[str, Any]] = []
+    for gatherer in gatherers:
+        capabilities: list[str] = [
+            c for c in gatherer.get("capabilities", []) if isinstance(c, str)
+        ]
+        if not capabilities:
+            # No declared capabilities — keep (can't evaluate)
+            kept.append(gatherer)
+            continue
+
+        all_skip = all(
+            effectiveness_service.get_tool_score(cap).tier == EffectivenessTier.SKIP
+            for cap in capabilities
+        )
+        if all_skip:
+            logger.info(
+                "Filtering gatherer %s — all tools (%s) are SKIP tier",
+                gatherer.get("name", "?"),
+                ", ".join(capabilities),
+            )
+        else:
+            kept.append(gatherer)
+
+    return kept
