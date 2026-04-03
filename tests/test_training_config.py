@@ -18,7 +18,7 @@ class TestTrainingConfigDefaults:
 
     def test_base_model_default(self) -> None:
         cfg = TrainingConfig()
-        assert cfg.base_model == "gemini-2.0-flash-001"
+        assert cfg.base_model == "gemini-2.5-flash"
 
     def test_min_examples_default(self) -> None:
         cfg = TrainingConfig()

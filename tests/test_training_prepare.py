@@ -96,7 +96,7 @@ class TestExtractPairs:
 
         # Mock BQ query result
         mock_result = MagicMock()
-        mock_result.__iter__ = MagicMock(return_value=iter(sample_bq_rows))
+        mock_result.__iter__.return_value = iter(sample_bq_rows)
         mock_query_job = MagicMock()
         mock_query_job.result.return_value = mock_result
         mock_bq_client.query.return_value = mock_query_job
@@ -117,7 +117,7 @@ class TestExtractPairs:
         from vaig.core.training import TrainingDataPreparer
 
         mock_result = MagicMock()
-        mock_result.__iter__ = MagicMock(return_value=iter([]))
+        mock_result.__iter__.return_value = iter([])
         mock_query_job = MagicMock()
         mock_query_job.result.return_value = mock_result
         mock_bq_client.query.return_value = mock_query_job
@@ -267,7 +267,7 @@ class TestPrepare:
         from vaig.core.training import TrainingDataPreparer
 
         mock_result = MagicMock()
-        mock_result.__iter__ = MagicMock(return_value=iter(sample_bq_rows))
+        mock_result.__iter__.return_value = iter(sample_bq_rows)
         mock_query_job = MagicMock()
         mock_query_job.result.return_value = mock_result
         mock_bq_client.query.return_value = mock_query_job
@@ -297,7 +297,7 @@ class TestPrepare:
         from vaig.core.training import TrainingDataPreparer
 
         mock_result = MagicMock()
-        mock_result.__iter__ = MagicMock(return_value=iter(sample_bq_rows))
+        mock_result.__iter__.return_value = iter(sample_bq_rows)
         mock_query_job = MagicMock()
         mock_query_job.result.return_value = mock_result
         mock_bq_client.query.return_value = mock_query_job
@@ -331,7 +331,7 @@ class TestPrepare:
         ]
 
         mock_result = MagicMock()
-        mock_result.__iter__ = MagicMock(return_value=iter(rows))
+        mock_result.__iter__.return_value = iter(rows)
         mock_query_job = MagicMock()
         mock_query_job.result.return_value = mock_result
         mock_bq_client.query.return_value = mock_query_job
@@ -363,7 +363,7 @@ class TestPrepare:
         ]
 
         mock_result = MagicMock()
-        mock_result.__iter__ = MagicMock(return_value=iter(rows))
+        mock_result.__iter__.return_value = iter(rows)
         mock_query_job = MagicMock()
         mock_query_job.result.return_value = mock_result
         mock_bq_client.query.return_value = mock_query_job
