@@ -967,7 +967,7 @@ class TrainingConfig(BaseModel):
     """
 
     enabled: bool = False
-    base_model: str = "gemini-2.0-flash-001"
+    base_model: str = "gemini-2.5-flash"
     min_examples: int = 50
     max_examples: int = 10000
     min_rating: int = 4
@@ -983,6 +983,8 @@ class TrainingConfig(BaseModel):
             raise ValueError("min_examples must be >= 10")
         if self.max_examples > 100000:
             raise ValueError("max_examples must be <= 100000")
+        if self.max_examples < self.min_examples:
+            raise ValueError("max_examples must be >= min_examples")
         if self.min_rating < 1 or self.min_rating > 5:
             raise ValueError("min_rating must be between 1 and 5")
         if self.epochs < 1 or self.epochs > 10:

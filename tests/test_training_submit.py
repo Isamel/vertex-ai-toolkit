@@ -30,7 +30,7 @@ def training_config() -> TrainingConfig:
         enabled=True,
         min_examples=10,
         max_examples=100,
-        base_model="gemini-2.0-flash-001",
+        base_model="gemini-2.5-flash",
         epochs=3,
         learning_rate_multiplier=1.0,
         gcs_staging_prefix="training_data/",
@@ -223,7 +223,7 @@ class TestSubmit:
         result = submitter.submit(valid_jsonl_file)
 
         assert result.job_name == "tuning-job-123"
-        assert result.base_model == "gemini-2.0-flash-001"
+        assert result.base_model == "gemini-2.5-flash"
         assert result.gcs_uri.startswith("gs://")
         mock_genai_client.tunings.tune.assert_called_once()
 
@@ -267,7 +267,7 @@ class TestSubmit:
         submitter.submit(valid_jsonl_file)
 
         call_kwargs = mock_genai_client.tunings.tune.call_args
-        assert call_kwargs.kwargs["base_model"] == "gemini-2.0-flash-001"
+        assert call_kwargs.kwargs["base_model"] == "gemini-2.5-flash"
         assert "training_dataset" in call_kwargs.kwargs
         assert call_kwargs.kwargs["config"]["epoch_count"] == 3
         assert call_kwargs.kwargs["config"]["learning_rate_multiplier"] == 1.0

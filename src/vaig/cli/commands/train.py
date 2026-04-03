@@ -49,6 +49,14 @@ def prepare(
 
     settings = _get_settings()
 
+    if not settings.training.enabled:
+        err_console.print(
+            "[red]Error:[/red] Training is not enabled. "
+            "Set [cyan]training.enabled = true[/cyan] in config or "
+            "[cyan]VAIG_TRAINING__ENABLED=true[/cyan]."
+        )
+        raise typer.Exit(code=1)
+
     # Apply CLI overrides to training config
     tc = settings.training
     if min_rating is not None:
@@ -59,7 +67,8 @@ def prepare(
     try:
         preparer = TrainingDataPreparer(settings.export, tc, bq_client=None)
         result = preparer.prepare(output_path=output, dry_run=dry_run)
-    except SystemExit:
+    except ValueError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(code=1) from None
     except ImportError as exc:
         err_console.print(f"[red]Error:[/red] {exc}")
@@ -98,6 +107,14 @@ def submit(
     from vaig.core.training import TuningJobSubmitter
 
     settings = _get_settings()
+
+    if not settings.training.enabled:
+        err_console.print(
+            "[red]Error:[/red] Training is not enabled. "
+            "Set [cyan]training.enabled = true[/cyan] in config or "
+            "[cyan]VAIG_TRAINING__ENABLED=true[/cyan]."
+        )
+        raise typer.Exit(code=1)
 
     try:
         submitter = TuningJobSubmitter(

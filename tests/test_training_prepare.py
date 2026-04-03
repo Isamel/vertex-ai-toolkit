@@ -59,22 +59,24 @@ def sample_bq_rows() -> list[dict]:
 
 
 class TestRequireRagDepsGuard:
-    """TrainingDataPreparer must guard on [rag] deps."""
+    """TrainingDataPreparer must guard on [rag] deps lazily."""
 
     def test_import_error_when_bigquery_missing(
         self, export_config: ExportConfig, training_config: TrainingConfig
     ) -> None:
-        with patch.dict("sys.modules", {"google.cloud.bigquery": None, "google.cloud": None}):
-            # The guard runs in __init__, but since google.cloud.bigquery is
-            # already imported in the test process, we patch _require_rag_deps directly
-            with patch(
-                "vaig.core.training._require_rag_deps",
-                side_effect=ImportError("Training features require the [rag] extras"),
-            ):
-                from vaig.core.training import TrainingDataPreparer
+        """Construction succeeds; ImportError fires on first BQ access."""
+        from vaig.core.training import TrainingDataPreparer
 
-                with pytest.raises(ImportError, match="rag"):
-                    TrainingDataPreparer(export_config, training_config)
+        with patch(
+            "vaig.core.training._require_rag_deps",
+            side_effect=ImportError("Training features require the [rag] extras"),
+        ):
+            # Construction must NOT raise — guard is lazy
+            preparer = TrainingDataPreparer(export_config, training_config)
+
+            # Accessing BQ client (via extract_pairs) triggers the guard
+            with pytest.raises(ImportError, match="rag"):
+                preparer.extract_pairs(min_rating=4, max_examples=10)
 
 
 # ── extract_pairs ────────────────────────────────────────────
@@ -94,7 +96,7 @@ class TestExtractPairs:
 
         # Mock BQ query result
         mock_result = MagicMock()
-        mock_result.__iter__ = lambda self: iter(sample_bq_rows)
+        mock_result.__iter__ = MagicMock(return_value=iter(sample_bq_rows))
         mock_query_job = MagicMock()
         mock_query_job.result.return_value = mock_result
         mock_bq_client.query.return_value = mock_query_job
@@ -115,7 +117,7 @@ class TestExtractPairs:
         from vaig.core.training import TrainingDataPreparer
 
         mock_result = MagicMock()
-        mock_result.__iter__ = lambda self: iter([])
+        mock_result.__iter__ = MagicMock(return_value=iter([]))
         mock_query_job = MagicMock()
         mock_query_job.result.return_value = mock_result
         mock_bq_client.query.return_value = mock_query_job
@@ -265,7 +267,7 @@ class TestPrepare:
         from vaig.core.training import TrainingDataPreparer
 
         mock_result = MagicMock()
-        mock_result.__iter__ = lambda self: iter(sample_bq_rows)
+        mock_result.__iter__ = MagicMock(return_value=iter(sample_bq_rows))
         mock_query_job = MagicMock()
         mock_query_job.result.return_value = mock_result
         mock_bq_client.query.return_value = mock_query_job
@@ -295,7 +297,7 @@ class TestPrepare:
         from vaig.core.training import TrainingDataPreparer
 
         mock_result = MagicMock()
-        mock_result.__iter__ = lambda self: iter(sample_bq_rows)
+        mock_result.__iter__ = MagicMock(return_value=iter(sample_bq_rows))
         mock_query_job = MagicMock()
         mock_query_job.result.return_value = mock_result
         mock_bq_client.query.return_value = mock_query_job
@@ -307,7 +309,7 @@ class TestPrepare:
         assert not output.exists()
         assert result.total_examples == 20
 
-    def test_prepare_insufficient_data_exits(
+    def test_prepare_insufficient_data_raises_value_error(
         self,
         export_config: ExportConfig,
         mock_bq_client: MagicMock,
@@ -329,14 +331,14 @@ class TestPrepare:
         ]
 
         mock_result = MagicMock()
-        mock_result.__iter__ = lambda self: iter(rows)
+        mock_result.__iter__ = MagicMock(return_value=iter(rows))
         mock_query_job = MagicMock()
         mock_query_job.result.return_value = mock_result
         mock_bq_client.query.return_value = mock_query_job
 
         preparer = TrainingDataPreparer(export_config, tc, bq_client=mock_bq_client)
 
-        with pytest.raises(SystemExit):
+        with pytest.raises(ValueError, match="Insufficient examples"):
             preparer.prepare()
 
     def test_prepare_avg_rating_calculation(
@@ -361,7 +363,7 @@ class TestPrepare:
         ]
 
         mock_result = MagicMock()
-        mock_result.__iter__ = lambda self: iter(rows)
+        mock_result.__iter__ = MagicMock(return_value=iter(rows))
         mock_query_job = MagicMock()
         mock_query_job.result.return_value = mock_result
         mock_bq_client.query.return_value = mock_query_job

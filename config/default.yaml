@@ -459,7 +459,7 @@ email:
 # Requires: pip install 'vertex-ai-toolkit[rag]'  (google-cloud-bigquery + google-cloud-storage)
 training:
   enabled: false                      # Set to true to enable fine-tuning pipeline (opt-in)
-  base_model: "gemini-2.0-flash-001"  # Base model ID for supervised tuning
+  base_model: "gemini-2.5-flash"       # Base model ID for supervised tuning
   min_examples: 50                    # Minimum training examples required
   max_examples: 10000                 # Maximum training examples to include
   min_rating: 4                       # Minimum feedback rating to include (1-5)

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from google.cloud import bigquery, storage
     from google.genai import Client as GenaiClient
 
-from vaig.core.config import ExportConfig, TrainingConfig
+from vaig.core.config import DEFAULT_CHARS_PER_TOKEN, ExportConfig, TrainingConfig
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,33 @@ def _require_rag_deps() -> None:
             "Training features require the [rag] extras. "
             "Install with: pip install 'vertex-ai-toolkit[rag]'"
         ) from None
+
+
+# ── Shared retry helper ──────────────────────────────────────
+
+
+def _run_with_retry(operation_name: str, func: Any) -> Any:
+    """Execute *func* with exponential backoff for transient GCP failures."""
+    delays = (0.5, 1.0, 2.0)
+
+    for attempt, delay in enumerate(delays, start=1):
+        try:
+            return func()
+        except Exception as exc:  # noqa: BLE001
+            if attempt == len(delays) or not _is_transient_gcp_error(exc):
+                raise
+            logger.warning(
+                "%s failed with transient error (%s). Retrying in %.1fs [attempt %d/%d]",
+                operation_name,
+                exc.__class__.__name__,
+                delay,
+                attempt,
+                len(delays),
+            )
+            time.sleep(delay)
+
+    # Unreachable: for-loop always returns or raises. Defensive guard only.
+    raise RuntimeError(f"{operation_name} retry loop exited unexpectedly")  # pragma: no cover
 
 
 # ── Result dataclasses ───────────────────────────────────────
@@ -101,7 +128,6 @@ class TrainingDataPreparer:
             training_config: Training pipeline configuration.
             bq_client: Optional pre-built BigQuery client for testing.
         """
-        _require_rag_deps()
         self._config = config
         self._training_config = training_config
         self._bq_client_override = bq_client
@@ -118,37 +144,12 @@ class TrainingDataPreparer:
         if self._bq_client is None:
             with self._bq_lock:
                 if self._bq_client is None:
+                    _require_rag_deps()
                     from google.cloud import bigquery as bq_mod
 
                     project = self._config.gcp_project_id.strip()
                     self._bq_client = bq_mod.Client(project=project)
         return self._bq_client
-
-    def _run_with_retry(self, operation_name: str, func: Any) -> Any:
-        """Execute *func* with exponential backoff for transient GCP failures."""
-        delays = (0.5, 1.0, 2.0)
-        last_exc: Exception | None = None
-
-        for attempt, delay in enumerate(delays, start=1):
-            try:
-                return func()
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                if attempt == len(delays) or not _is_transient_gcp_error(exc):
-                    raise
-                logger.warning(
-                    "%s failed with transient error (%s). Retrying in %.1fs [attempt %d/%d]",
-                    operation_name,
-                    exc.__class__.__name__,
-                    delay,
-                    attempt,
-                    len(delays),
-                )
-                time.sleep(delay)
-
-        if last_exc is not None:
-            raise last_exc
-        raise RuntimeError(f"{operation_name} retry loop exited unexpectedly")
 
     # ── Public API ───────────────────────────────────────────
 
@@ -168,22 +169,22 @@ class TrainingDataPreparer:
 
         query = f"""
             SELECT
-                f.tool_name,
+                tc.tool_name,
                 tc.input_params,
                 hr.report_markdown,
                 te.event_type,
-                f.cluster_name,
-                f.namespace,
+                hr.cluster_name,
+                hr.namespace,
                 f.rating
             FROM `{dataset}.feedback` AS f
             LEFT JOIN `{dataset}.health_reports` AS hr
-                ON f.report_id = hr.report_id
+                ON f.run_id = hr.run_id
             LEFT JOIN `{dataset}.tool_calls` AS tc
-                ON f.tool_call_id = tc.tool_call_id
+                ON f.run_id = tc.run_id
             LEFT JOIN `{dataset}.telemetry_events` AS te
-                ON f.session_id = te.session_id
+                ON f.run_id = te.run_id
             WHERE f.rating >= @min_rating
-            ORDER BY f.created_at DESC
+            ORDER BY f.timestamp DESC
             LIMIT @max_examples
         """
 
@@ -196,7 +197,7 @@ class TrainingDataPreparer:
             ]
         )
 
-        result = self._run_with_retry(
+        result = _run_with_retry(
             "BQ training data query",
             lambda: client.query(query, job_config=job_config).result(),
         )
@@ -226,10 +227,8 @@ class TrainingDataPreparer:
             if not report_markdown:
                 continue
 
-            user_text = (
-                f"Analyze {tool_name} with params {input_params}"
-                f" for {cluster_name}/{namespace}"
-            )
+            context = f" for {cluster_name}/{namespace}" if cluster_name or namespace else ""
+            user_text = f"Analyze {tool_name} with params {input_params}{context}"
 
             entry = {
                 "contents": [
@@ -256,23 +255,21 @@ class TrainingDataPreparer:
             PrepareResult with statistics.
 
         Raises:
-            SystemExit: When fewer than ``min_examples`` rows are found.
+            ValueError: When fewer than ``min_examples`` rows are found.
         """
         tc = self._training_config
         rows = self.extract_pairs(tc.min_rating, tc.max_examples)
         entries = self.transform_to_jsonl(rows)
 
         if len(entries) < tc.min_examples:
-            logger.error(
-                "Insufficient examples: %d found, %d required",
-                len(entries),
-                tc.min_examples,
+            raise ValueError(
+                f"Insufficient examples: {len(entries)} found, "
+                f"{tc.min_examples} required"
             )
-            raise SystemExit(1)
 
-        # Estimate tokens (~4 chars per token)
+        # Estimate tokens
         total_chars = sum(len(json.dumps(e)) for e in entries)
-        estimated_tokens = total_chars // 4
+        estimated_tokens = int(total_chars / DEFAULT_CHARS_PER_TOKEN)
 
         avg_rating = 0.0
         if rows:
@@ -283,7 +280,6 @@ class TrainingDataPreparer:
             from datetime import UTC, datetime
 
             ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-            tc.output_dir.mkdir(parents=True, exist_ok=True)
             output_path = tc.output_dir / f"training_{ts}.jsonl"
 
         if not dry_run:
@@ -332,7 +328,6 @@ class TuningJobSubmitter:
             gcs_client: Optional pre-built GCS client for testing.
             genai_client: Optional pre-built genai client for testing.
         """
-        _require_rag_deps()
         self._config = config
         self._training_config = training_config
         self._gcs_client_override = gcs_client
@@ -352,9 +347,12 @@ class TuningJobSubmitter:
         if self._gcs_client is None:
             with self._gcs_lock:
                 if self._gcs_client is None:
+                    _require_rag_deps()
                     from google.cloud import storage as gcs_mod
 
-                    self._gcs_client = gcs_mod.Client()
+                    self._gcs_client = gcs_mod.Client(
+                        project=self._config.gcp_project_id.strip() or None
+                    )
         return self._gcs_client
 
     def _get_genai_client(self) -> GenaiClient:
@@ -365,36 +363,20 @@ class TuningJobSubmitter:
         if self._genai_client is None:
             with self._genai_lock:
                 if self._genai_client is None:
+                    _require_rag_deps()
+                    import google.auth
                     from google import genai
 
-                    self._genai_client = genai.Client(vertexai=True)
+                    credentials, default_project = google.auth.default()
+                    configured_project = self._config.gcp_project_id.strip() or None
+                    project = configured_project or default_project
+
+                    self._genai_client = genai.Client(
+                        vertexai=True,
+                        project=project,
+                        credentials=credentials,
+                    )
         return self._genai_client
-
-    def _run_with_retry(self, operation_name: str, func: Any) -> Any:
-        """Execute *func* with exponential backoff for transient GCP failures."""
-        delays = (0.5, 1.0, 2.0)
-        last_exc: Exception | None = None
-
-        for attempt, delay in enumerate(delays, start=1):
-            try:
-                return func()
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                if attempt == len(delays) or not _is_transient_gcp_error(exc):
-                    raise
-                logger.warning(
-                    "%s failed with transient error (%s). Retrying in %.1fs [attempt %d/%d]",
-                    operation_name,
-                    exc.__class__.__name__,
-                    delay,
-                    attempt,
-                    len(delays),
-                )
-                time.sleep(delay)
-
-        if last_exc is not None:
-            raise last_exc
-        raise RuntimeError(f"{operation_name} retry loop exited unexpectedly")
 
     # ── Public API ───────────────────────────────────────────
 
@@ -409,29 +391,38 @@ class TuningJobSubmitter:
 
         Raises:
             FileNotFoundError: If the file does not exist.
-            ValueError: If the file has fewer than min_examples lines.
+            ValueError: If the file has fewer than min_examples lines
+                or contains malformed JSON.
         """
         if not jsonl_path.exists():
             raise FileNotFoundError(f"JSONL file not found: {jsonl_path}")
 
-        lines: list[dict[str, Any]] = []
+        count = 0
+        total_chars = 0
         with open(jsonl_path, encoding="utf-8") as f:
-            for line in f:
+            for line_number, line in enumerate(f, start=1):
                 stripped = line.strip()
-                if stripped:
-                    lines.append(json.loads(stripped))
+                if not stripped:
+                    continue
+                try:
+                    entry = json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"Invalid JSON on line {line_number} of {jsonl_path}: {exc.msg}"
+                    ) from exc
+                count += 1
+                total_chars += len(json.dumps(entry))
 
-        if len(lines) < self._training_config.min_examples:
+        if count < self._training_config.min_examples:
             raise ValueError(
-                f"Insufficient examples: {len(lines)} found, "
+                f"Insufficient examples: {count} found, "
                 f"{self._training_config.min_examples} required"
             )
 
-        total_chars = sum(len(json.dumps(entry)) for entry in lines)
-        avg_tokens = (total_chars // 4) // max(len(lines), 1)
+        avg_tokens = int((total_chars / DEFAULT_CHARS_PER_TOKEN) / max(count, 1))
 
         return {
-            "count": len(lines),
+            "count": count,
             "avg_tokens": avg_tokens,
             "valid": True,
         }
@@ -453,7 +444,7 @@ class TuningJobSubmitter:
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(blob_path)
 
-        self._run_with_retry(
+        _run_with_retry(
             "GCS upload",
             lambda: blob.upload_from_filename(str(jsonl_path)),
         )
@@ -491,7 +482,7 @@ class TuningJobSubmitter:
         gcs_uri = self.upload_to_gcs(jsonl_path)
 
         genai_client = self._get_genai_client()
-        tuning_job = self._run_with_retry(
+        tuning_job = _run_with_retry(
             "Vertex AI tuning job creation",
             lambda: genai_client.tunings.tune(
                 base_model=tc.base_model,

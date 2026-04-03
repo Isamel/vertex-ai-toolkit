@@ -129,7 +129,7 @@ class TestTrainPrepare:
             patch("vaig.cli._helpers._get_settings", return_value=_mock_settings()),
             patch("vaig.core.training.TrainingDataPreparer") as MockPreparer,
         ):
-            MockPreparer.return_value.prepare.side_effect = SystemExit(1)
+            MockPreparer.return_value.prepare.side_effect = ValueError("Insufficient examples")
             result = runner.invoke(app, ["train", "prepare"])
 
         assert result.exit_code == 1
