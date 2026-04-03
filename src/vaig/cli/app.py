@@ -181,6 +181,7 @@ from vaig.cli.commands import (  # noqa: E402, I001
     webhook as _webhook_mod,
 )
 from vaig.cli.commands.cloud_cmd import cloud_app  # noqa: E402
+from vaig.cli.commands.train import train_app  # noqa: E402
 
 _auth_mod.register(app)
 _chat_mod.register(app)
@@ -195,6 +196,7 @@ _web_mod.register(app)
 _webhook_mod.register(app)
 _schedule_mod.register(app)
 app.add_typer(cloud_app, name="cloud")
+app.add_typer(train_app, name="train")
 
 _sessions_mod.register(sessions_app)
 _models_mod.register(models_app)

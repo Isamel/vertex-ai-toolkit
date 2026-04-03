@@ -952,6 +952,53 @@ class ExportConfig(BaseModel):
         self.vertex_rag_corpus_id = value
 
 
+class TrainingConfig(BaseModel):
+    """Fine-tuning pipeline configuration.
+
+    Controls extraction of high-quality rated examples from BigQuery,
+    transformation into Gemini supervised-tuning JSONL, and submission of
+    fine-tuning jobs via Vertex AI.
+
+    Disabled by default — enable explicitly with ``training.enabled = true``
+    in config or ``VAIG_TRAINING__ENABLED=true``.
+
+    Requires the ``[rag]`` optional dependency group:
+    ``pip install 'vertex-ai-toolkit[rag]'``
+    """
+
+    enabled: bool = False
+    base_model: str = "gemini-2.0-flash-001"
+    min_examples: int = 50
+    max_examples: int = 10000
+    min_rating: int = 4
+    output_dir: Path = Path("training_data")
+    epochs: int = 3
+    learning_rate_multiplier: float = 1.0
+    gcs_staging_prefix: str = "training_data/"
+
+    @model_validator(mode="after")
+    def _validate_training_bounds(self) -> TrainingConfig:
+        """Validate numeric constraints for training configuration."""
+        if self.min_examples < 10:
+            raise ValueError("min_examples must be >= 10")
+        if self.max_examples > 100000:
+            raise ValueError("max_examples must be <= 100000")
+        if self.min_rating < 1 or self.min_rating > 5:
+            raise ValueError("min_rating must be between 1 and 5")
+        if self.epochs < 1 or self.epochs > 10:
+            raise ValueError("epochs must be between 1 and 10")
+        if self.learning_rate_multiplier <= 0:
+            raise ValueError("learning_rate_multiplier must be > 0")
+
+        prefix = self.gcs_staging_prefix.strip()
+        if prefix:
+            self.gcs_staging_prefix = prefix.rstrip("/") + "/"
+        else:
+            self.gcs_staging_prefix = ""
+
+        return self
+
+
 def _strip_empty_strings(data: dict[str, Any]) -> dict[str, Any]:
     """Recursively remove keys whose value is an empty string.
 
@@ -1101,6 +1148,7 @@ class Settings(BaseSettings):
     slack: SlackConfig = Field(default_factory=SlackConfig)
     email: EmailConfig = Field(default_factory=EmailConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
+    training: TrainingConfig = Field(default_factory=TrainingConfig)
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> Settings:
