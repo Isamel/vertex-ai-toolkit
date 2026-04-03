@@ -1451,8 +1451,9 @@ def _execute_orchestrated_skill(
 
     skill_meta = skill.get_metadata()
 
-    # Build tool registry to get the tool count for the header.
-    # execute_skill_headless will build its own registry internally.
+    # Build tool registry once — pass it to execute_skill_headless to
+    # avoid duplicate registry construction (it accepts an optional
+    # pre-built registry since the refactor for Copilot review #12).
     tool_registry = _register_live_tools(gke_config, settings=settings)
     tool_count = len(tool_registry.list_tools())
 
@@ -1496,6 +1497,7 @@ def _execute_orchestrated_skill(
                 skill,
                 question,
                 gke_config,
+                tool_registry=tool_registry,
                 tool_call_store=tool_call_store,
                 on_tool_call=tool_logger,
                 on_agent_progress=progress_display,

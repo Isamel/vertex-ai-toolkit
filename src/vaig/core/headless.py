@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from vaig.agents.orchestrator import OnAgentProgress, OrchestratorResult
     from vaig.core.config import GKEConfig, Settings
     from vaig.core.tool_call_store import ToolCallStore
+    from vaig.core.tool_registry import ToolRegistry
     from vaig.skills.base import BaseSkill
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ def execute_skill_headless(
     query: str,
     gke_config: GKEConfig,
     *,
+    tool_registry: ToolRegistry | None = None,
     tool_call_store: ToolCallStore | None = None,
     on_tool_call: OnToolCall | None = None,
     on_agent_progress: OnAgentProgress | None = None,
@@ -42,6 +44,10 @@ def execute_skill_headless(
         skill: Resolved skill instance (e.g. ``DiscoverySkill``).
         query: Investigation query for the orchestrator.
         gke_config: GKE cluster configuration for tool registration.
+        tool_registry: Optional pre-built registry.  When provided the
+            function skips its own ``register_live_tools()`` call, avoiding
+            duplicate work when the caller already built the registry
+            (e.g. to display a tool count header in the CLI).
         tool_call_store: Optional store for persisting tool-call metadata.
         on_tool_call: Optional callback for each tool invocation (CLI progress).
         on_agent_progress: Optional callback for agent lifecycle events
@@ -59,8 +65,9 @@ def execute_skill_headless(
     from vaig.agents.orchestrator import Orchestrator
     from vaig.core.gke import register_live_tools
 
-    # Build tool registry
-    tool_registry = register_live_tools(gke_config, settings=settings)
+    # Build tool registry (or reuse caller-provided one)
+    if tool_registry is None:
+        tool_registry = register_live_tools(gke_config, settings=settings)
     tool_count = len(tool_registry.list_tools())
 
     if tool_count == 0:

@@ -403,7 +403,7 @@ schedule:
   max_concurrent_scans: 1              # Maximum concurrent scan executions
   store_results: true                   # Store scan results for history/diffing
   misfire_grace_time: 900               # Seconds to tolerate a missed job trigger (15 min)
-  db_path: "~/.vaig/scheduler.db"       # SQLite job-store path for APScheduler persistence
+  db_path: "~/.vaig/scheduler.db"       # SQLite path for schedule metadata, budget tracking, and run history
 
 # PagerDuty integration — incident management via Events API v2 + REST API v2
 # Events API v2 uses routing_key for trigger/ack/resolve.

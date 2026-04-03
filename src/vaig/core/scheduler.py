@@ -143,6 +143,7 @@ class _EngineState:
     schedule_meta: dict[str, _ScheduleMeta] = field(default_factory=dict)
     run_task: asyncio.Task[None] | None = None
     db: aiosqlite.Connection | None = None
+    budget_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class SchedulerEngine:
@@ -245,7 +246,7 @@ class SchedulerEngine:
 
         self._state.schedule_meta[schedule_id] = _ScheduleMeta(
             target=target,
-            interval_minutes=interval_minutes or (None if cron else self._cfg.default_interval_minutes),
+            interval_minutes=None if cron else (interval_minutes or self._cfg.default_interval_minutes),
             cron_expression=cron,
         )
         await self._persist_schedule_meta(schedule_id, self._state.schedule_meta[schedule_id])
@@ -351,7 +352,7 @@ class SchedulerEngine:
         await self._persist_schedule_meta(schedule_id, meta)
 
         # ── 1. Budget check ──────────────────────────────────
-        if not await self._check_budget():
+        if not await self._reserve_budget():
             logger.warning(
                 "Daily budget exhausted (%d/%d) — skipping schedule %s",
                 await self._get_daily_count(),
@@ -378,24 +379,34 @@ class SchedulerEngine:
             skill = DiscoverySkill()
             query = self._build_query(target)
 
-            orch_result = await asyncio.to_thread(
+            scan_timeout = getattr(self._cfg, "scan_timeout_seconds", None)
+            scan_coro = asyncio.to_thread(
                 execute_skill_headless,
                 self._settings,
                 skill,
                 query,
                 gke_config,
             )
+            if scan_timeout:
+                orch_result = await asyncio.wait_for(scan_coro, timeout=scan_timeout)
+            else:
+                orch_result = await scan_coro
             report: HealthReport | None = orch_result.structured_report
+        except TimeoutError:
+            logger.exception(
+                "Scan timed out after %ss for schedule %s", scan_timeout, schedule_id,
+            )
+            return await self._record_run(
+                run_id, schedule_id, started_at, "timeout",
+            )
         except Exception:
             logger.exception("Headless scan failed for schedule %s", schedule_id)
-            await self._increment_budget()
             return await self._record_run(
                 run_id, schedule_id, started_at, "error",
             )
 
         if report is None:
             logger.warning("No structured report from schedule %s", schedule_id)
-            await self._increment_budget()
             return await self._record_run(
                 run_id, schedule_id, started_at, "no_report",
             )
@@ -424,7 +435,6 @@ class SchedulerEngine:
         # Update previous-report cache
         self._state.previous_reports[schedule_id] = report
         await self._persist_previous_report(schedule_id, report)
-        await self._increment_budget()
 
         # ── 4. Persist run ───────────────────────────────────
         report_dict = report.to_dict() if hasattr(report, "to_dict") else {}
@@ -561,7 +571,12 @@ class SchedulerEngine:
         await db.commit()
 
     async def _load_persisted_state(self) -> None:
-        """Reload ``schedule_meta`` and ``previous_reports`` from SQLite."""
+        """Reload ``schedule_meta`` and ``previous_reports`` from SQLite.
+
+        Also re-registers APScheduler jobs for each persisted schedule so
+        that schedules survive process restarts (APScheduler uses
+        ``MemoryDataStore`` which loses jobs on stop).
+        """
         db = self._db_conn()
 
         # ── schedule_meta ────────────────────────────────────
@@ -577,6 +592,24 @@ class SchedulerEngine:
                 cron_expression=cron_expr,
                 run_number=run_number,
             )
+
+            # Re-register the APScheduler job so it fires again.
+            if cron_expr:
+                trigger: IntervalTrigger | CronTrigger = CronTrigger.from_crontab(cron_expr)
+            else:
+                minutes = interval_min or self._cfg.default_interval_minutes
+                trigger = IntervalTrigger(minutes=minutes)
+
+            try:
+                await self._scheduler.add_schedule(
+                    self._scan_job,
+                    trigger,
+                    id=sid,
+                    kwargs={"schedule_id": sid},
+                    misfire_grace_time=self._cfg.misfire_grace_time,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("Failed to re-register schedule %s", sid, exc_info=True)
 
         # ── previous_reports ─────────────────────────────────
         cursor = await db.execute("SELECT * FROM previous_reports")
@@ -638,7 +671,10 @@ class SchedulerEngine:
         await db.commit()
 
     async def _check_budget(self) -> bool:
-        """Return ``True`` if another analysis is allowed today."""
+        """Return ``True`` if another analysis is allowed today.
+
+        .. warning:: For concurrent safety use :meth:`_reserve_budget` instead.
+        """
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         db = self._db_conn()
         cursor = await db.execute(
@@ -670,6 +706,19 @@ class SchedulerEngine:
             (today,),
         )
         await db.commit()
+
+    async def _reserve_budget(self) -> bool:
+        """Atomically check and increment the daily budget.
+
+        Returns ``True`` if a slot was reserved, ``False`` if the budget is
+        exhausted.  Uses an ``asyncio.Lock`` to prevent concurrent scans from
+        over-committing.
+        """
+        async with self._state.budget_lock:
+            if not await self._check_budget():
+                return False
+            await self._increment_budget()
+            return True
 
     async def _record_run(
         self,

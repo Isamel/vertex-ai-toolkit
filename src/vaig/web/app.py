@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import traceback
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -20,6 +22,36 @@ _STATIC_DIR = _WEB_DIR / "static"
 logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Startup / shutdown lifecycle for the scheduler engine.
+
+    If the ``schedule`` section is enabled in settings, the engine is
+    started automatically and attached to ``app.state.scheduler_engine``.
+    On shutdown the engine is stopped gracefully.
+    """
+    engine = None
+    try:
+        from vaig.core.config import get_settings
+
+        settings = get_settings()
+        if settings.schedule.enabled:
+            from vaig.core.scheduler import SchedulerEngine
+
+            engine = SchedulerEngine(settings)
+            await engine.start()
+            app.state.scheduler_engine = engine
+            logger.info("Scheduler engine attached to app (lifespan)")
+    except Exception:  # noqa: BLE001
+        logger.warning("Scheduler engine not started — schedule feature unavailable", exc_info=True)
+
+    yield
+
+    if engine is not None:
+        await engine.stop()
+        logger.info("Scheduler engine stopped (lifespan)")
+
+
 def create_app() -> FastAPI:
     """Build and configure the FastAPI application.
 
@@ -30,6 +62,7 @@ def create_app() -> FastAPI:
         title="VAIG Web",
         description="Vertex AI Gemini Toolkit — Web Interface",
         version=__version__,
+        lifespan=_lifespan,
     )
 
     # Static files

@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from vaig.core.scheduler import ScanResult, ScheduleInfo
-
-# Ensure dev mode is enabled for tests (IAP bypass)
-os.environ.setdefault("VAIG_WEB_DEV_MODE", "true")
 
 try:
     from fastapi.testclient import TestClient
@@ -20,6 +16,12 @@ except ImportError:
 
 
 # ── Fixtures ─────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _dev_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure dev mode is enabled for tests (IAP bypass) without leaking env vars."""
+    monkeypatch.setenv("VAIG_WEB_DEV_MODE", "true")
 
 
 def _make_engine() -> MagicMock:
@@ -76,12 +78,7 @@ def client() -> TestClient:
 
     app = create_app()
 
-    # Register schedules router
-    from vaig.web.routes.schedules import router as schedules_router
-
-    app.include_router(schedules_router)
-
-    # Attach mock engine
+    # Attach mock engine (schedules_router already included by create_app)
     app.state.scheduler_engine = _make_engine()
 
     return TestClient(app)
@@ -93,10 +90,6 @@ def client_no_engine() -> TestClient:
     from vaig.web.app import create_app
 
     app = create_app()
-
-    from vaig.web.routes.schedules import router as schedules_router
-
-    app.include_router(schedules_router)
 
     # Ensure no engine attached
     app.state.scheduler_engine = None
@@ -138,8 +131,8 @@ class TestCreateSchedule:
 
     def test_create_missing_cluster(self, client: TestClient) -> None:
         resp = client.post("/portal/schedules", json={"namespace": "default"})
-        assert resp.status_code == 400
-        assert "cluster_name" in resp.json()["detail"]
+        assert resp.status_code == 422
+        assert "cluster_name" in resp.text
 
     def test_create_with_cron(self, client: TestClient) -> None:
         resp = client.post(

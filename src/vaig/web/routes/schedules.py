@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse, Response
 
 from vaig.web.deps import get_current_user
@@ -22,6 +23,26 @@ __all__: list[str] = []
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/portal", tags=["schedules"])
+
+
+# ── Request models ───────────────────────────────────────────
+
+
+class CreateScheduleRequest(BaseModel):
+    """Pydantic model for ``POST /portal/schedules`` body validation."""
+
+    cluster_name: str = Field(..., min_length=1, description="GKE cluster name")
+    namespace: str = Field(default="", description="Kubernetes namespace (empty = default)")
+    interval_minutes: int | None = Field(
+        default=None, ge=1, le=1440,
+        description="Interval in minutes between scans (1–1440)",
+    )
+    cron: str | None = Field(
+        default=None,
+        description="Cron expression (overrides interval_minutes when set)",
+    )
+    all_namespaces: bool = Field(default=False, description="Scan all namespaces")
+    skip_healthy: bool = Field(default=True, description="Skip healthy services in report")
 
 
 # ── Engine helpers ───────────────────────────────────────────
@@ -88,7 +109,7 @@ async def list_schedules(request: Request) -> Response:
 
 
 @router.post("/schedules")
-async def create_schedule(request: Request) -> JSONResponse:
+async def create_schedule(request: Request, body: CreateScheduleRequest) -> JSONResponse:
     """Create a new scheduled health scan.
 
     Accepts JSON body::
@@ -105,24 +126,19 @@ async def create_schedule(request: Request) -> JSONResponse:
     _user = get_current_user(request)
     engine = _get_engine(request)
 
-    body: dict[str, Any] = await request.json()
-    cluster = body.get("cluster_name", "").strip()
-    if not cluster:
-        raise HTTPException(status_code=400, detail="cluster_name is required")
-
     from vaig.core.config import ScheduleTarget
 
     target = ScheduleTarget(
-        cluster_name=cluster,
-        namespace=body.get("namespace", ""),
-        all_namespaces=body.get("all_namespaces", False),
-        skip_healthy=body.get("skip_healthy", True),
+        cluster_name=body.cluster_name,
+        namespace=body.namespace,
+        all_namespaces=body.all_namespaces,
+        skip_healthy=body.skip_healthy,
     )
 
     schedule_id = await engine.add_schedule(
         target,
-        interval_minutes=body.get("interval_minutes"),
-        cron=body.get("cron"),
+        interval_minutes=body.interval_minutes,
+        cron=body.cron,
     )
 
     logger.info("Schedule created via web: %s by %s", schedule_id, _user)
