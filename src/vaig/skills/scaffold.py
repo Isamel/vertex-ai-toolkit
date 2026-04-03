@@ -652,7 +652,7 @@ def scaffold_skill(
                 f'"name": "{kebab}-{role}", '
                 f'"role": "{role.capitalize()}", '
                 '"system_instruction": self.get_system_instruction(), '
-                '"model": meta.recommended_model'
+                '"model": self.get_metadata().recommended_model'
                 "},"
             )
         agent_configs = "\n            ".join(agent_config_lines)

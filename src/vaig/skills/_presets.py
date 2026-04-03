@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from vaig.skills.base import SkillPhase
 
@@ -17,9 +17,9 @@ class SkillPreset:
     """
 
     name: str
-    phases: list[SkillPhase] = field(default_factory=list)
+    phases: tuple[SkillPhase, ...] = ()
     agent_count: int = 1
-    agent_roles: list[str] = field(default_factory=list)
+    agent_roles: tuple[str, ...] = ()
     generate_schema: bool = False
     requires_live_tools: bool = False
 
@@ -27,25 +27,25 @@ class SkillPreset:
 PRESETS: dict[str, SkillPreset] = {
     "analysis": SkillPreset(
         name="analysis",
-        phases=[SkillPhase.ANALYZE, SkillPhase.EXECUTE, SkillPhase.REPORT],
+        phases=(SkillPhase.ANALYZE, SkillPhase.EXECUTE, SkillPhase.REPORT),
         agent_count=1,
-        agent_roles=["analyst"],
+        agent_roles=("analyst",),
         generate_schema=False,
         requires_live_tools=False,
     ),
     "live-tools": SkillPreset(
         name="live-tools",
-        phases=[SkillPhase.ANALYZE, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT],
+        phases=(SkillPhase.ANALYZE, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT),
         agent_count=3,
-        agent_roles=["gatherer", "analyzer", "reporter"],
+        agent_roles=("gatherer", "analyzer", "reporter"),
         generate_schema=True,
         requires_live_tools=True,
     ),
     "coding": SkillPreset(
         name="coding",
-        phases=[SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT],
+        phases=(SkillPhase.ANALYZE, SkillPhase.PLAN, SkillPhase.EXECUTE, SkillPhase.VALIDATE, SkillPhase.REPORT),
         agent_count=2,
-        agent_roles=["planner", "executor"],
+        agent_roles=("planner", "executor"),
         generate_schema=True,
         requires_live_tools=False,
     ),

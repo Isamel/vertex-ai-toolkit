@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
+import click
 import typer
 from rich.panel import Panel
 from rich.table import Table
@@ -15,7 +16,12 @@ from vaig.cli._helpers import console, err_console
 if TYPE_CHECKING:
     from vaig.skills._presets import SkillPreset
 
-_VALID_PRESETS = ("analysis", "live-tools", "coding", "custom")
+
+def _valid_presets() -> tuple[str, ...]:
+    """Return valid preset names, derived from the PRESETS registry at runtime."""
+    from vaig.skills._presets import PRESETS
+
+    return tuple(k for k in PRESETS if k != "custom")
 
 
 def register(skills_app: typer.Typer) -> None:
@@ -101,7 +107,7 @@ def register(skills_app: typer.Typer) -> None:
         description: Annotated[str, typer.Option("--description", "-d")] = "A custom skill",
         tags: Annotated[str | None, typer.Option("--tags", "-t", help="Comma-separated tags")] = None,
         output_dir: Annotated[str | None, typer.Option("--output", "-o", help="Target directory (default: custom_dir from config)")] = None,
-        preset: Annotated[str | None, typer.Option("--preset", "-p", help="Skill preset: analysis, live-tools, coding, custom")] = None,
+        preset: Annotated[str | None, typer.Option("--preset", "-p", help="Skill preset archetype", click_type=click.Choice(_valid_presets()))] = None,
         interactive: Annotated[bool, typer.Option("--interactive", "-i", help="Interactive mode — prompts for options")] = False,
         config: Annotated[str | None, typer.Option("--config", "-c")] = None,
     ) -> None:
@@ -131,10 +137,7 @@ def register(skills_app: typer.Typer) -> None:
         # Resolve preset
         resolved_preset = None
         if preset is not None:
-            if preset not in _VALID_PRESETS:
-                raise typer.BadParameter(f"Invalid preset {preset!r}. Choose from: {', '.join(_VALID_PRESETS)}")
-            if preset == "custom":
-                raise typer.BadParameter("The 'custom' preset requires --interactive mode.")
+            # typer.Choice already validates preset is one of _valid_presets()
             from vaig.skills._presets import get_preset
             resolved_preset = get_preset(preset)
         elif interactive:
@@ -173,7 +176,11 @@ def _build_interactive_preset() -> SkillPreset:
     if not phases:
         phases = [SkillPhase.ANALYZE, SkillPhase.EXECUTE, SkillPhase.REPORT]
 
-    agent_count = int(typer.prompt("Number of agents", default="1"))
+    agent_count: int = typer.prompt("Number of agents", default=1, type=int)
+    while agent_count < 1:
+        err_console.print("[red]Agent count must be at least 1.[/red]")
+        agent_count = typer.prompt("Number of agents", default=1, type=int)
+
     agent_roles: list[str] = []
     if agent_count > 1:
         roles_input = typer.prompt(
@@ -181,6 +188,13 @@ def _build_interactive_preset() -> SkillPreset:
             default=",".join(f"agent-{i}" for i in range(1, agent_count + 1)),
         )
         agent_roles = [r.strip() for r in roles_input.split(",") if r.strip()]
+        while len(agent_roles) != agent_count:
+            err_console.print(f"[red]Expected {agent_count} roles but got {len(agent_roles)}. Try again.[/red]")
+            roles_input = typer.prompt(
+                "Agent roles (comma-separated)",
+                default=",".join(f"agent-{i}" for i in range(1, agent_count + 1)),
+            )
+            agent_roles = [r.strip() for r in roles_input.split(",") if r.strip()]
     else:
         agent_roles = ["analyst"]
 
@@ -189,9 +203,9 @@ def _build_interactive_preset() -> SkillPreset:
 
     return SkillPreset(
         name="custom",
-        phases=phases,
+        phases=tuple(phases),
         agent_count=agent_count,
-        agent_roles=agent_roles,
+        agent_roles=tuple(agent_roles),
         generate_schema=generate_schema,
         requires_live_tools=requires_live_tools,
     )

@@ -708,3 +708,53 @@ class TestPresetScaffoldIntegration:
         for py_file in skill_dir.glob("*.py"):
             content = py_file.read_text()
             compile(content, str(py_file), "exec")
+
+    def test_generated_get_agents_config_runtime(self, tmp_path: Path) -> None:
+        """C5: exec generated multi-agent skill.py and verify get_agents_config() works at runtime."""
+        import importlib
+        import sys
+
+        from vaig.skills._presets import get_preset
+        from vaig.skills.scaffold import scaffold_skill
+
+        preset = get_preset("live-tools")
+        skill_dir = scaffold_skill("rt-check", tmp_path, preset=preset)
+
+        # Make the generated package importable
+        sys.path.insert(0, str(tmp_path))
+        try:
+            # Import the generated prompts module so the skill module can find it
+            prompts_mod = importlib.import_module("rt_check.prompts")
+            sys.modules[".prompts"] = prompts_mod
+            sys.modules["rt_check.prompts"] = prompts_mod
+
+            # exec the generated skill.py in a namespace that has proper imports
+            skill_code = (skill_dir / "skill.py").read_text()
+            # Replace the relative import with the absolute one we can resolve
+            skill_code = skill_code.replace("from .prompts import", "from rt_check.prompts import")
+            ns: dict[str, Any] = {}
+            exec(compile(skill_code, str(skill_dir / "skill.py"), "exec"), ns)  # noqa: S102
+
+            # Find the concrete skill class (ends with 'Skill', not BaseSkill)
+            from vaig.skills.base import BaseSkill
+
+            skill_classes = [
+                v
+                for k, v in ns.items()
+                if k.endswith("Skill") and isinstance(v, type) and issubclass(v, BaseSkill) and v is not BaseSkill
+            ]
+            assert skill_classes, "No concrete Skill class found in generated skill.py"
+
+            skill_instance = skill_classes[0]()
+            agents = skill_instance.get_agents_config()
+            assert isinstance(agents, list)
+            assert len(agents) == preset.agent_count
+            for agent in agents:
+                assert "name" in agent
+                assert "role" in agent
+                assert "model" in agent
+        finally:
+            sys.path.pop(0)
+            sys.modules.pop(".prompts", None)
+            sys.modules.pop("rt_check.prompts", None)
+            sys.modules.pop("rt_check", None)
