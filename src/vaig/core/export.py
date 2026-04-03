@@ -776,7 +776,7 @@ class DataExporter:
             return None
         try:
             date_str = datetime.now(tz=UTC).strftime("%Y-%m-%d")
-            blob_path = f"{self._config.gcs_prefix}reports/{date_str}/{run_id}.json"
+            blob_path = f"{self._config.effective_gcs_prefix}reports/{date_str}/{run_id}.json"
             content = json.dumps(report, default=str)
             client = self._get_gcs_client()
             bucket = client.bucket(self._config.gcs_bucket)
@@ -809,7 +809,7 @@ class DataExporter:
             return None
         try:
             date_str = datetime.now(tz=UTC).strftime("%Y-%m-%d")
-            blob_path = f"{self._config.gcs_prefix}tool_results/{date_str}/{run_id}.jsonl"
+            blob_path = f"{self._config.effective_gcs_prefix}tool_results/{date_str}/{run_id}.jsonl"
             content = "\n".join(json.dumps(r, default=str) for r in records)
             client = self._get_gcs_client()
             bucket = client.bucket(self._config.gcs_bucket)
@@ -843,7 +843,7 @@ class DataExporter:
             now = datetime.now(tz=UTC)
             date_str = now.strftime("%Y-%m-%d")
             timestamp_iso = now.strftime("%Y%m%dT%H%M%SZ")
-            blob_path = f"{self._config.gcs_prefix}telemetry/{date_str}/batch_{timestamp_iso}.jsonl"
+            blob_path = f"{self._config.effective_gcs_prefix}telemetry/{date_str}/batch_{timestamp_iso}.jsonl"
             content = "\n".join(json.dumps(r, default=str) for r in records)
             client = self._get_gcs_client()
             bucket = client.bucket(self._config.gcs_bucket)

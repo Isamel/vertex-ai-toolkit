@@ -112,6 +112,7 @@ class RAGKnowledgeBase:
         self._project = project or config.gcp_project_id
         self._location = location
         self._initialized = False
+        self._org_corpus_cache: dict[str, str] = {}
 
     # ── Properties ────────────────────────────────────────────
 
@@ -215,6 +216,49 @@ class RAGKnowledgeBase:
             logger.exception("Failed to list RAG corpora.")
             return []
 
+    def resolve_corpus(self, org_id: str) -> str:
+        """Find or create the RAG corpus for an organization.
+
+        Parameters
+        ----------
+        org_id:
+            Organization identifier.  When empty, returns the global
+            ``vertex_rag_corpus_id`` from config.
+
+        Returns
+        -------
+        str
+            The full resource name of the resolved corpus.
+        """
+        if not org_id:
+            return self._config.vertex_rag_corpus_id
+
+        if org_id in self._org_corpus_cache:
+            return self._org_corpus_cache[org_id]
+
+        display_name = f"vaig-{org_id}"
+        try:
+            for corpus in self.list_corpora():
+                if corpus.get("display_name") == display_name:
+                    resolved: str = str(corpus["name"])
+                    self._org_corpus_cache[org_id] = resolved
+                    logger.info("Resolved org corpus %s → %s", display_name, resolved)
+                    return resolved
+
+            # Corpus does not exist — create it.
+            name = self.create_corpus(
+                display_name=display_name,
+                description=f"Per-org RAG corpus for organization '{org_id}'",
+            )
+            self._org_corpus_cache[org_id] = name
+            return name
+        except Exception:
+            logger.exception(
+                "Failed to resolve org corpus for '%s' — falling back to global",
+                org_id,
+            )
+            return self._config.vertex_rag_corpus_id
+
     # ── Ingestion ─────────────────────────────────────────────
 
     def ingest_reports(self, gcs_paths: list[str]) -> bool:
@@ -313,3 +357,91 @@ class RAGKnowledgeBase:
                 len(query),
             )
             return RetrievalResult(query=query)
+
+    def retrieve_with_fallback(
+        self,
+        query: str,
+        org_id: str = "",
+        top_k: int = 5,
+        min_results: int = 3,
+    ) -> RetrievalResult:
+        """Query org corpus first, fall back to global when results are sparse.
+
+        Parameters
+        ----------
+        query:
+            The search query.
+        org_id:
+            Organization identifier.  When empty, delegates to
+            :meth:`retrieve` on the global corpus.
+        top_k:
+            Maximum number of chunks to return per corpus query.
+        min_results:
+            Minimum chunk count from the org corpus before the global
+            corpus is also queried.
+
+        Returns
+        -------
+        RetrievalResult
+            Merged and deduplicated results.
+        """
+        if not org_id:
+            return self.retrieve(query, top_k=top_k)
+
+        org_corpus = self.resolve_corpus(org_id)
+        if not org_corpus:
+            return self.retrieve(query, top_k=top_k)
+
+        # Query the org-specific corpus.
+        self._ensure_initialized()
+        rag = _import_vertexai_rag()
+        org_chunks: list[RetrievedChunk] = []
+        try:
+            response = rag.retrieval_query(
+                rag_resources=[rag.RagResource(rag_corpus=org_corpus)],
+                text=query,
+                similarity_top_k=top_k,
+            )
+            org_chunks = [
+                RetrievedChunk(
+                    text=str(ctx.text),
+                    score=float(getattr(ctx, "distance", 0.0)),
+                    source=str(getattr(ctx, "source_uri", "")),
+                )
+                for ctx in (response.contexts.contexts if response.contexts else [])
+            ]
+        except Exception:
+            logger.exception("Org corpus retrieval failed for org '%s'", org_id)
+
+        if len(org_chunks) >= min_results:
+            logger.info(
+                "Org corpus '%s' returned %d chunks (>= min %d) — no global fallback",
+                org_id,
+                len(org_chunks),
+                min_results,
+            )
+            return RetrievalResult(chunks=org_chunks, query=query)
+
+        # Insufficient org results — also query the global corpus.
+        global_result = self.retrieve(query, top_k=top_k)
+
+        # Merge: org chunks first, then global, dedup by source URI.
+        seen_sources: set[str] = set()
+        merged: list[RetrievedChunk] = []
+        for chunk in [*org_chunks, *global_result.chunks]:
+            key = chunk.source
+            if key and key in seen_sources:
+                continue
+            if key:
+                seen_sources.add(key)
+            merged.append(chunk)
+
+        logger.info(
+            "Org corpus '%s' returned %d chunks (< min %d) — merged with %d global → %d total",
+            org_id,
+            len(org_chunks),
+            min_results,
+            len(global_result.chunks),
+            len(merged),
+        )
+        return RetrievalResult(chunks=merged, query=query)
