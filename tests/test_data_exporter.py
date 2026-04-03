@@ -1095,3 +1095,64 @@ def _captured_vaig_logs(
             yield
     finally:
         vaig_logger.propagate = original_propagate
+
+
+# ---------------------------------------------------------------------------
+# Per-Org Knowledge — GCS paths with org_id (SPEC-4.2)
+# ---------------------------------------------------------------------------
+
+
+class TestOrgGcsPaths:
+    """REQ-ORG-05: GCS blob paths include org_id segment when set."""
+
+    @pytest.fixture()
+    def org_config(self) -> ExportConfig:
+        return ExportConfig(
+            enabled=True,
+            gcp_project_id="test-project",
+            bigquery_dataset="test_dataset",
+            gcs_bucket="test-bucket",
+            gcs_prefix="rag_data/",
+            org_id="acme",
+        )
+
+    @pytest.fixture()
+    def org_exporter(
+        self, org_config: ExportConfig, mock_gcs_client: MagicMock
+    ) -> DataExporter:
+        return DataExporter(org_config, gcs_client=mock_gcs_client)
+
+    def test_report_blob_path_includes_org_id(
+        self, org_exporter: DataExporter, mock_gcs_client: MagicMock
+    ) -> None:
+        org_exporter.export_report_to_gcs({"key": "val"}, run_id="run-1")
+        blob_call = mock_gcs_client.bucket.return_value.blob
+        blob_path: str = blob_call.call_args[0][0]
+        assert blob_path.startswith("rag_data/acme/reports/")
+
+    def test_tool_results_blob_path_includes_org_id(
+        self, org_exporter: DataExporter, mock_gcs_client: MagicMock
+    ) -> None:
+        org_exporter.export_tool_results_to_gcs([{"t": 1}], run_id="run-2")
+        blob_call = mock_gcs_client.bucket.return_value.blob
+        blob_path: str = blob_call.call_args[0][0]
+        assert blob_path.startswith("rag_data/acme/tool_results/")
+
+    def test_telemetry_blob_path_includes_org_id(
+        self, org_exporter: DataExporter, mock_gcs_client: MagicMock
+    ) -> None:
+        org_exporter.export_telemetry_to_gcs([{"m": "data"}])
+        blob_call = mock_gcs_client.bucket.return_value.blob
+        blob_path: str = blob_call.call_args[0][0]
+        assert blob_path.startswith("rag_data/acme/telemetry/")
+
+    def test_paths_unchanged_when_no_org_id(
+        self,
+        exporter_with_clients: DataExporter,
+        mock_gcs_client: MagicMock,
+    ) -> None:
+        exporter_with_clients.export_report_to_gcs({"key": "val"}, run_id="run-3")
+        blob_call = mock_gcs_client.bucket.return_value.blob
+        blob_path: str = blob_call.call_args[0][0]
+        assert blob_path.startswith("test/reports/")
+        assert "/acme/" not in blob_path

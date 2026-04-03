@@ -934,6 +934,7 @@ class ExportConfig(BaseModel):
     rag_enabled: bool = False
     rag_chunk_size: int = 1024
     rag_chunk_overlap: int = 200
+    org_id: str = ""
 
     @model_validator(mode="after")
     def _normalize_export_fields(self) -> ExportConfig:
@@ -969,6 +970,13 @@ class ExportConfig(BaseModel):
     def bigquery_project(self, value: str) -> None:
         """Backward-compatible setter for legacy callers."""
         self.gcp_project_id = value
+
+    @property
+    def effective_gcs_prefix(self) -> str:
+        """GCS prefix with optional org_id segment for per-org isolation."""
+        if self.org_id:
+            return f"{self.gcs_prefix}{self.org_id}/"
+        return self.gcs_prefix
 
     @property
     def rag_corpus_name(self) -> str:
@@ -1181,6 +1189,13 @@ class Settings(BaseSettings):
     email: EmailConfig = Field(default_factory=EmailConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
+
+    @model_validator(mode="after")
+    def _bridge_platform_org_id(self) -> Settings:
+        """Copy platform.org_id → export.org_id when platform is enabled."""
+        if self.platform.enabled and self.platform.org_id and not self.export.org_id:
+            self.export.org_id = self.platform.org_id
+        return self
 
     @classmethod
     def load(cls, config_path: str | Path | None = None) -> Settings:

@@ -13,12 +13,14 @@ from vaig.core.config import (
     BudgetConfig,
     ContextConfig,
     DatadogAPIConfig,
+    ExportConfig,
     GCPConfig,
     GenerationConfig,
     LoggingConfig,
     MCPConfig,
     ModelInfo,
     ModelsConfig,
+    PlatformConfig,
     PluginConfig,
     ProjectEntry,
     RateLimitConfig,
@@ -1141,3 +1143,50 @@ class TestRateLimitConfig:
         assert cfg.policy_gcs_bucket == "my-quota-bucket"
         assert cfg.policy_gcs_path == "custom/quota.yaml"
         assert cfg.cache_ttl_seconds == 900
+
+
+# ---------------------------------------------------------------------------
+# Per-Org Knowledge — org_id bridging (SPEC-4.2)
+# ---------------------------------------------------------------------------
+
+
+class TestOrgIdBridging:
+    """REQ-ORG-01: platform.org_id → export.org_id bridging."""
+
+    def test_platform_enabled_bridges_org_id(self) -> None:
+        """When platform is enabled with org_id, it bridges to export."""
+        s = Settings(
+            platform=PlatformConfig(
+                enabled=True, backend_url="https://api.example.com", org_id="acme"
+            ),
+        )
+        assert s.export.org_id == "acme"
+
+    def test_platform_disabled_skips_bridging(self) -> None:
+        """When platform is disabled, org_id stays empty."""
+        s = Settings(
+            platform=PlatformConfig(enabled=False, org_id="acme"),
+        )
+        assert s.export.org_id == ""
+
+    def test_explicit_export_org_id_not_overwritten(self) -> None:
+        """Explicit export.org_id takes precedence over platform bridging."""
+        s = Settings(
+            platform=PlatformConfig(
+                enabled=True, backend_url="https://api.example.com", org_id="acme"
+            ),
+            export=ExportConfig(org_id="beta"),
+        )
+        assert s.export.org_id == "beta"
+
+
+class TestEffectiveGcsPrefix:
+    """REQ-ORG-05: effective_gcs_prefix property on ExportConfig."""
+
+    def test_prefix_includes_org_segment(self) -> None:
+        cfg = ExportConfig(gcs_prefix="rag_data/", org_id="acme")
+        assert cfg.effective_gcs_prefix == "rag_data/acme/"
+
+    def test_prefix_unchanged_when_no_org_id(self) -> None:
+        cfg = ExportConfig(gcs_prefix="rag_data/")
+        assert cfg.effective_gcs_prefix == "rag_data/"

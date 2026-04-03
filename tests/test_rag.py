@@ -12,6 +12,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from vaig.core.config import ExportConfig
 from vaig.core.rag import RAGKnowledgeBase, RetrievalResult, RetrievedChunk
 
@@ -346,7 +348,7 @@ class TestRAGKnowledgeBaseListCorpora:
 
     @patch("vaig.core.rag._import_vertexai")
     @patch("vaig.core.rag._import_vertexai_rag")
-    def test_list_corpora_failure_returns_empty(
+    def test_list_corpora_failure_raises(
         self, mock_rag_import: MagicMock, mock_vtx: MagicMock
     ) -> None:
         mock_rag = MagicMock()
@@ -355,7 +357,8 @@ class TestRAGKnowledgeBaseListCorpora:
 
         kb = RAGKnowledgeBase(config=_make_config())
         kb._initialized = True
-        assert kb.list_corpora() == []
+        with pytest.raises(RuntimeError, match="Failed to list RAG corpora"):
+            kb.list_corpora()
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +494,7 @@ class TestOrchestratorRAGContext:
         orch = self._make_orchestrator(rag_enabled=True, corpus="corpus/1")
         with patch.dict("sys.modules", {"vaig.core.rag": None}):
             result = orch._retrieve_rag_context("query")
-            assert result == ""
+        assert result == ""
 
     @patch("vaig.core.rag._import_vertexai")
     @patch("vaig.core.rag._import_vertexai_rag")
@@ -506,3 +509,199 @@ class TestOrchestratorRAGContext:
         result = orch._retrieve_rag_context("failing query")
 
         assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# Per-Org Knowledge — resolve_corpus (SPEC-4.2, REQ-ORG-02)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveCorpus:
+    """Verify org corpus resolution: lookup, creation, caching, global fallback."""
+
+    @patch("vaig.core.rag._import_vertexai")
+    @patch("vaig.core.rag._import_vertexai_rag")
+    def test_finds_existing_corpus(
+        self, mock_rag_import: MagicMock, mock_vtx: MagicMock
+    ) -> None:
+        mock_rag = MagicMock()
+        mock_rag_import.return_value = mock_rag
+
+        mock_rag.list_corpora.return_value = [
+            SimpleNamespace(name="projects/1/ragCorpora/org-1", display_name="vaig-acme"),
+        ]
+
+        cfg = _make_config()
+        kb = RAGKnowledgeBase(config=cfg)
+        result = kb.resolve_corpus("acme")
+
+        assert result == "projects/1/ragCorpora/org-1"
+        mock_rag.create_corpus.assert_not_called()
+
+    @patch("vaig.core.rag._import_vertexai")
+    @patch("vaig.core.rag._import_vertexai_rag")
+    def test_creates_when_missing(
+        self, mock_rag_import: MagicMock, mock_vtx: MagicMock
+    ) -> None:
+        mock_rag = MagicMock()
+        mock_rag_import.return_value = mock_rag
+
+        mock_rag.list_corpora.return_value = []
+        mock_rag.create_corpus.return_value = SimpleNamespace(
+            name="projects/1/ragCorpora/new-org"
+        )
+
+        cfg = _make_config()
+        kb = RAGKnowledgeBase(config=cfg)
+        result = kb.resolve_corpus("acme")
+
+        assert result == "projects/1/ragCorpora/new-org"
+        mock_rag.create_corpus.assert_called_once()
+
+    @patch("vaig.core.rag._import_vertexai")
+    @patch("vaig.core.rag._import_vertexai_rag")
+    def test_caches_result(
+        self, mock_rag_import: MagicMock, mock_vtx: MagicMock
+    ) -> None:
+        mock_rag = MagicMock()
+        mock_rag_import.return_value = mock_rag
+
+        mock_rag.list_corpora.return_value = [
+            SimpleNamespace(name="projects/1/ragCorpora/org-1", display_name="vaig-acme"),
+        ]
+
+        cfg = _make_config()
+        kb = RAGKnowledgeBase(config=cfg)
+        kb.resolve_corpus("acme")
+        kb.resolve_corpus("acme")
+
+        # list_corpora should only be called once — second call hits cache.
+        mock_rag.list_corpora.assert_called_once()
+
+    def test_empty_org_id_returns_global_corpus(self) -> None:
+        cfg = _make_config()
+        kb = RAGKnowledgeBase(config=cfg)
+        result = kb.resolve_corpus("")
+        assert result == cfg.vertex_rag_corpus_id
+
+
+# ---------------------------------------------------------------------------
+# Per-Org Knowledge — retrieve_with_fallback (SPEC-4.2, REQ-ORG-03)
+# ---------------------------------------------------------------------------
+
+
+class TestRetrieveWithFallback:
+    """Verify org-first + global-fallback retrieval with dedup."""
+
+    @patch("vaig.core.rag._import_vertexai")
+    @patch("vaig.core.rag._import_vertexai_rag")
+    def test_org_only_when_sufficient(
+        self, mock_rag_import: MagicMock, mock_vtx: MagicMock
+    ) -> None:
+        mock_rag = MagicMock()
+        mock_rag_import.return_value = mock_rag
+
+        # Org corpus returns 5 chunks (>= min_results=3).
+        org_contexts = [
+            SimpleNamespace(text=f"org-{i}", distance=0.9, source_uri=f"gs://org/{i}")
+            for i in range(5)
+        ]
+        mock_rag.retrieval_query.return_value = SimpleNamespace(
+            contexts=SimpleNamespace(contexts=org_contexts)
+        )
+        mock_rag.list_corpora.return_value = [
+            SimpleNamespace(name="projects/1/ragCorpora/org-1", display_name="vaig-acme"),
+        ]
+
+        cfg = _make_config()
+        kb = RAGKnowledgeBase(config=cfg)
+        result = kb.retrieve_with_fallback("query", org_id="acme")
+
+        assert len(result.chunks) == 5
+        # Only one call — no global fallback.
+        mock_rag.retrieval_query.assert_called_once()
+
+    @patch("vaig.core.rag._import_vertexai")
+    @patch("vaig.core.rag._import_vertexai_rag")
+    def test_merges_org_and_global_when_insufficient(
+        self, mock_rag_import: MagicMock, mock_vtx: MagicMock
+    ) -> None:
+        mock_rag = MagicMock()
+        mock_rag_import.return_value = mock_rag
+
+        # Org corpus returns 1 chunk (< min_results=3), global returns 4.
+        org_ctx = [SimpleNamespace(text="org-0", distance=0.9, source_uri="gs://org/0")]
+        global_ctx = [
+            SimpleNamespace(text=f"global-{i}", distance=0.8, source_uri=f"gs://global/{i}")
+            for i in range(4)
+        ]
+        mock_rag.retrieval_query.side_effect = [
+            SimpleNamespace(contexts=SimpleNamespace(contexts=org_ctx)),
+            SimpleNamespace(contexts=SimpleNamespace(contexts=global_ctx)),
+        ]
+        mock_rag.list_corpora.return_value = [
+            SimpleNamespace(name="projects/1/ragCorpora/org-1", display_name="vaig-acme"),
+        ]
+
+        cfg = _make_config()
+        kb = RAGKnowledgeBase(config=cfg)
+        result = kb.retrieve_with_fallback("query", org_id="acme")
+
+        assert len(result.chunks) == 5
+        assert result.chunks[0].text == "org-0"  # Org chunks first.
+        assert mock_rag.retrieval_query.call_count == 2
+
+    @patch("vaig.core.rag._import_vertexai")
+    @patch("vaig.core.rag._import_vertexai_rag")
+    def test_dedupes_by_source_uri(
+        self, mock_rag_import: MagicMock, mock_vtx: MagicMock
+    ) -> None:
+        mock_rag = MagicMock()
+        mock_rag_import.return_value = mock_rag
+
+        # Overlapping source_uri between org and global.
+        org_ctx = [SimpleNamespace(text="org-dup", distance=0.9, source_uri="gs://shared/doc1")]
+        global_ctx = [
+            SimpleNamespace(text="global-dup", distance=0.8, source_uri="gs://shared/doc1"),
+            SimpleNamespace(text="global-unique", distance=0.7, source_uri="gs://global/doc2"),
+        ]
+        mock_rag.retrieval_query.side_effect = [
+            SimpleNamespace(contexts=SimpleNamespace(contexts=org_ctx)),
+            SimpleNamespace(contexts=SimpleNamespace(contexts=global_ctx)),
+        ]
+        mock_rag.list_corpora.return_value = [
+            SimpleNamespace(name="projects/1/ragCorpora/org-1", display_name="vaig-acme"),
+        ]
+
+        cfg = _make_config()
+        kb = RAGKnowledgeBase(config=cfg)
+        result = kb.retrieve_with_fallback("query", org_id="acme")
+
+        sources = [c.source for c in result.chunks]
+        assert sources == ["gs://shared/doc1", "gs://global/doc2"]
+        # Org version kept, global duplicate dropped.
+        assert result.chunks[0].text == "org-dup"
+
+    @patch("vaig.core.rag._import_vertexai")
+    @patch("vaig.core.rag._import_vertexai_rag")
+    def test_global_only_when_no_org_id(
+        self, mock_rag_import: MagicMock, mock_vtx: MagicMock
+    ) -> None:
+        mock_rag = MagicMock()
+        mock_rag_import.return_value = mock_rag
+
+        global_ctx = [
+            SimpleNamespace(text="global-0", distance=0.8, source_uri="gs://global/0")
+        ]
+        mock_rag.retrieval_query.return_value = SimpleNamespace(
+            contexts=SimpleNamespace(contexts=global_ctx)
+        )
+
+        cfg = _make_config()
+        kb = RAGKnowledgeBase(config=cfg)
+        result = kb.retrieve_with_fallback("query", org_id="")
+
+        assert len(result.chunks) == 1
+        assert result.chunks[0].text == "global-0"
+        # Single call on global corpus.
+        mock_rag.retrieval_query.assert_called_once()
