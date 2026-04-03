@@ -85,6 +85,9 @@ class EmailSender:
         )
 
         to_addrs = recipients or self.recipients
+        if not to_addrs:
+            logger.warning("Skipping email alert — no recipients configured")
+            return
         subject = f"[{severity_upper}] {title} — {service_name}"
 
         html_body = self._build_alert_html(alert)
@@ -120,6 +123,9 @@ class EmailSender:
 
         formatted = format_report_summary(report, execution_time)
         to_addrs = recipients or self.recipients
+        if not to_addrs:
+            logger.warning("Skipping email report — no recipients configured")
+            return
         subject = f"[{formatted.status}] Service Health Report — {formatted.scope}"
 
         html_body = self._build_report_html(formatted)

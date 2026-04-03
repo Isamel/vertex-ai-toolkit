@@ -448,7 +448,7 @@ email:
   username: ""                        # SMTP username — or use VAIG_EMAIL__USERNAME
   password: ""                        # SMTP password — or use VAIG_EMAIL__PASSWORD
   from_address: ""                    # Sender email — or use VAIG_EMAIL__FROM_ADDRESS
-  recipients: []                      # List of recipient emails — or use VAIG_EMAIL__RECIPIENTS (comma-separated)
+  recipients: []                      # List of recipient emails — or use VAIG_EMAIL__RECIPIENTS as JSON, e.g. '["a@example.com","b@example.com"]'
   use_tls: true                       # Enable TLS encryption (STARTTLS on 587, SMTP_SSL on 465)
   timeout: 30                         # SMTP connection timeout in seconds
   notify_on:                          # Only send notifications for these severities (and above)

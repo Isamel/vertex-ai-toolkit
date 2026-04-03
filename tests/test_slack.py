@@ -224,15 +224,24 @@ class TestSendAlertCardThreshold:
         """SC-NH-03: DEBUG log emitted when severity doesn't meet threshold."""
         import logging
 
-        with caplog.at_level(logging.DEBUG):
-            webhook.send_alert_card(
-                title="Alert",
-                severity="LOW",
-                service_name="svc",
-                summary="Minor",
-            )
+        # The "vaig" parent logger may have propagate=False (set by
+        # setup_logging() in earlier tests), which prevents caplog from
+        # capturing records.  Temporarily ensure propagation is enabled.
+        vaig_logger = logging.getLogger("vaig")
+        orig_propagate = vaig_logger.propagate
+        vaig_logger.propagate = True
+        try:
+            with caplog.at_level(logging.DEBUG, logger="vaig.integrations.slack"):
+                webhook.send_alert_card(
+                    title="Alert",
+                    severity="LOW",
+                    service_name="svc",
+                    summary="Minor",
+                )
 
-        assert "does not meet threshold" in caplog.text
+            assert "does not meet threshold" in caplog.text
+        finally:
+            vaig_logger.propagate = orig_propagate
 
 
 # ── send_report_summary tests (SC-NH-02) ────────────────────

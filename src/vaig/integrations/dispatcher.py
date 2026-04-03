@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from vaig.core.config import EmailConfig, GoogleChatConfig, PagerDutyConfig, SlackConfig
 from vaig.integrations.email_sender import EmailSender
+from vaig.integrations.formatters import meets_threshold, status_to_severity
 from vaig.integrations.google_chat import GoogleChatWebhook
 from vaig.integrations.pagerduty import PagerDutyClient
 from vaig.integrations.slack import SlackWebhook
@@ -16,51 +17,6 @@ if TYPE_CHECKING:
     from vaig.skills.service_health.schema import HealthReport
 
 logger = logging.getLogger(__name__)
-
-# ── Severity helpers (shared across dispatch channels) ───────
-# These live here rather than in a specific integration module
-# to avoid tight coupling between the dispatcher and google_chat.
-
-_SEVERITY_ORDER: dict[str, int] = {
-    "critical": 4,
-    "high": 3,
-    "medium": 2,
-    "low": 1,
-    "info": 0,
-}
-
-
-def _status_to_severity(overall_status: str) -> str:
-    """Map OverallStatus to a severity string for threshold comparison."""
-    mapping: dict[str, str] = {
-        "CRITICAL": "CRITICAL",
-        "DEGRADED": "HIGH",
-        "HEALTHY": "INFO",
-        "UNKNOWN": "MEDIUM",
-    }
-    return mapping.get(overall_status.upper(), "MEDIUM")
-
-
-def _normalize_notify_on(notify_on: list[str]) -> list[str]:
-    """Return normalized valid severities from ``notify_on``."""
-    return [v.lower() for v in notify_on if v.lower() in _SEVERITY_ORDER]
-
-
-def _meets_threshold(severity: str, notify_on: list[str]) -> bool:
-    """Check if severity meets the minimum notification threshold."""
-    if not notify_on:
-        return False
-
-    severity_lower = severity.lower()
-    if severity_lower not in _SEVERITY_ORDER:
-        return False
-
-    valid_notify_on = _normalize_notify_on(notify_on)
-    if not valid_notify_on:
-        return False
-
-    min_threshold = min(_SEVERITY_ORDER[s] for s in valid_notify_on)
-    return _SEVERITY_ORDER[severity_lower] >= min_threshold
 
 
 @dataclass
@@ -180,7 +136,7 @@ class NotificationDispatcher:
         """
         result = DispatchResult()
         es = report.executive_summary
-        severity = _status_to_severity(es.overall_status.value)
+        severity = status_to_severity(es.overall_status.value)
 
         # Derive context
         source = alert_context.source if alert_context else "vaig"
@@ -237,10 +193,10 @@ class NotificationDispatcher:
                 f"{self.pagerduty.base_url.replace('api.', 'app.')}"
                 f"/incidents/{result.pagerduty_incident_id}"
             )
-        findings_text = [f.title for f in report.findings[:5]]
+        findings_text = [f.title for f in (report.findings or [])[:5]]
 
         # ── Google Chat ──────────────────────────────────────
-        if self.google_chat is not None and _meets_threshold(
+        if self.google_chat is not None and meets_threshold(
             severity, self.google_chat.notify_on
         ):
             try:
@@ -261,7 +217,7 @@ class NotificationDispatcher:
                 result.errors.append(error_msg)
 
         # ── Slack ────────────────────────────────────────────
-        if self.slack is not None and _meets_threshold(
+        if self.slack is not None and meets_threshold(
             severity, self.slack.notify_on
         ):
             try:
@@ -282,7 +238,7 @@ class NotificationDispatcher:
                 result.errors.append(error_msg)
 
         # ── Email ────────────────────────────────────────────
-        if self.email is not None and _meets_threshold(
+        if self.email is not None and meets_threshold(
             severity, self.email.notify_on
         ):
             try:
