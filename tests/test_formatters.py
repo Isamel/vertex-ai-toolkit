@@ -5,9 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from vaig.integrations.formatters import (
-    FormattedAlert,
     FormattedReport,
-    format_alert,
     format_report_summary,
     meets_threshold,
     status_to_severity,
@@ -95,33 +93,6 @@ class TestStatusToSeverity:
 
     def test_unrecognised_maps_to_medium(self) -> None:
         assert status_to_severity("BANANA") == "MEDIUM"
-
-
-# ── format_alert tests ───────────────────────────────────────
-
-
-class TestFormatAlert:
-    def test_returns_formatted_alert(self) -> None:
-        report = _make_report(status="CRITICAL")
-        alert = format_alert(report, service_name="my-api")
-
-        assert isinstance(alert, FormattedAlert)
-        assert alert.severity == "CRITICAL"
-        assert alert.service_name == "my-api"
-        assert alert.summary == "Service degraded"
-        assert len(alert.findings) == 1
-
-    def test_deterministic_output(self) -> None:
-        """SC-NH-11: identical input → identical output."""
-        report = _make_report()
-        a = format_alert(report)
-        b = format_alert(report)
-        assert a == b
-
-    def test_falls_back_to_scope_for_service_name(self) -> None:
-        report = _make_report(scope="Namespace: staging")
-        alert = format_alert(report)
-        assert alert.service_name == "Namespace: staging"
 
 
 # ── format_report_summary tests ──────────────────────────────

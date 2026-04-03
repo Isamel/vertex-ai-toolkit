@@ -8,12 +8,7 @@ import pytest
 import requests
 
 from vaig.core.config import GoogleChatConfig
-from vaig.integrations.google_chat import (
-    GoogleChatWebhook,
-    _meets_threshold,
-    _normalize_notify_on,
-    _status_to_severity,
-)
+from vaig.integrations.google_chat import GoogleChatWebhook
 
 # ── Fixtures ─────────────────────────────────────────────────
 
@@ -76,84 +71,6 @@ class TestGoogleChatConfigAutoEnable:
     def test_webhook_url_not_in_repr(self) -> None:
         config = GoogleChatConfig(webhook_url="https://secret.url")
         assert "secret.url" not in repr(config)
-
-
-# ── Severity threshold tests ─────────────────────────────────
-
-
-class TestSeverityThreshold:
-    """Tests for _meets_threshold helper."""
-
-    def test_critical_meets_critical_high(self) -> None:
-        assert _meets_threshold("CRITICAL", ["critical", "high"]) is True
-
-    def test_high_meets_critical_high(self) -> None:
-        assert _meets_threshold("HIGH", ["critical", "high"]) is True
-
-    def test_medium_does_not_meet_critical_high(self) -> None:
-        assert _meets_threshold("MEDIUM", ["critical", "high"]) is False
-
-    def test_low_does_not_meet_critical_high(self) -> None:
-        assert _meets_threshold("LOW", ["critical", "high"]) is False
-
-    def test_info_does_not_meet_critical_high(self) -> None:
-        assert _meets_threshold("INFO", ["critical", "high"]) is False
-
-    def test_all_severities_meet_all_threshold(self) -> None:
-        all_levels = ["critical", "high", "medium", "low", "info"]
-        for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
-            assert _meets_threshold(sev, all_levels) is True
-
-    def test_empty_notify_on_blocks_all(self) -> None:
-        assert _meets_threshold("CRITICAL", []) is False
-
-    def test_unknown_severity_in_notify_on_ignored(self) -> None:
-        """Typos in notify_on should fail safe (no alerts), not fail open."""
-        assert _meets_threshold("CRITICAL", ["critcal"]) is False
-
-    def test_unknown_severity_input_does_not_match(self) -> None:
-        """Unknown severity input should not pass threshold."""
-        assert _meets_threshold("BANANA", ["critical", "high"]) is False
-
-    def test_mixed_valid_invalid_notify_on(self) -> None:
-        """Valid entries still work even when mixed with typos."""
-        assert _meets_threshold("CRITICAL", ["typo", "critical"]) is True
-        assert _meets_threshold("MEDIUM", ["typo", "critical"]) is False
-
-
-class TestNormalizeNotifyOn:
-    """Tests for _normalize_notify_on helper."""
-
-    def test_valid_values_preserved(self) -> None:
-        result = _normalize_notify_on(["critical", "high", "medium"])
-        assert result == ["critical", "high", "medium"]
-
-    def test_invalid_values_dropped(self) -> None:
-        result = _normalize_notify_on(["critcal", "banana", "high"])
-        assert result == ["high"]
-
-    def test_empty_list(self) -> None:
-        result = _normalize_notify_on([])
-        assert result == []
-
-
-class TestStatusToSeverity:
-    """Tests for _status_to_severity mapping."""
-
-    def test_critical_maps(self) -> None:
-        assert _status_to_severity("CRITICAL") == "CRITICAL"
-
-    def test_degraded_maps_to_high(self) -> None:
-        assert _status_to_severity("DEGRADED") == "HIGH"
-
-    def test_healthy_maps_to_info(self) -> None:
-        assert _status_to_severity("HEALTHY") == "INFO"
-
-    def test_unknown_maps_to_medium(self) -> None:
-        assert _status_to_severity("UNKNOWN") == "MEDIUM"
-
-    def test_unrecognised_defaults_to_medium(self) -> None:
-        assert _status_to_severity("SOMETHING_ELSE") == "MEDIUM"
 
 
 # ── send_alert_card tests ────────────────────────────────────
@@ -328,6 +245,36 @@ class TestSendReportSummary:
         webhook.send_report_summary(report)
 
         mock_post.assert_called_once()
+
+    @patch("vaig.integrations.google_chat.requests.post")
+    def test_report_summary_shows_5_findings_parity(
+        self, mock_post: MagicMock, webhook: GoogleChatWebhook
+    ) -> None:
+        """REQ-GCP-02: report summary shows up to 5 findings (parity with Slack/Email)."""
+        mock_post.return_value = MagicMock(status_code=200)
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        report = self._make_report(status="CRITICAL")
+        # Create 7 distinct findings
+        findings = []
+        for i in range(7):
+            f = MagicMock()
+            f.title = f"Finding {i + 1}"
+            findings.append(f)
+        report.findings = findings
+
+        webhook.send_report_summary(report, execution_time=5.0)
+
+        mock_post.assert_called_once()
+        payload = mock_post.call_args.kwargs["json"]
+        widget_str = str(payload)
+
+        # Exactly 5 findings should appear (parity with Slack/Email)
+        for i in range(1, 6):
+            assert f"Finding {i}" in widget_str
+        # Findings 6 and 7 must NOT appear
+        assert "Finding 6" not in widget_str
+        assert "Finding 7" not in widget_str
 
 
 # ── Error handling ───────────────────────────────────────────

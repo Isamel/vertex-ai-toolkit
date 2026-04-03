@@ -8,6 +8,14 @@ from typing import TYPE_CHECKING, Any
 import requests
 
 from vaig.core.config import GoogleChatConfig
+from vaig.integrations.formatters import (
+    SEVERITY_ICON,
+    FormattedAlert,
+    FormattedReport,
+    format_report_summary,
+    meets_threshold,
+    status_to_severity,
+)
 
 if TYPE_CHECKING:
     from vaig.skills.service_health.schema import HealthReport
@@ -16,60 +24,6 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────
 _DEFAULT_TIMEOUT = 30
-
-_SEVERITY_ICON: dict[str, str] = {
-    "CRITICAL": "🔴",
-    "HIGH": "🟠",
-    "MEDIUM": "🟡",
-    "LOW": "🟢",
-    "INFO": "🔵",
-}
-
-# Severity ordering for threshold comparison
-_SEVERITY_ORDER: dict[str, int] = {
-    "critical": 4,
-    "high": 3,
-    "medium": 2,
-    "low": 1,
-    "info": 0,
-}
-
-
-def _normalize_notify_on(notify_on: list[str]) -> list[str]:
-    """Return normalized valid severities from ``notify_on``.
-
-    Unknown values are silently dropped so misconfiguration fails safe
-    (no alerts) rather than fail open.
-    """
-    normalized: list[str] = []
-    for value in notify_on:
-        severity = value.lower()
-        if severity in _SEVERITY_ORDER:
-            normalized.append(severity)
-    return normalized
-
-
-def _meets_threshold(severity: str, notify_on: list[str]) -> bool:
-    """Check if severity meets the minimum notification threshold.
-
-    The threshold is determined by the *lowest* valid severity in
-    ``notify_on``.  Any severity at or above that threshold will pass.
-    Invalid severities in ``notify_on`` are ignored so misconfiguration
-    fails safe (no alerts) rather than fail open.
-    """
-    if not notify_on:
-        return False
-
-    severity_lower = severity.lower()
-    if severity_lower not in _SEVERITY_ORDER:
-        return False
-
-    valid_notify_on = _normalize_notify_on(notify_on)
-    if not valid_notify_on:
-        return False
-
-    min_threshold = min(_SEVERITY_ORDER[s] for s in valid_notify_on)
-    return _SEVERITY_ORDER[severity_lower] >= min_threshold
 
 
 class GoogleChatWebhook:
@@ -104,7 +58,7 @@ class GoogleChatWebhook:
         """
         severity_upper = severity.upper()
 
-        if not _meets_threshold(severity_upper, self.notify_on):
+        if not meets_threshold(severity_upper, self.notify_on):
             logger.debug(
                 "Skipping Google Chat alert — severity %s does not meet threshold %s",
                 severity_upper,
@@ -112,56 +66,18 @@ class GoogleChatWebhook:
             )
             return
 
-        icon = _SEVERITY_ICON.get(severity_upper, "❓")
+        alert = FormattedAlert(
+            title=title,
+            severity=severity_upper,
+            severity_icon=SEVERITY_ICON.get(severity_upper, "\u2753"),
+            service_name=service_name,
+            summary=summary,
+            findings=findings[:5] if findings else [],
+            pagerduty_url=pagerduty_url,
+        )
 
-        # Build card widgets
-        widgets: list[dict[str, Any]] = [
-            {
-                "decoratedText": {
-                    "topLabel": "Severity",
-                    "text": f"{icon} {severity_upper}",
-                },
-            },
-            {
-                "decoratedText": {
-                    "topLabel": "Service",
-                    "text": service_name,
-                },
-            },
-            {
-                "textParagraph": {
-                    "text": summary,
-                },
-            },
-        ]
-
-        # Add top findings
-        if findings:
-            findings_text = "\n".join(f"• {f}" for f in findings[:5])
-            widgets.append(
-                {
-                    "textParagraph": {
-                        "text": f"<b>Top Findings:</b>\n{findings_text}",
-                    },
-                }
-            )
-
-        # Add PagerDuty link button if available
-        buttons: list[dict[str, Any]] = []
-        if pagerduty_url:
-            buttons.append(
-                {
-                    "text": "View in PagerDuty",
-                    "onClick": {
-                        "openLink": {"url": pagerduty_url},
-                    },
-                }
-            )
-
-        if buttons:
-            widgets.append({"buttonList": {"buttons": buttons}})
-
-        card_payload = self._build_card_message(title, widgets)
+        widgets = self._build_alert_widgets(alert)
+        card_payload = self._build_card_message(alert.title, widgets)
         self._send(card_payload)
 
     def send_report_summary(
@@ -178,49 +94,48 @@ class GoogleChatWebhook:
             report: The completed HealthReport.
             execution_time: Pipeline execution time in seconds.
         """
-        es = report.executive_summary
-        severity = _status_to_severity(es.overall_status.value)
+        formatted = format_report_summary(report, execution_time)
+        severity = status_to_severity(
+            report.executive_summary.overall_status.value,
+        )
 
-        if not _meets_threshold(severity, self.notify_on):
+        if not meets_threshold(severity, self.notify_on):
             logger.debug(
                 "Skipping Google Chat report summary — severity %s does not meet threshold",
                 severity,
             )
             return
 
-        icon = _SEVERITY_ICON.get(severity.upper(), "❓")
+        widgets = self._build_report_widgets(formatted)
+        card_payload = self._build_card_message(formatted.title, widgets)
+        self._send(card_payload)
 
-        # Extract top findings (max 3)
-        top_findings = [f.title for f in report.findings[:3]] if report.findings else []
-        findings_text = "\n".join(f"• {f}" for f in top_findings) if top_findings else "No findings."
+    # ── Private helpers ──────────────────────────────────────
 
+    def _build_alert_widgets(self, alert: FormattedAlert) -> list[dict[str, Any]]:
+        """Build Card v2 widgets for an alert card from FormattedAlert."""
         widgets: list[dict[str, Any]] = [
             {
                 "decoratedText": {
-                    "topLabel": "Status",
-                    "text": f"{icon} {es.overall_status.value}",
+                    "topLabel": "Severity",
+                    "text": f"{alert.severity_icon} {alert.severity}",
                 },
             },
             {
                 "decoratedText": {
-                    "topLabel": "Scope",
-                    "text": es.scope,
-                },
-            },
-            {
-                "decoratedText": {
-                    "topLabel": "Issues",
-                    "text": f"{es.issues_found} total ({es.critical_count} critical, {es.warning_count} warning)",
+                    "topLabel": "Service",
+                    "text": alert.service_name,
                 },
             },
             {
                 "textParagraph": {
-                    "text": es.summary_text,
+                    "text": alert.summary,
                 },
             },
         ]
 
-        if top_findings:
+        if alert.findings:
+            findings_text = "\n".join(f"• {f}" for f in alert.findings)
             widgets.append(
                 {
                     "textParagraph": {
@@ -229,20 +144,71 @@ class GoogleChatWebhook:
                 }
             )
 
-        if execution_time > 0:
-            widgets.append(
+        buttons: list[dict[str, Any]] = []
+        if alert.pagerduty_url:
+            buttons.append(
                 {
-                    "decoratedText": {
-                        "topLabel": "Execution Time",
-                        "text": f"{execution_time:.1f}s",
+                    "text": "View in PagerDuty",
+                    "onClick": {
+                        "openLink": {"url": alert.pagerduty_url},
                     },
                 }
             )
 
-        card_payload = self._build_card_message("Service Health Report", widgets)
-        self._send(card_payload)
+        if buttons:
+            widgets.append({"buttonList": {"buttons": buttons}})
 
-    # ── Private helpers ──────────────────────────────────────
+        return widgets
+
+    def _build_report_widgets(self, formatted: FormattedReport) -> list[dict[str, Any]]:
+        """Build Card v2 widgets for a report summary from FormattedReport."""
+        widgets: list[dict[str, Any]] = [
+            {
+                "decoratedText": {
+                    "topLabel": "Status",
+                    "text": f"{formatted.status_icon} {formatted.status}",
+                },
+            },
+            {
+                "decoratedText": {
+                    "topLabel": "Scope",
+                    "text": formatted.scope,
+                },
+            },
+            {
+                "decoratedText": {
+                    "topLabel": "Issues",
+                    "text": f"{formatted.issues_found} total ({formatted.critical_count} critical, {formatted.warning_count} warning)",
+                },
+            },
+            {
+                "textParagraph": {
+                    "text": formatted.summary,
+                },
+            },
+        ]
+
+        if formatted.findings:
+            findings_text = "\n".join(f"• {f}" for f in formatted.findings)
+            widgets.append(
+                {
+                    "textParagraph": {
+                        "text": f"<b>Top Findings:</b>\n{findings_text}",
+                    },
+                }
+            )
+
+        if formatted.execution_time > 0:
+            widgets.append(
+                {
+                    "decoratedText": {
+                        "topLabel": "Execution Time",
+                        "text": f"{formatted.execution_time:.1f}s",
+                    },
+                }
+            )
+
+        return widgets
 
     def _build_card_message(
         self,
@@ -284,14 +250,3 @@ class GoogleChatWebhook:
         )
         resp.raise_for_status()
         logger.info("Google Chat message sent successfully")
-
-
-def _status_to_severity(overall_status: str) -> str:
-    """Map OverallStatus to a severity string for threshold comparison."""
-    mapping: dict[str, str] = {
-        "CRITICAL": "CRITICAL",
-        "DEGRADED": "HIGH",
-        "HEALTHY": "INFO",
-        "UNKNOWN": "MEDIUM",
-    }
-    return mapping.get(overall_status.upper(), "MEDIUM")

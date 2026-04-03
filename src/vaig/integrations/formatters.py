@@ -97,31 +97,6 @@ class FormattedReport:
     execution_time: float = 0.0
 
 
-def format_alert(
-    report: HealthReport,
-    service_name: str = "",
-    pagerduty_url: str | None = None,
-) -> FormattedAlert:
-    """Build a FormattedAlert from a HealthReport."""
-    es = report.executive_summary
-    severity = status_to_severity(es.overall_status.value)
-    severity_upper = severity.upper()
-    icon = SEVERITY_ICON.get(severity_upper, "\u2753")
-
-    findings_text = [f.title for f in report.findings[:5]] if report.findings else []
-    svc = service_name or es.scope
-
-    return FormattedAlert(
-        title="Service Health Alert",
-        severity=severity_upper,
-        severity_icon=icon,
-        service_name=svc,
-        summary=es.summary_text,
-        findings=findings_text,
-        pagerduty_url=pagerduty_url,
-    )
-
-
 def format_report_summary(
     report: HealthReport,
     execution_time: float = 0.0,
