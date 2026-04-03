@@ -222,17 +222,25 @@ class TestCacheTTL:
         tools = {"tool_a": _FakeToolStats(call_count=10, failure_rate=0.9)}
         svc = _make_service(tools=tools, config=_make_config(enabled=True, cache_ttl_seconds=300))
 
-        # Prime the cache
-        with patch("vaig.core.optimizer.ToolCallOptimizer") as mock_cls:
+        # Control both time and optimizer for the entire test to avoid
+        # CI flakiness from partially-patched state.
+        with (
+            patch("vaig.core.effectiveness.time") as mock_time,
+            patch("vaig.core.optimizer.ToolCallOptimizer") as mock_cls,
+        ):
             mock_cls.return_value.analyze.return_value = _FakeToolInsights(tools=tools)
-            score1 = svc.get_tool_score("tool_a")
 
-        # Second call — patch monotonic at the module where it's used so the
-        # cache still looks fresh.  Using the effectiveness-module reference
-        # avoids intermittent CI failures when patching the C-level time module.
-        with patch("vaig.core.effectiveness.time") as mock_time:
-            mock_time.monotonic.return_value = svc._cache_timestamp + 60
+            # Prime: monotonic returns 1000.0
+            mock_time.monotonic.return_value = 1000.0
+            score1 = svc.get_tool_score("tool_a")
+            assert mock_cls.return_value.analyze.call_count == 1
+
+            # Second call 60 s later — well within TTL (300 s)
+            mock_time.monotonic.return_value = 1060.0
             score2 = svc.get_tool_score("tool_a")
+
+            # Optimizer must NOT have been called again (cache hit)
+            assert mock_cls.return_value.analyze.call_count == 1
 
         assert score1.tier == score2.tier == EffectivenessTier.SKIP
 
