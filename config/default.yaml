@@ -429,3 +429,28 @@ google_chat:
   notify_on:                          # Only send notifications for these severities (and above)
     - critical
     - high
+
+# Slack integration — incoming webhook for Block Kit notifications
+# Auto-enables when webhook_url is set.
+slack:
+  enabled: false
+  webhook_url: ""                     # Webhook URL — or use VAIG_SLACK__WEBHOOK_URL
+  notify_on:                          # Only send notifications for these severities (and above)
+    - critical
+    - high
+
+# Email (SMTP) integration — sends HTML + plain-text alerts and reports
+# Auto-enables when smtp_host, from_address, and recipients are all set.
+email:
+  enabled: false
+  smtp_host: ""                       # SMTP server hostname — or use VAIG_EMAIL__SMTP_HOST
+  smtp_port: 587                      # 587 for STARTTLS, 465 for implicit SSL
+  username: ""                        # SMTP username — or use VAIG_EMAIL__USERNAME
+  password: ""                        # SMTP password — or use VAIG_EMAIL__PASSWORD
+  from_address: ""                    # Sender email — or use VAIG_EMAIL__FROM_ADDRESS
+  recipients: []                      # List of recipient emails — or use VAIG_EMAIL__RECIPIENTS as JSON, e.g. '["a@example.com","b@example.com"]'
+  use_tls: true                       # Enable TLS encryption (STARTTLS on 587, SMTP_SSL on 465)
+  timeout: 30                         # SMTP connection timeout in seconds
+  notify_on:                          # Only send notifications for these severities (and above)
+    - critical
+    - high
