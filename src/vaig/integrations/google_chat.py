@@ -9,11 +9,11 @@ import requests
 
 from vaig.core.config import GoogleChatConfig
 from vaig.integrations.formatters import (
-    SEVERITY_ICON,
     FormattedAlert,
     FormattedReport,
     format_report_summary,
     meets_threshold,
+    severity_icon,
     status_to_severity,
 )
 
@@ -69,7 +69,7 @@ class GoogleChatWebhook:
         alert = FormattedAlert(
             title=title,
             severity=severity_upper,
-            severity_icon=SEVERITY_ICON.get(severity_upper, "\u2753"),
+            severity_icon=severity_icon(severity_upper),
             service_name=service_name,
             summary=summary,
             findings=findings[:5] if findings else [],

@@ -9,12 +9,14 @@ import requests
 
 from vaig.core.config import SlackConfig
 from vaig.integrations.formatters import (
-    SEVERITY_ICON,
     FormattedAlert,
     FormattedReport,
     format_report_summary,
     meets_threshold,
     status_to_severity,
+)
+from vaig.integrations.formatters import (
+    severity_icon as _severity_icon,
 )
 
 if TYPE_CHECKING:
@@ -250,8 +252,3 @@ class SlackWebhook:
 
 
 # ── Module-level helpers ─────────────────────────────────────
-
-
-def _severity_icon(severity: str) -> str:
-    """Return the emoji icon for a severity level."""
-    return SEVERITY_ICON.get(severity.upper(), "\u2753")

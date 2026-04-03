@@ -37,6 +37,11 @@ _STATUS_TO_SEVERITY: dict[str, str] = {
 # ── Helper functions ─────────────────────────────────────────
 
 
+def severity_icon(severity: str) -> str:
+    """Return the emoji icon for a severity level."""
+    return SEVERITY_ICON.get(severity.upper(), "❓")
+
+
 def meets_threshold(severity: str, notify_on: list[str]) -> bool:
     """Check if severity meets the minimum notification threshold.
 
@@ -104,7 +109,7 @@ def format_report_summary(
     """Build a FormattedReport from a HealthReport."""
     es = report.executive_summary
     severity = status_to_severity(es.overall_status.value)
-    icon = SEVERITY_ICON.get(severity.upper(), "\u2753")
+    icon = severity_icon(severity)
 
     findings_text = [f.title for f in report.findings[:5]] if report.findings else []
 
