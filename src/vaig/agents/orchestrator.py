@@ -336,11 +336,7 @@ class Orchestrator:
             from vaig.core.rag import RAGKnowledgeBase
 
             rag_kb = RAGKnowledgeBase(config=export_cfg, project=export_cfg.gcp_project_id)
-            org_id = export_cfg.org_id
-            if org_id:
-                result = rag_kb.retrieve_with_fallback(query, org_id=org_id)
-            else:
-                result = rag_kb.retrieve(query)
+            result = rag_kb.retrieve_with_fallback(query, org_id=export_cfg.org_id or "")
             if result.has_results:
                 formatted = result.format_context()
                 logger.info("RAG context injected: %d chunk(s)", len(result.chunks))

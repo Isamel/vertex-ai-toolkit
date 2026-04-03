@@ -203,6 +203,11 @@ class RAGKnowledgeBase:
         -------
         list[dict[str, Any]]
             A list of dicts with ``name`` and ``display_name`` keys.
+
+        Raises
+        ------
+        RuntimeError
+            When the underlying API call fails.
         """
         self._ensure_initialized()
         rag = _import_vertexai_rag()
@@ -212,9 +217,9 @@ class RAGKnowledgeBase:
                 {"name": str(c.name), "display_name": str(c.display_name)}
                 for c in corpora
             ]
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to list RAG corpora.")
-            return []
+            raise RuntimeError("Failed to list RAG corpora") from exc
 
     def resolve_corpus(self, org_id: str) -> str:
         """Find or create the RAG corpus for an organization.
@@ -238,7 +243,8 @@ class RAGKnowledgeBase:
 
         display_name = f"vaig-{org_id}"
         try:
-            for corpus in self.list_corpora():
+            corpora = self.list_corpora()
+            for corpus in corpora:
                 if corpus.get("display_name") == display_name:
                     resolved: str = str(corpus["name"])
                     self._org_corpus_cache[org_id] = resolved
@@ -252,7 +258,7 @@ class RAGKnowledgeBase:
             )
             self._org_corpus_cache[org_id] = name
             return name
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             logger.exception(
                 "Failed to resolve org corpus for '%s' — falling back to global",
                 org_id,
@@ -388,6 +394,10 @@ class RAGKnowledgeBase:
         if not org_id:
             return self.retrieve(query, top_k=top_k)
 
+        if not query.strip():
+            logger.debug("Empty query — returning empty retrieval.")
+            return RetrievalResult(query=query)
+
         org_corpus = self.resolve_corpus(org_id)
         if not org_corpus:
             return self.retrieve(query, top_k=top_k)
@@ -410,7 +420,7 @@ class RAGKnowledgeBase:
                 )
                 for ctx in (response.contexts.contexts if response.contexts else [])
             ]
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             logger.exception("Org corpus retrieval failed for org '%s'", org_id)
 
         if len(org_chunks) >= min_results:

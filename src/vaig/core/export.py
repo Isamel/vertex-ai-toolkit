@@ -761,7 +761,7 @@ class DataExporter:
     def export_report_to_gcs(self, report: dict[str, Any], run_id: str) -> str | None:
         """Upload a health report as a single JSON document to GCS (one JSON file per report).
 
-        The blob is written to ``{gcs_prefix}reports/{YYYY-MM-DD}/{run_id}.json``.
+        The blob is written to ``{effective_gcs_prefix}reports/{YYYY-MM-DD}/{run_id}.json``.
         Note: this uploads a single JSON document, not JSONL.
 
         Args:
@@ -792,7 +792,7 @@ class DataExporter:
     def export_tool_results_to_gcs(self, records: list[dict[str, Any]], run_id: str) -> str | None:
         """Upload tool call records as JSONL to GCS.
 
-        The blob is written to ``{gcs_prefix}tool_results/{YYYY-MM-DD}/{run_id}.jsonl``.
+        The blob is written to ``{effective_gcs_prefix}tool_results/{YYYY-MM-DD}/{run_id}.jsonl``.
 
         Args:
             records: List of tool call dicts to serialise as JSONL.
@@ -825,7 +825,7 @@ class DataExporter:
     def export_telemetry_to_gcs(self, records: list[dict[str, Any]]) -> str | None:
         """Upload a telemetry batch as JSONL to GCS.
 
-        The blob is written to ``{gcs_prefix}telemetry/{YYYY-MM-DD}/batch_{timestamp_iso}.jsonl``.
+        The blob is written to ``{effective_gcs_prefix}telemetry/{YYYY-MM-DD}/batch_{timestamp_iso}.jsonl``.
 
         Args:
             records: List of telemetry event dicts to serialise as JSONL.

@@ -12,6 +12,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from vaig.core.config import ExportConfig
 from vaig.core.rag import RAGKnowledgeBase, RetrievalResult, RetrievedChunk
 
@@ -346,7 +348,7 @@ class TestRAGKnowledgeBaseListCorpora:
 
     @patch("vaig.core.rag._import_vertexai")
     @patch("vaig.core.rag._import_vertexai_rag")
-    def test_list_corpora_failure_returns_empty(
+    def test_list_corpora_failure_raises(
         self, mock_rag_import: MagicMock, mock_vtx: MagicMock
     ) -> None:
         mock_rag = MagicMock()
@@ -355,7 +357,8 @@ class TestRAGKnowledgeBaseListCorpora:
 
         kb = RAGKnowledgeBase(config=_make_config())
         kb._initialized = True
-        assert kb.list_corpora() == []
+        with pytest.raises(RuntimeError, match="Failed to list RAG corpora"):
+            kb.list_corpora()
 
 
 # ---------------------------------------------------------------------------
