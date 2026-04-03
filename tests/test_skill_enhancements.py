@@ -333,3 +333,378 @@ class TestSkillsCreateCLI:
             "-o", str(tmp_path),
         ])
         assert result.exit_code == 1
+
+
+class TestSkillsCreateCLIPreset:
+    """Tests for CLI --preset and --interactive flags."""
+
+    def test_preset_coding_generates_skill(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from vaig.cli.app import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, [
+            "skills", "create", "cli-coder",
+            "--preset", "coding",
+            "-o", str(tmp_path),
+        ])
+        assert result.exit_code == 0
+        skill_dir = tmp_path / "cli_coder"
+        content = (skill_dir / "skill.py").read_text()
+        assert "SkillPhase.PLAN" in content
+        assert (skill_dir / "schema.py").exists()
+        assert (skill_dir / "README.md").exists()
+
+    def test_preset_analysis_generates_skill(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from vaig.cli.app import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, [
+            "skills", "create", "cli-analyzer",
+            "--preset", "analysis",
+            "-o", str(tmp_path),
+        ])
+        assert result.exit_code == 0
+        skill_dir = tmp_path / "cli_analyzer"
+        assert (skill_dir / "skill.py").exists()
+        assert not (skill_dir / "schema.py").exists()
+
+    def test_preset_and_interactive_mutual_exclusion(self, tmp_path: Path) -> None:
+        """SC-008: --preset + --interactive exits with error."""
+        from typer.testing import CliRunner
+
+        from vaig.cli.app import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, [
+            "skills", "create", "conflict-test",
+            "--preset", "coding",
+            "--interactive",
+            "-o", str(tmp_path),
+        ])
+        assert result.exit_code != 0
+
+    def test_interactive_with_piped_input(self, tmp_path: Path) -> None:
+        """SC-007: interactive mode with piped input generates matching output."""
+        from typer.testing import CliRunner
+
+        from vaig.cli.app import app
+
+        runner = CliRunner()
+        # Pipe: phases=1,3,5 (analyze,execute,report), agents=1, schema=n, live-tools=n
+        result = runner.invoke(
+            app,
+            [
+                "skills", "create", "interactive-test",
+                "--interactive",
+                "-o", str(tmp_path),
+            ],
+            input="1,3,5\n1\nn\nn\n",
+        )
+        assert result.exit_code == 0
+        skill_dir = tmp_path / "interactive_test"
+        assert (skill_dir / "skill.py").exists()
+        assert not (skill_dir / "schema.py").exists()
+
+    def test_invalid_preset_rejected(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from vaig.cli.app import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, [
+            "skills", "create", "bad-preset",
+            "--preset", "nonexistent",
+            "-o", str(tmp_path),
+        ])
+        assert result.exit_code != 0
+
+    def test_custom_preset_requires_interactive(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from vaig.cli.app import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, [
+            "skills", "create", "custom-test",
+            "--preset", "custom",
+            "-o", str(tmp_path),
+        ])
+        assert result.exit_code != 0
+
+    def test_output_lists_all_files(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from vaig.cli.app import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, [
+            "skills", "create", "file-list-test",
+            "--preset", "live-tools",
+            "-o", str(tmp_path),
+        ])
+        assert result.exit_code == 0
+        skill_dir = tmp_path / "file_list_test"
+        # Verify the files are actually generated (output listing is cosmetic)
+        assert (skill_dir / "schema.py").exists()
+        assert (skill_dir / "README.md").exists()
+        assert (skill_dir / "test_file_list_test.py").exists()
+        assert "Created files:" in result.output
+
+
+# ── Preset Scaffolding Tests ────────────────────────────────
+
+
+class TestPresetScaffolding:
+    """Tests for SkillPreset and get_preset (SC-001, SC-002)."""
+
+    def test_get_known_preset(self) -> None:
+        """SC-001: Retrieve known preset returns correct SkillPreset."""
+        from vaig.skills._presets import get_preset
+
+        preset = get_preset("live-tools")
+        assert preset.name == "live-tools"
+        assert len(preset.phases) == 4
+        assert preset.agent_count == 3
+        assert preset.requires_live_tools is True
+
+    def test_get_analysis_preset(self) -> None:
+        from vaig.skills._presets import get_preset
+
+        preset = get_preset("analysis")
+        assert preset.name == "analysis"
+        assert len(preset.phases) == 3
+        assert preset.agent_count == 1
+        assert preset.requires_live_tools is False
+        assert preset.generate_schema is False
+
+    def test_get_coding_preset(self) -> None:
+        from vaig.skills._presets import get_preset
+
+        preset = get_preset("coding")
+        assert preset.name == "coding"
+        assert len(preset.phases) == 5
+        assert preset.agent_count == 2
+        assert preset.generate_schema is True
+        assert preset.requires_live_tools is False
+
+    def test_unknown_preset_raises_value_error(self) -> None:
+        """SC-002: Unknown preset raises ValueError listing valid options."""
+        from vaig.skills._presets import get_preset
+
+        with pytest.raises(ValueError, match="Unknown preset 'nonexistent'"):
+            get_preset("nonexistent")
+
+    def test_unknown_preset_lists_valid_options(self) -> None:
+        from vaig.skills._presets import get_preset
+
+        with pytest.raises(ValueError, match="analysis") as exc_info:
+            get_preset("bad")
+        msg = str(exc_info.value)
+        assert "live-tools" in msg
+        assert "coding" in msg
+
+    def test_preset_is_frozen(self) -> None:
+        from vaig.skills._presets import get_preset
+
+        preset = get_preset("analysis")
+        with pytest.raises(AttributeError):
+            preset.name = "mutated"  # type: ignore[misc]
+
+
+class TestTemplateRendering:
+    """Verify templates render without KeyError when called with expected vars."""
+
+    def test_multi_agent_skill_template_renders(self) -> None:
+        from vaig.skills.scaffold import _MULTI_AGENT_SKILL_TEMPLATE
+
+        result = _MULTI_AGENT_SKILL_TEMPLATE.format(
+            display_name="Test Skill",
+            description="A test",
+            class_name="TestSkillSkill",
+            skill_name="test-skill",
+            tags="['test']",
+            supported_phases="SkillPhase.ANALYZE,",
+            requires_live_tools="True",
+            prompts_import=".prompts",
+            agent_configs='{"name": "test", "role": "Tester", "system_instruction": "Test", "model": "gemini-2.5-pro"},',
+        )
+        assert "class TestSkillSkill(BaseSkill):" in result
+
+    def test_coding_skill_template_renders(self) -> None:
+        from vaig.skills.scaffold import _CODING_SKILL_TEMPLATE
+
+        result = _CODING_SKILL_TEMPLATE.format(
+            display_name="Code Skill",
+            description="A coder",
+            class_name="CodeSkillSkill",
+            skill_name="code-skill",
+            tags="['code']",
+            prompts_import=".prompts",
+        )
+        assert "class CodeSkillSkill(BaseSkill):" in result
+        assert "planner" in result.lower()
+
+    def test_test_template_renders(self) -> None:
+        from vaig.skills.scaffold import _TEST_TEMPLATE
+
+        result = _TEST_TEMPLATE.format(
+            display_name="My Tool",
+            class_name="MyToolSkill",
+            skill_name="my-tool",
+            skill_import="vaig.skills.my_tool.skill",
+        )
+        assert "class TestMyToolSkill:" in result
+        assert 'meta.name == "my-tool"' in result
+
+    def test_readme_template_renders(self) -> None:
+        from vaig.skills.scaffold import _README_TEMPLATE
+
+        result = _README_TEMPLATE.format(
+            display_name="My Tool",
+            description="A tool",
+            skill_name="my-tool",
+            phases_list="- analyze\n- execute",
+        )
+        assert "# My Tool" in result
+        assert "A tool" in result
+
+    def test_schema_template_renders(self) -> None:
+        from vaig.skills.scaffold import _SCHEMA_TEMPLATE
+
+        result = _SCHEMA_TEMPLATE.format(
+            display_name="My Tool",
+            class_name_no_suffix="MyTool",
+        )
+        assert "class MyToolInput(BaseModel):" in result
+        assert "class MyToolOutput(BaseModel):" in result
+
+    def test_multi_agent_prompts_template_renders(self) -> None:
+        from vaig.skills.scaffold import _MULTI_AGENT_PROMPTS_TEMPLATE
+
+        result = _MULTI_AGENT_PROMPTS_TEMPLATE.format(display_name="My Agent")
+        assert "SYSTEM_INSTRUCTION" in result
+        assert '"validate"' in result
+
+    def test_coding_prompts_template_renders(self) -> None:
+        from vaig.skills.scaffold import _CODING_PROMPTS_TEMPLATE
+
+        result = _CODING_PROMPTS_TEMPLATE.format(display_name="Code Buddy")
+        assert '"plan"' in result
+        assert '"validate"' in result
+
+
+class TestPresetScaffoldIntegration:
+    """Integration tests for scaffold_skill() with presets (SC-003 through SC-010)."""
+
+    def test_no_preset_backward_compat_three_files(self, tmp_path: Path) -> None:
+        """SC-003 / SC-010: No preset produces same 3 files as before."""
+        from vaig.skills.scaffold import scaffold_skill
+
+        skill_dir = scaffold_skill("compat-test", tmp_path)
+        assert (skill_dir / "__init__.py").exists()
+        assert (skill_dir / "skill.py").exists()
+        assert (skill_dir / "prompts.py").exists()
+        # Should NOT have the extra files
+        assert not (skill_dir / "README.md").exists()
+        assert not (skill_dir / "schema.py").exists()
+        assert not list(skill_dir.glob("test_*.py"))
+
+    def test_no_preset_with_description_and_tags(self, tmp_path: Path) -> None:
+        """SC-010: Existing callers unaffected."""
+        from vaig.skills.scaffold import scaffold_skill
+
+        skill_dir = scaffold_skill("x", tmp_path, description="d", tags=["t"])
+        content = (skill_dir / "skill.py").read_text()
+        assert 'description="d"' in content
+        assert "'t'" in content
+
+    def test_analysis_preset_no_schema(self, tmp_path: Path) -> None:
+        """SC-006: analysis preset does NOT produce schema.py."""
+        from vaig.skills._presets import get_preset
+        from vaig.skills.scaffold import scaffold_skill
+
+        preset = get_preset("analysis")
+        skill_dir = scaffold_skill("analyzer", tmp_path, preset=preset)
+        assert (skill_dir / "skill.py").exists()
+        assert (skill_dir / "README.md").exists()
+        assert (skill_dir / "test_analyzer.py").exists()
+        assert not (skill_dir / "schema.py").exists()
+
+    def test_live_tools_preset_multi_agent_and_schema(self, tmp_path: Path) -> None:
+        """SC-004: live-tools generates multi-agent + schema."""
+        from vaig.skills._presets import get_preset
+        from vaig.skills.scaffold import scaffold_skill
+
+        preset = get_preset("live-tools")
+        skill_dir = scaffold_skill("my-tool", tmp_path, preset=preset)
+        skill_content = (skill_dir / "skill.py").read_text()
+        assert "get_agents_config" in skill_content
+        assert "requires_live_tools=True" in skill_content
+        assert (skill_dir / "schema.py").exists()
+        assert (skill_dir / "README.md").exists()
+        assert (skill_dir / "test_my_tool.py").exists()
+
+    def test_coding_preset_five_phases(self, tmp_path: Path) -> None:
+        """SC-009: coding preset generates 5-phase skill with schema."""
+        from vaig.skills._presets import get_preset
+        from vaig.skills.scaffold import scaffold_skill
+
+        preset = get_preset("coding")
+        skill_dir = scaffold_skill("code-gen", tmp_path, preset=preset)
+        skill_content = (skill_dir / "skill.py").read_text()
+        assert "SkillPhase.PLAN" in skill_content
+        assert "SkillPhase.VALIDATE" in skill_content
+        assert "planner" in skill_content.lower()
+        assert "executor" in skill_content.lower()
+        assert (skill_dir / "schema.py").exists()
+        assert (skill_dir / "README.md").exists()
+
+    def test_test_file_generated_and_valid(self, tmp_path: Path) -> None:
+        """SC-005: test file exists, imports skill class, has test_ function."""
+        from vaig.skills._presets import get_preset
+        from vaig.skills.scaffold import scaffold_skill
+
+        preset = get_preset("analysis")
+        skill_dir = scaffold_skill("test-gen", tmp_path, preset=preset)
+        test_file = skill_dir / "test_test_gen.py"
+        assert test_file.exists()
+        content = test_file.read_text()
+        assert "TestGenSkill" in content
+        assert "def test_metadata" in content
+
+    def test_generated_py_files_compile_analysis(self, tmp_path: Path) -> None:
+        """NFR-003: All .py files from analysis preset are syntactically valid."""
+        from vaig.skills._presets import get_preset
+        from vaig.skills.scaffold import scaffold_skill
+
+        preset = get_preset("analysis")
+        skill_dir = scaffold_skill("compile-a", tmp_path, preset=preset)
+        for py_file in skill_dir.glob("*.py"):
+            content = py_file.read_text()
+            compile(content, str(py_file), "exec")
+
+    def test_generated_py_files_compile_live_tools(self, tmp_path: Path) -> None:
+        """NFR-003: All .py files from live-tools preset are syntactically valid."""
+        from vaig.skills._presets import get_preset
+        from vaig.skills.scaffold import scaffold_skill
+
+        preset = get_preset("live-tools")
+        skill_dir = scaffold_skill("compile-lt", tmp_path, preset=preset)
+        for py_file in skill_dir.glob("*.py"):
+            content = py_file.read_text()
+            compile(content, str(py_file), "exec")
+
+    def test_generated_py_files_compile_coding(self, tmp_path: Path) -> None:
+        """NFR-003: All .py files from coding preset are syntactically valid."""
+        from vaig.skills._presets import get_preset
+        from vaig.skills.scaffold import scaffold_skill
+
+        preset = get_preset("coding")
+        skill_dir = scaffold_skill("compile-c", tmp_path, preset=preset)
+        for py_file in skill_dir.glob("*.py"):
+            content = py_file.read_text()
+            compile(content, str(py_file), "exec")
