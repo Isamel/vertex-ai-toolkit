@@ -454,3 +454,16 @@ email:
   notify_on:                          # Only send notifications for these severities (and above)
     - critical
     - high
+
+# Fine-tuning pipeline — extract rated examples from BigQuery, build JSONL, submit tuning jobs
+# Requires: pip install 'vertex-ai-toolkit[rag]'  (google-cloud-bigquery + google-cloud-storage)
+training:
+  enabled: false                      # Set to true to enable fine-tuning pipeline (opt-in)
+  base_model: "gemini-2.5-flash"       # Base model ID for supervised tuning
+  min_examples: 50                    # Minimum training examples required
+  max_examples: 10000                 # Maximum training examples to include
+  min_rating: 4                       # Minimum feedback rating to include (1-5)
+  output_dir: "training_data"         # Local directory for JSONL output
+  epochs: 3                           # Number of training epochs (1-10)
+  learning_rate_multiplier: 1.0       # Learning rate multiplier (> 0)
+  gcs_staging_prefix: "training_data/" # GCS prefix for staging JSONL files
