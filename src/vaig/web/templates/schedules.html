@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+
+{% block title %}Schedules{% endblock %}
+
+{% block content %}
+<section class="schedules-page">
+    <h1>Scheduled Health Scans</h1>
+    <p class="subtitle">Manage recurring GKE cluster health scans with diff-based alerting.</p>
+
+    {# ── Create Schedule Form ─────────────────────────── #}
+    <details class="schedule-form-wrapper" id="add-form">
+        <summary class="btn btn-primary">+ Add Schedule</summary>
+        <form id="create-schedule-form" class="schedule-form">
+            <div class="form-group">
+                <label for="cluster_name">Cluster Name <span class="required">*</span></label>
+                <input type="text" id="cluster_name" name="cluster_name"
+                       placeholder="e.g. prod-us-central1" required>
+            </div>
+            <div class="form-group">
+                <label for="namespace">Namespace</label>
+                <input type="text" id="namespace" name="namespace"
+                       placeholder="(empty = default namespace)">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="interval_minutes">Interval (minutes)</label>
+                    <input type="number" id="interval_minutes" name="interval_minutes"
+                           min="5" value="30">
+                </div>
+                <div class="form-group">
+                    <label for="cron">Cron Expression</label>
+                    <input type="text" id="cron" name="cron"
+                           placeholder="e.g. */30 * * * *">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="all_namespaces" name="all_namespaces">
+                        Scan all namespaces
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="skip_healthy" name="skip_healthy" checked>
+                        Skip healthy services
+                    </label>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Create Schedule</button>
+            <span id="create-status" class="status-msg"></span>
+        </form>
+    </details>
+
+    {# ── Schedules Table ──────────────────────────────── #}
+    <div class="schedules-table-wrapper" id="schedules-list">
+        {% if schedules %}
+        <table class="schedules-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Cluster</th>
+                    <th>Namespace</th>
+                    <th>Interval</th>
+                    <th>Cron</th>
+                    <th>Status</th>
+                    <th>Next Run</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in schedules %}
+                <tr data-schedule-id="{{ s.schedule_id }}">
+                    <td class="id-cell" title="{{ s.schedule_id }}">{{ s.schedule_id[:12] }}</td>
+                    <td>{{ s.cluster_name }}</td>
+                    <td>{{ s.namespace or '(default)' }}</td>
+                    <td>{{ s.interval_minutes ~ 'm' if s.interval_minutes else '—' }}</td>
+                    <td>{{ s.cron_expression or '—' }}</td>
+                    <td>
+                        {% if s.paused %}
+                            <span class="badge badge-warning">paused</span>
+                        {% else %}
+                            <span class="badge badge-success">active</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if s.next_fire_time %}
+                            {{ s.next_fire_time.strftime('%Y-%m-%d %H:%M UTC') }}
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                    <td class="actions-cell">
+                        <button class="btn btn-sm btn-trigger"
+                                onclick="triggerSchedule('{{ s.schedule_id }}')"
+                                title="Run now">▶</button>
+                        <button class="btn btn-sm btn-history"
+                                onclick="showHistory('{{ s.schedule_id }}')"
+                                title="View history">📋</button>
+                        <button class="btn btn-sm btn-danger"
+                                onclick="deleteSchedule('{{ s.schedule_id }}')"
+                                title="Delete">✕</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <p>No schedules configured yet.</p>
+            <p>Click <strong>+ Add Schedule</strong> above to create one.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    {# ── History Panel ────────────────────────────────── #}
+    <div id="history-panel" class="history-panel" style="display: none;">
+        <h2>Scan History <span id="history-schedule-id" class="dim"></span></h2>
+        <button class="btn btn-sm" onclick="closeHistory()">Close</button>
+        <table class="history-table" id="history-table">
+            <thead>
+                <tr>
+                    <th>Run ID</th>
+                    <th>Started</th>
+                    <th>Completed</th>
+                    <th>Status</th>
+                    <th>Alerts</th>
+                </tr>
+            </thead>
+            <tbody id="history-body">
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    const BASE = '/portal/schedules';
+
+    // ── Create schedule ─────────────────────────────────
+    const form = document.getElementById('create-schedule-form');
+    if (form) {
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const status = document.getElementById('create-status');
+            status.textContent = 'Creating…';
+
+            const payload = {
+                cluster_name: form.cluster_name.value.trim(),
+                namespace: form.namespace.value.trim(),
+                interval_minutes: parseInt(form.interval_minutes.value, 10) || null,
+                cron: form.cron.value.trim() || null,
+                all_namespaces: form.all_namespaces.checked,
+                skip_healthy: form.skip_healthy.checked
+            };
+
+            try {
+                const resp = await fetch(BASE, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    status.textContent = '✓ Created: ' + data.schedule_id.slice(0, 12);
+                    status.className = 'status-msg success';
+                    setTimeout(() => location.reload(), 800);
+                } else {
+                    status.textContent = '✗ ' + (data.detail || 'Error');
+                    status.className = 'status-msg error';
+                }
+            } catch (err) {
+                status.textContent = '✗ Network error';
+                status.className = 'status-msg error';
+            }
+        });
+    }
+
+    // ── Delete schedule ─────────────────────────────────
+    window.deleteSchedule = async function(id) {
+        if (!confirm('Delete schedule ' + id.slice(0, 12) + '?')) return;
+        try {
+            const resp = await fetch(BASE + '/' + id, {method: 'DELETE'});
+            if (resp.ok) {
+                const row = document.querySelector('[data-schedule-id="' + id + '"]');
+                if (row) row.remove();
+            } else {
+                const data = await resp.json();
+                alert(data.detail || 'Failed to delete');
+            }
+        } catch (err) {
+            alert('Network error');
+        }
+    };
+
+    // ── Trigger run-now ─────────────────────────────────
+    window.triggerSchedule = async function(id) {
+        try {
+            const resp = await fetch(BASE + '/' + id + '/trigger', {method: 'POST'});
+            const data = await resp.json();
+            if (resp.ok) {
+                alert('Scan complete — status: ' + data.status + ', alerts: ' + data.alerts_sent);
+            } else {
+                alert(data.detail || 'Failed to trigger');
+            }
+        } catch (err) {
+            alert('Network error');
+        }
+    };
+
+    // ── History panel ───────────────────────────────────
+    window.showHistory = async function(id) {
+        const panel = document.getElementById('history-panel');
+        const body = document.getElementById('history-body');
+        const label = document.getElementById('history-schedule-id');
+
+        label.textContent = id.slice(0, 12);
+        body.innerHTML = '<tr><td colspan="5">Loading…</td></tr>';
+        panel.style.display = 'block';
+
+        try {
+            const resp = await fetch(BASE + '/' + id + '/history');
+            const data = await resp.json();
+            if (!data.length) {
+                body.innerHTML = '<tr><td colspan="5">No scan history yet.</td></tr>';
+                return;
+            }
+            body.innerHTML = data.map(function(run) {
+                const statusBadge = run.status === 'success'
+                    ? '<span class="badge badge-success">success</span>'
+                    : run.status === 'error'
+                    ? '<span class="badge badge-danger">error</span>'
+                    : '<span class="badge badge-warning">' + run.status + '</span>';
+                return '<tr>'
+                    + '<td class="id-cell" title="' + run.id + '">' + run.id.slice(0, 12) + '</td>'
+                    + '<td>' + (run.started_at || '—') + '</td>'
+                    + '<td>' + (run.completed_at || '—') + '</td>'
+                    + '<td>' + statusBadge + '</td>'
+                    + '<td>' + run.alerts_sent + '</td>'
+                    + '</tr>';
+            }).join('');
+        } catch (err) {
+            body.innerHTML = '<tr><td colspan="5">Error loading history.</td></tr>';
+        }
+    };
+
+    window.closeHistory = function() {
+        document.getElementById('history-panel').style.display = 'none';
+    };
+})();
+</script>
+{% endblock %}
