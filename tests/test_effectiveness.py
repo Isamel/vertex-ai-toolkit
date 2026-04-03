@@ -227,8 +227,11 @@ class TestCacheTTL:
             mock_cls.return_value.analyze.return_value = _FakeToolInsights(tools=tools)
             score1 = svc.get_tool_score("tool_a")
 
-        # Second call — should NOT recompute (mock no longer active, would error if called)
-        with patch("time.monotonic", return_value=svc._cache_timestamp + 60):
+        # Second call — patch monotonic at the module where it's used so the
+        # cache still looks fresh.  Using the effectiveness-module reference
+        # avoids intermittent CI failures when patching the C-level time module.
+        with patch("vaig.core.effectiveness.time") as mock_time:
+            mock_time.monotonic.return_value = svc._cache_timestamp + 60
             score2 = svc.get_tool_score("tool_a")
 
         assert score1.tier == score2.tier == EffectivenessTier.SKIP
@@ -243,13 +246,14 @@ class TestCacheTTL:
             mock_cls.return_value.analyze.return_value = _FakeToolInsights(tools=tools)
             svc.get_tool_score("tool_a")
 
-        # Fast-forward past TTL
+        # Fast-forward past TTL — patch time at the effectiveness module level
+        new_tools = {"tool_a": _FakeToolStats(call_count=10, failure_rate=0.05)}
         with (
-            patch("time.monotonic", return_value=svc._cache_timestamp + 301),
+            patch("vaig.core.effectiveness.time") as mock_time,
             patch("vaig.core.optimizer.ToolCallOptimizer") as mock_cls2,
         ):
+            mock_time.monotonic.return_value = svc._cache_timestamp + 301
             # Tool now has low failure rate — tier should change
-            new_tools = {"tool_a": _FakeToolStats(call_count=10, failure_rate=0.05)}
             mock_cls2.return_value.analyze.return_value = _FakeToolInsights(tools=new_tools)
             score = svc.get_tool_score("tool_a")
 
