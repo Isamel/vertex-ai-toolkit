@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiosqlite
 import pytest
@@ -313,7 +313,7 @@ class TestDiffAlerting:
                     return_value=MagicMock(),
                 ),
                 patch.object(
-                    engine, "_dispatch_alert", return_value=1
+                    engine, "_dispatch_alert", new_callable=AsyncMock, return_value=1
                 ) as mock_dispatch,
             ):
                 result = await engine._scan_job(schedule_id=sid)
@@ -352,7 +352,7 @@ class TestDiffAlerting:
                     return_value=MagicMock(),
                 ),
                 patch.object(
-                    engine, "_dispatch_alert", return_value=0
+                    engine, "_dispatch_alert", new_callable=AsyncMock, return_value=0
                 ) as mock_dispatch,
             ):
                 result = await engine._scan_job(schedule_id=sid)
@@ -386,7 +386,7 @@ class TestDiffAlerting:
                     return_value=MagicMock(),
                 ),
                 patch.object(
-                    engine, "_dispatch_alert", return_value=1
+                    engine, "_dispatch_alert", new_callable=AsyncMock, return_value=1
                 ) as mock_dispatch,
             ):
                 result = await engine._scan_job(schedule_id=sid)
@@ -429,7 +429,7 @@ class TestDiffAlerting:
                     return_value=MagicMock(),
                 ),
                 patch.object(
-                    engine, "_dispatch_alert", return_value=0
+                    engine, "_dispatch_alert", new_callable=AsyncMock, return_value=0
                 ) as mock_dispatch,
             ):
                 result = await engine._scan_job(schedule_id=sid)
@@ -581,3 +581,61 @@ class TestSeverityOrder:
     def test_all_severities_present(self) -> None:
         expected = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
         assert set(_SEVERITY_ORDER.keys()) == expected
+
+
+# ── Test: State persistence across restarts ──────────────────
+
+
+class TestStatePersistence:
+    @pytest.mark.asyncio()
+    async def test_schedule_meta_survives_restart(
+        self, make_settings: Settings, schedule_target: ScheduleTarget
+    ) -> None:
+        """schedule_meta should be reloaded from SQLite on restart."""
+        engine1 = SchedulerEngine(make_settings, data_store=MemoryDataStore())
+        await engine1.start(process=False)
+        try:
+            sid = await engine1.add_schedule(schedule_target, interval_minutes=15)
+        finally:
+            await engine1.stop()
+
+        # New engine instance — simulates process restart
+        engine2 = SchedulerEngine(make_settings, data_store=MemoryDataStore())
+        await engine2.start(process=False)
+        try:
+            assert sid in engine2._state.schedule_meta
+            meta = engine2._state.schedule_meta[sid]
+            assert meta.target.cluster_name == "test-cluster"
+            assert meta.interval_minutes == 15
+        finally:
+            await engine2.stop()
+
+    @pytest.mark.asyncio()
+    async def test_remove_schedule_clears_persisted_state(
+        self, make_settings: Settings, schedule_target: ScheduleTarget
+    ) -> None:
+        """Removing a schedule should remove it from SQLite too."""
+        engine1 = SchedulerEngine(make_settings, data_store=MemoryDataStore())
+        await engine1.start(process=False)
+        try:
+            sid = await engine1.add_schedule(schedule_target, interval_minutes=30)
+            await engine1.remove_schedule(sid)
+        finally:
+            await engine1.stop()
+
+        engine2 = SchedulerEngine(make_settings, data_store=MemoryDataStore())
+        await engine2.start(process=False)
+        try:
+            assert sid not in engine2._state.schedule_meta
+        finally:
+            await engine2.stop()
+
+    @pytest.mark.asyncio()
+    async def test_db_connection_closed_on_stop(
+        self, engine: SchedulerEngine
+    ) -> None:
+        """Persistent DB connection should be closed after stop()."""
+        await engine.start(process=False)
+        assert engine._state.db is not None
+        await engine.stop()
+        assert engine._state.db is None

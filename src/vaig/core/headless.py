@@ -26,7 +26,6 @@ def execute_skill_headless(
     query: str,
     gke_config: GKEConfig,
     *,
-    timeout: float = 600.0,
     tool_call_store: ToolCallStore | None = None,
     on_tool_call: OnToolCall | None = None,
     on_agent_progress: OnAgentProgress | None = None,
@@ -43,9 +42,6 @@ def execute_skill_headless(
         skill: Resolved skill instance (e.g. ``DiscoverySkill``).
         query: Investigation query for the orchestrator.
         gke_config: GKE cluster configuration for tool registration.
-        timeout: Maximum wall-clock seconds for the pipeline (unused here,
-            the caller is responsible for enforcing this via
-            ``asyncio.wait_for`` or similar).
         tool_call_store: Optional store for persisting tool-call metadata.
         on_tool_call: Optional callback for each tool invocation (CLI progress).
         on_agent_progress: Optional callback for agent lifecycle events

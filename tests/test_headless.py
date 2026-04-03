@@ -203,3 +203,12 @@ class TestExecuteSkillHeadless:
 
         call_kwargs = mock_orch_cls.return_value.execute_with_tools.call_args
         assert call_kwargs.kwargs["tool_call_store"] is fake_store
+
+    def test_timeout_parameter_removed(self) -> None:
+        """The unused ``timeout`` parameter should no longer be accepted."""
+        import inspect
+
+        from vaig.core.headless import execute_skill_headless
+
+        sig = inspect.signature(execute_skill_headless)
+        assert "timeout" not in sig.parameters

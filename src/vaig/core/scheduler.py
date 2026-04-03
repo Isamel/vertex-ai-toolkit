@@ -114,6 +114,23 @@ CREATE INDEX IF NOT EXISTS idx_schedule_runs_schedule_id
     ON schedule_runs (schedule_id, started_at DESC);
 """
 
+_DDL_SCHEDULE_META = """
+CREATE TABLE IF NOT EXISTS schedule_meta (
+    schedule_id       TEXT PRIMARY KEY,
+    target_json       TEXT NOT NULL,
+    interval_minutes  INTEGER,
+    cron_expression   TEXT,
+    run_number        INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+_DDL_PREVIOUS_REPORTS = """
+CREATE TABLE IF NOT EXISTS previous_reports (
+    schedule_id   TEXT PRIMARY KEY,
+    report_json   TEXT NOT NULL
+);
+"""
+
 
 # ── Engine ───────────────────────────────────────────────────
 
@@ -125,6 +142,7 @@ class _EngineState:
     previous_reports: dict[str, HealthReport] = field(default_factory=dict)
     schedule_meta: dict[str, _ScheduleMeta] = field(default_factory=dict)
     run_task: asyncio.Task[None] | None = None
+    db: aiosqlite.Connection | None = None
 
 
 class SchedulerEngine:
@@ -167,7 +185,9 @@ class SchedulerEngine:
         if self._started:
             return
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._state.db = await aiosqlite.connect(str(self._db_path))
         await self._init_db()
+        await self._load_persisted_state()
         await self._scheduler.__aenter__()
         if process:
             self._state.run_task = asyncio.create_task(
@@ -189,6 +209,9 @@ class SchedulerEngine:
                 pass
             self._state.run_task = None
         await self._scheduler.__aexit__(None, None, None)
+        if self._state.db is not None:
+            await self._state.db.close()
+            self._state.db = None
         self._started = False
         logger.info("Scheduler engine stopped")
 
@@ -225,6 +248,7 @@ class SchedulerEngine:
             interval_minutes=interval_minutes or (None if cron else self._cfg.default_interval_minutes),
             cron_expression=cron,
         )
+        await self._persist_schedule_meta(schedule_id, self._state.schedule_meta[schedule_id])
 
         logger.info(
             "Schedule added: id=%s, cluster=%s, ns=%s",
@@ -244,6 +268,7 @@ class SchedulerEngine:
             logger.warning("Schedule %s not found in APScheduler", schedule_id)
         self._state.schedule_meta.pop(schedule_id, None)
         self._state.previous_reports.pop(schedule_id, None)
+        await self._delete_persisted_schedule(schedule_id)
         logger.info("Schedule removed: %s", schedule_id)
         return True
 
@@ -280,14 +305,15 @@ class SchedulerEngine:
         limit: int = 20,
     ) -> list[ScanResult]:
         """Return recent scan results for a schedule from SQLite."""
-        async with aiosqlite.connect(str(self._db_path)) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT * FROM schedule_runs WHERE schedule_id = ? "
-                "ORDER BY started_at DESC LIMIT ?",
-                (schedule_id, limit),
-            )
-            rows = await cursor.fetchall()
+        db = self._db_conn()
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM schedule_runs WHERE schedule_id = ? "
+            "ORDER BY started_at DESC LIMIT ?",
+            (schedule_id, limit),
+        )
+        rows = await cursor.fetchall()
+        db.row_factory = None
         return [
             ScanResult(
                 id=row["id"],
@@ -322,6 +348,7 @@ class SchedulerEngine:
         meta.run_number += 1
         run_id = str(uuid.uuid4())
         started_at = datetime.now(UTC).isoformat()
+        await self._persist_schedule_meta(schedule_id, meta)
 
         # ── 1. Budget check ──────────────────────────────────
         if not await self._check_budget():
@@ -351,7 +378,8 @@ class SchedulerEngine:
             skill = DiscoverySkill()
             query = self._build_query(target)
 
-            orch_result = execute_skill_headless(
+            orch_result = await asyncio.to_thread(
+                execute_skill_headless,
                 self._settings,
                 skill,
                 query,
@@ -389,12 +417,13 @@ class SchedulerEngine:
             }
 
             if diff.has_changes and self._has_alertable_findings(diff):
-                alerts_sent = self._dispatch_alert(
-                    report, meta, diff,
+                alerts_sent = await self._dispatch_alert(
+                    report, meta, diff, schedule_id=schedule_id,
                 )
 
         # Update previous-report cache
         self._state.previous_reports[schedule_id] = report
+        await self._persist_previous_report(schedule_id, report)
         await self._increment_budget()
 
         # ── 4. Persist run ───────────────────────────────────
@@ -415,7 +444,8 @@ class SchedulerEngine:
                 from vaig.core.export import auto_export_report
 
                 tagged_run_id = f"scheduled:{schedule_id}:{meta.run_number}"
-                auto_export_report(
+                await asyncio.to_thread(
+                    auto_export_report,
                     self._settings.export,
                     report,
                     run_id=tagged_run_id,
@@ -444,11 +474,13 @@ class SchedulerEngine:
                 return True
         return False
 
-    def _dispatch_alert(
+    async def _dispatch_alert(
         self,
         report: HealthReport,
         meta: _ScheduleMeta,
         diff: Any,
+        *,
+        schedule_id: str,
     ) -> int:
         """Send alert via NotificationDispatcher. Returns count of alerts sent."""
         try:
@@ -464,14 +496,11 @@ class SchedulerEngine:
                 service_name=meta.target.cluster_name,
                 cluster_name=meta.target.cluster_name,
                 namespace=meta.target.namespace,
-                schedule_id=next(
-                    (sid for sid, m in self._state.schedule_meta.items() if m is meta),
-                    "",
-                ),
+                schedule_id=schedule_id,
                 run_number=meta.run_number,
                 is_scheduled=True,
             )
-            result = dispatcher.dispatch(report, alert_context)
+            result = await asyncio.to_thread(dispatcher.dispatch, report, alert_context)
             sent = int(not result.has_errors)
             if result.has_errors:
                 logger.warning("Alert dispatch had errors: %s", result.errors)
@@ -514,47 +543,133 @@ class SchedulerEngine:
 
     # ── SQLite helpers ───────────────────────────────────────
 
+    def _db_conn(self) -> aiosqlite.Connection:
+        """Return the persistent DB connection or raise."""
+        if self._state.db is None:
+            msg = "Database not initialised — call start() first"
+            raise RuntimeError(msg)
+        return self._state.db
+
     async def _init_db(self) -> None:
         """Create tables if they don't exist."""
-        async with aiosqlite.connect(str(self._db_path)) as db:
-            await db.execute(_DDL_SCHEDULE_RUNS)
-            await db.execute(_DDL_BUDGET_USAGE)
-            await db.execute(_DDL_INDEX_RUNS)
-            await db.commit()
+        db = self._db_conn()
+        await db.execute(_DDL_SCHEDULE_RUNS)
+        await db.execute(_DDL_BUDGET_USAGE)
+        await db.execute(_DDL_INDEX_RUNS)
+        await db.execute(_DDL_SCHEDULE_META)
+        await db.execute(_DDL_PREVIOUS_REPORTS)
+        await db.commit()
+
+    async def _load_persisted_state(self) -> None:
+        """Reload ``schedule_meta`` and ``previous_reports`` from SQLite."""
+        db = self._db_conn()
+
+        # ── schedule_meta ────────────────────────────────────
+        cursor = await db.execute("SELECT * FROM schedule_meta")
+        rows = await cursor.fetchall()
+        for row in rows:
+            sid, target_json, interval_min, cron_expr, run_number = row
+            target_dict = json.loads(target_json)
+            target = ScheduleTarget(**target_dict)
+            self._state.schedule_meta[sid] = _ScheduleMeta(
+                target=target,
+                interval_minutes=interval_min,
+                cron_expression=cron_expr,
+                run_number=run_number,
+            )
+
+        # ── previous_reports ─────────────────────────────────
+        cursor = await db.execute("SELECT * FROM previous_reports")
+        rows = await cursor.fetchall()
+        for row in rows:
+            sid, report_json_str = row
+            # Store the raw JSON dict; the diff engine accepts dict or model
+            self._state.previous_reports[sid] = json.loads(report_json_str)
+
+        if self._state.schedule_meta:
+            logger.info(
+                "Restored %d schedule(s) and %d previous report(s) from SQLite",
+                len(self._state.schedule_meta),
+                len(self._state.previous_reports),
+            )
+
+    async def _persist_schedule_meta(
+        self, schedule_id: str, meta: _ScheduleMeta,
+    ) -> None:
+        """Upsert a single schedule_meta row."""
+        db = self._db_conn()
+        target_json = json.dumps({
+            "cluster_name": meta.target.cluster_name,
+            "namespace": meta.target.namespace,
+            "all_namespaces": meta.target.all_namespaces,
+            "skip_healthy": meta.target.skip_healthy,
+        })
+        await db.execute(
+            "INSERT INTO schedule_meta "
+            "(schedule_id, target_json, interval_minutes, cron_expression, run_number) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(schedule_id) DO UPDATE SET "
+            "target_json = excluded.target_json, "
+            "interval_minutes = excluded.interval_minutes, "
+            "cron_expression = excluded.cron_expression, "
+            "run_number = excluded.run_number",
+            (schedule_id, target_json, meta.interval_minutes, meta.cron_expression, meta.run_number),
+        )
+        await db.commit()
+
+    async def _persist_previous_report(
+        self, schedule_id: str, report: Any,
+    ) -> None:
+        """Upsert a previous report row."""
+        db = self._db_conn()
+        report_dict = report.to_dict() if hasattr(report, "to_dict") else report
+        await db.execute(
+            "INSERT INTO previous_reports (schedule_id, report_json) VALUES (?, ?) "
+            "ON CONFLICT(schedule_id) DO UPDATE SET report_json = excluded.report_json",
+            (schedule_id, json.dumps(report_dict)),
+        )
+        await db.commit()
+
+    async def _delete_persisted_schedule(self, schedule_id: str) -> None:
+        """Remove a schedule and its previous report from SQLite."""
+        db = self._db_conn()
+        await db.execute("DELETE FROM schedule_meta WHERE schedule_id = ?", (schedule_id,))
+        await db.execute("DELETE FROM previous_reports WHERE schedule_id = ?", (schedule_id,))
+        await db.commit()
 
     async def _check_budget(self) -> bool:
         """Return ``True`` if another analysis is allowed today."""
         today = datetime.now(UTC).strftime("%Y-%m-%d")
-        async with aiosqlite.connect(str(self._db_path)) as db:
-            cursor = await db.execute(
-                "SELECT analysis_count FROM budget_usage WHERE date = ?",
-                (today,),
-            )
-            row = await cursor.fetchone()
+        db = self._db_conn()
+        cursor = await db.execute(
+            "SELECT analysis_count FROM budget_usage WHERE date = ?",
+            (today,),
+        )
+        row = await cursor.fetchone()
         current = row[0] if row else 0
         return current < self._cfg.daily_max_analyses
 
     async def _get_daily_count(self) -> int:
         """Return today's analysis count."""
         today = datetime.now(UTC).strftime("%Y-%m-%d")
-        async with aiosqlite.connect(str(self._db_path)) as db:
-            cursor = await db.execute(
-                "SELECT analysis_count FROM budget_usage WHERE date = ?",
-                (today,),
-            )
-            row = await cursor.fetchone()
+        db = self._db_conn()
+        cursor = await db.execute(
+            "SELECT analysis_count FROM budget_usage WHERE date = ?",
+            (today,),
+        )
+        row = await cursor.fetchone()
         return row[0] if row else 0
 
     async def _increment_budget(self) -> None:
         """Increment today's analysis counter (insert-or-update)."""
         today = datetime.now(UTC).strftime("%Y-%m-%d")
-        async with aiosqlite.connect(str(self._db_path)) as db:
-            await db.execute(
-                "INSERT INTO budget_usage (date, analysis_count) VALUES (?, 1) "
-                "ON CONFLICT(date) DO UPDATE SET analysis_count = analysis_count + 1",
-                (today,),
-            )
-            await db.commit()
+        db = self._db_conn()
+        await db.execute(
+            "INSERT INTO budget_usage (date, analysis_count) VALUES (?, 1) "
+            "ON CONFLICT(date) DO UPDATE SET analysis_count = analysis_count + 1",
+            (today,),
+        )
+        await db.commit()
 
     async def _record_run(
         self,
@@ -569,24 +684,24 @@ class SchedulerEngine:
     ) -> ScanResult:
         """Insert a row into ``schedule_runs`` and return the result."""
         completed_at = datetime.now(UTC).isoformat()
-        async with aiosqlite.connect(str(self._db_path)) as db:
-            await db.execute(
-                "INSERT INTO schedule_runs "
-                "(id, schedule_id, started_at, completed_at, status, "
-                " report_json, diff_json, alerts_sent) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    run_id,
-                    schedule_id,
-                    started_at,
-                    completed_at,
-                    status,
-                    report_json,
-                    diff_json,
-                    alerts_sent,
-                ),
-            )
-            await db.commit()
+        db = self._db_conn()
+        await db.execute(
+            "INSERT INTO schedule_runs "
+            "(id, schedule_id, started_at, completed_at, status, "
+            " report_json, diff_json, alerts_sent) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                run_id,
+                schedule_id,
+                started_at,
+                completed_at,
+                status,
+                report_json,
+                diff_json,
+                alerts_sent,
+            ),
+        )
+        await db.commit()
         return ScanResult(
             id=run_id,
             schedule_id=schedule_id,
