@@ -810,6 +810,64 @@ class GoogleChatConfig(BaseModel):
         return self
 
 
+class SlackConfig(BaseModel):
+    """Slack incoming webhook integration configuration.
+
+    When ``webhook_url`` is set, the integration auto-enables and will
+    send Block Kit notifications for severities listed in ``notify_on``.
+    """
+
+    enabled: bool = False
+    webhook_url: str = Field(default="", repr=False)
+    notify_on: list[str] = Field(default_factory=lambda: ["critical", "high"])
+
+    @model_validator(mode="after")
+    def _auto_enable(self) -> SlackConfig:
+        """Normalize enabled state based on webhook_url presence."""
+        if self.webhook_url and not self.enabled:
+            self.enabled = True
+        elif self.enabled and not self.webhook_url:
+            logger.warning(
+                "Slack integration is enabled but webhook_url is empty; "
+                "disabling integration."
+            )
+            self.enabled = False
+        return self
+
+
+class EmailConfig(BaseModel):
+    """SMTP email notification configuration.
+
+    Auto-enables when ``smtp_host``, ``from_address``, and ``recipients``
+    are all provided.  Uses stdlib ``smtplib`` — no new dependencies.
+    """
+
+    enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    username: str = Field(default="", repr=False)
+    password: str = Field(default="", repr=False)
+    from_address: str = ""
+    recipients: list[str] = Field(default_factory=list)
+    use_tls: bool = True
+    timeout: int = 30
+    notify_on: list[str] = Field(default_factory=lambda: ["critical", "high"])
+
+    @model_validator(mode="after")
+    def _auto_enable(self) -> EmailConfig:
+        """Auto-enable when credentials are present; disable when missing."""
+        has_credentials = bool(self.smtp_host and self.from_address and self.recipients)
+        if not self.enabled and has_credentials:
+            self.enabled = True
+        elif self.enabled and not has_credentials:
+            logger.warning(
+                "Email integration is enabled but smtp_host, from_address, or "
+                "recipients is missing; disabling integration."
+            )
+            self.enabled = False
+        return self
+
+
 class RateLimitConfig(BaseModel):
     """Rate limiting configuration — quota policy loaded from GCS."""
 
@@ -1040,6 +1098,8 @@ class Settings(BaseSettings):
     webhook_server: WebhookServerConfig = Field(default_factory=WebhookServerConfig)
     pagerduty: PagerDutyConfig = Field(default_factory=PagerDutyConfig)
     google_chat: GoogleChatConfig = Field(default_factory=GoogleChatConfig)
+    slack: SlackConfig = Field(default_factory=SlackConfig)
+    email: EmailConfig = Field(default_factory=EmailConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
 
     @classmethod
