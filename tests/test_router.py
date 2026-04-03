@@ -484,7 +484,12 @@ class TestRouteAgentsRealWorldScenarios:
 
 
 class TestRouteAgentsEffectiveness:
-    """Router filters gatherers whose tools are ALL SKIP tier."""
+    """Router filters gatherers whose tools are ALL SKIP tier.
+
+    NOTE: These tests use capabilities as tool names. In production,
+    capabilities are query keywords (not tool names), so effectiveness
+    scoring by capability is an approximation. See TODO in router.py.
+    """
 
     @staticmethod
     def _mock_service(skip_tools: set[str]) -> Any:

@@ -422,16 +422,17 @@ class ToolLoopMixin:
                 )
 
                 # Record tool call for metrics/feedback storage
-                self._record_tool_call(
-                    tool_call_store,
-                    tool_name,
-                    tool_args,
-                    tool_result,
-                    tool_duration,
-                    agent_name,
-                    iteration,
-                    cached=is_cached,
-                )
+                if not (tool_result.output or "").startswith("Tool skipped (effectiveness)"):
+                    self._record_tool_call(
+                        tool_call_store,
+                        tool_name,
+                        tool_args,
+                        tool_result,
+                        tool_duration,
+                        agent_name,
+                        iteration,
+                        cached=is_cached,
+                    )
 
                 tools_executed.append(
                     {
@@ -908,7 +909,7 @@ class ToolLoopMixin:
             logger.info("Skipping tool %s: %s", tool_name, score.reason)
             return ToolResult(
                 output=f"Tool skipped (effectiveness): {score.reason}",
-                error=False,
+                error=True,
             )
 
         if score.tier == EffectivenessTier.DEPRIORITIZE:
@@ -945,7 +946,7 @@ class ToolLoopMixin:
             return result
 
         # ── Effectiveness pre-check (R-EFF-06) ────────────────
-        skip_result = self._check_tool_effectiveness(tool_name, "")
+        skip_result = self._check_tool_effectiveness(tool_name, getattr(self, "name", ""))
         if skip_result is not None:
             return skip_result
 
@@ -1297,16 +1298,17 @@ class ToolLoopMixin:
                     )
 
                     # Record tool call for metrics/feedback storage
-                    self._record_tool_call(
-                        tool_call_store,
-                        tool_name,
-                        tool_args,
-                        tool_result,
-                        tool_duration,
-                        agent_name,
-                        iteration,
-                        cached=is_cached,
-                    )
+                    if not (tool_result.output or "").startswith("Tool skipped (effectiveness)"):
+                        self._record_tool_call(
+                            tool_call_store,
+                            tool_name,
+                            tool_args,
+                            tool_result,
+                            tool_duration,
+                            agent_name,
+                            iteration,
+                            cached=is_cached,
+                        )
 
                     tools_executed.append(
                         {
@@ -1393,16 +1395,17 @@ class ToolLoopMixin:
                     )
 
                     # Record tool call for metrics/feedback storage
-                    self._record_tool_call(
-                        tool_call_store,
-                        tool_name,
-                        tool_args,
-                        tool_result,
-                        tool_duration,
-                        agent_name,
-                        iteration,
-                        cached=is_cached,
-                    )
+                    if not (tool_result.output or "").startswith("Tool skipped (effectiveness)"):
+                        self._record_tool_call(
+                            tool_call_store,
+                            tool_name,
+                            tool_args,
+                            tool_result,
+                            tool_duration,
+                            agent_name,
+                            iteration,
+                            cached=is_cached,
+                        )
 
                     tools_executed.append(
                         {
@@ -1478,7 +1481,7 @@ class ToolLoopMixin:
             return result
 
         # ── Effectiveness pre-check (R-EFF-06) ────────────────
-        skip_result = self._check_tool_effectiveness(tool_name, "")
+        skip_result = self._check_tool_effectiveness(tool_name, getattr(self, "name", ""))
         if skip_result is not None:
             return skip_result
 

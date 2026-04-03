@@ -88,14 +88,7 @@ class ToolEffectivenessService:
         self._ensure_cache_fresh()
         score = self._score_cache.get(tool_name)
         if score is None:
-            return EffectivenessScore(
-                tool_name=tool_name,
-                tier=EffectivenessTier.ALLOW,
-                failure_rate=0.0,
-                avg_duration_s=0.0,
-                call_count=0,
-                reason="insufficient data",
-            )
+            return _ALLOW_DEFAULT
         return score
 
     def get_all_scores(
@@ -126,7 +119,7 @@ class ToolEffectivenessService:
             from vaig.core.optimizer import ToolCallOptimizer
 
             optimizer = ToolCallOptimizer(self._store)
-            date_from = datetime.now(tz=UTC) - timedelta(days=self._config.lookback_days)
+            date_from = datetime.now(tz=UTC).replace(tzinfo=None) - timedelta(days=self._config.lookback_days)
             insights = optimizer.analyze(date_from=date_from)
 
             new_cache: dict[str, EffectivenessScore] = {}
@@ -170,8 +163,8 @@ class ToolEffectivenessService:
             avg = round(stats.avg_duration_s, 1)
             return EffectivenessTier.DEPRIORITIZE, f"avg duration {avg}s exceeds slow tool threshold"
 
-        # 5. Reliable → BOOST
-        if stats.failure_rate < cfg.boost_threshold:
+        # 5. Reliable + fast → BOOST
+        if stats.failure_rate < cfg.boost_threshold and stats.avg_duration_s < cfg.slow_tool_threshold_s:
             return EffectivenessTier.BOOST, "low failure rate — reliable tool"
 
         # 6. Default

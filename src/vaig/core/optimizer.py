@@ -108,11 +108,13 @@ class ToolCallOptimizer:
         # (YYYY-MM-DD), which is chronological at the day level but not
         # necessarily within a single day.
         runs = self._store.list_runs()
-        selected_runs = runs[-last_n_runs:]
 
-        # ── Optional lookback filter ──────────────────────────
+        # ── Optional lookback filter (apply BEFORE slicing) ───
         if date_from is not None:
-            selected_runs = [(rid, d) for rid, d in selected_runs if d >= date_from]
+            date_from = date_from.replace(hour=0, minute=0, second=0, microsecond=0)
+            runs = [(rid, d) for rid, d in runs if d >= date_from]
+
+        selected_runs = runs[-last_n_runs:]
 
         if not selected_runs:
             insights = ToolInsights(

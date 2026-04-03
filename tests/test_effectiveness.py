@@ -390,7 +390,7 @@ class TestMixinPreCheck:
 
         assert isinstance(result, ToolResult)
         assert "Tool skipped (effectiveness)" in result.output
-        assert result.error is False
+        assert result.error is True
 
     def test_deprioritize_returns_none(self) -> None:
         """DEPRIORITIZE-tier tool logs warning but returns None (proceed)."""

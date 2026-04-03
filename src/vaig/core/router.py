@@ -195,6 +195,9 @@ def _filter_skip_gatherers(
             kept.append(gatherer)
             continue
 
+        # TODO: capabilities are query keywords, not tool names — effectiveness
+        # scoring by capability is an approximation. A future refactor should
+        # map gatherer capabilities to actual tool names for accurate filtering.
         all_skip = all(
             effectiveness_service.get_tool_score(cap).tier == EffectivenessTier.SKIP
             for cap in capabilities
