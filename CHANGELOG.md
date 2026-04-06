@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-04-06
+
 ### Added
 - Dark/light theme toggle in web UI with OS preference detection via `prefers-color-scheme`, manual override via toggle button, `localStorage` persistence, and FOUC prevention script ([#188](https://github.com/Isamel/vertex-ai-toolkit/pull/188))
 - CLI auth + admin portal — `vaig login` (PKCE), `vaig logout`, `vaig whoami`, `vaig status` commands; JWT-based backend authentication; Firestore user/org repository; FastAPI admin API for CLI management and config policy enforcement ([#186](https://github.com/Isamel/vertex-ai-toolkit/pull/186))
@@ -15,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vaig web` command — start a FastAPI/HTMX web server with ask, chat, and live modes ([#175](https://github.com/Isamel/vertex-ai-toolkit/pull/175))
 - Ollama-compatible proxy endpoint for VS Code Copilot integration ([#181](https://github.com/Isamel/vertex-ai-toolkit/pull/181))
 - Web UI: settings panel in chat mode, error handling, responsive CSS, Cloud Run deployment support ([#179](https://github.com/Isamel/vertex-ai-toolkit/pull/179), [#185](https://github.com/Isamel/vertex-ai-toolkit/pull/185))
+- Per-org knowledge specialization — `export.org_id` field, `effective_gcs_prefix` property (injects `{org_id}/` segment when set), `Settings._bridge_platform_org_id` validator; org-aware RAG corpus resolution with global fallback and dedup ([#202](https://github.com/Isamel/vertex-ai-toolkit/pull/202))
 
 ### Fixed
 - TOCTOU race condition in web live mode pipeline semaphore — replaced double-acquire pattern with single-acquire (locked() check + acquire) to eliminate 429 errors from concurrent requests stealing semaphore slots ([#187](https://github.com/Isamel/vertex-ai-toolkit/pull/187))
@@ -268,7 +271,8 @@ SRE workflows.
 - Extracted shared test fixtures into `conftest.py`
 - Applied 12 code quality improvements from audit
 
-[Unreleased]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.10.0
