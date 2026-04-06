@@ -259,7 +259,10 @@ class ToolLoopMixin:
         # per-iteration overhead (C5).
         _warn_threshold, _error_threshold = self._load_cw_thresholds()
 
-        _inter_call_delay = get_settings().agents.min_inter_call_delay
+        try:
+            _inter_call_delay = get_settings().agents.min_inter_call_delay
+        except Exception:  # noqa: BLE001
+            _inter_call_delay = 0.0
 
         while iteration < max_iterations:
             iteration += 1
@@ -1105,7 +1108,10 @@ class ToolLoopMixin:
         # per-iteration overhead (C5).
         _warn_threshold, _error_threshold = self._load_cw_thresholds()
 
-        _inter_call_delay = get_settings().agents.min_inter_call_delay
+        try:
+            _inter_call_delay = get_settings().agents.min_inter_call_delay
+        except Exception:  # noqa: BLE001
+            _inter_call_delay = 0.0
 
         while iteration < max_iterations:
             iteration += 1

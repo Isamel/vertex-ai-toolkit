@@ -244,7 +244,7 @@ class AgentsConfig(BaseModel):
 
     Set to ``0`` to disable model fallback entirely.
     """
-    min_inter_call_delay: float = 0.0
+    min_inter_call_delay: float = Field(default=0.0, ge=0.0)
     """Seconds to sleep between LLM API calls in the tool loop (RPM throttle).
 
     Set to ``0`` (default) to disable throttling.  A value of ``1.0`` limits
@@ -326,7 +326,7 @@ class RetryConfig(BaseModel):
     initial_delay: float = 1.0
     max_delay: float = 60.0
     backoff_multiplier: float = 2.0
-    rate_limit_initial_delay: float = 8.0
+    rate_limit_initial_delay: float = Field(default=8.0, ge=0.0)
     """Longer initial backoff (seconds) used when a 429 rate-limit error is
     detected.  Applied instead of ``initial_delay`` so the client waits
     longer before retrying quota-exhausted requests."""
