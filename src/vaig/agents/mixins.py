@@ -259,9 +259,18 @@ class ToolLoopMixin:
         # per-iteration overhead (C5).
         _warn_threshold, _error_threshold = self._load_cw_thresholds()
 
+        try:
+            _inter_call_delay = get_settings().agents.min_inter_call_delay
+        except Exception:  # noqa: BLE001
+            _inter_call_delay = 0.0
+
         while iteration < max_iterations:
             iteration += 1
             logger.debug("Tool loop iteration %d/%d", iteration, max_iterations)
+
+            # -- RPM throttle: sleep between LLM calls (skip first) ------
+            if iteration > 1 and _inter_call_delay > 0:
+                time.sleep(_inter_call_delay)
 
             # -- Call Gemini with tool declarations -----------------------
             try:
@@ -1099,9 +1108,18 @@ class ToolLoopMixin:
         # per-iteration overhead (C5).
         _warn_threshold, _error_threshold = self._load_cw_thresholds()
 
+        try:
+            _inter_call_delay = get_settings().agents.min_inter_call_delay
+        except Exception:  # noqa: BLE001
+            _inter_call_delay = 0.0
+
         while iteration < max_iterations:
             iteration += 1
             logger.debug("Async tool loop iteration %d/%d", iteration, max_iterations)
+
+            # -- RPM throttle: sleep between LLM calls (skip first) ------
+            if iteration > 1 and _inter_call_delay > 0:
+                await asyncio.sleep(_inter_call_delay)
 
             # -- Call Gemini with tool declarations (async) ----------------
             try:

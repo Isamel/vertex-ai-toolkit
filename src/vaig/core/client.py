@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
     from google.auth.credentials import Credentials
 
-    from vaig.core.config import Settings
+    from vaig.core.config import RetryConfig, Settings
     from vaig.core.quota import QuotaChecker
 
 logger = logging.getLogger(__name__)
@@ -619,6 +619,32 @@ class GeminiClient:
 
     # ── Retry logic ───────────────────────────────────────────
 
+    @staticmethod
+    def _compute_backoff_delay(
+        delay: float,
+        retry_cfg: RetryConfig,
+        *,
+        is_rate_limit: bool,
+    ) -> tuple[float, float]:
+        """Compute the sleep duration and updated delay for the next retry.
+
+        Args:
+            delay: Current backoff delay in seconds.
+            retry_cfg: Retry configuration.
+            is_rate_limit: If ``True``, enforce the longer
+                ``rate_limit_initial_delay`` floor.
+
+        Returns:
+            ``(sleep_time, new_delay)`` — the time to sleep now and the delay
+            value to carry into the next iteration.
+        """
+        if is_rate_limit:
+            delay = max(delay, retry_cfg.rate_limit_initial_delay)
+        jitter = random.uniform(0, 0.5)  # noqa: S311
+        sleep_time = min(delay, retry_cfg.max_delay) + jitter
+        new_delay = delay * retry_cfg.backoff_multiplier
+        return sleep_time, new_delay
+
     def _retry_with_backoff(self, fn: Callable[[], T], *, timeout: float | None = None) -> T:
         """Execute *fn* with exponential backoff on retryable Google API errors (sync).
 
@@ -669,8 +695,11 @@ class GeminiClient:
                         last_exception = fallback_exc
                         break
                 if attempt < retry_cfg.max_retries:
-                    jitter = random.uniform(0, 0.5)  # noqa: S311
-                    sleep_time = min(delay, retry_cfg.max_delay) + jitter
+                    sleep_time, delay = self._compute_backoff_delay(
+                        delay,
+                        retry_cfg,
+                        is_rate_limit=isinstance(exc, google_exceptions.ResourceExhausted),
+                    )
                     logger.warning(
                         "Retryable error on attempt %d/%d (%s: %s) — retrying in %.2fs",
                         attempt + 1,
@@ -680,11 +709,13 @@ class GeminiClient:
                         sleep_time,
                     )
                     time.sleep(sleep_time)
-                    delay *= retry_cfg.backoff_multiplier
             except genai_errors.APIError as exc:
                 # google-genai SDK errors (ClientError / ServerError).
-                # The SDK already retried with backoff via HttpRetryOptions —
-                # do NOT retry at the app level (avoids retry budget explosion).
+                # The SDK already retried with backoff via HttpRetryOptions.
+                # For 429 (rate-limit) we DO retry at app level with a longer
+                # backoff — the SDK's retry budget may be too small for
+                # sustained quota pressure.  For other retryable codes the SDK
+                # already exhausted its budget so we break immediately.
                 if exc.code in _RETRYABLE_STATUS_CODES:
                     last_exception = exc
                     # Check for SSL/connection errors that need location fallback.
@@ -700,7 +731,24 @@ class GeminiClient:
                             return fn()
                         except Exception as fallback_exc:  # noqa: BLE001
                             last_exception = fallback_exc
-                    break  # fall through to exhaustion handler
+                        break  # fall through to exhaustion handler
+                    # 429 rate-limit: retry at app level with longer backoff
+                    if exc.code == 429:
+                        if attempt < retry_cfg.max_retries:
+                            sleep_time, delay = self._compute_backoff_delay(
+                                delay,
+                                retry_cfg,
+                                is_rate_limit=True,
+                            )
+                            logger.warning(
+                                "Rate-limited (genai 429) on attempt %d/%d — retrying in %.2fs",
+                                attempt + 1,
+                                retry_cfg.max_retries + 1,
+                                sleep_time,
+                            )
+                            time.sleep(sleep_time)
+                            continue
+                    break  # non-429 retryable — fall through to exhaustion handler
                 # Convert context-window 400 errors to ContextWindowExceededError.
                 if _is_context_window_error(exc):
                     raise ContextWindowExceededError(
@@ -793,8 +841,11 @@ class GeminiClient:
                         last_exception = fallback_exc
                         break
                 if attempt < retry_cfg.max_retries:
-                    jitter = random.uniform(0, 0.5)  # noqa: S311
-                    sleep_time = min(delay, retry_cfg.max_delay) + jitter
+                    sleep_time, delay = self._compute_backoff_delay(
+                        delay,
+                        retry_cfg,
+                        is_rate_limit=isinstance(exc, google_exceptions.ResourceExhausted),
+                    )
                     logger.warning(
                         "Retryable error on attempt %d/%d (%s: %s) — retrying in %.2fs",
                         attempt + 1,
@@ -804,11 +855,13 @@ class GeminiClient:
                         sleep_time,
                     )
                     await asyncio.sleep(sleep_time)
-                    delay *= retry_cfg.backoff_multiplier
             except genai_errors.APIError as exc:
                 # google-genai SDK errors (ClientError / ServerError).
-                # The SDK already retried with backoff via HttpRetryOptions —
-                # do NOT retry at the app level (avoids retry budget explosion).
+                # The SDK already retried with backoff via HttpRetryOptions.
+                # For 429 (rate-limit) we DO retry at app level with a longer
+                # backoff — the SDK's retry budget may be too small for
+                # sustained quota pressure.  For other retryable codes the SDK
+                # already exhausted its budget so we break immediately.
                 if exc.code in _RETRYABLE_STATUS_CODES:
                     last_exception = exc
                     # Check for SSL/connection errors that need location fallback.
@@ -824,7 +877,24 @@ class GeminiClient:
                             return await fn()
                         except Exception as fallback_exc:  # noqa: BLE001
                             last_exception = fallback_exc
-                    break  # fall through to exhaustion handler
+                        break  # fall through to exhaustion handler
+                    # 429 rate-limit: retry at app level with longer backoff
+                    if exc.code == 429:
+                        if attempt < retry_cfg.max_retries:
+                            sleep_time, delay = self._compute_backoff_delay(
+                                delay,
+                                retry_cfg,
+                                is_rate_limit=True,
+                            )
+                            logger.warning(
+                                "Rate-limited (genai 429) on attempt %d/%d — retrying in %.2fs",
+                                attempt + 1,
+                                retry_cfg.max_retries + 1,
+                                sleep_time,
+                            )
+                            await asyncio.sleep(sleep_time)
+                            continue
+                    break  # non-429 retryable — fall through to exhaustion handler
                 # Convert context-window 400 errors to ContextWindowExceededError.
                 if _is_context_window_error(exc):
                     raise ContextWindowExceededError(

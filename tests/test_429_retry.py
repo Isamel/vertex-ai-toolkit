@@ -1,8 +1,10 @@
 """Tests for two-layer retry: SDK-level HttpRetryOptions + app-level genai_errors.APIError handling.
 
 Layer 1 — SDK retries transient HTTP errors automatically via ``HttpRetryOptions``.
-Layer 2 — vaig catches ``genai_errors.APIError`` to convert to custom exceptions
-          and attempt SSL fallback, but does NOT retry (the SDK already did).
+Layer 2 — vaig catches ``genai_errors.APIError``:
+  - 429 (rate-limit): retried at app level with ``rate_limit_initial_delay`` backoff.
+  - Other retryable codes (500, 502, 503, 504): NOT retried at app level
+    (the SDK already exhausted its retry budget).
 """
 
 from __future__ import annotations
@@ -107,28 +109,29 @@ class TestBuildHttpOptions:
 
 # ── Layer 2: App-level genai_errors.APIError handling (sync) ─
 #
-# The SDK already retried via HttpRetryOptions.  vaig's handler MUST NOT
-# retry — it should catch, log, and convert to our custom exceptions.
+# The SDK already retried via HttpRetryOptions.  For 429, vaig's handler
+# DOES retry at app level with a longer backoff.  For other retryable codes
+# (500, 502, etc.) it does NOT retry — catches, logs, and converts.
 
 
 class TestSyncGenaiErrorHandling:
-    """Tests for _retry_with_backoff catching genai_errors.APIError (no app-level retry)."""
+    """Tests for _retry_with_backoff catching genai_errors.APIError."""
 
-    def test_genai_429_converts_to_rate_limit_error_without_retry(
+    def test_genai_429_retries_at_app_level(
         self,
         client: GeminiClient,
+        settings: Settings,
     ) -> None:
-        """A genai ClientError 429 is caught and converted to GeminiRateLimitError — NOT retried."""
+        """A genai ClientError 429 IS retried at app level with rate_limit backoff."""
         fn = MagicMock(
             side_effect=genai_errors.ClientError(429, "Resource exhausted"),
         )
 
-        with pytest.raises(GeminiRateLimitError) as exc_info:
+        with pytest.raises(GeminiRateLimitError):
             client._retry_with_backoff(fn)
 
-        # fn called only ONCE — SDK already retried, app level does not.
-        assert fn.call_count == 1
-        assert isinstance(exc_info.value.original_error, genai_errors.ClientError)
+        # fn called max_retries + 1 times (initial + retries)
+        assert fn.call_count == settings.retry.max_retries + 1
 
     def test_genai_500_converts_to_connection_error_without_retry(
         self,
@@ -209,17 +212,33 @@ class TestSyncGenaiErrorHandling:
         # fn called twice: first attempt → error → fallback → retry once
         assert fn.call_count == 2
 
-    def test_no_time_sleep_called_for_genai_errors(
+    def test_time_sleep_called_for_genai_429(
         self,
         client: GeminiClient,
+        settings: Settings,
     ) -> None:
-        """Verify time.sleep is NOT called when genai_errors.APIError is caught."""
+        """Verify time.sleep IS called when genai 429 is caught (app-level retry)."""
         fn = MagicMock(
             side_effect=genai_errors.ClientError(429, "Resource exhausted"),
         )
 
         with patch("vaig.core.client.time.sleep") as mock_sleep:
             with pytest.raises(GeminiRateLimitError):
+                client._retry_with_backoff(fn)
+
+            assert mock_sleep.call_count == settings.retry.max_retries
+
+    def test_no_time_sleep_called_for_genai_500(
+        self,
+        client: GeminiClient,
+    ) -> None:
+        """Verify time.sleep is NOT called when genai 500 is caught (no app retry)."""
+        fn = MagicMock(
+            side_effect=genai_errors.ServerError(500, "Internal server error"),
+        )
+
+        with patch("vaig.core.client.time.sleep") as mock_sleep:
+            with pytest.raises(GeminiConnectionError):
                 client._retry_with_backoff(fn)
 
             mock_sleep.assert_not_called()
@@ -229,14 +248,15 @@ class TestSyncGenaiErrorHandling:
 
 
 class TestAsyncGenaiErrorHandling:
-    """Tests for _async_retry_with_backoff catching genai_errors.APIError (no app-level retry)."""
+    """Tests for _async_retry_with_backoff catching genai_errors.APIError."""
 
     @pytest.mark.asyncio()
-    async def test_async_genai_429_converts_to_rate_limit_error_without_retry(
+    async def test_async_genai_429_retries_at_app_level(
         self,
         client: GeminiClient,
+        settings: Settings,
     ) -> None:
-        """Async: genai ClientError 429 → GeminiRateLimitError, no retry."""
+        """Async: genai ClientError 429 IS retried at app level."""
         call_count = 0
 
         async def fn() -> str:
@@ -244,11 +264,10 @@ class TestAsyncGenaiErrorHandling:
             call_count += 1
             raise genai_errors.ClientError(429, "Resource exhausted")
 
-        with pytest.raises(GeminiRateLimitError) as exc_info:
+        with pytest.raises(GeminiRateLimitError):
             await client._async_retry_with_backoff(fn)
 
-        assert call_count == 1
-        assert isinstance(exc_info.value.original_error, genai_errors.ClientError)
+        assert call_count == settings.retry.max_retries + 1
 
     @pytest.mark.asyncio()
     async def test_async_genai_500_converts_to_connection_error_without_retry(
@@ -316,11 +335,12 @@ class TestAsyncGenaiErrorHandling:
         assert call_count == 2
 
     @pytest.mark.asyncio()
-    async def test_async_no_asyncio_sleep_called_for_genai_errors(
+    async def test_async_asyncio_sleep_called_for_genai_429(
         self,
         client: GeminiClient,
+        settings: Settings,
     ) -> None:
-        """Verify asyncio.sleep is NOT called when genai_errors.APIError is caught."""
+        """Verify asyncio.sleep IS called when genai 429 is caught (app-level retry)."""
         call_count = 0
 
         async def fn() -> str:
@@ -332,4 +352,123 @@ class TestAsyncGenaiErrorHandling:
             with pytest.raises(GeminiRateLimitError):
                 await client._async_retry_with_backoff(fn)
 
+            assert mock_sleep.call_count == settings.retry.max_retries
+
+    @pytest.mark.asyncio()
+    async def test_async_no_asyncio_sleep_called_for_genai_500(
+        self,
+        client: GeminiClient,
+    ) -> None:
+        """Verify asyncio.sleep is NOT called when genai 500 is caught (no app retry)."""
+        call_count = 0
+
+        async def fn() -> str:
+            nonlocal call_count
+            call_count += 1
+            raise genai_errors.ServerError(500, "Internal server error")
+
+        with patch("vaig.core.client.asyncio.sleep") as mock_sleep:
+            with pytest.raises(GeminiConnectionError):
+                await client._async_retry_with_backoff(fn)
+
             mock_sleep.assert_not_called()
+
+
+# ── Rate-limit initial delay (rate_limit_initial_delay) ──────
+
+
+class TestRateLimitInitialDelay:
+    """Verify 429 errors use the longer ``rate_limit_initial_delay`` backoff."""
+
+    @pytest.fixture()
+    def rl_settings(self) -> Settings:
+        """Settings where rate_limit_initial_delay is clearly distinct from initial_delay."""
+        return Settings(
+            gcp=GCPConfig(project_id="test-project", location="us-central1"),
+            generation=GenerationConfig(),
+            models=ModelsConfig(default="gemini-2.5-pro", fallback="gemini-2.5-flash"),
+            retry=RetryConfig(
+                max_retries=2,
+                initial_delay=0.01,
+                max_delay=120.0,
+                backoff_multiplier=2.0,
+                rate_limit_initial_delay=8.0,
+            ),
+        )
+
+    @pytest.fixture()
+    def rl_client(self, rl_settings: Settings) -> GeminiClient:
+        return GeminiClient(rl_settings)
+
+    def test_sync_genai_429_uses_rate_limit_delay(
+        self,
+        rl_client: GeminiClient,
+    ) -> None:
+        """Sync: genai 429 sleep values start at rate_limit_initial_delay (8s), not initial_delay (0.01s)."""
+        fn = MagicMock(side_effect=genai_errors.ClientError(429, "Resource exhausted"))
+
+        with patch("vaig.core.client.time.sleep") as mock_sleep:
+            with pytest.raises(GeminiRateLimitError):
+                rl_client._retry_with_backoff(fn)
+
+            # First sleep should be ~8.0 + jitter (not ~0.01)
+            first_sleep = mock_sleep.call_args_list[0][0][0]
+            assert first_sleep >= 8.0, f"Expected >=8.0 for 429, got {first_sleep}"
+
+    def test_sync_resource_exhausted_uses_rate_limit_delay(
+        self,
+        rl_client: GeminiClient,
+    ) -> None:
+        """Sync: google.api_core ResourceExhausted (429) uses rate_limit_initial_delay."""
+        from google.api_core import exceptions as google_exceptions
+
+        fn = MagicMock(side_effect=google_exceptions.ResourceExhausted("quota exceeded"))
+
+        with patch("vaig.core.client.time.sleep") as mock_sleep:
+            with pytest.raises(GeminiRateLimitError):
+                rl_client._retry_with_backoff(fn)
+
+            first_sleep = mock_sleep.call_args_list[0][0][0]
+            assert first_sleep >= 8.0, f"Expected >=8.0 for ResourceExhausted, got {first_sleep}"
+
+    @pytest.mark.asyncio()
+    async def test_async_genai_429_uses_rate_limit_delay(
+        self,
+        rl_client: GeminiClient,
+    ) -> None:
+        """Async: genai 429 sleep values start at rate_limit_initial_delay."""
+        call_count = 0
+
+        async def fn() -> str:
+            nonlocal call_count
+            call_count += 1
+            raise genai_errors.ClientError(429, "Resource exhausted")
+
+        with patch("vaig.core.client.asyncio.sleep") as mock_sleep:
+            with pytest.raises(GeminiRateLimitError):
+                await rl_client._async_retry_with_backoff(fn)
+
+            first_sleep = mock_sleep.call_args_list[0][0][0]
+            assert first_sleep >= 8.0, f"Expected >=8.0 for async 429, got {first_sleep}"
+
+    @pytest.mark.asyncio()
+    async def test_async_resource_exhausted_uses_rate_limit_delay(
+        self,
+        rl_client: GeminiClient,
+    ) -> None:
+        """Async: google.api_core ResourceExhausted uses rate_limit_initial_delay."""
+        from google.api_core import exceptions as google_exceptions
+
+        call_count = 0
+
+        async def fn() -> str:
+            nonlocal call_count
+            call_count += 1
+            raise google_exceptions.ResourceExhausted("quota exceeded")
+
+        with patch("vaig.core.client.asyncio.sleep") as mock_sleep:
+            with pytest.raises(GeminiRateLimitError):
+                await rl_client._async_retry_with_backoff(fn)
+
+            first_sleep = mock_sleep.call_args_list[0][0][0]
+            assert first_sleep >= 8.0, f"Expected >=8.0 for async ResourceExhausted, got {first_sleep}"
