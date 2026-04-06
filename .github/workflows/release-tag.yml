@@ -1,0 +1,40 @@
+name: Create Release Tag
+
+# Automatically tags the commit when a release commit is pushed to main.
+# A "release commit" is one whose message matches "chore: release vX.Y.Z".
+# The resulting vX.Y.Z tag then triggers the build.yml workflow, which builds
+# the standalone binaries and creates the GitHub Release.
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  tag-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for release commit
+        id: check
+        run: |
+          MSG="${{ github.event.head_commit.message }}"
+          if echo "$MSG" | grep -qE '^chore: release v[0-9]+\.[0-9]+\.[0-9]+'; then
+            VERSION=$(echo "$MSG" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "should_tag=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_tag=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        if: steps.check.outputs.should_tag == 'true'
+        run: |
+          VERSION="${{ steps.check.outputs.version }}"
+          git tag "$VERSION"
+          git push origin "$VERSION"
