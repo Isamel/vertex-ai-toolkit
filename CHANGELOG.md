@@ -7,17 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-04-06
+
 ### Added
-- Dark/light theme toggle in web UI with OS preference detection via `prefers-color-scheme`, manual override via toggle button, `localStorage` persistence, and FOUC prevention script ([#188](https://github.com/Isamel/vertex-ai-toolkit/pull/188))
-- CLI auth + admin portal — `vaig login` (PKCE), `vaig logout`, `vaig whoami`, `vaig status` commands; JWT-based backend authentication; Firestore user/org repository; FastAPI admin API for CLI management and config policy enforcement ([#186](https://github.com/Isamel/vertex-ai-toolkit/pull/186))
-- Platform config section (`platform.enabled`, `platform.backend_url`) for opt-in centralized auth and config enforcement ([#186](https://github.com/Isamel/vertex-ai-toolkit/pull/186))
-- Web UI: live mode diagnosis pipeline with real-time SSE progress ([#184](https://github.com/Isamel/vertex-ai-toolkit/pull/184)), per-session config editor with Firestore persistence ([#178](https://github.com/Isamel/vertex-ai-toolkit/pull/178)), chat mode with multi-turn UI and Firestore sessions ([#177](https://github.com/Isamel/vertex-ai-toolkit/pull/177)), ask mode with SSE streaming ([#176](https://github.com/Isamel/vertex-ai-toolkit/pull/176))
-- `vaig web` command — start a FastAPI/HTMX web server with ask, chat, and live modes ([#175](https://github.com/Isamel/vertex-ai-toolkit/pull/175))
+
+#### Phase A — Proactive Operations & Collaboration
+- SPEC-1.1: Scheduled Health Scans — APScheduler-based background scanner with configurable cron, severity filtering, `HealthReport.diff()` comparison, and BigQuery storage ([#196](https://github.com/Isamel/vertex-ai-toolkit/pull/196))
+- SPEC-5.2: Skill Templates & Scaffolding — preset-based skill scaffolding system for rapid skill creation ([#197](https://github.com/Isamel/vertex-ai-toolkit/pull/197))
+- SPEC-6.3: Notification Hub — Slack webhook and SMTP email notification channels with multi-channel dispatcher and severity-based routing ([#198](https://github.com/Isamel/vertex-ai-toolkit/pull/198))
+
+#### Phase B — Knowledge Compound Effect
+- SPEC-4.1: Automated Fine-Tuning Pipeline — training data preparation from historical reports, SFT job management, model evaluation with comparison scoring ([#200](https://github.com/Isamel/vertex-ai-toolkit/pull/200))
+- SPEC-4.3: Tool Effectiveness Learning — tool call scoring engine with latency/failure/redundancy tracking, tier classification (BOOST/NEUTRAL/PENALIZE), LRU caching, and optimizer feedback loop ([#201](https://github.com/Isamel/vertex-ai-toolkit/pull/201))
+- SPEC-4.2: Per-Org Knowledge Specialization — org-scoped RAG corpus resolution (`vaig-{org_id}`), org-aware GCS export paths, config bridging via `PlatformConfig.org_id`, and retrieval fallback chain ([#202](https://github.com/Isamel/vertex-ai-toolkit/pull/202))
+
+#### Integrations & Resilience
+- Google Chat channel parity — migrated Google Chat to shared formatters for full feature parity with Slack across all notification types ([#199](https://github.com/Isamel/vertex-ai-toolkit/pull/199))
+- Rate-limit resilience — 429-specific backoff with `rate_limit_initial_delay` (8s floor), RPM-aware inter-call throttling via `min_inter_call_delay`, deduplicated retry logic via `_compute_backoff_delay` helper, app-level retry for `genai_errors.APIError` code 429 ([#204](https://github.com/Isamel/vertex-ai-toolkit/pull/204))
+- PagerDuty, Google Chat, and notification dispatcher integrations for multi-channel incident alerting ([#194](https://github.com/Isamel/vertex-ai-toolkit/pull/194))
+- Datadog webhook server for automated incident analysis from Datadog alert payloads ([#195](https://github.com/Isamel/vertex-ai-toolkit/pull/195))
+
+#### Web & Platform
+- `vaig web` command — FastAPI/HTMX web server with ask, chat, and live modes ([#175](https://github.com/Isamel/vertex-ai-toolkit/pull/175))
+- Web UI: ask mode with SSE streaming ([#176](https://github.com/Isamel/vertex-ai-toolkit/pull/176)), chat mode with multi-turn UI and Firestore sessions ([#177](https://github.com/Isamel/vertex-ai-toolkit/pull/177)), per-session config editor ([#178](https://github.com/Isamel/vertex-ai-toolkit/pull/178)), live mode diagnosis pipeline with real-time SSE progress ([#184](https://github.com/Isamel/vertex-ai-toolkit/pull/184))
+- Web UI: error handling, responsive CSS, Cloud Run deployment support ([#179](https://github.com/Isamel/vertex-ai-toolkit/pull/179)), settings panel in chat mode ([#185](https://github.com/Isamel/vertex-ai-toolkit/pull/185))
+- Dark/light theme toggle with OS preference detection via `prefers-color-scheme`, manual override, `localStorage` persistence, and FOUC prevention ([#188](https://github.com/Isamel/vertex-ai-toolkit/pull/188))
 - Ollama-compatible proxy endpoint for VS Code Copilot integration ([#181](https://github.com/Isamel/vertex-ai-toolkit/pull/181))
-- Web UI: settings panel in chat mode, error handling, responsive CSS, Cloud Run deployment support ([#179](https://github.com/Isamel/vertex-ai-toolkit/pull/179), [#185](https://github.com/Isamel/vertex-ai-toolkit/pull/185))
+- CLI auth + admin portal — `vaig login` (PKCE), `vaig logout`, `vaig whoami`, `vaig status`; JWT-based backend auth; Firestore user/org repository; FastAPI admin API for config enforcement ([#186](https://github.com/Isamel/vertex-ai-toolkit/pull/186))
+- Platform config section (`platform.enabled`, `platform.backend_url`) for opt-in centralized auth ([#186](https://github.com/Isamel/vertex-ai-toolkit/pull/186))
+- Enhanced dependency mapping with mandatory execution, Datadog API integration, and visual dependency graph ([#191](https://github.com/Isamel/vertex-ai-toolkit/pull/191))
+
+#### Reports & Enrichment
+- Report action quality improvement with rich examples and two-pass enrichment pipeline ([#182](https://github.com/Isamel/vertex-ai-toolkit/pull/182))
+- Action recommendations enriched with expected output and interpretation guidance ([#180](https://github.com/Isamel/vertex-ai-toolkit/pull/180))
+
+### Changed
+- Project documentation updated for recent changes ([#189](https://github.com/Isamel/vertex-ai-toolkit/pull/189))
 
 ### Fixed
-- TOCTOU race condition in web live mode pipeline semaphore — replaced double-acquire pattern with single-acquire (locked() check + acquire) to eliminate 429 errors from concurrent requests stealing semaphore slots ([#187](https://github.com/Isamel/vertex-ai-toolkit/pull/187))
+- TOCTOU race condition in web live mode pipeline semaphore — replaced double-acquire pattern with single-acquire to eliminate 429 errors from concurrent requests ([#187](https://github.com/Isamel/vertex-ai-toolkit/pull/187))
+- Agent counter and progress bar rendering in web live mode ([#190](https://github.com/Isamel/vertex-ai-toolkit/pull/190))
+- Async report post-processing wrapped in `asyncio.to_thread` for live mode compatibility ([#192](https://github.com/Isamel/vertex-ai-toolkit/pull/192))
+- Datadog diagnostic feedback and auto-fallback for metric retrieval failures ([#193](https://github.com/Isamel/vertex-ai-toolkit/pull/193))
+- urllib3 warning suppression, enrichment spinner, and finding context injection ([#183](https://github.com/Isamel/vertex-ai-toolkit/pull/183))
+- Context window overflow protection and improved error handling ([#173](https://github.com/Isamel/vertex-ai-toolkit/pull/173))
+- Datadog SDK Point object handling in metric pointlist extraction ([#169](https://github.com/Isamel/vertex-ai-toolkit/pull/169))
+- Custom label exclusion from APM queries and context manager fix in Datadog tools ([#168](https://github.com/Isamel/vertex-ai-toolkit/pull/168))
+- Datadog APM metrics rewritten to use Timeseries API with auto-detection ([#167](https://github.com/Isamel/vertex-ai-toolkit/pull/167))
+- Label resolution from actual workload types instead of only deployments ([#166](https://github.com/Isamel/vertex-ai-toolkit/pull/166))
+- Default `metric_mode` set to `both`, fuzzy template matching, and tag filter fallback ([#170](https://github.com/Isamel/vertex-ai-toolkit/pull/170))
+- APM severity thresholds and standalone findings added to health analysis ([#171](https://github.com/Isamel/vertex-ai-toolkit/pull/171))
+- Datadog service name pre-resolved from K8s workload labels ([#172](https://github.com/Isamel/vertex-ai-toolkit/pull/172))
+
+### Security
+- Pre-validation, delimiter defense, output redaction, and pre-commit hooks for prompt injection hardening ([#165](https://github.com/Isamel/vertex-ai-toolkit/pull/165))
 
 ## [0.12.0] - 2026-03-29
 
@@ -268,7 +311,8 @@ SRE workflows.
 - Extracted shared test fixtures into `conftest.py`
 - Applied 12 code quality improvements from audit
 
-[Unreleased]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Isamel/vertex-ai-toolkit/releases/tag/v0.10.0
