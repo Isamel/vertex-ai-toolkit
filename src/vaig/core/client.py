@@ -668,6 +668,9 @@ class GeminiClient:
                     except Exception as fallback_exc:  # noqa: BLE001
                         last_exception = fallback_exc
                         break
+                # If this is a 429/rate-limit, use longer backoff
+                if isinstance(exc, google_exceptions.ResourceExhausted):
+                    delay = max(delay, retry_cfg.rate_limit_initial_delay)
                 if attempt < retry_cfg.max_retries:
                     jitter = random.uniform(0, 0.5)  # noqa: S311
                     sleep_time = min(delay, retry_cfg.max_delay) + jitter
@@ -683,8 +686,11 @@ class GeminiClient:
                     delay *= retry_cfg.backoff_multiplier
             except genai_errors.APIError as exc:
                 # google-genai SDK errors (ClientError / ServerError).
-                # The SDK already retried with backoff via HttpRetryOptions —
-                # do NOT retry at the app level (avoids retry budget explosion).
+                # The SDK already retried with backoff via HttpRetryOptions.
+                # For 429 (rate-limit) we DO retry at app level with a longer
+                # backoff — the SDK's retry budget may be too small for
+                # sustained quota pressure.  For other retryable codes the SDK
+                # already exhausted its budget so we break immediately.
                 if exc.code in _RETRYABLE_STATUS_CODES:
                     last_exception = exc
                     # Check for SSL/connection errors that need location fallback.
@@ -700,7 +706,23 @@ class GeminiClient:
                             return fn()
                         except Exception as fallback_exc:  # noqa: BLE001
                             last_exception = fallback_exc
-                    break  # fall through to exhaustion handler
+                        break  # fall through to exhaustion handler
+                    # 429 rate-limit: retry at app level with longer backoff
+                    if exc.code == 429:
+                        delay = max(delay, retry_cfg.rate_limit_initial_delay)
+                        if attempt < retry_cfg.max_retries:
+                            jitter = random.uniform(0, 0.5)  # noqa: S311
+                            sleep_time = min(delay, retry_cfg.max_delay) + jitter
+                            logger.warning(
+                                "Rate-limited (genai 429) on attempt %d/%d — retrying in %.2fs",
+                                attempt + 1,
+                                retry_cfg.max_retries + 1,
+                                sleep_time,
+                            )
+                            time.sleep(sleep_time)
+                            delay *= retry_cfg.backoff_multiplier
+                            continue
+                    break  # non-429 retryable — fall through to exhaustion handler
                 # Convert context-window 400 errors to ContextWindowExceededError.
                 if _is_context_window_error(exc):
                     raise ContextWindowExceededError(
@@ -792,6 +814,9 @@ class GeminiClient:
                     except Exception as fallback_exc:  # noqa: BLE001
                         last_exception = fallback_exc
                         break
+                # If this is a 429/rate-limit, use longer backoff
+                if isinstance(exc, google_exceptions.ResourceExhausted):
+                    delay = max(delay, retry_cfg.rate_limit_initial_delay)
                 if attempt < retry_cfg.max_retries:
                     jitter = random.uniform(0, 0.5)  # noqa: S311
                     sleep_time = min(delay, retry_cfg.max_delay) + jitter
@@ -807,8 +832,11 @@ class GeminiClient:
                     delay *= retry_cfg.backoff_multiplier
             except genai_errors.APIError as exc:
                 # google-genai SDK errors (ClientError / ServerError).
-                # The SDK already retried with backoff via HttpRetryOptions —
-                # do NOT retry at the app level (avoids retry budget explosion).
+                # The SDK already retried with backoff via HttpRetryOptions.
+                # For 429 (rate-limit) we DO retry at app level with a longer
+                # backoff — the SDK's retry budget may be too small for
+                # sustained quota pressure.  For other retryable codes the SDK
+                # already exhausted its budget so we break immediately.
                 if exc.code in _RETRYABLE_STATUS_CODES:
                     last_exception = exc
                     # Check for SSL/connection errors that need location fallback.
@@ -824,7 +852,23 @@ class GeminiClient:
                             return await fn()
                         except Exception as fallback_exc:  # noqa: BLE001
                             last_exception = fallback_exc
-                    break  # fall through to exhaustion handler
+                        break  # fall through to exhaustion handler
+                    # 429 rate-limit: retry at app level with longer backoff
+                    if exc.code == 429:
+                        delay = max(delay, retry_cfg.rate_limit_initial_delay)
+                        if attempt < retry_cfg.max_retries:
+                            jitter = random.uniform(0, 0.5)  # noqa: S311
+                            sleep_time = min(delay, retry_cfg.max_delay) + jitter
+                            logger.warning(
+                                "Rate-limited (genai 429) on attempt %d/%d — retrying in %.2fs",
+                                attempt + 1,
+                                retry_cfg.max_retries + 1,
+                                sleep_time,
+                            )
+                            await asyncio.sleep(sleep_time)
+                            delay *= retry_cfg.backoff_multiplier
+                            continue
+                    break  # non-429 retryable — fall through to exhaustion handler
                 # Convert context-window 400 errors to ContextWindowExceededError.
                 if _is_context_window_error(exc):
                     raise ContextWindowExceededError(

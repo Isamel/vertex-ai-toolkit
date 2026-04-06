@@ -106,6 +106,7 @@ agents:
   orchestrator_model: "gemini-2.5-pro"
   specialist_model: "gemini-2.5-flash"
   max_iterations_retry: 15
+  min_inter_call_delay: 0.0
 
 context:
   max_file_size_mb: 50
@@ -128,6 +129,7 @@ retry:
   initial_delay: 1.0
   max_delay: 60.0
   backoff_multiplier: 2.0
+  rate_limit_initial_delay: 8.0
 
 logging:
   level: "WARNING"  # Override via VAIG_LOGGING__LEVEL or --verbose/-V
