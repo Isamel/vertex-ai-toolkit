@@ -962,6 +962,7 @@ def fetch_workload_costs(
     workloads_with_full_metrics = 0
     workloads_with_partial_metrics = 0
     workloads_without_metrics = 0
+    any_estimated = False  # True when at least one workload uses fallback estimates
 
     for (ns, wl_name), pods in sorted(workload_pods.items()):
         cpu_req, mem_req, eph_req = _aggregate_container_requests(pods)
@@ -975,11 +976,20 @@ def fetch_workload_costs(
         # With partial metrics, individual container dimensions may be None.
         wl_cpu_usage: float | None = None
         wl_mem_usage: float | None = None
+        wl_estimated = False
         if c_usage:
             cpu_vals = [c.avg_cpu_cores for c in c_usage.values() if c.avg_cpu_cores is not None]
             mem_vals = [c.avg_memory_gib for c in c_usage.values() if c.avg_memory_gib is not None]
             wl_cpu_usage = sum(cpu_vals) if cpu_vals else None
             wl_mem_usage = sum(mem_vals) if mem_vals else None
+        elif wl_usage_metrics is None:
+            # ── Fallback: no monitoring data available for this workload.
+            # Estimate usage as equal to requests (worst case — 100% utilization).
+            # This gives a cost estimate rather than "N/A" in the report.
+            wl_cpu_usage = cpu_req
+            wl_mem_usage = mem_req
+            wl_estimated = True
+            any_estimated = True
 
         cost_data = calculate_workload_cost(
             cpu_requests=cpu_req,
@@ -1004,6 +1014,7 @@ def fetch_workload_costs(
                 total_waste_usd=cost_data["total_waste_usd"],
                 containers=cost_data["containers"],
                 partial_metrics=wl_partial,
+                metrics_estimated=wl_estimated,
             )
         )
 
@@ -1013,7 +1024,9 @@ def fetch_workload_costs(
         wl_usage_cost = cost_data["total_usage_cost_usd"]
         if wl_usage_cost is not None:
             total_usage = (total_usage or 0.0) + wl_usage_cost
-            if wl_partial:
+            if wl_estimated:
+                workloads_without_metrics += 1
+            elif wl_partial:
                 workloads_with_partial_metrics += 1
             else:
                 workloads_with_full_metrics += 1
@@ -1038,6 +1051,7 @@ def fetch_workload_costs(
         workloads_with_full_metrics=workloads_with_full_metrics,
         workloads_with_partial_metrics=workloads_with_partial_metrics,
         workloads_without_metrics=workloads_without_metrics,
+        metrics_estimated=any_estimated,
     )
 
 

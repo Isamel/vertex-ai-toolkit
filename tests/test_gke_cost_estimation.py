@@ -1140,8 +1140,9 @@ class TestFetchWorkloadCostsV2BackwardCompat:
     def test_monitoring_unavailable_workload_has_empty_containers(
         self, _mock_autopilot: MagicMock, mock_clients: MagicMock
     ) -> None:
-        """When get_workload_usage_metrics returns {}, containers are populated from K8s requests
-        but have no usage/waste data (total_usage_cost_usd and total_waste_usd are None)."""
+        """When get_workload_usage_metrics returns {}, usage is estimated from requests
+        (100% utilization fallback). Containers are populated from K8s requests but
+        container_usage is None so per-container usage/waste remain None."""
         from vaig.tools.gke.cost_estimation import fetch_workload_costs
 
         pod = self._make_running_pod()
@@ -1159,19 +1160,19 @@ class TestFetchWorkloadCostsV2BackwardCompat:
             # containers are populated from K8s resource requests
             assert len(wl.containers) >= 1
             for ct in wl.containers:
-                # but no usage data → these must be None
+                # container_usage=None → per-container usage/waste are still None
                 assert ct.total_usage_cost_usd is None
                 assert ct.total_waste_usd is None
-            # workload-level totals are also None without monitoring
-            assert wl.total_usage_cost_usd is None
-            assert wl.total_waste_usd is None
+            # workload-level totals are now estimated from requests (not None)
+            assert wl.total_usage_cost_usd is not None
+            assert wl.metrics_estimated is True
 
     @patch("vaig.tools.gke.cost_estimation._create_k8s_clients")
     @patch("vaig.tools.gke.cost_estimation.detect_autopilot", return_value=True)
     def test_monitoring_unavailable_namespace_summaries_present_without_usage(
         self, _mock_autopilot: MagicMock, mock_clients: MagicMock
     ) -> None:
-        """namespace_summaries should contain the namespace but with None usage/waste."""
+        """namespace_summaries should contain the namespace with estimated usage."""
         from vaig.tools.gke.cost_estimation import fetch_workload_costs
 
         pod = self._make_running_pod()
@@ -1187,7 +1188,7 @@ class TestFetchWorkloadCostsV2BackwardCompat:
         # namespace_summaries should contain the namespace
         assert "default" in report.namespace_summaries
         ns = report.namespace_summaries["default"]
-        assert ns.total_usage_cost_usd is None
-        assert ns.total_waste_usd is None
+        # Usage is now estimated from requests, not None
+        assert ns.total_usage_cost_usd is not None
         # request cost should be non-zero (pod has 100m CPU + 128Mi memory)
         assert ns.total_request_cost_usd > 0
