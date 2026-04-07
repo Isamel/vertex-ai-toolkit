@@ -169,6 +169,7 @@ from vaig.cli.commands import (  # noqa: E402, I001
     doctor as _doctor_mod,
     export_cmd as _export_mod,
     feedback as _feedback_mod,
+    fleet as _fleet_mod,
     live as _live_mod,
     mcp as _mcp_mod,
     models as _models_mod,
@@ -195,6 +196,7 @@ _export_mod.register(app)
 _web_mod.register(app)
 _webhook_mod.register(app)
 _schedule_mod.register(app)
+_fleet_mod.register(app)
 app.add_typer(cloud_app, name="cloud")
 app.add_typer(train_app, name="train")
 

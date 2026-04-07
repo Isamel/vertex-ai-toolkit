@@ -1136,6 +1136,42 @@ class ScheduleConfig(BaseModel):
         return self
 
 
+class FleetCluster(BaseModel):
+    """A single GKE cluster in a fleet scan configuration."""
+
+    name: str = Field(description="Display name (required)")
+    cluster_name: str = Field(description="GKE cluster name (required)")
+    project_id: str = Field(default="", description="GCP project; falls back to gcp.project_id")
+    location: str = Field(default="", description="GKE location; falls back to gcp.location")
+    namespace: str = ""
+    all_namespaces: bool = False
+    skip_healthy: bool = True
+    kubeconfig_path: str = ""
+    context: str = ""
+    impersonate_sa: str = ""
+
+
+class FleetConfig(BaseModel):
+    """Multi-cluster fleet scanning configuration.
+
+    Auto-enables when ``clusters`` is non-empty, following the same
+    pattern as :class:`ScheduleConfig`.
+    """
+
+    enabled: bool = False
+    clusters: list[FleetCluster] = Field(default_factory=list)
+    parallel: bool = False
+    max_workers: int = Field(default=4, ge=1)
+    daily_budget_usd: float = 0.0
+
+    @model_validator(mode="after")
+    def _auto_enable(self) -> FleetConfig:
+        """Auto-enable when clusters are configured."""
+        if self.clusters and not self.enabled:
+            self.enabled = True
+        return self
+
+
 class Settings(BaseSettings):
     """Root application settings — merges env vars, YAML, and CLI overrides."""
 
@@ -1198,6 +1234,7 @@ class Settings(BaseSettings):
     slack: SlackConfig = Field(default_factory=SlackConfig)
     email: EmailConfig = Field(default_factory=EmailConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
+    fleet: FleetConfig = Field(default_factory=FleetConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
 
     @model_validator(mode="after")

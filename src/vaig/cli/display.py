@@ -16,6 +16,7 @@ from rich.text import Text
 
 if TYPE_CHECKING:
     from vaig.agents.base import AgentResult
+    from vaig.core.fleet import FleetReport
     from vaig.skills.service_health.diff import ReportDiff
     from vaig.skills.service_health.schema import HealthReport
 
@@ -711,6 +712,118 @@ def print_recommendations_table(
             expand=True,
         )
         con.print(panel)
+
+
+# ── Fleet Summary Panel ──────────────────────────────────────
+
+
+def print_fleet_summary_panel(
+    report: FleetReport,
+    *,
+    detailed: bool = False,
+    console: Console | None = None,
+) -> None:
+    """Render a fleet scan summary as a Rich Panel.
+
+    Shows total scanned, success/fail counts, fleet health status,
+    top correlations, and total cost.  When *detailed* is ``True``,
+    also renders a per-cluster breakdown table.
+
+    Args:
+        report: A :class:`FleetReport` instance from :class:`FleetRunner`.
+        detailed: Whether to show per-cluster breakdown.
+        console: Optional Rich Console; defaults to module-level instance.
+    """
+    con = console or _default_console
+
+    total = len(report.clusters)
+    successes = sum(1 for c in report.clusters if c.status == "success")
+    errors = sum(1 for c in report.clusters if c.status == "error")
+    skipped = sum(1 for c in report.clusters if c.status == "skipped")
+
+    # Determine fleet health status
+    if errors == 0 and skipped == 0:
+        fleet_status = "HEALTHY"
+        border_style = "green"
+        emoji = "🟢"
+    elif errors == total:
+        fleet_status = "FAILED"
+        border_style = "red"
+        emoji = "🔴"
+    else:
+        fleet_status = "DEGRADED"
+        border_style = "yellow"
+        emoji = "🟡"
+
+    body = Text()
+    body.append(f"{emoji} Fleet Status: ", style="bold")
+    body.append(f"{fleet_status}\n", style=f"bold {border_style}")
+    body.append(f"📊 Clusters: {total} total")
+    if successes:
+        body.append(f", {successes} succeeded", style="green")
+    if errors:
+        body.append(f", {errors} failed", style="red")
+    if skipped:
+        body.append(f", {skipped} skipped", style="yellow")
+    body.append("\n")
+    body.append(f"⏱  Duration: {report.total_duration_s:.1f}s\n")
+    body.append(f"💰 Cost: ${report.total_cost_usd:.4f}\n")
+
+    if report.budget_exceeded:
+        body.append("⚠  Budget exceeded — some clusters were skipped\n", style="bold yellow")
+
+    # Top correlations
+    if report.correlations:
+        body.append("\n")
+        body.append("🔗 Fleet-wide patterns:\n", style="bold")
+        for corr in report.correlations[:5]:
+            body.append(
+                f"  • {corr.pattern} ({corr.category}) — "
+                f"{len(corr.affected_clusters)}/{total} clusters\n"
+            )
+
+    panel = Panel(
+        body,
+        title="Fleet Scan Summary",
+        border_style=border_style,
+        padding=(1, 2),
+    )
+    con.print(panel)
+
+    # Detailed per-cluster table
+    if detailed:
+        table = Table(title="📋 Per-Cluster Results", show_lines=True)
+        table.add_column("Cluster", style="cyan")
+        table.add_column("Status", justify="center")
+        table.add_column("Duration", justify="right")
+        table.add_column("Cost", justify="right")
+        table.add_column("Details")
+
+        for cr in report.clusters:
+            if cr.status == "success":
+                status_str = "[green]✓ Success[/green]"
+                detail = ""
+                if cr.result and cr.result.structured_report:
+                    findings = getattr(cr.result.structured_report, "findings", [])
+                    detail = f"{len(findings)} findings"
+            elif cr.status == "error":
+                status_str = "[red]✗ Error[/red]"
+                detail = cr.error or "Unknown error"
+                if len(detail) > 60:
+                    detail = detail[:57] + "..."
+            else:
+                status_str = "[yellow]⊘ Skipped[/yellow]"
+                detail = cr.error or "Skipped"
+
+            table.add_row(
+                cr.display_name,
+                status_str,
+                f"{cr.duration_s:.1f}s",
+                f"${cr.cost_usd:.4f}",
+                detail,
+            )
+
+        con.print(table)
 
 
 # ── Watch Mode Diff Summary ──────────────────────────────────
