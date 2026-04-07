@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import click
 from typer.testing import CliRunner
 
 from vaig.cli.commands.fleet import fleet_app
@@ -11,8 +12,10 @@ from vaig.core.config import FleetCluster, FleetConfig
 
 runner = CliRunner()
 
-# Wide terminal so Rich/Typer never truncates option names (e.g. "--par…").
-_WIDE_ENV: dict[str, str] = {"COLUMNS": "200"}
+
+def _plain(output: str) -> str:
+    """Strip ANSI escape codes so assertions work regardless of terminal width."""
+    return click.unstyle(output)
 
 
 class TestFleetCLI:
@@ -20,15 +23,16 @@ class TestFleetCLI:
 
     def test_fleet_discover_help(self) -> None:
         """--help shows all expected flags."""
-        result = runner.invoke(fleet_app, ["discover", "--help"], env=_WIDE_ENV)
+        result = runner.invoke(fleet_app, ["discover", "--help"])
         assert result.exit_code == 0
-        assert "--parallel" in result.output
-        assert "--max-workers" in result.output
-        assert "--budget" in result.output
-        assert "--detailed" in result.output
-        assert "--export" in result.output
-        assert "--namespace" in result.output
-        assert "--all-namespaces" in result.output
+        text = _plain(result.output)
+        assert "--parallel" in text
+        assert "--max-workers" in text
+        assert "--budget" in text
+        assert "--detailed" in text
+        assert "--export" in text
+        assert "--namespace" in text
+        assert "--all-namespaces" in text
 
     def test_no_fleet_config_error(self) -> None:
         """No fleet config → actionable error."""
