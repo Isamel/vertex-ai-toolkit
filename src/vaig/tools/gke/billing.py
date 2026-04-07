@@ -50,6 +50,10 @@ _EPHEMERAL_KEYWORDS = ("autopilot", "ephemeral", "storage")
 # Cloud Billing Catalog service display name for GKE
 _GKE_SERVICE_DISPLAY_NAME = "Kubernetes Engine"
 
+# Static GKE service ID — avoids iterating all services in the Billing Catalog.
+# Format: ``services/<ID>``
+_GKE_SERVICE_ID = "6F81-5844-456A"
+
 
 def get_dynamic_pricing(
     project_id: str,
@@ -153,6 +157,8 @@ def _fetch_pricing_from_catalog(region: str) -> BillingPricingResult | None:
             ephemeral_per_gib_hour=eph_rate,
         )
 
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("Cloud Billing API pricing lookup failed: %s", exc)
         return None
@@ -161,12 +167,28 @@ def _fetch_pricing_from_catalog(region: str) -> BillingPricingResult | None:
 def _find_gke_service(client: object) -> str | None:
     """Find the Cloud Billing service name for Kubernetes Engine.
 
+    Tries the well-known static service ID first (``_GKE_SERVICE_ID``) to
+    avoid iterating the entire Billing Catalog.  Falls back to a full
+    service scan if the static ID does not resolve.
+
     Returns the service resource name (e.g.
     ``services/6F81-5844-456A``) or ``None`` if not found.
     """
     from google.cloud import billing_v1  # noqa: WPS433
 
     assert isinstance(client, billing_v1.CloudCatalogClient)  # noqa: S101
+
+    # Fast path: use the well-known static service ID
+    static_name = f"services/{_GKE_SERVICE_ID}"
+    try:
+        svc = client.get_service(name=static_name)
+        if svc and svc.display_name == _GKE_SERVICE_DISPLAY_NAME:
+            logger.debug("Resolved GKE service via static ID: %s", static_name)
+            return static_name
+    except Exception:  # noqa: BLE001
+        logger.debug("Static GKE service ID lookup failed, falling back to iteration")
+
+    # Fallback: iterate all services
     for svc in client.list_services():
         if svc.display_name == _GKE_SERVICE_DISPLAY_NAME:
             return str(svc.name)

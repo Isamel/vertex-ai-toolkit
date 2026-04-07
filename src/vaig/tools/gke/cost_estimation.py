@@ -348,6 +348,8 @@ def get_autopilot_pricing(
                 )
                 logger.info("Using dynamic Billing API pricing for region=%s", region)
                 return PricingLookupResult(pricing=pricing, source="billing_api")
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("Dynamic pricing lookup failed, falling back to hardcoded: %s", exc)
 
