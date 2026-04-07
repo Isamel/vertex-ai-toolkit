@@ -11,13 +11,16 @@ from vaig.core.config import FleetCluster, FleetConfig
 
 runner = CliRunner()
 
+# Wide terminal so Rich/Typer never truncates option names (e.g. "--par…").
+_WIDE_ENV: dict[str, str] = {"COLUMNS": "200"}
+
 
 class TestFleetCLI:
     """REQ-FLEET-05, REQ-FLEET-06, SC-05: CLI command tests."""
 
     def test_fleet_discover_help(self) -> None:
         """--help shows all expected flags."""
-        result = runner.invoke(fleet_app, ["--help"])
+        result = runner.invoke(fleet_app, ["discover", "--help"], env=_WIDE_ENV)
         assert result.exit_code == 0
         assert "--parallel" in result.output
         assert "--max-workers" in result.output
