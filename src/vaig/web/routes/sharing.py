@@ -72,8 +72,8 @@ async def share_session(request: Request, session_id: str) -> JSONResponse:
     user = get_current_user(request)
     access = get_session_access(request)
 
-    body = await request.json()
     try:
+        body = await request.json()
         payload = ShareRequest(**body)
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)

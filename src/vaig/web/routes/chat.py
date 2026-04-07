@@ -21,7 +21,7 @@ from sse_starlette import EventSourceResponse, ServerSentEvent
 from starlette.responses import JSONResponse, Response
 
 from vaig.core.models import SessionRole
-from vaig.web.deps import get_container, get_current_user, get_session_access, get_settings
+from vaig.web.deps import get_container, get_current_user, get_settings
 from vaig.web.events import EventQueueBridge
 from vaig.web.sse import stream_to_sse
 
@@ -108,10 +108,16 @@ async def session_delete(request: Request, session_id: str) -> JSONResponse:
         )
 
     # Verify session ownership via ACL before deleting
-    access = get_session_access(request)
-    result = await access.check_access(session_id, user, required=SessionRole.OWNER)
-    if not result.granted:
-        return JSONResponse({"error": "Session not found"}, status_code=404)
+    access_svc = getattr(request.app.state, "session_access", None)
+    if access_svc is not None:
+        result = await access_svc.check_access(session_id, user, required=SessionRole.OWNER)
+        if not result.granted:
+            return JSONResponse({"error": "Session not found"}, status_code=404)
+    else:
+        # Fallback: ownership check when ACL is not configured
+        session_data = await store.async_get_session(session_id)
+        if session_data is None or session_data.get("user") != user:
+            return JSONResponse({"error": "Session not found"}, status_code=404)
 
     deleted = await store.async_delete_session(session_id)
     if not deleted:
@@ -158,15 +164,20 @@ async def chat_resume(request: Request, session_id: str) -> Response:
         session_data = await store.async_get_session(session_id)
         # Verify user has at least viewer access via ACL
         if session_data is not None:
-            access = get_session_access(request)
-            acl_result = await access.check_access(
-                session_id, user, required=SessionRole.VIEWER
-            )
-            if not acl_result.granted:
-                session_data = None  # Treat as not found
+            access_svc = getattr(request.app.state, "session_access", None)
+            if access_svc is not None:
+                acl_result = await access_svc.check_access(
+                    session_id, user, required=SessionRole.VIEWER
+                )
+                if not acl_result.granted:
+                    session_data = None  # Treat as not found
+                else:
+                    user_role = acl_result.role.value if acl_result.role else "owner"
+                    is_owner = acl_result.role == SessionRole.OWNER if acl_result.role else True
             else:
-                user_role = acl_result.role.value if acl_result.role else "owner"
-                is_owner = acl_result.role == SessionRole.OWNER if acl_result.role else True
+                # Fallback: ownership check when ACL is not configured
+                if session_data.get("user") != user:
+                    session_data = None  # Treat as not found
         if session_data is not None:
             messages = await store.async_get_messages(session_id)
 
@@ -193,8 +204,9 @@ async def chat_resume(request: Request, session_id: str) -> Response:
     annotations_list: list[dict[str, Any]] = []
     if _sharing_enabled():
         try:
-            access = get_session_access(request)
-            raw_annotations = await access.list_annotations(session_id, user)
+            access_svc = getattr(request.app.state, "session_access", None)
+            if access_svc is not None:
+                raw_annotations = await access_svc.list_annotations(session_id, user)
             annotations_list = [
                 {
                     "id": a.id,
@@ -266,14 +278,21 @@ async def chat_message(request: Request, session_id: str) -> EventSourceResponse
                 _error_generator(f"Session {actual_session_id[:12]} not found.")
             )
         # Verify the user has editor-level access via ACL
-        access = get_session_access(request)
-        acl_result = await access.check_access(
-            actual_session_id, user, required=SessionRole.EDITOR
-        )
-        if not acl_result.granted:
-            return EventSourceResponse(
-                _error_generator("Insufficient permissions")
+        access_svc = getattr(request.app.state, "session_access", None)
+        if access_svc is not None:
+            acl_result = await access_svc.check_access(
+                actual_session_id, user, required=SessionRole.EDITOR
             )
+            if not acl_result.granted:
+                return EventSourceResponse(
+                    _error_generator("Insufficient permissions")
+                )
+        else:
+            # Fallback: ownership check when ACL is not configured
+            if existing.get("user") != user:
+                return EventSourceResponse(
+                    _error_generator("Insufficient permissions")
+                )
 
     # Store the user message
     if store is not None:

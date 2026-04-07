@@ -883,10 +883,11 @@
     {% if user_role is defined and user_role in ('owner', 'editor') and sharing_enabled is defined and sharing_enabled and session %}
     <div class="annotation-form" id="annotation-form-template">
         <select class="ann-type-select">
-            <option value="note">Note</option>
+            <option value="observation">Observation</option>
             <option value="action_item">Action Item</option>
             <option value="question">Question</option>
             <option value="root_cause">Root Cause</option>
+            <option value="resolution">Resolution</option>
         </select>
         <textarea class="ann-content-input" placeholder="Add annotation..." rows="2"></textarea>
         <div class="annotation-form-actions">
@@ -967,7 +968,7 @@
                 } else {
                     return resp.json().then(function(d) {
                         shareStatus.className = 'share-status error';
-                        shareStatus.textContent = d.detail || 'Failed to share';
+                        shareStatus.textContent = d.error || d.detail || 'Failed to share';
                     });
                 }
             }).catch(function() {
@@ -984,7 +985,7 @@
         fetch('/sessions/' + sessionId + '/collaborators')
             .then(function(resp) { return resp.json(); })
             .then(function(data) {
-                var collabs = data.collaborators || [];
+                var collabs = Array.isArray(data) ? data : (data && Array.isArray(data.collaborators) ? data.collaborators : []);
                 if (collabs.length === 0) {
                     collabContainer.innerHTML = '<span style="font-size:0.8rem;color:var(--text-secondary)">No collaborators yet</span>';
                     return;

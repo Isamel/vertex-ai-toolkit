@@ -149,7 +149,7 @@ class TestAnnotation:
             id="ann-2",
             author="bob@example.com",
             content="General note",
-            annotation_type="note",
+            annotation_type="observation",
             created_at="2026-01-01T00:00:00Z",
             updated_at="2026-01-01T00:00:00Z",
         )
@@ -160,7 +160,7 @@ class TestAnnotation:
             id="ann-3",
             author="bob@example.com",
             content="A note",
-            annotation_type="note",
+            annotation_type="observation",
             created_at="2026-01-01T00:00:00Z",
             updated_at="2026-01-01T00:00:00Z",
         )
@@ -173,7 +173,7 @@ class TestAnnotation:
                 id="ann-4",
                 author="bob@example.com",
                 content="x" * 2001,
-                annotation_type="note",
+                annotation_type="observation",
                 created_at="2026-01-01T00:00:00Z",
                 updated_at="2026-01-01T00:00:00Z",
             )
@@ -184,7 +184,7 @@ class TestAnnotation:
                 id="ann-5",
                 author="bob@example.com",
                 content="",
-                annotation_type="note",
+                annotation_type="observation",
                 created_at="2026-01-01T00:00:00Z",
                 updated_at="2026-01-01T00:00:00Z",
             )
@@ -218,7 +218,7 @@ class TestAnnotation:
             id="ann-8",
             author="bob@example.com",
             content="  hello  ",
-            annotation_type="note",
+            annotation_type="observation",
             created_at="2026-01-01T00:00:00Z",
             updated_at="2026-01-01T00:00:00Z",
         )
@@ -281,7 +281,7 @@ class TestSessionAccessProtocol:
                     id="ann-1",
                     author=user,
                     content=content,
-                    annotation_type="note",
+                    annotation_type="observation",
                     created_at="",
                     updated_at="",
                 )
@@ -293,7 +293,7 @@ class TestSessionAccessProtocol:
                     id=annotation_id,
                     author=user,
                     content=content,
-                    annotation_type="note",
+                    annotation_type="observation",
                     created_at="",
                     updated_at="",
                 )

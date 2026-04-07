@@ -38,7 +38,7 @@ def _sharing_enabled() -> bool:
 class CreateAnnotationRequest(BaseModel):
     """Body for POST /sessions/{id}/annotations."""
 
-    annotation_type: Literal["note", "root_cause", "action_item", "question"]
+    annotation_type: Literal["observation", "action_item", "question", "root_cause", "resolution"]
     content: str = Field(..., min_length=1, max_length=2000)
     message_ref: str | None = None
 
@@ -92,8 +92,8 @@ async def create_annotation(
     user = get_current_user(request)
     access = get_session_access(request)
 
-    body = await request.json()
     try:
+        body = await request.json()
         payload = CreateAnnotationRequest(**body)
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=422)

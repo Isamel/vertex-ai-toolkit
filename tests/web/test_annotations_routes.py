@@ -161,7 +161,7 @@ async def test_create_annotation_viewer_returns_403() -> None:
             resp = await ac.post(
                 "/sessions/s1/annotations",
                 json={
-                    "annotation_type": "note",
+                    "annotation_type": "observation",
                     "content": "Some observation",
                 },
             )
@@ -205,7 +205,7 @@ async def test_create_annotation_content_too_long_returns_422() -> None:
             resp = await ac.post(
                 "/sessions/s1/annotations",
                 json={
-                    "annotation_type": "note",
+                    "annotation_type": "observation",
                     "content": "x" * 2001,
                 },
             )
@@ -227,7 +227,7 @@ async def test_create_annotation_empty_content_returns_422() -> None:
             resp = await ac.post(
                 "/sessions/s1/annotations",
                 json={
-                    "annotation_type": "note",
+                    "annotation_type": "observation",
                     "content": "",
                 },
             )
@@ -241,7 +241,7 @@ async def test_create_annotation_no_message_ref() -> None:
         id="ann-002",
         author="editor@test.com",
         content="General observation",
-        annotation_type="note",
+        annotation_type="observation",
         message_ref=None,
         created_at="2026-01-01T00:00:00Z",
         updated_at="2026-01-01T00:00:00Z",
@@ -259,7 +259,7 @@ async def test_create_annotation_no_message_ref() -> None:
             resp = await ac.post(
                 "/sessions/s1/annotations",
                 json={
-                    "annotation_type": "note",
+                    "annotation_type": "observation",
                     "content": "General observation",
                 },
             )
@@ -521,7 +521,7 @@ async def test_create_annotation_flag_off_returns_404() -> None:
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             resp = await ac.post(
                 "/sessions/s1/annotations",
-                json={"annotation_type": "note", "content": "test"},
+                json={"annotation_type": "observation", "content": "test"},
             )
             assert resp.status_code == 404
 

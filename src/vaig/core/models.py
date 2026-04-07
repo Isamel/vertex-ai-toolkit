@@ -75,7 +75,7 @@ class AccessResult(BaseModel):
 
 # ── Annotation Models ────────────────────────────────────────────────────────
 
-AnnotationType = Literal["note", "root_cause", "action_item", "question"]
+AnnotationType = Literal["observation", "action_item", "question", "root_cause", "resolution"]
 
 
 class Annotation(BaseModel):

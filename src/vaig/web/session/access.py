@@ -331,9 +331,14 @@ class SessionAccessControl:
         Uses a Firestore collection group query on ``collaborators``
         where the document ID matches the normalized user email.
         """
+        if not _sharing_enabled():
+            return []
+
         user = _normalize_email(user)
 
         # Collection group query: find all collaborator docs for this user
+        # TODO: optimize with server-side where clause when Firestore supports
+        # document_id equality in collection group queries
         collab_group = self._client.collection_group(_COLLABORATORS_SUB)
 
         sessions: list[dict[str, Any]] = []
@@ -474,7 +479,7 @@ class SessionAccessControl:
             id=annotation_id,
             author=author,
             content=content,
-            annotation_type=cast(AnnotationType, data.get("annotation_type", "note")),
+            annotation_type=cast(AnnotationType, data.get("annotation_type", "observation")),
             message_ref=data.get("message_ref"),
             created_at=data.get("created_at", ""),
             updated_at=now,
@@ -564,7 +569,7 @@ class SessionAccessControl:
                         id=doc.id,
                         author=data.get("author", ""),
                         content=data.get("content", ""),
-                        annotation_type=cast(AnnotationType, data.get("annotation_type", "note")),
+                        annotation_type=cast(AnnotationType, data.get("annotation_type", "observation")),
                         message_ref=data.get("message_ref"),
                         created_at=data.get("created_at", ""),
                         updated_at=data.get("updated_at", ""),
