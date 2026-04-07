@@ -191,6 +191,7 @@ def format_export(
 # ── Fleet Export ──────────────────────────────────────────────
 
 if TYPE_CHECKING:
+    from vaig.core.compare import CompareReport
     from vaig.core.fleet import FleetReport
 
 
@@ -252,3 +253,27 @@ def export_fleet(report: FleetReport, *, fmt: str = "json") -> str:
         },
     }
     return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+# ── Compare Export (REQ-CMP-07) ──────────────────────────────────────────────
+
+
+def export_compare(report: CompareReport, *, fmt: str = "json") -> str:
+    """Export a :class:`CompareReport` in the requested format.
+
+    Args:
+        report: Cross-cluster comparison report.
+        fmt: Format string — ``"json"`` (only supported format currently).
+
+    Returns:
+        Formatted string content.
+
+    Raises:
+        ValueError: If the format is not recognized.
+    """
+    fmt = fmt.lower().strip()
+    if fmt != "json":
+        msg = f"Unsupported compare export format: {fmt!r}. Currently only 'json' is supported."
+        raise ValueError(msg)
+
+    return json.dumps(report.to_dict(), indent=2, ensure_ascii=False)
