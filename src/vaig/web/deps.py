@@ -10,16 +10,18 @@ Provides ``Depends()``-compatible callables for:
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException, Request
 
 from vaig.core.config import Settings
 from vaig.core.container import ServiceContainer, build_container
+from vaig.core.protocols import SessionAccessProtocol
 
 __all__ = [
     "get_container",
     "get_current_user",
+    "get_session_access",
     "get_settings",
 ]
 
@@ -128,3 +130,18 @@ async def get_settings(request: Request) -> Settings:
 def get_container(settings: Settings) -> ServiceContainer:
     """Build a per-request ServiceContainer from the given settings."""
     return build_container(settings)
+
+
+def get_session_access(request: Request) -> SessionAccessProtocol:
+    """Retrieve the session access control service from app state.
+
+    Raises HTTP 503 when no access control backend has been configured
+    (e.g. during startup or when the feature is not wired).
+    """
+    access = getattr(request.app.state, "session_access", None)
+    if access is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Session access control not configured",
+        )
+    return cast(SessionAccessProtocol, access)

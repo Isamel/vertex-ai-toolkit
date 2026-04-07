@@ -91,6 +91,25 @@
         flex-shrink: 0;
     }
 
+    /* Role badge on session cards */
+    .role-badge {
+        display: inline-block;
+        padding: 0.15rem 0.5rem;
+        border-radius: 3px;
+        font-size: 0.7rem;
+        font-family: var(--font-mono);
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    .role-badge.owner { background: rgba(63,185,80,0.15); color: var(--success); }
+    .role-badge.editor { background: rgba(79,143,247,0.15); color: var(--accent); }
+    .role-badge.viewer { background: rgba(255,180,50,0.15); color: #e0a030; }
+
+    /* Shared session card visual distinction */
+    .session-card.shared {
+        border-left: 3px solid var(--accent);
+    }
+
     .btn-delete {
         padding: 0.35rem 0.6rem;
         background: transparent;
@@ -142,19 +161,29 @@
     {% if sessions %}
     <div class="session-list" id="session-list">
         {% for s in sessions %}
-        <div class="session-card" id="session-{{ s.id }}">
+        <div class="session-card{% if s.role is defined and s.role != 'owner' %} shared{% endif %}" id="session-{{ s.id }}">
             <a href="/chat/{{ s.id }}" class="session-card-info">
-                <div class="session-card-name">{{ s.name or "Untitled" }}</div>
+                <div class="session-card-name">
+                    {{ s.name or "Untitled" }}
+                    {% if s.role is defined %}
+                    <span class="role-badge {{ s.role }}">{{ s.role }}</span>
+                    {% endif %}
+                </div>
                 <div class="session-card-meta">
                     <span>{{ s.id[:12] }}</span>
                     {% if s.model %}<span>{{ s.model }}</span>{% endif %}
                     {% if s.created_at %}<span>{{ s.created_at }}</span>{% endif %}
+                    {% if s.role is defined and s.role != 'owner' and s.user is defined %}
+                    <span>by {{ s.user }}</span>
+                    {% endif %}
                 </div>
             </a>
             <div class="session-card-actions">
+                {% if s.role is not defined or s.role == 'owner' %}
                 <button class="btn-delete" data-session-id="{{ s.id }}" title="Delete session">
                     Delete
                 </button>
+                {% endif %}
             </div>
         </div>
         {% endfor %}

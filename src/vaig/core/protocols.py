@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from vaig.core.models import AccessResult, Annotation, SessionCollaborator, SessionRole
+
 if TYPE_CHECKING:
     from vaig.core.cache import CacheStats
     from vaig.core.client import ChatMessage, GenerationResult, StreamResult, ToolCallResult
@@ -26,6 +28,7 @@ __all__ = [
     "GeminiClientProtocol",
     "K8sClientProvider",
     "PlatformAuthProtocol",
+    "SessionAccessProtocol",
     "SessionStoreProtocol",
 ]
 
@@ -358,4 +361,105 @@ class PlatformAuthProtocol(Protocol):
         Returns a dict of field paths to enforced values.  Returns an
         empty dict on network failure (graceful degradation).
         """
+        ...
+
+
+# ══════════════════════════════════════════════════════════════
+# A6. SessionAccess Protocol
+# ══════════════════════════════════════════════════════════════
+
+
+@runtime_checkable
+class SessionAccessProtocol(Protocol):
+    """Structural protocol for session access control.
+
+    Defines the interface for checking, granting, and revoking
+    collaborative access to investigation sessions.
+    """
+
+    async def check_access(
+        self,
+        session_id: str,
+        user: str,
+        *,
+        required: SessionRole = SessionRole.VIEWER,
+    ) -> AccessResult:
+        """Check whether *user* has at least *required* role on *session_id*."""
+        ...
+
+    async def share(
+        self,
+        session_id: str,
+        owner: str,
+        target_email: str,
+        role: SessionRole,
+    ) -> SessionCollaborator:
+        """Grant *target_email* the given *role* on *session_id*."""
+        ...
+
+    async def revoke(
+        self,
+        session_id: str,
+        owner: str,
+        target_email: str,
+    ) -> bool:
+        """Revoke *target_email*'s access to *session_id*."""
+        ...
+
+    async def list_collaborators(
+        self,
+        session_id: str,
+        user: str,
+    ) -> list[SessionCollaborator]:
+        """List all collaborators on *session_id*."""
+        ...
+
+    async def list_accessible_sessions(
+        self,
+        user: str,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """List sessions shared with *user* (not owned)."""
+        ...
+
+    async def add_annotation(
+        self,
+        session_id: str,
+        user: str,
+        *,
+        annotation_type: str,
+        content: str,
+        message_ref: str | None = None,
+    ) -> Annotation:
+        """Create a new annotation on *session_id* (editor+ access)."""
+        ...
+
+    async def update_annotation(
+        self,
+        session_id: str,
+        annotation_id: str,
+        user: str,
+        content: str,
+    ) -> Annotation:
+        """Update an existing annotation (author only)."""
+        ...
+
+    async def delete_annotation(
+        self,
+        session_id: str,
+        annotation_id: str,
+        user: str,
+    ) -> bool:
+        """Delete an annotation (author only)."""
+        ...
+
+    async def list_annotations(
+        self,
+        session_id: str,
+        user: str,
+        *,
+        limit: int = 50,
+    ) -> list[Annotation]:
+        """List annotations for *session_id* (viewer+ access)."""
         ...

@@ -2,9 +2,101 @@
 
 from __future__ import annotations
 
-from typing import Any
+from enum import StrEnum
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# ── Session Sharing Models ───────────────────────────────────────────────────
+
+
+class SessionRole(StrEnum):
+    """Role levels for session access control.
+
+    Ordered by privilege: OWNER > EDITOR > VIEWER.
+    """
+
+    OWNER = "owner"
+    EDITOR = "editor"
+    VIEWER = "viewer"
+
+    @property
+    def level(self) -> int:
+        """Numeric privilege level for comparison (higher = more access)."""
+        return _ROLE_LEVELS[self]
+
+    def __ge__(self, other: object) -> bool:
+        if not isinstance(other, SessionRole):
+            return NotImplemented
+        return self.level >= other.level
+
+    def __gt__(self, other: object) -> bool:
+        if not isinstance(other, SessionRole):
+            return NotImplemented
+        return self.level > other.level
+
+    def __le__(self, other: object) -> bool:
+        if not isinstance(other, SessionRole):
+            return NotImplemented
+        return self.level <= other.level
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, SessionRole):
+            return NotImplemented
+        return self.level < other.level
+
+
+_ROLE_LEVELS: dict[SessionRole, int] = {
+    SessionRole.VIEWER: 0,
+    SessionRole.EDITOR: 1,
+    SessionRole.OWNER: 2,
+}
+
+
+class SessionCollaborator(BaseModel):
+    """A user who has been granted access to a session."""
+
+    model_config = ConfigDict(frozen=True)
+
+    email: str
+    role: SessionRole
+    added_at: str  # ISO 8601
+    added_by: str
+
+
+class AccessResult(BaseModel):
+    """Result of an access control check."""
+
+    model_config = ConfigDict(frozen=True)
+
+    granted: bool
+    role: SessionRole | None = None
+
+
+# ── Annotation Models ────────────────────────────────────────────────────────
+
+AnnotationType = Literal["observation", "action_item", "question", "root_cause", "resolution"]
+
+
+class Annotation(BaseModel):
+    """A typed annotation on a session or specific message."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    author: str
+    content: str = Field(..., min_length=1, max_length=2000)
+    annotation_type: AnnotationType
+    message_ref: str | None = None
+    created_at: str  # ISO 8601
+    updated_at: str  # ISO 8601
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def _strip_content(cls, v: str) -> str:
+        if isinstance(v, str):
+            return v.strip()
+        return v
 
 
 class PipelineState(BaseModel):

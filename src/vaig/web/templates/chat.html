@@ -395,6 +395,323 @@
         margin-bottom: 1rem;
     }
 
+    /* Viewer mode banner */
+    .viewer-banner {
+        background: rgba(79, 143, 247, 0.1);
+        border: 1px solid rgba(79, 143, 247, 0.25);
+        border-radius: calc(var(--radius) / 2);
+        padding: 0.6rem 1rem;
+        color: var(--accent);
+        font-size: 0.85rem;
+        text-align: center;
+        margin-top: 0.5rem;
+        font-family: var(--font-mono);
+    }
+
+    /* Role badge */
+    .role-badge {
+        display: inline-block;
+        padding: 0.15rem 0.5rem;
+        border-radius: 3px;
+        font-size: 0.7rem;
+        font-family: var(--font-mono);
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    .role-badge.owner { background: rgba(63,185,80,0.15); color: var(--success); }
+    .role-badge.editor { background: rgba(79,143,247,0.15); color: var(--accent); }
+    .role-badge.viewer { background: rgba(255,180,50,0.15); color: #e0a030; }
+
+    /* Share button */
+    .btn-share {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.4rem 0.75rem;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) / 2);
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: border-color 0.2s, color 0.2s;
+    }
+    .btn-share:hover {
+        border-color: var(--accent);
+        color: var(--text-primary);
+    }
+
+    /* Share modal overlay */
+    .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+    }
+    .modal-overlay.visible { display: flex; }
+
+    .modal-content {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1.5rem;
+        width: 90%;
+        max-width: 480px;
+        max-height: 80vh;
+        overflow-y: auto;
+    }
+    .modal-content h2 {
+        font-family: var(--font-mono);
+        font-size: 1.1rem;
+        margin-bottom: 1rem;
+    }
+    .modal-close {
+        float: right;
+        background: none;
+        border: none;
+        color: var(--text-secondary);
+        font-size: 1.2rem;
+        cursor: pointer;
+        padding: 0;
+        line-height: 1;
+    }
+    .modal-close:hover { color: var(--text-primary); }
+
+    .share-form {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    .share-form input[type="email"] {
+        flex: 1;
+        padding: 0.45rem 0.6rem;
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) / 2);
+        color: var(--text-primary);
+        font-size: 0.85rem;
+    }
+    .share-form input[type="email"]:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+    .share-form select {
+        padding: 0.45rem 0.6rem;
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) / 2);
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        font-size: 0.85rem;
+        cursor: pointer;
+    }
+    .share-form button {
+        padding: 0.45rem 0.9rem;
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        border-radius: calc(var(--radius) / 2);
+        font-size: 0.85rem;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+    .share-form button:hover { background: var(--accent-hover); }
+
+    .share-status {
+        font-size: 0.8rem;
+        margin-bottom: 0.75rem;
+        padding: 0.4rem 0.6rem;
+        border-radius: calc(var(--radius) / 2);
+        display: none;
+    }
+    .share-status.success {
+        display: block;
+        background: rgba(63,185,80,0.1);
+        color: var(--success);
+    }
+    .share-status.error {
+        display: block;
+        background: rgba(248,81,73,0.1);
+        color: var(--error);
+    }
+
+    .collaborators-list h3 {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        margin-bottom: 0.5rem;
+    }
+    .collab-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.4rem 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 0.85rem;
+    }
+    .collab-item:last-child { border-bottom: none; }
+    .collab-email { flex: 1; color: var(--text-primary); }
+    .collab-role {
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        margin: 0 0.5rem;
+    }
+    .btn-revoke {
+        padding: 0.2rem 0.5rem;
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        color: var(--text-secondary);
+        font-size: 0.7rem;
+        cursor: pointer;
+    }
+    .btn-revoke:hover {
+        border-color: var(--error);
+        color: var(--error);
+    }
+
+    /* ── Annotations ───────────────────────────────── */
+    .annotation-wrapper {
+        margin-top: 0.3rem;
+    }
+    .annotation-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.4rem;
+        padding: 0.35rem 0.5rem;
+        background: var(--bg-primary);
+        border-radius: calc(var(--radius) / 2);
+        font-size: 0.8rem;
+        margin-top: 0.25rem;
+        border-left: 3px solid var(--border);
+    }
+    .annotation-item[data-type="observation"] { border-left-color: #4f8ff7; }
+    .annotation-item[data-type="note"]        { border-left-color: #4f8ff7; }
+    .annotation-item[data-type="action_item"] { border-left-color: #e89020; }
+    .annotation-item[data-type="question"]    { border-left-color: #a855f7; }
+    .annotation-item[data-type="root_cause"]  { border-left-color: #3fb950; }
+    .annotation-item[data-type="resolution"]  { border-left-color: #3fb950; }
+
+    .ann-type-badge {
+        display: inline-block;
+        padding: 0.1rem 0.4rem;
+        border-radius: 3px;
+        font-size: 0.65rem;
+        font-family: var(--font-mono);
+        font-weight: 600;
+        text-transform: uppercase;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+    .ann-type-badge.observation,
+    .ann-type-badge.note       { background: rgba(79,143,247,0.15); color: #4f8ff7; }
+    .ann-type-badge.action_item { background: rgba(232,144,32,0.15); color: #e89020; }
+    .ann-type-badge.question    { background: rgba(168,85,247,0.15); color: #a855f7; }
+    .ann-type-badge.root_cause,
+    .ann-type-badge.resolution  { background: rgba(63,185,80,0.15); color: #3fb950; }
+
+    .ann-content {
+        flex: 1;
+        color: var(--text-primary);
+        line-height: 1.4;
+    }
+    .ann-meta {
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+    }
+    .ann-actions {
+        display: flex;
+        gap: 0.3rem;
+        flex-shrink: 0;
+    }
+    .ann-actions button {
+        padding: 0.15rem 0.4rem;
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        color: var(--text-secondary);
+        font-size: 0.65rem;
+        cursor: pointer;
+    }
+    .ann-actions button:hover {
+        border-color: var(--accent);
+        color: var(--text-primary);
+    }
+    .ann-actions button.delete:hover {
+        border-color: var(--error);
+        color: var(--error);
+    }
+
+    .btn-annotate {
+        padding: 0.15rem 0.4rem;
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        color: var(--text-secondary);
+        font-size: 0.7rem;
+        cursor: pointer;
+        margin-top: 0.3rem;
+        transition: border-color 0.2s, color 0.2s;
+    }
+    .btn-annotate:hover {
+        border-color: var(--accent);
+        color: var(--text-primary);
+    }
+
+    .annotation-form {
+        display: none;
+        margin-top: 0.3rem;
+        padding: 0.5rem;
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) / 2);
+    }
+    .annotation-form.visible { display: block; }
+    .annotation-form select,
+    .annotation-form textarea {
+        width: 100%;
+        padding: 0.35rem 0.5rem;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) / 2);
+        color: var(--text-primary);
+        font-family: var(--font-sans);
+        font-size: 0.8rem;
+        margin-bottom: 0.35rem;
+    }
+    .annotation-form select { font-family: var(--font-mono); cursor: pointer; }
+    .annotation-form textarea { resize: vertical; min-height: 50px; }
+    .annotation-form select:focus,
+    .annotation-form textarea:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+    .annotation-form-actions {
+        display: flex;
+        gap: 0.35rem;
+        justify-content: flex-end;
+    }
+    .annotation-form-actions button {
+        padding: 0.3rem 0.6rem;
+        border-radius: calc(var(--radius) / 2);
+        font-size: 0.8rem;
+        cursor: pointer;
+        border: 1px solid var(--border);
+    }
+    .annotation-form-actions .btn-ann-submit {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+    }
+    .annotation-form-actions .btn-ann-cancel {
+        background: transparent;
+        color: var(--text-secondary);
+    }
+
     @media (max-width: 767px) {
         .message {
             max-width: 95%;
@@ -428,7 +745,11 @@
 <div class="chat-container">
     <div class="chat-header">
         <div>
-            <h1>Chat</h1>
+            <h1>Chat
+                {% if session and user_role is defined and user_role != 'owner' %}
+                <span class="role-badge {{ user_role }}">{{ user_role }}</span>
+                {% endif %}
+            </h1>
             {% if session %}
             <span class="session-info">{{ session.name }} &mdash; {{ session.id[:12] }}</span>
             {% else %}
@@ -436,6 +757,9 @@
             {% endif %}
         </div>
         <div class="header-actions">
+            {% if is_owner is defined and is_owner and sharing_enabled is defined and sharing_enabled and session %}
+            <button type="button" class="btn-share" id="share-btn" title="Share session">&#128279; Share</button>
+            {% endif %}
             <button type="button" class="settings-toggle" id="settings-toggle" title="Settings">&#9881; Settings</button>
             <a href="/sessions" class="btn-link">Sessions</a>
             <a href="/chat" class="btn-link">+ New</a>
@@ -444,6 +768,31 @@
 
     {% if error is defined and error %}
     <div class="alert-error">{{ error }}</div>
+    {% endif %}
+
+    {# ── Share modal ─────────────────────────────────── #}
+    {% if is_owner is defined and is_owner and sharing_enabled is defined and sharing_enabled and session %}
+    <div class="modal-overlay" id="share-modal">
+        <div class="modal-content">
+            <button class="modal-close" id="share-modal-close" type="button">&times;</button>
+            <h2>Share Session</h2>
+            <div class="share-form" id="share-form">
+                <input type="email" id="share-email" placeholder="colleague@example.com" required>
+                <select id="share-role">
+                    <option value="editor">Editor</option>
+                    <option value="viewer">Viewer</option>
+                </select>
+                <button type="button" id="share-submit">Share</button>
+            </div>
+            <div class="share-status" id="share-status"></div>
+            <div class="collaborators-list">
+                <h3>Collaborators</h3>
+                <div id="collaborators-container">
+                    <span style="font-size:0.8rem;color:var(--text-secondary)">Loading...</span>
+                </div>
+            </div>
+        </div>
+    </div>
     {% endif %}
 
     <div class="settings-panel" id="settings-panel">
@@ -466,15 +815,63 @@
 
     <div class="messages" id="messages">
         {% for msg in messages %}
-        <div class="message {{ msg.role }}">
+        <div class="message {{ msg.role }}" {% if msg.id is defined and msg.id %}data-message-id="{{ msg.id }}"{% endif %}>
             <div class="message-avatar">
                 {% if msg.role == 'user' %}U{% else %}AI{% endif %}
             </div>
-            <div class="message-bubble" {% if msg.role == 'assistant' %}data-markdown="true"{% endif %}>
-                {{ msg.content }}
+            <div style="display:flex;flex-direction:column;gap:0.25rem;flex:1;min-width:0">
+                <div class="message-bubble" {% if msg.role == 'assistant' %}data-markdown="true"{% endif %}>
+                    {{ msg.content }}
+                </div>
+                {# Annotations for this message #}
+                {% if annotations is defined and annotations %}
+                {% set msg_id = msg.id if msg.id is defined else '' %}
+                {% for ann in annotations if ann.message_ref == msg_id %}
+                {% if loop.first %}<div class="annotation-wrapper">{% endif %}
+                <div class="annotation-item" data-type="{{ ann.annotation_type }}" data-ann-id="{{ ann.id }}">
+                    <span class="ann-type-badge {{ ann.annotation_type }}">{{ ann.annotation_type }}</span>
+                    <span class="ann-content">{{ ann.content }}</span>
+                    <span class="ann-meta">{{ ann.author }}</span>
+                    {% if ann.author == (user if user is defined else '') %}
+                    <span class="ann-actions">
+                        <button class="ann-edit-btn" data-ann-id="{{ ann.id }}" data-content="{{ ann.content }}" data-type="{{ ann.annotation_type }}">Edit</button>
+                        <button class="delete ann-delete-btn" data-ann-id="{{ ann.id }}">Del</button>
+                    </span>
+                    {% endif %}
+                </div>
+                {% if loop.last %}</div>{% endif %}
+                {% endfor %}
+                {% endif %}
+                {# Annotate button (editor+ only) #}
+                {% if user_role is defined and user_role in ('owner', 'editor') and sharing_enabled is defined and sharing_enabled and session %}
+                <button type="button" class="btn-annotate" data-message-id="{{ msg.id if msg.id is defined else '' }}">+ Annotate</button>
+                {% endif %}
             </div>
         </div>
         {% endfor %}
+
+        {# Session-level annotations (no message_ref) #}
+        {% if annotations is defined and annotations %}
+        {% set session_anns = [] %}
+        {% for ann in annotations if not ann.message_ref %}
+        {% if loop.first %}
+        <div class="annotation-wrapper" style="margin:0.5rem 0">
+            <strong style="font-size:0.8rem;color:var(--text-secondary)">Session Notes</strong>
+        {% endif %}
+        <div class="annotation-item" data-type="{{ ann.annotation_type }}" data-ann-id="{{ ann.id }}">
+            <span class="ann-type-badge {{ ann.annotation_type }}">{{ ann.annotation_type }}</span>
+            <span class="ann-content">{{ ann.content }}</span>
+            <span class="ann-meta">{{ ann.author }}</span>
+            {% if ann.author == (user if user is defined else '') %}
+            <span class="ann-actions">
+                <button class="ann-edit-btn" data-ann-id="{{ ann.id }}" data-content="{{ ann.content }}" data-type="{{ ann.annotation_type }}">Edit</button>
+                <button class="delete ann-delete-btn" data-ann-id="{{ ann.id }}">Del</button>
+            </span>
+            {% endif %}
+        </div>
+        {% if loop.last %}</div>{% endif %}
+        {% endfor %}
+        {% endif %}
 
         <div class="streaming-indicator" id="streaming-indicator">
             <span>Thinking</span>
@@ -482,6 +879,27 @@
         </div>
     </div>
 
+    {# ── Annotation inline form (hidden by default) ── #}
+    {% if user_role is defined and user_role in ('owner', 'editor') and sharing_enabled is defined and sharing_enabled and session %}
+    <div class="annotation-form" id="annotation-form-template">
+        <select class="ann-type-select">
+            <option value="observation">Observation</option>
+            <option value="action_item">Action Item</option>
+            <option value="question">Question</option>
+            <option value="root_cause">Root Cause</option>
+            <option value="resolution">Resolution</option>
+        </select>
+        <textarea class="ann-content-input" placeholder="Add annotation..." rows="2"></textarea>
+        <div class="annotation-form-actions">
+            <button type="button" class="btn-ann-cancel">Cancel</button>
+            <button type="button" class="btn-ann-submit">Save</button>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if user_role is defined and user_role == 'viewer' %}
+    <div class="viewer-banner">&#128065; View only &mdash; you cannot send messages in this session</div>
+    {% else %}
     <form class="chat-input" id="chat-form">
         <textarea
             id="message-input"
@@ -495,6 +913,7 @@
             <span class="send-spinner spinner"></span>
         </button>
     </form>
+    {% endif %}
 </div>
 {% endblock %}
 
@@ -512,25 +931,205 @@
     // Current session ID — either from server-rendered data or set after first message
     var sessionId = {{ (session.id | tojson) if session else 'null' }};
 
+    // ── Share modal logic ───────────────────────────────
+    var shareBtn = document.getElementById('share-btn');
+    var shareModal = document.getElementById('share-modal');
+    var shareModalClose = document.getElementById('share-modal-close');
+    var shareSubmit = document.getElementById('share-submit');
+    var shareStatus = document.getElementById('share-status');
+    var collabContainer = document.getElementById('collaborators-container');
+
+    if (shareBtn && shareModal) {
+        shareBtn.addEventListener('click', function() {
+            shareModal.classList.add('visible');
+            loadCollaborators();
+        });
+        shareModalClose.addEventListener('click', function() {
+            shareModal.classList.remove('visible');
+        });
+        shareModal.addEventListener('click', function(e) {
+            if (e.target === shareModal) shareModal.classList.remove('visible');
+        });
+        shareSubmit.addEventListener('click', function() {
+            var email = document.getElementById('share-email').value.trim();
+            var role = document.getElementById('share-role').value;
+            if (!email) return;
+            shareSubmit.disabled = true;
+            fetch('/sessions/' + sessionId + '/share', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email: email, role: role})
+            }).then(function(resp) {
+                if (resp.ok) {
+                    shareStatus.className = 'share-status success';
+                    shareStatus.textContent = 'Shared with ' + email;
+                    document.getElementById('share-email').value = '';
+                    loadCollaborators();
+                } else {
+                    return resp.json().then(function(d) {
+                        shareStatus.className = 'share-status error';
+                        shareStatus.textContent = d.error || d.detail || 'Failed to share';
+                    });
+                }
+            }).catch(function() {
+                shareStatus.className = 'share-status error';
+                shareStatus.textContent = 'Network error';
+            }).finally(function() {
+                shareSubmit.disabled = false;
+            });
+        });
+    }
+
+    function loadCollaborators() {
+        if (!collabContainer || !sessionId) return;
+        fetch('/sessions/' + sessionId + '/collaborators')
+            .then(function(resp) { return resp.json(); })
+            .then(function(data) {
+                var collabs = Array.isArray(data) ? data : (data && Array.isArray(data.collaborators) ? data.collaborators : []);
+                if (collabs.length === 0) {
+                    collabContainer.innerHTML = '<span style="font-size:0.8rem;color:var(--text-secondary)">No collaborators yet</span>';
+                    return;
+                }
+                var html = '';
+                for (var i = 0; i < collabs.length; i++) {
+                    var c = collabs[i];
+                    html += '<div class="collab-item">' +
+                        '<span class="collab-email">' + escapeHtml(c.email) + '</span>' +
+                        '<span class="collab-role">' + escapeHtml(c.role) + '</span>' +
+                        '<button class="btn-revoke" data-email="' + escapeHtml(c.email) + '">Revoke</button>' +
+                        '</div>';
+                }
+                collabContainer.innerHTML = html;
+                collabContainer.querySelectorAll('.btn-revoke').forEach(function(btn) {
+                    btn.addEventListener('click', function() {
+                        var targetEmail = btn.getAttribute('data-email');
+                        fetch('/sessions/' + sessionId + '/share/' + encodeURIComponent(targetEmail), {method: 'DELETE'})
+                            .then(function(resp) {
+                                if (resp.ok) loadCollaborators();
+                            });
+                    });
+                });
+            })
+            .catch(function() {
+                collabContainer.innerHTML = '<span style="font-size:0.8rem;color:var(--error)">Failed to load</span>';
+            });
+    }
+
+    // ── Annotation logic ────────────────────────────────
+    var annFormTemplate = document.getElementById('annotation-form-template');
+    var activeAnnForm = null;
+
+    document.querySelectorAll('.btn-annotate').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var messageId = btn.getAttribute('data-message-id') || '';
+            showAnnotationForm(btn, messageId);
+        });
+    });
+
+    function showAnnotationForm(anchorEl, messageId, editId, editContent, editType) {
+        hideAnnotationForm();
+        if (!annFormTemplate) return;
+        var form = annFormTemplate.cloneNode(true);
+        form.removeAttribute('id');
+        form.classList.add('visible');
+        form.setAttribute('data-message-id', messageId || '');
+        if (editId) form.setAttribute('data-edit-id', editId);
+        if (editType) form.querySelector('.ann-type-select').value = editType;
+        if (editContent) form.querySelector('.ann-content-input').value = editContent;
+
+        anchorEl.parentElement.insertBefore(form, anchorEl.nextSibling);
+        activeAnnForm = form;
+
+        form.querySelector('.btn-ann-cancel').addEventListener('click', hideAnnotationForm);
+        form.querySelector('.btn-ann-submit').addEventListener('click', function() {
+            var annType = form.querySelector('.ann-type-select').value;
+            var content = form.querySelector('.ann-content-input').value.trim();
+            if (!content) return;
+            var annEditId = form.getAttribute('data-edit-id');
+            if (annEditId) {
+                updateAnnotation(annEditId, content);
+            } else {
+                createAnnotation(messageId, annType, content);
+            }
+        });
+    }
+
+    function hideAnnotationForm() {
+        if (activeAnnForm) {
+            activeAnnForm.remove();
+            activeAnnForm = null;
+        }
+    }
+
+    function createAnnotation(messageRef, annType, content) {
+        if (!sessionId) return;
+        var body = {annotation_type: annType, content: content};
+        if (messageRef) body.message_ref = messageRef;
+        fetch('/sessions/' + sessionId + '/annotations', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        }).then(function(resp) {
+            if (resp.ok) window.location.reload();
+        });
+    }
+
+    function updateAnnotation(annId, content) {
+        if (!sessionId) return;
+        fetch('/sessions/' + sessionId + '/annotations/' + annId, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({content: content})
+        }).then(function(resp) {
+            if (resp.ok) window.location.reload();
+        });
+    }
+
+    document.querySelectorAll('.ann-delete-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var annId = btn.getAttribute('data-ann-id');
+            if (!annId || !sessionId) return;
+            if (!confirm('Delete this annotation?')) return;
+            fetch('/sessions/' + sessionId + '/annotations/' + annId, {method: 'DELETE'})
+                .then(function(resp) {
+                    if (resp.ok) {
+                        var item = document.querySelector('[data-ann-id="' + annId + '"].annotation-item');
+                        if (item) item.remove();
+                    }
+                });
+        });
+    });
+
+    document.querySelectorAll('.ann-edit-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var annId = btn.getAttribute('data-ann-id');
+            var content = btn.getAttribute('data-content');
+            var annType = btn.getAttribute('data-type');
+            showAnnotationForm(btn, '', annId, content, annType);
+        });
+    });
+
     // Toggle settings panel
     settingsToggle.addEventListener('click', function() {
         settingsPanel.classList.toggle('visible');
         settingsToggle.classList.toggle('active');
     });
 
-    // Auto-resize textarea
-    input.addEventListener('input', function() {
-        this.style.height = 'auto';
-        this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-    });
+    // Auto-resize textarea (only if chat form exists — hidden in viewer mode)
+    if (input) {
+        input.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
 
-    // Submit on Enter (Shift+Enter for newline)
-    input.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            form.dispatchEvent(new Event('submit'));
-        }
-    });
+        // Submit on Enter (Shift+Enter for newline)
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                form.dispatchEvent(new Event('submit'));
+            }
+        });
+    }
 
     // Scroll to bottom
     function scrollToBottom() {
@@ -544,6 +1143,7 @@
 
     scrollToBottom();
 
+    if (form) {
     form.addEventListener('submit', function(e) {
         e.preventDefault();
 
@@ -711,12 +1311,13 @@
             onStreamEnd();
         });
     });
+    } // end if (form)
 
     function onStreamEnd() {
-        sendBtn.disabled = false;
-        sendBtn.classList.remove('loading');
+        if (sendBtn) sendBtn.disabled = false;
+        if (sendBtn) sendBtn.classList.remove('loading');
         streamingIndicator.classList.remove('active');
-        input.focus();
+        if (input) input.focus();
         scrollToBottom();
     }
 
