@@ -520,24 +520,25 @@ def print_cost_breakdown_table(
     table.add_column("Usage Cost", justify="right", min_width=14)
     table.add_column("Waste", justify="right", style="red", min_width=14)
 
+    def _format_cost(value: float | None, estimated: bool) -> str:
+        """Format a cost value with optional estimated indicator."""
+        if value is None:
+            return "—"
+        label = f"~${value:,.2f}/mo"
+        return f"{label} (est.)" if estimated else f"${value:,.2f}/mo"
+
     for wl in workloads:
         name = wl.workload_name or "—"
         ns = wl.namespace or "—"
         req_cost = f"${wl.total_request_cost_usd:,.2f}/mo" if wl.total_request_cost_usd is not None else "—"
-        if wl.total_usage_cost_usd is not None:
-            use_cost = f"~${wl.total_usage_cost_usd:,.2f}/mo (est.)" if getattr(wl, "metrics_estimated", False) else f"${wl.total_usage_cost_usd:,.2f}/mo"
-        else:
-            use_cost = "—"
+        use_cost = _format_cost(wl.total_usage_cost_usd, getattr(wl, "metrics_estimated", False))
         waste = f"${wl.total_waste_usd:,.2f}/mo" if wl.total_waste_usd is not None else "—"
         table.add_row(name, ns, req_cost, use_cost, waste)
 
     # Totals row
     if gke_cost.total_request_cost_usd is not None:
         total_req = f"${gke_cost.total_request_cost_usd:,.2f}/mo"
-        if gke_cost.total_usage_cost_usd is not None:
-            total_use = f"~${gke_cost.total_usage_cost_usd:,.2f}/mo (est.)" if getattr(gke_cost, "metrics_estimated", False) else f"${gke_cost.total_usage_cost_usd:,.2f}/mo"
-        else:
-            total_use = "—"
+        total_use = _format_cost(gke_cost.total_usage_cost_usd, getattr(gke_cost, "metrics_estimated", False))
         # Compute total waste by summing per-workload waste (not savings)
         waste_values = [
             wl.total_waste_usd
@@ -563,11 +564,17 @@ def print_cost_breakdown_table(
 
     # Show a note when usage costs are estimated from resource requests
     if getattr(gke_cost, "metrics_estimated", False):
+        without = getattr(gke_cost, "workloads_without_metrics", 0)
+        total_wl = len(workloads)
+        if without >= total_wl:
+            scope = "Usage costs are"
+        else:
+            scope = "Some workload usage costs are"
         con.print(
             Text(
-                "⚠ Usage costs marked (est.) are estimated from resource requests "
-                "(assumes 100% utilization). Actual usage may be lower. "
-                "Enable Cloud Monitoring for accurate usage data.",
+                f"⚠ {scope} estimated based on resource requests "
+                "(100% utilization assumed). Actual usage may be lower. "
+                "Enable Cloud Monitoring for actual usage data.",
                 style="dim yellow",
             )
         )

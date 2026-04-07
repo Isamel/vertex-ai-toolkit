@@ -624,8 +624,8 @@ class GKECostReport(BaseModel):
     )
     workloads: list[GKEWorkloadCost] = Field(default_factory=list)
     total_request_cost_usd: float | None = Field(default=None, description="Sum of all workload request costs")
-    total_usage_cost_usd: float | None = Field(default=None, description="Sum of all workload usage costs; None if no workload had any usage data")
-    total_savings_usd: float | None = Field(default=None, description="Estimated total monthly savings potential; None if no usage data available")
+    total_usage_cost_usd: float | None = Field(default=None, description="Sum of all workload usage costs; may include estimated values when metrics_estimated is True")
+    total_savings_usd: float | None = Field(default=None, description="Estimated total monthly savings potential; may include estimated values when metrics_estimated is True")
     namespace_summaries: dict[str, GKENamespaceSummary] = Field(default_factory=dict, description="Per-namespace aggregated cost summaries keyed by namespace name")
     monitoring_status: str | None = Field(
         default=None,
