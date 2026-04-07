@@ -16,6 +16,7 @@ from rich.text import Text
 
 if TYPE_CHECKING:
     from vaig.agents.base import AgentResult
+    from vaig.core.compare import CompareReport
     from vaig.core.fleet import FleetReport
     from vaig.skills.service_health.diff import ReportDiff
     from vaig.skills.service_health.schema import HealthReport
@@ -917,3 +918,104 @@ def print_watch_diff_summary(
         padding=(1, 2),
     )
     con.print(panel)
+
+
+# ── Cross-Cluster Compare Report ─────────────────────────────
+
+
+_COMPARE_SEVERITY_STYLE: dict[str, str] = {
+    "critical": "bold red",
+    "warning": "yellow",
+    "info": "dim",
+}
+
+
+def print_compare_report(
+    report: CompareReport,
+    *,
+    console: Console | None = None,
+) -> None:
+    """Render a cross-cluster comparison as a Rich Table (REQ-CMP-06).
+
+    Columns: one per cluster. Rows: each comparable field. Divergent
+    cells are color-coded by severity (red/yellow/dim). Non-divergent
+    cells use the severity style of the row when a diff exists,
+    or default styling when all values match.
+
+    Error clusters are displayed in a separate panel.
+
+    Args:
+        report: A :class:`CompareReport` from :class:`CompareRunner`.
+        console: Optional Rich Console; defaults to module-level instance.
+    """
+    con = console or _default_console
+
+    cluster_names = list(report.snapshots.keys())
+
+    # ── Error clusters panel ──────────────────────────────────
+    if report.errors:
+        err_body = Text()
+        for name, msg in report.errors.items():
+            err_body.append(f"  ✗ {name}: ", style="bold red")
+            err_body.append(f"{msg}\n")
+        con.print(Panel(err_body, title="Unreachable Clusters", border_style="red", padding=(0, 2)))
+
+    if not cluster_names:
+        con.print("[bold red]No snapshots collected — nothing to compare.[/bold red]")
+        return
+
+    # ── Build comparison table ────────────────────────────────
+    table = Table(
+        title="🔍 Cross-Cluster Comparison",
+        show_lines=True,
+        title_style="bold cyan",
+    )
+    table.add_column("Field", style="bold")
+    for name in cluster_names:
+        table.add_column(name, justify="center")
+
+    # Build a set of divergent fields for quick lookup
+    diff_map: dict[str, dict[str, Any]] = {}
+    severity_map: dict[str, str] = {}
+    for d in report.diffs:
+        diff_map[d.field] = d.values
+        severity_map[d.field] = d.severity
+
+    # Fields to display — sourced from core to avoid duplication
+    from vaig.core.compare import COMPARABLE_FIELDS
+
+    for field_name in COMPARABLE_FIELDS:
+        row_cells: list[str] = []
+        is_divergent = field_name in diff_map
+
+        for cname in cluster_names:
+            snap = report.snapshots[cname]
+            raw = getattr(snap, field_name, None)
+            display_val = str(raw) if raw is not None else "N/A"
+
+            if is_divergent:
+                style = _COMPARE_SEVERITY_STYLE.get(severity_map[field_name], "")
+                row_cells.append(f"[{style}]{display_val}[/{style}]")
+            else:
+                row_cells.append(f"[green]{display_val}[/green]")
+
+        table.add_row(field_name, *row_cells)
+
+    con.print(table)
+
+    # ── Summary line ──────────────────────────────────────────
+    total_diffs = len(report.diffs)
+    if total_diffs == 0:
+        con.print("\n[bold green]✓ No divergences found — clusters are in sync.[/bold green]")
+    else:
+        critical = sum(1 for d in report.diffs if d.severity == "critical")
+        warning = sum(1 for d in report.diffs if d.severity == "warning")
+        info = total_diffs - critical - warning
+        parts = []
+        if critical:
+            parts.append(f"[bold red]{critical} critical[/bold red]")
+        if warning:
+            parts.append(f"[yellow]{warning} warning[/yellow]")
+        if info:
+            parts.append(f"[dim]{info} info[/dim]")
+        con.print(f"\n⚠ {total_diffs} divergence{'s' if total_diffs != 1 else ''} found ({', '.join(parts)})")
