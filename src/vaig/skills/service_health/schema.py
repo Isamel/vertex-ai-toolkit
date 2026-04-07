@@ -649,6 +649,14 @@ class GKECostReport(BaseModel):
         default=0,
         description="Number of workloads for which no usage data was available from Cloud Monitoring",
     )
+    pricing_source: str = Field(
+        default="hardcoded_fallback",
+        description=(
+            "Source of the Autopilot pricing rates used for cost estimation. "
+            "'billing_api' when rates were fetched from the Cloud Billing Catalog API; "
+            "'hardcoded_fallback' when using the static pricing table."
+        ),
+    )
     metrics_estimated: bool = Field(
         default=False,
         description=(

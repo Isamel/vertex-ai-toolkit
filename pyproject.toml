@@ -31,6 +31,7 @@ live = [
     "google-cloud-logging>=3.11.0",
     "google-cloud-monitoring>=2.23.0",
     "google-cloud-container>=2.51.0",
+    "google-cloud-billing>=1.14.0",
     "google-auth>=2.35.0",
     "datadog-api-client>=2.0.0,<3.0.0",
     "requests>=2.32.0",

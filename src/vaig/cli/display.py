@@ -562,6 +562,16 @@ def print_cost_breakdown_table(
 
     con.print(table)
 
+    # Show pricing source (billing API vs hardcoded fallback)
+    pricing_source = getattr(gke_cost, "pricing_source", "hardcoded_fallback")
+    if pricing_source == "billing_api":
+        source_label = "Cloud Billing API"
+        source_style = "bold green"
+    else:
+        source_label = "hardcoded estimates"
+        source_style = "dim"
+    con.print(Text(f"  Pricing source: {source_label}", style=source_style))
+
     # Show a note when usage costs are estimated from resource requests
     if getattr(gke_cost, "metrics_estimated", False):
         without = getattr(gke_cost, "workloads_without_metrics", 0)
