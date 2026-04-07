@@ -244,4 +244,5 @@ class TestProtocolExports:
         assert "GCPClientProvider" in mod.__all__
         assert "SessionStoreProtocol" in mod.__all__
         assert "PlatformAuthProtocol" in mod.__all__
-        assert len(mod.__all__) == 5
+        assert "SessionAccessProtocol" in mod.__all__
+        assert len(mod.__all__) == 6
