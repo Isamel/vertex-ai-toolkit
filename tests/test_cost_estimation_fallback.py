@@ -209,6 +209,107 @@ class TestFallbackEstimationNoMonitoring:
         assert wl.total_usage_cost_usd == pytest.approx(wl.total_request_cost_usd, rel=0.01)
 
 
+class TestFallbackEstimationEmptyContainers:
+    """When monitoring returns WorkloadUsageMetrics with empty containers={},
+    usage should still be estimated from requests.
+
+    This covers the edge case where Cloud Monitoring is reachable and returns
+    a WorkloadUsageMetrics object, but the containers dict is empty (no data
+    points).  Previously this fell through both branches (c_usage was falsy,
+    but wl_usage_metrics was not None), leaving usage as None / N/A.
+    """
+
+    @patch("vaig.tools.gke.cost_estimation._create_k8s_clients")
+    @patch("vaig.tools.gke.cost_estimation.detect_autopilot", return_value=True)
+    def test_empty_containers_estimates_usage(
+        self, _mock_autopilot: MagicMock, mock_clients: MagicMock
+    ) -> None:
+        """Usage cost should be estimated when containers dict is empty."""
+        from vaig.tools.gke.cost_estimation import fetch_workload_costs
+
+        pod = _make_running_pod()
+        core_v1 = _make_mock_clients([pod])
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        # Monitoring returns a WorkloadUsageMetrics with empty containers
+        usage_metrics = {
+            "my-app": WorkloadUsageMetrics(
+                namespace="default",
+                workload_name="my-app",
+                containers={},  # ← empty: monitoring returned no data points
+            )
+        }
+
+        with patch(
+            "vaig.tools.gke.monitoring.get_workload_usage_metrics",
+            return_value=usage_metrics,
+        ):
+            report = fetch_workload_costs(_make_gke_config())
+
+        assert report.total_usage_cost_usd is not None
+        assert report.total_usage_cost_usd > 0.0
+        assert report.total_savings_usd is not None
+
+    @patch("vaig.tools.gke.cost_estimation._create_k8s_clients")
+    @patch("vaig.tools.gke.cost_estimation.detect_autopilot", return_value=True)
+    def test_empty_containers_sets_metrics_estimated(
+        self, _mock_autopilot: MagicMock, mock_clients: MagicMock
+    ) -> None:
+        """metrics_estimated should be True when containers dict is empty."""
+        from vaig.tools.gke.cost_estimation import fetch_workload_costs
+
+        pod = _make_running_pod()
+        core_v1 = _make_mock_clients([pod])
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        usage_metrics = {
+            "my-app": WorkloadUsageMetrics(
+                namespace="default",
+                workload_name="my-app",
+                containers={},
+            )
+        }
+
+        with patch(
+            "vaig.tools.gke.monitoring.get_workload_usage_metrics",
+            return_value=usage_metrics,
+        ):
+            report = fetch_workload_costs(_make_gke_config())
+
+        assert report.metrics_estimated is True
+        wl = report.workloads[0]
+        assert wl.metrics_estimated is True
+
+    @patch("vaig.tools.gke.cost_estimation._create_k8s_clients")
+    @patch("vaig.tools.gke.cost_estimation.detect_autopilot", return_value=True)
+    def test_empty_containers_usage_equals_requests(
+        self, _mock_autopilot: MagicMock, mock_clients: MagicMock
+    ) -> None:
+        """When estimated from empty containers, usage cost = request cost."""
+        from vaig.tools.gke.cost_estimation import fetch_workload_costs
+
+        pod = _make_running_pod()
+        core_v1 = _make_mock_clients([pod])
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        usage_metrics = {
+            "my-app": WorkloadUsageMetrics(
+                namespace="default",
+                workload_name="my-app",
+                containers={},
+            )
+        }
+
+        with patch(
+            "vaig.tools.gke.monitoring.get_workload_usage_metrics",
+            return_value=usage_metrics,
+        ):
+            report = fetch_workload_costs(_make_gke_config())
+
+        wl = report.workloads[0]
+        assert wl.total_usage_cost_usd == pytest.approx(wl.total_request_cost_usd, rel=0.01)
+
+
 class TestFallbackEstimationWithRealMetrics:
     """When monitoring returns real data, metrics_estimated should be False."""
 

@@ -1045,10 +1045,14 @@ def fetch_workload_costs(
             mem_vals = [c.avg_memory_gib for c in c_usage.values() if c.avg_memory_gib is not None]
             wl_cpu_usage = sum(cpu_vals) if cpu_vals else None
             wl_mem_usage = sum(mem_vals) if mem_vals else None
-        elif wl_usage_metrics is None:
-            # ── Fallback: no monitoring data available for this workload.
-            # Estimate usage as equal to requests (worst case — 100% utilization).
-            # This gives a cost estimate rather than "N/A" in the report.
+        else:
+            # ── Fallback: no usable monitoring data for this workload.
+            # Covers both wl_usage_metrics=None (monitoring not available)
+            # and wl_usage_metrics with empty containers={} (monitoring
+            # returned no data points).
+            # Estimate usage as equal to requests (worst case — 100%
+            # utilization).  This gives a cost estimate rather than
+            # "N/A" in the report.
             wl_cpu_usage = cpu_req
             wl_mem_usage = mem_req
             wl_estimated = True
