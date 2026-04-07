@@ -84,6 +84,7 @@ async def list_annotations(
 async def create_annotation(
     request: Request,
     session_id: str,
+    payload: CreateAnnotationRequest,
 ) -> JSONResponse:
     """Create a new annotation on the session (editor+ access)."""
     if not _sharing_enabled():
@@ -91,12 +92,6 @@ async def create_annotation(
 
     user = get_current_user(request)
     access = get_session_access(request)
-
-    try:
-        body = await request.json()
-        payload = CreateAnnotationRequest(**body)
-    except Exception as exc:
-        return JSONResponse({"error": str(exc)}, status_code=422)
 
     try:
         annotation = await access.add_annotation(
@@ -128,6 +123,7 @@ async def update_annotation(
     request: Request,
     session_id: str,
     annotation_id: str,
+    payload: UpdateAnnotationRequest,
 ) -> JSONResponse:
     """Update an annotation (author only)."""
     if not _sharing_enabled():
@@ -135,12 +131,6 @@ async def update_annotation(
 
     user = get_current_user(request)
     access = get_session_access(request)
-
-    body = await request.json()
-    try:
-        payload = UpdateAnnotationRequest(**body)
-    except Exception as exc:
-        return JSONResponse({"error": str(exc)}, status_code=422)
 
     try:
         annotation = await access.update_annotation(

@@ -64,19 +64,15 @@ class ShareRequest(BaseModel):
 
 
 @router.post("/sessions/{session_id}/share")
-async def share_session(request: Request, session_id: str) -> JSONResponse:
+async def share_session(
+    request: Request, session_id: str, payload: ShareRequest,
+) -> JSONResponse:
     """Invite a collaborator to the session (owner only)."""
     if not _sharing_enabled():
         return JSONResponse({"error": "not found"}, status_code=404)
 
     user = get_current_user(request)
     access = get_session_access(request)
-
-    try:
-        body = await request.json()
-        payload = ShareRequest(**body)
-    except Exception as exc:
-        return JSONResponse({"error": str(exc)}, status_code=422)
 
     try:
         role = SessionRole(payload.role)
