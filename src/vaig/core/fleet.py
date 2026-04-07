@@ -93,8 +93,8 @@ def correlate(cluster_results: list[ClusterResult]) -> list[FleetCorrelation]:
     Returns:
         List of cross-cluster correlations (may be empty).
     """
-    # group_key → {cluster_names set, total count}
-    groups: dict[tuple[str, str], dict[str, set[str] | int]] = {}
+    # group_key → (cluster_names set, total count)
+    groups: dict[tuple[str, str], tuple[set[str], int]] = {}
 
     for cr in cluster_results:
         findings = _extract_findings(cr)
@@ -103,23 +103,19 @@ def correlate(cluster_results: list[ClusterResult]) -> list[FleetCorrelation]:
             symptom = _normalize_symptom(finding.title)
             key = (category, symptom)
 
-            if key not in groups:
-                groups[key] = {"clusters": set(), "count": 0}
-            entry = groups[key]
-            clusters_set: set[str] = entry["clusters"]  # type: ignore[assignment]
-            clusters_set.add(cr.display_name)
-            entry["count"] = int(entry["count"]) + 1  # type: ignore[arg-type]
+            clusters, count = groups.get(key, (set(), 0))
+            clusters.add(cr.display_name)
+            groups[key] = (clusters, count + 1)
 
     correlations: list[FleetCorrelation] = []
-    for (category, symptom), info in groups.items():
-        affected: set[str] = info["clusters"]  # type: ignore[assignment]
+    for (category, symptom), (affected, count) in groups.items():
         if len(affected) >= 2:
             correlations.append(
                 FleetCorrelation(
                     pattern=symptom,
                     category=category,
                     affected_clusters=sorted(affected),
-                    count=int(info["count"]),  # type: ignore[arg-type]
+                    count=count,
                 )
             )
 
@@ -155,7 +151,7 @@ class FleetRunner:
         """
         start = time.monotonic()
         try:
-            from vaig.cli.commands.discover import _build_discover_query
+            from vaig.core.discovery import build_discover_query
             from vaig.core.gke import build_gke_config
             from vaig.core.headless import execute_skill_headless
             from vaig.skills.discovery.skill import DiscoverySkill
@@ -182,7 +178,7 @@ class FleetRunner:
                 )
 
             # Build query
-            query = _build_discover_query(
+            query = build_discover_query(
                 namespace=cluster.namespace or None,
                 all_namespaces=cluster.all_namespaces,
                 skip_healthy=cluster.skip_healthy,

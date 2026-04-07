@@ -26,35 +26,10 @@ from vaig.cli.commands.live import (
     _create_tool_call_store,
     _execute_orchestrated_skill,
 )
+from vaig.core.discovery import build_discover_query
 from vaig.core.gke import build_gke_config as _build_gke_config
-from vaig.core.prompt_defense import _sanitize_namespace
-from vaig.skills.discovery.prompts import SYSTEM_NAMESPACES_CSV
 
 logger = logging.getLogger(__name__)
-
-# ── Default auto-generated queries ────────────────────────────
-
-_QUERY_SINGLE_NS = (
-    "Scan namespace '{namespace}' and discover all workloads. "
-    "Enumerate Deployments, StatefulSets, DaemonSets, and Services. "
-    "Classify each workload as Healthy, Degraded, or Failing. "
-    "Investigate any non-healthy workloads by checking pods, logs, events, "
-    "and resource usage. Produce a comprehensive cluster health report."
-)
-
-_QUERY_ALL_NS = (
-    "Scan ALL non-system namespaces and discover all workloads. "
-    "Skip these system namespaces: {system_ns}. "
-    "Enumerate Deployments, StatefulSets, DaemonSets, and Services in each namespace. "
-    "Classify each workload as Healthy, Degraded, or Failing. "
-    "Investigate any non-healthy workloads by checking pods, logs, events, "
-    "and resource usage. Produce a comprehensive cluster health report."
-)
-
-_SKIP_HEALTHY_SUFFIX = (
-    " Focus the report on 🟡 Degraded and 🔴 Failing workloads only. "
-    "Do NOT include detailed output for healthy workloads — just a count."
-)
 
 
 def _build_discover_query(
@@ -65,31 +40,17 @@ def _build_discover_query(
 ) -> str:
     """Build the auto-generated investigation query for the discovery pipeline.
 
-    Args:
-        namespace: Target namespace (used when *all_namespaces* is False).
-        all_namespaces: When True, scan all non-system namespaces.
-        skip_healthy: When True, append instructions to omit healthy workloads.
-
-    Returns:
-        A natural-language query string for the agent pipeline.
+    Thin wrapper around :func:`vaig.core.discovery.build_discover_query`
+    that converts :class:`ValueError` to :class:`typer.BadParameter`.
     """
-    if all_namespaces:
-        query = _QUERY_ALL_NS.format(system_ns=SYSTEM_NAMESPACES_CSV)
-    else:
-        ns = namespace or "default"
-        safe_ns = _sanitize_namespace(ns)
-        if not safe_ns:
-            raise typer.BadParameter(
-                f"Invalid namespace name: {ns!r}. "
-                "Namespace must contain only lowercase alphanumeric characters or hyphens, "
-                "start and end with an alphanumeric character, and be at most 63 characters."
-            )
-        query = _QUERY_SINGLE_NS.format(namespace=safe_ns)
-
-    if skip_healthy:
-        query += _SKIP_HEALTHY_SUFFIX
-
-    return query
+    try:
+        return build_discover_query(
+            namespace=namespace,
+            all_namespaces=all_namespaces,
+            skip_healthy=skip_healthy,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def register(app: typer.Typer) -> None:

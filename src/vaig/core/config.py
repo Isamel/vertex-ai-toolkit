@@ -1161,7 +1161,7 @@ class FleetConfig(BaseModel):
     enabled: bool = False
     clusters: list[FleetCluster] = Field(default_factory=list)
     parallel: bool = False
-    max_workers: int = 4
+    max_workers: int = Field(default=4, ge=1)
     daily_budget_usd: float = 0.0
 
     @model_validator(mode="after")

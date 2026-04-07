@@ -152,7 +152,7 @@ class TestFleetRunnerScanOne:
 
         with patch("vaig.core.gke.build_gke_config") as mock_gke, \
              patch("vaig.skills.discovery.skill.DiscoverySkill") as mock_skill, \
-             patch("vaig.cli.commands.discover._build_discover_query", return_value="test query"), \
+             patch("vaig.core.discovery.build_discover_query", return_value="test query"), \
              patch("vaig.core.headless.execute_skill_headless", return_value=fake_result):
             mock_gke.return_value = MagicMock()
             mock_gke.return_value.model_copy = MagicMock(return_value=mock_gke.return_value)
@@ -174,7 +174,7 @@ class TestFleetRunnerScanOne:
 
         with patch("vaig.core.gke.build_gke_config") as mock_gke, \
              patch("vaig.skills.discovery.skill.DiscoverySkill") as mock_skill, \
-             patch("vaig.cli.commands.discover._build_discover_query", return_value="test query"), \
+             patch("vaig.core.discovery.build_discover_query", return_value="test query"), \
              patch("vaig.core.headless.execute_skill_headless", side_effect=RuntimeError("Connection refused")):
             mock_gke.return_value = MagicMock()
             mock_gke.return_value.model_copy = MagicMock(return_value=mock_gke.return_value)
@@ -197,7 +197,7 @@ class TestFleetRunnerScanOne:
 
         with patch("vaig.core.gke.build_gke_config") as mock_gke, \
              patch("vaig.skills.discovery.skill.DiscoverySkill"), \
-             patch("vaig.cli.commands.discover._build_discover_query", return_value="q"), \
+             patch("vaig.core.discovery.build_discover_query", return_value="q"), \
              patch("vaig.core.headless.execute_skill_headless", return_value=fake_result):
             mock_gke.return_value = MagicMock()
             mock_gke.return_value.model_copy = MagicMock(return_value=mock_gke.return_value)
