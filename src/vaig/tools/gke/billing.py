@@ -47,9 +47,6 @@ _CPU_KEYWORDS = ("autopilot", "vcpu", "cpu")
 _RAM_KEYWORDS = ("autopilot", "ram", "memory")
 _EPHEMERAL_KEYWORDS = ("autopilot", "ephemeral", "storage")
 
-# Cloud Billing Catalog service display name for GKE
-_GKE_SERVICE_DISPLAY_NAME = "Kubernetes Engine"
-
 # Static GKE service ID — avoids iterating all services in the Billing Catalog.
 # Format: ``services/<ID>``
 _GKE_SERVICE_ID = "6F81-5844-456A"
@@ -102,13 +99,11 @@ def _fetch_pricing_from_catalog(region: str) -> BillingPricingResult | None:
     try:
         client = billing_v1.CloudCatalogClient()
 
-        # 1. Find the GKE service ID
-        gke_service_name = _find_gke_service(client)
-        if gke_service_name is None:
-            logger.warning("Could not find '%s' service in Cloud Billing Catalog", _GKE_SERVICE_DISPLAY_NAME)
-            return None
+        # Use static GKE service ID to avoid iterating all services
+        gke_service_name = f"services/{_GKE_SERVICE_ID}"
+        logger.debug("Using static GKE service name: %s", gke_service_name)
 
-        # 2. List SKUs and filter for Autopilot pricing in this region
+        # List SKUs and filter for Autopilot pricing in this region
         cpu_rate: float | None = None
         ram_rate: float | None = None
         eph_rate: float | None = None
@@ -162,37 +157,6 @@ def _fetch_pricing_from_catalog(region: str) -> BillingPricingResult | None:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Cloud Billing API pricing lookup failed: %s", exc)
         return None
-
-
-def _find_gke_service(client: object) -> str | None:
-    """Find the Cloud Billing service name for Kubernetes Engine.
-
-    Tries the well-known static service ID first (``_GKE_SERVICE_ID``) to
-    avoid iterating the entire Billing Catalog.  Falls back to a full
-    service scan if the static ID does not resolve.
-
-    Returns the service resource name (e.g.
-    ``services/6F81-5844-456A``) or ``None`` if not found.
-    """
-    from google.cloud import billing_v1  # noqa: WPS433
-
-    assert isinstance(client, billing_v1.CloudCatalogClient)  # noqa: S101
-
-    # Fast path: use the well-known static service ID
-    static_name = f"services/{_GKE_SERVICE_ID}"
-    try:
-        svc = client.get_service(name=static_name)
-        if svc and svc.display_name == _GKE_SERVICE_DISPLAY_NAME:
-            logger.debug("Resolved GKE service via static ID: %s", static_name)
-            return static_name
-    except Exception:  # noqa: BLE001
-        logger.debug("Static GKE service ID lookup failed, falling back to iteration")
-
-    # Fallback: iterate all services
-    for svc in client.list_services():
-        if svc.display_name == _GKE_SERVICE_DISPLAY_NAME:
-            return str(svc.name)
-    return None
 
 
 def _sku_matches_region(sku: object, region: str) -> bool:
