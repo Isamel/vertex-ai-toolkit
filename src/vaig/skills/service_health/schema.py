@@ -594,6 +594,14 @@ class GKEWorkloadCost(BaseModel):
             "'partial data' indicator alongside usage cost figures."
         ),
     )
+    metrics_estimated: bool = Field(
+        default=False,
+        description=(
+            "True when usage metrics were unavailable from Cloud Monitoring and the "
+            "usage cost was estimated using resource requests (100%% utilization assumption). "
+            "Consumers should display an '(estimated)' indicator alongside cost figures."
+        ),
+    )
 
 
 class GKECostReport(BaseModel):
@@ -640,6 +648,14 @@ class GKECostReport(BaseModel):
     workloads_without_metrics: int = Field(
         default=0,
         description="Number of workloads for which no usage data was available from Cloud Monitoring",
+    )
+    metrics_estimated: bool = Field(
+        default=False,
+        description=(
+            "True when one or more workloads had no monitoring data and usage costs were "
+            "estimated using resource requests (100%% utilization assumption). "
+            "The report totals include these estimated values."
+        ),
     )
 
 

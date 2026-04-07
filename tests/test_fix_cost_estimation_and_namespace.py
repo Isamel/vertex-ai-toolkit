@@ -375,7 +375,9 @@ class TestFetchWorkloadCostsCoverageCounters:
         assert report.workloads_without_metrics == 1
         assert report.workloads_with_full_metrics == 0
         assert report.workloads_with_partial_metrics == 0
-        assert report.total_usage_cost_usd is None
+        # Usage is now estimated from requests (fallback), not None
+        assert report.total_usage_cost_usd is not None
+        assert report.metrics_estimated is True
 
 
 # ── FIX A2: monitoring errors surfaced in GKECostReport ───────

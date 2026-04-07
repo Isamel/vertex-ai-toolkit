@@ -524,14 +524,20 @@ def print_cost_breakdown_table(
         name = wl.workload_name or "—"
         ns = wl.namespace or "—"
         req_cost = f"${wl.total_request_cost_usd:,.2f}/mo" if wl.total_request_cost_usd is not None else "—"
-        use_cost = f"${wl.total_usage_cost_usd:,.2f}/mo" if wl.total_usage_cost_usd is not None else "—"
+        if wl.total_usage_cost_usd is not None:
+            use_cost = f"~${wl.total_usage_cost_usd:,.2f}/mo (est.)" if getattr(wl, "metrics_estimated", False) else f"${wl.total_usage_cost_usd:,.2f}/mo"
+        else:
+            use_cost = "—"
         waste = f"${wl.total_waste_usd:,.2f}/mo" if wl.total_waste_usd is not None else "—"
         table.add_row(name, ns, req_cost, use_cost, waste)
 
     # Totals row
     if gke_cost.total_request_cost_usd is not None:
         total_req = f"${gke_cost.total_request_cost_usd:,.2f}/mo"
-        total_use = f"${gke_cost.total_usage_cost_usd:,.2f}/mo" if gke_cost.total_usage_cost_usd is not None else "—"
+        if gke_cost.total_usage_cost_usd is not None:
+            total_use = f"~${gke_cost.total_usage_cost_usd:,.2f}/mo (est.)" if getattr(gke_cost, "metrics_estimated", False) else f"${gke_cost.total_usage_cost_usd:,.2f}/mo"
+        else:
+            total_use = "—"
         # Compute total waste by summing per-workload waste (not savings)
         waste_values = [
             wl.total_waste_usd
@@ -554,6 +560,18 @@ def print_cost_breakdown_table(
         )
 
     con.print(table)
+
+    # Show a note when usage costs are estimated from resource requests
+    if getattr(gke_cost, "metrics_estimated", False):
+        con.print(
+            Text(
+                "⚠ Usage costs marked (est.) are estimated from resource requests "
+                "(assumes 100% utilization). Actual usage may be lower. "
+                "Enable Cloud Monitoring for accurate usage data.",
+                style="dim yellow",
+            )
+        )
+
     con.print()
 
 
