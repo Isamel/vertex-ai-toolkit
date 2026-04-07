@@ -67,9 +67,9 @@ class TestMatchesKeywords:
     def test_missing_keyword(self) -> None:
         assert not _matches_keywords("autopilot pod ram time", ("autopilot", "vcpu"))
 
-    def test_case_sensitive(self) -> None:
-        # Keywords must be lowercase and description should be lowered by caller
-        assert not _matches_keywords("Autopilot Pod vCPU", ("autopilot", "vcpu"))
+    def test_case_insensitive(self) -> None:
+        # _matches_keywords now lowercases description internally
+        assert _matches_keywords("Autopilot Pod vCPU", ("autopilot", "vcpu"))
 
 
 # ── _sku_matches_region ──────────────────────────────────────
@@ -137,13 +137,11 @@ class TestGetDynamicPricing:
     """Dynamic pricing lookup with API mocking."""
 
     def test_returns_none_when_billing_not_installed(self) -> None:
-        with patch.dict("sys.modules", {"google.cloud.billing_v1": None}):
-            # Force re-import failure
-            with patch(
-                "vaig.tools.gke.billing._fetch_pricing_from_catalog",
-                return_value=None,
-            ):
-                result = get_dynamic_pricing("my-project", "us-central1")
+        with patch.dict(
+            "sys.modules",
+            {"google.cloud.billing_v1": None, "google.cloud": None},
+        ):
+            result = get_dynamic_pricing("my-project", "us-central1")
         assert result is None
 
     def test_cache_hit(self) -> None:

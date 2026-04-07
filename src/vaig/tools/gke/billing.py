@@ -23,10 +23,7 @@ Requires ``google-cloud-billing`` (optional — part of ``live`` extras).
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, NamedTuple
-
-if TYPE_CHECKING:
-    pass
+from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +90,7 @@ def _fetch_pricing_from_catalog(region: str) -> BillingPricingResult | None:
     Returns ``None`` on any failure (import, API, parsing).
     """
     try:
-        from google.cloud import billing_v1  # type: ignore[attr-defined]  # noqa: WPS433
+        from google.cloud import billing_v1  # noqa: WPS433
     except ImportError:
         logger.debug("google-cloud-billing not installed — skipping dynamic pricing")
         return None
@@ -167,7 +164,7 @@ def _find_gke_service(client: object) -> str | None:
     Returns the service resource name (e.g.
     ``services/6F81-5844-456A``) or ``None`` if not found.
     """
-    from google.cloud import billing_v1  # type: ignore[attr-defined]  # noqa: WPS433
+    from google.cloud import billing_v1  # noqa: WPS433
 
     assert isinstance(client, billing_v1.CloudCatalogClient)  # noqa: S101
     for svc in client.list_services():
@@ -186,7 +183,8 @@ def _sku_matches_region(sku: object, region: str) -> bool:
 
 def _matches_keywords(description: str, keywords: tuple[str, ...]) -> bool:
     """Return True if *description* contains ALL keywords (case-insensitive)."""
-    return all(kw in description for kw in keywords)
+    description_lower = description.lower()
+    return all(kw in description_lower for kw in keywords)
 
 
 def _extract_hourly_rate(sku: object) -> float | None:

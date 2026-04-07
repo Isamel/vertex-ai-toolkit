@@ -895,7 +895,7 @@ def fetch_workload_costs(
             cluster_type="autopilot",
             region=region,
             supported=False,
-            unsupported_reason=f"Region '{region}' is not in the pricing table. Supported: {', '.join(AUTOPILOT_PRICING)}.",
+            unsupported_reason=f"Could not fetch dynamic pricing from Cloud Billing API and region '{region}' is not in the hardcoded pricing table. Supported: {', '.join(AUTOPILOT_PRICING)}.",
         )
     pricing = pricing_result.pricing
     pricing_source = pricing_result.source
