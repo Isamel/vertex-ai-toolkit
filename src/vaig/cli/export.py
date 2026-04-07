@@ -6,7 +6,8 @@ import functools
 import importlib.resources
 import json
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 from markdown_it import MarkdownIt
 
@@ -185,3 +186,69 @@ def format_export(
         return payload.to_html()
     msg = f"Unsupported export format: {fmt!r}. Use 'json', 'md', or 'html'."
     raise ValueError(msg)
+
+
+# ── Fleet Export ──────────────────────────────────────────────
+
+if TYPE_CHECKING:
+    from vaig.core.fleet import FleetReport
+
+
+def _cluster_result_to_dict(cr: Any) -> dict[str, Any]:
+    """Convert a :class:`ClusterResult` to a JSON-friendly dict."""
+    data: dict[str, Any] = {
+        "cluster_name": cr.cluster_name,
+        "display_name": cr.display_name,
+        "status": cr.status,
+        "duration_s": cr.duration_s,
+        "cost_usd": cr.cost_usd,
+    }
+    if cr.error:
+        data["error"] = cr.error
+    if cr.result and cr.result.structured_report:
+        report = cr.result.structured_report
+        if hasattr(report, "to_dict"):
+            data["health_report"] = report.to_dict()
+    return data
+
+
+def _correlation_to_dict(corr: Any) -> dict[str, Any]:
+    """Convert a :class:`FleetCorrelation` to a JSON-friendly dict."""
+    return {
+        "pattern": corr.pattern,
+        "category": corr.category,
+        "affected_clusters": corr.affected_clusters,
+        "count": corr.count,
+    }
+
+
+def export_fleet(report: FleetReport, *, fmt: str = "json") -> str:
+    """Export a :class:`FleetReport` in the requested format.
+
+    Args:
+        report: Fleet scan report.
+        fmt: Format string — ``"json"`` (only supported format currently).
+
+    Returns:
+        Formatted string content.
+
+    Raises:
+        ValueError: If the format is not recognized.
+    """
+    fmt = fmt.lower().strip()
+    if fmt != "json":
+        msg = f"Unsupported fleet export format: {fmt!r}. Currently only 'json' is supported."
+        raise ValueError(msg)
+
+    payload: dict[str, Any] = {
+        "clusters": [_cluster_result_to_dict(cr) for cr in report.clusters],
+        "correlations": [_correlation_to_dict(c) for c in report.correlations],
+        "metadata": {
+            "timestamp": datetime.now(tz=UTC).isoformat(),
+            "total_cost_usd": report.total_cost_usd,
+            "total_duration_s": report.total_duration_s,
+            "budget_exceeded": report.budget_exceeded,
+            "cluster_count": len(report.clusters),
+        },
+    }
+    return json.dumps(payload, indent=2, ensure_ascii=False)
