@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from vaig.core.config import FleetCluster, GKEConfig, Settings
@@ -48,7 +48,7 @@ class DeploymentSnapshot(BaseModel):
     error_rate_pct: float | None = None
 
     # Meta
-    collected_at: datetime = datetime.min
+    collected_at: datetime = Field(default_factory=lambda: datetime.min.replace(tzinfo=UTC))
 
 
 @dataclass
@@ -106,6 +106,18 @@ class CompareReport:
 # ── Snapshot Collection (REQ-CMP-02) ─────────────────────────
 
 
+def _extract_image_tag(image: str) -> str:
+    """Extract tag from container image reference, handling port-only refs."""
+    if "@" in image:  # digest reference
+        return image.split("@")[-1][:12]
+    # Split on last colon, but only if what follows looks like a tag (no slashes)
+    if ":" in image:
+        candidate = image.rsplit(":", 1)[-1]
+        if "/" not in candidate:
+            return candidate
+    return "latest"  # no tag = latest
+
+
 def collect_deployment_snapshot(
     gke_config: GKEConfig,
     namespace: str,
@@ -127,6 +139,8 @@ def collect_deployment_snapshot(
     Raises:
         RuntimeError: If K8s client creation fails or deployment not found.
     """
+    from kubernetes.client.exceptions import ApiException
+
     from vaig.tools.base import ToolResult
     from vaig.tools.gke._clients import _create_k8s_clients
 
@@ -135,7 +149,7 @@ def collect_deployment_snapshot(
         msg = f"K8s client error for {gke_config.cluster_name}: {result.output}"
         raise RuntimeError(msg)
 
-    core_v1, apps_v1, _custom, _api_client = result
+    _core_v1, apps_v1, _custom, _api_client = result
 
     # ── Read Deployment ──────────────────────────────────────
     try:
@@ -144,23 +158,27 @@ def collect_deployment_snapshot(
             namespace=namespace,
             _request_timeout=gke_config.request_timeout,
         )
+    except ApiException as api_err:
+        msg = f"K8s API error reading {deployment} in {namespace} on {gke_config.cluster_name}: {api_err.reason}"
+        raise RuntimeError(msg) from api_err
     except Exception as exc:
         msg = f"Failed to read deployment {deployment} in {namespace} on {gke_config.cluster_name}: {exc}"
         raise RuntimeError(msg) from exc
 
-    spec = dep.spec or type("", (), {"replicas": 0, "template": None})()
-    status = dep.status or type("", (), {"ready_replicas": 0, "observed_generation": 0})()
-
-    replicas_desired = spec.replicas or 0
-    replicas_ready = status.ready_replicas or 0
-    observed_gen = status.observed_generation or 0
+    # Safe attribute access instead of brittle type() dummy objects
+    replicas_desired = getattr(dep.spec, "replicas", 0) if dep.spec else 0
+    replicas_desired = replicas_desired or 0
+    replicas_ready = getattr(dep.status, "ready_replicas", 0) if dep.status else 0
+    replicas_ready = replicas_ready or 0
+    observed_gen = getattr(dep.status, "observed_generation", 0) if dep.status else 0
+    observed_gen = observed_gen or 0
 
     # Extract image tag from the first container
     image_tag = ""
-    template = getattr(spec, "template", None)
-    if template and template.spec and template.spec.containers:
+    template = getattr(dep.spec, "template", None) if dep.spec else None
+    if template and getattr(template, "spec", None) and getattr(template.spec, "containers", None):
         full_image = template.spec.containers[0].image or ""
-        image_tag = full_image.split(":")[-1] if ":" in full_image else full_image
+        image_tag = _extract_image_tag(full_image)
 
     # ── HPA (optional) ───────────────────────────────────────
     hpa_min: int | None = None
@@ -176,6 +194,8 @@ def collect_deployment_snapshot(
         )
         hpa_min = hpa.spec.min_replicas if hpa.spec else None
         hpa_max = hpa.spec.max_replicas if hpa.spec else None
+    except ApiException as api_err:
+        logger.debug("No HPA for %s/%s on %s: %s", namespace, deployment, gke_config.cluster_name, api_err.reason)
     except Exception:  # noqa: BLE001
         logger.debug("No HPA found for %s/%s on %s", namespace, deployment, gke_config.cluster_name)
 
@@ -200,8 +220,15 @@ def collect_deployment_snapshot(
 
 _NA_SENTINEL = "N/A"
 
+
+def _values_equal(a: object, b: object) -> bool:
+    """Compare values, handling numeric precision."""
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return abs(float(a) - float(b)) < 1e-9
+    return a == b
+
 # Fields eligible for comparison and their severity classifiers.
-_COMPARABLE_FIELDS: list[str] = [
+COMPARABLE_FIELDS: list[str] = [
     "image_tag",
     "replicas_desired",
     "replicas_ready",
@@ -259,15 +286,15 @@ def diff_snapshots(snapshots: dict[str, DeploymentSnapshot]) -> list[FieldDiff]:
 
     diffs: list[FieldDiff] = []
 
-    for field_name in _COMPARABLE_FIELDS:
+    for field_name in COMPARABLE_FIELDS:
         values: dict[str, Any] = {}
         for cluster_name, snap in snapshots.items():
             raw = getattr(snap, field_name, None)
             values[cluster_name] = raw if raw is not None else _NA_SENTINEL
 
-        # Check if all values are the same
-        unique = {str(v) for v in values.values()}
-        if len(unique) <= 1:
+        # Check if all values are the same (type-aware comparison)
+        vals = list(values.values())
+        if all(_values_equal(vals[0], v) for v in vals[1:]):
             continue
 
         def _default_severity(_: dict[str, Any]) -> Literal["critical", "warning", "info"]:

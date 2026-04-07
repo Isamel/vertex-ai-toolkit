@@ -938,8 +938,9 @@ def print_compare_report(
     """Render a cross-cluster comparison as a Rich Table (REQ-CMP-06).
 
     Columns: one per cluster. Rows: each comparable field. Divergent
-    cells are color-coded by severity (red/yellow/dim). Matching
-    values are shown in green.
+    cells are color-coded by severity (red/yellow/dim). Non-divergent
+    cells use the severity style of the row when a diff exists,
+    or default styling when all values match.
 
     Error clusters are displayed in a separate panel.
 
@@ -980,20 +981,10 @@ def print_compare_report(
         diff_map[d.field] = d.values
         severity_map[d.field] = d.severity
 
-    # Fields to display (same as _COMPARABLE_FIELDS in compare.py)
-    display_fields = [
-        "image_tag",
-        "replicas_desired",
-        "replicas_ready",
-        "hpa_min",
-        "hpa_max",
-        "cpu_usage_cores",
-        "memory_usage_gib",
-        "error_rate_pct",
-        "rollout_generation",
-    ]
+    # Fields to display — sourced from core to avoid duplication
+    from vaig.core.compare import COMPARABLE_FIELDS
 
-    for field_name in display_fields:
+    for field_name in COMPARABLE_FIELDS:
         row_cells: list[str] = []
         is_divergent = field_name in diff_map
 
