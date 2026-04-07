@@ -301,6 +301,65 @@ AUTOPILOT_PRICING: dict[str, GKEPricing] = {
 }
 
 
+# ── Dynamic pricing lookup ────────────────────────────────────
+
+
+class PricingLookupResult:
+    """Result of a pricing lookup with source tracking."""
+
+    __slots__ = ("pricing", "source")
+
+    def __init__(self, pricing: GKEPricing, source: str) -> None:
+        self.pricing = pricing
+        self.source = source
+
+
+def get_autopilot_pricing(
+    region: str,
+    project_id: str | None = None,
+) -> PricingLookupResult | None:
+    """Look up Autopilot pricing for *region*, trying dynamic billing API first.
+
+    1. If *project_id* is provided, attempts to fetch live pricing from the
+       Cloud Billing Catalog API via :func:`billing.get_dynamic_pricing`.
+    2. Falls back to the hardcoded ``AUTOPILOT_PRICING`` table.
+    3. Returns ``None`` if the region is not found in either source.
+
+    Args:
+        region: GCP region, e.g. ``"us-central1"``.
+        project_id: GCP project ID for dynamic pricing lookup. When ``None``,
+            skips the billing API and goes straight to hardcoded prices.
+
+    Returns:
+        A :class:`PricingLookupResult` with the pricing and its source, or
+        ``None`` if the region is unknown.
+    """
+    # 1. Try dynamic pricing from Cloud Billing API
+    if project_id:
+        try:
+            from vaig.tools.gke.billing import get_dynamic_pricing  # noqa: WPS433
+
+            dynamic = get_dynamic_pricing(project_id=project_id, region=region)
+            if dynamic is not None:
+                pricing = GKEPricing(
+                    cpu_per_vcpu_hour=dynamic.cpu_per_vcpu_hour,
+                    ram_per_gib_hour=dynamic.ram_per_gib_hour,
+                    ephemeral_per_gib_hour=dynamic.ephemeral_per_gib_hour,
+                )
+                logger.info("Using dynamic Billing API pricing for region=%s", region)
+                return PricingLookupResult(pricing=pricing, source="billing_api")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Dynamic pricing lookup failed, falling back to hardcoded: %s", exc)
+
+    # 2. Fallback to hardcoded pricing table
+    hardcoded = AUTOPILOT_PRICING.get(region)
+    if hardcoded is not None:
+        logger.debug("Using hardcoded pricing for region=%s", region)
+        return PricingLookupResult(pricing=hardcoded, source="hardcoded_fallback")
+
+    return None
+
+
 # ── Memory suffix table (module-level constant) ───────────────
 # Maps Kubernetes memory suffix → factor to convert raw value to GiB.
 # Sorted longest-first so iteration always matches the most specific suffix.
@@ -830,14 +889,16 @@ def fetch_workload_costs(
         )
 
     # ── 2. Pricing lookup ──────────────────────────────────────
-    pricing = AUTOPILOT_PRICING.get(region)
-    if pricing is None:
+    pricing_result = get_autopilot_pricing(region=region, project_id=gke_config.project_id)
+    if pricing_result is None:
         return GKECostReport(
             cluster_type="autopilot",
             region=region,
             supported=False,
             unsupported_reason=f"Region '{region}' is not in the pricing table. Supported: {', '.join(AUTOPILOT_PRICING)}.",
         )
+    pricing = pricing_result.pricing
+    pricing_source = pricing_result.source
 
     # ── 3. K8s API — list pods ─────────────────────────────────
     if not _K8S_AVAILABLE:
@@ -1038,6 +1099,7 @@ def fetch_workload_costs(
         workloads_with_full_metrics=workloads_with_full_metrics,
         workloads_with_partial_metrics=workloads_with_partial_metrics,
         workloads_without_metrics=workloads_without_metrics,
+        pricing_source=pricing_source,
     )
 
 
