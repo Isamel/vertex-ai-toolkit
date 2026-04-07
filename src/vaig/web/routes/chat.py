@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import AsyncGenerator
 from typing import Any
 from uuid import uuid4
@@ -19,7 +20,8 @@ from fastapi import APIRouter, Request
 from sse_starlette import EventSourceResponse, ServerSentEvent
 from starlette.responses import JSONResponse, Response
 
-from vaig.web.deps import get_container, get_current_user, get_settings
+from vaig.core.models import SessionRole
+from vaig.web.deps import get_container, get_current_user, get_session_access, get_settings
 from vaig.web.events import EventQueueBridge
 from vaig.web.sse import stream_to_sse
 
@@ -28,6 +30,13 @@ __all__: list[str] = []
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["chat"])
+
+_FEATURE_FLAG = "VAIG_WEB_SHARED_SESSIONS"
+
+
+def _sharing_enabled() -> bool:
+    """Return ``True`` when the shared-sessions feature flag is active."""
+    return os.environ.get(_FEATURE_FLAG, "").lower() in ("true", "1", "yes")
 
 
 def _get_session_store(request: Request) -> Any:
@@ -50,13 +59,40 @@ async def sessions_list(request: Request) -> Response:
 
     sessions: list[dict[str, Any]] = []
     if store is not None:
-        sessions = await store.async_list_sessions(user=user)
+        owned = await store.async_list_sessions(user=user)
+        # Mark owned sessions with role
+        for s in owned:
+            s.setdefault("role", "owner")
+
+        # Merge shared sessions if the access service is available
+        access_svc = getattr(request.app.state, "session_access", None)
+        if access_svc is not None:
+            try:
+                shared = await access_svc.list_accessible_sessions(user)
+            except Exception:  # noqa: BLE001
+                logger.warning("Failed to fetch shared sessions for %s", user)
+                shared = []
+
+            # Deduplicate: owned sessions take precedence
+            owned_ids = {s.get("id") for s in owned}
+            for s in shared:
+                if s.get("id") not in owned_ids:
+                    sessions.append(s)
+
+        sessions = owned + list(sessions)
+
+        # Sort by updated_at descending (most recent first)
+        sessions.sort(key=lambda s: s.get("updated_at", ""), reverse=True)
 
     templates = request.app.state.templates
     return templates.TemplateResponse(  # type: ignore[no-any-return]
         request=request,
         name="sessions.html",
-        context={"sessions": sessions, "user": user},
+        context={
+            "sessions": sessions,
+            "user": user,
+            "sharing_enabled": _sharing_enabled(),
+        },
     )
 
 
@@ -71,9 +107,10 @@ async def session_delete(request: Request, session_id: str) -> JSONResponse:
             {"error": "Session store not configured"}, status_code=503
         )
 
-    # Verify session ownership before deleting
-    session_data = await store.async_get_session(session_id)
-    if session_data is None or session_data.get("user") != user:
+    # Verify session ownership via ACL before deleting
+    access = get_session_access(request)
+    result = await access.check_access(session_id, user, required=SessionRole.OWNER)
+    if not result.granted:
         return JSONResponse({"error": "Session not found"}, status_code=404)
 
     deleted = await store.async_delete_session(session_id)
@@ -98,6 +135,10 @@ async def chat_new(request: Request) -> Response:
             "session": None,
             "messages": [],
             "default_project": settings.gcp.project_id,
+            "user_role": "owner",
+            "is_owner": True,
+            "sharing_enabled": _sharing_enabled(),
+            "annotations": [],
         },
     )
 
@@ -110,12 +151,22 @@ async def chat_resume(request: Request, session_id: str) -> Response:
 
     session_data: dict[str, Any] | None = None
     messages: list[dict[str, Any]] = []
+    user_role = "owner"
+    is_owner = True
 
     if store is not None:
         session_data = await store.async_get_session(session_id)
-        # Verify session belongs to the current user
-        if session_data is not None and session_data.get("user") != user:
-            session_data = None  # Treat as not found
+        # Verify user has at least viewer access via ACL
+        if session_data is not None:
+            access = get_session_access(request)
+            acl_result = await access.check_access(
+                session_id, user, required=SessionRole.VIEWER
+            )
+            if not acl_result.granted:
+                session_data = None  # Treat as not found
+            else:
+                user_role = acl_result.role.value if acl_result.role else "owner"
+                is_owner = acl_result.role == SessionRole.OWNER if acl_result.role else True
         if session_data is not None:
             messages = await store.async_get_messages(session_id)
 
@@ -130,9 +181,34 @@ async def chat_resume(request: Request, session_id: str) -> Response:
                 "messages": [],
                 "error": f"Session {session_id[:12]} not found.",
                 "default_project": settings.gcp.project_id,
+                "user_role": "owner",
+                "is_owner": True,
+                "sharing_enabled": _sharing_enabled(),
+                "annotations": [],
             },
             status_code=404,
         )
+
+    # Fetch annotations for the session if sharing is enabled
+    annotations_list: list[dict[str, Any]] = []
+    if _sharing_enabled():
+        try:
+            access = get_session_access(request)
+            raw_annotations = await access.list_annotations(session_id, user)
+            annotations_list = [
+                {
+                    "id": a.id,
+                    "author": a.author,
+                    "content": a.content,
+                    "annotation_type": a.annotation_type,
+                    "message_ref": a.message_ref,
+                    "created_at": a.created_at,
+                    "updated_at": a.updated_at,
+                }
+                for a in raw_annotations
+            ]
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to fetch annotations for session %s", session_id[:8])
 
     templates = request.app.state.templates
     return templates.TemplateResponse(  # type: ignore[no-any-return]
@@ -142,6 +218,10 @@ async def chat_resume(request: Request, session_id: str) -> Response:
             "session": session_data,
             "messages": messages,
             "default_project": settings.gcp.project_id,
+            "user_role": user_role,
+            "is_owner": is_owner,
+            "sharing_enabled": _sharing_enabled(),
+            "annotations": annotations_list,
         },
     )
 
@@ -178,12 +258,21 @@ async def chat_message(request: Request, session_id: str) -> EventSourceResponse
             # Generate an ephemeral UUID even without persistence
             actual_session_id = str(uuid4())
 
-    # Validate existing session exists before proceeding
+    # Validate existing session exists and user has edit access
     if session_id != "new" and store is not None:
         existing = await store.async_get_session(actual_session_id)
         if existing is None:
             return EventSourceResponse(
                 _error_generator(f"Session {actual_session_id[:12]} not found.")
+            )
+        # Verify the user has editor-level access via ACL
+        access = get_session_access(request)
+        acl_result = await access.check_access(
+            actual_session_id, user, required=SessionRole.EDITOR
+        )
+        if not acl_result.granted:
+            return EventSourceResponse(
+                _error_generator("Insufficient permissions")
             )
 
     # Store the user message

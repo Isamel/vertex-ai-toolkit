@@ -268,6 +268,46 @@ class TestSessionAccessProtocol:
             ) -> list[dict[str, Any]]:
                 return []
 
+            async def add_annotation(
+                self,
+                session_id: str,
+                user: str,
+                *,
+                annotation_type: str,
+                content: str,
+                message_ref: str | None = None,
+            ) -> Annotation:
+                return Annotation(
+                    id="ann-1",
+                    author=user,
+                    content=content,
+                    annotation_type="note",
+                    created_at="",
+                    updated_at="",
+                )
+
+            async def update_annotation(
+                self, session_id: str, annotation_id: str, user: str, content: str
+            ) -> Annotation:
+                return Annotation(
+                    id=annotation_id,
+                    author=user,
+                    content=content,
+                    annotation_type="note",
+                    created_at="",
+                    updated_at="",
+                )
+
+            async def delete_annotation(
+                self, session_id: str, annotation_id: str, user: str
+            ) -> bool:
+                return True
+
+            async def list_annotations(
+                self, session_id: str, user: str, *, limit: int = 50
+            ) -> list[Annotation]:
+                return []
+
         assert isinstance(FakeAccess(), SessionAccessProtocol)
 
     def test_empty_object_does_not_satisfy_protocol(self) -> None:

@@ -72,6 +72,7 @@ def create_app() -> FastAPI:
     app.state.templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
     # Register routes
+    from vaig.web.routes.annotations import router as annotations_router
     from vaig.web.routes.ask import router as ask_router
     from vaig.web.routes.chat import router as chat_router
     from vaig.web.routes.health import router as health_router
@@ -79,6 +80,7 @@ def create_app() -> FastAPI:
     from vaig.web.routes.pages import router as pages_router
     from vaig.web.routes.schedules import router as schedules_router
     from vaig.web.routes.settings import router as settings_router
+    from vaig.web.routes.sharing import router as sharing_router
 
     app.include_router(health_router)
     app.include_router(pages_router)
@@ -87,6 +89,8 @@ def create_app() -> FastAPI:
     app.include_router(settings_router)
     app.include_router(live_router)
     app.include_router(schedules_router)
+    app.include_router(sharing_router)
+    app.include_router(annotations_router)
 
     # Ollama-compatible proxy — always registered so that Ollama
     # clients receive a JSON 404 when disabled instead of HTML.
@@ -99,6 +103,11 @@ def create_app() -> FastAPI:
     # (e.g. FirestoreSessionStore) can be attached via middleware or
     # a startup event when running in production.
     app.state.session_store = None
+
+    # Session access control — lazily initialised like the store.
+    # A concrete ``SessionAccessControl`` is attached at startup when
+    # Firestore is available and the shared-sessions feature is wired.
+    app.state.session_access = None
 
     # Custom error handlers
     app.add_exception_handler(404, _not_found_handler)

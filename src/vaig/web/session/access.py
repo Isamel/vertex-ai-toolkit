@@ -7,6 +7,7 @@ Firestore layout::
 
     vaig_sessions/{session_id}
         collaborators/{normalized_email}   ← ACL documents
+        annotations/{annotation_id}        ← annotation documents
 """
 
 from __future__ import annotations
@@ -14,9 +15,10 @@ from __future__ import annotations
 import logging
 import os
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
-from vaig.core.models import AccessResult, SessionCollaborator, SessionRole
+from vaig.core.models import AccessResult, Annotation, AnnotationType, SessionCollaborator, SessionRole
 
 if TYPE_CHECKING:
     from google.cloud.firestore import AsyncClient
@@ -31,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 _COLLECTION = "vaig_sessions"
 _COLLABORATORS_SUB = "collaborators"
+_ANNOTATIONS_SUB = "annotations"
 _FEATURE_FLAG = "VAIG_WEB_SHARED_SESSIONS"
 _IAP_PREFIX = "accounts.google.com:"
 
@@ -87,6 +90,12 @@ class SessionAccessControl:
 
         session = await self._store.async_get_session(session_id)
         if session is None:
+            logger.warning(
+                "Access denied: session %s not found (user=%s, required=%s)",
+                session_id[:8],
+                user,
+                required.value,
+            )
             return AccessResult(granted=False)
 
         owner_email = _normalize_email(session.get("user", ""))
@@ -97,6 +106,11 @@ class SessionAccessControl:
 
         # Feature flag off → owner-only fallback
         if not _sharing_enabled():
+            logger.warning(
+                "Access denied: sharing disabled, non-owner %s on session %s",
+                user,
+                session_id[:8],
+            )
             return AccessResult(granted=False)
 
         # Look up collaborator document
@@ -108,16 +122,33 @@ class SessionAccessControl:
         )
         doc = await collab_ref.get()
         if not doc.exists:
+            logger.warning(
+                "Access denied: %s is not a collaborator on session %s",
+                user,
+                session_id[:8],
+            )
             return AccessResult(granted=False)
 
         data: dict[str, Any] = doc.to_dict() or {}
         try:
             role = SessionRole(data.get("role", ""))
         except ValueError:
+            logger.warning(
+                "Access denied: invalid role for %s on session %s",
+                user,
+                session_id[:8],
+            )
             return AccessResult(granted=False)
 
         if role >= required:
             return AccessResult(granted=True, role=role)
+        logger.warning(
+            "Access denied: %s has role %s but %s required on session %s",
+            user,
+            role.value,
+            required.value,
+            session_id[:8],
+        )
         return AccessResult(granted=False, role=role)
 
     # ── share (Task 2.3) ─────────────────────────────────────
@@ -335,3 +366,217 @@ class SessionAccessControl:
             count += 1
 
         return sessions
+
+    # ── Annotation CRUD (Task 4.1) ───────────────────────────
+
+    async def add_annotation(
+        self,
+        session_id: str,
+        user: str,
+        *,
+        annotation_type: str,
+        content: str,
+        message_ref: str | None = None,
+    ) -> Annotation:
+        """Create a new annotation on *session_id*.
+
+        Requires editor+ access.
+
+        Raises:
+            PermissionError: If the caller lacks editor access.
+        """
+        user = _normalize_email(user)
+
+        result = await self.check_access(session_id, user, required=SessionRole.EDITOR)
+        if not result.granted:
+            msg = "Insufficient permissions"
+            raise PermissionError(msg)
+
+        now = datetime.now(UTC).isoformat()
+        ann_id = str(uuid4())
+
+        annotation = Annotation(
+            id=ann_id,
+            author=user,
+            content=content,
+            annotation_type=cast(AnnotationType, annotation_type),
+            message_ref=message_ref,
+            created_at=now,
+            updated_at=now,
+        )
+
+        ann_ref = (
+            self._client.collection(_COLLECTION)
+            .document(session_id)
+            .collection(_ANNOTATIONS_SUB)
+            .document(ann_id)
+        )
+        await ann_ref.set({
+            "author": user,
+            "content": annotation.content,
+            "annotation_type": annotation_type,
+            "message_ref": message_ref,
+            "created_at": now,
+            "updated_at": now,
+        })
+
+        logger.info(
+            "Annotation %s added to session %s by %s",
+            ann_id[:8],
+            session_id[:8],
+            user,
+        )
+        return annotation
+
+    async def update_annotation(
+        self,
+        session_id: str,
+        annotation_id: str,
+        user: str,
+        content: str,
+    ) -> Annotation:
+        """Update an existing annotation.  Author-only.
+
+        Raises:
+            PermissionError: If the caller is not the annotation author.
+            LookupError: If the annotation does not exist.
+        """
+        user = _normalize_email(user)
+
+        # Must at least be a viewer to access the session
+        result = await self.check_access(session_id, user, required=SessionRole.VIEWER)
+        if not result.granted:
+            msg = "Insufficient permissions"
+            raise PermissionError(msg)
+
+        ann_ref = (
+            self._client.collection(_COLLECTION)
+            .document(session_id)
+            .collection(_ANNOTATIONS_SUB)
+            .document(annotation_id)
+        )
+        doc = await ann_ref.get()
+        if not doc.exists:
+            msg = "Annotation not found"
+            raise LookupError(msg)
+
+        data: dict[str, Any] = doc.to_dict() or {}
+        author = _normalize_email(data.get("author", ""))
+
+        if author != user:
+            msg = "Only the annotation author can edit"
+            raise PermissionError(msg)
+
+        now = datetime.now(UTC).isoformat()
+        await ann_ref.update({"content": content, "updated_at": now})
+
+        return Annotation(
+            id=annotation_id,
+            author=author,
+            content=content,
+            annotation_type=cast(AnnotationType, data.get("annotation_type", "note")),
+            message_ref=data.get("message_ref"),
+            created_at=data.get("created_at", ""),
+            updated_at=now,
+        )
+
+    async def delete_annotation(
+        self,
+        session_id: str,
+        annotation_id: str,
+        user: str,
+    ) -> bool:
+        """Delete an annotation.  Author-only.
+
+        Raises:
+            PermissionError: If the caller is not the annotation author.
+            LookupError: If the annotation does not exist.
+        """
+        user = _normalize_email(user)
+
+        # Must at least be a viewer to access the session
+        result = await self.check_access(session_id, user, required=SessionRole.VIEWER)
+        if not result.granted:
+            msg = "Insufficient permissions"
+            raise PermissionError(msg)
+
+        ann_ref = (
+            self._client.collection(_COLLECTION)
+            .document(session_id)
+            .collection(_ANNOTATIONS_SUB)
+            .document(annotation_id)
+        )
+        doc = await ann_ref.get()
+        if not doc.exists:
+            msg = "Annotation not found"
+            raise LookupError(msg)
+
+        data: dict[str, Any] = doc.to_dict() or {}
+        author = _normalize_email(data.get("author", ""))
+
+        if author != user:
+            msg = "Only the annotation author can delete"
+            raise PermissionError(msg)
+
+        await ann_ref.delete()
+
+        logger.info(
+            "Annotation %s deleted from session %s by %s",
+            annotation_id[:8],
+            session_id[:8],
+            user,
+        )
+        return True
+
+    async def list_annotations(
+        self,
+        session_id: str,
+        user: str,
+        *,
+        limit: int = 50,
+    ) -> list[Annotation]:
+        """List annotations for *session_id*.
+
+        Requires viewer+ access.  Returns up to *limit* annotations
+        ordered by ``created_at``.
+        """
+        user = _normalize_email(user)
+
+        result = await self.check_access(session_id, user, required=SessionRole.VIEWER)
+        if not result.granted:
+            return []
+
+        ann_col = (
+            self._client.collection(_COLLECTION)
+            .document(session_id)
+            .collection(_ANNOTATIONS_SUB)
+        )
+
+        annotations: list[Annotation] = []
+        count = 0
+        async for doc in ann_col.order_by("created_at").limit(limit).stream():
+            if count >= limit:
+                break
+            data: dict[str, Any] = doc.to_dict() or {}
+            try:
+                annotations.append(
+                    Annotation(
+                        id=doc.id,
+                        author=data.get("author", ""),
+                        content=data.get("content", ""),
+                        annotation_type=cast(AnnotationType, data.get("annotation_type", "note")),
+                        message_ref=data.get("message_ref"),
+                        created_at=data.get("created_at", ""),
+                        updated_at=data.get("updated_at", ""),
+                    )
+                )
+                count += 1
+            except (ValueError, KeyError):
+                logger.warning(
+                    "Invalid annotation doc %s in session %s",
+                    doc.id,
+                    session_id[:8],
+                )
+                continue
+
+        return annotations

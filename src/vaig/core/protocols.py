@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from vaig.core.models import AccessResult, SessionCollaborator, SessionRole
+from vaig.core.models import AccessResult, Annotation, SessionCollaborator, SessionRole
 
 if TYPE_CHECKING:
     from vaig.core.cache import CacheStats
@@ -421,4 +421,45 @@ class SessionAccessProtocol(Protocol):
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """List sessions shared with *user* (not owned)."""
+        ...
+
+    async def add_annotation(
+        self,
+        session_id: str,
+        user: str,
+        *,
+        annotation_type: str,
+        content: str,
+        message_ref: str | None = None,
+    ) -> Annotation:
+        """Create a new annotation on *session_id* (editor+ access)."""
+        ...
+
+    async def update_annotation(
+        self,
+        session_id: str,
+        annotation_id: str,
+        user: str,
+        content: str,
+    ) -> Annotation:
+        """Update an existing annotation (author only)."""
+        ...
+
+    async def delete_annotation(
+        self,
+        session_id: str,
+        annotation_id: str,
+        user: str,
+    ) -> bool:
+        """Delete an annotation (author only)."""
+        ...
+
+    async def list_annotations(
+        self,
+        session_id: str,
+        user: str,
+        *,
+        limit: int = 50,
+    ) -> list[Annotation]:
+        """List annotations for *session_id* (viewer+ access)."""
         ...

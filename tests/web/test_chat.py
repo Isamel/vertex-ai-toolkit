@@ -102,6 +102,91 @@ class _FakeSessionStore:
         return False
 
 
+class _FakeSessionAccess:
+    """In-memory session access control for testing.
+
+    Grants OWNER to the user stored in ``session["user"]`` and looks up
+    other users in an internal collaborator map.
+    """
+
+    def __init__(self, store: _FakeSessionStore) -> None:
+        self._store = store
+        # Mapping: (session_id, email) -> SessionRole
+        self.collaborators: dict[tuple[str, str], str] = {}
+        # Accessible sessions returned by list_accessible_sessions
+        self.shared_sessions: list[dict] = []
+
+    async def check_access(
+        self,
+        session_id: str,
+        user: str,
+        *,
+        required: str | None = None,
+    ) -> MagicMock:
+        """Return a mock AccessResult based on store ownership and collaborators."""
+        from vaig.core.models import AccessResult, SessionRole
+
+        if required is None:
+            required = SessionRole.VIEWER  # type: ignore[assignment]
+
+        session = await self._store.async_get_session(session_id)
+        if session is None:
+            return AccessResult(granted=False)
+
+        owner = session.get("user", "")
+        if user == owner:
+            return AccessResult(granted=True, role=SessionRole.OWNER)
+
+        # Check collaborators
+        key = (session_id, user)
+        if key in self.collaborators:
+            role = SessionRole(self.collaborators[key])
+            if role >= required:
+                return AccessResult(granted=True, role=role)
+            return AccessResult(granted=False, role=role)
+
+        return AccessResult(granted=False)
+
+    async def share(self, session_id, owner, target_email, role):
+        from vaig.core.models import SessionCollaborator
+
+        session = await self._store.async_get_session(session_id)
+        if session is None:
+            msg = "Session not found"
+            raise PermissionError(msg)
+        if owner != session.get("user", ""):
+            msg = "Only the session owner can share"
+            raise PermissionError(msg)
+        if target_email == owner:
+            msg = "Cannot share with session owner"
+            raise ValueError(msg)
+
+        self.collaborators[(session_id, target_email)] = role.value
+        return SessionCollaborator(
+            email=target_email, role=role, added_at="now", added_by=owner,
+        )
+
+    async def revoke(self, session_id, owner, target_email):
+        session = await self._store.async_get_session(session_id)
+        if session is None:
+            msg = "Session not found"
+            raise PermissionError(msg)
+        if owner != session.get("user", ""):
+            msg = "Only the session owner can revoke access"
+            raise PermissionError(msg)
+        key = (session_id, target_email)
+        if key in self.collaborators:
+            del self.collaborators[key]
+            return True
+        return False
+
+    async def list_collaborators(self, session_id, user):
+        return []
+
+    async def list_accessible_sessions(self, user, *, limit=20):
+        return self.shared_sessions
+
+
 # ── Fixtures ─────────────────────────────────────────────────
 
 
@@ -113,9 +198,11 @@ def app():
 
 @pytest.fixture()
 def app_with_store():
-    """Create an app instance with a fake session store."""
+    """Create an app instance with a fake session store and access control."""
     application = create_app()
-    application.state.session_store = _FakeSessionStore()
+    store = _FakeSessionStore()
+    application.state.session_store = store
+    application.state.session_access = _FakeSessionAccess(store)
     return application
 
 
@@ -229,6 +316,7 @@ async def test_chat_resume_existing_session_returns_200() -> None:
         {"role": "assistant", "content": "Hi there"},
     ]
     app.state.session_store = store
+    app.state.session_access = _FakeSessionAccess(store)
 
     with patch(
         "vaig.web.routes.chat.get_current_user", return_value="test@test.com"
@@ -311,6 +399,7 @@ async def test_session_delete_returns_200() -> None:
         "user": "test@test.com",
     }
     app.state.session_store = store
+    app.state.session_access = _FakeSessionAccess(store)
 
     with patch(
         "vaig.web.routes.chat.get_current_user", return_value="test@test.com"
@@ -328,7 +417,9 @@ async def test_session_delete_returns_200() -> None:
 async def test_session_delete_returns_404_for_missing() -> None:
     """DELETE /sessions/{id} returns 404 when session does not exist."""
     app = create_app()
-    app.state.session_store = _FakeSessionStore()
+    store = _FakeSessionStore()
+    app.state.session_store = store
+    app.state.session_access = _FakeSessionAccess(store)
 
     with patch(
         "vaig.web.routes.chat.get_current_user", return_value="test@test.com"
@@ -365,6 +456,7 @@ async def test_chat_message_returns_sse_content_type() -> None:
     store.sessions["s1"] = {"id": "s1", "name": "Test", "model": "gemini-2.0-flash", "user": "test@test.com"}
     store.messages["s1"] = []
     app.state.session_store = store
+    app.state.session_access = _FakeSessionAccess(store)
 
     mock_stream = _MockStream(["Hello"])
     mock_orchestrator = MagicMock()
@@ -406,6 +498,7 @@ async def test_chat_message_contains_session_and_chunk_events() -> None:
     store.sessions["s2"] = {"id": "s2", "name": "Test", "model": "gemini-2.0-flash", "user": "test@test.com"}
     store.messages["s2"] = []
     app.state.session_store = store
+    app.state.session_access = _FakeSessionAccess(store)
 
     mock_stream = _MockStream(["Hello ", "world"], usage={"tokens": 10})
     mock_orchestrator = MagicMock()
@@ -530,6 +623,7 @@ async def test_chat_resume_wrong_user_returns_404() -> None:
         "user": "owner@test.com",
     }
     app.state.session_store = store
+    app.state.session_access = _FakeSessionAccess(store)
 
     with patch(
         "vaig.web.routes.chat.get_current_user", return_value="intruder@test.com"
@@ -552,6 +646,7 @@ async def test_session_delete_wrong_user_returns_404() -> None:
         "user": "owner@test.com",
     }
     app.state.session_store = store
+    app.state.session_access = _FakeSessionAccess(store)
 
     with patch(
         "vaig.web.routes.chat.get_current_user", return_value="intruder@test.com"
@@ -617,6 +712,7 @@ async def test_chat_message_nonexistent_session_returns_error() -> None:
     app = create_app()
     store = _FakeSessionStore()
     app.state.session_store = store
+    app.state.session_access = _FakeSessionAccess(store)
 
     with (
         patch("vaig.web.routes.chat.get_current_user", return_value="test@test.com"),
@@ -642,3 +738,228 @@ async def test_chat_message_nonexistent_session_returns_error() -> None:
             body = resp.text
             assert "event: error" in body
             assert "not found" in body.lower()
+
+
+# ── ACL Integration (Task 3.6) ──────────────────────────────
+
+
+def _make_acl_app() -> tuple:
+    """Create app with store, access control, and a pre-populated session."""
+    app = create_app()
+    store = _FakeSessionStore()
+    store.sessions["shared-sess"] = {
+        "id": "shared-sess",
+        "name": "Shared Session",
+        "model": "gemini-2.0-flash",
+        "user": "owner@test.com",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }
+    store.messages["shared-sess"] = [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there"},
+    ]
+    access = _FakeSessionAccess(store)
+    app.state.session_store = store
+    app.state.session_access = access
+    return app, store, access
+
+
+@pytest.mark.asyncio
+async def test_acl_viewer_can_read_session() -> None:
+    """GET /chat/{id} returns 200 when the user has viewer access."""
+    app, _store, access = _make_acl_app()
+    access.collaborators[("shared-sess", "viewer@test.com")] = "viewer"
+
+    with patch(
+        "vaig.web.routes.chat.get_current_user", return_value="viewer@test.com"
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/chat/shared-sess")
+            assert resp.status_code == 200
+            assert "Hello" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_acl_viewer_cannot_send_message() -> None:
+    """POST /chat/{id}/message returns permission error for viewer."""
+    app, _store, access = _make_acl_app()
+    access.collaborators[("shared-sess", "viewer@test.com")] = "viewer"
+
+    with (
+        patch("vaig.web.routes.chat.get_current_user", return_value="viewer@test.com"),
+        patch(
+            "vaig.web.deps.Settings.from_overrides",
+            return_value=MagicMock(models=MagicMock(default="gemini-2.0-flash")),
+        ),
+        patch(
+            "vaig.web.deps.build_container",
+            return_value=MagicMock(
+                event_bus=MagicMock(subscribe=MagicMock(return_value=lambda: None)),
+                gemini_client=MagicMock(),
+            ),
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/chat/shared-sess/message",
+                data={"message": "I am a viewer"},
+            )
+            assert resp.status_code == 200
+            body = resp.text
+            assert "event: error" in body
+            assert "permission" in body.lower() or "Insufficient" in body
+
+
+@pytest.mark.asyncio
+async def test_acl_editor_can_send_message() -> None:
+    """POST /chat/{id}/message succeeds for editor."""
+    app, _store, access = _make_acl_app()
+    access.collaborators[("shared-sess", "editor@test.com")] = "editor"
+
+    mock_stream = _MockStream(["Response"])
+    mock_orchestrator = MagicMock()
+    mock_orchestrator.async_execute_single = AsyncMock(return_value=mock_stream)
+
+    with (
+        patch("vaig.web.routes.chat.get_current_user", return_value="editor@test.com"),
+        patch(
+            "vaig.web.deps.Settings.from_overrides",
+            return_value=MagicMock(models=MagicMock(default="gemini-2.0-flash")),
+        ),
+        patch(
+            "vaig.web.deps.build_container",
+            return_value=MagicMock(
+                event_bus=MagicMock(subscribe=MagicMock(return_value=lambda: None)),
+                gemini_client=MagicMock(),
+            ),
+        ),
+        patch(
+            "vaig.agents.orchestrator.Orchestrator",
+            return_value=mock_orchestrator,
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/chat/shared-sess/message",
+                data={"message": "I am an editor"},
+            )
+            assert resp.status_code == 200
+            assert "text/event-stream" in resp.headers["content-type"]
+            assert "event: session" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_acl_non_collaborator_denied_read() -> None:
+    """GET /chat/{id} returns 404 for non-collaborator."""
+    app, _store, _access = _make_acl_app()
+
+    with patch(
+        "vaig.web.routes.chat.get_current_user", return_value="stranger@test.com"
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/chat/shared-sess")
+            assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_acl_non_collaborator_denied_message() -> None:
+    """POST /chat/{id}/message returns permission error for non-collaborator."""
+    app, _store, _access = _make_acl_app()
+
+    with (
+        patch("vaig.web.routes.chat.get_current_user", return_value="stranger@test.com"),
+        patch(
+            "vaig.web.deps.Settings.from_overrides",
+            return_value=MagicMock(models=MagicMock(default="gemini-2.0-flash")),
+        ),
+        patch(
+            "vaig.web.deps.build_container",
+            return_value=MagicMock(
+                event_bus=MagicMock(subscribe=MagicMock(return_value=lambda: None)),
+                gemini_client=MagicMock(),
+            ),
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/chat/shared-sess/message",
+                data={"message": "Let me in"},
+            )
+            assert resp.status_code == 200
+            body = resp.text
+            assert "event: error" in body
+            assert "permission" in body.lower() or "Insufficient" in body
+
+
+@pytest.mark.asyncio
+async def test_acl_shared_sessions_appear_in_list() -> None:
+    """GET /sessions shows shared sessions alongside owned sessions."""
+    app, store, access = _make_acl_app()
+    # Add an owned session for the listing user
+    store.sessions["my-sess"] = {
+        "id": "my-sess",
+        "name": "My Session",
+        "model": "gemini-2.0-flash",
+        "user": "viewer@test.com",
+        "updated_at": "2026-01-02T00:00:00Z",
+    }
+    # The shared session should appear from list_accessible_sessions
+    access.shared_sessions = [
+        {
+            "id": "shared-sess",
+            "name": "Shared Session",
+            "model": "gemini-2.0-flash",
+            "user": "owner@test.com",
+            "role": "viewer",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+    ]
+
+    with patch(
+        "vaig.web.routes.chat.get_current_user", return_value="viewer@test.com"
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/sessions")
+            assert resp.status_code == 200
+            body = resp.text
+            assert "My Session" in body
+            assert "Shared Session" in body
+
+
+@pytest.mark.asyncio
+async def test_acl_owner_can_delete() -> None:
+    """DELETE /sessions/{id} succeeds for session owner."""
+    app, store, _access = _make_acl_app()
+
+    with patch(
+        "vaig.web.routes.chat.get_current_user", return_value="owner@test.com"
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.delete("/sessions/shared-sess")
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "deleted"
+            assert "shared-sess" not in store.sessions
+
+
+@pytest.mark.asyncio
+async def test_acl_non_owner_cannot_delete() -> None:
+    """DELETE /sessions/{id} returns 404 for non-owner (even with editor access)."""
+    app, store, access = _make_acl_app()
+    access.collaborators[("shared-sess", "editor@test.com")] = "editor"
+
+    with patch(
+        "vaig.web.routes.chat.get_current_user", return_value="editor@test.com"
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.delete("/sessions/shared-sess")
+            assert resp.status_code == 404
+            # Session must still exist
+            assert "shared-sess" in store.sessions
