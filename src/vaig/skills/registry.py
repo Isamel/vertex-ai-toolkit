@@ -98,6 +98,7 @@ class SkillRegistry:
         self._settings = settings
         self._skills: dict[str, BaseSkill] = {}
         self._metadata_cache: dict[str, SkillMetadata] = {}
+        self._source_map: dict[str, str] = {}
         self._loaded = False
 
     def _load_builtin_skills(self) -> None:
@@ -118,6 +119,7 @@ class SkillRegistry:
             try:
                 skill = _import_skill(module_path)
                 self._register(skill)
+                self._source_map[name] = "builtin"
                 logger.info("Loaded built-in skill: %s", name)
             except Exception:  # noqa: BLE001
                 logger.warning("Failed to load built-in skill: %s", name, exc_info=True)
@@ -145,6 +147,7 @@ class SkillRegistry:
 
         for skill in load_from_directories(skills_cfg.external_dirs):
             self._register(skill)
+            self._source_map[skill.get_metadata().name] = "external_dir"
 
         # Use filtered package loading when explicit packages are configured;
         # otherwise fall back to unfiltered entry-point discovery.  Both
@@ -156,6 +159,7 @@ class SkillRegistry:
         )
         for skill in ep_skills:
             self._register(skill)
+            self._source_map[skill.get_metadata().name] = "entry_point"
 
     def _register(self, skill: BaseSkill) -> None:
         """Register a skill instance.
@@ -220,6 +224,15 @@ class SkillRegistry:
         """List all registered skill names."""
         self._ensure_loaded()
         return list(self._skills.keys())
+
+    def get_source(self, name: str) -> str:
+        """Return the source type for a registered skill.
+
+        Returns one of ``"builtin"``, ``"external_dir"``, ``"entry_point"``,
+        or ``"unknown"`` if the skill is not tracked.
+        """
+        self._ensure_loaded()
+        return self._source_map.get(name, "unknown")
 
     def is_registered(self, name: str) -> bool:
         """Check if a skill is registered."""

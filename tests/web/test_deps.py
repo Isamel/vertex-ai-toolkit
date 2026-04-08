@@ -19,7 +19,7 @@ pytest.importorskip(
 
 from fastapi import HTTPException
 
-from vaig.web.deps import get_container, get_current_user, get_settings
+from vaig.web.deps import get_container, get_current_user, get_settings, is_admin
 
 # ── get_current_user ─────────────────────────────────────────
 
@@ -178,3 +178,77 @@ class TestGetContainer:
             result = get_container(mock_settings)
             mock_build.assert_called_once_with(mock_settings)
             assert result is mock_build.return_value
+
+
+# ── is_admin ─────────────────────────────────────────────────
+
+
+class TestIsAdmin:
+    """Tests for admin email check and dev-mode bypass."""
+
+    def _make_request(self, headers: dict[str, str] | None = None) -> MagicMock:
+        """Create a mock request with given headers."""
+        request = MagicMock()
+        request.headers = headers or {}
+        return request
+
+    @patch.dict(
+        "os.environ",
+        {"VAIG_WEB_ADMIN_EMAILS": "admin@corp.com,other@corp.com"},
+        clear=True,
+    )
+    def test_admin_email_in_list_returns_true(self) -> None:
+        """User whose email is in the admin list should be admin."""
+        request = self._make_request(
+            {"X-Goog-Authenticated-User-Email": "accounts.google.com:admin@corp.com"}
+        )
+        assert is_admin(request) is True
+
+    @patch.dict(
+        "os.environ",
+        {"VAIG_WEB_ADMIN_EMAILS": "admin@corp.com"},
+        clear=True,
+    )
+    def test_non_admin_email_returns_false(self) -> None:
+        """User whose email is NOT in the admin list should not be admin."""
+        request = self._make_request(
+            {"X-Goog-Authenticated-User-Email": "accounts.google.com:user@corp.com"}
+        )
+        assert is_admin(request) is False
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_empty_admin_list_returns_false(self) -> None:
+        """When VAIG_WEB_ADMIN_EMAILS is unset, no user is admin."""
+        import os
+
+        os.environ.pop("VAIG_WEB_ADMIN_EMAILS", None)
+        os.environ.pop("VAIG_WEB_DEV_MODE", None)
+        request = self._make_request(
+            {"X-Goog-Authenticated-User-Email": "accounts.google.com:admin@corp.com"}
+        )
+        assert is_admin(request) is False
+
+    @patch.dict(
+        "os.environ",
+        {"VAIG_WEB_DEV_MODE": "true"},
+        clear=True,
+    )
+    def test_dev_mode_bypass_returns_true(self) -> None:
+        """In dev mode, all authenticated users are admin."""
+        import os
+
+        os.environ.pop("VAIG_WEB_ADMIN_EMAILS", None)
+        request = self._make_request({})
+        assert is_admin(request) is True
+
+    @patch.dict(
+        "os.environ",
+        {"VAIG_WEB_ADMIN_EMAILS": "ADMIN@Corp.com"},
+        clear=True,
+    )
+    def test_case_insensitive_email_match(self) -> None:
+        """Email comparison should be case-insensitive."""
+        request = self._make_request(
+            {"X-Goog-Authenticated-User-Email": "accounts.google.com:admin@corp.com"}
+        )
+        assert is_admin(request) is True

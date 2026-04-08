@@ -222,3 +222,49 @@ class TestSkillCollision:
 
         # Warning should mention the override
         assert "overridden" in caplog.text.lower() or "override" in caplog.text.lower()
+
+
+# ── get_source ───────────────────────────────────────────────
+
+
+class TestGetSource:
+    """Tests for SkillRegistry.get_source() — source type tracking."""
+
+    def test_builtin_skill_returns_builtin(self) -> None:
+        """Skills loaded via _load_builtin_skills should be tracked as 'builtin'."""
+        from unittest.mock import MagicMock
+
+        from vaig.skills.registry import SkillRegistry
+
+        registry = SkillRegistry(MagicMock())
+        skill = DummySkill()
+        registry._register(skill)
+        registry._source_map["dummy"] = "builtin"
+        registry._loaded = True
+
+        assert registry.get_source("dummy") == "builtin"
+
+    def test_external_dir_skill_returns_external_dir(self) -> None:
+        """Skills loaded from directories should be tracked as 'external_dir'."""
+        from unittest.mock import MagicMock
+
+        from vaig.skills.registry import SkillRegistry
+
+        registry = SkillRegistry(MagicMock())
+        skill = DummySkill()
+        registry._register(skill)
+        registry._source_map["dummy"] = "external_dir"
+        registry._loaded = True
+
+        assert registry.get_source("dummy") == "external_dir"
+
+    def test_unknown_name_returns_unknown(self) -> None:
+        """Querying an untracked skill name should return 'unknown'."""
+        from unittest.mock import MagicMock
+
+        from vaig.skills.registry import SkillRegistry
+
+        registry = SkillRegistry(MagicMock())
+        registry._loaded = True
+
+        assert registry.get_source("nonexistent") == "unknown"

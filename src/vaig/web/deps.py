@@ -9,6 +9,7 @@ Provides ``Depends()``-compatible callables for:
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, cast
 
@@ -23,6 +24,7 @@ __all__ = [
     "get_current_user",
     "get_session_access",
     "get_settings",
+    "is_admin",
 ]
 
 # IAP header set by Cloud Identity-Aware Proxy
@@ -34,6 +36,10 @@ _DEV_USER_ENV = "VAIG_WEB_DEV_USER"
 _DEV_USER_DEFAULT = "dev@localhost"
 # Explicit dev-mode flag — must be set for dev fallback to activate
 _DEV_MODE_ENV = "VAIG_WEB_DEV_MODE"
+# Comma-separated admin emails
+_ADMIN_EMAILS_ENV = "VAIG_WEB_ADMIN_EMAILS"
+
+logger = logging.getLogger(__name__)
 
 
 def get_current_user(request: Request) -> str:
@@ -62,6 +68,35 @@ def get_current_user(request: Request) -> str:
         status_code=401,
         detail="Missing IAP authentication header. Set VAIG_WEB_DEV_MODE=true for local development.",
     )
+
+
+def is_admin(request: Request) -> bool:
+    """Check if the current user is an admin.
+
+    Admin emails are sourced from the ``VAIG_WEB_ADMIN_EMAILS`` environment
+    variable (comma-separated).  In dev mode (``VAIG_WEB_DEV_MODE=true``),
+    the admin check is bypassed — all authenticated users are treated as
+    admin.
+
+    Returns ``False`` when the admin list is empty/unset in production mode,
+    meaning no users are admin.
+    """
+    # Dev mode bypass — all authenticated users are admin
+    if os.environ.get(_DEV_MODE_ENV, "").lower() in ("true", "1", "yes"):
+        return True
+
+    raw = os.environ.get(_ADMIN_EMAILS_ENV, "")
+    admin_emails = {e.strip().lower() for e in raw.split(",") if e.strip()}
+
+    if not admin_emails:
+        return False
+
+    try:
+        user = get_current_user(request)
+    except HTTPException:
+        return False
+
+    return user.lower() in admin_emails
 
 
 async def get_settings(request: Request) -> Settings:
