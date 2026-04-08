@@ -312,7 +312,8 @@ investigation checklist).  Do NOT collect node data, events, or Cloud Logging
     - Associate each pod with its owning workload using ownerReferences or standard labels
       (app, app.kubernetes.io/name, or controller-specific labels).
     - For each workload: use the **TOTAL across all pods** (CPU total, memory total across all pods).
-      Optionally mention per-pod average for context (e.g., "0.563 cores total, 0.056 cores/pod avg across 10 pods").
+      ALWAYS include pod count and per-pod average, e.g. "0.38 cores (10 pods, 0.038/pod avg)".
+      Without per-pod context, totals across many pods look misleading to readers.
     - Include a pod count per workload (ready/total pods).
     - Never report raw per-pod values in the Service Status table — always use aggregated per-workload values.
 
