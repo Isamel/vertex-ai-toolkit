@@ -26,7 +26,9 @@ from vaig.cli._helpers import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from vaig.skills.service_health.schema import RecommendedAction
+    from vaig.core.config import Settings
+    from vaig.core.remediation import ClassifiedCommand
+    from vaig.skills.service_health.schema import HealthReport, RecommendedAction
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,8 @@ def _load_last_report() -> dict[str, object] | None:
         records = store.read_reports(last=1)
         if records:
             return records[-1].get("report")
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception:  # noqa: BLE001
         logger.debug("Failed to load report from ReportStore", exc_info=True)
     return None
@@ -201,6 +205,7 @@ def register(app: typer.Typer) -> None:
                 _handle_finding(
                     finding_id=finding,
                     recommendations=recommendations,
+                    report=report,
                     settings=settings,
                     approve=approve,
                     dry_run=dry_run,
@@ -211,20 +216,21 @@ def register(app: typer.Typer) -> None:
 
         except typer.Exit:
             raise  # Let typer exits pass through
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception as exc:  # noqa: BLE001
             handle_cli_error(exc, debug=debug)
 
 
 def _display_actions_table(
     recommendations: Sequence[RecommendedAction],
-    settings: object,
+    settings: Settings,
 ) -> None:
     """Render a Rich table of all recommended actions with tier info."""
-    from vaig.core.config import RemediationConfig
     from vaig.core.remediation import CommandClassifier
 
-    rem_config: RemediationConfig = settings.remediation  # type: ignore[attr-defined]
-    classifier = CommandClassifier(rem_config, coding_denied_commands=[])
+    rem_config = settings.remediation
+    classifier = CommandClassifier(rem_config)
 
     console.print()
     console.print("[bold cyan]vaig remediate --list[/bold cyan] — recommended actions")
@@ -270,18 +276,39 @@ def _handle_finding(
     *,
     finding_id: str,
     recommendations: Sequence[RecommendedAction],
-    settings: object,
+    report: HealthReport,
+    settings: Settings,
     approve: bool,
     dry_run: bool,
     execute: bool,
     debug: bool,
 ) -> None:
     """Handle remediation of a specific finding."""
-    from vaig.core.config import RemediationConfig
-    from vaig.core.remediation import CommandClassifier, SafetyTier
+    from vaig.core.gke import build_gke_config
+    from vaig.core.remediation import CommandClassifier, RemediationExecutor, SafetyTier
 
-    rem_config: RemediationConfig = settings.remediation  # type: ignore[attr-defined]
-    classifier = CommandClassifier(rem_config, coding_denied_commands=[])
+    rem_config = settings.remediation
+    classifier = CommandClassifier(rem_config)
+
+    # ── Validate report cluster matches current context ──
+    report_cluster = report.metadata.cluster_name
+    if report_cluster:
+        from vaig.core.event_bus import EventBus
+
+        gke_config = build_gke_config(settings)
+        executor = RemediationExecutor(rem_config, EventBus.get())
+        if not executor.validate_context(report_cluster, gke_config):
+            console.print(
+                Panel(
+                    f"[red]Cluster mismatch![/red]\n\n"
+                    f"Report was generated for: [bold]{report_cluster}[/bold]\n"
+                    f"Current context points to: [bold]{gke_config.cluster_name}[/bold]\n\n"
+                    f"Run against the correct cluster or generate a new report.",
+                    title="[red]✗ Context Mismatch[/red]",
+                    border_style="red",
+                )
+            )
+            raise typer.Exit(code=1)
 
     # Find matching recommendations by related_findings or by index
     matching = [
@@ -405,30 +432,29 @@ def _handle_finding(
 
 
 def _execute_remediation(
-    action: object,
-    classified: object,
-    settings: object,
+    action: RecommendedAction,
+    classified: ClassifiedCommand,
+    settings: Settings,
     *,
     debug: bool = False,
 ) -> None:
     """Execute a remediation command and display the result."""
-    from vaig.core.config import RemediationConfig
     from vaig.core.event_bus import EventBus
     from vaig.core.gke import build_gke_config
     from vaig.core.remediation import RemediationExecutor
 
-    rem_config: RemediationConfig = settings.remediation  # type: ignore[attr-defined]
-    bus = EventBus()
+    rem_config = settings.remediation
+    bus = EventBus.get()
     executor = RemediationExecutor(rem_config, bus)
-    gke_config = build_gke_config(settings)  # type: ignore[arg-type]
+    gke_config = build_gke_config(settings)
 
     console.print("[dim]Executing...[/dim]")
 
     try:
         result = asyncio.run(
             executor.execute(
-                action,  # type: ignore[arg-type]
-                classified,  # type: ignore[arg-type]
+                action,
+                classified,
                 gke_config,
                 approved=True,
             )
@@ -450,6 +476,8 @@ def _execute_remediation(
                     border_style="green",
                 )
             )
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception as exc:  # noqa: BLE001
         console.print(
             Panel(

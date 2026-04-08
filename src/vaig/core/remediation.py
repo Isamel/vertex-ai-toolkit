@@ -8,7 +8,7 @@ execution engine:
   with its safety tier assignment.
 - :class:`CommandClassifier` — classifies command strings into safety tiers
   using ordered regex rules with a default-BLOCKED policy.
-- :class:`RemediationResult` — frozen dataclass capturing execution outcome.
+- :class:`ToolResult` — frozen dataclass capturing execution outcome.
 - :class:`RemediationExecutor` — dispatches classified commands to native K8s
   functions or subprocess, with safety gating and audit event emission.
 """
@@ -134,6 +134,14 @@ _KUBECTL_DELETE_POD_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# ``kubectl rollout restart`` and ``rollout status`` stay SAFE (the tier-rule
+# default), but ``rollout undo``, ``rollout pause``, and ``rollout resume``
+# are promoted to REVIEW because they mutate workload state.
+_KUBECTL_ROLLOUT_REVIEW_SUBCMDS = re.compile(
+    r"^(undo|pause|resume)$",
+    re.IGNORECASE,
+)
+
 
 def _load_coding_denied_commands() -> list[str]:
     """Load denied_commands from Settings().coding — best-effort.
@@ -142,9 +150,11 @@ def _load_coding_denied_commands() -> list[str]:
     testing without config files).
     """
     try:
-        from vaig.core.config import Settings
+        from vaig.core.config import get_settings
 
-        return Settings().coding.denied_commands
+        return get_settings().coding.denied_commands
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception:  # noqa: BLE001
         return []
 
@@ -298,6 +308,16 @@ class CommandClassifier:
         ):
             matched_tier = SafetyTier.REVIEW
 
+        # ── Step 7b: special case — kubectl rollout undo/pause/resume → REVIEW ──
+        if (
+            matched_tier == SafetyTier.SAFE
+            and tool.lower() == "kubectl"
+            and subcommand.lower() == "rollout"
+            and args
+            and _KUBECTL_ROLLOUT_REVIEW_SUBCMDS.match(args[0])
+        ):
+            matched_tier = SafetyTier.REVIEW
+
         # ── Step 8: config tier_overrides ──
         if self._config.tier_overrides:
             for pattern, tier_name in self._config.tier_overrides.items():
@@ -428,6 +448,12 @@ class RemediationExecutor:
         from vaig.core.events import RemediationExecuted
         from vaig.tools.base import ToolResult
 
+        # ── Wire config-level overrides ──
+        if self._config.dry_run:
+            dry_run = True
+        if self._config.auto_approve_safe and classified.tier == SafetyTier.SAFE:
+            approved = True
+
         async with self._lock:
             cluster = gke_config.cluster_name
 
@@ -457,6 +483,17 @@ class RemediationExecutor:
                 )
                 return ToolResult(output=plan, error=False)
 
+            # ── SAFE without approval: return plan unless auto_approve_safe ──
+            if classified.tier == SafetyTier.SAFE and not approved:
+                if not self._config.auto_approve_safe:
+                    plan = (
+                        f"[APPROVAL NEEDED] {action.title}\n"
+                        f"Command: {classified.raw_command}\n"
+                        f"Tier: SAFE\n"
+                        f"Re-run with --approve to execute."
+                    )
+                    return ToolResult(output=plan, error=False)
+
             # ── dry_run: describe without executing ──
             if dry_run:
                 description = (
@@ -469,6 +506,8 @@ class RemediationExecutor:
             # ── Dispatch and execute ──
             try:
                 result = await self._dispatch(classified, gke_config)
+            except (KeyboardInterrupt, SystemExit):
+                raise
             except Exception as exc:
                 error_msg = f"Execution failed: {exc}"
                 logger.exception(
@@ -547,16 +586,19 @@ class RemediationExecutor:
 
         if key == ("kubectl", "rollout"):
             # Expected: kubectl rollout restart <resource/name>
-            # Skip "restart" subsubcommand if present
+            # Only "restart" is handled natively; other subsubcommands
+            # (status, undo, pause, resume) fall through to subprocess.
             remaining = args
             if remaining and remaining[0].lower() == "restart":
                 remaining = remaining[1:]
-            resource, name = self._parse_resource_name(remaining)
-            namespace = self._extract_namespace(args, gke_config)
-            return await async_kubectl_restart(
-                resource, name,
-                gke_config=gke_config, namespace=namespace,
-            )
+                resource, name = self._parse_resource_name(remaining)
+                namespace = self._extract_namespace(args, gke_config)
+                return await async_kubectl_restart(
+                    resource, name,
+                    gke_config=gke_config, namespace=namespace,
+                )
+            # Not "restart" — fall through to subprocess dispatch
+            return await self._dispatch_subprocess(classified, gke_config)
 
         if key == ("kubectl", "annotate"):
             # Expected: kubectl annotate <resource/name> key=value

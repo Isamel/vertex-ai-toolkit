@@ -1446,3 +1446,249 @@ class TestRemediationIntegration:
         # Step 4: event emitted
         assert len(events) == 1
         assert events[0].tier == "blocked"
+
+
+# ══════════════════════════════════════════════════════════════
+# Fix 7 — SAFE tier approval gating
+# ══════════════════════════════════════════════════════════════
+
+
+class TestRemediationExecutorSafeApproval:
+    """SAFE commands without approval return plan when auto_approve_safe is off."""
+
+    @pytest.mark.asyncio
+    async def test_safe_without_approval_returns_plan(self) -> None:
+        """SAFE + approved=False + auto_approve_safe=False → plan, no execution."""
+        config = RemediationConfig(enabled=True, auto_approve_safe=False)
+        bus = EventBus()
+        executor = RemediationExecutor(config, bus)
+        events_received: list[RemediationExecuted] = []
+        bus.subscribe(RemediationExecuted, events_received.append)
+
+        action = _make_action(title="Annotate pod", command="kubectl annotate pod/foo key=val")
+        classified = ClassifiedCommand(
+            tool="kubectl", subcommand="annotate",
+            args=("pod/foo", "key=val"), tier=SafetyTier.SAFE,
+            raw_command="kubectl annotate pod/foo key=val",
+        )
+        gke = _make_gke_config()
+
+        result = await executor.execute(action, classified, gke, approved=False)
+
+        assert result.error is False
+        assert "APPROVAL NEEDED" in result.output
+        assert "Annotate pod" in result.output
+        assert "--approve" in result.output
+        assert len(events_received) == 0  # No event — nothing executed
+
+    @pytest.mark.asyncio
+    async def test_safe_with_auto_approve_safe_dispatches(self) -> None:
+        """SAFE + approved=False + auto_approve_safe=True → auto-approved, dispatches."""
+        config = RemediationConfig(enabled=True, auto_approve_safe=True)
+        bus = EventBus()
+        executor = RemediationExecutor(config, bus)
+
+        action = _make_action(command="kubectl annotate pod/foo key=val")
+        classified = ClassifiedCommand(
+            tool="kubectl", subcommand="annotate",
+            args=("pod/foo", "key=val"), tier=SafetyTier.SAFE,
+            raw_command="kubectl annotate pod/foo key=val",
+        )
+        gke = _make_gke_config()
+
+        mock_result = ToolResult(output="pod/foo annotated", error=False)
+        with patch(
+            "vaig.tools.gke.mutations.async_kubectl_annotate",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ) as mock_annotate:
+            result = await executor.execute(action, classified, gke, approved=False)
+
+        assert result.error is False
+        assert result.output == "pod/foo annotated"
+        mock_annotate.assert_awaited_once()
+
+
+# ══════════════════════════════════════════════════════════════
+# Fix 8 — config.dry_run and config.auto_approve_safe overrides
+# ══════════════════════════════════════════════════════════════
+
+
+class TestRemediationExecutorConfigOverrides:
+    """Config-level dry_run and auto_approve_safe override call-site params."""
+
+    @pytest.mark.asyncio
+    async def test_config_dry_run_overrides_param(self) -> None:
+        """config.dry_run=True forces dry_run even when param is False."""
+        config = RemediationConfig(enabled=True, dry_run=True)
+        bus = EventBus()
+        executor = RemediationExecutor(config, bus)
+
+        action = _make_action()
+        classified = ClassifiedCommand(
+            tool="kubectl", subcommand="scale",
+            args=("deployment/foo", "--replicas=3"), tier=SafetyTier.SAFE,
+            raw_command="kubectl scale deployment/foo --replicas=3",
+        )
+        gke = _make_gke_config()
+
+        with patch.object(executor, "_dispatch", new_callable=AsyncMock) as mock_dispatch:
+            result = await executor.execute(
+                action, classified, gke, dry_run=False, approved=True,
+            )
+
+        assert "DRY RUN" in result.output
+        mock_dispatch.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_config_auto_approve_safe_overrides_param(self) -> None:
+        """config.auto_approve_safe=True forces approved=True for SAFE commands."""
+        config = RemediationConfig(enabled=True, auto_approve_safe=True)
+        bus = EventBus()
+        executor = RemediationExecutor(config, bus)
+
+        action = _make_action(command="kubectl annotate pod/foo key=val")
+        classified = ClassifiedCommand(
+            tool="kubectl", subcommand="annotate",
+            args=("pod/foo", "key=val"), tier=SafetyTier.SAFE,
+            raw_command="kubectl annotate pod/foo key=val",
+        )
+        gke = _make_gke_config()
+
+        mock_result = ToolResult(output="annotated", error=False)
+        with patch(
+            "vaig.tools.gke.mutations.async_kubectl_annotate",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ) as mock_annotate:
+            result = await executor.execute(
+                action, classified, gke, approved=False,
+            )
+
+        assert result.error is False
+        assert result.output == "annotated"
+        mock_annotate.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_config_auto_approve_safe_does_not_affect_review(self) -> None:
+        """config.auto_approve_safe=True does NOT auto-approve REVIEW commands."""
+        config = RemediationConfig(enabled=True, auto_approve_safe=True)
+        bus = EventBus()
+        executor = RemediationExecutor(config, bus)
+
+        action = _make_action(command="kubectl apply -f dep.yaml")
+        classified = ClassifiedCommand(
+            tool="kubectl", subcommand="apply",
+            args=("-f", "dep.yaml"), tier=SafetyTier.REVIEW,
+            raw_command="kubectl apply -f dep.yaml",
+        )
+        gke = _make_gke_config()
+
+        result = await executor.execute(action, classified, gke, approved=False)
+
+        assert result.error is False
+        assert "REVIEW REQUIRED" in result.output
+
+
+# ══════════════════════════════════════════════════════════════
+# Fix 16 — kubectl rollout status dispatches to subprocess
+# ══════════════════════════════════════════════════════════════
+
+
+class TestRemediationExecutorRolloutDispatch:
+    """kubectl rollout non-restart subcommands dispatch via subprocess."""
+
+    @pytest.mark.asyncio
+    async def test_rollout_status_dispatches_to_subprocess(self) -> None:
+        """kubectl rollout status should use subprocess, not native restart."""
+        executor, bus = _make_executor()
+        action = _make_action(command="kubectl rollout status deployment/web")
+        classified = ClassifiedCommand(
+            tool="kubectl", subcommand="rollout",
+            args=("status", "deployment/web"),
+            tier=SafetyTier.SAFE,
+            raw_command="kubectl rollout status deployment/web",
+        )
+        gke = _make_gke_config()
+
+        mock_result = ToolResult(output="deployment/web successfully rolled out", error=False)
+        with patch(
+            "vaig.tools.shell_tools.async_run_command",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ) as mock_run, patch(
+            "vaig.tools.gke.mutations.async_kubectl_restart",
+            new_callable=AsyncMock,
+        ) as mock_restart:
+            result = await executor.execute(action, classified, gke, approved=True)
+
+        assert result.output == "deployment/web successfully rolled out"
+        assert result.error is False
+        mock_run.assert_awaited_once()
+        mock_restart.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_rollout_restart_still_dispatches_to_native(self) -> None:
+        """kubectl rollout restart should still use native dispatch."""
+        executor, bus = _make_executor()
+        action = _make_action(command="kubectl rollout restart deployment/web")
+        classified = ClassifiedCommand(
+            tool="kubectl", subcommand="rollout",
+            args=("restart", "deployment/web"),
+            tier=SafetyTier.SAFE,
+            raw_command="kubectl rollout restart deployment/web",
+        )
+        gke = _make_gke_config()
+
+        mock_result = ToolResult(output="deployment.apps/web restarted", error=False)
+        with patch(
+            "vaig.tools.gke.mutations.async_kubectl_restart",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ) as mock_restart:
+            result = await executor.execute(action, classified, gke, approved=True)
+
+        assert result.output == "deployment.apps/web restarted"
+        mock_restart.assert_awaited_once()
+
+
+# ══════════════════════════════════════════════════════════════
+# Fix 17 — kubectl rollout undo/pause/resume → REVIEW
+# ══════════════════════════════════════════════════════════════
+
+
+class TestCommandClassifierRolloutSubcmds:
+    """kubectl rollout sub-subcommand tier classification."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "kubectl rollout restart deployment/foo",
+            "kubectl rollout status deployment/foo",
+        ],
+        ids=["rollout-restart", "rollout-status"],
+    )
+    def test_rollout_restart_and_status_stay_safe(self, command: str) -> None:
+        """rollout restart and rollout status remain SAFE."""
+        classifier = _make_classifier()
+        result = classifier.classify(command)
+        assert result.tier == SafetyTier.SAFE, (
+            f"Expected SAFE for {command!r}, got {result.tier}"
+        )
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "kubectl rollout undo deployment/foo",
+            "kubectl rollout pause deployment/foo",
+            "kubectl rollout resume deployment/foo",
+        ],
+        ids=["rollout-undo", "rollout-pause", "rollout-resume"],
+    )
+    def test_rollout_undo_pause_resume_are_review(self, command: str) -> None:
+        """rollout undo, pause, and resume are REVIEW — they mutate state."""
+        classifier = _make_classifier()
+        result = classifier.classify(command)
+        assert result.tier == SafetyTier.REVIEW, (
+            f"Expected REVIEW for {command!r}, got {result.tier}"
+        )
