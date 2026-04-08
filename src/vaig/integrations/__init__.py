@@ -8,7 +8,9 @@ from vaig.integrations.dispatcher import AlertContext, DispatchResult, Notificat
 
 if TYPE_CHECKING:
     from vaig.integrations.email_sender import EmailSender
+    from vaig.integrations.finding_exporter import FindingExporter
     from vaig.integrations.google_chat import GoogleChatWebhook
+    from vaig.integrations.jira import JiraClient
     from vaig.integrations.pagerduty import PagerDutyClient
     from vaig.integrations.slack import SlackWebhook
 
@@ -16,7 +18,9 @@ __all__ = [
     "AlertContext",
     "DispatchResult",
     "EmailSender",
+    "FindingExporter",
     "GoogleChatWebhook",
+    "JiraClient",
     "NotificationDispatcher",
     "PagerDutyClient",
     "SlackWebhook",
@@ -46,4 +50,12 @@ def __getattr__(name: str) -> object:
         from vaig.integrations.email_sender import EmailSender
 
         return EmailSender
+    if name == "JiraClient":
+        from vaig.integrations.jira import JiraClient
+
+        return JiraClient
+    if name == "FindingExporter":
+        from vaig.integrations.finding_exporter import FindingExporter
+
+        return FindingExporter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

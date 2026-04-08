@@ -756,6 +756,45 @@ class WebhookServerConfig(BaseModel):
         return self
 
 
+class JiraConfig(BaseModel):
+    """Jira Cloud REST API v3 integration configuration.
+
+    Used by :class:`~vaig.integrations.jira.JiraClient` for exporting
+    health-report findings as Jira issues.  Auto-enables when
+    ``base_url`` is set (same pattern as :class:`PagerDutyConfig`).
+    """
+
+    enabled: bool = False
+    base_url: str = ""
+    email: str = Field(default="", repr=False)
+    api_token: SecretStr = Field(default=SecretStr(""), repr=False)
+    project_key: str = ""
+    issue_type: str = "Bug"
+    severity_field_mapping: dict[str, str] = Field(
+        default_factory=lambda: {
+            "CRITICAL": "Highest",
+            "HIGH": "High",
+            "MEDIUM": "Medium",
+            "LOW": "Low",
+            "INFO": "Lowest",
+        }
+    )
+
+    @model_validator(mode="after")
+    def _auto_enable(self) -> JiraConfig:
+        """Auto-enable when base_url is provided unless explicitly disabled."""
+        has_url = bool(self.base_url)
+        if not self.enabled and has_url and "enabled" not in self.model_fields_set:
+            self.enabled = True
+        elif self.enabled and not has_url:
+            logger.warning(
+                "Jira integration is enabled but base_url is empty; "
+                "disabling Jira integration."
+            )
+            self.enabled = False
+        return self
+
+
 class PagerDutyConfig(BaseModel):
     """PagerDuty Events API v2 + REST API v2 integration configuration.
 
@@ -1304,6 +1343,7 @@ class Settings(BaseSettings):
     audit: AuditConfig = Field(default_factory=AuditConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
     webhook_server: WebhookServerConfig = Field(default_factory=WebhookServerConfig)
+    jira: JiraConfig = Field(default_factory=JiraConfig)
     pagerduty: PagerDutyConfig = Field(default_factory=PagerDutyConfig)
     google_chat: GoogleChatConfig = Field(default_factory=GoogleChatConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
