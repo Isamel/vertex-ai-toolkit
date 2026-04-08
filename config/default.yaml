@@ -435,6 +435,9 @@ pagerduty:
     high: error
     medium: warning
     info: info
+  # Alert correlation fields (read-only fetch from PD REST API)
+  alert_service_ids: []               # Filter incidents to these PD service IDs (empty = all services)
+  alert_fetch_limit: 25               # Maximum incidents returned by list_pagerduty_incidents tool
 
 # Google Chat integration — incoming webhook for Card v2 notifications
 # Auto-enables when webhook_url is set.
@@ -453,6 +456,18 @@ slack:
   notify_on:                          # Only send notifications for these severities (and above)
     - critical
     - high
+  # Alert correlation fields (read-only Slack conversations.history)
+  bot_token: ""                       # Slack Bot OAuth token for reading channel history — or use VAIG_SLACK__BOT_TOKEN
+  alert_channel_ids: []               # Channel IDs to search for alerts (e.g. ["C01ABCDEF"])
+
+# OpsGenie integration — alert correlation via OpsGenie v2 API
+# Auto-enables when api_key is set.
+opsgenie:
+  enabled: false
+  api_key: ""                         # OpsGenie API key — or use VAIG_OPSGENIE__API_KEY
+  base_url: "https://api.opsgenie.com"  # US region; use "https://api.eu.opsgenie.com" for EU
+  team_ids: []                        # Filter alerts to these team IDs (empty = all teams)
+  alert_fetch_limit: 25               # Maximum alerts returned by list_opsgenie_alerts tool
 
 # Email (SMTP) integration — sends HTML + plain-text alerts and reports
 # Auto-enables when smtp_host, from_address, and recipients are all set.

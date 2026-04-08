@@ -43,3 +43,6 @@ KUBERNETES_WRITE: str = "kubernetes_write"
 
 #: Cloud Monitoring metrics tools (historical CPU/memory time series from Cloud Monitoring).
 MONITORING: str = "monitoring"
+
+#: Incident management tools (PagerDuty, OpsGenie, Slack alert correlation).
+INCIDENT_MANAGEMENT: str = "incident_management"
