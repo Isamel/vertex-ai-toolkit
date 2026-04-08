@@ -499,6 +499,17 @@ fleet:
   max_workers: 4
   daily_budget_usd: 0.0
 
+# Remediation engine — safety-tiered command execution for runbook automation
+# Feature-flagged: disabled by default.  Enable explicitly with
+# remediation.enabled = true in config or VAIG_REMEDIATION__ENABLED=true.
+remediation:
+  enabled: false                        # Master feature flag — must be explicitly enabled
+  auto_approve_safe: false              # When true, SAFE-tier commands execute without user confirmation
+  blocked_commands: []                  # Regex patterns for commands that should ALWAYS be BLOCKED
+  timeout: 30                           # Execution timeout in seconds per command
+  dry_run: false                        # When true, all commands show plan without executing
+  tier_overrides: {}                    # Map of regex pattern → tier name (safe/review/blocked)
+
 training:
   enabled: false                      # Set to true to enable fine-tuning pipeline (opt-in)
   base_model: "gemini-2.5-flash"       # Base model ID for supervised tuning

@@ -25,6 +25,7 @@ __all__ = [
     "OrchestratorPhaseCompleted",
     "OrchestratorToolsCompleted",
     "QuotaExceeded",
+    "RemediationExecuted",
     "SessionEnded",
     "SessionStarted",
     "SkillUsed",
@@ -331,3 +332,36 @@ class AgentProgressCompleted(Event):
     agent_index: int = 0
     total_agents: int = 0
     end_agent_index: int | None = None
+
+
+# ══════════════════════════════════════════════════════════════
+# Remediation Events
+# ══════════════════════════════════════════════════════════════
+
+
+@dataclass(frozen=True)
+class RemediationExecuted(Event):
+    """Emitted after a remediation command is executed (or blocked).
+
+    Captures the full audit trail for every remediation attempt —
+    success, failure, or blocked — for BigQuery + Cloud Logging
+    via the existing AuditSubscriber.
+
+    Attributes:
+        action_title: Human-readable title of the recommended action.
+        command: The raw command string that was classified.
+        tier: Safety tier (``"safe"``, ``"review"``, ``"blocked"``).
+        result_output: Standard output from the command execution.
+        error: Error message if the command failed, empty otherwise.
+        dry_run: Whether this was a dry-run (no actual execution).
+        cluster: GKE cluster name where the command was targeted.
+    """
+
+    event_type: str = field(default="remediation.executed", init=False)
+    action_title: str = ""
+    command: str = ""
+    tier: str = ""
+    result_output: str = ""
+    error: str = ""
+    dry_run: bool = False
+    cluster: str = ""
