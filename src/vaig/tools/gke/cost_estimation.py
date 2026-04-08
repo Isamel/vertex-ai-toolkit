@@ -1045,14 +1045,32 @@ def fetch_workload_costs(
             mem_vals = [c.avg_memory_gib for c in c_usage.values() if c.avg_memory_gib is not None]
             wl_cpu_usage = sum(cpu_vals) if cpu_vals else None
             wl_mem_usage = sum(mem_vals) if mem_vals else None
-        elif wl_usage_metrics is None:
-            # ── Fallback: no monitoring data available for this workload.
-            # Estimate usage as equal to requests (worst case — 100% utilization).
-            # This gives a cost estimate rather than "N/A" in the report.
+        else:
+            # ── Fallback: no usable monitoring data for this workload.
+            # Covers both wl_usage_metrics=None (for example, no workload
+            # metrics entry was found) and wl_usage_metrics with empty
+            # containers={} (monitoring returned no usable data points).
+            # Estimate usage as equal to requests (worst case — 100%
+            # utilization).  This gives a cost estimate rather than
+            # "N/A" in the report.
             wl_cpu_usage = cpu_req
             wl_mem_usage = mem_req
             wl_estimated = True
             any_estimated = True
+
+            # Build synthetic per-container usage from requests so that
+            # calculate_workload_cost() can produce per-container cost
+            # breakdowns instead of leaving them as N/A.
+            if c_requests:
+                from vaig.tools.gke.monitoring import ContainerUsageMetrics  # noqa: WPS433
+
+                c_usage = {}
+                for c_name, (c_cpu, c_mem, _c_eph) in c_requests.items():
+                    c_usage[c_name] = ContainerUsageMetrics(
+                        container_name=c_name,
+                        avg_cpu_cores=c_cpu,
+                        avg_memory_gib=c_mem,
+                    )
 
         cost_data = calculate_workload_cost(
             cpu_requests=cpu_req,

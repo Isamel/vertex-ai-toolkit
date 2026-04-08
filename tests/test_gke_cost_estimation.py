@@ -1141,8 +1141,8 @@ class TestFetchWorkloadCostsV2BackwardCompat:
         self, _mock_autopilot: MagicMock, mock_clients: MagicMock
     ) -> None:
         """When get_workload_usage_metrics returns {}, usage is estimated from requests
-        (100% utilization fallback). Containers are populated from K8s requests but
-        container_usage is None so per-container usage/waste remain None."""
+        (100% utilization fallback). Both workload-level and per-container costs
+        are populated with estimated values (usage == requests → waste ≈ 0)."""
         from vaig.tools.gke.cost_estimation import fetch_workload_costs
 
         pod = self._make_running_pod()
@@ -1160,9 +1160,12 @@ class TestFetchWorkloadCostsV2BackwardCompat:
             # containers are populated from K8s resource requests
             assert len(wl.containers) >= 1
             for ct in wl.containers:
-                # container_usage=None → per-container usage/waste are still None
-                assert ct.total_usage_cost_usd is None
-                assert ct.total_waste_usd is None
+                # per-container usage is now estimated from requests (not None)
+                assert ct.total_usage_cost_usd is not None
+                assert ct.total_usage_cost_usd > 0.0
+                # usage == requests → waste ≈ 0
+                assert ct.total_waste_usd is not None
+                assert ct.total_waste_usd == pytest.approx(0.0, abs=0.01)
             # workload-level totals are now estimated from requests (not None)
             assert wl.total_usage_cost_usd is not None
             assert wl.metrics_estimated is True
