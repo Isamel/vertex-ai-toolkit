@@ -69,6 +69,13 @@ dev = [
 [project.scripts]
 vaig = "vaig.cli.app:app"
 
+# Entry-point group for third-party skill plugins.
+# Third-party packages register skills here, e.g.:
+#   [project.entry-points."vaig.skills"]
+#   my_skill = "my_package.skills:MyCustomSkill"
+# See README.md for details.
+[project.entry-points."vaig.skills"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
