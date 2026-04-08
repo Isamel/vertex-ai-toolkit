@@ -420,6 +420,22 @@ schedule:
   misfire_grace_time: 900               # Seconds to tolerate a missed job trigger (15 min)
   db_path: "~/.vaig/scheduler.db"       # SQLite path for schedule metadata, budget tracking, and run history
 
+# Jira Cloud integration — export health-report findings as Jira issues
+# Auto-enables when base_url is set.
+jira:
+  enabled: false
+  base_url: ""                        # Jira Cloud URL — e.g. https://myorg.atlassian.net — or use VAIG_JIRA__BASE_URL
+  email: ""                           # Jira Cloud email — or use VAIG_JIRA__EMAIL
+  api_token: ""                       # Jira Cloud API token — or use VAIG_JIRA__API_TOKEN
+  project_key: ""                     # Target project key (e.g. "OPS") — or use VAIG_JIRA__PROJECT_KEY
+  issue_type: "Bug"                   # Default issue type for new findings
+  severity_field_mapping:             # Map finding severity → Jira priority name
+    CRITICAL: Highest
+    HIGH: High
+    MEDIUM: Medium
+    LOW: Low
+    INFO: Lowest
+
 # PagerDuty integration — incident management via Events API v2 + REST API v2
 # Events API v2 uses routing_key for trigger/ack/resolve.
 # REST API v2 uses api_token for enrichment (notes, incident search).
