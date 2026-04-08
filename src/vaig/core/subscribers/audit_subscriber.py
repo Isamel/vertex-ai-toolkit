@@ -461,11 +461,11 @@ class AuditSubscriber:
 
             client = self._logging_client
             if client is None:
-                client = cloud_logging.Client(credentials=self._credentials)
+                client = cloud_logging.Client(credentials=self._credentials)  # type: ignore[no-untyped-call]
                 self._logging_client = client
 
             log_name = self._settings.audit.cloud_logging_log_name
-            gcp_logger = client.logger(log_name)
+            gcp_logger = client.logger(log_name)  # type: ignore[no-untyped-call]
 
             for record in records:
                 severity = "ERROR" if record.get("event_type") == "error.occurred" else "INFO"
