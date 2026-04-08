@@ -309,6 +309,51 @@ class TestFallbackEstimationEmptyContainers:
         wl = report.workloads[0]
         assert wl.total_usage_cost_usd == pytest.approx(wl.total_request_cost_usd, rel=0.01)
 
+    @patch("vaig.tools.gke.cost_estimation._create_k8s_clients")
+    @patch("vaig.tools.gke.cost_estimation.detect_autopilot", return_value=True)
+    def test_empty_containers_per_container_costs_populated(
+        self, _mock_autopilot: MagicMock, mock_clients: MagicMock
+    ) -> None:
+        """Per-container cost breakdown should be populated when estimated."""
+        from vaig.tools.gke.cost_estimation import fetch_workload_costs
+
+        pod = _make_running_pod()
+        core_v1 = _make_mock_clients([pod])
+        mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
+
+        usage_metrics = {
+            "my-app": WorkloadUsageMetrics(
+                namespace="default",
+                workload_name="my-app",
+                containers={},
+            )
+        }
+
+        with patch(
+            "vaig.tools.gke.monitoring.get_workload_usage_metrics",
+            return_value=usage_metrics,
+        ):
+            report = fetch_workload_costs(_make_gke_config())
+
+        wl = report.workloads[0]
+        # Container-level costs should be present (not empty list)
+        assert len(wl.containers) > 0, "containers list should not be empty in fallback"
+
+        container = wl.containers[0]
+        assert container.container_name == "app"
+        # Per-container usage and waste costs should be populated, not None
+        assert container.total_request_cost_usd is not None
+        assert container.total_request_cost_usd > 0.0
+        assert container.total_usage_cost_usd is not None
+        assert container.total_usage_cost_usd > 0.0
+        assert container.total_waste_usd is not None
+        # Since usage = requests (100% utilization), per-container waste should be ~0
+        assert container.total_waste_usd == pytest.approx(0.0, abs=0.01)
+        # Usage cost should match request cost for each container
+        assert container.total_usage_cost_usd == pytest.approx(
+            container.total_request_cost_usd, rel=0.01
+        )
+
 
 class TestFallbackEstimationWithRealMetrics:
     """When monitoring returns real data, metrics_estimated should be False."""
