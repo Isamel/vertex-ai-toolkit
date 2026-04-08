@@ -1157,9 +1157,13 @@ function renderGKECost() {
   // ── Summary cards ─────────────────────────────────────────────
   const isEstimated = !!gkeCost.metrics_estimated;
   const fmt = v => v != null ? '$' + Number(v).toFixed(2) : 'N/A';
-  const usageSub = isEstimated
-    ? 'per month (est. — no monitoring data)'
-    : 'per month (actual)';
+  const totalWlCount = (gkeCost.workloads || []).length;
+  const estWlCount = gkeCost.workloads_without_metrics ?? 0;
+  const usageSub = !isEstimated
+    ? 'per month (actual)'
+    : estWlCount >= totalWlCount
+      ? 'per month (est. — no monitoring data)'
+      : 'per month (mixed: some estimated)';
   const summaryCards = [
     { label: 'Total Request Cost', value: fmt(gkeCost.total_request_cost_usd), sub: 'per month (est.)' },
     { label: 'Total Usage Cost',   value: fmt(gkeCost.total_usage_cost_usd), sub: usageSub, estimated: isEstimated },
@@ -1178,7 +1182,7 @@ function renderGKECost() {
   if (bannerEl) {
     if (isEstimated) {
       const wlCount = (gkeCost.workloads || []).length;
-      const estCount = gkeCost.workloads_without_metrics || wlCount;
+      const estCount = gkeCost.workloads_without_metrics ?? wlCount;
       const scope = estCount >= wlCount ? 'All' : 'Some';
       bannerEl.innerHTML = `<div class="gke-est-banner">⚠ ${scope} usage costs are estimated from resource requests (100% utilization assumed). Actual usage may be lower. Enable Cloud Monitoring for actual usage data.</div>`;
       bannerEl.style.display = '';
@@ -1228,12 +1232,16 @@ function renderGKECost() {
       const wasteHtml = rc.waste_cost_usd != null
         ? `<span class="gke-waste-pos">$${Number(rc.waste_cost_usd).toFixed(2)}</span>`
         : '<span class="gke-na">N/A</span>';
-      const usageCell = wlEstimated
-        ? `<span class="gke-estimated" title="Estimated from requests — no monitoring data">≈ ${rc.usage != null ? Number(rc.usage).toFixed(3) : 'N/A'} (est.)</span>`
-        : (rc.usage != null ? Number(rc.usage).toFixed(3) : '<span class="gke-na">N/A</span>');
-      const usageCostCell = wlEstimated
-        ? `<span class="gke-estimated" title="Estimated from requests">${rc.usage_cost_usd != null ? '~$' + Number(rc.usage_cost_usd).toFixed(2) : 'N/A'} (est.)</span>`
-        : (rc.usage_cost_usd != null ? '$' + Number(rc.usage_cost_usd).toFixed(2) : '<span class="gke-na">N/A</span>');
+      const usageCell = rc.usage == null
+        ? '<span class="gke-na">N/A</span>'
+        : (wlEstimated
+            ? `<span class="gke-estimated" title="Estimated from requests — no monitoring data">≈ ${Number(rc.usage).toFixed(3)} (est.)</span>`
+            : Number(rc.usage).toFixed(3));
+      const usageCostCell = rc.usage_cost_usd == null
+        ? '<span class="gke-na">N/A</span>'
+        : (wlEstimated
+            ? `<span class="gke-estimated" title="Estimated from requests">~$${Number(rc.usage_cost_usd).toFixed(2)} (est.)</span>`
+            : '$' + Number(rc.usage_cost_usd).toFixed(2));
       return `<tr>
         <td>${esc(rc.resource_type)}</td>
         <td>${rc.requests != null ? Number(rc.requests).toFixed(3) : '<span class="gke-na">N/A</span>'}</td>
