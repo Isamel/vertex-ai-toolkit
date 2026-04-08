@@ -39,7 +39,7 @@ def list_pagerduty_incidents(
     effective_limit = min(limit, config.alert_fetch_limit)
 
     # ── Cache check ──────────────────────────────────────────
-    cache_parts = ["pd", "incidents", status, service_name, str(effective_limit)]
+    cache_parts = ["pd", "incidents", config.base_url, status, service_name, str(effective_limit)]
     if config.alert_service_ids:
         cache_parts.append(",".join(sorted(config.alert_service_ids)))
     ck = _cache_key(*cache_parts)
@@ -55,7 +55,7 @@ def list_pagerduty_incidents(
         "Accept": "application/vnd.pagerduty+json;version=2",
     }
     params: dict[str, Any] = {
-        "statuses[]": status.split(","),
+        "statuses[]": [s.strip() for s in status.split(",")],
         "limit": str(effective_limit),
         "sort_by": "created_at:desc",
     }

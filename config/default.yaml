@@ -458,7 +458,6 @@ slack:
     - high
   # Alert correlation fields (read-only Slack conversations.history)
   bot_token: ""                       # Slack Bot OAuth token for reading channel history — or use VAIG_SLACK__BOT_TOKEN
-  alert_channel_ids: []               # Channel IDs to search for alerts (e.g. ["C01ABCDEF"])
 
 # OpsGenie integration — alert correlation via OpsGenie v2 API
 # Auto-enables when api_key is set.

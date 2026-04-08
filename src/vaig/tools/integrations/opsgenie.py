@@ -39,7 +39,7 @@ def list_opsgenie_alerts(
     effective_limit = min(limit, config.alert_fetch_limit)
 
     # ── Cache check ──────────────────────────────────────────
-    cache_parts = ["og", "alerts", status, priority, str(effective_limit)]
+    cache_parts = ["og", "alerts", config.base_url, status, priority, str(effective_limit)]
     if config.team_ids:
         cache_parts.append(",".join(sorted(config.team_ids)))
     ck = _cache_key(*cache_parts)
@@ -85,7 +85,7 @@ def list_opsgenie_alerts(
     alerts: list[dict[str, Any]] = (data or {}).get("data", [])
 
     if not alerts:
-        output = "No open OpsGenie alerts found."
+        output = "No OpsGenie alerts found for the given filters."
         _set_cache(ck, output, ttl=_OG_CACHE_TTL)
         return ToolResult(output=output)
 

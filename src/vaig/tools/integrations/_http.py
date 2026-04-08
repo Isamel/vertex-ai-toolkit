@@ -45,7 +45,7 @@ def api_request(
                 timeout=timeout,
             )
             if resp.status_code >= 500 and attempt < attempts - 1:
-                time.sleep(1)
+                time.sleep(2 ** attempt)
                 continue
             if resp.status_code == 401:
                 return None, ToolResult(
@@ -67,16 +67,22 @@ def api_request(
                     output=f"{service_name} API unavailable: {resp.status_code}",
                     error=True,
                 )
-            return resp.json(), None
+            try:
+                return resp.json(), None
+            except ValueError:
+                return None, ToolResult(
+                    output=f"{service_name} returned invalid JSON (HTTP {resp.status_code}).",
+                    error=True,
+                )
         except requests.Timeout:
             last_exc = requests.Timeout(f"{service_name} request timed out after {timeout}s")
             if attempt < attempts - 1:
-                time.sleep(1)
+                time.sleep(2 ** attempt)
                 continue
         except requests.ConnectionError:
             last_exc = requests.ConnectionError(f"{service_name} connection failed")
             if attempt < attempts - 1:
-                time.sleep(1)
+                time.sleep(2 ** attempt)
                 continue
         except requests.RequestException as exc:
             return None, ToolResult(

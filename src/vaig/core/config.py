@@ -839,7 +839,6 @@ class SlackConfig(BaseModel):
 
     # Alert correlation tool fields (read-only Slack conversations.history)
     bot_token: SecretStr = Field(default=SecretStr(""), repr=False)
-    alert_channel_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _auto_enable(self) -> SlackConfig:
@@ -873,7 +872,7 @@ class OpsGenieConfig(BaseModel):
     def _auto_enable(self) -> OpsGenieConfig:
         """Auto-enable when api_key is provided; disable when missing."""
         has_key = bool(self.api_key.get_secret_value())
-        if not self.enabled and has_key and "enabled" not in self.model_fields_set:
+        if not self.enabled and has_key:
             self.enabled = True
         elif self.enabled and not has_key:
             logger.warning(

@@ -64,12 +64,10 @@ def _og_config(
 def _slack_config(
     *,
     bot_token: str = _FAKE_SLACK_TOKEN,
-    alert_channel_ids: list[str] | None = None,
 ) -> SlackConfig:
     return SlackConfig(
         webhook_url="https://hooks.slack.com/fake",
         bot_token=SecretStr(bot_token),
-        alert_channel_ids=alert_channel_ids or [],
     )
 
 
@@ -280,7 +278,7 @@ class TestOpsGenieTool:
             result = list_opsgenie_alerts(config=_og_config())
 
         assert not result.error
-        assert "No open OpsGenie alerts" in result.output
+        assert "No OpsGenie alerts" in result.output
 
     def test_api_error(self) -> None:
         """OG API returns 500 → ToolResult with error=True."""

@@ -105,8 +105,8 @@ def search_slack_messages(
         except (ValueError, OSError):
             time_str = ts
         # Truncate long messages
-        if len(text) > 200:
-            text = text[:200] + "…"
+        if len(text) > 500:
+            text = text[:500] + "…"
         lines.append(f"{i}. **[{time_str}]** ({user}): {text}")
 
     output = "\n".join(lines)

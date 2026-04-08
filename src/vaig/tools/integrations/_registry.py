@@ -104,7 +104,7 @@ def create_alert_correlation_tools(settings: Settings) -> list[ToolDef]:
         )
 
     # ── Slack ────────────────────────────────────────────────
-    if settings.slack.bot_token.get_secret_value():
+    if settings.slack.enabled and settings.slack.bot_token.get_secret_value():
         from vaig.tools.integrations.slack import search_slack_messages
 
         slack_cfg = settings.slack
