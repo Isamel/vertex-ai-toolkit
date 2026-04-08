@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -779,6 +779,10 @@ class PagerDutyConfig(BaseModel):
         }
     )
 
+    # Alert correlation tool fields (read-only fetch from PD REST API)
+    alert_service_ids: list[str] = Field(default_factory=list)
+    alert_fetch_limit: int = 25
+
     @model_validator(mode="after")
     def _auto_enable(self) -> PagerDutyConfig:
         """Auto-enable when routing_key is provided unless explicitly disabled."""
@@ -825,11 +829,16 @@ class SlackConfig(BaseModel):
 
     When ``webhook_url`` is set, the integration auto-enables and will
     send Block Kit notifications for severities listed in ``notify_on``.
+    The ``bot_token`` is used separately by alert-correlation tools to
+    read channel history via the conversations.history API.
     """
 
     enabled: bool = False
     webhook_url: str = Field(default="", repr=False)
     notify_on: list[str] = Field(default_factory=lambda: ["critical", "high"])
+
+    # Alert correlation tool fields (read-only Slack conversations.history)
+    bot_token: SecretStr = Field(default=SecretStr(""), repr=False)
 
     @model_validator(mode="after")
     def _auto_enable(self) -> SlackConfig:
@@ -839,6 +848,35 @@ class SlackConfig(BaseModel):
         elif self.enabled and not self.webhook_url:
             logger.warning(
                 "Slack integration is enabled but webhook_url is empty; "
+                "disabling integration."
+            )
+            self.enabled = False
+        return self
+
+
+class OpsGenieConfig(BaseModel):
+    """OpsGenie v2 API integration configuration for alert correlation.
+
+    When ``api_key`` is set, the integration auto-enables and the
+    ``list_opsgenie_alerts`` tool becomes available in ``vaig live``.
+    Use ``base_url`` to switch between US and EU regions.
+    """
+
+    enabled: bool = False
+    api_key: SecretStr = Field(default=SecretStr(""), repr=False)
+    base_url: str = "https://api.opsgenie.com"
+    team_ids: list[str] = Field(default_factory=list)
+    alert_fetch_limit: int = 25
+
+    @model_validator(mode="after")
+    def _auto_enable(self) -> OpsGenieConfig:
+        """Auto-enable when api_key is provided; disable when missing."""
+        has_key = bool(self.api_key.get_secret_value())
+        if not self.enabled and has_key:
+            self.enabled = True
+        elif self.enabled and not has_key:
+            logger.warning(
+                "OpsGenie integration is enabled but api_key is empty; "
                 "disabling integration."
             )
             self.enabled = False
@@ -1269,6 +1307,7 @@ class Settings(BaseSettings):
     pagerduty: PagerDutyConfig = Field(default_factory=PagerDutyConfig)
     google_chat: GoogleChatConfig = Field(default_factory=GoogleChatConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
+    opsgenie: OpsGenieConfig = Field(default_factory=OpsGenieConfig)
     email: EmailConfig = Field(default_factory=EmailConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     fleet: FleetConfig = Field(default_factory=FleetConfig)

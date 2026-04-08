@@ -139,4 +139,17 @@ def register_live_tools(
                 exc_info=True,
             )
 
+    # Alert correlation tools — PagerDuty, OpsGenie, Slack (incident management)
+    if settings is not None:
+        try:
+            from vaig.tools.integrations._registry import create_alert_correlation_tools  # noqa: WPS433
+
+            for tool in create_alert_correlation_tools(settings):
+                registry.register(tool)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Failed to load alert correlation tools. Skipping.",
+                exc_info=True,
+            )
+
     return registry
