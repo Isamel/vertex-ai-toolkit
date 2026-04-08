@@ -245,7 +245,9 @@ class SkillsConfig(BaseModel):
                 DeprecationWarning,
                 stacklevel=2,
             )
-            data.setdefault("external_dirs", []).insert(0, custom_dir)
+            # Normalize explicitly — data may contain None from YAML ``null``
+            data["external_dirs"] = data.get("external_dirs") or []
+            data["external_dirs"].insert(0, custom_dir)
         else:
             # Both set — external_dirs wins, log a warning
             logger.warning(

@@ -73,7 +73,7 @@ vaig = "vaig.cli.app:app"
 # Third-party packages register skills here, e.g.:
 #   [project.entry-points."vaig.skills"]
 #   my_skill = "my_package.skills:MyCustomSkill"
-# See docs/skills-plugin-guide.md for details.
+# See README.md for details.
 [project.entry-points."vaig.skills"]
 
 [build-system]

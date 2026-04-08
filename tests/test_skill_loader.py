@@ -275,6 +275,37 @@ class TestLoadFromPackages:
         skills = load_from_packages(["vaig-specific-skills"])
         assert skills == []
 
+    @patch("vaig.skills.loader.importlib.metadata.entry_points")
+    def test_pep503_normalization_matches_case_insensitive(self, mock_eps: MagicMock) -> None:
+        """PEP 503: dist names with underscores/mixed case should match hyphenated filter."""
+        ep = self._mock_ep_with_dist("Vaig_Security_Skills")
+        mock_eps.return_value = [ep]
+
+        skills = load_from_packages(["vaig-security-skills"])
+
+        assert len(skills) == 1
+        assert skills[0].get_metadata().name == "ep-dummy"
+
+    @patch("vaig.skills.loader.importlib.metadata.entry_points")
+    def test_pep503_normalization_dots(self, mock_eps: MagicMock) -> None:
+        """PEP 503: dist names with dots should normalize to hyphens."""
+        ep = self._mock_ep_with_dist("vaig.security.skills")
+        mock_eps.return_value = [ep]
+
+        skills = load_from_packages(["vaig-security-skills"])
+
+        assert len(skills) == 1
+
+    @patch("vaig.skills.loader.importlib.metadata.entry_points")
+    def test_pep503_normalization_filter_side(self, mock_eps: MagicMock) -> None:
+        """PEP 503: filter names with underscores should match hyphenated dist names."""
+        ep = self._mock_ep_with_dist("vaig-security-skills")
+        mock_eps.return_value = [ep]
+
+        skills = load_from_packages(["Vaig_Security_Skills"])
+
+        assert len(skills) == 1
+
 
 # ═══════════════════════════════════════════════════════════════
 # _migrate_custom_dir validator  (Task 5.4)
@@ -306,3 +337,92 @@ class TestMigrateCustomDir:
         cfg = SkillsConfig()
         assert cfg.external_dirs == []
         assert cfg.packages == []
+
+    def test_custom_dir_with_explicit_null_external_dirs(self) -> None:
+        """custom_dir set + external_dirs explicitly None → migrate without AttributeError."""
+        with pytest.warns(DeprecationWarning, match="custom_dir is deprecated"):
+            cfg = SkillsConfig.model_validate(
+                {"custom_dir": "/old/path", "external_dirs": None}
+            )
+
+        assert cfg.external_dirs == ["/old/path"]
+
+
+# ═══════════════════════════════════════════════════════════════
+# _import_skill_from_path — module name sanitization  (Fix 6)
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestImportSkillFromPathSanitization:
+    """Tests for hyphen-to-underscore sanitization in _import_skill_from_path."""
+
+    def test_hyphenated_dir_name_produces_valid_module(self, tmp_path: Path) -> None:
+        """Directory names with hyphens should not cause import errors."""
+        skill_dir = tmp_path / "my-custom-skills"
+        skill_dir.mkdir()
+        (skill_dir / "skill.py").write_text(_DUMMY_SKILL_PY)
+
+        # load_from_directories calls _import_skill_from_path under the hood
+        skills = load_from_directories([str(tmp_path)])
+
+        assert len(skills) == 1
+        assert skills[0].get_metadata().name == "dummy-external"
+
+
+# ═══════════════════════════════════════════════════════════════
+# Registry: _load_external_skills — no double loading  (Fix 1)
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestRegistryNoDuplicateLoading:
+    """Ensure _load_external_skills calls only ONE of entry_points/packages."""
+
+    @patch("vaig.skills.loader.load_from_packages")
+    @patch("vaig.skills.loader.load_from_entry_points")
+    @patch("vaig.skills.loader.load_from_directories", return_value=[])
+    def test_packages_configured_skips_entry_points(
+        self,
+        _mock_dirs: MagicMock,
+        mock_ep: MagicMock,
+        mock_pkg: MagicMock,
+    ) -> None:
+        """When packages is non-empty, load_from_entry_points must NOT be called."""
+        from vaig.core.config import Settings
+
+        mock_pkg.return_value = []
+
+        settings = Settings()  # type: ignore[call-arg]
+        settings.skills.packages = ["vaig-security-skills"]
+
+        from vaig.skills.registry import SkillRegistry
+
+        registry = SkillRegistry(settings)
+        registry._load_external_skills()
+
+        mock_pkg.assert_called_once_with(["vaig-security-skills"])
+        mock_ep.assert_not_called()
+
+    @patch("vaig.skills.loader.load_from_packages")
+    @patch("vaig.skills.loader.load_from_entry_points")
+    @patch("vaig.skills.loader.load_from_directories", return_value=[])
+    def test_no_packages_uses_entry_points(
+        self,
+        _mock_dirs: MagicMock,
+        mock_ep: MagicMock,
+        mock_pkg: MagicMock,
+    ) -> None:
+        """When packages is empty, load_from_entry_points should be called."""
+        from vaig.core.config import Settings
+
+        mock_ep.return_value = []
+
+        settings = Settings()  # type: ignore[call-arg]
+        settings.skills.packages = []
+
+        from vaig.skills.registry import SkillRegistry
+
+        registry = SkillRegistry(settings)
+        registry._load_external_skills()
+
+        mock_ep.assert_called_once()
+        mock_pkg.assert_not_called()

@@ -20,6 +20,7 @@ import importlib.metadata
 import importlib.util
 import inspect
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,17 @@ if TYPE_CHECKING:
 from vaig.skills.base import BaseSkill
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_dist_name(name: str) -> str:
+    """Normalize a distribution name per PEP 503.
+
+    Collapses runs of hyphens, underscores, and dots into a single
+    hyphen and lowercases the result, so that ``Vaig_Security_Skills``,
+    ``vaig-security-skills``, and ``vaig.security.skills`` all compare
+    as equal.
+    """
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def _find_skill_class(module: ModuleType) -> type[BaseSkill]:
@@ -65,8 +77,11 @@ def _import_skill_from_path(file_path: Path) -> BaseSkill:
     Raises:
         ImportError: If the module cannot be loaded or has no ``BaseSkill`` subclass.
     """
+    # Replace hyphens with underscores — directory names like "my-custom-skills"
+    # would produce invalid Python module identifiers otherwise.
+    module_name = file_path.parent.name.replace("-", "_")
     spec = importlib.util.spec_from_file_location(
-        f"vaig.skills.external.{file_path.parent.name}",
+        f"vaig.skills.external.{module_name}",
         file_path,
     )
     if spec is None or spec.loader is None:
@@ -196,7 +211,7 @@ def load_from_packages(names: list[str]) -> list[BaseSkill]:
         return []
 
     skills: list[BaseSkill] = []
-    names_set = set(names)
+    names_set = {_normalize_dist_name(n) for n in names}
 
     try:
         entry_points = importlib.metadata.entry_points(group="vaig.skills")
@@ -213,7 +228,7 @@ def load_from_packages(names: list[str]) -> list[BaseSkill]:
         except Exception:  # noqa: BLE001
             dist_name = None
 
-        if dist_name not in names_set:
+        if dist_name is None or _normalize_dist_name(dist_name) not in names_set:
             logger.debug(
                 "Skipping entry point '%s' — dist '%s' not in packages filter",
                 ep.name,

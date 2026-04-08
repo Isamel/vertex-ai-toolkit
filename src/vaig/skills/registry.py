@@ -125,10 +125,12 @@ class SkillRegistry:
     def _load_external_skills(self) -> None:
         """Load external skills from directories, entry points, and packages.
 
-        Delegates to the three loader functions in order:
+        Delegates to the loader functions in order:
         1. ``load_from_directories`` — filesystem scan
-        2. ``load_from_entry_points`` — pip-installed packages
-        3. ``load_from_packages`` — entry points filtered by name
+        2. ``load_from_packages`` (when ``packages`` is configured) OR
+           ``load_from_entry_points`` (unfiltered) — never both, to
+           avoid scanning the same ``vaig.skills`` entry-point group
+           twice and registering duplicate skills.
 
         On name collision, the later source wins and a warning is logged
         (handled by :meth:`_register`).
@@ -144,30 +146,38 @@ class SkillRegistry:
         for skill in load_from_directories(skills_cfg.external_dirs):
             self._register(skill)
 
-        for skill in load_from_entry_points():
-            self._register(skill)
-
-        for skill in load_from_packages(skills_cfg.packages):
+        # Use filtered package loading when explicit packages are configured;
+        # otherwise fall back to unfiltered entry-point discovery.  Both
+        # scan the same entry-point group, so only ONE should run.
+        ep_skills = (
+            load_from_packages(skills_cfg.packages)
+            if skills_cfg.packages
+            else load_from_entry_points()
+        )
+        for skill in ep_skills:
             self._register(skill)
 
     def _register(self, skill: BaseSkill) -> None:
         """Register a skill instance.
 
         On name collision, the new skill wins and a warning is logged
-        with old and new source identifiers.
+        with old and new display names, versions, and source modules.
         """
         meta = skill.get_metadata()
         name = meta.name
 
         if name in self._skills:
             old_meta = self._metadata_cache[name]
+            old_skill = self._skills[name]
             logger.warning(
-                "Skill '%s' overridden (old: %s v%s, new: %s v%s)",
+                "Skill '%s' overridden (old: %s v%s [%s], new: %s v%s [%s])",
                 name,
                 old_meta.display_name,
                 old_meta.version,
+                old_skill.__class__.__module__,
                 meta.display_name,
                 meta.version,
+                skill.__class__.__module__,
             )
 
         self._skills[name] = skill
