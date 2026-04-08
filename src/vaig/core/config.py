@@ -212,8 +212,48 @@ class SkillsConfig(BaseModel):
         ]
     )
     custom_dir: str | None = None
+    external_dirs: list[str] = Field(default_factory=list)
+    packages: list[str] = Field(default_factory=list)
     auto_routing: bool = True
     auto_routing_threshold: float = 1.5
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_custom_dir(cls, data: Any) -> Any:
+        """Bridge deprecated ``custom_dir`` → ``external_dirs[0]``.
+
+        When ``custom_dir`` is set and ``external_dirs`` is empty, the
+        custom_dir value is prepended to ``external_dirs`` and a
+        ``DeprecationWarning`` is emitted.  When both are set,
+        ``external_dirs`` wins and a warning is logged.
+        """
+        import warnings
+
+        if not isinstance(data, dict):
+            return data
+
+        custom_dir = data.get("custom_dir")
+        if not custom_dir:
+            return data
+
+        external_dirs = data.get("external_dirs") or []
+
+        if not external_dirs:
+            # Migrate: custom_dir → external_dirs[0]
+            warnings.warn(
+                "skills.custom_dir is deprecated; use skills.external_dirs instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            data.setdefault("external_dirs", []).insert(0, custom_dir)
+        else:
+            # Both set — external_dirs wins, log a warning
+            logger.warning(
+                "Both skills.custom_dir and skills.external_dirs are set; "
+                "external_dirs takes precedence — custom_dir is ignored."
+            )
+
+        return data
 
 
 class AgentsConfig(BaseModel):

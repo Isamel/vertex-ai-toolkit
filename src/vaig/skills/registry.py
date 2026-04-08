@@ -122,37 +122,56 @@ class SkillRegistry:
             except Exception:  # noqa: BLE001
                 logger.warning("Failed to load built-in skill: %s", name, exc_info=True)
 
-    def _load_custom_skills(self) -> None:
-        """Load custom skills from the configured directory."""
-        custom_dir = self._settings.skills.custom_dir
-        if not custom_dir:
-            return
+    def _load_external_skills(self) -> None:
+        """Load external skills from directories, entry points, and packages.
 
-        custom_path = Path(custom_dir).expanduser().resolve()
-        if not custom_path.is_dir():
-            logger.warning("Custom skills directory not found: %s", custom_path)
-            return
+        Delegates to the three loader functions in order:
+        1. ``load_from_directories`` — filesystem scan
+        2. ``load_from_entry_points`` — pip-installed packages
+        3. ``load_from_packages`` — entry points filtered by name
 
-        for skill_dir in sorted(custom_path.iterdir()):
-            if not skill_dir.is_dir():
-                continue
+        On name collision, the later source wins and a warning is logged
+        (handled by :meth:`_register`).
+        """
+        from vaig.skills.loader import (
+            load_from_directories,
+            load_from_entry_points,
+            load_from_packages,
+        )
 
-            skill_file = skill_dir / "skill.py"
-            if not skill_file.exists():
-                continue
+        skills_cfg = self._settings.skills
 
-            try:
-                skill = _import_skill_from_path(skill_file)
-                self._register(skill)
-                logger.info("Loaded custom skill: %s from %s", skill.get_metadata().name, skill_file)
-            except Exception:  # noqa: BLE001
-                logger.warning("Failed to load custom skill from: %s", skill_file, exc_info=True)
+        for skill in load_from_directories(skills_cfg.external_dirs):
+            self._register(skill)
+
+        for skill in load_from_entry_points():
+            self._register(skill)
+
+        for skill in load_from_packages(skills_cfg.packages):
+            self._register(skill)
 
     def _register(self, skill: BaseSkill) -> None:
-        """Register a skill instance."""
+        """Register a skill instance.
+
+        On name collision, the new skill wins and a warning is logged
+        with old and new source identifiers.
+        """
         meta = skill.get_metadata()
-        self._skills[meta.name] = skill
-        self._metadata_cache[meta.name] = meta
+        name = meta.name
+
+        if name in self._skills:
+            old_meta = self._metadata_cache[name]
+            logger.warning(
+                "Skill '%s' overridden (old: %s v%s, new: %s v%s)",
+                name,
+                old_meta.display_name,
+                old_meta.version,
+                meta.display_name,
+                meta.version,
+            )
+
+        self._skills[name] = skill
+        self._metadata_cache[name] = meta
 
         # Telemetry: emit skill_use event via EventBus
         try:
@@ -169,7 +188,7 @@ class SkillRegistry:
             return
 
         self._load_builtin_skills()
-        self._load_custom_skills()
+        self._load_external_skills()
         self._loaded = True
 
     def get(self, name: str) -> BaseSkill | None:
@@ -240,35 +259,10 @@ def _import_skill(module_path: str) -> BaseSkill:
     return skill_class()
 
 
-def _import_skill_from_path(file_path: Path) -> BaseSkill:
-    """Import a skill from a file path (for custom skills).
-
-    Uses importlib.util to load from an arbitrary file.
-    """
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location(
-        f"vaig.skills.custom.{file_path.parent.name}",
-        file_path,
-    )
-    if spec is None or spec.loader is None:
-        msg = f"Cannot load skill from: {file_path}"
-        raise ImportError(msg)
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    skill_class = _find_skill_class(module)
-    return skill_class()
-
-
-def _find_skill_class(module: object) -> type[BaseSkill]:
-    """Find the first BaseSkill subclass in a module."""
-    import inspect
-
-    for _name, obj in inspect.getmembers(module, inspect.isclass):
-        if issubclass(obj, BaseSkill) and obj is not BaseSkill:
-            return obj
-
-    msg = f"No BaseSkill subclass found in module: {module}"
-    raise ImportError(msg)
+# Backward-compat re-exports — canonical implementations live in loader.py.
+# These were moved in SPEC-5.1; keep re-exports so any external code that
+# imported them from registry.py continues to work.
+from vaig.skills.loader import (  # noqa: E402
+    _find_skill_class,
+    _import_skill_from_path,  # noqa: F401
+)

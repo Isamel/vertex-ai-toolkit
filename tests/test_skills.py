@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase, SkillResult
@@ -153,3 +155,70 @@ class TestBaseSkill:
         )
         formatted = skill.format_output(result)
         assert formatted == "This is the output"
+
+
+# ── Collision / Override ─────────────────────────────────────
+
+
+class OverrideDummySkill(BaseSkill):
+    """Skill with same name as DummySkill but different version — simulates external override."""
+
+    def get_metadata(self) -> SkillMetadata:
+        return SkillMetadata(
+            name="dummy",
+            display_name="Override Dummy Skill",
+            description="An override skill",
+            version="2.0.0",
+            tags=["test"],
+            supported_phases=[SkillPhase.ANALYZE, SkillPhase.REPORT],
+            recommended_model="gemini-2.5-flash",
+        )
+
+    def get_system_instruction(self) -> str:
+        return "You are an override dummy."
+
+    def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
+        return f"[{phase.value}] {context} | {user_input}"
+
+
+class TestSkillCollision:
+    """Tests for skill name collision handling in _register()."""
+
+    def test_external_overrides_builtin_with_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Registering a skill with a name that already exists should override
+        and log a warning."""
+        from unittest.mock import MagicMock
+
+        from vaig.skills.registry import SkillRegistry
+
+        settings = MagicMock()
+        registry = SkillRegistry(settings)
+
+        builtin = DummySkill()
+        external = OverrideDummySkill()
+
+        # Register the builtin first (no collision yet)
+        registry._register(builtin)
+        assert registry._skills["dummy"] is builtin
+
+        # The "vaig" parent logger has propagate=False (set by setup_logging()),
+        # so we must patch the parent's propagate to let records reach caplog.
+        vaig_logger = logging.getLogger("vaig")
+        orig_propagate = vaig_logger.propagate
+        vaig_logger.propagate = True
+
+        # Now register the external with the same name
+        try:
+            with caplog.at_level(logging.WARNING):
+                registry._register(external)
+        finally:
+            vaig_logger.propagate = orig_propagate
+
+        # External should win
+        assert registry._skills["dummy"] is external
+        assert registry._metadata_cache["dummy"].version == "2.0.0"
+
+        # Warning should mention the override
+        assert "overridden" in caplog.text.lower() or "override" in caplog.text.lower()
