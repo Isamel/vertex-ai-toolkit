@@ -1,6 +1,6 @@
 """Audit subscriber — dual-sink (BigQuery + Cloud Logging) event adapter.
 
-Subscribes to 7 domain events on the :class:`~vaig.core.event_bus.EventBus`,
+Subscribes to 8 domain events on the :class:`~vaig.core.event_bus.EventBus`,
 enriches each into an audit record with identity and app metadata, buffers
 records, and flushes to BigQuery (streaming insert) and Cloud Logging
 (structured JSON) when the buffer fills or a session ends.
@@ -25,6 +25,7 @@ from vaig.core.events import (
     ApiCalled,
     CliCommandTracked,
     ErrorOccurred,
+    RemediationExecuted,
     SessionEnded,
     SessionStarted,
     SkillUsed,
@@ -91,7 +92,7 @@ _BQ_SCHEMA = [
 class AuditSubscriber:
     """Dual-sink audit subscriber for BigQuery + Cloud Logging.
 
-    Subscribes to 7 EventBus event types, enriches each into an audit
+    Subscribes to 8 EventBus event types, enriches each into an audit
     record dict, and flushes batched records to both sinks independently.
 
     Args:
@@ -142,7 +143,7 @@ class AuditSubscriber:
     # ── Subscription wiring ──────────────────────────────────
 
     def _subscribe_all(self) -> None:
-        """Register handlers for 7 audit event types."""
+        """Register handlers for 8 audit event types."""
         bus = EventBus.get()
         self._unsubscribers = [
             bus.subscribe(ApiCalled, self._on_api_called),
@@ -152,6 +153,7 @@ class AuditSubscriber:
             bus.subscribe(SessionStarted, self._on_session_started),
             bus.subscribe(SessionEnded, self._on_session_ended),
             bus.subscribe(ErrorOccurred, self._on_error_occurred),
+            bus.subscribe(RemediationExecuted, self._on_remediation_executed),
         ]
 
     def unsubscribe_all(self) -> None:
@@ -358,6 +360,21 @@ class AuditSubscriber:
             self._append_record(record)
         except Exception:  # noqa: BLE001
             logger.debug("AuditSubscriber: failed to handle ErrorOccurred", exc_info=True)
+
+    def _on_remediation_executed(self, event: RemediationExecuted) -> None:
+        """RemediationExecuted → audit record with command, tier, and outcome."""
+        try:
+            result = "blocked" if event.tier == "blocked" else ("fail" if event.error else "success")
+            record = self._make_record(
+                event.event_type,
+                timestamp=event.timestamp,
+                command=event.command,
+                result=result,
+                error_message=event.error or "",
+            )
+            self._append_record(record)
+        except Exception:  # noqa: BLE001
+            logger.debug("AuditSubscriber: failed to handle RemediationExecuted", exc_info=True)
 
     # ── Flush logic ──────────────────────────────────────────
 

@@ -1100,6 +1100,43 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
+class RemediationConfig(BaseModel):
+    """Remediation engine configuration — safety-tiered command execution.
+
+    Controls the runbook execution engine that classifies recommended
+    commands into SAFE/REVIEW/BLOCKED tiers and enforces approval
+    workflows before execution.
+
+    Feature-flagged: disabled by default (``enabled=False``).
+    Enable explicitly with ``remediation.enabled = true`` in config
+    or ``VAIG_REMEDIATION__ENABLED=true``.
+    """
+
+    enabled: bool = False
+    """Master feature flag — entire engine is disabled until explicitly enabled."""
+    auto_approve_safe: bool = False
+    """When True, SAFE-tier commands execute without user confirmation."""
+    blocked_commands: list[str] = Field(default_factory=list)
+    """Regex patterns for commands that should ALWAYS be BLOCKED.
+
+    Checked against the full command string before tier assignment.
+    Reuses the same regex pattern approach as
+    :attr:`CodingConfig.denied_commands`.
+    """
+    timeout: int = 30
+    """Execution timeout in seconds per command."""
+    dry_run: bool = False
+    """When True, all commands show execution plan without side effects."""
+    tier_overrides: dict[str, str] = Field(default_factory=dict)
+    """Map of command regex pattern → tier name (safe/review/blocked).
+
+    Allows SREs to promote or demote specific commands without code
+    changes.  Patterns are matched against the full command string.
+    Example: ``{"kubectl rollout restart": "safe"}`` promotes rollout
+    restarts from REVIEW to SAFE.
+    """
+
+
 class ScheduleTarget(BaseModel):
     """A single GKE cluster/namespace to scan on a schedule."""
 
@@ -1236,6 +1273,7 @@ class Settings(BaseSettings):
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     fleet: FleetConfig = Field(default_factory=FleetConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
+    remediation: RemediationConfig = Field(default_factory=RemediationConfig)
 
     @model_validator(mode="after")
     def _bridge_platform_org_id(self) -> Settings:

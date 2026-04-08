@@ -109,9 +109,9 @@ class TestRequireAuditDeps:
 class TestAuditSubscriberSubscriptions:
     """Tests for event subscriptions."""
 
-    def test_subscribes_to_7_event_types(self, subscriber: AuditSubscriber) -> None:
-        """AuditSubscriber registers 7 unsubscribe callbacks."""
-        assert len(subscriber._unsubscribers) == 7
+    def test_subscribes_to_8_event_types(self, subscriber: AuditSubscriber) -> None:
+        """AuditSubscriber registers 8 unsubscribe callbacks."""
+        assert len(subscriber._unsubscribers) == 8
 
     def test_unsubscribe_all_clears_handlers(self, subscriber: AuditSubscriber) -> None:
         """unsubscribe_all() removes all handlers."""

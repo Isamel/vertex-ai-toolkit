@@ -15,6 +15,7 @@ Actual command implementations live in:
 - ``vaig.cli.commands.skills``      — skill management sub-commands
 - ``vaig.cli.commands.mcp``         — MCP server management sub-commands
 - ``vaig.cli.commands.doctor``      — environment healthcheck
+- ``vaig.cli.commands.remediate``   — remediation of health report findings
 - ``vaig.cli.commands.stats``       — telemetry stats sub-commands
 - ``vaig.cli.commands.export_cmd``  — session export command
 - ``vaig.cli.commands._code``       — code mode + chunked analysis helpers
@@ -175,6 +176,7 @@ from vaig.cli.commands import (  # noqa: E402, I001
     mcp as _mcp_mod,
     models as _models_mod,
     optimize as _optimize_mod,
+    remediate as _remediate_mod,
     schedule as _schedule_mod,
     sessions as _sessions_mod,
     skills as _skills_mod,
@@ -199,6 +201,7 @@ _web_mod.register(app)
 _webhook_mod.register(app)
 _schedule_mod.register(app)
 _fleet_mod.register(app)
+_remediate_mod.register(app)
 app.add_typer(cloud_app, name="cloud")
 app.add_typer(train_app, name="train")
 
