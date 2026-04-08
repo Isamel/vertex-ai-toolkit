@@ -208,7 +208,7 @@ class PagerDutyClient:
         from vaig.integrations.finding_exporter import ExportResult
 
         finding_id = finding.id
-        severity_str = str(finding.severity.value).lower() if hasattr(finding.severity, "value") else str(finding.severity).lower()
+        severity_str = self._extract_severity(finding.severity)
         dedup_key = f"{cluster_context}:{finding_id}" if cluster_context else finding_id
 
         try:
@@ -295,6 +295,18 @@ class PagerDutyClient:
         return "\n".join(parts)
 
     # ── Private helpers ──────────────────────────────────────
+
+    @staticmethod
+    def _extract_severity(severity: object) -> str:
+        """Normalise a severity value to a lowercase string.
+
+        Handles both ``Enum``-style (``severity.value``) and plain-string
+        severity fields so callers don't need to inspect ``hasattr``
+        manually.
+        """
+        if hasattr(severity, "value"):
+            return str(severity.value).lower()
+        return str(severity).lower()
 
     def _send_event(self, payload: dict[str, Any]) -> None:
         """POST an event to the PagerDuty Events API v2."""

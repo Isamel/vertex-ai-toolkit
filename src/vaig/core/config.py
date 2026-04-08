@@ -767,7 +767,7 @@ class JiraConfig(BaseModel):
     enabled: bool = False
     base_url: str = ""
     email: str = Field(default="", repr=False)
-    api_token: str = Field(default="", repr=False)
+    api_token: SecretStr = Field(default=SecretStr(""), repr=False)
     project_key: str = ""
     issue_type: str = "Bug"
     severity_field_mapping: dict[str, str] = Field(
@@ -782,9 +782,9 @@ class JiraConfig(BaseModel):
 
     @model_validator(mode="after")
     def _auto_enable(self) -> JiraConfig:
-        """Auto-enable when base_url is provided; disable when missing."""
+        """Auto-enable when base_url is provided unless explicitly disabled."""
         has_url = bool(self.base_url)
-        if not self.enabled and has_url:
+        if not self.enabled and has_url and "enabled" not in self.model_fields_set:
             self.enabled = True
         elif self.enabled and not has_url:
             logger.warning(

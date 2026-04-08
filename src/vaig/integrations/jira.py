@@ -24,7 +24,7 @@ class JiraClient:
     def __init__(self, config: JiraConfig) -> None:
         self.base_url = config.base_url.rstrip("/")
         self.email = config.email
-        self.api_token = config.api_token
+        self.api_token = config.api_token.get_secret_value()
         self.project_key = config.project_key
         self.issue_type = config.issue_type
         self.severity_field_mapping = config.severity_field_mapping
@@ -155,13 +155,15 @@ class JiraClient:
             )
             return False
 
-    def _search_existing(self, finding_id: str) -> str | None:
+    def search_existing(self, finding_id: str) -> str | None:
         """Search for an existing Jira issue with the given finding ID as a label.
 
         Returns:
             The issue key if found, or ``None``.
         """
-        jql = f'project = "{self.project_key}" AND labels = "{finding_id}"'
+        # Escape double-quotes in finding_id to prevent JQL injection
+        safe_finding_id = finding_id.replace('"', '\\"')
+        jql = f'project = "{self.project_key}" AND labels = "{safe_finding_id}"'
         try:
             resp = requests.get(
                 f"{self.base_url}/rest/api/3/search",

@@ -96,7 +96,7 @@ class TestExportToJira:
     def test_export_creates_issue(
         self, mock_jira: MagicMock, mock_report_store: MagicMock
     ) -> None:
-        mock_jira._search_existing.return_value = None
+        mock_jira.search_existing.return_value = None
         mock_jira.create_issue.return_value = {"key": "OPS-42", "id": "10001"}
 
         exporter = FindingExporter(jira=mock_jira, report_store=mock_report_store)
@@ -111,7 +111,7 @@ class TestExportToJira:
     def test_export_dedup_detected(
         self, mock_jira: MagicMock, mock_report_store: MagicMock
     ) -> None:
-        mock_jira._search_existing.return_value = "OPS-42"
+        mock_jira.search_existing.return_value = "OPS-42"
 
         exporter = FindingExporter(jira=mock_jira, report_store=mock_report_store)
         result = exporter.export("crashloop-payment", "jira")
@@ -140,7 +140,7 @@ class TestExportToJira:
     def test_export_adds_evidence_comment(
         self, mock_jira: MagicMock, mock_report_store: MagicMock
     ) -> None:
-        mock_jira._search_existing.return_value = None
+        mock_jira.search_existing.return_value = None
         mock_jira.create_issue.return_value = {"key": "OPS-42", "id": "10001"}
 
         exporter = FindingExporter(jira=mock_jira, report_store=mock_report_store)

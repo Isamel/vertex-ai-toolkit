@@ -55,6 +55,11 @@ class TestJiraConfigAutoEnable:
         config = JiraConfig(enabled=True, base_url="")
         assert config.enabled is False
 
+    def test_explicit_disabled_with_base_url_stays_disabled(self) -> None:
+        """Explicitly disabling should override auto-enable from base_url."""
+        config = JiraConfig(enabled=False, base_url="https://myorg.atlassian.net")
+        assert config.enabled is False
+
     def test_severity_mapping_defaults(self) -> None:
         config = JiraConfig()
         assert config.severity_field_mapping["CRITICAL"] == "Highest"
@@ -141,7 +146,7 @@ class TestJiraClientCreateIssue:
 
 
 class TestJiraClientSearchExisting:
-    """Tests for JiraClient._search_existing."""
+    """Tests for JiraClient.search_existing."""
 
     @patch("vaig.integrations.jira.requests.get")
     def test_finds_existing_issue(self, mock_get: MagicMock, client: JiraClient) -> None:
@@ -152,7 +157,7 @@ class TestJiraClientSearchExisting:
         mock_resp.raise_for_status = MagicMock()
         mock_get.return_value = mock_resp
 
-        result = client._search_existing("crashloop-payment")
+        result = client.search_existing("crashloop-payment")
         assert result == "OPS-42"
 
     @patch("vaig.integrations.jira.requests.get")
@@ -162,15 +167,31 @@ class TestJiraClientSearchExisting:
         mock_resp.raise_for_status = MagicMock()
         mock_get.return_value = mock_resp
 
-        result = client._search_existing("nonexistent")
+        result = client.search_existing("nonexistent")
         assert result is None
 
     @patch("vaig.integrations.jira.requests.get")
     def test_search_error_returns_none(self, mock_get: MagicMock, client: JiraClient) -> None:
         mock_get.side_effect = requests.exceptions.ConnectionError("Network error")
 
-        result = client._search_existing("any-finding")
+        result = client.search_existing("any-finding")
         assert result is None
+
+    @patch("vaig.integrations.jira.requests.get")
+    def test_search_escapes_quotes_in_finding_id(
+        self, mock_get: MagicMock, client: JiraClient
+    ) -> None:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"issues": []}
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        client.search_existing('finding"with-quotes')
+
+        call_kwargs = mock_get.call_args
+        jql = call_kwargs.kwargs.get("params", {}).get("jql", "")
+        # The double-quote should be escaped
+        assert 'finding\\"with-quotes' in jql
 
 
 # ── Validate project tests ──────────────────────────────────

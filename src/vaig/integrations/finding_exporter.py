@@ -65,7 +65,7 @@ class FindingExporter:
         Returns:
             :class:`ExportResult` with outcome details.
         """
-        result = self.find_finding(finding_slug)
+        result = self.find_finding(finding_slug, report_id=report_id)
         if result is None:
             return ExportResult(
                 target=target,
@@ -88,8 +88,14 @@ class FindingExporter:
             error=f"Unknown export target: {target!r}. Use 'jira' or 'pagerduty'.",
         )
 
-    def find_finding(self, slug: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    def find_finding(
+        self, slug: str, *, report_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
         """Look up a finding by slug from the report store.
+
+        Args:
+            slug: Finding ID or substring to match.
+            report_id: Optional run_id to narrow search to a single report.
 
         Returns:
             Tuple of ``(finding_dict, report_record)`` or ``None``.
@@ -98,6 +104,12 @@ class FindingExporter:
             return None
 
         reports = self._report_store.read_reports(last=50)
+
+        # When report_id is provided, narrow to that specific report
+        if report_id:
+            reports = [r for r in reports if r.get("run_id") == report_id]
+            if not reports:
+                return None
 
         # Pass 1: exact match
         for record in reversed(reports):
@@ -172,7 +184,7 @@ class FindingExporter:
         finding_id = finding.get("id", "")
 
         # Dedup check
-        existing_key = self._jira._search_existing(finding_id)
+        existing_key = self._jira.search_existing(finding_id)
         if existing_key:
             return ExportResult(
                 target="jira",
@@ -186,13 +198,14 @@ class FindingExporter:
         description = self._build_jira_description(finding)
         severity = str(finding.get("severity", "MEDIUM")).upper()
         priority = self._jira.severity_field_mapping.get(severity, "Medium")
+        labels = [label for label in [finding.get("category", ""), finding_id] if label]
 
         try:
             data = self._jira.create_issue(
                 summary=finding.get("title", finding_id),
                 description=description,
                 priority=priority,
-                labels=[finding.get("category", ""), finding_id],
+                labels=labels,
             )
             issue_key = data.get("key", "")
             url = self._jira.issue_url(issue_key)
@@ -244,7 +257,7 @@ class FindingExporter:
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception:
-            logger.warning("Could not parse finding into Finding model; using raw dict")
+            logger.exception("Could not parse finding into Finding model; using raw dict")
             finding_obj = None
 
         if finding_obj is not None:

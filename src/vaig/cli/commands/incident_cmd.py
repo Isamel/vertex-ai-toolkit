@@ -10,9 +10,6 @@ from rich.table import Table
 
 from vaig.core.config import get_settings
 from vaig.core.report_store import ReportStore
-from vaig.integrations.finding_exporter import ExportResult, FindingExporter
-from vaig.integrations.jira import JiraClient
-from vaig.integrations.pagerduty import PagerDutyClient
 
 console = Console()
 err_console = Console(stderr=True)
@@ -43,6 +40,8 @@ def export(
     ] = "",
 ) -> None:
     """Export a finding to Jira or PagerDuty."""
+    from vaig.integrations.finding_exporter import ExportResult, FindingExporter
+
     settings = get_settings()
 
     # Build clients based on config
@@ -56,6 +55,8 @@ def export(
                 "Set VAIG_JIRA__BASE_URL and VAIG_JIRA__API_TOKEN to enable.",
             )
             raise typer.Exit(code=1)
+        from vaig.integrations.jira import JiraClient
+
         jira_client = JiraClient(settings.jira)
 
     elif to == "pagerduty":
@@ -65,6 +66,8 @@ def export(
                 "Set VAIG_PAGERDUTY__ROUTING_KEY to enable.",
             )
             raise typer.Exit(code=1)
+        from vaig.integrations.pagerduty import PagerDutyClient
+
         pd_client = PagerDutyClient(settings.pagerduty)
     else:
         err_console.print(f"[bold red]Unknown target:[/] {to!r}. Use 'jira' or 'pagerduty'.")
@@ -110,6 +113,8 @@ def list_findings(
     ] = 20,
 ) -> None:
     """List recent findings from stored health reports."""
+    from vaig.integrations.finding_exporter import FindingExporter
+
     report_store = ReportStore()
     exporter = FindingExporter(report_store=report_store)
     findings = exporter.list_findings(last=last)

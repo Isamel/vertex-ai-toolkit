@@ -19,8 +19,8 @@ class TestExportCommand:
 
     @patch("vaig.cli.commands.incident_cmd.get_settings")
     @patch("vaig.cli.commands.incident_cmd.ReportStore")
-    @patch("vaig.cli.commands.incident_cmd.FindingExporter")
-    @patch("vaig.cli.commands.incident_cmd.JiraClient")
+    @patch("vaig.integrations.finding_exporter.FindingExporter", autospec=True)
+    @patch("vaig.integrations.jira.JiraClient", autospec=True)
     def test_export_jira_success(
         self,
         mock_jira_cls: MagicMock,
@@ -81,8 +81,8 @@ class TestExportCommand:
 
     @patch("vaig.cli.commands.incident_cmd.get_settings")
     @patch("vaig.cli.commands.incident_cmd.ReportStore")
-    @patch("vaig.cli.commands.incident_cmd.FindingExporter")
-    @patch("vaig.cli.commands.incident_cmd.JiraClient")
+    @patch("vaig.integrations.finding_exporter.FindingExporter", autospec=True)
+    @patch("vaig.integrations.jira.JiraClient", autospec=True)
     def test_export_finding_not_found(
         self,
         mock_jira_cls: MagicMock,
@@ -109,8 +109,8 @@ class TestExportCommand:
 
     @patch("vaig.cli.commands.incident_cmd.get_settings")
     @patch("vaig.cli.commands.incident_cmd.ReportStore")
-    @patch("vaig.cli.commands.incident_cmd.FindingExporter")
-    @patch("vaig.cli.commands.incident_cmd.JiraClient")
+    @patch("vaig.integrations.finding_exporter.FindingExporter", autospec=True)
+    @patch("vaig.integrations.jira.JiraClient", autospec=True)
     def test_export_already_existed_shows_warning(
         self,
         mock_jira_cls: MagicMock,
@@ -146,7 +146,7 @@ class TestListCommand:
     """Tests for `vaig incident list`."""
 
     @patch("vaig.cli.commands.incident_cmd.ReportStore")
-    @patch("vaig.cli.commands.incident_cmd.FindingExporter")
+    @patch("vaig.integrations.finding_exporter.FindingExporter", autospec=True)
     def test_list_shows_findings(
         self, mock_exporter_cls: MagicMock, mock_store_cls: MagicMock
     ) -> None:
@@ -168,7 +168,7 @@ class TestListCommand:
         assert "crashloop-payment" in result.output
 
     @patch("vaig.cli.commands.incident_cmd.ReportStore")
-    @patch("vaig.cli.commands.incident_cmd.FindingExporter")
+    @patch("vaig.integrations.finding_exporter.FindingExporter", autospec=True)
     def test_list_no_findings(
         self, mock_exporter_cls: MagicMock, mock_store_cls: MagicMock
     ) -> None:
