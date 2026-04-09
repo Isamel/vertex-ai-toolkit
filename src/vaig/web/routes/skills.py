@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from starlette.responses import Response
 
-from vaig.core.config import Settings
+from vaig.core.config import get_settings
 from vaig.core.telemetry import get_telemetry_collector
 from vaig.skills.registry import SkillRegistry
 from vaig.web.deps import get_current_user, is_admin
@@ -37,7 +37,7 @@ async def skills_dashboard(request: Request) -> Response:
     user = get_current_user(request)
 
     # ── Fetch skill metadata ────────────────────────────────────
-    settings = Settings.from_overrides()
+    settings = get_settings()
     registry = SkillRegistry(settings)
 
     all_skills = registry.list_skills()
@@ -72,8 +72,10 @@ async def skills_dashboard(request: Request) -> Response:
 
     try:
         collector = get_telemetry_collector()
+        # TODO: Move aggregation to SQL query in TelemetryCollector
+        # (e.g. SELECT event_name, COUNT(*) … GROUP BY event_name)
         events = await collector.async_query_events(
-            event_type="skill_use", limit=10000,
+            event_type="skill_use", limit=1000,
         )
         usage_counts: Counter[str] = Counter(
             e["event_name"] for e in events if e.get("event_name")
@@ -86,6 +88,8 @@ async def skills_dashboard(request: Request) -> Response:
         if usage_counts:
             most_used = usage_counts.most_common(1)[0][0]
 
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception:  # noqa: BLE001
         logger.warning("Telemetry unavailable for skills dashboard", exc_info=True)
         telemetry_available = False

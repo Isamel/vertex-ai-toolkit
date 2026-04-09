@@ -77,11 +77,11 @@ async def test_skills_admin_gets_200() -> None:
             "vaig.web.routes.skills.is_admin",
             return_value=True,
         ),
-        patch("vaig.web.routes.skills.Settings") as mock_settings_cls,
+        patch("vaig.web.routes.skills.get_settings") as mock_get_settings,
         patch("vaig.web.routes.skills.SkillRegistry") as mock_registry_cls,
         patch("vaig.web.routes.skills.get_telemetry_collector") as mock_tc,
     ):
-        mock_settings_cls.from_overrides.return_value = MagicMock()
+        mock_get_settings.return_value = MagicMock()
         mock_registry = MagicMock()
         mock_registry.list_skills.return_value = [mock_meta]
         mock_registry.get_source.return_value = "builtin"
@@ -139,11 +139,11 @@ async def test_skills_empty_registry_shows_empty_state() -> None:
             "vaig.web.routes.skills.is_admin",
             return_value=True,
         ),
-        patch("vaig.web.routes.skills.Settings") as mock_settings_cls,
+        patch("vaig.web.routes.skills.get_settings") as mock_get_settings,
         patch("vaig.web.routes.skills.SkillRegistry") as mock_registry_cls,
         patch("vaig.web.routes.skills.get_telemetry_collector") as mock_tc,
     ):
-        mock_settings_cls.from_overrides.return_value = MagicMock()
+        mock_get_settings.return_value = MagicMock()
         mock_registry = MagicMock()
         mock_registry.list_skills.return_value = []
         mock_registry_cls.return_value = mock_registry
@@ -177,11 +177,11 @@ async def test_skills_dev_mode_bypasses_admin() -> None:
             "vaig.web.routes.skills.is_admin",
             return_value=True,
         ),
-        patch("vaig.web.routes.skills.Settings") as mock_settings_cls,
+        patch("vaig.web.routes.skills.get_settings") as mock_get_settings,
         patch("vaig.web.routes.skills.SkillRegistry") as mock_registry_cls,
         patch("vaig.web.routes.skills.get_telemetry_collector") as mock_tc,
     ):
-        mock_settings_cls.from_overrides.return_value = MagicMock()
+        mock_get_settings.return_value = MagicMock()
         mock_registry = MagicMock()
         mock_registry.list_skills.return_value = []
         mock_registry_cls.return_value = mock_registry
@@ -214,14 +214,14 @@ async def test_skills_telemetry_failure_shows_dash() -> None:
             "vaig.web.routes.skills.is_admin",
             return_value=True,
         ),
-        patch("vaig.web.routes.skills.Settings") as mock_settings_cls,
+        patch("vaig.web.routes.skills.get_settings") as mock_get_settings,
         patch("vaig.web.routes.skills.SkillRegistry") as mock_registry_cls,
         patch(
             "vaig.web.routes.skills.get_telemetry_collector",
             side_effect=RuntimeError("DB unavailable"),
         ),
     ):
-        mock_settings_cls.from_overrides.return_value = MagicMock()
+        mock_get_settings.return_value = MagicMock()
         mock_registry = MagicMock()
         mock_registry.list_skills.return_value = [mock_meta]
         mock_registry.get_source.return_value = "builtin"
@@ -260,11 +260,11 @@ async def test_skills_usage_count_from_telemetry() -> None:
             "vaig.web.routes.skills.is_admin",
             return_value=True,
         ),
-        patch("vaig.web.routes.skills.Settings") as mock_settings_cls,
+        patch("vaig.web.routes.skills.get_settings") as mock_get_settings,
         patch("vaig.web.routes.skills.SkillRegistry") as mock_registry_cls,
         patch("vaig.web.routes.skills.get_telemetry_collector") as mock_tc,
     ):
-        mock_settings_cls.from_overrides.return_value = MagicMock()
+        mock_get_settings.return_value = MagicMock()
         mock_registry = MagicMock()
         mock_registry.list_skills.return_value = [mock_meta]
         mock_registry.get_source.return_value = "builtin"
@@ -306,11 +306,11 @@ async def test_admin_sees_skills_nav_link() -> None:
             "vaig.web.deps.is_admin",
             return_value=True,
         ),
-        patch("vaig.web.routes.skills.Settings") as mock_settings_cls,
+        patch("vaig.web.routes.skills.get_settings") as mock_get_settings,
         patch("vaig.web.routes.skills.SkillRegistry") as mock_registry_cls,
         patch("vaig.web.routes.skills.get_telemetry_collector") as mock_tc,
     ):
-        mock_settings_cls.from_overrides.return_value = MagicMock()
+        mock_get_settings.return_value = MagicMock()
         mock_registry = MagicMock()
         mock_registry.list_skills.return_value = [mock_meta]
         mock_registry.get_source.return_value = "builtin"

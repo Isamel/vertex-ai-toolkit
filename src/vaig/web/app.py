@@ -38,6 +38,8 @@ class _AdminContextMiddleware(BaseHTTPMiddleware):
             from vaig.web.deps import is_admin
 
             request.state.is_admin = is_admin(request)
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception:  # noqa: BLE001
             request.state.is_admin = False
         return await call_next(request)
