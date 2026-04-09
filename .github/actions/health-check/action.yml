@@ -1,0 +1,55 @@
+name: "VAIG Health Check"
+description: "Run GKE service health discovery via Vertex AI and gate PRs on severity threshold"
+
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  cluster:
+    description: "GKE cluster name"
+    required: true
+  project-id:
+    description: "GCP project ID"
+    required: true
+  location:
+    description: "GKE cluster location (e.g. us-central1)"
+    required: true
+  namespace:
+    description: "Kubernetes namespace to scan"
+    required: false
+    default: "default"
+  fail-on:
+    description: "Minimum severity to fail the check: CRITICAL, HIGH, MEDIUM, LOW, INFO"
+    required: false
+    default: "CRITICAL"
+  model:
+    description: "Gemini model to use for analysis"
+    required: false
+    default: "gemini-2.5-flash"
+  comment:
+    description: "Post health report as PR comment (true/false)"
+    required: false
+    default: "true"
+  timeout:
+    description: "Pipeline timeout in seconds"
+    required: false
+    default: "600"
+  format:
+    description: "Report output format: md or json"
+    required: false
+    default: "md"
+
+outputs:
+  status:
+    description: "Overall health status: pass or fail"
+  findings-count:
+    description: "Total number of findings"
+  max-severity:
+    description: "Highest severity found: CRITICAL, HIGH, MEDIUM, LOW, INFO, or NONE"
+  report:
+    description: "Full health report in markdown"
+
+runs:
+  using: "docker"
+  image: "Dockerfile"
