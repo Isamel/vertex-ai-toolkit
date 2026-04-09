@@ -91,11 +91,13 @@ async def submit_review(
     existing = store.get_by_run_id(run_id)
     if existing is not None:
         # Update — preserve submitted_at, bump updated_at.
+        # Preserve existing finding_reviews if incoming list is empty.
+        updated_findings = body.finding_reviews if body.finding_reviews else existing.finding_reviews
         review = existing.model_copy(
             update={
                 "status": body.status,
                 "reviewer": reviewer,
-                "finding_reviews": body.finding_reviews,
+                "finding_reviews": updated_findings,
                 "overall_comment": body.overall_comment,
                 "updated_at": now,
             }
