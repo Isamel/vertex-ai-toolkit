@@ -518,6 +518,7 @@
     var completedAgents = 0;
     var toolCount = 0;
     var reportHtml = null;
+    var currentEvent = '';
 
     form.addEventListener('submit', function(e) {
         e.preventDefault();
@@ -559,7 +560,6 @@
                 var lines = buffer.split('\n');
                 buffer = lines.pop() || '';
 
-                var currentEvent = '';
                 for (var i = 0; i < lines.length; i++) {
                     var line = lines[i];
                     if (line.startsWith('event:')) {
@@ -571,7 +571,7 @@
                                 var data = JSON.parse(dataStr);
                                 handleSSEEvent(currentEvent, data);
                             } catch(err) {
-                                // Non-JSON data, ignore
+                                console.warn('Non-JSON SSE data:', err);
                             }
                         }
                     }
@@ -627,6 +627,10 @@
 
             case 'keepalive':
                 // Ignore heartbeats
+                break;
+
+            default:
+                console.warn('Unknown SSE event:', eventType);
                 break;
         }
     }
@@ -789,6 +793,7 @@
         completedAgents = 0;
         toolCount = 0;
         reportHtml = null;
+        currentEvent = '';
     }
 
     // Open report in new tab
