@@ -33,10 +33,14 @@ can gate merges based on finding severity.
 
 | Output | Type | Description |
 |--------|------|-------------|
-| `status` | string | `pass` or `fail` |
+| `status` | string | `pass`, `fail`, or `error` |
 | `findings-count` | int | Total number of findings |
 | `max-severity` | string | Highest severity: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`, or `NONE` |
 | `report` | string | Full health report in markdown |
+
+- `pass` — no findings at or above the `fail-on` threshold
+- `fail` — at least one finding meets or exceeds the threshold
+- `error` — an exception occurred (timeout, auth failure, etc.)
 
 Use outputs in subsequent steps:
 

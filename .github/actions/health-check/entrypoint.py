@@ -16,6 +16,7 @@ import logging
 import os
 import signal
 import sys
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -119,10 +120,11 @@ def build_config(inputs: ActionInputs) -> tuple[Any, Any]:
     Returns:
         ``(settings, gke_config)`` tuple of Pydantic models.
     """
-    from vaig.core.config import GCPConfig, GKEConfig, Settings
+    from vaig.core.config import GCPConfig, GKEConfig, ModelsConfig, Settings
 
     settings = Settings(
         gcp=GCPConfig(project_id=inputs.project_id, location=inputs.location),
+        models=ModelsConfig(default=inputs.model),
     )
     gke_config = GKEConfig(
         cluster_name=inputs.cluster,
@@ -232,15 +234,22 @@ def post_comment(comment: str) -> None:
     api_base = os.environ.get("GITHUB_API_URL", "https://api.github.com")
     comments_url = f"{api_base}/repos/{repo}/issues/{pr_number}/comments"
 
-    # Look for existing comment with our marker
+    # Look for existing comment with our marker (paginated)
     existing_comment_id = None
     try:
-        resp = requests.get(comments_url, headers=headers, timeout=30)
-        if resp.status_code == 200:
+        page_url: str | None = f"{comments_url}?per_page=100"
+        while page_url:
+            resp = requests.get(page_url, headers=headers, timeout=30)
+            if resp.status_code != 200:
+                break
             for c in resp.json():
                 if COMMENT_MARKER in c.get("body", ""):
                     existing_comment_id = c["id"]
                     break
+            if existing_comment_id:
+                break
+            # Follow Link header for next page
+            page_url = resp.links.get("next", {}).get("url")
     except requests.RequestException:
         pass  # proceed to create new comment
 
@@ -292,12 +301,13 @@ def set_outputs(
         f.write(f"status={status}\n")
         f.write(f"findings-count={findings_count}\n")
         f.write(f"max-severity={max_severity}\n")
-        # Multiline output using heredoc-style delimiter
-        f.write("report<<VAIG_EOF\n")
+        # Multiline output using unique heredoc-style delimiter to prevent collisions
+        delimiter = f"VAIG_EOF_{uuid.uuid4().hex}"
+        f.write(f"report<<{delimiter}\n")
         f.write(report)
         if not report.endswith("\n"):
             f.write("\n")
-        f.write("VAIG_EOF\n")
+        f.write(f"{delimiter}\n")
 
 
 def _timeout_handler(signum: int, frame: Any) -> None:  # noqa: ARG001
@@ -374,10 +384,10 @@ def main() -> int:
         print(msg, file=sys.stderr)
         if inputs.comment:
             error_comment = format_comment(
-                f"⏱️ {msg}", "fail", 0, 0.0,
+                f"⏱️ {msg}", "error", 0, 0.0,
             )
             post_comment(error_comment)
-        set_outputs("fail", 0, "UNKNOWN", msg)
+        set_outputs("error", 0, "UNKNOWN", msg)
         return 1
 
     except Exception as exc:  # noqa: BLE001
@@ -393,13 +403,13 @@ def main() -> int:
 
         if inputs.comment:
             error_comment = format_comment(
-                f"❌ {msg}", "fail", 0, 0.0,
+                f"❌ {msg}", "error", 0, 0.0,
             )
             try:
                 post_comment(error_comment)
             except Exception:  # noqa: BLE001
                 pass  # best-effort — don't mask the original error
-        set_outputs("fail", 0, "UNKNOWN", msg)
+        set_outputs("error", 0, "UNKNOWN", msg)
         return 1
 
 

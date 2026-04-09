@@ -34,22 +34,35 @@ inputs:
   timeout:
     description: "Pipeline timeout in seconds"
     required: false
-    default: "600"
-  format:
-    description: "Report output format: md or json"
-    required: false
-    default: "md"
+    default: "300"
 
 outputs:
   status:
-    description: "Overall health status: pass or fail"
+    description: "Overall health status: pass, fail, or error"
+    value: ${{ steps.run.outputs.status }}
   findings-count:
     description: "Total number of findings"
+    value: ${{ steps.run.outputs.findings-count }}
   max-severity:
     description: "Highest severity found: CRITICAL, HIGH, MEDIUM, LOW, INFO, or NONE"
+    value: ${{ steps.run.outputs.max-severity }}
   report:
     description: "Full health report in markdown"
+    value: ${{ steps.run.outputs.report }}
 
 runs:
-  using: "docker"
-  image: "Dockerfile"
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install VAIG
+      shell: bash
+      run: pip install --no-cache-dir "${{ github.workspace }}[live]"
+
+    - name: Run health check
+      id: run
+      shell: bash
+      run: python "${{ github.action_path }}/entrypoint.py"

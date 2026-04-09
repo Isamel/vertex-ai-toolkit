@@ -251,6 +251,10 @@ class TestFormatComment:
         body = entrypoint.format_comment("report", "fail", 1, 0.01)
         assert "Status: `fail`" in body
 
+    def test_error_status_in_summary(self) -> None:
+        body = entrypoint.format_comment("report", "error", 0, 0.0)
+        assert "Status: `error`" in body
+
 
 # ── Task 3.4: set_outputs tests ─────────────────────────────────
 
@@ -269,9 +273,8 @@ class TestSetOutputs:
         assert "status=pass" in content
         assert "findings-count=3" in content
         assert "max-severity=HIGH" in content
-        assert "report<<VAIG_EOF" in content
+        assert "report<<VAIG_EOF_" in content
         assert "# Report\nDetails here" in content
-        assert "VAIG_EOF" in content
 
     def test_multiline_report(self, tmp_path: Any) -> None:
         output_file = tmp_path / "github_output"
@@ -484,7 +487,7 @@ class TestMain:
         assert exit_code == 1
         mock_post.assert_called_once()  # Error comment posted
         content = output_file.read_text()
-        assert "status=fail" in content
+        assert "status=error" in content
 
     @patch("entrypoint.post_comment")
     @patch("vaig.core.headless.execute_skill_headless")
@@ -505,7 +508,7 @@ class TestMain:
 
         assert exit_code == 1
         content = output_file.read_text()
-        assert "status=fail" in content
+        assert "status=error" in content
 
     @patch("requests.get")
     @patch("requests.patch")
@@ -533,6 +536,7 @@ class TestMain:
             json=lambda: [
                 {"id": 999, "body": f"old report {entrypoint.COMMENT_MARKER}"},
             ],
+            links={},
         )
         mock_patch.return_value = MagicMock(status_code=200)
 
@@ -562,7 +566,7 @@ class TestMain:
         event_file.write_text(json.dumps({"pull_request": {"number": 5}}))
         monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_file))
 
-        mock_get.return_value = MagicMock(status_code=200, json=lambda: [])
+        mock_get.return_value = MagicMock(status_code=200, json=lambda: [], links={})
         mock_post.return_value = MagicMock(status_code=403, text="Forbidden")
 
         entrypoint.post_comment("report body")
@@ -615,3 +619,125 @@ class TestMain:
 
         assert exit_code == 0
         mock_post.assert_not_called()
+
+
+# ── Task 3.7: model input propagation ───────────────────────────
+
+
+class TestModelInput:
+    """Tests for model input propagation to Settings."""
+
+    def test_model_applied_to_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Verify model input propagates to Settings.models.default."""
+        monkeypatch.setenv("INPUT_CLUSTER", "c")
+        monkeypatch.setenv("INPUT_PROJECT-ID", "p")
+        monkeypatch.setenv("INPUT_LOCATION", "loc")
+        monkeypatch.setenv("INPUT_MODEL", "gemini-2.5-pro")
+
+        inputs = entrypoint.parse_inputs()
+        assert inputs.model == "gemini-2.5-pro"
+
+        settings, _gke = entrypoint.build_config(inputs)
+        assert settings.models.default == "gemini-2.5-pro"
+
+    def test_model_default_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Default model (gemini-2.5-flash) is applied to Settings."""
+        monkeypatch.setenv("INPUT_CLUSTER", "c")
+        monkeypatch.setenv("INPUT_PROJECT-ID", "p")
+        monkeypatch.setenv("INPUT_LOCATION", "loc")
+        monkeypatch.delenv("INPUT_MODEL", raising=False)
+
+        inputs = entrypoint.parse_inputs()
+        assert inputs.model == "gemini-2.5-flash"
+
+        settings, _gke = entrypoint.build_config(inputs)
+        assert settings.models.default == "gemini-2.5-flash"
+
+
+# ── Task 3.8: error status tests ────────────────────────────────
+
+
+class TestErrorStatus:
+    """Tests for distinct error vs fail status."""
+
+    def _setup_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Any:
+        """Set up common environment for main() tests."""
+        monkeypatch.setenv("INPUT_CLUSTER", "test-cluster")
+        monkeypatch.setenv("INPUT_PROJECT-ID", "test-project")
+        monkeypatch.setenv("INPUT_LOCATION", "us-central1")
+        monkeypatch.setenv("INPUT_FAIL-ON", "CRITICAL")
+        monkeypatch.setenv("INPUT_COMMENT", "true")
+        monkeypatch.setenv("INPUT_TIMEOUT", "300")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
+        monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+
+        event_file = tmp_path / "event.json"
+        event_file.write_text(json.dumps({"pull_request": {"number": 42}}))
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_file))
+
+        output_file = tmp_path / "github_output"
+        output_file.write_text("")
+        monkeypatch.setenv("GITHUB_OUTPUT", str(output_file))
+
+        return output_file
+
+    @patch("entrypoint.post_comment")
+    @patch("vaig.core.headless.execute_skill_headless")
+    def test_exception_sets_error_status(
+        self,
+        mock_headless: MagicMock,
+        mock_post: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        """Exceptions set status=error, not status=fail."""
+        output_file = self._setup_env(monkeypatch, tmp_path)
+        mock_headless.side_effect = RuntimeError("Something went wrong")
+
+        exit_code = entrypoint.main()
+
+        assert exit_code == 1
+        content = output_file.read_text()
+        assert "status=error" in content
+
+    @patch("entrypoint.post_comment")
+    @patch("vaig.core.headless.execute_skill_headless")
+    def test_timeout_sets_error_status(
+        self,
+        mock_headless: MagicMock,
+        mock_post: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        """Timeouts set status=error, not status=fail."""
+        output_file = self._setup_env(monkeypatch, tmp_path)
+        mock_headless.side_effect = TimeoutError("Health check timed out")
+
+        exit_code = entrypoint.main()
+
+        assert exit_code == 1
+        content = output_file.read_text()
+        assert "status=error" in content
+
+    @patch("entrypoint.post_comment")
+    @patch("vaig.core.headless.execute_skill_headless")
+    def test_threshold_breach_sets_fail_status(
+        self,
+        mock_headless: MagicMock,
+        mock_post: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        """Threshold breach sets status=fail (not error)."""
+        output_file = self._setup_env(monkeypatch, tmp_path)
+
+        report = _FakeReport([_FakeFinding("CRITICAL")])
+        mock_headless.return_value = _FakeOrchestratorResult(
+            structured_report=report,
+        )
+
+        exit_code = entrypoint.main()
+
+        assert exit_code == 1
+        content = output_file.read_text()
+        assert "status=fail" in content

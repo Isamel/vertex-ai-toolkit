@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-RUN groupadd -r vaig && useradd -r -g vaig vaig
+RUN groupadd -r vaig && useradd -r --uid 1001 -g vaig vaig
 
 WORKDIR /action
 
