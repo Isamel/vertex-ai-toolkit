@@ -584,6 +584,9 @@ class TrendConfig(BaseModel):
     @field_validator("baseline_days")
     @classmethod
     def _validate_baseline_days(cls, v: list[int]) -> list[int]:
+        if not v:
+            msg = "baseline_days must not be empty when trend analysis is enabled"
+            raise ValueError(msg)
         for d in v:
             if d > 42:  # noqa: PLR2004
                 msg = f"baseline_days value {d} exceeds Cloud Monitoring retention limit of 42 days"
@@ -591,7 +594,8 @@ class TrendConfig(BaseModel):
             if d < 1:
                 msg = f"baseline_days value {d} must be at least 1"
                 raise ValueError(msg)
-        return v
+        # Deduplicate and sort for deterministic ordering
+        return sorted(set(v))
 
 
 class GKEConfig(BaseModel):

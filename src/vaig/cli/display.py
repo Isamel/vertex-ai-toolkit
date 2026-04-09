@@ -644,6 +644,7 @@ def print_trend_analysis_table(
         expand=True,
     )
     table.add_column("Service", style="cyan", min_width=20)
+    table.add_column("Namespace", style="dim cyan", min_width=14)
     table.add_column("Metric", min_width=14)
     table.add_column("Direction", justify="center", min_width=10)
     table.add_column("Change %", justify="right", min_width=10)
@@ -652,6 +653,7 @@ def print_trend_analysis_table(
 
     for trend in trend_list:
         svc = trend.service_name or "—"
+        ns = getattr(trend, "namespace", "") or "—"
         metric = trend.metric or "—"
         arrow = _DIRECTION_SYMBOLS.get(trend.direction, "?")
         direction_display = f"{arrow} {trend.direction}"
@@ -671,7 +673,7 @@ def print_trend_analysis_table(
         sev_style = _TREND_SEVERITY_STYLE.get(trend.severity, "dim")
         severity_text = Text(trend.severity.upper(), style=sev_style)
 
-        table.add_row(svc, metric, direction_display, change_pct, days_str, severity_text)
+        table.add_row(svc, ns, metric, direction_display, change_pct, days_str, severity_text)
 
     # Summary footer
     anomalies = getattr(trends_data, "anomalies_detected", 0)
@@ -679,7 +681,7 @@ def print_trend_analysis_table(
 
     table.add_section()
     summary = f"{anomalies} anomal{'y' if anomalies == 1 else 'ies'} detected across {services} service{'s' if services != 1 else ''}"
-    table.add_row(Text(summary, style="bold"), "", "", "", "", "")
+    table.add_row(Text(summary, style="bold"), "", "", "", "", "", "")
 
     con.print(table)
     con.print()

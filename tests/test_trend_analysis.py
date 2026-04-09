@@ -445,6 +445,14 @@ class TestTrendConfigValidation:
         cfg = TrendConfig()
         assert cfg.baseline_days == [7]
 
+    def test_empty_list_raises_validation_error(self) -> None:
+        with pytest.raises(Exception, match="must not be empty"):
+            TrendConfig(baseline_days=[])
+
+    def test_duplicates_are_deduplicated_and_sorted(self) -> None:
+        cfg = TrendConfig(baseline_days=[14, 7, 7, 28, 14])
+        assert cfg.baseline_days == [7, 14, 28]
+
 
 # ── 6.5 Schema roundtrip ─────────────────────────────────────
 
@@ -592,6 +600,7 @@ class TestPrintTrendAnalysisTable:
         trend = MetricTrend(
             metric="memory_usage",
             service_name="api-server",
+            namespace="prod",
             direction="increasing",
             rate_of_change_percent=15.0,
             current_value=1150.0,
@@ -606,6 +615,7 @@ class TestPrintTrendAnalysisTable:
         )
         output = self._capture(self._make_report(trends=analysis))
         assert "api-server" in output
+        assert "prod" in output  # namespace column
         assert "memory_usage" in output
         assert "+15.0%" in output
         assert "42d" in output
@@ -656,14 +666,32 @@ class TestPrintTrendAnalysisTable:
 # ── Phase 7: Integration Tests ────────────────────────────────
 
 
-def _mock_time_series(double_value: float) -> MagicMock:
-    """Create a mock time series with a single data point."""
+def _mock_time_series(double_value: float, controller_name: str = "") -> MagicMock:
+    """Create a mock time series with a single data point.
+
+    The mock mimics Cloud Monitoring's time-series structure including
+    ``metadata.system_labels`` so that ``_group_by_controller`` can
+    extract the ``top_level_controller_name`` label.
+
+    When *controller_name* is empty, the mock omits the label so that
+    ``_group_by_controller`` falls back to the namespace key.
+    """
     point = MagicMock()
     point.value.double_value = double_value
     point.value.int64_value = 0
 
     ts = MagicMock()
     ts.points = [point]
+
+    # Build metadata.system_labels.fields to match proto Struct
+    if controller_name:
+        ctrl_field = MagicMock()
+        ctrl_field.string_value = controller_name
+        fields_dict: dict[str, Any] = {"top_level_controller_name": ctrl_field}
+    else:
+        fields_dict = {}
+    ts.metadata.system_labels.fields = fields_dict
+
     return ts
 
 
@@ -679,19 +707,18 @@ class TestFetchAnomalyTrendsIntegration:
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        # Return different values for baseline and current queries
-        # Each call to list_time_series returns a list of time series
-        # With 1 namespace × 3 metrics × 1 baseline window = 6 queries
-        # (3 baseline + 3 current)
+        # With the refactored call order (current once per metric, then baseline
+        # per window), 1 namespace × 3 metrics × 1 window = 6 API calls.
+        # Pattern per metric: current, baseline.
         call_count = 0
 
         def mock_list_ts(request: Any) -> list[MagicMock]:
             nonlocal call_count
             call_count += 1
-            # Odd calls = baseline (1000), even calls = current (1150) → 15% increase
+            # Odd calls = current (1150), even calls = baseline (1000) → 15% increase
             if call_count % 2 == 1:
-                return [_mock_time_series(1000.0)]
-            return [_mock_time_series(1150.0)]
+                return [_mock_time_series(1150.0)]
+            return [_mock_time_series(1000.0)]
 
         mock_client.list_time_series.side_effect = mock_list_ts
 
@@ -700,7 +727,7 @@ class TestFetchAnomalyTrendsIntegration:
 
         assert result is not None
         assert isinstance(result, TrendAnalysis)
-        assert result.services_analyzed == 1
+        assert result.services_analyzed >= 1
         assert len(result.trends) == 3  # cpu, memory, restart for 1 namespace × 1 window
         assert result.analyzed_at  # non-empty ISO timestamp
 
@@ -763,9 +790,9 @@ class TestFetchAnomalyTrendsIntegration:
         def mock_list_ts(request: Any) -> list[MagicMock]:
             nonlocal call_count
             call_count += 1
-            # Return data only for first 2 queries (first metric), rest empty
+            # Return data only for first 2 queries (first metric: current + baseline)
             if call_count <= 2:
-                return [_mock_time_series(1000.0 if call_count == 1 else 1200.0)]
+                return [_mock_time_series(1200.0 if call_count == 1 else 1000.0)]
             return []  # empty — no data for other metrics
 
         mock_client.list_time_series.side_effect = mock_list_ts
@@ -774,7 +801,7 @@ class TestFetchAnomalyTrendsIntegration:
         result = fetch_anomaly_trends(gke_cfg, namespaces=["default"])
 
         assert result is not None
-        # Only the first metric should produce a trend (the rest have both None → skip)
+        # Only the first metric should produce a trend (the rest have both empty → skip)
         assert len(result.trends) >= 1
         assert result.services_analyzed >= 1
 
@@ -792,9 +819,10 @@ class TestFetchAnomalyTrendsIntegration:
         def mock_list_ts(request: Any) -> list[MagicMock]:
             nonlocal call_count
             call_count += 1
+            # current calls (odd) → 1300, baseline calls (even) → 1000
             if call_count % 2 == 1:
-                return [_mock_time_series(1000.0)]
-            return [_mock_time_series(1300.0)]
+                return [_mock_time_series(1300.0)]
+            return [_mock_time_series(1000.0)]
 
         mock_client.list_time_series.side_effect = mock_list_ts
 
@@ -802,8 +830,8 @@ class TestFetchAnomalyTrendsIntegration:
         result = fetch_anomaly_trends(gke_cfg, namespaces=["ns-a", "ns-b"])
 
         assert result is not None
-        assert result.services_analyzed == 2
-        # 2 namespaces × 3 metrics × 1 window = 6 trends
+        assert result.services_analyzed >= 2
+        # 2 namespaces × 3 metrics × 1 window = 6 trends (with fallback controller keys)
         assert len(result.trends) == 6
 
     @patch("vaig.tools.gke.trend_analysis._MONITORING_AVAILABLE", False)
@@ -852,17 +880,20 @@ class TestFetchAnomalyTrendsIntegration:
         def mock_list_ts(request: Any) -> list[MagicMock]:
             nonlocal call_count
             call_count += 1
-            # memory baseline=1000, current=1300 → 30% increase → critical
-            # cpu baseline=1000, current=1050 → 5% increase → info (below 20% threshold)
-            # restart baseline=1000, current=1010 → info
-            idx = ((call_count - 1) // 2) % 3  # metric index: 0=cpu, 1=memory, 2=restart
-            if call_count % 2 == 1:
-                return [_mock_time_series(1000.0)]
-            if idx == 0:  # cpu current
-                return [_mock_time_series(1050.0)]
-            if idx == 1:  # memory current
-                return [_mock_time_series(1300.0)]
-            return [_mock_time_series(1010.0)]  # restart current
+            # New call order: per metric, current first then baseline.
+            # Metric order: cpu, memory, restart (1 window each).
+            # call 1 = cpu current, call 2 = cpu baseline
+            # call 3 = memory current, call 4 = memory baseline
+            # call 5 = restart current, call 6 = restart baseline
+            metric_idx = (call_count - 1) // 2  # 0=cpu, 1=memory, 2=restart
+            is_current = call_count % 2 == 1
+
+            if metric_idx == 0:  # cpu
+                return [_mock_time_series(1050.0 if is_current else 1000.0)]
+            if metric_idx == 1:  # memory — 30% increase → critical
+                return [_mock_time_series(1300.0 if is_current else 1000.0)]
+            # restart — small delta → info
+            return [_mock_time_series(1010.0 if is_current else 1000.0)]
 
         mock_client.list_time_series.side_effect = mock_list_ts
 

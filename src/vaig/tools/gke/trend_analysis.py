@@ -6,6 +6,11 @@ restarts, CPU growth).  Produces a :class:`TrendAnalysis` object
 attached to ``ReportMetadata.trends`` via post-pipeline enrichment
 (same pattern as :mod:`cost_estimation`).
 
+Baseline windows are configurable via ``TrendConfig.baseline_days``
+(default ``[7]``, max 42 per Cloud Monitoring retention limits).
+Severity levels are ``"info"``, ``"warning"``, and ``"critical"``
+based on per-metric thresholds.
+
 When Cloud Monitoring is unavailable or the feature is disabled,
 ``fetch_anomaly_trends()`` returns ``None`` and the health report
 proceeds without trend data.
@@ -60,11 +65,14 @@ def _query_baseline(
     namespace: str,
     metric_type: str,
     window_days: int,
-) -> float | None:
-    """Query Cloud Monitoring for a historical baseline average.
+) -> dict[str, float]:
+    """Query Cloud Monitoring for historical baseline averages per controller.
 
     Uses 3600s (hourly) alignment for multi-day windows to keep
-    response sizes manageable.
+    response sizes manageable.  ALIGN_RATE is used for both CPU and
+    restart_count metrics to normalise to per-second rate regardless
+    of alignment period, avoiding unit mismatch between baseline and
+    current queries.
 
     Args:
         client: A ``MetricServiceClient`` instance.
@@ -75,7 +83,9 @@ def _query_baseline(
         window_days: Number of days for the baseline window.
 
     Returns:
-        Average value across the window, or ``None`` if no data.
+        Mapping of controller name → average value.  Falls back to
+        the namespace as key when no controller label is present.
+        Empty dict when no data is available.
     """
     now = datetime.now(tz=UTC)
     end = now - timedelta(days=1)  # baseline ends 24h ago
@@ -91,10 +101,8 @@ def _query_baseline(
     is_cpu = metric_type == _CPU_METRIC
     is_restart = metric_type == _RESTART_METRIC
 
-    if is_cpu:
+    if is_cpu or is_restart:
         aligner = monitoring_v3.Aggregation.Aligner.ALIGN_RATE
-    elif is_restart:
-        aligner = monitoring_v3.Aggregation.Aligner.ALIGN_DELTA
     else:
         aligner = monitoring_v3.Aggregation.Aligner.ALIGN_MEAN
 
@@ -127,16 +135,9 @@ def _query_baseline(
 
     results = list(client.list_time_series(request=request))
     if not results:
-        return None
+        return {}
 
-    all_values: list[float] = []
-    for ts in results:
-        for point in ts.points:
-            val = point.value.double_value or point.value.int64_value
-            if val is not None:
-                all_values.append(float(val))
-
-    return sum(all_values) / len(all_values) if all_values else None
+    return _group_by_controller(results, namespace)
 
 
 def _query_current(
@@ -146,10 +147,12 @@ def _query_current(
     namespace: str,
     metric_type: str,
     window_hours: int = 24,
-) -> float | None:
-    """Query Cloud Monitoring for the current observation window average.
+) -> dict[str, float]:
+    """Query Cloud Monitoring for the current observation window averages per controller.
 
     Uses 300s (5-minute) alignment for granularity in the recent window.
+    ALIGN_RATE is used for both CPU and restart_count metrics to
+    normalise to per-second rate, matching the baseline query units.
 
     Args:
         client: A ``MetricServiceClient`` instance.
@@ -160,7 +163,9 @@ def _query_current(
         window_hours: Current window size in hours (default 24).
 
     Returns:
-        Average value across the window, or ``None`` if no data.
+        Mapping of controller name → average value.  Falls back to
+        the namespace as key when no controller label is present.
+        Empty dict when no data is available.
     """
     now = datetime.now(tz=UTC)
     start = now - timedelta(hours=window_hours)
@@ -175,10 +180,8 @@ def _query_current(
     is_cpu = metric_type == _CPU_METRIC
     is_restart = metric_type == _RESTART_METRIC
 
-    if is_cpu:
+    if is_cpu or is_restart:
         aligner = monitoring_v3.Aggregation.Aligner.ALIGN_RATE
-    elif is_restart:
-        aligner = monitoring_v3.Aggregation.Aligner.ALIGN_DELTA
     else:
         aligner = monitoring_v3.Aggregation.Aligner.ALIGN_MEAN
 
@@ -211,16 +214,60 @@ def _query_current(
 
     results = list(client.list_time_series(request=request))
     if not results:
-        return None
+        return {}
 
-    all_values: list[float] = []
+    return _group_by_controller(results, namespace)
+
+
+def _group_by_controller(
+    results: list[Any],
+    fallback_key: str,
+) -> dict[str, float]:
+    """Group time-series results by ``top_level_controller_name``.
+
+    Each time series returned by Cloud Monitoring carries resource and
+    system labels.  This helper extracts the controller name from
+    ``metadata.system_labels.top_level_controller_name`` and computes
+    the average value across all data points for each controller.
+
+    When no controller label is present on a time series, the
+    *fallback_key* (typically the namespace) is used instead so the
+    caller always receives at least one entry per query result.
+
+    Args:
+        results: List of time-series objects from ``list_time_series``.
+        fallback_key: Key to use when no controller label is present.
+
+    Returns:
+        Mapping of controller name → average value across that
+        controller's data points.
+    """
+    controller_values: dict[str, list[float]] = {}
     for ts in results:
+        # Extract controller name from metadata labels
+        controller = fallback_key
+        try:
+            sys_labels = ts.metadata.system_labels
+            # system_labels is a Struct — access fields dict
+            fields = getattr(sys_labels, "fields", None) or {}
+            ctrl_field = fields.get("top_level_controller_name")
+            if ctrl_field is not None:
+                ctrl_val = getattr(ctrl_field, "string_value", "") or ""
+                if ctrl_val:
+                    controller = ctrl_val
+        except (AttributeError, TypeError):
+            pass
+
         for point in ts.points:
             val = point.value.double_value or point.value.int64_value
             if val is not None:
-                all_values.append(float(val))
+                controller_values.setdefault(controller, []).append(float(val))
 
-    return sum(all_values) / len(all_values) if all_values else None
+    return {
+        ctrl: sum(vals) / len(vals)
+        for ctrl, vals in controller_values.items()
+        if vals
+    }
 
 
 def _project_days_to_threshold(
@@ -426,30 +473,43 @@ def fetch_anomaly_trends(
     try:
         for ns in effective_ns:
             for metric_type in metrics:
+                # Fetch current once per (namespace, metric) — does not depend on
+                # window_days, so hoisting outside the baseline loop avoids
+                # redundant API calls.
+                current_by_ctrl = _query_current(
+                    client, project_id, cluster, ns, metric_type
+                )
+
                 for window_days in trend_config.baseline_days:
-                    baseline_avg = _query_baseline(
+                    baseline_by_ctrl = _query_baseline(
                         client, project_id, cluster, ns, metric_type, window_days
                     )
-                    current_avg = _query_current(
-                        client, project_id, cluster, ns, metric_type
-                    )
 
-                    # Use namespace as service identifier when controller grouping
-                    # returns aggregated results
-                    service_name = ns
-                    services_seen.add(service_name)
+                    # Iterate over the union of controllers seen in either
+                    # baseline or current to preserve per-workload granularity.
+                    all_controllers = set(baseline_by_ctrl) | set(current_by_ctrl)
+                    if not all_controllers:
+                        # Neither query returned data — fall back to namespace
+                        all_controllers = {ns}
 
-                    trend = _compute_trend(
-                        metric_type,
-                        service_name,
-                        ns,
-                        current_avg,
-                        baseline_avg,
-                        trend_config,
-                        window_days,
-                    )
-                    if trend is not None:
-                        all_trends.append(trend)
+                    for controller in sorted(all_controllers):
+                        service_name = controller
+                        services_seen.add(service_name)
+
+                        baseline_avg = baseline_by_ctrl.get(controller)
+                        current_avg = current_by_ctrl.get(controller)
+
+                        trend = _compute_trend(
+                            metric_type,
+                            service_name,
+                            ns,
+                            current_avg,
+                            baseline_avg,
+                            trend_config,
+                            window_days,
+                        )
+                        if trend is not None:
+                            all_trends.append(trend)
 
     except Exception as exc:  # noqa: BLE001
         logger.debug("Trend analysis API error: %s", exc)

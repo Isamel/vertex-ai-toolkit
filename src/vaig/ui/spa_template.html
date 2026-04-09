@@ -1198,6 +1198,7 @@ function renderTrendSection() {
         : '—';
       return `<tr>
         <td>${esc(t.service_name || '—')}</td>
+        <td>${esc(t.namespace || '—')}</td>
         <td>${esc(t.metric || '—')}</td>
         <td class="trend-direction">${dir} ${esc(t.direction || '—')}</td>
         <td style="text-align:right;font-family:var(--font-mono)">${changePct}</td>
@@ -1208,7 +1209,7 @@ function renderTrendSection() {
 
     container.innerHTML = `<table class="trend-table">
       <thead><tr>
-        <th>Service</th><th>Metric</th><th>Direction</th>
+        <th>Service</th><th>Namespace</th><th>Metric</th><th>Direction</th>
         <th style="text-align:right">Change %</th><th style="text-align:right">Days to Limit</th><th>Severity</th>
       </tr></thead>
       <tbody>${rows}</tbody>
