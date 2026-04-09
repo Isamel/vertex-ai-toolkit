@@ -116,6 +116,36 @@ def test_post_non_admin_403(client: TestClient, monkeypatch) -> None:
     assert resp.status_code == 403
 
 
+# ── 5b. POST unauthenticated returns 401 ────────────────────
+
+
+def test_post_unauthenticated_401(client: TestClient, monkeypatch) -> None:
+    """Missing auth header without dev mode → 401 (not 403)."""
+    monkeypatch.setenv("VAIG_WEB_DEV_MODE", "false")
+    resp = client.post(
+        "/api/reviews/r1",
+        json={"status": "approved"},
+    )
+    assert resp.status_code == 401
+
+
+# ── 5c. GET unauthenticated returns 401 ─────────────────────
+
+
+def test_get_review_unauthenticated_401(client: TestClient, monkeypatch) -> None:
+    """GET endpoints also require authentication."""
+    monkeypatch.setenv("VAIG_WEB_DEV_MODE", "false")
+    resp = client.get("/api/reviews/r1")
+    assert resp.status_code == 401
+
+
+def test_list_reviews_unauthenticated_401(client: TestClient, monkeypatch) -> None:
+    """GET /api/reviews also requires authentication."""
+    monkeypatch.setenv("VAIG_WEB_DEV_MODE", "false")
+    resp = client.get("/api/reviews")
+    assert resp.status_code == 401
+
+
 # ── 6. GET list all reviews ─────────────────────────────────
 
 
@@ -140,3 +170,18 @@ def test_list_filtered_by_status(client: TestClient, tmp_store) -> None:
     data = resp.json()
     assert len(data) == 2
     assert all(r["status"] == "pending_review" for r in data)
+
+
+# ── 8. GET list filtered by status alias ────────────────────
+
+
+def test_list_filtered_by_status_alias(client: TestClient, tmp_store) -> None:
+    """``?status=pending`` is accepted as alias for ``pending_review``."""
+    tmp_store.save(ReportReview(run_id="x", status=ReviewStatus.APPROVED))
+    tmp_store.save(ReportReview(run_id="y", status=ReviewStatus.PENDING_REVIEW))
+
+    resp = client.get("/api/reviews?status=pending")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["status"] == "pending_review"

@@ -462,6 +462,21 @@ def _execute_remediation(
     if settings.review.enabled:
         from vaig.core.review_store import ReviewStore
 
+        # Fail closed: refuse to execute when review is required but no
+        # run_id was provided — callers must pass --run-id explicitly.
+        if settings.review.require_review_for_remediation and not run_id:
+            console.print(
+                Panel(
+                    "[red]Review is required for remediation but no "
+                    "[bold]--run-id[/bold] was provided.[/red]\n\n"
+                    "Pass [bold]--run-id <RUN_ID>[/bold] to link this "
+                    "execution to a reviewed health report.",
+                    title="[red]✗ Review Gate[/red]",
+                    border_style="red",
+                )
+            )
+            return
+
         review_store = ReviewStore()
         review_config = settings.review
 

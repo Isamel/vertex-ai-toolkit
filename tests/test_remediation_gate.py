@@ -199,11 +199,11 @@ def test_gate_bypassed_when_no_store():
     assert "Review not approved" not in result.output
 
 
-# ── 5. Bypassed when no run_id provided ──────────────────────
+# ── 5. Fail-closed when no run_id provided ──────────────────
 
 
-def test_gate_bypassed_when_no_run_id():
-    """If execute() is called without run_id, gate cannot check → skip."""
+def test_gate_fails_closed_when_no_run_id():
+    """If execute() is called without run_id, gate fails closed → error."""
     review_store = MagicMock()
     review_config = ReviewConfig(enabled=True, require_review_for_remediation=True)
     rem_config = RemediationConfig(auto_approve_safe=True)
@@ -233,4 +233,42 @@ def test_gate_bypassed_when_no_run_id():
         )
 
     review_store.is_approved.assert_not_called()
-    assert "Review not approved" not in result.output
+    assert result.error is True
+    assert "no run_id provided" in result.output
+
+
+# ── 6. Fail-closed when no store wired but review required ───
+
+
+def test_gate_fails_closed_when_no_store():
+    """If review is required but ReviewStore is not wired → fail closed."""
+    review_config = ReviewConfig(enabled=True, require_review_for_remediation=True)
+    rem_config = RemediationConfig(auto_approve_safe=True)
+    bus = _make_bus()
+
+    # No review_store but review IS required
+    executor = RemediationExecutor(
+        rem_config,
+        bus,
+        review_store=None,
+        review_config=review_config,
+    )
+
+    with patch.object(executor, "_dispatch") as mock_dispatch:
+        mock_result = MagicMock()
+        mock_result.output = "success"
+        mock_result.error = False
+        mock_dispatch.return_value = mock_result
+
+        result = _run(
+            executor.execute(
+                _make_action(),
+                _make_classified(tier=SafetyTier.SAFE),
+                _make_gke_config(),
+                approved=True,
+                run_id="run-with-no-store",
+            )
+        )
+
+    assert result.error is True
+    assert "ReviewStore is not configured" in result.output

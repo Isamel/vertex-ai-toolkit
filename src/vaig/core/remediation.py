@@ -474,15 +474,28 @@ class RemediationExecutor:
                 self._review_config
                 and self._review_config.enabled
                 and self._review_config.require_review_for_remediation
-                and self._review_store
-                and run_id
-                and not self._review_store.is_approved(run_id)
             ):
-                reason = (
-                    f"Review not approved for run_id {run_id!r}. "
-                    "Submit a review approval before executing remediation."
-                )
-                return ToolResult(output=reason, error=True)
+                # Fail closed: refuse to proceed when the gate cannot be
+                # evaluated (missing run_id or missing store).
+                if not run_id or not self._review_store:
+                    reason = (
+                        "Review is required for remediation but cannot be "
+                        "verified: "
+                        + (
+                            "no run_id provided. Pass --run-id to link this "
+                            "execution to a reviewed health report."
+                            if not run_id
+                            else "ReviewStore is not configured."
+                        )
+                    )
+                    return ToolResult(output=reason, error=True)
+
+                if not self._review_store.is_approved(run_id):
+                    reason = (
+                        f"Review not approved for run_id {run_id!r}. "
+                        "Submit a review approval before executing remediation."
+                    )
+                    return ToolResult(output=reason, error=True)
 
             # ── BLOCKED: never execute ──
             if classified.tier == SafetyTier.BLOCKED:

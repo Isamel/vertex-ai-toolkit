@@ -983,7 +983,7 @@ class HealthReport(BaseModel):
                         parts.append(f"- **Impact**: {f.impact}")
                     if f.affected_resources:
                         parts.append(f"- **Affected Resources**: {', '.join(f.affected_resources)}")
-        parts.append("")
+                    parts.append("")
 
     @staticmethod
     def _render_evidence_subbullets(parts: list[str], evidence: list[str]) -> None:

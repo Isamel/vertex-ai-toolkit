@@ -139,7 +139,7 @@ class ReviewStore:
         try:
             raw = path.read_text(encoding="utf-8")
             return ReportReview.model_validate_json(raw)
-        except (json.JSONDecodeError, ValueError) as exc:
+        except (json.JSONDecodeError, ValueError, OSError) as exc:
             logger.warning("Corrupt review file %s: %s", path, exc)
             return None
 
@@ -150,9 +150,16 @@ class ReviewStore:
 
         Results are sorted by modification time (newest first).
         """
+
+        def _safe_mtime(p: Path) -> float:
+            try:
+                return p.stat().st_mtime
+            except OSError:
+                return 0.0
+
         files = sorted(
             self._base_dir.glob("*.json"),
-            key=lambda p: p.stat().st_mtime,
+            key=_safe_mtime,
             reverse=True,
         )
         reviews: list[ReportReview] = []
@@ -162,7 +169,7 @@ class ReviewStore:
                 review = ReportReview.model_validate_json(raw)
                 if status is None or review.status == status:
                     reviews.append(review)
-            except (json.JSONDecodeError, ValueError) as exc:
+            except (json.JSONDecodeError, ValueError, OSError) as exc:
                 logger.warning("Skipping corrupt review %s: %s", f, exc)
         return reviews
 

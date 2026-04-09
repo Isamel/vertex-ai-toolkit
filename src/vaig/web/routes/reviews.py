@@ -28,8 +28,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["reviews"])
 
-# Module-level store instance — created once, reused across requests.
-_store = ReviewStore()
+# Lazily initialised store — avoids directory creation at import time.
+_store: ReviewStore | None = None
+
+
+def _get_store() -> ReviewStore:
+    """Return the module-level ReviewStore, creating it on first access."""
+    global _store  # noqa: PLW0603
+    if _store is None:
+        _store = ReviewStore()
+    return _store
 
 
 # -- Request Models --------------------------------------------------------
@@ -47,9 +55,11 @@ class SubmitReviewRequest(BaseModel):
 
 
 @router.get("/api/reviews/{run_id}")
-async def get_review(run_id: str) -> JSONResponse:
+async def get_review(run_id: str, request: Request) -> JSONResponse:
     """Return the review for *run_id*, or 404 if none exists."""
-    review = _store.get_by_run_id(run_id)
+    get_current_user(request)  # enforce authentication
+    store = _get_store()
+    review = store.get_by_run_id(run_id)
     if review is None:
         return JSONResponse(
             {"error": f"No review found for run_id {run_id!r}"},
@@ -65,16 +75,20 @@ async def submit_review(
     request: Request,
 ) -> JSONResponse:
     """Create or update a review for *run_id*.  Admin-only."""
+    # Authenticate first — raises 401 if no valid identity.
+    reviewer = get_current_user(request)
+
+    # Then authorise — returns 403 when authenticated but not admin.
     if not is_admin(request):
         return JSONResponse(
             {"error": "Admin privileges required to submit reviews"},
             status_code=403,
         )
 
-    reviewer = get_current_user(request)
+    store = _get_store()
     now = datetime.now(UTC)
 
-    existing = _store.get_by_run_id(run_id)
+    existing = store.get_by_run_id(run_id)
     if existing is not None:
         # Update — preserve submitted_at, bump updated_at.
         review = existing.model_copy(
@@ -97,7 +111,7 @@ async def submit_review(
             updated_at=now,
         )
 
-    _store.save(review)
+    store.save(review)
 
     # Fire event for audit trail.
     try:
@@ -120,17 +134,27 @@ async def submit_review(
 
 
 @router.get("/api/reviews")
-async def list_reviews(status: str | None = None) -> JSONResponse:
+async def list_reviews(request: Request, status: str | None = None) -> JSONResponse:
     """List reviews, optionally filtered by ``?status=``."""
+    get_current_user(request)  # enforce authentication
+
+    # Accept common short-hand aliases so callers can use e.g. ``?status=pending``.
+    _STATUS_ALIASES: dict[str, str] = {
+        "pending": "pending_review",
+        "changes": "changes_requested",
+    }
+
     filter_status: ReviewStatus | None = None
     if status is not None:
+        canonical = _STATUS_ALIASES.get(status, status)
         try:
-            filter_status = ReviewStatus(status)
+            filter_status = ReviewStatus(canonical)
         except ValueError:
             return JSONResponse(
                 {"error": f"Invalid status {status!r}. Valid: {[s.value for s in ReviewStatus]}"},
                 status_code=400,
             )
 
-    reviews = _store.list_reviews(status=filter_status)
+    store = _get_store()
+    reviews = store.list_reviews(status=filter_status)
     return JSONResponse([r.model_dump(mode="json") for r in reviews])
