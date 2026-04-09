@@ -9,7 +9,6 @@ Provides ``Depends()``-compatible callables for:
 
 from __future__ import annotations
 
-import logging
 import os
 from typing import Any, cast
 
@@ -38,8 +37,6 @@ _DEV_USER_DEFAULT = "dev@localhost"
 _DEV_MODE_ENV = "VAIG_WEB_DEV_MODE"
 # Comma-separated admin emails
 _ADMIN_EMAILS_ENV = "VAIG_WEB_ADMIN_EMAILS"
-
-logger = logging.getLogger(__name__)
 
 
 def get_current_user(request: Request) -> str:
@@ -75,11 +72,15 @@ def is_admin(request: Request) -> bool:
 
     Admin emails are sourced from the ``VAIG_WEB_ADMIN_EMAILS`` environment
     variable (comma-separated).  In dev mode (``VAIG_WEB_DEV_MODE=true``),
-    the admin check is bypassed — all authenticated users are treated as
-    admin.
+    the admin check is bypassed — **all** users (including unauthenticated
+    ones) are treated as admin, since this function does not call
+    ``get_current_user()``.
 
     Returns ``False`` when the admin list is empty/unset in production mode,
-    meaning no users are admin.
+    meaning no users are admin.  Also returns ``False`` when the user cannot
+    be resolved (e.g. missing IAP header without dev mode), because the
+    internal ``get_current_user()`` call raises ``HTTPException`` which is
+    caught and treated as a non-admin.
     """
     # Dev mode bypass — all authenticated users are admin
     if os.environ.get(_DEV_MODE_ENV, "").lower() in ("true", "1", "yes"):

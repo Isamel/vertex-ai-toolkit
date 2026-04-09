@@ -74,7 +74,7 @@ async def test_skills_admin_gets_200() -> None:
             return_value="admin@test.com",
         ),
         patch(
-            "vaig.web.routes.skills.is_admin",
+            "vaig.web.deps.is_admin",
             return_value=True,
         ),
         patch("vaig.web.routes.skills.get_settings") as mock_get_settings,
@@ -112,7 +112,7 @@ async def test_skills_non_admin_gets_403() -> None:
             return_value="user@test.com",
         ),
         patch(
-            "vaig.web.routes.skills.is_admin",
+            "vaig.web.deps.is_admin",
             return_value=False,
         ),
     ):
@@ -136,7 +136,7 @@ async def test_skills_empty_registry_shows_empty_state() -> None:
             return_value="admin@test.com",
         ),
         patch(
-            "vaig.web.routes.skills.is_admin",
+            "vaig.web.deps.is_admin",
             return_value=True,
         ),
         patch("vaig.web.routes.skills.get_settings") as mock_get_settings,
@@ -165,17 +165,18 @@ async def test_skills_empty_registry_shows_empty_state() -> None:
 @pytest.mark.asyncio
 @patch.dict("os.environ", {"VAIG_WEB_DEV_MODE": "true"}, clear=False)
 async def test_skills_dev_mode_bypasses_admin() -> None:
-    """In dev mode, all authenticated users get 200."""
+    """In dev mode, all authenticated users get 200.
+
+    With VAIG_WEB_DEV_MODE=true, ``is_admin()`` returns True for everyone.
+    We do NOT mock ``is_admin`` here — it should naturally return True via
+    the dev-mode bypass, proving the env var works end-to-end.
+    """
     app = create_app()
 
     with (
         patch(
             "vaig.web.routes.skills.get_current_user",
             return_value="anyone@test.com",
-        ),
-        patch(
-            "vaig.web.routes.skills.is_admin",
-            return_value=True,
         ),
         patch("vaig.web.routes.skills.get_settings") as mock_get_settings,
         patch("vaig.web.routes.skills.SkillRegistry") as mock_registry_cls,
@@ -211,7 +212,7 @@ async def test_skills_telemetry_failure_shows_dash() -> None:
             return_value="admin@test.com",
         ),
         patch(
-            "vaig.web.routes.skills.is_admin",
+            "vaig.web.deps.is_admin",
             return_value=True,
         ),
         patch("vaig.web.routes.skills.get_settings") as mock_get_settings,
@@ -257,7 +258,7 @@ async def test_skills_usage_count_from_telemetry() -> None:
             return_value="admin@test.com",
         ),
         patch(
-            "vaig.web.routes.skills.is_admin",
+            "vaig.web.deps.is_admin",
             return_value=True,
         ),
         patch("vaig.web.routes.skills.get_settings") as mock_get_settings,
@@ -281,6 +282,16 @@ async def test_skills_usage_count_from_telemetry() -> None:
             # RCA should show count of 3 somewhere in the HTML
             body = resp.text
             assert "RCA" in body
+            # The usage count is rendered inside a <td class="usage-count">
+            assert 'usage-count">' in body
+            # Extract the usage cell content and verify count value
+            import re
+
+            usage_match = re.search(
+                r'class="usage-count">\s*(\d+)\s*</td>', body,
+            )
+            assert usage_match is not None, "Usage count cell not found"
+            assert usage_match.group(1) == "3"
 
 
 # ── Nav link visibility ──────────────────────────────────────
@@ -297,10 +308,6 @@ async def test_admin_sees_skills_nav_link() -> None:
         patch(
             "vaig.web.routes.skills.get_current_user",
             return_value="admin@test.com",
-        ),
-        patch(
-            "vaig.web.routes.skills.is_admin",
-            return_value=True,
         ),
         patch(
             "vaig.web.deps.is_admin",

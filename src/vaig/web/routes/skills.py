@@ -15,7 +15,7 @@ from starlette.responses import Response
 from vaig.core.config import get_settings
 from vaig.core.telemetry import get_telemetry_collector
 from vaig.skills.registry import SkillRegistry
-from vaig.web.deps import get_current_user, is_admin
+from vaig.web.deps import get_current_user
 
 __all__: list[str] = []
 
@@ -30,11 +30,17 @@ async def skills_dashboard(request: Request) -> Response:
 
     Admin-only: returns 403 for non-admin users.  Shows installed skills
     with source indicators and aggregated usage stats from telemetry.
-    """
-    if not is_admin(request):
-        raise HTTPException(status_code=403, detail="Admin access required.")
 
+    Authentication is enforced first (401 if unauthenticated), then the
+    admin flag set by ``_AdminContextMiddleware`` is checked (403 if not
+    admin).
+    """
+    # 1. Enforce authentication — raises 401 if not authenticated
     user = get_current_user(request)
+
+    # 2. Check admin flag set by middleware — raises 403 if not admin
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin access required.")
 
     # ── Fetch skill metadata ────────────────────────────────────
     settings = get_settings()
