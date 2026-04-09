@@ -1322,6 +1322,24 @@ class RemediationConfig(BaseModel):
     """
 
 
+class ReviewConfig(BaseModel):
+    """Report review/approval gate configuration.
+
+    Controls the human review workflow that gates remediation execution.
+    When enabled, remediation commands require an approved report review
+    before execution.
+
+    Feature-flagged: disabled by default (``enabled=False``).
+    Enable explicitly with ``review.enabled = true`` in config
+    or ``VAIG_REVIEW__ENABLED=true``.
+    """
+
+    enabled: bool = False
+    """Master feature flag — review gate is disabled until explicitly enabled."""
+    require_review_for_remediation: bool = True
+    """When True, remediation is blocked until the report review is approved."""
+
+
 class ScheduleTarget(BaseModel):
     """A single GKE cluster/namespace to scan on a schedule."""
 
@@ -1461,6 +1479,7 @@ class Settings(BaseSettings):
     fleet: FleetConfig = Field(default_factory=FleetConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     remediation: RemediationConfig = Field(default_factory=RemediationConfig)
+    review: ReviewConfig = Field(default_factory=ReviewConfig)
 
     @model_validator(mode="after")
     def _bridge_platform_org_id(self) -> Settings:

@@ -20,6 +20,7 @@ import re
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -1183,3 +1184,43 @@ class HealthReport(BaseModel):
             for ce in collapsed:
                 parts.append(f"| {ce.display_time} | {ce.display_event} | {ce.severity.value} |")
         parts.append("")
+
+
+# ══════════════════════════════════════════════════════════════
+# Review / Approval Models
+# ══════════════════════════════════════════════════════════════
+
+
+class ReviewStatus(StrEnum):
+    """Status of a report or finding review."""
+
+    DRAFT = "draft"
+    PENDING_REVIEW = "pending_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    CHANGES_REQUESTED = "changes_requested"
+
+
+class FindingReview(BaseModel):
+    """Review decision for a single finding within a report."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    finding_id: str
+    status: ReviewStatus = ReviewStatus.DRAFT
+    reviewer_comment: str = ""
+    reviewed_at: datetime | None = None
+
+
+class ReportReview(BaseModel):
+    """Aggregate review for an entire health report run."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    run_id: str
+    status: ReviewStatus = ReviewStatus.DRAFT
+    reviewer: str = ""
+    finding_reviews: list[FindingReview] = Field(default_factory=list)
+    overall_comment: str = ""
+    submitted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

@@ -168,7 +168,7 @@ class TestRemediateList:
         report = _make_report_dict()
         with (
             patch("vaig.cli.commands.remediate._get_settings", return_value=settings),
-            patch("vaig.cli.commands.remediate._load_last_report", return_value=report),
+            patch("vaig.cli.commands.remediate._load_last_report", return_value=(report, "test-run-id")),
         ):
             res = runner.invoke(cli_app, ["--list"])
         assert res.exit_code == 0
@@ -184,7 +184,7 @@ class TestRemediateList:
         report = _make_report_dict(recommendations=[], findings=[])
         with (
             patch("vaig.cli.commands.remediate._get_settings", return_value=settings),
-            patch("vaig.cli.commands.remediate._load_last_report", return_value=report),
+            patch("vaig.cli.commands.remediate._load_last_report", return_value=(report, "test-run-id")),
         ):
             res = runner.invoke(cli_app, ["--list"])
         assert res.exit_code == 0
@@ -206,7 +206,7 @@ class TestRemediateSafe:
         report = _make_report_dict()
         with (
             patch("vaig.cli.commands.remediate._get_settings", return_value=settings),
-            patch("vaig.cli.commands.remediate._load_last_report", return_value=report),
+            patch("vaig.cli.commands.remediate._load_last_report", return_value=(report, "test-run-id")),
         ):
             res = runner.invoke(cli_app, ["--finding", "crashloop-payment-svc"])
         assert res.exit_code == 0
@@ -224,7 +224,7 @@ class TestRemediateSafe:
 
         with (
             patch("vaig.cli.commands.remediate._get_settings", return_value=settings),
-            patch("vaig.cli.commands.remediate._load_last_report", return_value=report),
+            patch("vaig.cli.commands.remediate._load_last_report", return_value=(report, "test-run-id")),
             patch("vaig.cli.commands.remediate._execute_remediation") as mock_exec,
         ):
             res = runner.invoke(cli_app, ["--finding", "crashloop-payment-svc", "--approve"])
@@ -262,7 +262,7 @@ class TestRemediateBlocked:
         )
         with (
             patch("vaig.cli.commands.remediate._get_settings", return_value=settings),
-            patch("vaig.cli.commands.remediate._load_last_report", return_value=report),
+            patch("vaig.cli.commands.remediate._load_last_report", return_value=(report, "test-run-id")),
         ):
             res = runner.invoke(cli_app, ["--finding", "crashloop-payment-svc"])
         assert res.exit_code == 0
@@ -300,7 +300,7 @@ class TestRemediateReview:
         )
         with (
             patch("vaig.cli.commands.remediate._get_settings", return_value=settings),
-            patch("vaig.cli.commands.remediate._load_last_report", return_value=report),
+            patch("vaig.cli.commands.remediate._load_last_report", return_value=(report, "test-run-id")),
         ):
             res = runner.invoke(cli_app, ["--finding", "crashloop-payment-svc"])
         assert res.exit_code == 0
@@ -329,7 +329,7 @@ class TestRemediateReview:
         )
         with (
             patch("vaig.cli.commands.remediate._get_settings", return_value=settings),
-            patch("vaig.cli.commands.remediate._load_last_report", return_value=report),
+            patch("vaig.cli.commands.remediate._load_last_report", return_value=(report, "test-run-id")),
             patch("vaig.cli.commands.remediate._execute_remediation") as mock_exec,
         ):
             res = runner.invoke(cli_app, ["--finding", "crashloop-payment-svc", "--execute"])
@@ -351,7 +351,7 @@ class TestRemediateDryRun:
         report = _make_report_dict()
         with (
             patch("vaig.cli.commands.remediate._get_settings", return_value=settings),
-            patch("vaig.cli.commands.remediate._load_last_report", return_value=report),
+            patch("vaig.cli.commands.remediate._load_last_report", return_value=(report, "test-run-id")),
         ):
             res = runner.invoke(
                 cli_app,
@@ -377,7 +377,7 @@ class TestFindingNotFound:
         report = _make_report_dict()
         with (
             patch("vaig.cli.commands.remediate._get_settings", return_value=settings),
-            patch("vaig.cli.commands.remediate._load_last_report", return_value=report),
+            patch("vaig.cli.commands.remediate._load_last_report", return_value=(report, "test-run-id")),
         ):
             res = runner.invoke(cli_app, ["--finding", "nonexistent-finding-id"])
         assert res.exit_code == 1
@@ -399,7 +399,7 @@ class TestFindingByIndex:
         report = _make_report_dict()
         with (
             patch("vaig.cli.commands.remediate._get_settings", return_value=settings),
-            patch("vaig.cli.commands.remediate._load_last_report", return_value=report),
+            patch("vaig.cli.commands.remediate._load_last_report", return_value=(report, "test-run-id")),
         ):
             res = runner.invoke(cli_app, ["--finding", "1", "--dry-run"])
         assert res.exit_code == 0
@@ -426,7 +426,7 @@ class TestRemediateExecution:
 
         with (
             patch("vaig.cli.commands.remediate._get_settings", return_value=settings),
-            patch("vaig.cli.commands.remediate._load_last_report", return_value=report),
+            patch("vaig.cli.commands.remediate._load_last_report", return_value=(report, "test-run-id")),
             patch("vaig.core.remediation.RemediationExecutor") as mock_exec_cls,
             patch("vaig.core.event_bus.EventBus", return_value=MagicMock()),
             patch("vaig.core.gke.build_gke_config", return_value=MagicMock()),
@@ -451,7 +451,7 @@ class TestRemediateExecution:
 
         with (
             patch("vaig.cli.commands.remediate._get_settings", return_value=settings),
-            patch("vaig.cli.commands.remediate._load_last_report", return_value=report),
+            patch("vaig.cli.commands.remediate._load_last_report", return_value=(report, "test-run-id")),
             patch("vaig.core.remediation.RemediationExecutor") as mock_exec_cls,
             patch("vaig.core.event_bus.EventBus", return_value=MagicMock()),
             patch("vaig.core.gke.build_gke_config", return_value=MagicMock()),
