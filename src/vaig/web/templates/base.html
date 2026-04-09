@@ -34,6 +34,7 @@
                 <a href="/live" class="nav-link">Live</a>
                 <a href="/sessions" class="nav-link">Sessions</a>
                 <a href="/settings" class="nav-link">Settings</a>
+                {% if request.state.is_admin %}<a href="/portal/skills" class="nav-link">Skills</a>{% endif %}
                 <button type="button" class="theme-toggle" id="theme-toggle"
                         aria-label="Toggle dark/light theme" title="Toggle theme">
                     🌙

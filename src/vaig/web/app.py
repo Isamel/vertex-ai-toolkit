@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import traceback
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -11,6 +12,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from vaig import __version__
@@ -20,6 +22,27 @@ _TEMPLATES_DIR = _WEB_DIR / "templates"
 _STATIC_DIR = _WEB_DIR / "static"
 
 logger = logging.getLogger(__name__)
+
+
+class _AdminContextMiddleware(BaseHTTPMiddleware):
+    """Inject ``request.state.is_admin`` for every request.
+
+    Templates can use ``request.state.is_admin`` to conditionally
+    render admin-only UI elements (e.g. the Skills nav link).
+    """
+
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint,
+    ) -> Response:
+        try:
+            from vaig.web.deps import is_admin
+
+            request.state.is_admin = is_admin(request)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:  # noqa: BLE001
+            request.state.is_admin = False
+        return await call_next(request)
 
 
 @asynccontextmanager
@@ -44,6 +67,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("Scheduler engine attached to app (lifespan)")
     except Exception:  # noqa: BLE001
         logger.warning("Scheduler engine not started — schedule feature unavailable", exc_info=True)
+
+    # Warn if no admin emails are configured and dev mode is off
+    if not os.environ.get("VAIG_WEB_ADMIN_EMAILS") and not os.environ.get("VAIG_WEB_DEV_MODE"):
+        logger.warning(
+            "VAIG_WEB_ADMIN_EMAILS is empty — no users will have admin access to /portal/skills",
+        )
 
     yield
 
@@ -71,6 +100,9 @@ def create_app() -> FastAPI:
     # Jinja2 templates — stored on app.state for route access
     app.state.templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
+    # Admin context middleware — injects request.state.is_admin
+    app.add_middleware(_AdminContextMiddleware)
+
     # Register routes
     from vaig.web.routes.annotations import router as annotations_router
     from vaig.web.routes.ask import router as ask_router
@@ -81,6 +113,7 @@ def create_app() -> FastAPI:
     from vaig.web.routes.schedules import router as schedules_router
     from vaig.web.routes.settings import router as settings_router
     from vaig.web.routes.sharing import router as sharing_router
+    from vaig.web.routes.skills import router as skills_router
 
     app.include_router(health_router)
     app.include_router(pages_router)
@@ -91,6 +124,7 @@ def create_app() -> FastAPI:
     app.include_router(schedules_router)
     app.include_router(sharing_router)
     app.include_router(annotations_router)
+    app.include_router(skills_router)
 
     # Ollama-compatible proxy — always registered so that Ollama
     # clients receive a JSON 404 when disabled instead of HTML.
