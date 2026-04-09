@@ -1,47 +1,90 @@
 /**
  * VAIG VS Code Extension — entry point.
  *
- * Stub for Phase 1-2. Full implementation in Phase 4 (task 4.1).
+ * Wires together:
+ *   - ConnectionManager (health polling, state machine)
+ *   - StatusBarManager (visual connection indicator)
+ *   - ReportPanelManager (WebView for diagnosis reports)
+ *   - Commands: connect, liveDiagnosis, openReport
+ *
+ * All disposables are pushed to `context.subscriptions` so VS Code
+ * cleans them up automatically on deactivation.
  */
 
 import * as vscode from "vscode";
 
 import { getConfig } from "./config.js";
+import { createConnectCommand } from "./commands/connect.js";
+import { createLiveDiagnosisCommand } from "./commands/run-live.js";
+import type { ReportStore } from "./commands/run-live.js";
+import { createOpenReportCommand } from "./commands/open-report.js";
 import { ConnectionManager } from "./server/connection.js";
+import { StatusBarManager } from "./ui/status-bar.js";
+import { ReportPanelManager } from "./ui/report-panel.js";
 
 export function activate(context: vscode.ExtensionContext): void {
-  const outputChannel = vscode.window.createOutputChannel("VAIG");
-  outputChannel.appendLine("VAIG extension activating…");
+  const outputChannel = vscode.window.createOutputChannel("VAIG Diagnosis");
+  outputChannel.appendLine("VAIG extension activating...");
+
+  // ── Core services ──────────────────────────────────────────
 
   const connectionManager = new ConnectionManager();
-  context.subscriptions.push(connectionManager);
+  const statusBarManager = new StatusBarManager(connectionManager);
+  const reportPanelManager = new ReportPanelManager();
 
-  // Auto-connect if configured.
+  // Mutable store for the last captured report (shared between commands).
+  const reportStore: ReportStore = { lastReport: null };
+
+  // ── Commands ───────────────────────────────────────────────
+
+  const connectCmd = vscode.commands.registerCommand(
+    "vaig.connect",
+    createConnectCommand(connectionManager),
+  );
+
+  const liveDiagnosisCmd = vscode.commands.registerCommand(
+    "vaig.liveDiagnosis",
+    createLiveDiagnosisCommand(
+      connectionManager,
+      reportPanelManager,
+      reportStore,
+      outputChannel,
+    ),
+  );
+
+  const openReportCmd = vscode.commands.registerCommand(
+    "vaig.openReport",
+    createOpenReportCommand(reportPanelManager, reportStore),
+  );
+
+  // ── Register all disposables ───────────────────────────────
+
+  context.subscriptions.push(
+    connectionManager,
+    statusBarManager,
+    reportPanelManager,
+    outputChannel,
+    connectCmd,
+    liveDiagnosisCmd,
+    openReportCmd,
+  );
+
+  // ── Auto-connect ───────────────────────────────────────────
+
   const config = getConfig();
   if (config.autoConnect) {
+    outputChannel.appendLine(
+      `Auto-connecting to ${config.serverUrl}...`,
+    );
     void connectionManager.connect();
   }
 
-  // Placeholder command registrations — full implementation in Phase 3-4.
-  context.subscriptions.push(
-    vscode.commands.registerCommand("vaig.connect", () => {
-      void connectionManager.connect();
-    }),
-    vscode.commands.registerCommand("vaig.liveDiagnosis", () => {
-      void vscode.window.showInformationMessage(
-        "Live diagnosis — coming in Phase 3",
-      );
-    }),
-    vscode.commands.registerCommand("vaig.openReport", () => {
-      void vscode.window.showInformationMessage(
-        "Report viewer — coming in Phase 3",
-      );
-    }),
+  outputChannel.appendLine(
+    `VAIG extension activated (server: ${config.serverUrl})`,
   );
-
-  outputChannel.appendLine(`VAIG extension activated (server: ${config.serverUrl})`);
 }
 
 export function deactivate(): void {
-  // Disposables registered via context.subscriptions are cleaned up by VS Code.
+  // All disposables registered via context.subscriptions are
+  // cleaned up automatically by VS Code.
 }
