@@ -53,7 +53,6 @@ export interface SSEEvent {
 export interface VaigConfig {
   readonly serverUrl: string;
   readonly autoConnect: boolean;
-  readonly devMode: boolean;
 }
 
 // ── Report ──────────────────────────────────────────────────

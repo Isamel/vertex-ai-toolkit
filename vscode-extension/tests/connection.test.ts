@@ -21,7 +21,6 @@ vi.mock("../src/config.js", () => ({
   getConfig: vi.fn(() => ({
     serverUrl: "http://localhost:8080",
     autoConnect: true,
-    devMode: true,
   })),
 }));
 
@@ -47,7 +46,6 @@ describe("ConnectionManager", () => {
     vi.mocked(getConfig).mockReturnValue({
       serverUrl: "http://localhost:8080",
       autoConnect: true,
-      devMode: true,
     });
     manager = new ConnectionManager();
   });

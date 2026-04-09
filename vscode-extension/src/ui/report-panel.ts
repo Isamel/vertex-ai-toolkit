@@ -30,7 +30,7 @@ export class ReportPanelManager implements vscode.Disposable {
   show(html: string): void {
     if (this.panel) {
       // Reuse existing panel — update content and bring to front.
-      this.panel.webview.html = this.wrapHtml(html, this.panel.webview);
+      this.panel.webview.html = this.wrapHtml(html);
       this.panel.reveal(vscode.ViewColumn.One);
       return;
     }
@@ -46,7 +46,7 @@ export class ReportPanelManager implements vscode.Disposable {
       },
     );
 
-    this.panel.webview.html = this.wrapHtml(html, this.panel.webview);
+    this.panel.webview.html = this.wrapHtml(html);
 
     // Track lifecycle — null out reference when user closes the panel.
     this.panel.onDidDispose(() => {
@@ -73,13 +73,7 @@ export class ReportPanelManager implements vscode.Disposable {
    * `unsafe-inline`. External scripts are limited to jsdelivr CDN
    * (for Mermaid rendering).
    */
-  private wrapHtml(rawHtml: string, webview: vscode.Webview): string {
-    // Generate a nonce for additional CSP flexibility (not used for
-    // inline scripts, but available if we add extension-owned scripts).
-    const _webview = webview; // retain reference for future nonce use
-
-    void _webview;
-
+  private wrapHtml(rawHtml: string): string {
     const csp = [
       "default-src 'none'",
       "script-src 'unsafe-inline' https://cdn.jsdelivr.net",
@@ -88,12 +82,12 @@ export class ReportPanelManager implements vscode.Disposable {
       "font-src https:",
     ].join("; ");
 
-    // If the HTML already has a <head>, inject CSP there.
+    // If the HTML already has a <head>, inject CSP there (case-insensitive).
     // Otherwise, wrap with a minimal document.
-    if (rawHtml.includes("<head>")) {
+    if (/<head\b[^>]*>/i.test(rawHtml)) {
       return rawHtml.replace(
-        "<head>",
-        `<head>\n<meta http-equiv="Content-Security-Policy" content="${csp}">`,
+        /<head\b[^>]*>/i,
+        `$&\n<meta http-equiv="Content-Security-Policy" content="${csp}">`,
       );
     }
 

@@ -28,7 +28,6 @@ describe("config", () => {
       expect(cfg).toEqual({
         serverUrl: "http://localhost:8080",
         autoConnect: true,
-        devMode: true,
       });
     });
 
@@ -76,7 +75,6 @@ describe("config", () => {
           const overrides: Record<string, unknown> = {
             serverUrl: "https://prod.example.com",
             autoConnect: false,
-            devMode: false,
           };
           return overrides[key];
         }),
@@ -90,7 +88,6 @@ describe("config", () => {
       expect(cfg).toEqual({
         serverUrl: "https://prod.example.com",
         autoConnect: false,
-        devMode: false,
       });
     });
 

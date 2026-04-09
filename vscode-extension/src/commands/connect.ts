@@ -5,7 +5,7 @@
  *   - Shows InputBox pre-filled with current `vaig.serverUrl`.
  *   - Validates URL format before attempting connection.
  *   - On success: updates the `vaig.serverUrl` setting globally.
- *   - On failure: shows error message with option to retry.
+ *   - On failure: shows error message with option to change the URL.
  *   - If already connected to the SAME URL: shows info message.
  */
 
@@ -64,10 +64,9 @@ export function createConnectCommand(
       const action = await vscode.window.showErrorMessage(
         `Failed to connect to VAIG: ${message}`,
         "Change URL",
-        "Retry",
       );
 
-      if (action === "Change URL" || action === "Retry") {
+      if (action === "Change URL") {
         // Re-run the command — recursive via command palette.
         await vscode.commands.executeCommand("vaig.connect");
       }

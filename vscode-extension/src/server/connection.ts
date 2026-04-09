@@ -4,7 +4,7 @@
  * Lifecycle:
  *   disconnected → connecting → connected → disconnected (on failure)
  *
- * Health polling runs on a `setInterval` at 10s when connected.
+ * Health polling runs on a `setTimeout` at 10s when connected.
  * On failure, retries with exponential backoff (10 → 20 → 40 → 60s cap).
  * Emits `onDidChangeState` for the status bar and commands to react.
  *
@@ -41,6 +41,8 @@ export class ConnectionManager implements vscode.Disposable {
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private currentBackoff = INITIAL_BACKOFF_MS;
   private disposed = false;
+  private _isPolling = false;
+  private _abortController: AbortController | null = null;
 
   constructor() {
     this._serverUrl = getConfig().serverUrl;
@@ -75,19 +77,24 @@ export class ConnectionManager implements vscode.Disposable {
    * reads the current `vaig.serverUrl` configuration value.
    */
   async connect(url?: string): Promise<void> {
+    if (this._isPolling) return;
+
     if (url) {
       this._serverUrl = url;
     } else {
       this._serverUrl = getConfig().serverUrl;
     }
 
+    this._abortController = new AbortController();
     this.setState("connecting");
     await this.poll();
   }
 
-  /** Stop polling and transition to disconnected. */
+  /** Stop polling, cancel in-flight health checks, and transition to disconnected. */
   disconnect(): void {
     this.clearTimer();
+    this._abortController?.abort();
+    this._abortController = null;
     this._serverVersion = undefined;
     this.currentBackoff = INITIAL_BACKOFF_MS;
     this.setState("disconnected");
@@ -116,8 +123,9 @@ export class ConnectionManager implements vscode.Disposable {
    * On failure → disconnected, double backoff (capped), schedule retry.
    */
   private async poll(): Promise<void> {
-    if (this.disposed) return;
+    if (this.disposed || this._isPolling) return;
 
+    this._isPolling = true;
     try {
       const health = await this.client.checkHealth(this._serverUrl);
       this._serverVersion = health.version;
@@ -132,6 +140,8 @@ export class ConnectionManager implements vscode.Disposable {
         this.currentBackoff * 2,
         MAX_BACKOFF_MS,
       );
+    } finally {
+      this._isPolling = false;
     }
   }
 

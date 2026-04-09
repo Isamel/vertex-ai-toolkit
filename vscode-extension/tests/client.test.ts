@@ -229,7 +229,7 @@ describe("VaigClient", () => {
       expect(body).toContain("cluster=prod-1");
     });
 
-    it("sends X-Dev-Mode header when devMode is true", async () => {
+    it("does not send X-Dev-Mode header", async () => {
       vi.stubGlobal(
         "fetch",
         vi.fn().mockResolvedValue({
@@ -243,14 +243,13 @@ describe("VaigClient", () => {
       for await (const _ of client.streamLiveDiagnosis(
         "http://localhost:8080",
         { service_name: "svc" },
-        true, // devMode
       )) {
         /* drain */
       }
 
       const callArgs = vi.mocked(fetch).mock.calls[0]!;
       const headers = callArgs[1]?.headers as Record<string, string>;
-      expect(headers["X-Dev-Mode"]).toBe("true");
+      expect(headers["X-Dev-Mode"]).toBeUndefined();
     });
 
     it("throws on HTTP error response", async () => {

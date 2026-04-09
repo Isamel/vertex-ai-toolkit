@@ -82,7 +82,6 @@ export class VaigClient {
   async *streamLiveDiagnosis(
     baseUrl: string,
     params: LiveDiagnosisParams,
-    devMode = false,
   ): AsyncGenerator<SSEEvent, void, undefined> {
     // Prepare form body — only include defined fields.
     const formData = new URLSearchParams();
@@ -101,9 +100,6 @@ export class VaigClient {
       "Content-Type": "application/x-www-form-urlencoded",
       Accept: "text/event-stream",
     };
-    if (devMode) {
-      headers["X-Dev-Mode"] = "true";
-    }
 
     const res = await fetch(url, {
       method: "POST",
@@ -187,6 +183,12 @@ export class VaigClient {
         if (result.value) {
           parser.feed(decoder.decode(result.value, { stream: true }));
         }
+      }
+
+      // Flush any remaining bytes from the TextDecoder.
+      const remainingText = decoder.decode();
+      if (remainingText) {
+        parser.feed(remainingText);
       }
 
       // Drain remaining queued events after stream ends.

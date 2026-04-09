@@ -14,7 +14,6 @@
 
 import * as vscode from "vscode";
 
-import { getConfig } from "../config.js";
 import type { ConnectionManager } from "../server/connection.js";
 import type { ReportPanelManager } from "../ui/report-panel.js";
 import type { ReportData, SSEEvent } from "../types.js";
@@ -63,7 +62,6 @@ export function createLiveDiagnosisCommand(
     // User pressed Escape or empty.
     if (!serviceName) return;
 
-    const config = getConfig();
     const client = connectionManager.httpClient;
 
     // Clear and show the output channel.
@@ -81,7 +79,6 @@ export function createLiveDiagnosisCommand(
       const stream = client.streamLiveDiagnosis(
         connectionManager.serverUrl,
         { service_name: serviceName },
-        config.devMode,
       );
 
       for await (const event of stream) {
@@ -124,15 +121,16 @@ function handleSSEEvent(
 ): void {
   switch (event.event) {
     case "agent_start": {
-      const name = String(event.data["name"] ?? "unknown");
+      const name = String(event.data["agent"] ?? "unknown");
       const index = Number(event.data["index"] ?? 0);
-      const total = Number(event.data["total"] ?? "?");
+      const totalValue = Number(event.data["total"]);
+      const total = Number.isFinite(totalValue) ? String(totalValue) : "?";
       outputChannel.appendLine(`▶ Agent ${name} (${index + 1}/${total})`);
       break;
     }
 
     case "agent_end": {
-      const name = String(event.data["name"] ?? "unknown");
+      const name = String(event.data["agent"] ?? "unknown");
       outputChannel.appendLine(`✓ Agent ${name} completed`);
       break;
     }

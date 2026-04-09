@@ -102,7 +102,6 @@ const defaultConfigValues: Record<string, Record<string, unknown>> = {
   vaig: {
     serverUrl: "http://localhost:8080",
     autoConnect: true,
-    devMode: true,
   },
 };
 

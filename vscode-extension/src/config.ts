@@ -18,7 +18,6 @@ export function getConfig(): VaigConfig {
   return {
     serverUrl: cfg.get<string>("serverUrl", "http://localhost:8080"),
     autoConnect: cfg.get<boolean>("autoConnect", true),
-    devMode: cfg.get<boolean>("devMode", true),
   };
 }
 
