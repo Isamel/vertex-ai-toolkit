@@ -23,3 +23,9 @@ variable "timeout" {
   type        = number
   default     = 120
 }
+
+variable "vaig_path" {
+  description = "Path to the vaig binary. Override if vaig is not on PATH."
+  type        = string
+  default     = "vaig"
+}

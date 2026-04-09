@@ -20,6 +20,7 @@ data "external" "vaig_health" {
     cluster   = var.cluster
     project   = var.project
     timeout   = tostring(var.timeout)
+    vaig_path = var.vaig_path
   }
 }
 

@@ -21,10 +21,12 @@ EOF
   exit 2
 }
 
-# ── prerequisite checks ─────────────────────────────────────────────────────
+# ── prerequisite checks (pre-stdin) ──────────────────────────────────────────
 
-command -v vaig >/dev/null 2>&1 || error_json "vaig not found — install with: pip install vaig"
 command -v jq   >/dev/null 2>&1 || error_json "jq not found — install jq to parse Terraform input"
+
+GCLOUD_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null || true)
+[[ -z "$GCLOUD_ACCOUNT" ]] && error_json "no active gcloud account — run: gcloud auth login"
 
 # ── read Terraform stdin JSON ────────────────────────────────────────────────
 
@@ -34,6 +36,11 @@ NAMESPACE=$(echo "$INPUT" | jq -r '.namespace // empty')
 CLUSTER=$(echo "$INPUT"   | jq -r '.cluster   // empty')
 PROJECT=$(echo "$INPUT"   | jq -r '.project   // empty')
 TIMEOUT=$(echo "$INPUT"   | jq -r '.timeout   // "120"')
+VAIG_BIN=$(echo "$INPUT"  | jq -r '.vaig_path // "vaig"')
+
+# ── prerequisite check (post-stdin) ─────────────────────────────────────────
+
+command -v "$VAIG_BIN" >/dev/null 2>&1 || error_json "${VAIG_BIN} not found — install with: pip install vaig"
 
 # ── build vaig check arguments ──────────────────────────────────────────────
 
@@ -46,7 +53,7 @@ ARGS+=(--cached)
 
 # ── invoke vaig check ───────────────────────────────────────────────────────
 
-OUTPUT=$(vaig check "${ARGS[@]}" 2>/dev/null) || {
+OUTPUT=$("$VAIG_BIN" check "${ARGS[@]}" 2>/dev/null) || {
   rc=$?
   # If vaig check wrote valid JSON to stdout, forward it even on non-zero exit
   if echo "$OUTPUT" | jq . >/dev/null 2>&1; then
