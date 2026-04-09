@@ -166,6 +166,7 @@ from vaig.cli.commands import (  # noqa: E402, I001
     ask as _ask_mod,
     auth as _auth_mod,
     chat as _chat_mod,
+    check as _check_mod,
     compare as _compare_mod,
     discover as _discover_mod,
     doctor as _doctor_mod,
@@ -189,6 +190,7 @@ from vaig.cli.commands.incident_cmd import incident_app  # noqa: E402
 from vaig.cli.commands.train import train_app  # noqa: E402
 
 _auth_mod.register(app)
+_check_mod.register(app)
 _chat_mod.register(app)
 _ask_mod.register(app)
 _live_mod.register(app)
