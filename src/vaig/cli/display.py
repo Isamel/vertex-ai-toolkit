@@ -592,6 +592,99 @@ def print_cost_breakdown_table(
     con.print()
 
 
+# ── Trend Analysis Table ─────────────────────────────────────
+
+_DIRECTION_SYMBOLS: dict[str, str] = {
+    "increasing": "↑",
+    "decreasing": "↓",
+    "stable": "→",
+    "new": "🆕",
+}
+
+_TREND_SEVERITY_STYLE: dict[str, str] = {
+    "critical": "bold red",
+    "warning": "yellow",
+    "info": "green",
+}
+
+
+def print_trend_analysis_table(
+    report: HealthReport,
+    *,
+    console: Console | None = None,
+) -> None:
+    """Render a trend analysis table from anomaly detection data.
+
+    Extracts data from ``report.metadata.trends`` when available.
+    If no trend data exists the function returns silently
+    (never crashes).
+
+    Args:
+        report: A parsed ``HealthReport`` instance.
+        console: Optional Rich Console; defaults to module-level instance.
+    """
+    con = console or _default_console
+
+    trends_data = getattr(report.metadata, "trends", None) if report.metadata else None
+    if trends_data is None:
+        return
+
+    trend_list = getattr(trends_data, "trends", None) or []
+    if not trend_list:
+        return
+
+    con.print(Rule("📈 Anomaly Trends", style="green"))
+    con.print()
+
+    table = Table(
+        show_header=True,
+        header_style="bold",
+        show_lines=False,
+        pad_edge=True,
+        expand=True,
+    )
+    table.add_column("Service", style="cyan", min_width=20)
+    table.add_column("Metric", min_width=14)
+    table.add_column("Direction", justify="center", min_width=10)
+    table.add_column("Change %", justify="right", min_width=10)
+    table.add_column("Days to Limit", justify="right", min_width=14)
+    table.add_column("Severity", justify="center", min_width=10)
+
+    for trend in trend_list:
+        svc = trend.service_name or "—"
+        metric = trend.metric or "—"
+        arrow = _DIRECTION_SYMBOLS.get(trend.direction, "?")
+        direction_display = f"{arrow} {trend.direction}"
+
+        change_pct = (
+            f"{trend.rate_of_change_percent:+.1f}%"
+            if trend.rate_of_change_percent is not None
+            else "—"
+        )
+
+        days_str = (
+            f"{trend.days_to_threshold:.0f}d"
+            if trend.days_to_threshold is not None
+            else "—"
+        )
+
+        sev_style = _TREND_SEVERITY_STYLE.get(trend.severity, "dim")
+        severity_text = Text(trend.severity.upper(), style=sev_style)
+
+        table.add_row(svc, metric, direction_display, change_pct, days_str, severity_text)
+
+    # Summary footer
+    anomalies = getattr(trends_data, "anomalies_detected", 0)
+    services = getattr(trends_data, "services_analyzed", 0)
+
+    table.add_section()
+    summary = f"{anomalies} anomal{'y' if anomalies == 1 else 'ies'} detected across {services} service{'s' if services != 1 else ''}"
+    table.add_row(Text(summary, style="bold"), "", "", "", "", "")
+
+    con.print(table)
+    con.print()
+
+
 # ── Severity Detail Blocks ───────────────────────────────────
 
 # Emoji & label for severity detail rendering (extends the schema map)

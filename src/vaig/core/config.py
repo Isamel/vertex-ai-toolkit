@@ -547,6 +547,53 @@ class DatadogAPIConfig(BaseModel):
         return self
 
 
+class TrendConfig(BaseModel):
+    """Configuration for anomaly trend detection.
+
+    Controls whether trend analysis is enabled and defines the baseline
+    windows and severity thresholds used to classify metric changes.
+    """
+
+    enabled: bool = False
+    baseline_days: list[int] = Field(
+        default_factory=lambda: [7],
+        description="Baseline window sizes in days. Max 42 (Cloud Monitoring retention limit).",
+    )
+    memory_warning_pct: float = Field(
+        default=10.0, description="Memory % increase over baseline to trigger warning"
+    )
+    memory_critical_pct: float = Field(
+        default=25.0, description="Memory % increase over baseline to trigger critical"
+    )
+    cpu_warning_pct: float = Field(
+        default=20.0, description="CPU % increase over baseline to trigger warning"
+    )
+    cpu_critical_pct: float = Field(
+        default=50.0, description="CPU % increase over baseline to trigger critical"
+    )
+    restart_warning_count: int = Field(
+        default=5, description="Absolute restart delta over baseline to trigger warning"
+    )
+    restart_critical_count: int = Field(
+        default=15, description="Absolute restart delta over baseline to trigger critical"
+    )
+    memory_limit_gib: float = Field(
+        default=4.0, description="Assumed memory limit in GiB for days-to-threshold projection"
+    )
+
+    @field_validator("baseline_days")
+    @classmethod
+    def _validate_baseline_days(cls, v: list[int]) -> list[int]:
+        for d in v:
+            if d > 42:  # noqa: PLR2004
+                msg = f"baseline_days value {d} exceeds Cloud Monitoring retention limit of 42 days"
+                raise ValueError(msg)
+            if d < 1:
+                msg = f"baseline_days value {d} must be at least 1"
+                raise ValueError(msg)
+        return v
+
+
 class GKEConfig(BaseModel):
     """GKE live-cluster connection and query configuration."""
 
@@ -598,6 +645,9 @@ class GKEConfig(BaseModel):
     # the 5 tool functions from hanging ~84s when that cluster is
     # unreachable, while still being generous enough for normal queries.
     argo_request_timeout: int = 10
+    # Anomaly trend detection — compares current metrics against historical
+    # Cloud Monitoring baselines to detect slowly-degrading services.
+    trends: TrendConfig = Field(default_factory=TrendConfig)
 
 
 class OllamaConfig(BaseModel):

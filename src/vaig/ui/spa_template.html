@@ -556,6 +556,38 @@
   }
   .gke-container-name:first-child { margin-top: 2px; }
 
+  /* ── Anomaly Trends ───────────────────────────────────────── */
+  .trend-summary-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px; margin-bottom: 16px;
+  }
+  .trend-summary-card {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px;
+    border-left: 3px solid var(--info);
+  }
+  .trend-summary-card.has-anomalies { border-left-color: var(--critical); }
+  .trend-summary-card .trend-card-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin-bottom: 4px; }
+  .trend-summary-card .trend-card-value { font-size: 26px; font-weight: 800; color: var(--info); line-height: 1.1; font-family: var(--font-mono); }
+  .trend-summary-card.has-anomalies .trend-card-value { color: var(--critical); }
+  .trend-summary-card .trend-card-sub { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+  .trend-table {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+  }
+  .trend-table th {
+    text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text-dim); border-bottom: 1px solid var(--border);
+  }
+  .trend-table td {
+    padding: 8px 12px; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  }
+  .trend-table tr:hover td { background: var(--bg-hover); }
+  .trend-sev { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; }
+  .trend-sev.critical { background: color-mix(in srgb, var(--critical) 25%, transparent); color: var(--critical); }
+  .trend-sev.warning  { background: color-mix(in srgb, var(--medium) 25%, transparent); color: var(--medium); }
+  .trend-sev.info     { background: color-mix(in srgb, var(--info) 25%, transparent); color: var(--info); }
+  .trend-direction { font-family: var(--font-mono); }
+
   /* ── Tool Usage ────────────────────────────────────────────── */
   .tool-usage-section { margin-top: 8px; }
   .tool-bar-container { display: flex; flex-direction: column; gap: 8px; }
@@ -665,6 +697,9 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
     </a>
     <a class="nav-item" href="#section-gke-cost" onclick="setActiveNav(this)" id="nav-gke-cost-item" style="display:none">
       <span class="nav-icon">☸️</span> GKE Cost
+    </a>
+    <a class="nav-item" href="#section-trends" onclick="setActiveNav(this)" id="nav-trends-item" style="display:none">
+      <span class="nav-icon">📈</span> Trends
     </a>
     <a class="nav-item" href="#section-tools" onclick="setActiveNav(this)" id="nav-tools-item" style="display:none">
       <span class="nav-icon">🛠</span> Tool Usage
@@ -779,6 +814,18 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
           <div id="gke-cost-namespace-summaries"></div>
           <div id="gke-cost-workloads"></div>
         </div>
+      </div>
+    </section>
+
+    <!-- Anomaly Trends -->
+    <section id="section-trends" style="display:none">
+      <h2>
+        <span class="section-icon">📈</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Anomaly Trends</span>
+      </h2>
+      <div class="section-content">
+        <div class="trend-summary-grid" id="trend-summary-grid"></div>
+        <div id="trend-table-container"></div>
       </div>
     </section>
 
@@ -1098,6 +1145,75 @@ function renderCostUsage() {
       <div class="cost-card-sub">${esc(c.sub)}</div>
     </div>`
   ).join('');
+}
+
+// ── Anomaly Trends ────────────────────────────────────────────────
+function renderTrendSection() {
+  const trends = REPORT_DATA.metadata && REPORT_DATA.metadata.trends;
+  if (!trends) return;
+
+  const trendList = trends.trends || [];
+  if (!trendList.length) return;
+
+  const section = document.getElementById('section-trends');
+  const navItem = document.getElementById('nav-trends-item');
+  if (section) section.style.display = '';
+  if (navItem) navItem.style.display = '';
+
+  const anomalies = trends.anomalies_detected || 0;
+  const servicesAnalyzed = trends.services_analyzed || 0;
+  const analyzedAt = trends.analyzed_at || '';
+
+  // Summary cards
+  const summaryCards = [
+    { label: 'Anomalies Detected', value: String(anomalies), sub: 'warning + critical', hasAnomalies: anomalies > 0 },
+    { label: 'Services Analyzed', value: String(servicesAnalyzed), sub: 'across all namespaces', hasAnomalies: false },
+    { label: 'Trends Tracked', value: String(trendList.length), sub: analyzedAt ? 'as of ' + analyzedAt : '', hasAnomalies: false },
+  ];
+  const grid = document.getElementById('trend-summary-grid');
+  if (grid) {
+    grid.innerHTML = summaryCards.map(c =>
+      `<div class="trend-summary-card${c.hasAnomalies ? ' has-anomalies' : ''}">
+        <div class="trend-card-label">${esc(c.label)}</div>
+        <div class="trend-card-value">${esc(c.value)}</div>
+        <div class="trend-card-sub">${esc(c.sub)}</div>
+      </div>`
+    ).join('');
+  }
+
+  // Direction symbols
+  const dirSymbols = { increasing: '↑', decreasing: '↓', stable: '→', 'new': '🆕' };
+
+  // Trend table
+  const container = document.getElementById('trend-table-container');
+  if (container) {
+    const rows = trendList.map(t => {
+      const sev = (t.severity || 'info').toLowerCase();
+      const dir = dirSymbols[t.direction] || '?';
+      const changePct = t.rate_of_change_percent != null
+        ? (t.rate_of_change_percent > 0 ? '+' : '') + Number(t.rate_of_change_percent).toFixed(1) + '%'
+        : '—';
+      const daysStr = t.days_to_threshold != null
+        ? Math.round(t.days_to_threshold) + 'd'
+        : '—';
+      return `<tr>
+        <td>${esc(t.service_name || '—')}</td>
+        <td>${esc(t.metric || '—')}</td>
+        <td class="trend-direction">${dir} ${esc(t.direction || '—')}</td>
+        <td style="text-align:right;font-family:var(--font-mono)">${changePct}</td>
+        <td style="text-align:right;font-family:var(--font-mono)">${daysStr}</td>
+        <td><span class="trend-sev ${sev}">${sev}</span></td>
+      </tr>`;
+    }).join('');
+
+    container.innerHTML = `<table class="trend-table">
+      <thead><tr>
+        <th>Service</th><th>Metric</th><th>Direction</th>
+        <th style="text-align:right">Change %</th><th style="text-align:right">Days to Limit</th><th>Severity</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
 }
 
 // ── Tool Usage ────────────────────────────────────────────────────
@@ -1691,6 +1807,7 @@ function renderDependencies() {
   renderCostUsage();
   renderToolUsage();
   renderGKECost();
+  renderTrendSection();
   renderWatchHistory();
   renderDependencies();
   const _titleCluster = REPORT_DATA.metadata.cluster_name;

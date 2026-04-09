@@ -257,6 +257,7 @@ class TestInjectBothNone:
         gke = MagicMock()
         gke.cluster_name = "my-cluster"
         gke.project_id = "my-project"
+        gke.trends = None  # Trends are opt-in (disabled by default)
 
         _inject_report_metadata(
             report,

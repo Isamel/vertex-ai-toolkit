@@ -41,6 +41,7 @@ from vaig.cli.display import (
     print_recommendations_table,
     print_service_status_table,
     print_severity_detail_blocks,
+    print_trend_analysis_table,
     print_watch_diff_summary,
 )
 from vaig.core.cache import ToolResultCache
@@ -1237,19 +1238,23 @@ def _inject_report_metadata(
                 tool_calls=tool_calls,
             )
 
+    # ── Resolve effective namespaces (shared by cost estimation & trend analysis) ──
+    if gke_config is not None:
+        if cost_namespaces is None:
+            # Not using --all-namespaces or an explicit list, so fall back to the default namespace from config.
+            default_ns = getattr(gke_config, "default_namespace", None)
+            effective_namespaces: list[str] | None = [default_ns] if default_ns else None
+        else:
+            # An empty list from --all-namespaces means "all namespaces", which is represented by `None`.
+            # A non-empty list is an explicit filter.
+            effective_namespaces = cost_namespaces or None
+    else:
+        effective_namespaces = None
+
     # ── GKE workload cost estimation ──────────────────────────
     if gke_config is not None and getattr(metadata, "gke_cost", None) is None:
         try:
             from vaig.tools.gke.cost_estimation import fetch_workload_costs  # noqa: WPS433
-
-            if cost_namespaces is None:
-                # Not using --all-namespaces or an explicit list, so fall back to the default namespace from config.
-                default_ns = getattr(gke_config, "default_namespace", None)
-                effective_namespaces: list[str] | None = [default_ns] if default_ns else None
-            else:
-                # An empty list from --all-namespaces means "all namespaces", which is represented by `None`.
-                # A non-empty list is an explicit filter.
-                effective_namespaces = cost_namespaces or None
 
             metadata.gke_cost = fetch_workload_costs(gke_config, namespaces=effective_namespaces)
         except Exception as _gke_cost_exc:  # noqa: BLE001
@@ -1264,6 +1269,15 @@ def _inject_report_metadata(
                 )
             except Exception:  # noqa: BLE001
                 pass  # schema import failed — leave gke_cost unset
+
+    # ── Anomaly trend detection ───────────────────────────────
+    if gke_config is not None and getattr(gke_config, "trends", None) is not None and gke_config.trends.enabled:
+        try:
+            from vaig.tools.gke.trend_analysis import fetch_anomaly_trends  # noqa: WPS433
+
+            metadata.trends = fetch_anomaly_trends(gke_config, namespaces=effective_namespaces)
+        except Exception as _trend_exc:  # noqa: BLE001
+            logger.debug("Trend analysis failed: %s", _trend_exc)
 
     # ── Generated-at timestamp — ALWAYS overwrite with actual time ────────────
     metadata.generated_at = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -1524,6 +1538,7 @@ def _execute_orchestrated_skill(
                 print_service_status_table(orch_result.structured_report, console=console)
                 print_severity_detail_blocks(orch_result.structured_report, console=console)
                 print_cost_breakdown_table(orch_result.structured_report, console=console)
+                print_trend_analysis_table(orch_result.structured_report, console=console)
             if orch_result.synthesized_output:
                 print_colored_report(orch_result.synthesized_output, console=console)
             # Rich Table for recommendations (after the full report)
@@ -2216,6 +2231,7 @@ async def _async_execute_orchestrated_skill(
                 print_service_status_table(orch_result.structured_report, console=console)
                 print_severity_detail_blocks(orch_result.structured_report, console=console)
                 print_cost_breakdown_table(orch_result.structured_report, console=console)
+                print_trend_analysis_table(orch_result.structured_report, console=console)
             if orch_result.synthesized_output:
                 print_colored_report(orch_result.synthesized_output, console=console)
             # Rich Table for recommendations (after the full report)
