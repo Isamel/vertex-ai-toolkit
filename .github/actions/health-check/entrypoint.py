@@ -71,7 +71,7 @@ def parse_inputs() -> ActionInputs:
     severity level.  Exits with code 1 on validation failure.
     """
     cluster = os.environ.get("INPUT_CLUSTER", "").strip()
-    project_id = os.environ.get("INPUT_PROJECT-ID", "").strip()
+    project_id = os.environ.get("INPUT_PROJECT_ID", "").strip()
     location = os.environ.get("INPUT_LOCATION", "").strip()
 
     missing: list[str] = []
@@ -87,7 +87,7 @@ def parse_inputs() -> ActionInputs:
             print(f"Required input '{name}' not provided", file=sys.stderr)
         sys.exit(1)
 
-    fail_on = os.environ.get("INPUT_FAIL-ON", "CRITICAL").strip().upper()
+    fail_on = os.environ.get("INPUT_FAIL_ON", "CRITICAL").strip().upper()
     if fail_on not in VALID_FAIL_ON:
         print(
             f"Invalid fail-on value '{fail_on}'. Must be: CRITICAL, HIGH, MEDIUM, LOW, INFO",
@@ -100,6 +100,7 @@ def parse_inputs() -> ActionInputs:
     try:
         timeout = int(timeout_raw)
     except ValueError:
+        logger.warning("Invalid timeout value '%s', defaulting to 300", timeout_raw)
         timeout = 300
 
     return ActionInputs(
@@ -391,6 +392,8 @@ def main() -> int:
         return 1
 
     except Exception as exc:  # noqa: BLE001
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
         if hasattr(signal, "SIGALRM"):
             signal.alarm(0)
         # Detect auth failures

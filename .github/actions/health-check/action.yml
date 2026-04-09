@@ -66,3 +66,12 @@ runs:
       id: run
       shell: bash
       run: python "${{ github.action_path }}/entrypoint.py"
+      env:
+        INPUT_CLUSTER: ${{ inputs.cluster }}
+        INPUT_PROJECT_ID: ${{ inputs.project-id }}
+        INPUT_LOCATION: ${{ inputs.location }}
+        INPUT_NAMESPACE: ${{ inputs.namespace }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_MODEL: ${{ inputs.model }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+        INPUT_TIMEOUT: ${{ inputs.timeout }}

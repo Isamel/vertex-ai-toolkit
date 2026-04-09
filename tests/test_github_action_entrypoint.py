@@ -9,6 +9,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from dataclasses import dataclass, field
@@ -78,10 +79,10 @@ class TestParseInputs:
 
     def test_valid_inputs(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("INPUT_CLUSTER", "my-cluster")
-        monkeypatch.setenv("INPUT_PROJECT-ID", "my-project")
+        monkeypatch.setenv("INPUT_PROJECT_ID", "my-project")
         monkeypatch.setenv("INPUT_LOCATION", "us-central1")
         monkeypatch.setenv("INPUT_NAMESPACE", "production")
-        monkeypatch.setenv("INPUT_FAIL-ON", "HIGH")
+        monkeypatch.setenv("INPUT_FAIL_ON", "HIGH")
         monkeypatch.setenv("INPUT_MODEL", "gemini-2.5-pro")
         monkeypatch.setenv("INPUT_COMMENT", "false")
         monkeypatch.setenv("INPUT_TIMEOUT", "120")
@@ -99,11 +100,11 @@ class TestParseInputs:
 
     def test_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("INPUT_CLUSTER", "c")
-        monkeypatch.setenv("INPUT_PROJECT-ID", "p")
+        monkeypatch.setenv("INPUT_PROJECT_ID", "p")
         monkeypatch.setenv("INPUT_LOCATION", "loc")
         # Clear optional inputs
         monkeypatch.delenv("INPUT_NAMESPACE", raising=False)
-        monkeypatch.delenv("INPUT_FAIL-ON", raising=False)
+        monkeypatch.delenv("INPUT_FAIL_ON", raising=False)
         monkeypatch.delenv("INPUT_MODEL", raising=False)
         monkeypatch.delenv("INPUT_COMMENT", raising=False)
         monkeypatch.delenv("INPUT_TIMEOUT", raising=False)
@@ -119,7 +120,7 @@ class TestParseInputs:
     def test_missing_required_cluster(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """SC-08: Missing required input."""
         monkeypatch.delenv("INPUT_CLUSTER", raising=False)
-        monkeypatch.setenv("INPUT_PROJECT-ID", "p")
+        monkeypatch.setenv("INPUT_PROJECT_ID", "p")
         monkeypatch.setenv("INPUT_LOCATION", "loc")
 
         with pytest.raises(SystemExit) as exc_info:
@@ -128,7 +129,7 @@ class TestParseInputs:
 
     def test_missing_required_project(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("INPUT_CLUSTER", "c")
-        monkeypatch.delenv("INPUT_PROJECT-ID", raising=False)
+        monkeypatch.delenv("INPUT_PROJECT_ID", raising=False)
         monkeypatch.setenv("INPUT_LOCATION", "loc")
 
         with pytest.raises(SystemExit) as exc_info:
@@ -137,7 +138,7 @@ class TestParseInputs:
 
     def test_missing_required_location(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("INPUT_CLUSTER", "c")
-        monkeypatch.setenv("INPUT_PROJECT-ID", "p")
+        monkeypatch.setenv("INPUT_PROJECT_ID", "p")
         monkeypatch.delenv("INPUT_LOCATION", raising=False)
 
         with pytest.raises(SystemExit) as exc_info:
@@ -147,9 +148,9 @@ class TestParseInputs:
     def test_invalid_fail_on(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """SC-08 variant: Invalid fail-on value."""
         monkeypatch.setenv("INPUT_CLUSTER", "c")
-        monkeypatch.setenv("INPUT_PROJECT-ID", "p")
+        monkeypatch.setenv("INPUT_PROJECT_ID", "p")
         monkeypatch.setenv("INPUT_LOCATION", "loc")
-        monkeypatch.setenv("INPUT_FAIL-ON", "INVALID")
+        monkeypatch.setenv("INPUT_FAIL_ON", "INVALID")
 
         with pytest.raises(SystemExit) as exc_info:
             entrypoint.parse_inputs()
@@ -157,12 +158,28 @@ class TestParseInputs:
 
     def test_fail_on_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("INPUT_CLUSTER", "c")
-        monkeypatch.setenv("INPUT_PROJECT-ID", "p")
+        monkeypatch.setenv("INPUT_PROJECT_ID", "p")
         monkeypatch.setenv("INPUT_LOCATION", "loc")
-        monkeypatch.setenv("INPUT_FAIL-ON", "high")
+        monkeypatch.setenv("INPUT_FAIL_ON", "high")
 
         result = entrypoint.parse_inputs()
         assert result.fail_on == "HIGH"
+
+    def test_invalid_timeout_logs_warning(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Invalid timeout value logs a warning and defaults to 300."""
+        monkeypatch.setenv("INPUT_CLUSTER", "c")
+        monkeypatch.setenv("INPUT_PROJECT_ID", "p")
+        monkeypatch.setenv("INPUT_LOCATION", "loc")
+        monkeypatch.setenv("INPUT_TIMEOUT", "not-a-number")
+
+        with caplog.at_level(logging.WARNING, logger="vaig-gha"):
+            result = entrypoint.parse_inputs()
+
+        assert result.timeout == 300
+        assert "Invalid timeout value" in caplog.text
+        assert "not-a-number" in caplog.text
 
 
 # ── Task 3.2: extract_severity tests ────────────────────────────
@@ -345,9 +362,9 @@ class TestMain:
     def _setup_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Any:
         """Set up common environment for main() tests."""
         monkeypatch.setenv("INPUT_CLUSTER", "test-cluster")
-        monkeypatch.setenv("INPUT_PROJECT-ID", "test-project")
+        monkeypatch.setenv("INPUT_PROJECT_ID", "test-project")
         monkeypatch.setenv("INPUT_LOCATION", "us-central1")
-        monkeypatch.setenv("INPUT_FAIL-ON", "CRITICAL")
+        monkeypatch.setenv("INPUT_FAIL_ON", "CRITICAL")
         monkeypatch.setenv("INPUT_COMMENT", "true")
         monkeypatch.setenv("INPUT_TIMEOUT", "300")
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
@@ -428,7 +445,7 @@ class TestMain:
     ) -> None:
         """SC-03: MEDIUM finding with threshold MEDIUM → fail."""
         output_file = self._setup_env(monkeypatch, tmp_path)
-        monkeypatch.setenv("INPUT_FAIL-ON", "MEDIUM")
+        monkeypatch.setenv("INPUT_FAIL_ON", "MEDIUM")
 
         report = _FakeReport([_FakeFinding("MEDIUM")])
         mock_headless.return_value = _FakeOrchestratorResult(
@@ -620,6 +637,23 @@ class TestMain:
         assert exit_code == 0
         mock_post.assert_not_called()
 
+    @patch("entrypoint.post_comment")
+    @patch("vaig.core.headless.execute_skill_headless")
+    def test_keyboard_interrupt_re_raised(
+        self,
+        mock_headless: MagicMock,
+        mock_post: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        """KeyboardInterrupt is re-raised, not swallowed by broad except."""
+        self._setup_env(monkeypatch, tmp_path)
+
+        mock_headless.side_effect = KeyboardInterrupt
+
+        with pytest.raises(KeyboardInterrupt):
+            entrypoint.main()
+
 
 # ── Task 3.7: model input propagation ───────────────────────────
 
@@ -630,7 +664,7 @@ class TestModelInput:
     def test_model_applied_to_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Verify model input propagates to Settings.models.default."""
         monkeypatch.setenv("INPUT_CLUSTER", "c")
-        monkeypatch.setenv("INPUT_PROJECT-ID", "p")
+        monkeypatch.setenv("INPUT_PROJECT_ID", "p")
         monkeypatch.setenv("INPUT_LOCATION", "loc")
         monkeypatch.setenv("INPUT_MODEL", "gemini-2.5-pro")
 
@@ -643,7 +677,7 @@ class TestModelInput:
     def test_model_default_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Default model (gemini-2.5-flash) is applied to Settings."""
         monkeypatch.setenv("INPUT_CLUSTER", "c")
-        monkeypatch.setenv("INPUT_PROJECT-ID", "p")
+        monkeypatch.setenv("INPUT_PROJECT_ID", "p")
         monkeypatch.setenv("INPUT_LOCATION", "loc")
         monkeypatch.delenv("INPUT_MODEL", raising=False)
 
@@ -663,9 +697,9 @@ class TestErrorStatus:
     def _setup_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Any:
         """Set up common environment for main() tests."""
         monkeypatch.setenv("INPUT_CLUSTER", "test-cluster")
-        monkeypatch.setenv("INPUT_PROJECT-ID", "test-project")
+        monkeypatch.setenv("INPUT_PROJECT_ID", "test-project")
         monkeypatch.setenv("INPUT_LOCATION", "us-central1")
-        monkeypatch.setenv("INPUT_FAIL-ON", "CRITICAL")
+        monkeypatch.setenv("INPUT_FAIL_ON", "CRITICAL")
         monkeypatch.setenv("INPUT_COMMENT", "true")
         monkeypatch.setenv("INPUT_TIMEOUT", "300")
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test123")
