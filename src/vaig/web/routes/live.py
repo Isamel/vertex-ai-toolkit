@@ -222,7 +222,8 @@ async def live_stream(request: Request) -> EventSourceResponse:
                     )
 
                     async for sse_event in live_pipeline_to_sse(
-                        pipeline_coro, event_queue
+                        pipeline_coro, event_queue,
+                        gke_config=gke_config,
                     ):
                         yield sse_event
             except asyncio.CancelledError:
