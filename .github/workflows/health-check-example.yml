@@ -12,11 +12,14 @@
 #      - roles/monitoring.viewer (Cloud Monitoring)
 #      - roles/aiplatform.user (Vertex AI Gemini)
 
-name: GKE Health Check
+name: GKE Health Check (Example)
 
+# This is an EXAMPLE workflow — it only runs manually via workflow_dispatch.
+# To use it on PRs, copy this file and add a pull_request trigger:
+#   on:
+#     pull_request:
+#       branches: [main]
 on:
-  pull_request:
-    branches: [main]
   workflow_dispatch:
     inputs:
       namespace:
