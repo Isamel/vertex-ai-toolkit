@@ -110,6 +110,7 @@ def create_app() -> FastAPI:
     from vaig.web.routes.health import router as health_router
     from vaig.web.routes.live import router as live_router
     from vaig.web.routes.pages import router as pages_router
+    from vaig.web.routes.reviews import router as reviews_router
     from vaig.web.routes.schedules import router as schedules_router
     from vaig.web.routes.settings import router as settings_router
     from vaig.web.routes.sharing import router as sharing_router
@@ -125,6 +126,7 @@ def create_app() -> FastAPI:
     app.include_router(sharing_router)
     app.include_router(annotations_router)
     app.include_router(skills_router)
+    app.include_router(reviews_router)
 
     # Ollama-compatible proxy — always registered so that Ollama
     # clients receive a JSON 404 when disabled instead of HTML.

@@ -50,10 +50,11 @@ def _tier_label(tier: str) -> str:
 # ── Report loading ───────────────────────────────────────────
 
 
-def _load_last_report() -> dict[str, object] | None:
+def _load_last_report() -> tuple[dict[str, object], str] | None:
     """Load the most recent health report from the local ReportStore.
 
-    Returns the report dict or ``None`` if no reports are available.
+    Returns a ``(report_dict, run_id)`` tuple or ``None`` if no reports
+    are available.
     """
     try:
         from vaig.core.report_store import ReportStore
@@ -61,7 +62,11 @@ def _load_last_report() -> dict[str, object] | None:
         store = ReportStore()
         records = store.read_reports(last=1)
         if records:
-            return records[-1].get("report")
+            record = records[-1]
+            report = record.get("report")
+            run_id = record.get("run_id", "")
+            if report is not None:
+                return report, str(run_id)
     except (KeyboardInterrupt, SystemExit):
         raise
     except Exception:  # noqa: BLE001
@@ -169,8 +174,8 @@ def register(app: typer.Typer) -> None:
                 raise typer.Exit(code=1)
 
             # ── Load the last report ──
-            report_dict = _load_last_report()
-            if report_dict is None:
+            loaded = _load_last_report()
+            if loaded is None:
                 console.print(
                     Panel(
                         "[yellow]No health report found.[/yellow]\n\n"
@@ -182,6 +187,8 @@ def register(app: typer.Typer) -> None:
                     )
                 )
                 raise typer.Exit(code=1)
+
+            report_dict, run_id = loaded
 
             # ── Parse recommendations ──
             from vaig.skills.service_health.schema import HealthReport
@@ -211,6 +218,7 @@ def register(app: typer.Typer) -> None:
                     dry_run=dry_run,
                     execute=execute,
                     debug=debug,
+                    run_id=run_id,
                 )
                 return
 
@@ -282,6 +290,7 @@ def _handle_finding(
     dry_run: bool,
     execute: bool,
     debug: bool,
+    run_id: str = "",
 ) -> None:
     """Handle remediation of a specific finding."""
     from vaig.core.gke import build_gke_config
@@ -428,7 +437,7 @@ def _handle_finding(
             continue
 
         # ── Execute ──
-        _execute_remediation(action, classified, settings, debug=debug)
+        _execute_remediation(action, classified, settings, debug=debug, run_id=run_id)
 
 
 def _execute_remediation(
@@ -437,6 +446,7 @@ def _execute_remediation(
     settings: Settings,
     *,
     debug: bool = False,
+    run_id: str = "",
 ) -> None:
     """Execute a remediation command and display the result."""
     from vaig.core.event_bus import EventBus
@@ -445,7 +455,22 @@ def _execute_remediation(
 
     rem_config = settings.remediation
     bus = EventBus.get()
-    executor = RemediationExecutor(rem_config, bus)
+
+    # ── Wire review gate when enabled ──
+    review_store = None
+    review_config = None
+    if settings.review.enabled:
+        from vaig.core.review_store import ReviewStore
+
+        review_store = ReviewStore()
+        review_config = settings.review
+
+    executor = RemediationExecutor(
+        rem_config,
+        bus,
+        review_store=review_store,
+        review_config=review_config,
+    )
     gke_config = build_gke_config(settings)
 
     console.print("[dim]Executing...[/dim]")
@@ -457,6 +482,7 @@ def _execute_remediation(
                 classified,
                 gke_config,
                 approved=True,
+                run_id=run_id or None,
             )
         )
 

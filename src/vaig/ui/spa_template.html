@@ -638,6 +638,36 @@
     border-radius: 4px; font-family: var(--font-mono);
   }
   .watch-finding-mini .sev-tag { font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 3px; margin-right: 6px; }
+
+  /* ── Review panel ──────────────────────────────────────────── */
+  .review-badge {
+    display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 8px;
+    border-radius: 3px; letter-spacing: .4px; text-transform: uppercase; margin-left: 8px;
+  }
+  .review-badge.draft              { background: rgba(120,124,153,.2); color: var(--text-dim); }
+  .review-badge.pending_review     { background: rgba(224,175,104,.2); color: var(--medium); }
+  .review-badge.approved           { background: rgba(158,206,106,.2); color: var(--healthy); }
+  .review-badge.rejected           { background: rgba(247,118,142,.2); color: var(--critical); }
+  .review-badge.changes_requested  { background: rgba(187,154,247,.2); color: #bb9af7; }
+  .review-panel { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-top: 16px; }
+  .review-panel h3 { margin: 0 0 12px; font-size: 14px; color: var(--text-bright); }
+  .review-form-row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  .review-form-row label { font-size: 12px; color: var(--text-dim); min-width: 80px; }
+  .review-form-row select, .review-form-row textarea {
+    background: var(--bg-base); border: 1px solid var(--border); color: var(--text-main);
+    border-radius: 4px; padding: 6px 10px; font-size: 12px; font-family: var(--font-main);
+  }
+  .review-form-row select { min-width: 180px; }
+  .review-form-row textarea { flex: 1; min-height: 60px; resize: vertical; min-width: 200px; }
+  .review-btn {
+    display: inline-block; padding: 6px 16px; border: none; border-radius: 4px;
+    font-size: 12px; font-weight: 700; cursor: pointer; transition: all var(--transition);
+  }
+  .review-btn.submit { background: var(--accent); color: #1a1b26; }
+  .review-btn.submit:hover { filter: brightness(1.15); }
+  .review-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .review-status-msg { font-size: 12px; margin-top: 8px; }
+  .review-offline { color: var(--text-dim); font-size: 12px; font-style: italic; padding: 12px 0; }
 </style>
 </head>
 <body>
@@ -691,6 +721,10 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
     <a class="nav-item" href="#section-recommendations" onclick="setActiveNav(this)">
       <span class="nav-icon">✅</span> Actions
       <span class="nav-count" id="nav-recs-count"></span>
+    </a>
+    <a class="nav-item" href="#section-review" onclick="setActiveNav(this)" id="nav-review-item" style="display:none">
+      <span class="nav-icon">📋</span> Review
+      <span class="nav-count" id="nav-review-status"></span>
     </a>
     <a class="nav-item" href="#section-cost" onclick="setActiveNav(this)" id="nav-cost-item" style="display:none">
       <span class="nav-icon">💰</span> Cost &amp; Usage
@@ -790,6 +824,12 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
     <section id="section-recommendations">
       <h2><span class="section-icon">✅</span> Recommended Actions</h2>
       <div id="recs-list"></div>
+    </section>
+
+    <!-- Review -->
+    <section id="section-review" style="display:none">
+      <h2><span class="section-icon">📋</span> Report Review <span id="review-header-badge"></span></h2>
+      <div id="review-content"></div>
     </section>
 
     <!-- Cost & Usage -->
@@ -1795,6 +1835,107 @@ function renderDependencies() {
   }
 }
 
+// ── Review panel ─────────────────────────────────────────────────
+function renderReviewPanel() {
+  // Try to detect a run_id — check REPORT_DATA for any identifying info.
+  // The SPA receives report data but the run_id is external to HealthReport.
+  // When served from the web app, the page URL may contain it.
+  const urlParams = new URLSearchParams(window.location.search);
+  const runId = urlParams.get('run_id') || '';
+  if (!runId) return; // No run_id — cannot show review panel
+
+  const section = document.getElementById('section-review');
+  const navItem = document.getElementById('nav-review-item');
+  const container = document.getElementById('review-content');
+  const headerBadge = document.getElementById('review-header-badge');
+  const navStatus = document.getElementById('nav-review-status');
+
+  section.style.display = '';
+  navItem.style.display = '';
+
+  function badgeHtml(status) {
+    return `<span class="review-badge ${esc(status)}">${esc(status.replace('_', ' '))}</span>`;
+  }
+
+  function renderForm(existing) {
+    const currentStatus = existing ? existing.status : 'draft';
+    const currentComment = existing ? (existing.overall_comment || '') : '';
+
+    headerBadge.innerHTML = badgeHtml(currentStatus);
+    navStatus.textContent = currentStatus.replace('_', ' ').toUpperCase();
+
+    const statusOptions = ['draft','pending_review','approved','rejected','changes_requested'];
+    const optionsHtml = statusOptions.map(s =>
+      `<option value="${s}" ${s === currentStatus ? 'selected' : ''}>${s.replace('_',' ')}</option>`
+    ).join('');
+
+    container.innerHTML = `
+      <div class="review-panel">
+        <h3>Review for run: <code>${esc(runId)}</code></h3>
+        <div class="review-form-row">
+          <label for="review-status-select">Status</label>
+          <select id="review-status-select">${optionsHtml}</select>
+        </div>
+        <div class="review-form-row">
+          <label for="review-comment">Comment</label>
+          <textarea id="review-comment" placeholder="Add a review comment...">${esc(currentComment)}</textarea>
+        </div>
+        <div>
+          <button class="review-btn submit" id="review-submit-btn" onclick="submitReview()">Submit Review</button>
+        </div>
+        <div class="review-status-msg" id="review-status-msg"></div>
+      </div>
+    `;
+  }
+
+  // Load existing review
+  fetch(`/api/reviews/${encodeURIComponent(runId)}`)
+    .then(r => { if (r.ok) return r.json(); return null; })
+    .then(data => renderForm(data))
+    .catch(() => {
+      container.innerHTML = '<div class="review-offline">Review panel unavailable (offline mode or API not reachable).</div>';
+    });
+
+  // Submit review
+  window.submitReview = function() {
+    const statusSel = document.getElementById('review-status-select');
+    const commentEl = document.getElementById('review-comment');
+    const msgEl = document.getElementById('review-status-msg');
+    const btn = document.getElementById('review-submit-btn');
+    if (!statusSel || !commentEl) return;
+
+    btn.disabled = true;
+    msgEl.textContent = 'Submitting...';
+    msgEl.style.color = 'var(--text-dim)';
+
+    fetch(`/api/reviews/${encodeURIComponent(runId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status: statusSel.value,
+        overall_comment: commentEl.value,
+        finding_reviews: [],
+      }),
+    })
+    .then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    })
+    .then(data => {
+      msgEl.textContent = 'Review saved successfully.';
+      msgEl.style.color = 'var(--healthy)';
+      headerBadge.innerHTML = badgeHtml(data.status || statusSel.value);
+      navStatus.textContent = (data.status || statusSel.value).replace('_', ' ').toUpperCase();
+      btn.disabled = false;
+    })
+    .catch(err => {
+      msgEl.textContent = `Error: ${err.message}`;
+      msgEl.style.color = 'var(--critical)';
+      btn.disabled = false;
+    });
+  };
+}
+
 // ── Init ──────────────────────────────────────────────────────────
 (function init() {
   renderHeader();
@@ -1809,6 +1950,7 @@ function renderDependencies() {
   renderToolUsage();
   renderGKECost();
   renderTrendSection();
+  renderReviewPanel();
   renderWatchHistory();
   renderDependencies();
   const _titleCluster = REPORT_DATA.metadata.cluster_name;

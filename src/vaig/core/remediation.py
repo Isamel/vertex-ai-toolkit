@@ -27,8 +27,9 @@ from typing import TYPE_CHECKING
 from vaig.tools.shell_tools import _check_denied_command
 
 if TYPE_CHECKING:
-    from vaig.core.config import GKEConfig, RemediationConfig
+    from vaig.core.config import GKEConfig, RemediationConfig, ReviewConfig
     from vaig.core.event_bus import EventBus
+    from vaig.core.review_store import ReviewStore
     from vaig.skills.service_health.schema import RecommendedAction
     from vaig.tools.base import ToolResult
 
@@ -408,10 +409,19 @@ class RemediationExecutor:
         bus: Event bus for emitting :class:`RemediationExecuted` events.
     """
 
-    def __init__(self, config: RemediationConfig, bus: EventBus) -> None:
+    def __init__(
+        self,
+        config: RemediationConfig,
+        bus: EventBus,
+        *,
+        review_store: ReviewStore | None = None,
+        review_config: ReviewConfig | None = None,
+    ) -> None:
         self._config = config
         self._bus = bus
         self._lock = asyncio.Lock()
+        self._review_store = review_store
+        self._review_config = review_config
 
     def validate_context(
         self, report_cluster: str, gke_config: GKEConfig
@@ -432,6 +442,7 @@ class RemediationExecutor:
         *,
         dry_run: bool = False,
         approved: bool = False,
+        run_id: str | None = None,
     ) -> ToolResult:
         """Execute a classified remediation command.
 
@@ -441,6 +452,7 @@ class RemediationExecutor:
             gke_config: GKE cluster configuration for native dispatch.
             dry_run: If ``True``, return what *would* run without executing.
             approved: If ``True``, the command is approved for execution.
+            run_id: Health-report run ID used to check review approval.
 
         Returns:
             A :class:`ToolResult` with the command output or plan.
@@ -456,6 +468,21 @@ class RemediationExecutor:
 
         async with self._lock:
             cluster = gke_config.cluster_name
+
+            # ── REVIEW GATE: block if review required but not approved ──
+            if (
+                self._review_config
+                and self._review_config.enabled
+                and self._review_config.require_review_for_remediation
+                and self._review_store
+                and run_id
+                and not self._review_store.is_approved(run_id)
+            ):
+                reason = (
+                    f"Review not approved for run_id {run_id!r}. "
+                    "Submit a review approval before executing remediation."
+                )
+                return ToolResult(output=reason, error=True)
 
             # ── BLOCKED: never execute ──
             if classified.tier == SafetyTier.BLOCKED:

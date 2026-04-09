@@ -26,6 +26,7 @@ __all__ = [
     "OrchestratorToolsCompleted",
     "QuotaExceeded",
     "RemediationExecuted",
+    "ReportReviewed",
     "SessionEnded",
     "SessionStarted",
     "SkillUsed",
@@ -365,3 +366,21 @@ class RemediationExecuted(Event):
     error: str = ""
     dry_run: bool = False
     cluster: str = ""
+
+
+@dataclass(frozen=True)
+class ReportReviewed(Event):
+    """Emitted when a report review status changes (approve/reject/request changes).
+
+    Captures the review decision for the audit trail.
+
+    Attributes:
+        run_id: Unique identifier for the pipeline run being reviewed.
+        status: New review status (e.g. ``"approved"``, ``"rejected"``).
+        reviewer: Email of the reviewer who submitted the decision.
+    """
+
+    event_type: str = field(default="report.reviewed", init=False)
+    run_id: str = ""
+    status: str = ""
+    reviewer: str = ""
