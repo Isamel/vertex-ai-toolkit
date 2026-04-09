@@ -35,9 +35,14 @@ logger = logging.getLogger(__name__)
 _CACHE_DIR = Path.home() / ".cache" / "vaig" / "check"
 
 
-def _cache_key(namespace: str | None, cluster: str | None, project: str | None) -> str:
-    """SHA-256 hash of the (namespace, cluster, project) tuple."""
-    raw = f"{namespace or ''}:{cluster or ''}:{project or ''}"
+def _cache_key(
+    namespace: str | None,
+    cluster: str | None,
+    project: str | None,
+    location: str | None = None,
+) -> str:
+    """SHA-256 hash of the resolved (namespace, cluster, project, location) tuple."""
+    raw = f"{namespace or ''}:{cluster or ''}:{project or ''}:{location or ''}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -52,7 +57,7 @@ def _read_cache(key: str, ttl: int) -> CheckOutput | None:
     try:
         data = json.loads(cache_file.read_text())
         return CheckOutput(**data)
-    except Exception:  # noqa: BLE001
+    except (json.JSONDecodeError, ValueError, KeyError):
         return None
 
 
@@ -62,7 +67,7 @@ def _write_cache(key: str, output: CheckOutput) -> None:
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
         cache_file = _CACHE_DIR / f"{key}.json"
         cache_file.write_text(output.model_dump_json())
-    except Exception:  # noqa: BLE001
+    except OSError:
         logger.debug("Failed to write cache file", exc_info=True)
 
 
@@ -106,6 +111,10 @@ def register(app: typer.Typer) -> None:
             str | None,
             typer.Option("--project", "-p", help="GCP project ID (overrides config)"),
         ] = None,
+        location: Annotated[
+            str | None,
+            typer.Option("--location", "-l", help="GKE cluster location/zone/region (overrides config)"),
+        ] = None,
         timeout: Annotated[
             int,
             typer.Option("--timeout", help="Timeout in seconds for the health check pipeline"),
@@ -147,10 +156,32 @@ def register(app: typer.Typer) -> None:
             vaig check --namespace production
             vaig check --cached --cache-ttl 600
             vaig check --timeout 60 --project my-gcp-project
+            vaig check --location us-central1 --cluster my-cluster
         """
         _apply_subcommand_log_flags(verbose=verbose, debug=debug)
 
-        c_key = _cache_key(namespace, cluster, project)
+        # ── Resolve settings and GKE config FIRST for cache key ──
+        settings = _helpers._get_settings(config)
+
+        if project:
+            settings.gcp.project_id = project
+        if model:
+            settings.models.default = model
+
+        gke_config = _build_gke_config(
+            settings,
+            cluster=cluster,
+            namespace=namespace,
+            location=location,
+        )
+
+        # Cache key uses RESOLVED values (after settings/GKE defaults applied)
+        c_key = _cache_key(
+            gke_config.default_namespace,
+            gke_config.cluster_name,
+            gke_config.project_id,
+            gke_config.location,
+        )
 
         # ── Cache hit path ───────────────────────────────────
         if cached:
@@ -166,19 +197,6 @@ def register(app: typer.Typer) -> None:
 
         # ── Fresh pipeline execution ─────────────────────────
         try:
-            settings = _helpers._get_settings(config)
-
-            if project:
-                settings.gcp.project_id = project
-            if model:
-                settings.models.default = model
-
-            gke_config = _build_gke_config(
-                settings,
-                cluster=cluster,
-                namespace=namespace,
-            )
-
             from vaig.skills.service_health.skill import ServiceHealthSkill
 
             skill = ServiceHealthSkill()
@@ -191,7 +209,7 @@ def register(app: typer.Typer) -> None:
             from vaig.core.headless import execute_skill_headless
 
             async def _run_with_timeout() -> object:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 return await asyncio.wait_for(
                     loop.run_in_executor(
                         None,
@@ -225,8 +243,8 @@ def register(app: typer.Typer) -> None:
             if exit_code != 0:
                 raise SystemExit(exit_code)
 
-        except SystemExit:
-            raise  # Let SystemExit pass through
+        except (SystemExit, KeyboardInterrupt):
+            raise  # Let SystemExit and KeyboardInterrupt pass through
         except Exception as exc:  # noqa: BLE001
             err_msg = f"{type(exc).__name__}: {exc}"
             logger.error("Check command failed: %s", err_msg)

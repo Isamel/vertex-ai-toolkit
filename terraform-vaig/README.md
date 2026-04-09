@@ -2,14 +2,14 @@
 
 Gate Terraform deployments on GKE cluster health using `vaig check`.
 
-This module wraps `vaig check` as a Terraform [external data source](https://registry.terraform.io/providers/hashicorp/external/latest/docs/data-sources/external) and uses Terraform 1.5+ [`check` blocks](https://developer.hashicorp.com/terraform/language/checks) to produce a plan-time warning when the cluster is unhealthy.
+This module wraps `vaig check` as a Terraform [external data source](https://registry.terraform.io/providers/hashicorp/external/latest/docs/data-sources/external) and uses Terraform 1.5+ [`check` blocks](https://developer.hashicorp.com/terraform/language/checks) to produce a plan-time warning when the cluster is unhealthy.  The wrapper always exits 0 so the `external` data source succeeds — the `check` block reads the JSON status field to decide pass/fail.
 
 ## Prerequisites
 
 | Requirement | Minimum Version | Notes |
 |-------------|-----------------|-------|
 | Terraform   | 1.5+            | `check` block support |
-| Python      | 3.12+           | Required by `vaig` |
+| Python      | 3.11+           | Required by `vaig` |
 | `vaig`      | latest          | `pip install vaig` |
 | `jq`        | any             | Parses Terraform stdin JSON |
 | `gcloud`    | any             | Authenticated with target project |
@@ -101,11 +101,17 @@ check { assert = status == "HEALTHY" }
 
 ## Exit Codes
 
-| Code | Meaning | Terraform Behavior |
-|------|---------|-------------------|
-| 0    | Healthy | Data source succeeds |
-| 1    | Unhealthy (DEGRADED/CRITICAL) | Data source fails → plan error |
-| 2    | Error or timeout | Data source fails → plan error |
+The wrapper (`vaig-check.sh`) **always exits 0** when invoked by Terraform, because the `external` data source treats any non-zero exit as a plan failure.  Health status is communicated via the JSON `status` field, and the HCL `check` block decides pass/fail.
+
+| `status` field | Meaning |
+|----------------|---------|
+| `HEALTHY`      | Cluster is healthy — `check` block passes |
+| `DEGRADED`     | Partial issues — `check` block warns |
+| `CRITICAL`     | Serious issues — `check` block warns |
+| `ERROR`        | Infrastructure error (vaig not found, auth failure, etc.) — `check` block warns |
+| `TIMEOUT`      | Health check timed out — `check` block warns |
+
+The `vaig check` CLI itself uses exit codes 0/1/2 for scripting outside Terraform.
 
 The wrapper always outputs valid JSON to stdout, even on errors, to provide meaningful diagnostics in the Terraform output.
 

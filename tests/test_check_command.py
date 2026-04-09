@@ -212,7 +212,7 @@ class TestCheckCache:
 
     def test_cache_hit_returns_cached_result(self, tmp_path: Path) -> None:
         """When cache is fresh, --cached returns it without running pipeline."""
-        key = _cache_key("default", "test-cluster", "test-project")
+        key = _cache_key("default", "test-cluster", "test-project", "us-central1")
         output = CheckOutput.from_error("HEALTHY", "All good")
         output.status = "HEALTHY"
 
@@ -222,7 +222,11 @@ class TestCheckCache:
         cache_file = cache_dir / f"{key}.json"
         cache_file.write_text(output.model_dump_json())
 
-        with patch("vaig.cli.commands.check._CACHE_DIR", cache_dir):
+        with (
+            patch("vaig.cli.commands.check._CACHE_DIR", cache_dir),
+            patch(_P_GKE, return_value=_mock_gke_config()),
+            patch(_P_SETTINGS, return_value=_mock_settings()),
+        ):
             result = runner.invoke(app, [
                 "check", "--cached",
                 "--namespace", "default",
@@ -256,7 +260,7 @@ class TestCheckCache:
 
     def test_stale_cache_runs_pipeline(self, tmp_path: Path) -> None:
         """When cache is older than TTL, --cached runs a fresh check."""
-        key = _cache_key(None, None, None)
+        key = _cache_key("default", "test-cluster", "test-project", "us-central1")
         output = CheckOutput.from_error("HEALTHY", "old result")
         output.status = "HEALTHY"
 
@@ -287,16 +291,21 @@ class TestCacheKey:
     """Verify cache key generation."""
 
     def test_deterministic(self) -> None:
-        k1 = _cache_key("ns", "cluster", "project")
-        k2 = _cache_key("ns", "cluster", "project")
+        k1 = _cache_key("ns", "cluster", "project", "us-central1")
+        k2 = _cache_key("ns", "cluster", "project", "us-central1")
         assert k1 == k2
 
     def test_different_inputs_different_keys(self) -> None:
-        k1 = _cache_key("ns1", "cluster", "project")
-        k2 = _cache_key("ns2", "cluster", "project")
+        k1 = _cache_key("ns1", "cluster", "project", "us-central1")
+        k2 = _cache_key("ns2", "cluster", "project", "us-central1")
         assert k1 != k2
 
     def test_none_handling(self) -> None:
-        k1 = _cache_key(None, None, None)
+        k1 = _cache_key(None, None, None, None)
         assert isinstance(k1, str)
         assert len(k1) == 64  # SHA-256 hex digest
+
+    def test_location_affects_key(self) -> None:
+        k1 = _cache_key("ns", "cluster", "project", "us-central1")
+        k2 = _cache_key("ns", "cluster", "project", "europe-west1")
+        assert k1 != k2

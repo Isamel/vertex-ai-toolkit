@@ -1,7 +1,7 @@
 # variables.tf — Input variables for the vaig health-gate module.
 
 variable "namespace" {
-  description = "Kubernetes namespace to check. Leave empty for cluster-wide."
+  description = "Kubernetes namespace to check. Defaults to 'default' if not set."
   type        = string
   default     = ""
 }
