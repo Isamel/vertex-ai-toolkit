@@ -468,12 +468,21 @@ async def _emit_pipeline_result(
             # fields) so the SPA renderer can populate every section.
             from vaig.core.report_metadata import inject_report_metadata  # noqa: PLC0415
 
-            inject_report_metadata(
+            # inject_report_metadata may run blocking I/O (cost estimation,
+            # Cloud Monitoring queries) — offload to a thread so we don't
+            # block the event loop.
+            await asyncio.to_thread(
+                inject_report_metadata,
                 structured_report,
                 gke_config=gke_config,
                 orch_result=result,
+                # tool_usage requires a ToolCallLogger which is CLI-only;
+                # the web pipeline does not track individual tool calls,
+                # so the Tool Usage section will be absent in web reports.
             )
-        except Exception:  # noqa: BLE001
+        except BaseException as exc:  # noqa: BLE001
+            if isinstance(exc, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
+                raise
             logger.warning(
                 "Failed to inject report metadata for live SSE",
                 exc_info=True,

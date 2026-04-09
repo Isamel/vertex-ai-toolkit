@@ -167,6 +167,8 @@ def inject_report_metadata(
             from vaig.tools.gke.cost_estimation import fetch_workload_costs  # noqa: PLC0415
 
             metadata.gke_cost = fetch_workload_costs(gke_config, namespaces=effective_namespaces)
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception as _gke_cost_exc:  # noqa: BLE001
             logger.debug("GKE cost estimation failed: %s", _gke_cost_exc)
             try:
@@ -177,11 +179,14 @@ def inject_report_metadata(
                     cluster_type="unknown",
                     unsupported_reason=str(_gke_cost_exc),
                 )
+            except (KeyboardInterrupt, SystemExit):
+                raise
             except Exception:  # noqa: BLE001
                 pass  # schema import failed — leave gke_cost unset
 
     # ── Anomaly trend detection ───────────────────────────────
-    if gke_config is not None and getattr(gke_config, "trends", None) is not None and gke_config.trends.enabled:
+    trend_cfg = getattr(gke_config, "trends", None) if gke_config is not None else None
+    if trend_cfg is not None and getattr(trend_cfg, "enabled", False):
         try:
             from vaig.tools.gke.trend_analysis import fetch_anomaly_trends  # noqa: PLC0415
 

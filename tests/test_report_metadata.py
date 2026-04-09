@@ -323,6 +323,49 @@ class TestGKECostEstimation:
         inject_report_metadata(report, gke_config=gke)
         assert report.metadata.gke_cost.supported is True
 
+    def test_gke_cost_reraises_system_exceptions(self) -> None:
+        """KeyboardInterrupt / SystemExit must not be swallowed."""
+        import pytest
+
+        report = _make_report()
+        gke = _make_gke_config()
+
+        with patch(
+            "vaig.tools.gke.cost_estimation.fetch_workload_costs",
+            side_effect=KeyboardInterrupt,
+        ):
+            with pytest.raises(KeyboardInterrupt):
+                inject_report_metadata(report, gke_config=gke)
+
+
+class TestTrendsDefensiveAccess:
+    """Tests for defensive attribute access on gke_config.trends."""
+
+    def test_trends_without_enabled_attr(self) -> None:
+        """A trends object missing .enabled should not raise."""
+        report = _make_report()
+        # trends is an object without an 'enabled' attribute
+        gke = _make_gke_config(trends=object())
+        with patch(
+            "vaig.tools.gke.cost_estimation.fetch_workload_costs",
+            side_effect=RuntimeError("skip"),
+        ):
+            inject_report_metadata(report, gke_config=gke)
+        # trends analysis should be skipped — no crash
+        assert getattr(report.metadata, "trends", None) is None
+
+    def test_trends_enabled_false_skips_analysis(self) -> None:
+        """When trends.enabled is False, trend analysis must be skipped."""
+        report = _make_report()
+        trends_obj = SimpleNamespace(enabled=False)
+        gke = _make_gke_config(trends=trends_obj)
+        with patch(
+            "vaig.tools.gke.cost_estimation.fetch_workload_costs",
+            side_effect=RuntimeError("skip"),
+        ):
+            inject_report_metadata(report, gke_config=gke)
+        assert getattr(report.metadata, "trends", None) is None
+
 
 class TestFullIntegration:
     """End-to-end test combining all injection paths."""

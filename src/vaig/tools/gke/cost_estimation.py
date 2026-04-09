@@ -1019,6 +1019,18 @@ def fetch_workload_costs(
                 if monitoring_status is None:
                     monitoring_status = f"Monitoring query failed for ns={ns}: {exc_desc}"
 
+    # Log a clear summary of monitoring data availability
+    if not monitoring_available:
+        logger.info("GKE cost estimation: Cloud Monitoring library not available — using request-based estimates")
+    elif monitoring_status is None:
+        logger.info("GKE cost estimation: no namespaces queried for monitoring data")
+    elif monitoring_status == "ok":
+        logger.info("GKE cost estimation: Cloud Monitoring metrics fetched successfully")
+    elif monitoring_status.startswith("no_data"):
+        logger.info("GKE cost estimation: Cloud Monitoring query returned no data — %s", monitoring_status)
+    else:
+        logger.warning("GKE cost estimation: monitoring issue — %s", monitoring_status)
+
     workloads: list[GKEWorkloadCost] = []
     total_request = 0.0
     total_usage: float | None = None  # accumulates usage from workloads that have any data
