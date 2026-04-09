@@ -667,6 +667,46 @@ class GKECostReport(BaseModel):
     )
 
 
+class MetricTrend(BaseModel):
+    """Trend data for a single metric of a single service.
+
+    Captures the rate-of-change between a current observation window and a
+    historical baseline, along with a severity classification and an optional
+    projection of how many days until a resource limit is reached.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    metric: str = Field(description="Metric identifier: 'cpu_usage', 'memory_usage', or 'restart_count'")
+    service_name: str = Field(description="Workload / service name")
+    namespace: str = Field(default="", description="Kubernetes namespace")
+    direction: str = Field(description="Trend direction: 'increasing', 'decreasing', 'stable', or 'new'")
+    rate_of_change_percent: float | None = Field(
+        default=None,
+        description="Percentage change from baseline. None when baseline is zero (new service).",
+    )
+    current_value: float | None = Field(default=None, description="Current window average value")
+    baseline_value: float | None = Field(default=None, description="Baseline window average value")
+    baseline_window_days: int = Field(default=7, description="Number of days in the baseline window")
+    days_to_threshold: float | None = Field(
+        default=None,
+        description="Projected days until resource limit is reached. None if stable/decreasing.",
+    )
+    severity: str = Field(default="info", description="Severity: 'critical', 'warning', or 'info'")
+
+
+class TrendAnalysis(BaseModel):
+    """Aggregated trend analysis results across all services and metrics."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    trends: list[MetricTrend] = Field(default_factory=list, description="Individual metric trends")
+    analyzed_at: str = Field(default="", description="ISO 8601 timestamp of analysis")
+    baseline_windows: list[int] = Field(default_factory=lambda: [7], description="Baseline window sizes in days")
+    services_analyzed: int = Field(default=0, description="Number of services analyzed")
+    anomalies_detected: int = Field(default=0, description="Count of warning + critical trends")
+
+
 class CostMetrics(BaseModel):
     """Cost and token usage metrics for the report generation run."""
 
@@ -705,6 +745,7 @@ class ReportMetadata(BaseModel):
     cost_metrics: CostMetrics | None = Field(default=None, description="Cost and token usage for this run")
     tool_usage: ToolUsageSummary | None = Field(default=None, description="Tool call statistics for this run")
     gke_cost: GKECostReport | None = Field(default=None, description="GKE workload cost estimation (Autopilot only)")
+    trends: TrendAnalysis | None = Field(default=None, description="Anomaly trend detection results")
 
 
 # ── Dependency graph models ───────────────────────────────────

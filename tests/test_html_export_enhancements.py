@@ -43,6 +43,7 @@ def _make_gke_config(cluster_name: str = "prod-cluster", project_id: str = "my-p
     cfg = MagicMock()
     cfg.cluster_name = cluster_name
     cfg.project_id = project_id
+    cfg.trends = None  # Trends are opt-in (disabled by default)
     return cfg
 
 

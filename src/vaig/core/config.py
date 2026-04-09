@@ -547,6 +547,69 @@ class DatadogAPIConfig(BaseModel):
         return self
 
 
+# ── Trend analysis constants ──────────────────────────────────
+MAX_BASELINE_DAYS: int = 42
+"""Cloud Monitoring retention limit in days."""
+MIN_BASELINE_DAYS: int = 1
+"""Minimum allowed baseline window size in days."""
+
+
+class TrendConfig(BaseModel):
+    """Configuration for anomaly trend detection.
+
+    Controls whether trend analysis is enabled and defines the baseline
+    windows and severity thresholds used to classify metric changes.
+    """
+
+    enabled: bool = False
+    baseline_days: list[int] = Field(
+        default_factory=lambda: [7],
+        description="Baseline window sizes in days. Max 42 (Cloud Monitoring retention limit).",
+    )
+    memory_warning_pct: float = Field(
+        default=10.0, description="Memory % increase over baseline to trigger warning"
+    )
+    memory_critical_pct: float = Field(
+        default=25.0, description="Memory % increase over baseline to trigger critical"
+    )
+    cpu_warning_pct: float = Field(
+        default=20.0, description="CPU % increase over baseline to trigger warning"
+    )
+    cpu_critical_pct: float = Field(
+        default=50.0, description="CPU % increase over baseline to trigger critical"
+    )
+    restart_warning_count: int = Field(
+        default=5, description="Absolute restart delta over baseline to trigger warning"
+    )
+    restart_critical_count: int = Field(
+        default=15, description="Absolute restart delta over baseline to trigger critical"
+    )
+    memory_limit_gib: float = Field(
+        default=4.0, description="Assumed memory limit in GiB for days-to-threshold projection"
+    )
+
+    MAX_BASELINE_DAYS: int = 42
+    """Cloud Monitoring retention limit in days."""
+    MIN_BASELINE_DAYS: int = 1
+    """Minimum allowed baseline window size in days."""
+
+    @field_validator("baseline_days")
+    @classmethod
+    def _validate_baseline_days(cls, v: list[int]) -> list[int]:
+        if not v:
+            msg = "baseline_days must not be empty when trend analysis is enabled"
+            raise ValueError(msg)
+        for d in v:
+            if d > MAX_BASELINE_DAYS:
+                msg = f"baseline_days value {d} exceeds Cloud Monitoring retention limit of {MAX_BASELINE_DAYS} days"
+                raise ValueError(msg)
+            if d < MIN_BASELINE_DAYS:
+                msg = f"baseline_days value {d} must be at least {MIN_BASELINE_DAYS}"
+                raise ValueError(msg)
+        # Deduplicate and sort for deterministic ordering
+        return sorted(set(v))
+
+
 class GKEConfig(BaseModel):
     """GKE live-cluster connection and query configuration."""
 
@@ -598,6 +661,9 @@ class GKEConfig(BaseModel):
     # the 5 tool functions from hanging ~84s when that cluster is
     # unreachable, while still being generous enough for normal queries.
     argo_request_timeout: int = 10
+    # Anomaly trend detection — compares current metrics against historical
+    # Cloud Monitoring baselines to detect slowly-degrading services.
+    trends: TrendConfig = Field(default_factory=TrendConfig)
 
 
 class OllamaConfig(BaseModel):

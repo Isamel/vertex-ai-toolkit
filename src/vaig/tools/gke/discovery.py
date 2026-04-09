@@ -912,7 +912,7 @@ def _discover_istio_dependencies(
     - VirtualServices hosted ON ``service_name`` that route to other services (outgoing → service_name calls them)
 
     Args:
-        service_name: Name of the service being analysed.
+        service_name: Name of the service being analyzed.
         namespace: Namespace to scope the search.
         custom_api: kubernetes CustomObjectsApi instance.
 
