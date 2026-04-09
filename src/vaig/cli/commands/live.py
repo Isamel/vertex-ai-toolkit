@@ -1276,6 +1276,8 @@ def _inject_report_metadata(
             from vaig.tools.gke.trend_analysis import fetch_anomaly_trends  # noqa: WPS433
 
             metadata.trends = fetch_anomaly_trends(gke_config, namespaces=effective_namespaces)
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception as _trend_exc:  # noqa: BLE001
             logger.debug("Trend analysis failed: %s", _trend_exc)
 

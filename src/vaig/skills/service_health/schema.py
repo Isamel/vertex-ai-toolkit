@@ -703,7 +703,7 @@ class TrendAnalysis(BaseModel):
     trends: list[MetricTrend] = Field(default_factory=list, description="Individual metric trends")
     analyzed_at: str = Field(default="", description="ISO 8601 timestamp of analysis")
     baseline_windows: list[int] = Field(default_factory=lambda: [7], description="Baseline window sizes in days")
-    services_analyzed: int = Field(default=0, description="Number of services analysed")
+    services_analyzed: int = Field(default=0, description="Number of services analyzed")
     anomalies_detected: int = Field(default=0, description="Count of warning + critical trends")
 
 

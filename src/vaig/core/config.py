@@ -547,6 +547,13 @@ class DatadogAPIConfig(BaseModel):
         return self
 
 
+# ── Trend analysis constants ──────────────────────────────────
+MAX_BASELINE_DAYS: int = 42
+"""Cloud Monitoring retention limit in days."""
+MIN_BASELINE_DAYS: int = 1
+"""Minimum allowed baseline window size in days."""
+
+
 class TrendConfig(BaseModel):
     """Configuration for anomaly trend detection.
 
@@ -581,6 +588,11 @@ class TrendConfig(BaseModel):
         default=4.0, description="Assumed memory limit in GiB for days-to-threshold projection"
     )
 
+    MAX_BASELINE_DAYS: int = 42
+    """Cloud Monitoring retention limit in days."""
+    MIN_BASELINE_DAYS: int = 1
+    """Minimum allowed baseline window size in days."""
+
     @field_validator("baseline_days")
     @classmethod
     def _validate_baseline_days(cls, v: list[int]) -> list[int]:
@@ -588,11 +600,11 @@ class TrendConfig(BaseModel):
             msg = "baseline_days must not be empty when trend analysis is enabled"
             raise ValueError(msg)
         for d in v:
-            if d > 42:  # noqa: PLR2004
-                msg = f"baseline_days value {d} exceeds Cloud Monitoring retention limit of 42 days"
+            if d > MAX_BASELINE_DAYS:
+                msg = f"baseline_days value {d} exceeds Cloud Monitoring retention limit of {MAX_BASELINE_DAYS} days"
                 raise ValueError(msg)
-            if d < 1:
-                msg = f"baseline_days value {d} must be at least 1"
+            if d < MIN_BASELINE_DAYS:
+                msg = f"baseline_days value {d} must be at least {MIN_BASELINE_DAYS}"
                 raise ValueError(msg)
         # Deduplicate and sort for deterministic ordering
         return sorted(set(v))

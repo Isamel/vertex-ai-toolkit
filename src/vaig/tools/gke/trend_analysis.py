@@ -19,6 +19,7 @@ proceeds without trend data.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -133,10 +134,7 @@ def _query_baseline(
         aggregation=aggregation,
     )
 
-    results = list(client.list_time_series(request=request))
-    if not results:
-        return {}
-
+    results = client.list_time_series(request=request)
     return _group_by_controller(results, namespace)
 
 
@@ -212,15 +210,12 @@ def _query_current(
         aggregation=aggregation,
     )
 
-    results = list(client.list_time_series(request=request))
-    if not results:
-        return {}
-
+    results = client.list_time_series(request=request)
     return _group_by_controller(results, namespace)
 
 
 def _group_by_controller(
-    results: list[Any],
+    results: Iterable[Any],
     fallback_key: str,
 ) -> dict[str, float]:
     """Group time-series results by ``top_level_controller_name``.
@@ -235,7 +230,7 @@ def _group_by_controller(
     caller always receives at least one entry per query result.
 
     Args:
-        results: List of time-series objects from ``list_time_series``.
+        results: Iterable of time-series objects from ``list_time_series``.
         fallback_key: Key to use when no controller label is present.
 
     Returns:
@@ -511,6 +506,8 @@ def fetch_anomaly_trends(
                         if trend is not None:
                             all_trends.append(trend)
 
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.debug("Trend analysis API error: %s", exc)
         return None
