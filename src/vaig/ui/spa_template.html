@@ -1341,7 +1341,11 @@ function renderGKECost() {
       const wlCount = (gkeCost.workloads || []).length;
       const estCount = gkeCost.workloads_without_metrics ?? wlCount;
       const scope = estCount >= wlCount ? 'All' : 'Some';
-      bannerEl.innerHTML = `<div class="gke-est-banner">⚠ ${scope} usage costs are estimated from resource requests (100% utilization assumed). Actual usage may be lower. Enable Cloud Monitoring for actual usage data.</div>`;
+      bannerEl.innerHTML = `<div class="gke-est-banner">⚠ ${scope} usage costs are estimated from resource requests (100% utilization assumed). Actual usage may be lower. Enable Cloud Monitoring for actual usage data.${
+        gkeCost.monitoring_status && gkeCost.monitoring_status !== 'ok'
+          ? '<br><small>Reason: ' + esc(gkeCost.monitoring_status) + '</small>'
+          : ''
+      }</div>`;
       bannerEl.style.display = '';
     } else {
       bannerEl.style.display = 'none';

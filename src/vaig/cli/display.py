@@ -588,6 +588,10 @@ def print_cost_breakdown_table(
                 style="dim yellow",
             )
         )
+        # Surface the specific reason when monitoring_status indicates an issue
+        mon_status = getattr(gke_cost, "monitoring_status", None)
+        if mon_status and mon_status != "ok":
+            con.print(Text(f"  Reason: {mon_status}", style="dim yellow"))
 
     con.print()
 

@@ -317,6 +317,7 @@ async def live_pipeline_to_sse(
     event_queue: asyncio.Queue[Event | None],
     *,
     keepalive_interval: float = 5.0,
+    gke_config: Any = None,
 ) -> AsyncGenerator[ServerSentEvent, None]:
     """Stream EventBus events during a live pipeline execution, then the final result.
 
@@ -340,6 +341,9 @@ async def live_pipeline_to_sse(
         event_queue: Per-request ``asyncio.Queue`` fed by the
             :class:`~vaig.web.events.EventQueueBridge`.
         keepalive_interval: Seconds between keepalive heartbeats when idle.
+        gke_config: Optional :class:`~vaig.core.config.GKEConfig` used to
+            inject runtime metadata (cluster name, project, cost estimation)
+            into the structured report before HTML rendering.
     """
     pipeline_task: asyncio.Task[Any] = asyncio.create_task(pipeline_coro)
 
@@ -377,7 +381,7 @@ async def live_pipeline_to_sse(
         result = await pipeline_task
 
         # Yield result + report events
-        async for sse_event in _emit_pipeline_result(result):
+        async for sse_event in _emit_pipeline_result(result, gke_config=gke_config):
             yield sse_event
 
     except asyncio.CancelledError:
@@ -399,7 +403,7 @@ async def live_pipeline_to_sse(
         if partial_result is not None:
             logger.info("Partial pipeline result available — sending before error")
             async for sse_event in _emit_pipeline_result(
-                partial_result, partial=True
+                partial_result, partial=True, gke_config=gke_config
             ):
                 yield sse_event
 
@@ -427,6 +431,7 @@ async def _emit_pipeline_result(
     result: Any,
     *,
     partial: bool = False,
+    gke_config: Any = None,
 ) -> AsyncGenerator[ServerSentEvent, None]:
     """Serialise an ``OrchestratorResult`` into SSE events.
 
@@ -458,6 +463,31 @@ async def _emit_pipeline_result(
 
     # Render HTML report if a structured report is available
     if structured_report is not None:
+        try:
+            # Inject runtime metadata (cost, tools, GKE cost, trends, header
+            # fields) so the SPA renderer can populate every section.
+            from vaig.core.report_metadata import inject_report_metadata  # noqa: PLC0415
+
+            # inject_report_metadata may run blocking I/O (cost estimation,
+            # Cloud Monitoring queries) — offload to a thread so we don't
+            # block the event loop.
+            await asyncio.to_thread(
+                inject_report_metadata,
+                structured_report,
+                gke_config=gke_config,
+                orch_result=result,
+                # tool_usage requires a ToolCallLogger which is CLI-only;
+                # the web pipeline does not track individual tool calls,
+                # so the Tool Usage section will be absent in web reports.
+            )
+        except BaseException as exc:  # noqa: BLE001
+            if isinstance(exc, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
+                raise
+            logger.warning(
+                "Failed to inject report metadata for live SSE",
+                exc_info=True,
+            )
+
         try:
             from vaig.ui.html_report import render_health_report_html
 

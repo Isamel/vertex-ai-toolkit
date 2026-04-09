@@ -605,7 +605,7 @@ def get_workload_usage_metrics(
         Workloads without monitoring data are simply absent from the result.
     """
     if not _MONITORING_AVAILABLE:
-        logger.debug("Cloud Monitoring not available — skipping usage metrics fetch")
+        logger.info("Cloud Monitoring not available — google-cloud-monitoring not installed")
         return {}
 
     if not workload_pod_names:
