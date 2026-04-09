@@ -1,0 +1,12 @@
+tests/
+docs/
+.git/
+htmlcov/
+*.egg-info
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+MagicMock/
+examples/
+*.html
