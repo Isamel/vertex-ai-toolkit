@@ -20,7 +20,7 @@ dependencies = [
     "pymupdf>=1.25.0",
     "pillow>=11.0.0",
     "humanize>=4.11.0",
-    "aiosqlite>=0.20.0",
+    "aiosqlite>=0.22.1",
     "markdown-it-py>=3.0.0",
     "apscheduler>=4.0.0a1",
 ]
