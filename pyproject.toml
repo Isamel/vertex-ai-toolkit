@@ -39,7 +39,7 @@ live = [
 rag = [
     "google-cloud-bigquery>=3.20.0",
     "google-cloud-storage>=2.16.0",
-    "google-cloud-aiplatform>=1.60.0",
+    "google-cloud-aiplatform>=1.147.0",
 ]
 web = [
     "fastapi>=0.115.0",
