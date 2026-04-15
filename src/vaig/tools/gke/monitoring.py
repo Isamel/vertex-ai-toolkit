@@ -614,6 +614,19 @@ def get_workload_usage_metrics(
     project_id = gke_config.project_id
     cluster_name = gke_config.cluster_name
 
+    # ── Diagnostic logging ────────────────────────────────────
+    total_pods = sum(len(pods) for pods in workload_pod_names.values())
+    logger.info(
+        "Cloud Monitoring query: project=%s, cluster=%s, namespace=%s, "
+        "workloads=%d, pods=%d, window=%dm",
+        project_id,
+        cluster_name,
+        namespace,
+        len(workload_pod_names),
+        total_pods,
+        window_minutes,
+    )
+
     try:
         client = MetricServiceClient()
     except Exception as exc:  # noqa: BLE001
@@ -630,6 +643,8 @@ def get_workload_usage_metrics(
     cpu_filter = _build_metric_filter_with_container(_CPU_METRIC, cluster_name, namespace)
     cpu_by_pod_container: dict[tuple[str, str], float] = {}  # (pod, container) → avg cores
 
+    logger.info("Cloud Monitoring CPU filter: %s", cpu_filter)
+
     try:
         cpu_ts_list = _query_time_series_with_container(
             client=client,
@@ -641,6 +656,8 @@ def get_workload_usage_metrics(
     except Exception as exc:  # noqa: BLE001
         logger.warning("get_workload_usage_metrics: CPU query failed for ns=%s: %s", namespace, exc)
         cpu_ts_list = []
+
+    logger.info("Cloud Monitoring CPU result: %d time series returned", len(cpu_ts_list))
 
     for ts in cpu_ts_list:
         resource_labels = ts.resource.labels if hasattr(ts, "resource") else {}
@@ -664,6 +681,8 @@ def get_workload_usage_metrics(
     mem_filter = _build_metric_filter_with_container(_MEMORY_METRIC, cluster_name, namespace)
     mem_by_pod_container: dict[tuple[str, str], float] = {}  # (pod, container) → avg GiB
 
+    logger.info("Cloud Monitoring Memory filter: %s", mem_filter)
+
     try:
         mem_ts_list = _query_time_series_with_container(
             client=client,
@@ -675,6 +694,8 @@ def get_workload_usage_metrics(
     except Exception as exc:  # noqa: BLE001
         logger.warning("get_workload_usage_metrics: memory query failed for ns=%s: %s", namespace, exc)
         mem_ts_list = []
+
+    logger.info("Cloud Monitoring Memory result: %d time series returned", len(mem_ts_list))
 
     for ts in mem_ts_list:
         resource_labels = ts.resource.labels if hasattr(ts, "resource") else {}
@@ -723,6 +744,22 @@ def get_workload_usage_metrics(
 
     result: dict[str, WorkloadUsageMetrics] = {}
 
+    # ── Diagnostic: pod matching summary ─────────────────────
+    matched_pods = {pn for pn, _ in all_keys if pn in pod_to_workload}
+    unmatched_pods = {pn for pn, _ in all_keys if pn not in pod_to_workload}
+    if unmatched_pods:
+        logger.info(
+            "Cloud Monitoring: %d pods matched workloads, %d unmatched: %s",
+            len(matched_pods),
+            len(unmatched_pods),
+            list(unmatched_pods)[:5],  # show max 5 to avoid log flooding
+        )
+    else:
+        logger.info(
+            "Cloud Monitoring: %d pods matched workloads, 0 unmatched",
+            len(matched_pods),
+        )
+
     for workload_name in wl_container_cpu:
         containers: dict[str, ContainerUsageMetrics] = {}
 
@@ -753,6 +790,23 @@ def get_workload_usage_metrics(
             namespace=namespace,
             workload_name=workload_name,
             containers=containers,
+        )
+
+    # ── Diagnostic: final summary ──────────────────────────────
+    workloads_with_data = set(result.keys())
+    workloads_without_data = set(workload_pod_names.keys()) - workloads_with_data
+    if workloads_without_data:
+        logger.info(
+            "Cloud Monitoring summary: %d/%d workloads have usage data. "
+            "Missing: %s",
+            len(workloads_with_data),
+            len(workload_pod_names),
+            list(workloads_without_data)[:10],
+        )
+    else:
+        logger.info(
+            "Cloud Monitoring summary: all %d workloads have usage data",
+            len(workloads_with_data),
         )
 
     return result
