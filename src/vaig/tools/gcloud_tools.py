@@ -162,11 +162,11 @@ def _handle_gcp_api_error(exc: Exception, *, service: str = "GCP API") -> str:
                 f"Try reducing the limit or narrowing the filter. Error: {msg}"
             )
         if isinstance(exc, ServiceUnavailable):
-            msg = getattr(exc, "message", str(exc))
+            msg = getattr(exc, "message", None) or str(exc)
             msg_lower = msg.lower()
             if (
                 "serviceaccounts" in msg_lower
-                or "getaccesstoken" in msg_lower
+                or "accesstoken" in msg_lower
                 or "token creator" in msg_lower
             ):
                 return (
