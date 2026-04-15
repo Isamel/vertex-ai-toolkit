@@ -616,7 +616,7 @@ def get_workload_usage_metrics(
 
     # ── Diagnostic logging ────────────────────────────────────
     total_pods = sum(len(pods) for pods in workload_pod_names.values())
-    logger.info(
+    logger.debug(
         "Cloud Monitoring query: project=%s, cluster=%s, namespace=%s, "
         "workloads=%d, pods=%d, window=%dm",
         project_id,
@@ -643,7 +643,7 @@ def get_workload_usage_metrics(
     cpu_filter = _build_metric_filter_with_container(_CPU_METRIC, cluster_name, namespace)
     cpu_by_pod_container: dict[tuple[str, str], float] = {}  # (pod, container) → avg cores
 
-    logger.info("Cloud Monitoring CPU filter: %s", cpu_filter)
+    logger.debug("Cloud Monitoring CPU filter: %s", cpu_filter)
 
     try:
         cpu_ts_list = _query_time_series_with_container(
@@ -657,7 +657,7 @@ def get_workload_usage_metrics(
         logger.warning("get_workload_usage_metrics: CPU query failed for ns=%s: %s", namespace, exc)
         cpu_ts_list = []
 
-    logger.info("Cloud Monitoring CPU result: %d time series returned", len(cpu_ts_list))
+    logger.debug("Cloud Monitoring CPU result: %d time series returned", len(cpu_ts_list))
 
     for ts in cpu_ts_list:
         resource_labels = ts.resource.labels if hasattr(ts, "resource") else {}
@@ -681,7 +681,7 @@ def get_workload_usage_metrics(
     mem_filter = _build_metric_filter_with_container(_MEMORY_METRIC, cluster_name, namespace)
     mem_by_pod_container: dict[tuple[str, str], float] = {}  # (pod, container) → avg GiB
 
-    logger.info("Cloud Monitoring Memory filter: %s", mem_filter)
+    logger.debug("Cloud Monitoring Memory filter: %s", mem_filter)
 
     try:
         mem_ts_list = _query_time_series_with_container(
@@ -695,7 +695,7 @@ def get_workload_usage_metrics(
         logger.warning("get_workload_usage_metrics: memory query failed for ns=%s: %s", namespace, exc)
         mem_ts_list = []
 
-    logger.info("Cloud Monitoring Memory result: %d time series returned", len(mem_ts_list))
+    logger.debug("Cloud Monitoring Memory result: %d time series returned", len(mem_ts_list))
 
     for ts in mem_ts_list:
         resource_labels = ts.resource.labels if hasattr(ts, "resource") else {}
@@ -745,18 +745,21 @@ def get_workload_usage_metrics(
     result: dict[str, WorkloadUsageMetrics] = {}
 
     # ── Diagnostic: pod matching summary ─────────────────────
-    matched_pods = {pn for pn, _ in all_keys if pn in pod_to_workload}
-    unmatched_pods = {pn for pn, _ in all_keys if pn not in pod_to_workload}
-    if unmatched_pods:
-        logger.info(
-            "Cloud Monitoring: %d pods matched workloads, %d unmatched: %s",
+    result_pod_names = {pn for pn, _ in all_keys}
+    expected_pod_names = set(pod_to_workload.keys())
+    matched_pods = result_pod_names & expected_pod_names
+    missing_pods = expected_pod_names - result_pod_names  # pods we expected but got no data for
+    if missing_pods:
+        logger.debug(
+            "Cloud Monitoring: %d pods matched, %d expected pods missing "
+            "(no monitoring data, showing first 5): %s",
             len(matched_pods),
-            len(unmatched_pods),
-            list(unmatched_pods)[:5],  # show max 5 to avoid log flooding
+            len(missing_pods),
+            sorted(missing_pods)[:5],
         )
     else:
-        logger.info(
-            "Cloud Monitoring: %d pods matched workloads, 0 unmatched",
+        logger.debug(
+            "Cloud Monitoring: all %d expected pods matched",
             len(matched_pods),
         )
 
@@ -796,15 +799,15 @@ def get_workload_usage_metrics(
     workloads_with_data = set(result.keys())
     workloads_without_data = set(workload_pod_names.keys()) - workloads_with_data
     if workloads_without_data:
-        logger.info(
+        logger.debug(
             "Cloud Monitoring summary: %d/%d workloads have usage data. "
-            "Missing: %s",
+            "Missing (showing first 10): %s",
             len(workloads_with_data),
             len(workload_pod_names),
-            list(workloads_without_data)[:10],
+            sorted(workloads_without_data)[:10],
         )
     else:
-        logger.info(
+        logger.debug(
             "Cloud Monitoring summary: all %d workloads have usage data",
             len(workloads_with_data),
         )
