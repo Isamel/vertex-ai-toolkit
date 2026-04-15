@@ -614,6 +614,19 @@ def get_workload_usage_metrics(
     project_id = gke_config.project_id
     cluster_name = gke_config.cluster_name
 
+    # ── Diagnostic logging ────────────────────────────────────
+    total_pods = sum(len(pods) for pods in workload_pod_names.values())
+    logger.debug(
+        "Cloud Monitoring query: project=%s, cluster=%s, namespace=%s, "
+        "workloads=%d, pods=%d, window=%dm",
+        project_id,
+        cluster_name,
+        namespace,
+        len(workload_pod_names),
+        total_pods,
+        window_minutes,
+    )
+
     try:
         client = MetricServiceClient()
     except Exception as exc:  # noqa: BLE001
@@ -630,6 +643,8 @@ def get_workload_usage_metrics(
     cpu_filter = _build_metric_filter_with_container(_CPU_METRIC, cluster_name, namespace)
     cpu_by_pod_container: dict[tuple[str, str], float] = {}  # (pod, container) → avg cores
 
+    logger.debug("Cloud Monitoring CPU filter: %s", cpu_filter)
+
     try:
         cpu_ts_list = _query_time_series_with_container(
             client=client,
@@ -641,6 +656,8 @@ def get_workload_usage_metrics(
     except Exception as exc:  # noqa: BLE001
         logger.warning("get_workload_usage_metrics: CPU query failed for ns=%s: %s", namespace, exc)
         cpu_ts_list = []
+
+    logger.debug("Cloud Monitoring CPU result: %d time series returned", len(cpu_ts_list))
 
     for ts in cpu_ts_list:
         resource_labels = ts.resource.labels if hasattr(ts, "resource") else {}
@@ -664,6 +681,8 @@ def get_workload_usage_metrics(
     mem_filter = _build_metric_filter_with_container(_MEMORY_METRIC, cluster_name, namespace)
     mem_by_pod_container: dict[tuple[str, str], float] = {}  # (pod, container) → avg GiB
 
+    logger.debug("Cloud Monitoring Memory filter: %s", mem_filter)
+
     try:
         mem_ts_list = _query_time_series_with_container(
             client=client,
@@ -675,6 +694,8 @@ def get_workload_usage_metrics(
     except Exception as exc:  # noqa: BLE001
         logger.warning("get_workload_usage_metrics: memory query failed for ns=%s: %s", namespace, exc)
         mem_ts_list = []
+
+    logger.debug("Cloud Monitoring Memory result: %d time series returned", len(mem_ts_list))
 
     for ts in mem_ts_list:
         resource_labels = ts.resource.labels if hasattr(ts, "resource") else {}
@@ -723,6 +744,25 @@ def get_workload_usage_metrics(
 
     result: dict[str, WorkloadUsageMetrics] = {}
 
+    # ── Diagnostic: pod matching summary ─────────────────────
+    result_pod_names = {pn for pn, _ in all_keys}
+    expected_pod_names = set(pod_to_workload.keys())
+    matched_pods = result_pod_names & expected_pod_names
+    missing_pods = expected_pod_names - result_pod_names  # pods we expected but got no data for
+    if missing_pods:
+        logger.debug(
+            "Cloud Monitoring: %d pods matched, %d expected pods missing "
+            "(no monitoring data, showing first 5): %s",
+            len(matched_pods),
+            len(missing_pods),
+            sorted(missing_pods)[:5],
+        )
+    else:
+        logger.debug(
+            "Cloud Monitoring: all %d expected pods matched",
+            len(matched_pods),
+        )
+
     for workload_name in wl_container_cpu:
         containers: dict[str, ContainerUsageMetrics] = {}
 
@@ -753,6 +793,23 @@ def get_workload_usage_metrics(
             namespace=namespace,
             workload_name=workload_name,
             containers=containers,
+        )
+
+    # ── Diagnostic: final summary ──────────────────────────────
+    workloads_with_data = set(result.keys())
+    workloads_without_data = set(workload_pod_names.keys()) - workloads_with_data
+    if workloads_without_data:
+        logger.debug(
+            "Cloud Monitoring summary: %d/%d workloads have usage data. "
+            "Missing (showing first 10): %s",
+            len(workloads_with_data),
+            len(workload_pod_names),
+            sorted(workloads_without_data)[:10],
+        )
+    else:
+        logger.debug(
+            "Cloud Monitoring summary: all %d workloads have usage data",
+            len(workloads_with_data),
         )
 
     return result
