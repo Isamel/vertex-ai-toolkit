@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-04-15
+
+**Phase F — Platform Integration & Extensibility (7 SPECs)**
+
+### Added
+- SPEC-1.2: Anomaly Trend Detection — temporal trend analysis for anomalies with spike/gradual/recurring classification and predictive scoring ([#222](https://github.com/Isamel/vertex-ai-toolkit/pull/222))
+- SPEC-5.1: Skill Plugin System — dynamic skill loading with plugin registry, YAML-based skill definitions, and hot-reload support ([#218](https://github.com/Isamel/vertex-ai-toolkit/pull/218))
+- SPEC-5.3: Skill Marketplace Admin Portal — web-based admin UI for managing skill marketplace with approval workflows and usage analytics ([#219](https://github.com/Isamel/vertex-ai-toolkit/pull/219))
+- SPEC-6.2: Report Review/Approval Workflow — multi-stage review process with role-based approvals, comments, and audit trail ([#223](https://github.com/Isamel/vertex-ai-toolkit/pull/223))
+- SPEC-7.1: VS Code Extension — native VS Code extension for running diagnostics, viewing reports, and managing skills from the editor ([#224](https://github.com/Isamel/vertex-ai-toolkit/pull/224))
+- SPEC-7.2: GitHub Actions Health Check — reusable GitHub Action for automated health checks in CI/CD pipelines ([#220](https://github.com/Isamel/vertex-ai-toolkit/pull/220))
+- SPEC-7.3: `vaig check` + Terraform — CLI `vaig check` command and Terraform provider for infrastructure-as-code health check integration ([#226](https://github.com/Isamel/vertex-ai-toolkit/pull/226))
+- Monitoring diagnostic logging — debug-level diagnostic logging for workload usage metrics collection with missing pod detection and sorted truncation ([#240](https://github.com/Isamel/vertex-ai-toolkit/pull/240))
+
+### Fixed
+- Corrected cost and resource values in health reports ([#217](https://github.com/Isamel/vertex-ai-toolkit/pull/217))
+- SSE chunking for live web mode — proper streaming of large payloads ([#221](https://github.com/Isamel/vertex-ai-toolkit/pull/221))
+- Web report missing metadata sections — 5 sections (Cost & Usage, GKE Workload Cost Estimation, Anomaly Trends, Tool Usage, Header metadata) now properly rendered in web live mode ([#227](https://github.com/Isamel/vertex-ai-toolkit/pull/227))
+- esbuild/vitest vulnerabilities in VS Code extension dependencies ([#228](https://github.com/Isamel/vertex-ai-toolkit/pull/228))
+- 503 ServiceUnavailable handler in GCP API error handling with SA impersonation guidance ([#241](https://github.com/Isamel/vertex-ai-toolkit/pull/241))
+
+### Dependencies
+- Bumped GitHub Actions (actions/checkout, actions/setup-node, actions/setup-python, actions/upload-artifact) ([#229](https://github.com/Isamel/vertex-ai-toolkit/pull/229))
+- Updated google-auth requirement ([#230](https://github.com/Isamel/vertex-ai-toolkit/pull/230))
+- Updated humanize requirement ([#231](https://github.com/Isamel/vertex-ai-toolkit/pull/231))
+- Updated pyyaml requirement ([#233](https://github.com/Isamel/vertex-ai-toolkit/pull/233))
+- Updated google-cloud-bigquery requirement ([#234](https://github.com/Isamel/vertex-ai-toolkit/pull/234))
+- Updated prompt-toolkit requirement ([#236](https://github.com/Isamel/vertex-ai-toolkit/pull/236))
+- Updated apscheduler requirement ([#238](https://github.com/Isamel/vertex-ai-toolkit/pull/238))
+- Updated uvicorn requirement ([#239](https://github.com/Isamel/vertex-ai-toolkit/pull/239))
+
 ## [0.13.0] - 2026-04-06
 
 ### Added
@@ -311,7 +342,8 @@ SRE workflows.
 - Extracted shared test fixtures into `conftest.py`
 - Applied 12 code quality improvements from audit
 
-[Unreleased]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.13.0...v0.16.0
 [0.13.0]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/Isamel/vertex-ai-toolkit/compare/v0.10.0...v0.11.0
