@@ -146,6 +146,7 @@ def _handle_gcp_api_error(exc: Exception, *, service: str = "GCP API") -> str:
             NotFound,
             PermissionDenied,
             ResourceExhausted,
+            ServiceUnavailable,
         )
 
         if isinstance(exc, (PermissionDenied, Forbidden)):
@@ -159,6 +160,28 @@ def _handle_gcp_api_error(exc: Exception, *, service: str = "GCP API") -> str:
             return (
                 f"{service} API quota exceeded. "
                 f"Try reducing the limit or narrowing the filter. Error: {msg}"
+            )
+        if isinstance(exc, ServiceUnavailable):
+            msg = getattr(exc, "message", None) or str(exc)
+            msg_lower = msg.lower()
+            if (
+                "serviceaccounts" in msg_lower
+                or "accesstoken" in msg_lower
+                or "token creator" in msg_lower
+            ):
+                return (
+                    f"{service} returned 503 due to a Service Account "
+                    f"impersonation issue. The caller likely lacks the "
+                    f"Service Account Token Creator role. Grant it with:\n"
+                    f"  gcloud iam service-accounts add-iam-policy-binding "
+                    f"SA_EMAIL "
+                    f'--member="user:YOUR_EMAIL" '
+                    f'--role="roles/iam.serviceAccountTokenCreator"\n'
+                    f"Error: {msg}"
+                )
+            return (
+                f"{service} is temporarily unavailable (503). "
+                f"Retry in a few moments. Error: {msg}"
             )
         if isinstance(exc, (InvalidArgument, NotFound)):
             msg = getattr(exc, "message", str(exc))
