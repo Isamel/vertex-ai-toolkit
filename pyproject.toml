@@ -8,7 +8,7 @@ license = { text = "MIT" }
 
 dependencies = [
     "google-genai>=1.0.0",
-    "google-auth>=2.35.0",
+    "google-auth>=2.49.2",
     "typer[all]>=0.15.0",
     "rich>=13.9.0",
     "prompt-toolkit>=3.0.48",
@@ -32,7 +32,7 @@ live = [
     "google-cloud-monitoring>=2.23.0",
     "google-cloud-container>=2.51.0",
     "google-cloud-billing>=1.14.0",
-    "google-auth>=2.35.0",
+    "google-auth>=2.49.2",
     "datadog-api-client>=2.0.0,<3.0.0",
     "requests>=2.32.0",
 ]
