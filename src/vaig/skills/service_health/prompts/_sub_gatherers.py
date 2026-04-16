@@ -451,6 +451,8 @@ For each deployment that has an HPA or that has a ``VerticalPodAutoscaler`` reso
       group is unavailable, this is a **root cause** for HPA scaling failure — flag it as CRITICAL.
     - If ``check_metrics_api_health`` is not in your available tools list, SKIP this sub-step and
       mark it as SKIPPED in the Investigation Checklist.
+    - After completing this step, you MUST immediately proceed to Step 6d below.
+      Do NOT emit your final response until you have checked whether the HPA uses custom or external metrics.
 
 ### Step 6d — Custom / External Metric Queries (MANDATORY when HPAs use custom/external metrics)
 20. If an HPA references **custom metrics** (e.g. ``type: Pods`` or ``type: Object``
@@ -461,7 +463,13 @@ For each deployment that has an HPA or that has a ``VerticalPodAutoscaler`` reso
       ``FailedGetCustomMetric`` or ``ScalingLimited`` HPA conditions.
     - Call ``query_custom_metrics()`` (no metric_name) to **list all available**
       custom metrics when you need to verify what metrics the adapter exposes.
-21. If an HPA references **external metrics** (e.g. ``type: External``
+
+**How to recognize external metrics in HPA output**: Look for ``type: External`` in the
+HPA spec, OR any metric name containing pipes (``|``) such as ``istio.io|service|server|request_count``
+or ``pubsub.googleapis.com|subscription|num_undelivered_messages``. In GKE with Stackdriver adapter,
+pipe-separated metric names typically indicate external metrics from Cloud Monitoring.
+
+21. **ALWAYS CHECK**: If an HPA references **external metrics** (e.g. ``type: External``
     with ``external.metrics.k8s.io``), you **MUST** call ``query_external_metrics(metric_name="<metric>",
     namespace="{ns}")`` to verify the metric exists and has data.
     Do NOT skip this when the tool is available — missing metric data is the #1 cause of HPA scaling failures.
