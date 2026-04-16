@@ -20,6 +20,9 @@ _CORE_TOOLS_TABLE = """\
 | `gcloud_monitoring_query` | `metric_type` | `project`, `interval_minutes`, `aggregation`, `filter_str` |
 | `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |
 | `get_scaling_status` | `name` | `namespace` |
+| `check_metrics_api_health` | | |
+| `query_custom_metrics` | | `metric_name`, `namespace` |
+| `query_external_metrics` | `metric_name` | `namespace` |
 | `get_datadog_config` | | `namespace`, `deployment` |
 | `get_pod_metrics` | `namespace`, `pod_name_prefix` | `window_minutes`, `metric_type` |
 | `discover_dependencies` | `service_name` | `namespace`, `force_refresh` |"""

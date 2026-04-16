@@ -56,6 +56,7 @@ from .helm import (
     helm_release_values,
 )
 from .kubectl import kubectl_get_labels
+from .metrics_api import check_metrics_api_health, query_custom_metrics, query_external_metrics
 from .monitoring import get_pod_metrics
 from .scaling import get_scaling_status
 
@@ -1110,6 +1111,88 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
             execute=lambda name, namespace="default",
                     _cfg=gke_config: get_scaling_status(
                 name, gke_config=_cfg, namespace=namespace,
+            ),
+        ),
+        ToolDef(
+            name="check_metrics_api_health",
+            description=(
+                "Probe Kubernetes aggregated metrics API groups (metrics.k8s.io, "
+                "custom.metrics.k8s.io, external.metrics.k8s.io) and report their "
+                "health status. Shows whether Metrics Server, custom metrics adapter, "
+                "and external metrics adapter are installed and available. Essential "
+                "for diagnosing HPA scaling failures caused by a broken metrics pipeline. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=None,
+            categories=frozenset({SCALING}),
+            execute=lambda _cfg=gke_config: check_metrics_api_health(
+                gke_config=_cfg,
+            ),
+        ),
+        # ── Custom / external metrics query tools ──────────────
+        ToolDef(
+            name="query_custom_metrics",
+            description=(
+                "Query custom metrics from the custom.metrics.k8s.io API group. "
+                "When metric_name is empty, lists all available custom metrics. "
+                "When provided, fetches the named metric's current value and labels. "
+                "Use after check_metrics_api_health confirms the custom metrics API is "
+                "available, or to verify an HPA-referenced custom metric exists and has data. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="metric_name",
+                    type="string",
+                    description=(
+                        "Custom metric name to query (e.g. 'requests_per_second'). "
+                        "Leave empty to list all available custom metrics."
+                    ),
+                    required=False,
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace to scope the query (default: cluster-wide).",
+                    required=False,
+                ),
+            ],
+            categories=frozenset({MONITORING}),
+            execute=lambda metric_name="", namespace="",
+                    _cfg=gke_config: query_custom_metrics(
+                metric_name, gke_config=_cfg, namespace=namespace,
+            ),
+        ),
+        ToolDef(
+            name="query_external_metrics",
+            description=(
+                "Query external metrics from the external.metrics.k8s.io API group. "
+                "External metrics come from cloud monitoring systems (e.g. Cloud "
+                "Monitoring, Datadog) and are not tied to Kubernetes objects. "
+                "Use to verify an HPA-referenced external metric exists and has data, "
+                "e.g. pubsub.googleapis.com|subscription|num_undelivered_messages. "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[
+                ToolParam(
+                    name="metric_name",
+                    type="string",
+                    description=(
+                        "External metric name to query (e.g. "
+                        "'pubsub.googleapis.com|subscription|num_undelivered_messages')."
+                    ),
+                ),
+                ToolParam(
+                    name="namespace",
+                    type="string",
+                    description="Kubernetes namespace to scope the query (default: cluster-wide).",
+                    required=False,
+                ),
+            ],
+            categories=frozenset({MONITORING}),
+            execute=lambda metric_name, namespace="",
+                    _cfg=gke_config: query_external_metrics(
+                metric_name, gke_config=_cfg, namespace=namespace,
             ),
         ),
         # ── Cloud Monitoring metrics tools ────────────────────
