@@ -444,7 +444,7 @@ For each deployment that has an HPA or that has a ``VerticalPodAutoscaler`` reso
 
 ### Step 6c — Metrics API Health (MANDATORY when HPAs exist)
 19. **ALWAYS** call ``check_metrics_api_health()`` when Step 6 found ANY HPA — no parameters needed.
-    Do NOT skip this step. It is essential for diagnosing HPA scaling failures.
+    Do NOT skip this step when the tool is available. It is essential for diagnosing HPA scaling failures.
     - This checks whether metrics.k8s.io, custom.metrics.k8s.io, and external.metrics.k8s.io
       API groups are registered and healthy.
     - If ANY HPA references custom or external metrics and the corresponding API
@@ -455,16 +455,16 @@ For each deployment that has an HPA or that has a ``VerticalPodAutoscaler`` reso
 ### Step 6d — Custom / External Metric Queries (MANDATORY when HPAs use custom/external metrics)
 20. If an HPA references **custom metrics** (e.g. ``type: Pods`` or ``type: Object``
     with ``custom.metrics.k8s.io``), you **MUST** call ``query_custom_metrics(metric_name="<metric>",
-    namespace="<ns>")`` to verify the metric exists and has data.
-    Do NOT skip this — missing metric data is the #1 cause of HPA scaling failures.
+    namespace="{ns}")`` to verify the metric exists and has data.
+    Do NOT skip this when the tool is available — missing metric data is the #1 cause of HPA scaling failures.
     - If the metric returns **no data**, this is likely the root cause for
       ``FailedGetCustomMetric`` or ``ScalingLimited`` HPA conditions.
     - Call ``query_custom_metrics()`` (no metric_name) to **list all available**
       custom metrics when you need to verify what metrics the adapter exposes.
 21. If an HPA references **external metrics** (e.g. ``type: External``
     with ``external.metrics.k8s.io``), you **MUST** call ``query_external_metrics(metric_name="<metric>",
-    namespace="<ns>")`` to verify the metric exists and has data.
-    Do NOT skip this — missing metric data is the #1 cause of HPA scaling failures.
+    namespace="{ns}")`` to verify the metric exists and has data.
+    Do NOT skip this when the tool is available — missing metric data is the #1 cause of HPA scaling failures.
     - Common external metrics: ``pubsub.googleapis.com|subscription|num_undelivered_messages``,
       ``custom.googleapis.com/*``.
     - If the metric returns **no data** or a 404, this is likely the root cause for
