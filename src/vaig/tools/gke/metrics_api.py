@@ -21,11 +21,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ── Lazy import guard ─────────────────────────────────────────
-_K8S_AVAILABLE = True
 try:
     from kubernetes.client import exceptions as k8s_exceptions  # noqa: WPS433
 except ImportError:
-    _K8S_AVAILABLE = False
+    pass  # availability is checked via _clients._K8S_AVAILABLE
 
 # ── Metrics API groups to probe ───────────────────────────────
 _METRICS_GROUPS: dict[str, dict[str, str]] = {
@@ -83,6 +82,8 @@ def check_metrics_api_health(*, gke_config: GKEConfig) -> ToolResult:
             error=True,
         )
     except Exception as exc:  # noqa: BLE001
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
         logger.warning("Unexpected error querying API groups: %s", exc)
         return ToolResult(
             output=f"Error querying API groups: {exc}",
@@ -100,6 +101,8 @@ def check_metrics_api_health(*, gke_config: GKEConfig) -> ToolResult:
 
         api_reg = ApiregistrationV1Api(api_client)
     except Exception as exc:  # noqa: BLE001
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
         logger.warning("Failed to create ApiregistrationV1Api: %s", exc)
         api_reg = None
 
@@ -126,7 +129,8 @@ def check_metrics_api_health(*, gke_config: GKEConfig) -> ToolResult:
         if api_reg is not None:
             try:
                 api_svc = api_reg.read_api_service(api_service_name)
-                for condition in api_svc.status.conditions or []:
+                status = getattr(api_svc, "status", None)
+                for condition in (status.conditions if status else []) or []:
                     if condition.type == "Available":
                         condition_status = condition.status  # "True" / "False" / "Unknown"
                         condition_message = condition.message or ""
@@ -146,6 +150,8 @@ def check_metrics_api_health(*, gke_config: GKEConfig) -> ToolResult:
                     logger.warning("Error reading APIService %s: %s", api_service_name, exc)
                     condition_message = f"Error reading APIService: {exc.reason}"
             except Exception as exc:  # noqa: BLE001
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
                 logger.warning("Unexpected error reading APIService %s: %s", api_service_name, exc)
                 condition_message = f"Error: {exc}"
 
@@ -179,8 +185,9 @@ def check_metrics_api_health(*, gke_config: GKEConfig) -> ToolResult:
     elif is_autopilot is False:
         lines.append("### Cluster Mode")
         lines.append(
-            "- GKE **Standard** cluster — Metrics Server must be deployed manually "
-            "or via `gcloud container clusters update --enable-managed-prometheus`.\n"
+            "- GKE **Standard** cluster — Metrics Server must be installed separately "
+            "for `metrics.k8s.io` (for example, by deploying Metrics Server or enabling "
+            "GKE's managed metrics-server feature); managed Prometheus does not provide this API.\n"
         )
 
     # ── Summary ───────────────────────────────────────────────
@@ -239,7 +246,7 @@ def query_custom_metrics(
     result = _clients._create_k8s_clients(gke_config)
     if isinstance(result, ToolResult):
         return result
-    _, _, custom_api, _ = result
+    _, _, custom_api, api_client = result
 
     group = "custom.metrics.k8s.io"
     version = "v1beta1"
@@ -247,8 +254,16 @@ def query_custom_metrics(
     # ── List mode (no metric_name) ────────────────────────────
     if not metric_name:
         try:
-            api_resources = custom_api.get_api_resources(group=group, version=version)
-            resources = api_resources.get("resources", []) if isinstance(api_resources, dict) else []
+            from kubernetes.client import ApisApi  # noqa: WPS433
+
+            api_resources = ApisApi(api_client).get_api_resources(group=group, version=version)
+            # Handle both V1APIResourceList object and dict responses
+            if hasattr(api_resources, "resources"):
+                resources = api_resources.resources or []
+            elif isinstance(api_resources, dict):
+                resources = api_resources.get("resources", [])
+            else:
+                resources = []
             if not resources:
                 return ToolResult(
                     output=(
@@ -261,7 +276,7 @@ def query_custom_metrics(
             lines = ["## Custom Metrics — Available Metrics\n"]
             lines.append(f"Found {len(resources)} custom metric(s):\n")
             for res in resources:
-                name = res.get("name", "<unknown>") if isinstance(res, dict) else str(res)
+                name = res.get("name", "<unknown>") if isinstance(res, dict) else getattr(res, "name", str(res))
                 lines.append(f"- `{name}`")
             return ToolResult(output="\n".join(lines))
         except k8s_exceptions.ApiException as exc:
@@ -285,6 +300,8 @@ def query_custom_metrics(
                 error=True,
             )
         except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
             logger.warning("Unexpected error listing custom metrics: %s", exc)
             return ToolResult(output=f"Error listing custom metrics: {exc}", error=True)
 
@@ -324,6 +341,8 @@ def query_custom_metrics(
             error=True,
         )
     except Exception as exc:  # noqa: BLE001
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
         logger.warning("Unexpected error querying custom metric %s: %s", metric_name, exc)
         return ToolResult(output=f"Error querying custom metric '{metric_name}': {exc}", error=True)
 
@@ -397,7 +416,7 @@ def query_external_metrics(
 
     group = "external.metrics.k8s.io"
     version = "v1beta1"
-    ns = namespace or "default"
+    ns = namespace or gke_config.default_namespace or "default"
 
     try:
         metric_data = custom_api.list_namespaced_custom_object(
@@ -427,6 +446,8 @@ def query_external_metrics(
             error=True,
         )
     except Exception as exc:  # noqa: BLE001
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
         logger.warning("Unexpected error querying external metric %s: %s", metric_name, exc)
         return ToolResult(output=f"Error querying external metric '{metric_name}': {exc}", error=True)
 

@@ -1185,7 +1185,10 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 ToolParam(
                     name="namespace",
                     type="string",
-                    description="Kubernetes namespace to scope the query (default: cluster-wide).",
+                    description=(
+                        "Kubernetes namespace to scope the query. If omitted, the "
+                        "query uses the default namespace ('default')."
+                    ),
                     required=False,
                 ),
             ],

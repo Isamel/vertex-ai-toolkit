@@ -298,18 +298,25 @@ class TestQueryCustomMetrics:
     def test_list_mode_with_metrics(self, mock_clients: MagicMock) -> None:
         mock_clients._K8S_AVAILABLE = True
         custom_api = MagicMock()
+        api_client = MagicMock()
         mock_clients._create_k8s_clients.return_value = (
-            MagicMock(), MagicMock(), custom_api, MagicMock(),
+            MagicMock(), MagicMock(), custom_api, api_client,
         )
-        custom_api.get_api_resources.return_value = {
-            "resources": [
-                {"name": "requests_per_second"},
-                {"name": "queue_depth"},
-            ],
-        }
-        from vaig.tools.gke.metrics_api import query_custom_metrics
+        # Build object-style V1APIResourceList mock
+        res1 = MagicMock()
+        res1.name = "requests_per_second"
+        res2 = MagicMock()
+        res2.name = "queue_depth"
+        api_resources = MagicMock()
+        api_resources.resources = [res1, res2]
 
-        result = query_custom_metrics(gke_config=_make_gke_config())
+        mock_apis_api = MagicMock()
+        mock_apis_api.get_api_resources.return_value = api_resources
+
+        with patch("kubernetes.client.ApisApi", return_value=mock_apis_api):
+            from vaig.tools.gke.metrics_api import query_custom_metrics
+
+            result = query_custom_metrics(gke_config=_make_gke_config())
         assert result.error is False
         assert "requests_per_second" in result.output
         assert "queue_depth" in result.output
@@ -319,14 +326,20 @@ class TestQueryCustomMetrics:
     def test_list_mode_no_metrics(self, mock_clients: MagicMock) -> None:
         mock_clients._K8S_AVAILABLE = True
         custom_api = MagicMock()
+        api_client = MagicMock()
         mock_clients._create_k8s_clients.return_value = (
-            MagicMock(), MagicMock(), custom_api, MagicMock(),
+            MagicMock(), MagicMock(), custom_api, api_client,
         )
-        custom_api.get_api_resources.return_value = {"resources": []}
+        api_resources = MagicMock()
+        api_resources.resources = []
 
-        from vaig.tools.gke.metrics_api import query_custom_metrics
+        mock_apis_api = MagicMock()
+        mock_apis_api.get_api_resources.return_value = api_resources
 
-        result = query_custom_metrics(gke_config=_make_gke_config())
+        with patch("kubernetes.client.ApisApi", return_value=mock_apis_api):
+            from vaig.tools.gke.metrics_api import query_custom_metrics
+
+            result = query_custom_metrics(gke_config=_make_gke_config())
         assert result.error is False
         assert "No custom metrics" in result.output
 
@@ -429,17 +442,21 @@ class TestQueryCustomMetrics:
     def test_list_mode_api_not_registered(self, mock_clients: MagicMock) -> None:
         mock_clients._K8S_AVAILABLE = True
         custom_api = MagicMock()
+        api_client = MagicMock()
         mock_clients._create_k8s_clients.return_value = (
-            MagicMock(), MagicMock(), custom_api, MagicMock(),
+            MagicMock(), MagicMock(), custom_api, api_client,
         )
         from kubernetes.client import exceptions as k8s_exc
 
-        custom_api.get_api_resources.side_effect = k8s_exc.ApiException(
+        mock_apis_api = MagicMock()
+        mock_apis_api.get_api_resources.side_effect = k8s_exc.ApiException(
             status=404, reason="Not Found",
         )
-        from vaig.tools.gke.metrics_api import query_custom_metrics
 
-        result = query_custom_metrics(gke_config=_make_gke_config())
+        with patch("kubernetes.client.ApisApi", return_value=mock_apis_api):
+            from vaig.tools.gke.metrics_api import query_custom_metrics
+
+            result = query_custom_metrics(gke_config=_make_gke_config())
         assert result.error is False
         assert "not registered" in result.output.lower()
 
