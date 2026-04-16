@@ -464,10 +464,10 @@ For each deployment that has an HPA or that has a ``VerticalPodAutoscaler`` reso
     - Call ``query_custom_metrics()`` (no metric_name) to **list all available**
       custom metrics when you need to verify what metrics the adapter exposes.
 
-    **How to recognize external metrics in HPA output**: Look for ``type: External`` in the
-    HPA spec, OR any metric name containing pipes (``|``) such as ``istio.io|service|server|request_count``
-    or ``pubsub.googleapis.com|subscription|num_undelivered_messages``. In GKE with Stackdriver adapter,
-    pipe-separated metric names typically indicate external metrics from Cloud Monitoring.
+**How to recognize external metrics in HPA output**: Look for ``type: External`` in the
+HPA spec, OR any metric name containing pipes (``|``) such as ``istio.io|service|server|request_count``
+or ``pubsub.googleapis.com|subscription|num_undelivered_messages``. In GKE with Stackdriver adapter,
+pipe-separated metric names typically indicate external metrics from Cloud Monitoring.
 
 21. **ALWAYS CHECK**: If an HPA references **external metrics** (e.g. ``type: External``
     with ``external.metrics.k8s.io``), you **MUST** call ``query_external_metrics(metric_name="<metric>",
