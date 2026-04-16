@@ -1157,7 +1157,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
-            categories=frozenset({MONITORING}),
+            categories=frozenset({SCALING, MONITORING}),
             execute=lambda metric_name="", namespace="",
                     _cfg=gke_config: query_custom_metrics(
                 metric_name, gke_config=_cfg, namespace=namespace,
@@ -1192,7 +1192,7 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                     required=False,
                 ),
             ],
-            categories=frozenset({MONITORING}),
+            categories=frozenset({SCALING, MONITORING}),
             execute=lambda metric_name, namespace="",
                     _cfg=gke_config: query_external_metrics(
                 metric_name, gke_config=_cfg, namespace=namespace,
