@@ -442,6 +442,33 @@ For each deployment that has an HPA or that has a ``VerticalPodAutoscaler`` reso
     - If ``get_scaling_status`` is not in your available tools list, SKIP this sub-step and
       mark it as SKIPPED in the Investigation Checklist.
 
+### Step 6c — Metrics API Health (Metrics Pipeline Diagnostics)
+19. Call ``check_metrics_api_health()`` — no parameters needed.
+    - This checks whether metrics.k8s.io, custom.metrics.k8s.io, and external.metrics.k8s.io
+      API groups are registered and healthy.
+    - If ANY HPA in Step 6 references custom or external metrics and the corresponding API
+      group is unavailable, this is a **root cause** for HPA scaling failure — flag it as CRITICAL.
+    - If ``check_metrics_api_health`` is not in your available tools list, SKIP this sub-step and
+      mark it as SKIPPED in the Investigation Checklist.
+
+### Step 6d — Custom / External Metric Queries (HPA Cross-Reference)
+20. If an HPA references **custom metrics** (e.g. ``type: Pods`` or ``type: Object``
+    with ``custom.metrics.k8s.io``), call ``query_custom_metrics(metric_name="<metric>",
+    namespace="<ns>")`` to verify the metric exists and has data.
+    - If the metric returns **no data**, this is likely the root cause for
+      ``FailedGetCustomMetric`` or ``ScalingLimited`` HPA conditions.
+    - Call ``query_custom_metrics()`` (no metric_name) to **list all available**
+      custom metrics when you need to verify what metrics the adapter exposes.
+21. If an HPA references **external metrics** (e.g. ``type: External``
+    with ``external.metrics.k8s.io``), call ``query_external_metrics(metric_name="<metric>",
+    namespace="<ns>")`` to verify the metric exists and has data.
+    - Common external metrics: ``pubsub.googleapis.com|subscription|num_undelivered_messages``,
+      ``custom.googleapis.com/*``.
+    - If the metric returns **no data** or a 404, this is likely the root cause for
+      ``FailedGetExternalMetric`` HPA conditions.
+    - If ``query_custom_metrics`` or ``query_external_metrics`` are not in your available
+      tools list, SKIP this sub-step and mark it as SKIPPED in the Investigation Checklist.
+
 ### Data collection rules:
 - For kubectl_logs: use ``pod="<name>"`` — NOT ``pod_name``. No ``previous`` parameter.
 - For get_container_status: use ``name="<name>"`` — NOT ``pod_name``.
