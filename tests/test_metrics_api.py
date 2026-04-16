@@ -106,6 +106,8 @@ class TestCheckMetricsApiHealth:
         mock_api_reg = MagicMock()
         api_svc = MagicMock()
         api_svc.status.conditions = [_make_api_condition()]
+        api_svc.spec.service.namespace = "custom-metrics"
+        api_svc.spec.service.name = "custom-metrics-stackdriver-adapter"
         mock_api_reg.read_api_service.return_value = api_svc
 
         with (
@@ -120,6 +122,8 @@ class TestCheckMetricsApiHealth:
         assert "3/3" in result.output
         assert "✅" in result.output
         assert "All metrics APIs are operational" in result.output
+        assert "Backing service:" in result.output
+        assert "custom-metrics/custom-metrics-stackdriver-adapter" in result.output
 
     @patch("vaig.tools.gke.metrics_api._clients")
     def test_no_groups_registered(self, mock_clients: MagicMock) -> None:
@@ -398,6 +402,28 @@ class TestQueryCustomMetrics:
         )
         assert result.error is False  # 404 is informational, not an error
         assert "not found" in result.output.lower()
+
+    @patch("vaig.tools.gke.metrics_api._clients")
+    def test_query_metric_auth_error(self, mock_clients: MagicMock) -> None:
+        mock_clients._K8S_AVAILABLE = True
+        custom_api = MagicMock()
+        mock_clients._create_k8s_clients.return_value = (
+            MagicMock(), MagicMock(), custom_api, MagicMock(),
+        )
+        from kubernetes.client import exceptions as k8s_exc
+
+        custom_api.list_namespaced_custom_object.side_effect = k8s_exc.ApiException(
+            status=403, reason="Forbidden",
+        )
+        from vaig.tools.gke.metrics_api import query_custom_metrics
+
+        result = query_custom_metrics(
+            metric_name="requests_per_second",
+            gke_config=_make_gke_config(),
+            namespace="default",
+        )
+        assert result.error is True
+        assert "authorization" in result.output.lower() or "Forbidden" in result.output
 
     @patch("vaig.tools.gke.metrics_api._clients")
     def test_list_mode_api_not_registered(self, mock_clients: MagicMock) -> None:

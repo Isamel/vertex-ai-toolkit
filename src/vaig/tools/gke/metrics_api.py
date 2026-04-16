@@ -122,6 +122,7 @@ def check_metrics_api_health(*, gke_config: GKEConfig) -> ToolResult:
         # Group is registered — check APIService condition
         condition_status = "Unknown"
         condition_message = ""
+        backing_service: str = ""
         if api_reg is not None:
             try:
                 api_svc = api_reg.read_api_service(api_service_name)
@@ -130,6 +131,13 @@ def check_metrics_api_health(*, gke_config: GKEConfig) -> ToolResult:
                         condition_status = condition.status  # "True" / "False" / "Unknown"
                         condition_message = condition.message or ""
                         break
+                # Extract backing service metadata from spec.service
+                svc_ref = getattr(api_svc.spec, "service", None)
+                if svc_ref is not None:
+                    svc_ns = getattr(svc_ref, "namespace", None) or ""
+                    svc_name = getattr(svc_ref, "name", None) or ""
+                    if svc_ns and svc_name:
+                        backing_service = f"{svc_ns}/{svc_name}"
             except k8s_exceptions.ApiException as exc:
                 if exc.status == 404:
                     condition_status = "NotFound"
@@ -154,6 +162,8 @@ def check_metrics_api_health(*, gke_config: GKEConfig) -> ToolResult:
             lines.append("- Status: ⚠️ **Unknown**")
 
         lines.append(f"- APIService: `{api_service_name}`")
+        if backing_service:
+            lines.append(f"- Backing service: `{backing_service}`")
         if condition_message:
             lines.append(f"- Message: {condition_message}")
         lines.append("")
