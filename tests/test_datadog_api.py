@@ -2483,8 +2483,13 @@ class TestBothModePerMetricCustomLabels:
     kubernetes.* metrics must include them.
     """
 
-    def test_both_mode_k8s_metric_includes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
-        """In both mode, querying a k8s metric (cpu) includes custom labels in the FIRST tag filter."""
+    def test_both_mode_k8s_metric_excludes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
+        """In both mode, built-in k8s metrics (cpu) do NOT include custom labels.
+
+        Built-in kubernetes.* templates only carry cluster/service/env tags; applying
+        user-defined custom labels to them caused over-filtering and empty results.
+        Only user-defined metrics from ``config.custom_metrics`` receive custom labels.
+        """
         from vaig.core.config import DatadogLabelConfig
         from vaig.tools.gke.datadog_api import query_datadog_metrics
 
@@ -2502,10 +2507,10 @@ class TestBothModePerMetricCustomLabels:
                 _custom_api=mock_api,
             )
 
-        # Check the FIRST call includes custom labels (fallback may strip them)
+        # Built-in k8s metric → custom labels must NOT appear in the query.
         first_call_kwargs = mock_api.query_metrics.call_args_list[0].kwargs
         query_str = first_call_kwargs.get("query", "")
-        assert "team:platform" in query_str
+        assert "team:" not in query_str
 
     def test_both_mode_apm_metric_excludes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
         """In both mode, querying an APM metric (latency) excludes custom labels."""
@@ -2554,8 +2559,8 @@ class TestBothModePerMetricCustomLabels:
         query_str = call_kwargs.get("query", "")
         assert "team:" not in query_str
 
-    def test_both_mode_memory_metric_includes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
-        """In both mode, querying 'memory' (kubernetes.* metric) includes custom labels in first call."""
+    def test_both_mode_memory_metric_excludes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
+        """In both mode, built-in 'memory' (kubernetes.*) metric excludes custom labels."""
         from vaig.core.config import DatadogLabelConfig
         from vaig.tools.gke.datadog_api import query_datadog_metrics
 
@@ -2573,10 +2578,10 @@ class TestBothModePerMetricCustomLabels:
                 _custom_api=mock_api,
             )
 
-        # Check the FIRST call includes custom labels (fallback may strip them)
+        # Built-in k8s metric → custom labels must NOT appear in the query.
         first_call_kwargs = mock_api.query_metrics.call_args_list[0].kwargs
         query_str = first_call_kwargs.get("query", "")
-        assert "team:platform" in query_str
+        assert "team:" not in query_str
 
     def test_pure_apm_mode_still_excludes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
         """Pure APM mode continues to exclude custom labels (regression guard)."""
@@ -2601,8 +2606,8 @@ class TestBothModePerMetricCustomLabels:
         query_str = call_kwargs.get("query", "")
         assert "team:" not in query_str
 
-    def test_pure_k8s_mode_still_includes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
-        """Pure k8s_agent mode continues to include custom labels in first call (regression guard)."""
+    def test_pure_k8s_mode_excludes_custom_labels_for_builtin(self, dd_config: DatadogAPIConfig) -> None:
+        """Pure k8s_agent mode excludes custom labels for built-in kubernetes.* metrics."""
         from vaig.core.config import DatadogLabelConfig
         from vaig.tools.gke.datadog_api import query_datadog_metrics
 
@@ -2620,10 +2625,44 @@ class TestBothModePerMetricCustomLabels:
                 _custom_api=mock_api,
             )
 
-        # Check the FIRST call includes custom labels (fallback may strip them)
+        # Built-in k8s metric → custom labels must NOT appear in the query.
+        first_call_kwargs = mock_api.query_metrics.call_args_list[0].kwargs
+        query_str = first_call_kwargs.get("query", "")
+        assert "team:" not in query_str
+
+    def test_user_defined_custom_metric_includes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
+        """User-defined metrics (via config.custom_metrics) DO receive custom labels.
+
+        This is the positive case for Fix #3: only entries the user explicitly declared
+        in ``custom_metrics`` should carry ``labels.custom`` in the query.
+        """
+        from vaig.core.config import DatadogLabelConfig
+        from vaig.tools.gke.datadog_api import query_datadog_metrics
+
+        dd_config.metric_mode = "both"
+        dd_config.labels = DatadogLabelConfig(custom={"team": "platform"})
+        # User-defined custom metric: {filters} is the caller placeholder,
+        # {{pod_name}} is a literal for str.format (becomes {pod_name} in the
+        # final Datadog query string).
+        dd_config.custom_metrics = {
+            "myapp_latency": "avg:myapp.latency{{{filters}}} by {{pod_name}}",
+        }
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = MagicMock(series=[])
+
+        with patch.dict("sys.modules", _make_dd_modules()):
+            query_datadog_metrics(
+                cluster_name="my-cluster",
+                metric="myapp_latency",
+                config=dd_config,
+                _custom_api=mock_api,
+            )
+
         first_call_kwargs = mock_api.query_metrics.call_args_list[0].kwargs
         query_str = first_call_kwargs.get("query", "")
         assert "team:platform" in query_str
+        assert "myapp.latency" in query_str
 
 
 # ── Problem 2: cluster_name_override ─────────────────────────
@@ -2822,7 +2861,8 @@ class TestDetectApmOperation:
         """Probing returns the first operation that has non-empty timeseries data."""
         from vaig.tools.gke.datadog_api import _detect_apm_operation
 
-        # First two probes return empty; third (grpc.server) returns data.
+        # First two probes return empty; third (http.request) returns data.
+        # Probe order: envoy.proxy, servlet.request, http.request, grpc.server, ...
         empty_resp = MagicMock()
         empty_resp.series = []
 
@@ -2836,7 +2876,7 @@ class TestDetectApmOperation:
 
         result = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
 
-        assert result == "grpc.server"  # 3rd in _APM_OPERATION_PROBE_ORDER
+        assert result == "http.request"  # 3rd in _APM_OPERATION_PROBE_ORDER
         assert mock_api.query_metrics.call_count == 3
 
     def test_cache_hit_skips_api_calls(self, dd_config: DatadogAPIConfig) -> None:
@@ -2858,7 +2898,7 @@ class TestDetectApmOperation:
         # Second call: should hit cache — no new API calls
         result2 = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
 
-        assert result1 == result2 == "servlet.request"  # 1st in probe order
+        assert result1 == result2 == "envoy.proxy"  # 1st in probe order (Istio services)
         assert mock_api.query_metrics.call_count == first_call_count
 
     def test_all_probes_empty_returns_none(self, dd_config: DatadogAPIConfig) -> None:
@@ -2889,7 +2929,7 @@ class TestDetectApmOperation:
 
         result = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
 
-        assert result == "http.request"  # 2nd in _APM_OPERATION_PROBE_ORDER
+        assert result == "servlet.request"  # 2nd in _APM_OPERATION_PROBE_ORDER
         assert mock_api.query_metrics.call_count == 2
 
 
@@ -3180,12 +3220,20 @@ class TestTagFilterFallback:
         assert mock_api.query_metrics.call_count == 1
 
     def test_retry_without_custom_labels_on_no_data(self, dd_config: DatadogAPIConfig) -> None:
-        """When first query returns no data with custom labels, retry without them."""
+        """When first query returns no data with custom labels, retry without them.
+
+        Uses a user-defined custom metric (via ``config.custom_metrics``) so Fix #3
+        includes custom labels in the first query — retry then strips them and hits
+        data.
+        """
         from vaig.core.config import DatadogLabelConfig
         from vaig.tools.gke.datadog_api import query_datadog_metrics
 
         dd_config.metric_mode = "both"
         dd_config.labels = DatadogLabelConfig(custom={"team": "platform"})
+        dd_config.custom_metrics = {
+            "myapp_latency": "avg:myapp.latency{{{filters}}} by {{pod_name}}",
+        }
 
         # First call: no data; second call: data
         mock_api = MagicMock()
@@ -3197,7 +3245,7 @@ class TestTagFilterFallback:
         with patch.dict("sys.modules", _make_dd_modules()):
             result = query_datadog_metrics(
                 cluster_name="my-cluster",
-                metric="cpu",
+                metric="myapp_latency",
                 config=dd_config,
                 _custom_api=mock_api,
             )
@@ -3220,6 +3268,9 @@ class TestTagFilterFallback:
 
         dd_config.metric_mode = "both"
         dd_config.labels = DatadogLabelConfig(custom={"team": "platform"})
+        dd_config.custom_metrics = {
+            "myapp_latency": "avg:myapp.latency{{{filters}}} by {{pod_name}}",
+        }
 
         # Both calls: no data
         mock_api = MagicMock()
@@ -3231,7 +3282,7 @@ class TestTagFilterFallback:
         with patch.dict("sys.modules", _make_dd_modules()):
             result = query_datadog_metrics(
                 cluster_name="my-cluster",
-                metric="cpu",
+                metric="myapp_latency",
                 config=dd_config,
                 _custom_api=mock_api,
             )
