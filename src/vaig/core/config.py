@@ -512,6 +512,26 @@ class DatadogAPIConfig(BaseModel):
             "common operation names to find the one with data."
         ),
     )
+    apm_operation_overrides: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Per-service APM operation override. Key: sanitized service name. "
+            "Value: operation name (e.g. 'envoy.proxy'). Highest precedence — "
+            "overrides dict is checked before apm_operation, cache, discovery, "
+            "and probe order. "
+            "Precedence: overrides > apm_operation > cache > discovery > probe order."
+        ),
+    )
+    apm_discovery_enabled: bool = Field(
+        default=False,
+        description=(
+            "When True, query Datadog /api/v1/search to auto-resolve the APM "
+            "operation name before falling back to probe order. Adds one HTTP "
+            "call per cache miss. Off by default (dark-launched / opt-in). "
+            "Safe to enable — falls back to probe order on any API error or "
+            "empty result."
+        ),
+    )
 
     @field_validator("ssl_verify", mode="before")
     @classmethod

@@ -45,21 +45,22 @@ _ERR_FORBIDDEN = "Insufficient permissions. Check your Datadog API/app key scope
 _ERR_RATE_LIMIT = "Rate limit exceeded. Try again later."
 
 # ── Datadog APM operation probe order ────────────────────────
-# Ordered by prevalence: Istio/Envoy → Java/Spring → generic HTTP → gRPC →
-# Python → Ruby → messaging → cloud/serverless.
+# Ordered by prevalence: Istio/Envoy (newest then legacy) → Java/Spring →
+# gRPC → Ruby → Node/Express → Python → .NET → generic HTTP (catch-all).
+# envoy.proxy MUST remain at position #1 (primary istio-ingressgateway pattern).
 _APM_OPERATION_PROBE_ORDER: tuple[str, ...] = (
-    "envoy.proxy",
-    "servlet.request",
-    "http.request",
-    "grpc.server",
-    "flask.request",
-    "web.request",
-    "rack.request",
-    "grpc.client",
-    "kafka.consume",
-    "consumer.consume",
-    "aws.request",
-    "lambda.invoke",
+    "envoy.proxy",       # Istio/Envoy sidecar + ingressgateway (keep #1)
+    "envoy.envoy",       # Older Envoy span naming (stale-cache scenario)
+    "servlet.request",   # Java/Spring/Tomcat
+    "grpc.server",       # gRPC server-side
+    "grpc.client",       # gRPC client-side
+    "rack.request",      # Ruby on Rails
+    "express.request",   # Node/Express
+    "django.request",    # Python/Django
+    "flask.request",     # Python/Flask
+    "fastapi.request",   # Python/FastAPI
+    "aspnet.request",    # .NET
+    "http.request",      # generic HTTP (last-resort catch-all)
 )
 
 # ── Metric name aliases (fuzzy matching) ─────────────────────
@@ -363,6 +364,86 @@ def _ssl_error_result(context: str, exc: Exception) -> ToolResult:
     )
 
 
+# ── APM Discovery Helpers ────────────────────────────────────
+
+_APM_OP_FROM_METRIC_RE: re.Pattern[str] = re.compile(
+    r"^trace\.([^.]+(?:\.[^.]+)?)\.hits$"
+)
+
+
+def _dd_raw_get(
+    client_ctx: Any,
+    config: DatadogAPIConfig,
+    path: str,
+    params: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Raw GET against the Datadog v1 API.
+
+    Mirrors the inline auth+GET pattern used in ``diagnose_datadog_metrics``
+    (rest_client, ``DD-API-KEY`` / ``DD-APPLICATION-KEY`` headers, JSON decode).
+
+    Returns an empty dict on any failure (non-200, exception, non-dict body).
+    Never raises.
+    """
+    import json as _json  # noqa: WPS433
+    import urllib.parse  # noqa: WPS433
+
+    try:
+        auth_headers: dict[str, str] = {
+            "DD-API-KEY": config.api_key,
+            "DD-APPLICATION-KEY": config.app_key,
+        }
+        rest = getattr(client_ctx, "rest_client", client_ctx)
+        qs = ""
+        if params:
+            qs = "?" + urllib.parse.urlencode(params)
+        url = f"https://api.{config.site}{path}{qs}"
+        resp = rest.request("GET", url, headers=auth_headers, timeout=5)
+        resp_status = getattr(resp, "status", 200)
+        if resp_status and resp_status >= 400:  # noqa: PLR2004
+            logger.debug("_dd_raw_get: HTTP %s for %s", resp_status, path)
+            return {}
+        if hasattr(resp, "data"):
+            raw_data = resp.data
+            data = _json.loads(
+                raw_data.decode("utf-8") if isinstance(raw_data, bytes) else raw_data
+            )
+        else:
+            data = {}
+        return data if isinstance(data, dict) else {}
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("_dd_raw_get: request to %s failed: %s", path, exc)
+        return {}
+
+
+def _discover_apm_operation(
+    api: Any,
+    service: str,
+    env: str,
+    config: DatadogAPIConfig,
+) -> str | None:
+    """Query ``/api/v1/search`` for ``trace.*.hits`` metrics emitted by *service*.
+
+    Parses the returned metric names with :data:`_APM_OP_FROM_METRIC_RE` and
+    returns the first matched operation name.  Returns ``None`` on empty
+    results, no regex match, or any API failure.
+
+    Result is **not** cached here — callers (``_detect_apm_operation``) own
+    the cache lifecycle.
+    """
+    client_ctx = api.api_client
+    q = f"metrics:trace.*.hits service:{service} env:{env}"
+    data = _dd_raw_get(client_ctx, config, "/api/v1/search", {"q": q})
+    metrics: list[str] = data.get("results", {}).get("metrics", [])
+    for m in metrics:
+        match = _APM_OP_FROM_METRIC_RE.match(m)
+        if match:
+            return match.group(1)
+    return None
+
+
 # ── Public Tool Functions ────────────────────────────────────
 
 
@@ -371,26 +452,52 @@ def _detect_apm_operation(
     service: str,
     env: str,
     config: DatadogAPIConfig,
-) -> str | None:
-    """Probe ``trace.{op}.hits`` metrics to find the active APM operation name.
+) -> tuple[str | None, str]:
+    """Resolve the active APM operation name using a 5-step fallback chain.
 
-    Checks the discovery cache first (TTL 300 s).  When
-    ``config.apm_operation`` is not ``"auto"``, the configured value is
-    returned immediately without any API calls.
+    1. **Override dict**: if ``config.apm_operation_overrides`` has the
+       sanitized service name, return that value immediately.
+    2. **Explicit config**: if ``config.apm_operation != "auto"``, return it.
+    3. **Cache hit**: if ``apm_op:{service}:{env}`` is cached (TTL 300 s),
+       return the cached value.
+    4. **Discovery** (opt-in): if ``config.apm_discovery_enabled`` is True,
+       call ``_discover_apm_operation``; on success cache and return.
+    5. **Probe order**: iterate ``_APM_OPERATION_PROBE_ORDER``; return first
+       operation with non-empty timeseries; cache the winner.
 
-    Returns the first operation with non-empty timeseries data, or
-    ``None`` if every probe comes back empty.
+    Returns a ``(operation, source)`` tuple where *source* is one of
+    ``"override"``, ``"config"``, ``"cache"``, ``"discovery"``, ``"probe"``,
+    or ``"none"`` (when every step fails and ``None`` is returned).
     """
-    # Fast path: explicit configuration — skip probing entirely.
+    # Step 1: per-service override dict (highest precedence, no API calls)
+    sanitized = _sanitize_tag_value("service_name", service)
+    override = config.apm_operation_overrides.get(sanitized)
+    if override:
+        return override, "override"
+
+    # Step 2: explicit config.apm_operation
     configured = getattr(config, "apm_operation", "auto")
     if configured != "auto":
-        return configured
+        return configured, "config"
 
+    # Step 3: cache hit
     cache_key = _cache._cache_key_discovery("apm_op", service, env)
     cached = _cache._get_cached(cache_key, ttl=300)
     if cached is not None:
-        return cached
+        return cached, "cache"
 
+    # Step 4: discovery (feature-flagged, default off)
+    if getattr(config, "apm_discovery_enabled", False):
+        discovered = _discover_apm_operation(api, service, env, config)
+        if discovered:
+            _cache._set_cache(cache_key, discovered, ttl=300)
+            logger.info(
+                "Datadog APM: discovered operation '%s' for service=%s env=%s",
+                discovered, service, env,
+            )
+            return discovered, "discovery"
+
+    # Step 5: probe order
     now = int(time.time())
     start = now - 900  # last 15 minutes
 
@@ -408,7 +515,7 @@ def _detect_apm_operation(
                     "Datadog APM: detected operation '%s' for service=%s env=%s",
                     op, service, env,
                 )
-                return op
+                return op, "probe"
         except (urllib3.exceptions.MaxRetryError, OSError):
             logger.debug(
                 "Datadog APM: probe for '%s' failed for service=%s env=%s",
@@ -420,7 +527,7 @@ def _detect_apm_operation(
         "Datadog APM: no operation found for service=%s env=%s (probed: %s)",
         service, env, ", ".join(_APM_OPERATION_PROBE_ORDER),
     )
-    return None
+    return None, "none"
 
 
 def query_datadog_metrics(
@@ -631,7 +738,7 @@ def query_datadog_metrics(
         # to avoid wasted API calls.
         if _apm_needs_detection and _is_trace_metric and service and env:
             try:
-                detected = _detect_apm_operation(api, service, env, config)
+                detected, _det_source = _detect_apm_operation(api, service, env, config)
             except Exception as exc:  # noqa: BLE001
                 logger.debug(
                     "APM operation auto-detection failed for service=%s env=%s: %s",
@@ -680,7 +787,7 @@ def query_datadog_metrics(
                 # exists for this metric (avoids wasted calls).
                 if service and env:
                     try:
-                        detected = _detect_apm_operation(api, service, env, config)
+                        detected, _det_source = _detect_apm_operation(api, service, env, config)
                     except Exception as exc:  # noqa: BLE001
                         logger.debug(
                             "auto mode: APM operation detection failed: %s", exc,
@@ -1014,15 +1121,21 @@ def _run_apm_queries(
     hours_back: float,
     cache_key: str,
     config: DatadogAPIConfig,
+    *,
+    _retried: bool = False,
 ) -> ToolResult:
     """Execute APM operation detection and metric queries using the given API object.
 
     Extracted so that both the ``_custom_api`` (testing) and real-client paths
     share the same logic while keeping all API calls inside the context manager
     when a real client is used.
+
+    ``_retried`` is an internal guard: when ``True`` and all metric queries
+    return empty, the results are returned as-is without another cache
+    invalidation + retry (prevents infinite loops for services with no traffic).
     """
     # ── Detect APM operation name ────────────────────────
-    operation = _detect_apm_operation(api, service_name, env, config)
+    operation, op_source = _detect_apm_operation(api, service_name, env, config)
     if operation is None:
         probed = ", ".join(_APM_OPERATION_PROBE_ORDER)
         return ToolResult(
@@ -1058,6 +1171,36 @@ def _run_apm_queries(
             results[metric_key] = last_val
         else:
             results[metric_key] = None
+
+    # ── Cache invalidation + single-shot retry ────────────
+    # If all 3 metric queries returned empty AND this is not already a retry,
+    # the cached operation may be stale.  Invalidate it and re-run once.
+    all_empty = (
+        results.get("hits") is None
+        and results.get("errors") is None
+        and results.get("duration") is None
+    )
+    # Only invalidate when the op came from cache (not override, config, discovery, or probe).
+    if all_empty and op_source == "cache" and not _retried:
+        apm_op_cache_key = _cache._cache_key_discovery("apm_op", service_name, env)
+        _cache._DISCOVERY_CACHE.pop(apm_op_cache_key, None)
+        logger.debug(
+            "Datadog APM: all metrics empty for op=%s service=%s env=%s — "
+            "invalidated cache, retrying operation detection",
+            operation, service_name, env,
+        )
+        return _run_apm_queries(
+            api,
+            service_name,
+            env,
+            tag_filter,
+            start,
+            now,
+            hours_back,
+            cache_key,
+            config,
+            _retried=True,
+        )
 
     # ── Compute derived metrics ──────────────────────────
     hits = results.get("hits")
