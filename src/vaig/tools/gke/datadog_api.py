@@ -45,8 +45,10 @@ _ERR_FORBIDDEN = "Insufficient permissions. Check your Datadog API/app key scope
 _ERR_RATE_LIMIT = "Rate limit exceeded. Try again later."
 
 # ── Datadog APM operation probe order ────────────────────────
-# Ordered by prevalence: Java/Spring → generic HTTP → gRPC → Python → Ruby → messaging.
+# Ordered by prevalence: Istio/Envoy → Java/Spring → generic HTTP → gRPC →
+# Python → Ruby → messaging → cloud/serverless.
 _APM_OPERATION_PROBE_ORDER: tuple[str, ...] = (
+    "envoy.proxy",
     "servlet.request",
     "http.request",
     "grpc.server",
@@ -55,6 +57,9 @@ _APM_OPERATION_PROBE_ORDER: tuple[str, ...] = (
     "rack.request",
     "grpc.client",
     "kafka.consume",
+    "consumer.consume",
+    "aws.request",
+    "lambda.invoke",
 )
 
 # ── Metric name aliases (fuzzy matching) ─────────────────────
@@ -480,15 +485,21 @@ def query_datadog_metrics(
     # Resolve metric mode — APM trace.* metrics do not carry custom tags
     mode = getattr(config, "metric_mode", "auto")
 
-    # Resolve APM operation name when in apm or both mode
+    # Resolve APM operation name when in apm or both mode.
+    # When apm_operation == "auto" the actual operation is probed lazily:
+    #   - apm/both mode: probed here (before building the primary query) when
+    #     service+env are available.  Without probing, Istio/Envoy services
+    #     silently fall back to "http.request" and return no data.
+    #   - auto mode: probed inside the k8s→apm fallback (api client is built
+    #     there) — see _run_with_fallback below.
     resolved_operation = "http.request"
+    _apm_needs_detection = False
     if mode in ("apm", "both"):
         apm_op = getattr(config, "apm_operation", "auto")
         if apm_op != "auto":
             resolved_operation = apm_op
-        # NOTE: auto-detection is not run here because query_datadog_metrics
-        # doesn't have service/env guaranteed; _detect_apm_operation is used
-        # by get_datadog_apm_services which always has those values.
+        elif service and env:
+            _apm_needs_detection = True  # probed inside _run_with_fallback
 
     metric_templates = _build_metric_templates(config, operation=resolved_operation)
     template = metric_templates.get(metric)
@@ -513,20 +524,29 @@ def query_datadog_metrics(
             error=True,
         )
 
-    # Determine include_custom_labels per-metric: APM trace.* metrics only
-    # carry service+env tags, so custom labels would cause empty results.
-    # In "both" mode the decision depends on the resolved template.
-    _is_trace_metric = "trace." in template
-    _had_custom_labels = not _is_trace_metric and bool(
+    # Determine include_custom_labels per-metric.  Built-in templates
+    # (kubernetes.* and APM trace.*) only carry cluster/service/env tags —
+    # applying user-defined custom labels to them causes over-filtering and
+    # empty results.  Only user-defined entries from ``config.custom_metrics``
+    # should receive custom labels.
+    template_str: str = template  # narrow for nonlocal rebinding inside closure
+    _is_trace_metric = "trace." in template_str
+    _is_custom_metric = metric in (getattr(config, "custom_metrics", {}) or {})
+    # Include custom labels when the metric is user-defined OR when it is not
+    # a trace.* metric (kubernetes.* built-ins first attempt with custom labels;
+    # the retry path strips them on empty results).  Only trace.* metrics are
+    # hard-blocked because their tag schema never includes user-defined labels.
+    _include_custom_labels = _is_custom_metric or not _is_trace_metric
+    _had_custom_labels = _include_custom_labels and bool(
         config.labels.custom if config is not None else False
     )
     filters, tag_err = _build_tag_filter(
-        effective_cluster, service, env, config, include_custom_labels=not _is_trace_metric,
+        effective_cluster, service, env, config, include_custom_labels=_include_custom_labels,
     )
     if tag_err is not None:
         return tag_err
 
-    query = template.format(filters=filters)
+    query = template_str.format(filters=filters)
 
     def _execute_query(api: Any, q: str) -> tuple[ToolResult, bool]:
         """Run a single metrics query and return ``(result, has_data)``.
@@ -560,6 +580,10 @@ def query_datadog_metrics(
                 "  - Time window may predate metric collection",
                 "  - If using k8s_agent mode, the Datadog DaemonSet Agent may not be installed",
                 "  - If APM-only setup: set metric_mode='apm' or 'auto' in config",
+                "",
+                "Next step:",
+                "  Run diagnose_datadog_metrics(config=config) to inspect available "
+                "tags and validate label config.",
             ]
             return (
                 ToolResult(output="\n".join(diag_lines), error=False),
@@ -598,6 +622,34 @@ def query_datadog_metrics(
         When ``mode == "auto"``, tries the k8s_agent template first.  If that
         returns no data, rebuilds the query using APM templates and retries.
         """
+        nonlocal template_str, query, resolved_operation, metric_templates
+
+        # ── APM operation auto-detection (apm/both mode) ──────
+        # Probe the APM backend for the actual operation name — required for
+        # non-HTTP workloads like Istio/Envoy which use "envoy.proxy" rather
+        # than "http.request".  Skip for non-trace metrics (e.g. kubernetes.*)
+        # to avoid wasted API calls.
+        if _apm_needs_detection and _is_trace_metric and service and env:
+            try:
+                detected = _detect_apm_operation(api, service, env, config)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "APM operation auto-detection failed for service=%s env=%s: %s",
+                    service, env, exc,
+                )
+                detected = None
+            if detected and detected != resolved_operation:
+                logger.debug(
+                    "APM operation auto-detected: '%s' for service=%s env=%s",
+                    detected, service, env,
+                )
+                resolved_operation = detected
+                metric_templates = _build_metric_templates(config, operation=resolved_operation)
+                new_template = metric_templates.get(metric)
+                if new_template is not None:
+                    template_str = new_template
+                    query = template_str.format(filters=filters)
+
         result, has_data = _execute_query(api, query)
 
         # Retry without custom labels when the first query returned no data
@@ -607,8 +659,8 @@ def query_datadog_metrics(
                 effective_cluster, service, env, config, include_custom_labels=False,
             )
             if fb_err is None:
-                fallback_query = template.format(filters=fallback_filters)
-                logger.debug(
+                fallback_query = template_str.format(filters=fallback_filters)
+                logger.info(
                     "No data with custom labels for '%s'; retrying without custom labels",
                     metric,
                 )
@@ -622,6 +674,27 @@ def query_datadog_metrics(
             apm_only = _build_metric_templates(_fb_config, operation=resolved_operation)
             apm_template = apm_only.get(metric)
             if apm_template is not None:
+                # Auto-detect APM operation before executing the fallback —
+                # the default "http.request" misses Istio/Envoy and other
+                # non-HTTP workloads.  Only probed when an apm template
+                # exists for this metric (avoids wasted calls).
+                if service and env:
+                    try:
+                        detected = _detect_apm_operation(api, service, env, config)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug(
+                            "auto mode: APM operation detection failed: %s", exc,
+                        )
+                        detected = None
+                    if detected and detected != resolved_operation:
+                        logger.debug(
+                            "auto mode: APM operation auto-detected: '%s' for service=%s env=%s",
+                            detected, service, env,
+                        )
+                        resolved_operation = detected
+                        apm_only = _build_metric_templates(_fb_config, operation=resolved_operation)
+                        apm_template = apm_only.get(metric) or apm_template
+
                 # APM trace.* metrics don't carry custom labels — use minimal filter
                 apm_filters, apm_err = _build_tag_filter(
                     effective_cluster, service, env, config, include_custom_labels=False,
@@ -629,8 +702,9 @@ def query_datadog_metrics(
                 if apm_err is None:
                     apm_query = apm_template.format(filters=apm_filters)
                     logger.info(
-                        "auto mode: k8s_agent returned no data for '%s'; falling back to apm",
-                        metric,
+                        "auto mode: k8s_agent returned no data for '%s'; "
+                        "falling back to apm (operation=%s)",
+                        metric, resolved_operation,
                     )
                     result, has_data = _execute_query(api, apm_query)
                     if has_data:
