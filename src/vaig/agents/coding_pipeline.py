@@ -31,6 +31,7 @@ from vaig.core.prompt_defense import (
     COT_INSTRUCTION,
     wrap_untrusted_content,
 )
+from vaig.core.schemas import VerificationReport
 from vaig.tools import ToolRegistry, create_file_tools, create_shell_tools
 
 if TYPE_CHECKING:
@@ -354,8 +355,9 @@ class CodingSkillOrchestrator:
             plan_result.usage, impl_result.usage, verify_result.usage
         )
 
-        # Determine overall success from verification report
-        success = self._parse_success(verify_content)
+        # Determine overall success from verification report.
+        # Prefer structured JSON output; fall back to regex heuristics.
+        success = self._parse_success_structured(verify_content)
 
         logger.info(
             "CodingSkillOrchestrator completed — success=%s, total_tokens=%s",
@@ -502,6 +504,27 @@ class CodingSkillOrchestrator:
             for key in totals:
                 totals[key] += u.get(key, 0)
         return totals
+
+    @staticmethod
+    def _parse_success_structured(verification_report: str) -> bool:
+        """Parse verification result, preferring structured JSON over regex.
+
+        Attempts to deserialise *verification_report* as a
+        :class:`~vaig.core.schemas.VerificationReport` JSON object.  Markdown
+        code fences (````` ```json ... ``` ```) are stripped before parsing.
+
+        If the text cannot be parsed as JSON the method delegates to the
+        legacy :meth:`_parse_success` regex heuristic so that plain-text
+        verifier responses keep working unchanged.
+        """
+        # Strip optional markdown fences: ```json ... ``` or ``` ... ```
+        stripped = re.sub(r"^```[a-z]*\s*", "", verification_report.strip(), flags=re.IGNORECASE)
+        stripped = re.sub(r"\s*```$", "", stripped.strip())
+        try:
+            report = VerificationReport.model_validate_json(stripped)
+            return report.success
+        except Exception:
+            return CodingSkillOrchestrator._parse_success(verification_report)
 
     @staticmethod
     def _parse_success(verification_report: str) -> bool:

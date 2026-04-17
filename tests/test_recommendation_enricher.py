@@ -316,3 +316,121 @@ class TestBuildEnrichmentPrompt:
         # Second call should fallback to web-ns (first service's namespace)
         second_prompt = client.async_generate.call_args_list[1][0][0]
         assert "**Namespace**: web-ns" in second_prompt
+
+
+# ── Root-cause finding fallback (SH-03) ─────────────────────────────────────
+
+
+def _make_finding_with_causal(
+    finding_id: str,
+    caused_by: list[str] | None = None,
+) -> Finding:
+    return Finding(
+        id=finding_id,
+        title=f"Finding {finding_id}",
+        severity=Severity.HIGH,
+        description="desc",
+        root_cause="cause",
+        evidence=[],
+        confidence=Confidence.HIGH,
+        impact="impact",
+        affected_resources=[],
+        caused_by=caused_by or [],
+    )
+
+
+def _make_action_no_related() -> RecommendedAction:
+    """Action with no related_findings so the enricher must fall back."""
+    return RecommendedAction(
+        priority=1,
+        title="Generic action",
+        description="Do something",
+        urgency=ActionUrgency.IMMEDIATE,
+        command="kubectl get pods",
+        expected_output="pods listed",
+        interpretation="check status",
+        why="diagnosing",
+        risk="none",
+        related_findings=[],  # explicitly empty — forces fallback
+    )
+
+
+class TestRootCauseFallback:
+    """Verify the 3-step finding resolution fallback in enrich_recommendations."""
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_root_cause_finding_when_no_related(self):
+        """Step 2: should pick the root-cause finding (caused_by=[]) over a child."""
+        root = _make_finding_with_causal("root-f", caused_by=[])
+        child = _make_finding_with_causal("child-f", caused_by=["root-f"])
+
+        enriched_json = json.dumps(
+            {
+                "expected_output": "new expected",
+                "interpretation": "new interpretation",
+            }
+        )
+        client = _make_stub_client(enriched_json)
+
+        report = _make_report(
+            findings=[root, child],
+            recommendations=[_make_action_no_related()],
+        )
+
+        await enrich_recommendations(report, client)
+
+        # The enrichment prompt should reference the root-cause finding, not the child
+        prompt_used = client.async_generate.call_args_list[0][0][0]
+        assert "root-f" in prompt_used or "Finding root-f" in prompt_used
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_first_finding_when_no_root_causes(self):
+        """Step 3: all findings have upstream causes → fall back to findings[0]."""
+        f1 = _make_finding_with_causal("f1", caused_by=["f2"])
+        f2 = _make_finding_with_causal("f2", caused_by=["f1"])
+
+        enriched_json = json.dumps(
+            {"expected_output": "x", "interpretation": "y"}
+        )
+        client = _make_stub_client(enriched_json)
+
+        report = _make_report(
+            findings=[f1, f2],
+            recommendations=[_make_action_no_related()],
+        )
+
+        await enrich_recommendations(report, client)
+
+        # Should still call the LLM (didn't skip) — meaning it resolved to findings[0]
+        assert client.async_generate.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_related_findings_id_match_wins_over_root_cause(self):
+        """Step 1 takes priority: explicit related_findings ID match beats root_causes."""
+        root = _make_finding_with_causal("root-f", caused_by=[])
+        child = _make_finding_with_causal("child-f", caused_by=["root-f"])
+
+        enriched_json = json.dumps(
+            {"expected_output": "x", "interpretation": "y"}
+        )
+        client = _make_stub_client(enriched_json)
+
+        # Action explicitly points to the child finding
+        action = RecommendedAction(
+            priority=1,
+            title="Fix child",
+            description="desc",
+            urgency=ActionUrgency.IMMEDIATE,
+            command="cmd",
+            expected_output="out",
+            interpretation="interp",
+            why="why",
+            risk="none",
+            related_findings=["child-f"],
+        )
+
+        report = _make_report(findings=[root, child], recommendations=[action])
+        await enrich_recommendations(report, client)
+
+        prompt_used = client.async_generate.call_args_list[0][0][0]
+        assert "child-f" in prompt_used or "Finding child-f" in prompt_used
