@@ -9,6 +9,7 @@ structured JSON report (rendered to Markdown).
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 from typing import Any, NamedTuple
 
@@ -185,6 +186,67 @@ class ServiceHealthSkill(BaseSkill):
         # Empty result means resolution failed or was not attempted —
         # the prompt builder falls back to LLM-based Step 0 resolution.
         self._prefetched_dd_resolution: DDResolutionResult = DDResolutionResult()
+        # Lazy-initialized enrichment resources (SH-08).
+        # Created on first call to ``_enrich_report_recommendations``; reused on
+        # subsequent calls.  Single-worker pool — used sequentially, never
+        # concurrently.  Call ``close()`` to release resources explicitly.
+        self._enrichment_pool: concurrent.futures.ThreadPoolExecutor | None = None
+        self._gemini_client: Any | None = None  # GeminiClient, lazy-imported
+
+    def close(self) -> None:
+        """Shut down lazy-initialized resources. Idempotent.
+
+        Safe to call multiple times or when resources were never created.
+        After ``close()``, the next call to ``_enrich_report_recommendations``
+        will re-create a fresh pool and client.
+        """
+        if self._enrichment_pool is not None:
+            self._enrichment_pool.shutdown(wait=False, cancel_futures=True)
+            self._enrichment_pool = None
+        self._gemini_client = None
+
+    def _detect_argocd(self, namespace: str, gke_config: Any) -> bool:
+        """Resolve the 3-state ``argocd_enabled`` flag to a concrete bool.
+
+        - ``False``  → skip detection, return ``False``
+        - ``True``   → force-enable, return ``True``
+        - ``None``   → perform a live CRD probe via the GKE k8s client and
+                       return the result of :func:`~vaig.tools.gke.argocd.detect_argocd`
+        """
+        setting = gke_config.argocd_enabled
+        if setting is not None:
+            return bool(setting)
+        from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415
+        from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415
+        from vaig.tools.gke.argocd import detect_argocd  # noqa: PLC0415
+
+        api_client = None
+        clients = _gke_clients._create_k8s_clients(gke_config)
+        if not isinstance(clients, _ToolResult):
+            api_client = clients[3]  # ApiClient is the 4th element
+        return detect_argocd(namespace=namespace, api_client=api_client)
+
+    def _detect_argo_rollouts(self, namespace: str, gke_config: Any) -> bool:
+        """Resolve the 3-state ``argo_rollouts_enabled`` flag to a concrete bool.
+
+        - ``False``  → skip detection, return ``False``
+        - ``True``   → force-enable, return ``True``
+        - ``None``   → perform a live CRD probe via the GKE k8s client and
+                       return the result of
+                       :func:`~vaig.tools.gke.argo_rollouts.detect_argo_rollouts`
+        """
+        setting = gke_config.argo_rollouts_enabled
+        if setting is not None:
+            return bool(setting)
+        from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415
+        from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415
+        from vaig.tools.gke.argo_rollouts import detect_argo_rollouts  # noqa: PLC0415
+
+        api_client = None
+        clients = _gke_clients._create_k8s_clients(gke_config)
+        if not isinstance(clients, _ToolResult):
+            api_client = clients[3]  # ApiClient is the 4th element
+        return detect_argo_rollouts(namespace=namespace, api_client=api_client)
 
     def get_metadata(self) -> SkillMetadata:
         return SkillMetadata(
@@ -574,30 +636,9 @@ class ServiceHealthSkill(BaseSkill):
         settings = get_settings()
         namespace = namespace or settings.gke.default_namespace
 
-        # Resolve the 3-state ArgoCD flag:
-        #   None  → auto-detect via CRD probe + annotation fallback (lazy, cached per process)
-        #   True  → force-enable regardless of CRD
-        #   False → always disable (skip detection entirely)
-        _acd_setting = settings.gke.argocd_enabled
-        if _acd_setting is False:
-            argocd_active = False
-        elif _acd_setting is True:
-            argocd_active = True
-        else:
-            from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415
-            from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415
-            from vaig.tools.gke.argocd import detect_argocd  # noqa: PLC0415
-            _effective_gke = settings.gke.model_copy(
-                update={"default_namespace": namespace}
-            )
-            _acd_api_client = None
-            _acd_clients = _gke_clients._create_k8s_clients(_effective_gke)
-            if not isinstance(_acd_clients, _ToolResult):
-                _acd_api_client = _acd_clients[3]  # ApiClient is the 4th element
-            argocd_active = detect_argocd(
-                namespace=namespace,
-                api_client=_acd_api_client,
-            )
+        # Resolve the 3-state ArgoCD flag via helper (SH-07).
+        effective_gke = settings.gke.model_copy(update={"default_namespace": namespace})
+        argocd_active = self._detect_argocd(namespace, effective_gke)
 
         gatherer_prompt = build_gatherer_prompt(
             helm_enabled=settings.gke.helm_enabled,
@@ -746,49 +787,11 @@ class ServiceHealthSkill(BaseSkill):
                     exc_info=True,
                 )
 
-        # Resolve the 3-state Argo Rollouts flag:
-        #   None  → auto-detect via CRD probe (lazy, cached per process)
-        #   True  → force-enable regardless of CRD
-        #   False → always disable (skip detection entirely)
-        _ar_setting = effective_gke.argo_rollouts_enabled
-        if _ar_setting is False:
-            argo_rollouts_active = False
-        elif _ar_setting is True:
-            argo_rollouts_active = True
-        else:
-            from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415
-            from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415
-            from vaig.tools.gke.argo_rollouts import detect_argo_rollouts  # noqa: PLC0415
-            _ar_api_client = None
-            _ar_clients = _gke_clients._create_k8s_clients(effective_gke)
-            if not isinstance(_ar_clients, _ToolResult):
-                _ar_api_client = _ar_clients[3]  # ApiClient is the 4th element
-            argo_rollouts_active = detect_argo_rollouts(
-                namespace=effective_namespace,
-                api_client=_ar_api_client,
-            )
+        # Resolve the 3-state Argo Rollouts flag via helper (SH-07).
+        argo_rollouts_active = self._detect_argo_rollouts(effective_namespace, effective_gke)
 
-        # Resolve the 3-state ArgoCD flag:
-        #   None  → auto-detect via CRD probe + annotation fallback (lazy, cached per process)
-        #   True  → force-enable regardless of CRD
-        #   False → always disable (skip detection entirely)
-        _acd_setting = effective_gke.argocd_enabled
-        if _acd_setting is False:
-            argocd_active = False
-        elif _acd_setting is True:
-            argocd_active = True
-        else:
-            from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415  # noqa: F811
-            from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415  # noqa: F811
-            from vaig.tools.gke.argocd import detect_argocd  # noqa: PLC0415
-            _acd_api_client = None
-            _acd_clients = _gke_clients._create_k8s_clients(effective_gke)
-            if not isinstance(_acd_clients, _ToolResult):
-                _acd_api_client = _acd_clients[3]  # ApiClient is the 4th element
-            argocd_active = detect_argocd(
-                namespace=effective_namespace,
-                api_client=_acd_api_client,
-            )
+        # Resolve the 3-state ArgoCD flag via helper (SH-07).
+        argocd_active = self._detect_argocd(effective_namespace, effective_gke)
 
         agents: list[dict[str, Any]] = [
             # ── Parallel group: core sub-gatherers ───────────────────────
@@ -1020,7 +1023,6 @@ class ServiceHealthSkill(BaseSkill):
                 30 s each with concurrency).  Set lower in tests or CI.
         """
         import asyncio
-        import concurrent.futures
 
         from vaig.core.client import GeminiClient
         from vaig.core.config import get_settings
@@ -1029,7 +1031,13 @@ class ServiceHealthSkill(BaseSkill):
         )
 
         settings = get_settings()
-        client = GeminiClient(settings)
+        # Lazy-init: reuse client and pool across calls (SH-08).
+        if self._gemini_client is None:
+            self._gemini_client = GeminiClient(settings)
+        client = self._gemini_client
+        if self._enrichment_pool is None:
+            self._enrichment_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        pool = self._enrichment_pool
 
         logger.info(
             "Starting two-pass recommendation enrichment for %d recommendations "
@@ -1046,9 +1054,8 @@ class ServiceHealthSkill(BaseSkill):
 
         from vaig.core.log import _make_console  # noqa: PLC0415
 
-        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(asyncio.run, enrich_recommendations(report, client))
         try:
-            future = pool.submit(asyncio.run, enrich_recommendations(report, client))
             if sys.stderr.isatty():
                 console = _make_console(stderr=True)
                 with console.status(
@@ -1068,5 +1075,3 @@ class ServiceHealthSkill(BaseSkill):
             )
             future.cancel()
             return report
-        finally:
-            pool.shutdown(wait=False, cancel_futures=True)
