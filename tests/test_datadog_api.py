@@ -2858,17 +2858,18 @@ class TestDetectApmOperation:
         dd_config.apm_operation = "grpc.server"
         mock_api = MagicMock()
 
-        result = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
+        result, source = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
 
         assert result == "grpc.server"
+        assert source == "config"
         mock_api.query_metrics.assert_not_called()
 
     def test_probe_returns_first_operation_with_data(self, dd_config: DatadogAPIConfig) -> None:
         """Probing returns the first operation that has non-empty timeseries data."""
         from vaig.tools.gke.datadog_api import _detect_apm_operation
 
-        # First two probes return empty; third (http.request) returns data.
-        # Probe order: envoy.proxy, servlet.request, http.request, grpc.server, ...
+        # First two probes return empty; third (servlet.request) returns data.
+        # Probe order: envoy.proxy, envoy.envoy, servlet.request, grpc.server, ...
         empty_resp = MagicMock()
         empty_resp.series = []
 
@@ -2880,9 +2881,10 @@ class TestDetectApmOperation:
         mock_api = MagicMock()
         mock_api.query_metrics.side_effect = [empty_resp, empty_resp, hit_resp]
 
-        result = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
+        result, source = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
 
-        assert result == "http.request"  # 3rd in _APM_OPERATION_PROBE_ORDER
+        assert result == "servlet.request"  # 3rd in _APM_OPERATION_PROBE_ORDER
+        assert source == "probe"
         assert mock_api.query_metrics.call_count == 3
 
     def test_cache_hit_skips_api_calls(self, dd_config: DatadogAPIConfig) -> None:
@@ -2898,13 +2900,15 @@ class TestDetectApmOperation:
         mock_api = MagicMock()
         mock_api.query_metrics.return_value = hit_resp
 
-        result1 = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
+        result1, source1 = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
         first_call_count = mock_api.query_metrics.call_count
 
         # Second call: should hit cache — no new API calls
-        result2 = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
+        result2, source2 = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
 
         assert result1 == result2 == "envoy.proxy"  # 1st in probe order (Istio services)
+        assert source1 == "probe"
+        assert source2 == "cache"
         assert mock_api.query_metrics.call_count == first_call_count
 
     def test_all_probes_empty_returns_none(self, dd_config: DatadogAPIConfig) -> None:
@@ -2916,9 +2920,10 @@ class TestDetectApmOperation:
         mock_api = MagicMock()
         mock_api.query_metrics.return_value = empty_resp
 
-        result = _detect_apm_operation(mock_api, "ghost-svc", "prod", dd_config)
+        result, source = _detect_apm_operation(mock_api, "ghost-svc", "prod", dd_config)
 
         assert result is None
+        assert source == "none"
 
     def test_probe_exception_continues_to_next_operation(self, dd_config: DatadogAPIConfig) -> None:
         """If a probe raises a network error, the next operation is tried."""
@@ -2933,10 +2938,588 @@ class TestDetectApmOperation:
         # First probe raises a network error; second returns data.
         mock_api.query_metrics.side_effect = [OSError("connection reset"), hit_resp]
 
-        result = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
+        result, source = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
 
-        assert result == "servlet.request"  # 2nd in _APM_OPERATION_PROBE_ORDER
+        assert result == "envoy.envoy"  # 2nd in _APM_OPERATION_PROBE_ORDER
+        assert source == "probe"
         assert mock_api.query_metrics.call_count == 2
+
+    # ── T-06: override dict (step 1) ──────────────────────────
+
+    def test_override_hit_short_circuits_all(self, dd_config: DatadogAPIConfig) -> None:
+        """Override dict hit returns the mapped value — no probe, no cache, no discovery."""
+        from vaig.tools.gke.datadog_api import _detect_apm_operation
+
+        dd_config.apm_operation_overrides = {"my-svc": "envoy.proxy"}
+        dd_config.apm_operation = "auto"
+        mock_api = MagicMock()
+
+        result, source = _detect_apm_operation(mock_api, "my-svc", "prod", dd_config)
+
+        assert result == "envoy.proxy"
+        assert source == "override"
+        mock_api.query_metrics.assert_not_called()
+
+    def test_override_key_sanitized(self, dd_config: DatadogAPIConfig) -> None:
+        """Override key lookup uses the sanitized service name (returned by _sanitize_tag_value).
+        Since _sanitize_tag_value returns the value unchanged (it validates, not transforms),
+        the override key must match the exact service name form passed."""
+        from vaig.tools.gke.datadog_api import _detect_apm_operation
+
+        # "my-svc" → _sanitize_tag_value returns "my-svc" unchanged
+        dd_config.apm_operation_overrides = {"my-svc": "envoy.proxy"}
+        dd_config.apm_operation = "auto"
+        mock_api = MagicMock()
+
+        result, source = _detect_apm_operation(mock_api, "my-svc", "prod", dd_config)
+
+        assert result == "envoy.proxy"
+        assert source == "override"
+        mock_api.query_metrics.assert_not_called()
+
+    def test_override_miss_falls_through_to_config(self, dd_config: DatadogAPIConfig) -> None:
+        """Override dict miss falls through — next step (config) still applies."""
+        from vaig.tools.gke.datadog_api import _detect_apm_operation
+
+        dd_config.apm_operation_overrides = {"other-svc": "envoy.proxy"}
+        dd_config.apm_operation = "servlet.request"  # explicit config → step 2
+        mock_api = MagicMock()
+
+        result, source = _detect_apm_operation(mock_api, "my-svc", "prod", dd_config)
+
+        assert result == "servlet.request"
+        assert source == "config"
+        mock_api.query_metrics.assert_not_called()
+
+    def test_override_wins_over_explicit_apm_operation(self, dd_config: DatadogAPIConfig) -> None:
+        """Override dict takes precedence over config.apm_operation != 'auto'."""
+        from vaig.tools.gke.datadog_api import _detect_apm_operation
+
+        dd_config.apm_operation_overrides = {"my-svc": "grpc.server"}
+        dd_config.apm_operation = "envoy.proxy"  # would win without override
+        mock_api = MagicMock()
+
+        result, source = _detect_apm_operation(mock_api, "my-svc", "prod", dd_config)
+
+        assert result == "grpc.server"
+        assert source == "override"
+        mock_api.query_metrics.assert_not_called()
+
+    def test_override_wins_over_cached_entry(self, dd_config: DatadogAPIConfig) -> None:
+        """Override dict wins even when a cache entry for the service exists."""
+        import time
+
+        from vaig.tools.gke._cache import _DISCOVERY_CACHE, _cache_key_discovery
+        from vaig.tools.gke.datadog_api import _detect_apm_operation
+
+        # Pre-populate cache with a different value (timestamp, value, ttl)
+        cache_key = _cache_key_discovery("apm_op", "my-svc", "prod")
+        _DISCOVERY_CACHE[cache_key] = (time.monotonic(), "cached.operation", 300)
+
+        dd_config.apm_operation_overrides = {"my-svc": "grpc.server"}
+        dd_config.apm_operation = "auto"
+        mock_api = MagicMock()
+
+        result, source = _detect_apm_operation(mock_api, "my-svc", "prod", dd_config)
+
+        assert result == "grpc.server"
+        assert source == "override"
+        mock_api.query_metrics.assert_not_called()
+
+    # ── T-06: discovery step (step 4) ─────────────────────────
+
+    def test_discovery_flag_off_no_discovery_call(self, dd_config: DatadogAPIConfig) -> None:
+        """When apm_discovery_enabled=False (default), _discover_apm_operation is never called."""
+        from unittest.mock import patch
+
+        from vaig.tools.gke.datadog_api import _detect_apm_operation
+
+        dd_config.apm_discovery_enabled = False
+        dd_config.apm_operation = "auto"
+        dd_config.apm_operation_overrides = {}
+
+        empty_resp = MagicMock()
+        empty_resp.series = []
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = empty_resp
+
+        with patch("vaig.tools.gke.datadog_api._discover_apm_operation") as mock_disc:
+            result, source = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
+
+        mock_disc.assert_not_called()
+        assert result is None  # all probes empty
+        assert source == "none"
+
+    def test_discovery_flag_on_hit_returns_and_caches(self, dd_config: DatadogAPIConfig) -> None:
+        """When discovery is ON and returns an op, it is returned and cached."""
+        from unittest.mock import patch
+
+        from vaig.tools.gke._cache import _DISCOVERY_CACHE, _cache_key_discovery
+        from vaig.tools.gke.datadog_api import _detect_apm_operation
+
+        dd_config.apm_discovery_enabled = True
+        dd_config.apm_operation = "auto"
+        dd_config.apm_operation_overrides = {}
+        mock_api = MagicMock()
+
+        with patch(
+            "vaig.tools.gke.datadog_api._discover_apm_operation",
+            return_value="django.request",
+        ):
+            result, source = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
+
+        assert result == "django.request"
+        assert source == "discovery"
+        mock_api.query_metrics.assert_not_called()  # discovery returned — no probe needed
+        # Result should be cached
+        cache_key = _cache_key_discovery("apm_op", "svc", "prod")
+        assert cache_key in _DISCOVERY_CACHE
+
+    def test_discovery_flag_on_none_falls_back_to_probe(self, dd_config: DatadogAPIConfig) -> None:
+        """When discovery returns None, probe order is used as fallback."""
+        from unittest.mock import patch
+
+        from vaig.tools.gke.datadog_api import _detect_apm_operation
+
+        dd_config.apm_discovery_enabled = True
+        dd_config.apm_operation = "auto"
+        dd_config.apm_operation_overrides = {}
+
+        hit_resp = MagicMock()
+        hit_series = MagicMock()
+        hit_series.pointlist = [[1700000000, 10.0]]
+        hit_resp.series = [hit_series]
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = hit_resp
+
+        with patch(
+            "vaig.tools.gke.datadog_api._discover_apm_operation",
+            return_value=None,
+        ):
+            result, source = _detect_apm_operation(mock_api, "svc", "prod", dd_config)
+
+        assert result == "envoy.proxy"  # first probe in order
+        assert source == "probe"
+        mock_api.query_metrics.assert_called_once()
+
+    def test_all_five_steps_fail_returns_none(self, dd_config: DatadogAPIConfig) -> None:
+        """T-12: With discovery enabled, if discovery returns None and all probes empty → None."""
+        from unittest.mock import patch
+
+        from vaig.tools.gke.datadog_api import _detect_apm_operation
+
+        dd_config.apm_discovery_enabled = True
+        dd_config.apm_operation = "auto"
+        dd_config.apm_operation_overrides = {}
+
+        empty_resp = MagicMock()
+        empty_resp.series = []
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = empty_resp
+
+        with patch(
+            "vaig.tools.gke.datadog_api._discover_apm_operation",
+            return_value=None,
+        ):
+            result, source = _detect_apm_operation(mock_api, "ghost-svc", "prod", dd_config)
+
+        assert result is None
+        assert source == "none"
+        # All probes tried, discovery tried — nothing found
+        assert mock_api.query_metrics.call_count == 12  # full _APM_OPERATION_PROBE_ORDER
+
+
+# ── T-10: _discover_apm_operation direct unit tests ──────────
+
+
+class TestDiscoverApmOperation:
+    """Direct unit tests for _discover_apm_operation (T-10)."""
+
+    def setup_method(self) -> None:
+        from vaig.tools.gke._cache import clear_discovery_cache
+
+        clear_discovery_cache()
+
+    def _make_config(self) -> DatadogAPIConfig:
+        return DatadogAPIConfig(enabled=True, api_key="test-api-key", app_key="test-app-key")
+
+    def _make_api(self, raw_get_return: dict) -> Any:
+        """Build a mock api whose api_client.rest_client.request returns a fake response."""
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.data = __import__("json").dumps(raw_get_return).encode()
+        mock_rest = MagicMock()
+        mock_rest.request.return_value = mock_resp
+        mock_client = MagicMock()
+        mock_client.rest_client = mock_rest
+        mock_api = MagicMock()
+        mock_api.api_client = mock_client
+        return mock_api
+
+    def test_returns_first_matched_operation(self) -> None:
+        """Returns first matched operation from trace.*.hits metric names."""
+        from vaig.tools.gke.datadog_api import _discover_apm_operation
+
+        config = self._make_config()
+        api = self._make_api(
+            {"results": {"metrics": ["trace.django.request.hits", "trace.flask.request.hits"]}}
+        )
+
+        result = _discover_apm_operation(api, "my-svc", "prod", config)
+
+        assert result == "django.request"
+
+    def test_empty_metrics_returns_none(self) -> None:
+        """Returns None when metrics list is empty."""
+        from vaig.tools.gke.datadog_api import _discover_apm_operation
+
+        config = self._make_config()
+        api = self._make_api({"results": {"metrics": []}})
+
+        result = _discover_apm_operation(api, "my-svc", "prod", config)
+
+        assert result is None
+
+    def test_http_error_returns_none(self) -> None:
+        """Returns None when _dd_raw_get returns {} due to HTTP error."""
+        from unittest.mock import patch
+
+        from vaig.tools.gke.datadog_api import _discover_apm_operation
+
+        config = self._make_config()
+        mock_api = MagicMock()
+        mock_api.api_client = MagicMock()
+
+        with patch("vaig.tools.gke.datadog_api._dd_raw_get", return_value={}):
+            result = _discover_apm_operation(mock_api, "my-svc", "prod", config)
+
+        assert result is None
+
+    def test_unparseable_metric_names_returns_none(self) -> None:
+        """Returns None when metric names don't match the expected pattern."""
+        from vaig.tools.gke.datadog_api import _discover_apm_operation
+
+        config = self._make_config()
+        api = self._make_api(
+            {"results": {"metrics": ["custom.metric.count", "not.a.trace.metric"]}}
+        )
+
+        result = _discover_apm_operation(api, "my-svc", "prod", config)
+
+        assert result is None
+
+    def test_missing_results_key_returns_none(self) -> None:
+        """Returns None when response has no 'results' key."""
+        from vaig.tools.gke.datadog_api import _discover_apm_operation
+
+        config = self._make_config()
+        api = self._make_api({})
+
+        result = _discover_apm_operation(api, "my-svc", "prod", config)
+
+        assert result is None
+
+
+    def test_discover_includes_env_in_query(self) -> None:
+        """_discover_apm_operation must include env in the search query."""
+        from unittest.mock import patch
+
+        from vaig.tools.gke.datadog_api import _discover_apm_operation
+
+        config = self._make_config()
+        mock_api = MagicMock()
+        mock_api.api_client = MagicMock()
+
+        with patch("vaig.tools.gke.datadog_api._dd_raw_get", return_value={}) as mock_raw:
+            _discover_apm_operation(mock_api, "my-svc", "staging", config)
+
+        assert mock_raw.call_count == 1
+        _, _, _, params = mock_raw.call_args[0]
+        assert "env:staging" in params["q"]
+        assert "service:my-svc" in params["q"]
+
+
+# ── Retry only triggers for cache-sourced operations ─────────
+
+
+class TestRetryOnlyCacheSource:
+    """Retry must ONLY happen when operation came from cache (not override/config/discovery/probe)."""
+
+    def setup_method(self) -> None:
+        from vaig.tools.gke._cache import clear_discovery_cache
+
+        clear_discovery_cache()
+
+    def _make_config(self, **kwargs: Any) -> DatadogAPIConfig:
+        return DatadogAPIConfig(enabled=True, api_key="k", app_key="k", **kwargs)
+
+    def _empty_resp(self) -> Any:
+        r = MagicMock()
+        r.series = []
+        return r
+
+    def _run(self, config: DatadogAPIConfig, mock_api: Any, *, retried: bool = False) -> Any:
+        import time as _time
+
+        from vaig.tools.gke.datadog_api import _run_apm_queries
+        now = int(_time.time())
+        from vaig.tools.gke._cache import _cache_key_discovery
+        return _run_apm_queries(
+            mock_api,
+            "my-svc",
+            "prod",
+            "service:my-svc,env:prod",
+            now - 3600,
+            now,
+            1.0,
+            _cache_key_discovery("dd_apm", "my-svc", "prod"),
+            config,
+            _retried=retried,
+        )
+
+    def test_no_retry_when_op_from_override(self) -> None:
+        """Override-sourced op: all-empty metrics must NOT trigger retry/cache invalidation."""
+        config = self._make_config()
+        config.apm_operation_overrides = {"my-svc": "grpc.server"}
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = self._empty_resp()
+
+        self._run(config, mock_api)
+
+        # Only 3 queries (one per metric); no extra probe call for retry
+        assert mock_api.query_metrics.call_count == 3
+
+    def test_no_retry_when_op_from_explicit_config(self) -> None:
+        """Explicit config op: all-empty metrics must NOT trigger retry."""
+        config = self._make_config()
+        config.apm_operation = "servlet.request"
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = self._empty_resp()
+
+        self._run(config, mock_api)
+
+        assert mock_api.query_metrics.call_count == 3
+
+    def test_no_retry_when_op_from_discovery(self) -> None:
+        """Discovery-sourced op: all-empty metrics must NOT trigger retry."""
+        from unittest.mock import patch
+
+        config = self._make_config()
+        config.apm_discovery_enabled = True
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = self._empty_resp()
+
+        with patch(
+            "vaig.tools.gke.datadog_api._discover_apm_operation",
+            return_value="django.request",
+        ):
+            self._run(config, mock_api)
+
+        # Only 3 queries (hits/errors/duration); no extra probe calls
+        assert mock_api.query_metrics.call_count == 3
+
+    def test_retry_triggers_when_op_from_cache(self) -> None:
+        """Cache-sourced op with all-empty metrics MUST trigger cache invalidation + retry."""
+        import time as _time
+
+        from vaig.tools.gke._cache import _cache_key_discovery, _set_cache
+        from vaig.tools.gke.datadog_api import _run_apm_queries
+
+        config = self._make_config()
+        service, env = "my-svc", "prod"
+        cache_key = _cache_key_discovery("apm_op", service, env)
+        _set_cache(cache_key, "envoy.envoy", ttl=300)
+
+        empty_resp = self._empty_resp()
+
+        hit_resp = MagicMock()
+        hit_series = MagicMock()
+        hit_series.pointlist = [[1700000000, 5.0]]
+        hit_resp.series = [hit_series]
+
+        mock_api = MagicMock()
+        # First 3: APM queries for cached op (all empty), then probe + 3 APM queries on retry
+        mock_api.query_metrics.side_effect = [
+            empty_resp, empty_resp, empty_resp,  # first run: all empty
+            hit_resp,                             # probe: envoy.proxy wins
+            hit_resp, empty_resp, empty_resp,     # retry run: hits only
+        ]
+
+        now = int(_time.time())
+        result = _run_apm_queries(
+            mock_api, service, env,
+            f"service:{service},env:{env}",
+            now - 3600, now, 1.0,
+            _cache_key_discovery("dd_apm", service, env),
+            config,
+        )
+
+        # Must have been retried: >3 calls total
+        assert mock_api.query_metrics.call_count > 3
+        assert result.error is False
+
+
+# ── _run_apm_queries cache-invalidation retry (T-07) ─────────
+
+
+class TestRunApmQueriesInvalidation:
+    """Cache-invalidation + single-shot retry in _run_apm_queries (T-07)."""
+
+    def setup_method(self) -> None:
+        from vaig.tools.gke._cache import clear_discovery_cache
+
+        clear_discovery_cache()
+
+    def _make_config(self) -> DatadogAPIConfig:
+        return DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+        )
+
+    def _make_api(self, *, probe_resp: Any, apm_resp: Any | None = None) -> Any:
+        """Helper: build a mock API whose query_metrics returns probe_resp for probe
+        queries and apm_resp for the 3 APM metric queries."""
+        mock_api = MagicMock()
+        if apm_resp is None:
+            mock_api.query_metrics.return_value = probe_resp
+        else:
+            mock_api.query_metrics.side_effect = [probe_resp, apm_resp, apm_resp, apm_resp]
+        return mock_api
+
+    def test_stale_cache_invalidated_on_all_empty_metrics(self) -> None:
+        """PRIMARY BUG REPRO: cached envoy.envoy + all-empty metrics → cache invalidated,
+        retry finds envoy.proxy with data."""
+        from vaig.tools.gke._cache import _DISCOVERY_CACHE, _cache_key_discovery, _set_cache
+        from vaig.tools.gke.datadog_api import _run_apm_queries
+
+        config = self._make_config()
+        service, env = "my-svc", "prd"
+        cache_key = _cache_key_discovery("apm_op", service, env)
+
+        # Pre-poison the cache with stale "envoy.envoy"
+        _set_cache(cache_key, "envoy.envoy", ttl=300)
+        assert cache_key in _DISCOVERY_CACHE
+
+        # All 3 APM metric queries return empty (envoy.envoy has no data)
+        empty_resp = MagicMock()
+        empty_resp.series = []
+
+        # On retry, envoy.proxy probe gets data
+        hit_resp = MagicMock()
+        hit_series = MagicMock()
+        hit_series.pointlist = [[1700000000, 5.0]]
+        hit_resp.series = [hit_series]
+
+        mock_api = MagicMock()
+        # Side effect sequence:
+        # 1st call: _run_apm_queries uses cached op "envoy.envoy", runs 3 queries → all empty
+        # Then cache is invalidated, _detect_apm_operation is called → probe "envoy.proxy" → hit_resp
+        # 2nd run: 3 more queries using "envoy.proxy" → hit_resp for hits, empty for errors/duration
+        mock_api.query_metrics.side_effect = [
+            empty_resp,   # hits query for envoy.envoy → empty
+            empty_resp,   # errors query for envoy.envoy → empty
+            empty_resp,   # duration query for envoy.envoy → empty
+            hit_resp,     # probe for envoy.proxy (first in probe order) → hit
+            hit_resp,     # hits query for envoy.proxy
+            empty_resp,   # errors query for envoy.proxy → empty (N/A ok)
+            empty_resp,   # duration query for envoy.proxy → empty (N/A ok)
+        ]
+
+        result = _run_apm_queries(
+            mock_api,
+            service,
+            env,
+            f"service:{service},env:{env}",
+            int(__import__("time").time()) - 3600,
+            int(__import__("time").time()),
+            1.0,
+            _cache_key_discovery("dd_apm", service, env),
+            config,
+        )
+
+        # Cache should have been cleared (or replaced with envoy.proxy)
+        # Either way the stale envoy.envoy entry must be gone
+        cached_val = _DISCOVERY_CACHE.get(cache_key)
+        assert cached_val is None or cached_val[1] != "envoy.envoy"
+
+        # Result should NOT report envoy.envoy metrics (which were all N/A)
+        assert result.error is False
+        assert "envoy.proxy" in result.output or "envoy" in result.output
+
+    def test_no_invalidation_when_partial_results(self) -> None:
+        """Partial metric results (hits non-empty) do NOT trigger cache invalidation."""
+        from vaig.tools.gke._cache import _DISCOVERY_CACHE, _cache_key_discovery, _set_cache
+        from vaig.tools.gke.datadog_api import _run_apm_queries
+
+        config = self._make_config()
+        service, env = "my-svc", "prd"
+        cache_key = _cache_key_discovery("apm_op", service, env)
+        _set_cache(cache_key, "envoy.proxy", ttl=300)
+
+        hit_resp = MagicMock()
+        hit_series = MagicMock()
+        hit_series.pointlist = [[1700000000, 5.0]]
+        hit_resp.series = [hit_series]
+
+        empty_resp = MagicMock()
+        empty_resp.series = []
+
+        mock_api = MagicMock()
+        # hits returns data; errors/duration are empty (partial result)
+        mock_api.query_metrics.side_effect = [hit_resp, empty_resp, empty_resp]
+
+        _run_apm_queries(
+            mock_api,
+            service,
+            env,
+            f"service:{service},env:{env}",
+            int(__import__("time").time()) - 3600,
+            int(__import__("time").time()),
+            1.0,
+            _cache_key_discovery("dd_apm", service, env),
+            config,
+        )
+
+        # Cache should NOT be invalidated
+        assert cache_key in _DISCOVERY_CACHE
+        assert _DISCOVERY_CACHE[cache_key][1] == "envoy.proxy"
+
+    def test_retry_guard_prevents_infinite_loop(self) -> None:
+        """When _retried=True, all-empty results are returned as-is without another retry."""
+        from vaig.tools.gke._cache import _cache_key_discovery, _set_cache
+        from vaig.tools.gke.datadog_api import _run_apm_queries
+
+        config = self._make_config()
+        service, env = "ghost-svc", "prd"
+        cache_key = _cache_key_discovery("apm_op", service, env)
+        _set_cache(cache_key, "envoy.envoy", ttl=300)
+
+        empty_resp = MagicMock()
+        empty_resp.series = []
+
+        mock_api = MagicMock()
+        mock_api.query_metrics.return_value = empty_resp
+
+        # Pass _retried=True to simulate already-retried state
+        result = _run_apm_queries(
+            mock_api,
+            service,
+            env,
+            f"service:{service},env:{env}",
+            int(__import__("time").time()) - 3600,
+            int(__import__("time").time()),
+            1.0,
+            _cache_key_discovery("dd_apm", service, env),
+            config,
+            _retried=True,
+        )
+
+        # Should return N/A results (not retry again)
+        assert result.error is False
+        assert "N/A" in result.output
+        # query_metrics was called exactly 3 times (the 3 APM metrics, no probe retry)
+        assert mock_api.query_metrics.call_count == 3
 
 
 # ── _build_metric_templates with custom operation ────────────
@@ -3064,6 +3647,36 @@ class TestConfigDefaults:
         """DatadogAPIConfig.apm_operation accepts a custom operation name."""
         config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k", apm_operation="servlet.request")
         assert config.apm_operation == "servlet.request"
+
+    # ── T-08: new config fields ────────────────────────────────
+
+    def test_apm_operation_overrides_default_empty(self) -> None:
+        """DatadogAPIConfig.apm_operation_overrides defaults to empty dict."""
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        assert config.apm_operation_overrides == {}
+
+    def test_apm_discovery_enabled_default_false(self) -> None:
+        """DatadogAPIConfig.apm_discovery_enabled defaults to False."""
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        assert config.apm_discovery_enabled is False
+
+    def test_apm_operation_overrides_populated(self) -> None:
+        """DatadogAPIConfig accepts apm_operation_overrides as a dict."""
+        config = DatadogAPIConfig(
+            enabled=True,
+            api_key="k",
+            app_key="k",
+            apm_operation_overrides={"my-svc": "envoy.proxy"},
+        )
+        assert config.apm_operation_overrides == {"my-svc": "envoy.proxy"}
+
+    def test_backward_compat_yaml_without_new_fields(self) -> None:
+        """Existing configs without apm_operation_overrides/apm_discovery_enabled load fine."""
+        # Simulate loading from a minimal config dict (no new fields present)
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="k")
+        # Both new fields should be at their defaults — no ValidationError
+        assert config.apm_operation_overrides == {}
+        assert config.apm_discovery_enabled is False
 
 
 # ── Default metric_mode ──────────────────────────────────────
