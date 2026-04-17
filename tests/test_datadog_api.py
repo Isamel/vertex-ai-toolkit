@@ -2480,15 +2480,19 @@ class TestBothModePerMetricCustomLabels:
     """Tests for per-metric include_custom_labels in 'both' mode.
 
     When metric_mode='both', trace.* metrics must exclude custom labels while
-    kubernetes.* metrics must include them.
+    kubernetes.* metrics include custom labels on the first attempt (and strip
+    them on retry when no data is returned).  Only user-defined metrics from
+    ``config.custom_metrics`` are guaranteed to include custom labels.
     """
 
-    def test_both_mode_k8s_metric_excludes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
-        """In both mode, built-in k8s metrics (cpu) do NOT include custom labels.
+    def test_both_mode_k8s_metric_includes_custom_labels_on_first_attempt(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """In both mode, built-in k8s metrics (cpu) include custom labels on first attempt.
 
-        Built-in kubernetes.* templates only carry cluster/service/env tags; applying
-        user-defined custom labels to them caused over-filtering and empty results.
-        Only user-defined metrics from ``config.custom_metrics`` receive custom labels.
+        kubernetes.* templates carry user-defined custom labels on the initial query;
+        if that returns no data the retry strips them.  Only trace.* metrics are
+        hard-blocked from ever receiving custom labels.
         """
         from vaig.core.config import DatadogLabelConfig
         from vaig.tools.gke.datadog_api import query_datadog_metrics
@@ -2507,10 +2511,10 @@ class TestBothModePerMetricCustomLabels:
                 _custom_api=mock_api,
             )
 
-        # Built-in k8s metric → custom labels must NOT appear in the query.
+        # Built-in k8s metric → custom labels ARE included on the first call.
         first_call_kwargs = mock_api.query_metrics.call_args_list[0].kwargs
         query_str = first_call_kwargs.get("query", "")
-        assert "team:" not in query_str
+        assert "team:platform" in query_str
 
     def test_both_mode_apm_metric_excludes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
         """In both mode, querying an APM metric (latency) excludes custom labels."""
@@ -2559,8 +2563,10 @@ class TestBothModePerMetricCustomLabels:
         query_str = call_kwargs.get("query", "")
         assert "team:" not in query_str
 
-    def test_both_mode_memory_metric_excludes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
-        """In both mode, built-in 'memory' (kubernetes.*) metric excludes custom labels."""
+    def test_both_mode_memory_metric_includes_custom_labels_on_first_attempt(
+        self, dd_config: DatadogAPIConfig
+    ) -> None:
+        """In both mode, built-in 'memory' (kubernetes.*) metric includes custom labels on first attempt."""
         from vaig.core.config import DatadogLabelConfig
         from vaig.tools.gke.datadog_api import query_datadog_metrics
 
@@ -2578,10 +2584,10 @@ class TestBothModePerMetricCustomLabels:
                 _custom_api=mock_api,
             )
 
-        # Built-in k8s metric → custom labels must NOT appear in the query.
+        # Built-in k8s metric → custom labels ARE included on the first call.
         first_call_kwargs = mock_api.query_metrics.call_args_list[0].kwargs
         query_str = first_call_kwargs.get("query", "")
-        assert "team:" not in query_str
+        assert "team:platform" in query_str
 
     def test_pure_apm_mode_still_excludes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
         """Pure APM mode continues to exclude custom labels (regression guard)."""
@@ -2606,8 +2612,8 @@ class TestBothModePerMetricCustomLabels:
         query_str = call_kwargs.get("query", "")
         assert "team:" not in query_str
 
-    def test_pure_k8s_mode_excludes_custom_labels_for_builtin(self, dd_config: DatadogAPIConfig) -> None:
-        """Pure k8s_agent mode excludes custom labels for built-in kubernetes.* metrics."""
+    def test_pure_k8s_mode_includes_custom_labels_for_builtin(self, dd_config: DatadogAPIConfig) -> None:
+        """Pure k8s_agent mode includes custom labels for built-in kubernetes.* metrics on first attempt."""
         from vaig.core.config import DatadogLabelConfig
         from vaig.tools.gke.datadog_api import query_datadog_metrics
 
@@ -2625,10 +2631,10 @@ class TestBothModePerMetricCustomLabels:
                 _custom_api=mock_api,
             )
 
-        # Built-in k8s metric → custom labels must NOT appear in the query.
+        # Built-in k8s metric → custom labels ARE included on the first call.
         first_call_kwargs = mock_api.query_metrics.call_args_list[0].kwargs
         query_str = first_call_kwargs.get("query", "")
-        assert "team:" not in query_str
+        assert "team:platform" in query_str
 
     def test_user_defined_custom_metric_includes_custom_labels(self, dd_config: DatadogAPIConfig) -> None:
         """User-defined metrics (via config.custom_metrics) DO receive custom labels.

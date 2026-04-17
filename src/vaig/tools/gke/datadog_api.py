@@ -532,7 +532,11 @@ def query_datadog_metrics(
     template_str: str = template  # narrow for nonlocal rebinding inside closure
     _is_trace_metric = "trace." in template_str
     _is_custom_metric = metric in (getattr(config, "custom_metrics", {}) or {})
-    _include_custom_labels = _is_custom_metric
+    # Include custom labels when the metric is user-defined OR when it is not
+    # a trace.* metric (kubernetes.* built-ins first attempt with custom labels;
+    # the retry path strips them on empty results).  Only trace.* metrics are
+    # hard-blocked because their tag schema never includes user-defined labels.
+    _include_custom_labels = _is_custom_metric or not _is_trace_metric
     _had_custom_labels = _include_custom_labels and bool(
         config.labels.custom if config is not None else False
     )
@@ -578,9 +582,8 @@ def query_datadog_metrics(
                 "  - If APM-only setup: set metric_mode='apm' or 'auto' in config",
                 "",
                 "Next step:",
-                f"  Run diagnose_datadog_metrics(service={service!r}, env={env!r}, "
-                f"cluster_name={effective_cluster!r}) to inspect available tags "
-                "and validate label config.",
+                "  Run diagnose_datadog_metrics(config=config) to inspect available "
+                "tags and validate label config.",
             ]
             return (
                 ToolResult(output="\n".join(diag_lines), error=False),
@@ -624,8 +627,9 @@ def query_datadog_metrics(
         # ── APM operation auto-detection (apm/both mode) ──────
         # Probe the APM backend for the actual operation name — required for
         # non-HTTP workloads like Istio/Envoy which use "envoy.proxy" rather
-        # than "http.request".
-        if _apm_needs_detection and service and env:
+        # than "http.request".  Skip for non-trace metrics (e.g. kubernetes.*)
+        # to avoid wasted API calls.
+        if _apm_needs_detection and _is_trace_metric and service and env:
             try:
                 detected = _detect_apm_operation(api, service, env, config)
             except Exception as exc:  # noqa: BLE001
@@ -635,7 +639,7 @@ def query_datadog_metrics(
                 )
                 detected = None
             if detected and detected != resolved_operation:
-                logger.info(
+                logger.debug(
                     "APM operation auto-detected: '%s' for service=%s env=%s",
                     detected, service, env,
                 )
@@ -683,7 +687,7 @@ def query_datadog_metrics(
                         )
                         detected = None
                     if detected and detected != resolved_operation:
-                        logger.info(
+                        logger.debug(
                             "auto mode: APM operation auto-detected: '%s' for service=%s env=%s",
                             detected, service, env,
                         )
