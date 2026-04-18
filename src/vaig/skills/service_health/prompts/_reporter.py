@@ -402,6 +402,50 @@ Each finding MUST include:
 - ``affected_resources``: List of exact resource names (e.g. "production/deployment/my-app").
 - ``remediation``: Brief remediation suggestion (optional).
 
+#### Causal Relationship Fields (REQUIRED when causal links exist)
+
+For every finding, populate the causal graph fields to enable root-cause analysis:
+
+- ``caused_by``: List of ``Finding.id`` slugs that caused this finding.
+  Set this on **symptom findings** — e.g. an OOM-kill finding caused by a
+  memory-leak finding would have ``caused_by: ["memory-leak-payment-svc"]``.
+  Leave as ``[]`` if this finding has no upstream cause (it IS a root cause).
+
+- ``causes``: List of ``Finding.id`` slugs that this finding causes.
+  Set this on **root-cause findings** — e.g. the memory-leak finding would
+  have ``causes: ["oom-kill-payment-svc"]``.
+  Leave as ``[]`` if this finding has no downstream effects.
+
+**Rules:**
+1. ``caused_by`` and ``causes`` MUST reference valid ``Finding.id`` values in
+   this same report.  Never invent IDs.
+2. Relationships are bidirectional: if finding A ``causes`` B, then B
+   ``caused_by`` A.  Always set BOTH sides.
+3. Most findings will have empty ``caused_by`` and ``causes`` — only populate
+   when a clear causal chain is evident from the evidence.
+
+#### ``causal_graph_mermaid``
+
+When **2 or more causal edges** exist across all findings, populate
+``causal_graph_mermaid`` with a valid Mermaid ``graph TD`` string that
+visualises the causal chain.  Example:
+
+```
+graph TD
+  memory-leak-payment-svc["Memory Leak (payment-svc)"] --> oom-kill-payment-svc["OOMKilled (payment-svc)"]
+  db-conn-exhaustion["DB Connection Exhaustion"] --> crashloop-api-gw["CrashLoop (api-gateway)"]
+```
+
+- Node IDs MUST match ``Finding.id`` slugs exactly.
+- Node labels (in ``[""...]``) should be short human-readable names.
+- Use ``-->`` for causal edges (cause → effect).
+- When fewer than 2 edges exist, leave ``causal_graph_mermaid`` as ``null``.
+
+#### ``root_causes`` (do NOT include in output)
+
+``root_causes`` is computed automatically by the schema from findings where
+``caused_by`` is empty.  Do NOT include this field in your JSON output.
+
 #### ``downgraded_findings``
 List findings the verifier downgraded.  If none were downgraded, use an empty list.
 

@@ -413,6 +413,14 @@ class Finding(BaseModel):
     impact: str = Field(default="")
     affected_resources: list[str] = Field(default_factory=list)
     remediation: str | None = None
+    caused_by: list[str] = Field(
+        default_factory=list,
+        description="Finding.id slugs of upstream causes (findings that caused this one)",
+    )
+    causes: list[str] = Field(
+        default_factory=list,
+        description="Finding.id slugs of downstream effects (findings caused by this one)",
+    )
 
 
 class DowngradedFinding(BaseModel):
@@ -810,6 +818,21 @@ class HealthReport(BaseModel):
     timeline: list[TimelineEvent] = Field(default_factory=list)
     dependencies: DependencyGraph | None = Field(default=None, description="Structured dependency graph for the service ecosystem")
     metadata: ReportMetadata = Field(default_factory=ReportMetadata)
+    causal_graph_mermaid: str | None = Field(
+        default=None,
+        description="Mermaid graph TD diagram string describing causal relationships between findings",
+    )
+
+    @property
+    def root_causes(self) -> list[Finding]:
+        """Return findings that are true root causes (no upstream causes).
+
+        A finding is a root cause when its ``caused_by`` list is empty,
+        meaning no other finding caused it.  This is a ``@property`` (not a
+        ``@computed_field``) so it is excluded from Pydantic serialisation
+        and does not interfere with Gemini's ``response_schema`` generation.
+        """
+        return [f for f in self.findings if not f.caused_by]
 
     # ── Serialisation helpers ────────────────────────────────
 
@@ -845,7 +868,7 @@ class HealthReport(BaseModel):
         ``HEALTH_REPORTER_PROMPT``: Executive Summary → Cluster Overview →
         Service Status → Findings (by severity) → Downgraded Findings →
         Root Cause Hypotheses → Evidence Details → Recommended Actions →
-        Manual Investigation Required → Timeline.
+        Manual Investigation Required → Timeline → Causal Graph.
         """
         parts: list[str] = []
         parts.append("# Service Health Report")
@@ -860,6 +883,7 @@ class HealthReport(BaseModel):
         self._render_recommendations(parts)
         self._render_manual_investigations(parts)
         self._render_timeline(parts)
+        self._render_causal_graph(parts)
         return "\n".join(parts)
 
     # ── Private rendering helpers ────────────────────────────
@@ -1183,6 +1207,19 @@ class HealthReport(BaseModel):
             parts.append("|------|-------|----------|")
             for ce in collapsed:
                 parts.append(f"| {ce.display_time} | {ce.display_event} | {ce.severity.value} |")
+        parts.append("")
+
+    def _render_causal_graph(self, parts: list[str]) -> None:
+        """Render the causal graph Mermaid block when present."""
+        if self.causal_graph_mermaid is None:
+            return
+        if not self.causal_graph_mermaid.strip():
+            return
+        parts.append("## Causal Graph")
+        parts.append("")
+        parts.append("```mermaid")
+        parts.append(self.causal_graph_mermaid)
+        parts.append("```")
         parts.append("")
 
 

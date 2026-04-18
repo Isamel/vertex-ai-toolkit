@@ -303,16 +303,26 @@ async def enrich_recommendations(
     semaphore = asyncio.Semaphore(max_concurrent)
     tasks: list[asyncio.Task[tuple[int, str, str] | None]] = []
 
+    root_causes = report.root_causes  # cache once — property builds a new list each call
+
     for i, action in enumerate(report.recommendations):
-        # Resolve the related finding — use first related_findings ID that
-        # exists, or fall back to the first finding in the report.
+        # Resolve the related finding using the following fallback order:
+        # 1. First related_findings ID that exists in finding_by_id
+        # 2. First finding whose ID appears in report.root_causes (true root causes)
+        # 3. report.findings[0] (original fallback)
         related: Finding | None = None
         for fid in action.related_findings:
             if fid in finding_by_id:
                 related = finding_by_id[fid]
                 break
-        if related is None and report.findings:
-            related = report.findings[0]
+        if related is None:
+            # Prefer root-cause findings (those with no upstream causes) for
+            # enrichment context — they provide deeper causal information.
+            root_cause_findings = root_causes
+            if root_cause_findings:
+                related = root_cause_findings[0]
+            elif report.findings:
+                related = report.findings[0]
         if related is None:
             continue
 
