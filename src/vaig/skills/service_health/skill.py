@@ -205,6 +205,17 @@ class ServiceHealthSkill(BaseSkill):
             self._enrichment_pool = None
         self._gemini_client = None
 
+    @staticmethod
+    def _get_api_client(gke_config: Any) -> Any | None:
+        """Extract the Kubernetes ``ApiClient`` from *gke_config*, or ``None``."""
+        from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415
+        from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415
+
+        clients = _gke_clients._create_k8s_clients(gke_config)
+        if isinstance(clients, _ToolResult):
+            return None
+        return clients[3]  # ApiClient is the 4th element
+
     def _detect_argocd(self, namespace: str, gke_config: Any) -> bool:
         """Resolve the 3-state ``argocd_enabled`` flag to a concrete bool.
 
@@ -216,15 +227,9 @@ class ServiceHealthSkill(BaseSkill):
         setting = gke_config.argocd_enabled
         if setting is not None:
             return bool(setting)
-        from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415
-        from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415
         from vaig.tools.gke.argocd import detect_argocd  # noqa: PLC0415
 
-        api_client = None
-        clients = _gke_clients._create_k8s_clients(gke_config)
-        if not isinstance(clients, _ToolResult):
-            api_client = clients[3]  # ApiClient is the 4th element
-        return detect_argocd(namespace=namespace, api_client=api_client)
+        return detect_argocd(namespace=namespace, api_client=self._get_api_client(gke_config))
 
     def _detect_argo_rollouts(self, namespace: str, gke_config: Any) -> bool:
         """Resolve the 3-state ``argo_rollouts_enabled`` flag to a concrete bool.
@@ -238,15 +243,9 @@ class ServiceHealthSkill(BaseSkill):
         setting = gke_config.argo_rollouts_enabled
         if setting is not None:
             return bool(setting)
-        from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415
-        from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415
         from vaig.tools.gke.argo_rollouts import detect_argo_rollouts  # noqa: PLC0415
 
-        api_client = None
-        clients = _gke_clients._create_k8s_clients(gke_config)
-        if not isinstance(clients, _ToolResult):
-            api_client = clients[3]  # ApiClient is the 4th element
-        return detect_argo_rollouts(namespace=namespace, api_client=api_client)
+        return detect_argo_rollouts(namespace=namespace, api_client=self._get_api_client(gke_config))
 
     def get_metadata(self) -> SkillMetadata:
         return SkillMetadata(
@@ -1009,8 +1008,8 @@ class ServiceHealthSkill(BaseSkill):
     ) -> HealthReport:
         """Run async recommendation enrichment from a synchronous context.
 
-        Creates a lightweight :class:`~vaig.core.client.GeminiClient` scoped to
-        this enrichment pass and delegates to :func:`enrich_recommendations`.
+        Lazily initialises a :class:`~vaig.core.client.GeminiClient` (cached on
+        ``self._gemini_client``) and delegates to :func:`enrich_recommendations`.
         Uses a :class:`~concurrent.futures.ThreadPoolExecutor` with a hard
         *overall_timeout* to guarantee the enrichment never blocks the report
         pipeline — even when GCP auth probes hang (e.g. inside CI or
