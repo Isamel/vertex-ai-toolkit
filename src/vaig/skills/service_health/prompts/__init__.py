@@ -16,6 +16,7 @@ from vaig.core.prompt_defense import (
 
 from ._analyzer import HEALTH_ANALYZER_PROMPT
 from ._gatherer import _GATHERER_PROMPT_TEMPLATE, HEALTH_GATHERER_PROMPT, build_gatherer_prompt
+from ._investigator import HEALTH_INVESTIGATOR_PROMPT
 from ._phases import PHASE_PROMPTS
 from ._planner import HEALTH_PLANNER_PROMPT
 from ._reporter import (
@@ -57,6 +58,8 @@ __all__ = [
     "HEALTH_VERIFIER_PROMPT",
     # planner
     "HEALTH_PLANNER_PROMPT",
+    # investigator
+    "HEALTH_INVESTIGATOR_PROMPT",
     # reporter
     "HEALTH_REPORTER_PROMPT",
     "build_reporter_prompt",
