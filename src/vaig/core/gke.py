@@ -77,6 +77,9 @@ def build_gke_config(
 def register_live_tools(
     gke_config: GKEConfig,
     settings: Settings | None = None,
+    *,
+    repo: str | None = None,
+    repo_ref: str = "HEAD",
 ) -> ToolRegistry:
     """Create a :class:`ToolRegistry` and register GKE + GCloud + plugin tools.
 
@@ -87,6 +90,10 @@ def register_live_tools(
     Args:
         gke_config: GKE configuration for tool creation.
         settings: Full application settings (used for plugin tool loading).
+        repo: Optional GitHub repo in ``owner/repo`` format. When provided
+            and ``settings.github.enabled`` is True, repo tools are injected
+            into the analyzer/hypothesis loop.
+        repo_ref: Git ref to use for repo correlation (default: ``HEAD``).
 
     Returns:
         Populated :class:`ToolRegistry` (may be empty if no optional deps
@@ -149,6 +156,32 @@ def register_live_tools(
         except Exception:  # noqa: BLE001
             logger.warning(
                 "Failed to load alert correlation tools. Skipping.",
+                exc_info=True,
+            )
+
+    # GitHub repo correlation tools — injected when --repo is provided and github is enabled.
+    # Only active when both conditions hold; otherwise behavior is identical to pre-Phase-6.
+    if settings is not None and repo is not None:
+        try:
+            from vaig.tools.integrations._github_registry import create_github_repo_tools  # noqa: WPS433
+
+            if settings.github.enabled:
+                for tool in create_github_repo_tools(settings):
+                    registry.register(tool)
+                logger.info(
+                    "GitHub repo tools registered for %s @ %s (allowed_repos=%s)",
+                    repo,
+                    repo_ref,
+                    settings.github.allowed_repos or "all",
+                )
+            else:
+                logger.debug(
+                    "Skipping GitHub repo tools: github.enabled=False (--repo=%s provided but no token configured)",
+                    repo,
+                )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Failed to load GitHub repo tools. Skipping.",
                 exc_info=True,
             )
 
