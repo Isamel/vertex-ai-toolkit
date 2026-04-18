@@ -309,6 +309,38 @@ class CodingConfig(BaseModel):
             "(Planner→Implementer→Verifier) instead of the single-agent CodingAgent"
         ),
     )
+    workspace_isolation: bool = Field(
+        default=False,
+        description=(
+            "When True, copies workspace to a temp directory before pipeline execution. "
+            "Original workspace is untouched until the pipeline completes successfully."
+        ),
+    )
+    jail_ignore_patterns: list[str] = Field(
+        default_factory=lambda: [".git", "node_modules", "__pycache__", "*.pyc"],
+        description=(
+            "Glob patterns to exclude when copying workspace to the jail temp directory. "
+            "Passed to shutil.ignore_patterns."
+        ),
+    )
+    max_fix_iterations: int = Field(
+        default=1,
+        description=(
+            "Maximum number of fix-forward loop iterations (Implementer→Verifier retries). "
+            "Default 1 means no retry (current behaviour). Set to 3+ to enable self-correction."
+        ),
+    )
+    test_timeout: int = Field(
+        default=120,
+        description="Timeout in seconds for test runner execution.",
+    )
+    test_command: str = Field(
+        default="",
+        description=(
+            "Explicit test command to run (e.g. 'pytest -x --tb=short'). "
+            "When empty, auto-detects pytest via pyproject.toml / conftest.py presence."
+        ),
+    )
     denied_commands: list[str] = Field(
         default_factory=lambda: [
             # Destructive disk / filesystem operations

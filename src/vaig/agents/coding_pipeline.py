@@ -29,13 +29,17 @@ from pydantic import ValidationError
 
 from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS, CodingConfig, Settings
+from vaig.core.event_bus import EventBus
+from vaig.core.events import LoopStepEvent
 from vaig.core.prompt_defense import (
     ANTI_HALLUCINATION_RULES,
     COT_INSTRUCTION,
     wrap_untrusted_content,
 )
 from vaig.core.schemas import VerificationReport
+from vaig.core.workspace_jail import WorkspaceJail
 from vaig.tools import ToolRegistry, create_file_tools, create_shell_tools
+from vaig.tools.test_runner import create_test_runner_tool
 
 if TYPE_CHECKING:
     from vaig.core.protocols import GeminiClientProtocol
@@ -244,7 +248,10 @@ class CodingSkillOrchestrator:
         self._verifier_model = verifier_model or fallback_model
 
         # Build shared tool registry (all agents share the same tools)
-        self._registry = self._build_registry()
+        # Note: _build_registry is called with effective_path inside run()
+        # when workspace_isolation is enabled. This initial build uses the
+        # original workspace and is replaced per-run when isolation is on.
+        self._registry = self._build_registry(self._workspace)
 
         logger.info(
             "CodingSkillOrchestrator initialized — workspace=%s, "
@@ -261,6 +268,13 @@ class CodingSkillOrchestrator:
     def run(self, task: str, *, context: str = "") -> CodingPipelineResult:
         """Execute the Planner → Implementer → Verifier pipeline.
 
+        When ``workspace_isolation=True`` in the coding config, the workspace
+        is copied to a temp directory before execution.  Changes are synced
+        back on success; on failure the original workspace is untouched.
+
+        When ``max_fix_iterations > 1``, the Implementer → Verifier stages
+        are wrapped in a fix-forward retry loop.
+
         Args:
             task: The coding task description.
             context: Optional additional context (file contents, error traces, etc.).
@@ -271,102 +285,74 @@ class CodingSkillOrchestrator:
         """
         logger.info("CodingSkillOrchestrator.run() — task=%r", task[:80])
 
-        # Step 1 — Planner
-        planner = self._make_agent(
-            name="coding-planner",
-            system_instruction=_PLANNER_SYSTEM_PROMPT,
-            model=self._planner_model,
-            temperature=0.4,  # Slightly higher for creative planning
-        )
-        planner_prompt = self._build_planner_prompt(task, context)
-        logger.debug("CodingSkillOrchestrator — running Planner agent")
-        plan_result = planner.execute(planner_prompt)
-        plan_content = plan_result.content
+        isolation = self._coding_config.workspace_isolation
+        ignore_patterns = self._coding_config.jail_ignore_patterns or None
 
-        if not plan_result.success:
-            logger.warning("CodingSkillOrchestrator — Planner reported failure; short-circuiting pipeline")
-            usage = self._aggregate_usage(plan_result.usage)
-            return CodingPipelineResult(
+        with WorkspaceJail(
+            self._workspace,
+            enabled=isolation,
+            ignore_patterns=ignore_patterns,
+        ) as jail:
+            effective_workspace = jail.effective_path
+
+            # Rebuild registry scoped to the effective (jailed) workspace
+            self._registry = self._build_registry(effective_workspace)
+
+            # Step 1 — Planner
+            planner = self._make_agent(
+                name="coding-planner",
+                system_instruction=_PLANNER_SYSTEM_PROMPT,
+                model=self._planner_model,
+                temperature=0.4,
+            )
+            planner_prompt = self._build_planner_prompt(task, context)
+            logger.debug("CodingSkillOrchestrator — running Planner agent")
+            plan_result = planner.execute(planner_prompt)
+            plan_content = plan_result.content
+
+            if not plan_result.success:
+                logger.warning("CodingSkillOrchestrator — Planner reported failure; short-circuiting pipeline")
+                usage = self._aggregate_usage(plan_result.usage)
+                return CodingPipelineResult(
+                    task=task,
+                    plan=plan_content,
+                    implementation_summary="",
+                    verification_report="",
+                    success=False,
+                    usage=usage,
+                    metadata={
+                        "planner": plan_result.metadata,
+                        "implementer": {},
+                        "verifier": {},
+                        "workspace": str(effective_workspace),
+                    },
+                )
+
+            # Steps 2+3 — Implementer → Verifier (with fix-forward loop)
+            max_iterations = max(1, self._coding_config.max_fix_iterations)
+            impl_content, verify_content, success, attempt_history = self._run_fix_forward(
                 task=task,
-                plan=plan_content,
-                implementation_summary="",
-                verification_report="",
-                success=False,
-                usage=usage,
-                metadata={
-                    "planner": plan_result.metadata,
-                    "implementer": {},
-                    "verifier": {},
-                    "workspace": str(self._workspace),
-                },
+                plan_content=plan_content,
+                max_iterations=max_iterations,
             )
 
-        # Step 2 — Implementer (receives plan as context)
-        implementer = self._make_agent(
-            name="coding-implementer",
-            system_instruction=_IMPLEMENTER_SYSTEM_PROMPT,
-            model=self._implementer_model,
-            temperature=0.1,  # Low temperature — maximum precision
-        )
-        implementer_context = self._wrap_agent_output(
-            label="PLANNER_OUTPUT",
-            content=plan_content,
-        )
-        implementer_prompt = self._build_implementer_prompt(task)
-        logger.debug("CodingSkillOrchestrator — running Implementer agent")
-        impl_result = implementer.execute(implementer_prompt, context=implementer_context)
-        impl_content = impl_result.content
+        # Aggregate token usage from all attempts
+        all_usages = [plan_result.usage]
+        for attempt in attempt_history:
+            all_usages.append(attempt.get("impl_usage", {}))
+            all_usages.append(attempt.get("verify_usage", {}))
+        usage = self._aggregate_usage(*all_usages)
 
-        if not impl_result.success:
-            logger.warning("CodingSkillOrchestrator — Implementer reported failure; short-circuiting pipeline")
-            usage = self._aggregate_usage(plan_result.usage, impl_result.usage)
-            return CodingPipelineResult(
-                task=task,
-                plan=plan_content,
-                implementation_summary=impl_content,
-                verification_report="",
-                success=False,
-                usage=usage,
-                metadata={
-                    "planner": plan_result.metadata,
-                    "implementer": impl_result.metadata,
-                    "verifier": {},
-                    "workspace": str(self._workspace),
-                },
-            )
-
-        # Step 3 — Verifier (receives plan + implementation as context)
-        verifier = self._make_agent(
-            name="coding-verifier",
-            system_instruction=_VERIFIER_SYSTEM_PROMPT,
-            model=self._verifier_model,
-            temperature=0.1,  # Low temperature — deterministic verification
-        )
-        verifier_context = "\n\n".join(
-            [
-                self._wrap_agent_output(label="PLANNER_OUTPUT", content=plan_content),
-                self._wrap_agent_output(label="IMPLEMENTER_OUTPUT", content=impl_content),
-            ]
-        )
-        verifier_prompt = self._build_verifier_prompt(task)
-        logger.debug("CodingSkillOrchestrator — running Verifier agent")
-        verify_result = verifier.execute(verifier_prompt, context=verifier_context)
-        verify_content = verify_result.content
-
-        # Aggregate token usage
-        usage = self._aggregate_usage(
-            plan_result.usage, impl_result.usage, verify_result.usage
-        )
-
-        # Determine overall success from verification report.
-        # Prefer structured JSON output; fall back to regex heuristics.
-        success = self._parse_success_structured(verify_content)
-
+        iteration_count = len(attempt_history)
         logger.info(
-            "CodingSkillOrchestrator completed — success=%s, total_tokens=%s",
+            "CodingSkillOrchestrator completed — success=%s, iterations=%d, total_tokens=%s",
             success,
+            iteration_count,
             usage.get("total_tokens", "?"),
         )
+
+        # Find the last implementer result (from last attempt)
+        last_attempt = attempt_history[-1] if attempt_history else {}
 
         return CodingPipelineResult(
             task=task,
@@ -377,27 +363,45 @@ class CodingSkillOrchestrator:
             usage=usage,
             metadata={
                 "planner": plan_result.metadata,
-                "implementer": impl_result.metadata,
-                "verifier": verify_result.metadata,
+                "implementer": last_attempt.get("impl_metadata", {}),
+                "verifier": last_attempt.get("verify_metadata", {}),
                 "workspace": str(self._workspace),
+                "iteration_count": iteration_count,
+                "fix_forward_attempts": attempt_history,
             },
         )
 
     # ── Private helpers ───────────────────────────────────────
 
-    def _build_registry(self) -> ToolRegistry:
-        """Build the tool registry shared by all pipeline agents."""
+    def _build_registry(self, workspace: Path) -> ToolRegistry:
+        """Build the tool registry shared by all pipeline agents.
+
+        Args:
+            workspace: The workspace path to scope file and shell tools to.
+                When workspace isolation is enabled this is the jail's
+                ``effective_path``; otherwise the original workspace root.
+        """
         registry = ToolRegistry()
 
-        for tool in create_file_tools(self._workspace):
+        for tool in create_file_tools(workspace):
             registry.register(tool)
 
         for tool in create_shell_tools(
-            self._workspace,
+            workspace,
             allowed_commands=self._coding_config.allowed_commands or None,
             denied_commands=self._coding_config.denied_commands or None,
         ):
             registry.register(tool)
+
+        # TestRunnerTool — registered when test runner is detected or configured
+        test_tool = create_test_runner_tool(
+            workspace,
+            timeout=self._coding_config.test_timeout,
+            test_command=self._coding_config.test_command,
+        )
+        if test_tool is not None:
+            registry.register(test_tool)
+            logger.debug("CodingSkillOrchestrator: TestRunnerTool registered")
 
         # Plugin tools (optional — same as CodingAgent)
         if self._settings is not None:
@@ -425,6 +429,219 @@ class CodingSkillOrchestrator:
                 )
 
         return registry
+
+    def _run_fix_forward(
+        self,
+        task: str,
+        plan_content: str,
+        max_iterations: int,
+    ) -> tuple[str, str, bool, list[dict[str, Any]]]:
+        """Run the Implementer → Verifier stages with fix-forward retry.
+
+        On each iteration:
+        1. Implementer runs (with structured feedback from previous failure if any).
+        2. Verifier runs.
+        3. If verification passes → return immediately.
+        4. If it fails → build feedback payload from issues[:5], emit
+           :class:`~vaig.core.events.LoopStepEvent`, continue to next iteration.
+
+        When all iterations are exhausted without success, the **last** attempt
+        is returned (as per design decision #3 — last attempt has most feedback).
+
+        Args:
+            task: The original task description.
+            plan_content: Output from the Planner stage.
+            max_iterations: Maximum number of Implementer→Verifier cycles.
+
+        Returns:
+            Tuple of ``(impl_content, verify_content, success, attempt_history)``.
+            ``attempt_history`` is a list of dicts with per-attempt metadata.
+        """
+        attempt_history: list[dict[str, Any]] = []
+        feedback_context: str = ""
+        impl_content = ""
+        verify_content = ""
+        success = False
+
+        for iteration in range(1, max_iterations + 1):
+            logger.debug(
+                "CodingSkillOrchestrator fix-forward: iteration %d/%d",
+                iteration,
+                max_iterations,
+            )
+
+            # Emit LoopStepEvent at the start of each retry (not the first pass)
+            if iteration > 1:
+                self._emit_fix_forward_event(iteration)
+
+            # Step 2 — Implementer
+            implementer = self._make_agent(
+                name="coding-implementer",
+                system_instruction=_IMPLEMENTER_SYSTEM_PROMPT,
+                model=self._implementer_model,
+                temperature=0.1,
+            )
+            implementer_context_parts = [
+                self._wrap_agent_output(label="PLANNER_OUTPUT", content=plan_content),
+            ]
+            if feedback_context:
+                implementer_context_parts.append(feedback_context)
+            implementer_context = "\n\n".join(implementer_context_parts)
+            implementer_prompt = self._build_implementer_prompt(task)
+            logger.debug("CodingSkillOrchestrator — running Implementer (iteration %d)", iteration)
+            impl_result = implementer.execute(implementer_prompt, context=implementer_context)
+            impl_content = impl_result.content
+
+            if not impl_result.success:
+                logger.warning(
+                    "CodingSkillOrchestrator — Implementer failure at iteration %d", iteration
+                )
+                attempt_history.append({
+                    "iteration": iteration,
+                    "impl_metadata": impl_result.metadata,
+                    "impl_usage": impl_result.usage,
+                    "verify_metadata": {},
+                    "verify_usage": {},
+                    "success": False,
+                    "issues": [],
+                })
+                # Continue to next iteration — maybe implementer was just unlucky
+                feedback_context = self._build_feedback_context(
+                    iteration=iteration,
+                    issues=["Implementer agent reported failure — please review and retry"],
+                )
+                continue
+
+            # Step 3 — Verifier
+            verifier = self._make_agent(
+                name="coding-verifier",
+                system_instruction=_VERIFIER_SYSTEM_PROMPT,
+                model=self._verifier_model,
+                temperature=0.1,
+            )
+            verifier_context = "\n\n".join(
+                [
+                    self._wrap_agent_output(label="PLANNER_OUTPUT", content=plan_content),
+                    self._wrap_agent_output(label="IMPLEMENTER_OUTPUT", content=impl_content),
+                ]
+            )
+            verifier_prompt = self._build_verifier_prompt(task)
+            logger.debug("CodingSkillOrchestrator — running Verifier (iteration %d)", iteration)
+            verify_result = verifier.execute(verifier_prompt, context=verifier_context)
+            verify_content = verify_result.content
+
+            success = self._parse_success_structured(verify_content)
+            issues = self._extract_issues(verify_content)
+
+            attempt_history.append({
+                "iteration": iteration,
+                "impl_metadata": impl_result.metadata,
+                "impl_usage": impl_result.usage,
+                "verify_metadata": verify_result.metadata,
+                "verify_usage": verify_result.usage,
+                "success": success,
+                "issues": issues,
+            })
+
+            if success:
+                logger.info(
+                    "CodingSkillOrchestrator: verification passed at iteration %d", iteration
+                )
+                break
+
+            # Build structured feedback for the next iteration
+            feedback_context = self._build_feedback_context(
+                iteration=iteration,
+                issues=issues,
+            )
+            logger.info(
+                "CodingSkillOrchestrator: verification failed at iteration %d (%d issues); "
+                "will retry if iterations remain",
+                iteration,
+                len(issues),
+            )
+
+        return impl_content, verify_content, success, attempt_history
+
+    @staticmethod
+    def _build_feedback_context(*, iteration: int, issues: list[str]) -> str:
+        """Build structured XML feedback for the next fix-forward iteration.
+
+        Caps issues at 5 to avoid prompt bloat (spec CM-01/R-03).
+
+        Args:
+            iteration: The iteration number that produced the issues.
+            issues: Full list of issues from the verification report.
+
+        Returns:
+            XML-wrapped feedback string to inject into the Implementer context.
+        """
+        top_issues = issues[:5]
+        issues_xml = "\n".join(
+            f"  <issue index=\"{i + 1}\">{issue}</issue>"
+            for i, issue in enumerate(top_issues)
+        )
+        return (
+            f"<fix_forward_feedback>\n"
+            f"  <iteration>{iteration}</iteration>\n"
+            f"  <failed_checks>\n"
+            f"{issues_xml}\n"
+            f"  </failed_checks>\n"
+            f"  <instruction>The previous implementation attempt failed. "
+            f"Address ALL issues listed above and re-implement the affected files.</instruction>\n"
+            f"</fix_forward_feedback>"
+        )
+
+    @staticmethod
+    def _extract_issues(verify_content: str) -> list[str]:
+        """Extract issues from a verification report.
+
+        Tries structured JSON parsing first; falls back to line-by-line
+        heuristics for plain-text reports.
+
+        Args:
+            verify_content: Raw verifier output (may be JSON or plain text).
+
+        Returns:
+            List of issue strings (may be empty).
+        """
+        # Try JSON first
+        stripped = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", verify_content.strip(), flags=re.IGNORECASE)
+        stripped = re.sub(r"\s*```$", "", stripped.strip())
+        try:
+            report = VerificationReport.model_validate_json(stripped)
+            return report.issues
+        except (json.JSONDecodeError, ValidationError):
+            pass
+
+        # Heuristic: look for lines containing FAIL / failure / issue markers
+        issues: list[str] = []
+        for line in verify_content.splitlines():
+            line = line.strip()
+            if re.search(r"\bFAIL\b|\bfailure\b|\bissue\b|\berror\b", line, re.IGNORECASE):
+                if len(line) > 5:  # skip very short matches
+                    issues.append(line)
+        return issues
+
+    @staticmethod
+    def _emit_fix_forward_event(iteration: int) -> None:
+        """Emit a :class:`~vaig.core.events.LoopStepEvent` for a fix-forward retry.
+
+        Swallows all exceptions so event emission never breaks the pipeline.
+
+        Args:
+            iteration: 1-based iteration counter.
+        """
+        try:
+            EventBus.get().emit(
+                LoopStepEvent(
+                    loop_type="fix_forward",
+                    iteration=iteration,
+                    skill="coding-pipeline",
+                )
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("_emit_fix_forward_event: failed to emit LoopStepEvent", exc_info=True)
 
     def _make_agent(
         self,
