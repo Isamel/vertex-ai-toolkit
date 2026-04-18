@@ -1417,6 +1417,34 @@ class ScheduleConfig(BaseModel):
         return self
 
 
+class GitHubConfig(BaseModel):
+    """GitHub REST API integration configuration.
+
+    When ``token`` is set, the integration auto-enables and the
+    ``repo_list_tree`` / ``repo_read_file`` tools become available.
+    Token is settable via ``VAIG_GITHUB__TOKEN``.
+    """
+
+    enabled: bool = False
+    token: SecretStr = Field(default=SecretStr(""), repr=False)
+    api_base: str = "https://api.github.com"
+    default_ref: str = "main"
+
+    @model_validator(mode="after")
+    def _auto_enable(self) -> GitHubConfig:
+        """Auto-enable when token is provided; disable when token is missing."""
+        has_token = bool(self.token.get_secret_value())
+        if not self.enabled and has_token:
+            self.enabled = True
+        elif self.enabled and not has_token:
+            logger.warning(
+                "GitHub integration is enabled but token is empty; "
+                "disabling GitHub integration."
+            )
+            self.enabled = False
+        return self
+
+
 class FleetCluster(BaseModel):
     """A single GKE cluster in a fleet scan configuration."""
 
@@ -1518,6 +1546,7 @@ class Settings(BaseSettings):
     email: EmailConfig = Field(default_factory=EmailConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     fleet: FleetConfig = Field(default_factory=FleetConfig)
+    github: GitHubConfig = Field(default_factory=GitHubConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     remediation: RemediationConfig = Field(default_factory=RemediationConfig)
     review: ReviewConfig = Field(default_factory=ReviewConfig)
