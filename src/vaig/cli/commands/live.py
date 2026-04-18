@@ -632,6 +632,14 @@ def register(app: typer.Typer) -> None:
                 help="Git ref to use for repo correlation (default: HEAD)",
             ),
         ] = "HEAD",
+        interactive: Annotated[
+            bool,
+            typer.Option(
+                "--interactive",
+                "-i",
+                help="After the report, open an interactive drill-in REPL for follow-up questions",
+            ),
+        ] = False,
     ) -> None:
         """Investigate live GKE/GCP infrastructure using AI with infrastructure tools.
 
@@ -805,6 +813,7 @@ def register(app: typer.Typer) -> None:
                         detailed=detailed,
                         repo=repo,
                         repo_ref=repo_ref,
+                        interactive=interactive,
                     )
                 _execute_live_mode(
                     client,
@@ -1317,6 +1326,97 @@ def _get_offline_fallback_context(skill_meta: SkillMetadata) -> str:
     )
 
 
+async def _run_drill_in_loop(
+    orchestrator: Any,
+    orch_result: Any,
+    settings: Settings,
+) -> None:
+    """Interactive drill-in REPL: ask follow-up questions about the report.
+
+    Builds a system context from the report markdown + evidence ledger summary,
+    then loops reading user questions via Rich ``Prompt.ask``.  Each question is
+    sent to Gemini (text-only, no tool calls) with the accumulated conversation
+    history.  Oldest Q&A turns are trimmed when the accumulated context exceeds
+    ``max_chars`` (derived from ``settings.generation.max_output_tokens * 4``).
+
+    Exit conditions: 'exit', 'quit', empty input, ``KeyboardInterrupt``, ``EOFError``.
+    """
+    import asyncio
+
+    from rich.prompt import Prompt
+
+    report = orch_result.structured_report
+    ledger = getattr(getattr(orch_result, "final_state", None), "evidence_ledger", None)
+
+    # ── Build system context (never trimmed) ───────────────────
+    try:
+        report_md = report.to_markdown() if hasattr(report, "to_markdown") else str(report)
+    except Exception:  # noqa: BLE001
+        report_md = str(report)
+
+    system_ctx = f"## Investigation Report\n\n{report_md}"
+    if ledger is not None:
+        try:
+            ledger_summary = ledger.to_summary()
+            if ledger_summary:
+                system_ctx += f"\n\n## Evidence Ledger\n\n{ledger_summary}"
+        except Exception:  # noqa: BLE001
+            pass
+
+    max_chars: int = (settings.generation.max_output_tokens or 65_536) * 4
+
+    # Q&A turns accumulate here; system_ctx is prepended each time but never trimmed
+    qa_turns: list[str] = []
+
+    console.print()
+    console.print("[bold cyan]💬 Drill-In Mode — ask follow-up questions about the report[/bold cyan]")
+    console.print("[dim]Type 'exit' or press Ctrl+C to return to normal flow[/dim]")
+    console.print()
+
+    while True:
+        try:
+            user_input = await asyncio.to_thread(
+                Prompt.ask,
+                "[bold green]You[/bold green]",
+            )
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[dim]👋 Drill-in session ended.[/dim]")
+            return
+
+        user_input = user_input.strip()
+        if not user_input or user_input.lower() in {"exit", "quit"}:
+            console.print("[dim]👋 Drill-in session ended.[/dim]")
+            return
+
+        # Build full context: system_ctx + accumulated Q&A turns
+        accumulated = "\n".join(qa_turns)
+
+        # Trim oldest Q&A turns if over cap (system_ctx is never trimmed)
+        while qa_turns and len(system_ctx) + len(accumulated) > max_chars:
+            qa_turns.pop(0)
+            accumulated = "\n".join(qa_turns)
+
+        full_context = system_ctx + ("\n\n" + accumulated if accumulated else "")
+
+        try:
+            result = await asyncio.to_thread(
+                orchestrator.execute_single,
+                user_input,
+                context=full_context,
+            )
+            response_text = result.content if hasattr(result, "content") else str(result)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]Error: {exc}[/red]")
+            response_text = ""
+
+        if response_text:
+            console.print()
+            console.print(f"[bold blue]Assistant:[/bold blue] {response_text}")
+            console.print()
+            qa_turns.append(f"User: {user_input}\nAssistant: {response_text}")
+
+
+
 def _execute_orchestrated_skill(
     client: GeminiClientProtocol,
     settings: Settings,
@@ -1335,6 +1435,7 @@ def _execute_orchestrated_skill(
     detailed: bool = False,
     repo: str | None = None,
     repo_ref: str = "HEAD",
+    interactive: bool = False,
 ) -> HealthReport | None:
     """Execute a skill through the Orchestrator's tool-aware pipeline.
 
@@ -1481,6 +1582,17 @@ def _execute_orchestrated_skill(
 
         # Interactive feedback prompt (only when export is enabled)
         _prompt_feedback(settings, run_id=run_id)
+
+        # Interactive drill-in REPL (only when --interactive flag is set)
+        if interactive and orch_result.structured_report is not None:
+            import asyncio
+
+            from vaig.agents.orchestrator import Orchestrator as _Orchestrator
+
+            _drill_orchestrator = _Orchestrator(client, settings)
+            asyncio.run(_run_drill_in_loop(_drill_orchestrator, orch_result, settings))
+        elif interactive:
+            logger.debug("Drill-in skipped: no structured report available")
 
         # Notify via terminal bell
         _emit_bell(no_bell=no_bell)
