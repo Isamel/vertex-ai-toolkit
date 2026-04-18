@@ -3072,6 +3072,7 @@ class TestDatadogGathererPipelineConfig:
         real_settings = get_settings()
         mock_settings = MagicMock()
         mock_settings.datadog.enabled = datadog_enabled
+        mock_settings.investigation.enabled = False
         mock_settings.gke = real_settings.gke
 
         with patch("vaig.core.config.get_settings", return_value=mock_settings):
