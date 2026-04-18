@@ -1481,6 +1481,60 @@ class FleetConfig(BaseModel):
         return self
 
 
+class WebSearchConfig(BaseModel):
+    """Configuration for the Tavily web search tool."""
+
+    provider: Literal["tavily"] = "tavily"
+    api_key: SecretStr = SecretStr("")
+    max_results: int = Field(default=5, ge=1, le=20)
+    allowed_domains: list[str] = Field(
+        default_factory=lambda: [
+            "kubernetes.io",
+            "cloud.google.com",
+            "docs.datadoghq.com",
+            "argoproj.io",
+            "stackoverflow.com",
+            "github.com",
+        ]
+    )
+
+
+class DocFetchConfig(BaseModel):
+    """Configuration for the HTML document fetch tool."""
+
+    max_bytes: int = Field(default=500_000, ge=1024, le=5_000_000)
+    timeout_seconds: int = Field(default=10, ge=1, le=60)
+    per_run_cap: int = Field(default=10, ge=1, le=50)
+
+
+class RagKnowledgeConfig(BaseModel):
+    """Configuration for the RAG knowledge base search tool."""
+
+    enabled: bool = True
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+class KnowledgeConfig(BaseModel):
+    """Configuration for external knowledge tools (web search, doc fetch, RAG).
+
+    Disabled by default. Auto-enabled when ``web_search.api_key`` is set.
+    Activated via ``VAIG_KNOWLEDGE__ENABLED=true`` or by providing a Tavily API key
+    via ``VAIG_KNOWLEDGE__WEB_SEARCH__API_KEY``.
+    """
+
+    enabled: bool = False
+    web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
+    doc_fetch: DocFetchConfig = Field(default_factory=DocFetchConfig)
+    rag: RagKnowledgeConfig = Field(default_factory=RagKnowledgeConfig)
+
+    @model_validator(mode="after")
+    def _auto_enable(self) -> KnowledgeConfig:
+        """Auto-enable knowledge tools when a Tavily API key is configured."""
+        if self.web_search.api_key.get_secret_value():
+            self.enabled = True
+        return self
+
+
 class Settings(BaseSettings):
     """Root application settings — merges env vars, YAML, and CLI overrides."""
 
@@ -1551,6 +1605,7 @@ class Settings(BaseSettings):
     remediation: RemediationConfig = Field(default_factory=RemediationConfig)
     review: ReviewConfig = Field(default_factory=ReviewConfig)
     auto_activation: AutoActivationConfig = Field(default_factory=lambda: AutoActivationConfig())
+    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
 
     @model_validator(mode="after")
     def _bridge_platform_org_id(self) -> Settings:

@@ -35,6 +35,8 @@ live = [
     "google-auth>=2.49.2",
     "datadog-api-client>=2.0.0,<3.0.0",
     "requests>=2.32.0",
+    "html2text>=2024.2.26",
+    "httpx>=0.28.0",
 ]
 rag = [
     "google-cloud-bigquery>=3.41.0",
