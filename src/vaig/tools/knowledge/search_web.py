@@ -8,6 +8,7 @@ import httpx
 
 from vaig.core.exceptions import ToolExecutionError
 from vaig.core.prompt_defense import wrap_untrusted_content
+from vaig.tools.base import ToolResult
 
 if TYPE_CHECKING:
     from vaig.core.config import WebSearchConfig
@@ -18,7 +19,7 @@ def search_web(
     config: WebSearchConfig,
     *,
     max_results: int | None = None,
-) -> str:
+) -> ToolResult:
     """Search the web using the Tavily API and return formatted results.
 
     Args:
@@ -27,7 +28,7 @@ def search_web(
         max_results: Override for the number of results to return.
 
     Returns:
-        Formatted search results wrapped with untrusted content delimiters.
+        ToolResult with formatted search results wrapped with untrusted content delimiters.
 
     Raises:
         ToolExecutionError: If the api_key is empty or the HTTP request fails.
@@ -36,7 +37,8 @@ def search_web(
     if not api_key:
         raise ToolExecutionError(
             "search_web: api_key is required but not configured. "
-            "Set VAIG_KNOWLEDGE__WEB_SEARCH__API_KEY to enable web search."
+            "Set VAIG_KNOWLEDGE__WEB_SEARCH__API_KEY to enable web search.",
+            tool_name="search_web",
         )
 
     payload = {
@@ -49,7 +51,8 @@ def search_web(
 
     if response.status_code >= 300:
         raise ToolExecutionError(
-            f"search_web: Tavily API returned HTTP {response.status_code}: {response.text[:200]}"
+            f"search_web: Tavily API returned HTTP {response.status_code}: {response.text[:200]}",
+            tool_name="search_web",
         )
 
     data = response.json()
@@ -64,4 +67,4 @@ def search_web(
 
     formatted = "\n\n".join(lines) if lines else "No results found."
 
-    return wrap_untrusted_content(formatted)
+    return ToolResult(output=wrap_untrusted_content(formatted))

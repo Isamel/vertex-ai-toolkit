@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from vaig.core.exceptions import ToolExecutionError
 from vaig.core.prompt_defense import wrap_untrusted_content
+from vaig.tools.base import ToolResult
 
 if TYPE_CHECKING:
     from vaig.core.config import RagKnowledgeConfig
@@ -16,7 +17,7 @@ def search_rag_knowledge(
     query: str,
     config: RagKnowledgeConfig,
     rag_kb: RAGKnowledgeBase,
-) -> str:
+) -> ToolResult:
     """Search the RAG knowledge base for relevant chunks.
 
     Args:
@@ -25,18 +26,21 @@ def search_rag_knowledge(
         rag_kb: The RAG knowledge base instance to query.
 
     Returns:
-        Formatted chunks wrapped with untrusted content delimiters.
+        ToolResult with formatted chunks wrapped with untrusted content delimiters.
 
     Raises:
         ToolExecutionError: If RAG knowledge retrieval is disabled in config.
     """
     if not config.enabled:
-        raise ToolExecutionError("search_rag_knowledge: RAG knowledge disabled")
+        raise ToolExecutionError(
+            "search_rag_knowledge: RAG knowledge disabled",
+            tool_name="search_rag_knowledge",
+        )
 
     result = rag_kb.retrieve(query=query, top_k=config.top_k)
 
     if not result.chunks:
-        return wrap_untrusted_content("No results found in knowledge corpus.")
+        return ToolResult(output=wrap_untrusted_content("No results found in knowledge corpus."))
 
     lines: list[str] = []
     for i, chunk in enumerate(result.chunks, 1):
@@ -44,4 +48,4 @@ def search_rag_knowledge(
         lines.append(f"{i}.{source_info} {chunk.text}")
 
     formatted = "\n\n".join(lines)
-    return wrap_untrusted_content(formatted)
+    return ToolResult(output=wrap_untrusted_content(formatted))

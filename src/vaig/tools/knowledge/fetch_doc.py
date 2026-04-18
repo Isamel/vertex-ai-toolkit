@@ -11,6 +11,7 @@ import httpx
 
 from vaig.core.exceptions import ToolExecutionError
 from vaig.core.prompt_defense import wrap_untrusted_content
+from vaig.tools.base import ToolResult
 
 if TYPE_CHECKING:
     from vaig.core.config import DocFetchConfig
@@ -25,7 +26,7 @@ def fetch_doc(
     allowed_domains: list[str],
     *,
     _run_counter: list[int] | None = None,
-) -> str:
+) -> ToolResult:
     """Fetch a document from an allowed domain and return it as Markdown.
 
     Args:
@@ -35,7 +36,7 @@ def fetch_doc(
         _run_counter: Optional mutable counter for per-run cap enforcement.
 
     Returns:
-        Markdown content wrapped with untrusted content delimiters.
+        ToolResult with Markdown content wrapped with untrusted content delimiters.
 
     Raises:
         ToolExecutionError: If the domain is not allowed, the per-run cap is
@@ -45,12 +46,16 @@ def fetch_doc(
     hostname = parsed.hostname or ""
 
     if hostname not in allowed_domains:
-        raise ToolExecutionError(f"fetch_doc: domain not allowed: {hostname}")
+        raise ToolExecutionError(
+            f"fetch_doc: domain not allowed: {hostname}",
+            tool_name="fetch_doc",
+        )
 
     if _run_counter is not None:
         if _run_counter[0] >= config.per_run_cap:
             raise ToolExecutionError(
-                f"fetch_doc: per_run_cap exhausted (limit={config.per_run_cap})"
+                f"fetch_doc: per_run_cap exhausted (limit={config.per_run_cap})",
+                tool_name="fetch_doc",
             )
         _run_counter[0] += 1
 
@@ -58,7 +63,8 @@ def fetch_doc(
         response = httpx.get(url, follow_redirects=False, timeout=config.timeout_seconds)
     except httpx.TimeoutException as exc:
         raise ToolExecutionError(
-            f"fetch_doc: request timed out after {config.timeout_seconds}s: {exc}"
+            f"fetch_doc: request timed out after {config.timeout_seconds}s: {exc}",
+            tool_name="fetch_doc",
         ) from exc
 
     # Handle redirects manually (max 1 hop)
@@ -68,7 +74,8 @@ def fetch_doc(
         redirect_hostname = redirect_parsed.hostname or ""
         if redirect_hostname not in allowed_domains:
             raise ToolExecutionError(
-                f"fetch_doc: redirect to disallowed domain: {redirect_hostname}"
+                f"fetch_doc: redirect to disallowed domain: {redirect_hostname}",
+                tool_name="fetch_doc",
             )
         try:
             response = httpx.get(
@@ -78,7 +85,8 @@ def fetch_doc(
             )
         except httpx.TimeoutException as exc:
             raise ToolExecutionError(
-                f"fetch_doc: redirect request timed out after {config.timeout_seconds}s: {exc}"
+                f"fetch_doc: redirect request timed out after {config.timeout_seconds}s: {exc}",
+                tool_name="fetch_doc",
             ) from exc
 
     body = response.content[: config.max_bytes]
@@ -91,4 +99,4 @@ def fetch_doc(
     h.ignore_links = False
     markdown = h.handle(text)
 
-    return wrap_untrusted_content(markdown)
+    return ToolResult(output=wrap_untrusted_content(markdown))
