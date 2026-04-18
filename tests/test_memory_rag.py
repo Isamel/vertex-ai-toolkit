@@ -4,23 +4,21 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
-import pytest
-
 from vaig.core.memory.memory_rag import MemoryRAGIndex, build_narrative
 from vaig.core.memory.models import PatternEntry
 
 
 def _entry(**kwargs) -> PatternEntry:  # type: ignore[no-untyped-def]
-    defaults = dict(
-        fingerprint="deadbeef01234567",
-        first_seen=datetime(2024, 1, 1, tzinfo=UTC),
-        last_seen=datetime(2024, 6, 1, tzinfo=UTC),
-        occurrences=3,
-        severity="high",
-        title="CrashLoopBackOff",
-        service="payments",
-        category="pod-health",
-    )
+    defaults = {
+        "fingerprint": "deadbeef01234567",
+        "first_seen": datetime(2024, 1, 1, tzinfo=UTC),
+        "last_seen": datetime(2024, 6, 1, tzinfo=UTC),
+        "occurrences": 3,
+        "severity": "high",
+        "title": "CrashLoopBackOff",
+        "service": "payments",
+        "category": "pod-health",
+    }
     defaults.update(kwargs)
     return PatternEntry(**defaults)
 

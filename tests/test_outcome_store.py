@@ -1,12 +1,8 @@
 """Tests for FixOutcomeStore."""
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
-from vaig.core.memory.models import FixOutcome
 from vaig.core.memory.outcome_store import FixOutcomeStore
 
 
