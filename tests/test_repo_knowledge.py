@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -250,12 +250,12 @@ class TestRepoIndexManagerBuildIndex:
         triage = _make_triage(tier1_paths=["src/main.py"])
         content = {"src/main.py": "x"}
 
-        before = datetime.utcnow()
+        before = datetime.now(tz=UTC)
         mgr.build_index(
             owner="acme", repo="myrepo", ref="main",
             triage_report=triage, content_fetcher=content,
         )
-        after = datetime.utcnow()
+        after = datetime.now(tz=UTC)
 
         built = mgr.built_at("acme", "myrepo", "main")
         assert built is not None
@@ -317,7 +317,7 @@ class TestRepoIndexManagerMisc:
 
 class TestSearchRepoKnowledgeTool:
     def _run(self, coro):  # type: ignore[no-untyped-def]
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def test_returns_tool_result_with_chunks(self, tmp_path: Path) -> None:
         rag = _make_rag_mock(chunks=[_make_chunk("src/main.py", "def main(): pass", 0.9)])

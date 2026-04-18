@@ -10,7 +10,7 @@ Provides:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -181,7 +181,7 @@ class RepoIndexManager:
 
         self._rag.ingest_narratives(corpus_name, narratives)
 
-        built_at = datetime.utcnow()
+        built_at = datetime.now(tz=UTC)
         self._cache[corpus_name] = (built_at, ref, latest_sha)
 
         # Persist a marker on disk for recovery across process restarts
@@ -333,7 +333,7 @@ async def search_repo_knowledge(
         logger.exception("Failed to search repo knowledge index for %s/%s@%s", owner, repo, ref)
         return ToolResult(output=f"Failed to search knowledge index: {exc}", error=True)
 
-    built_at = index_manager.built_at(owner, repo, ref) or datetime.utcnow()
+    built_at = index_manager.built_at(owner, repo, ref) or datetime.now(tz=UTC)
 
     result = RepoKnowledgeResult(
         repo=f"{owner}/{repo}",
