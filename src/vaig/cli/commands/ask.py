@@ -100,6 +100,27 @@ def register(app: typer.Typer) -> None:
             str | None,
             typer.Option("--gke-location", help="GKE cluster location (overrides gke.location)"),
         ] = None,
+        resume: Annotated[
+            bool,
+            typer.Option(
+                "--resume",
+                help="Resume a previous code-migration run from saved state in .vaig/migration-state.json",
+            ),
+        ] = False,
+        repo: Annotated[
+            str | None,
+            typer.Option(
+                "--repo",
+                help="GitHub repository to make available as context (format: owner/repo)",
+            ),
+        ] = None,
+        repo_ref: Annotated[
+            str | None,
+            typer.Option(
+                "--repo-ref",
+                help="Branch, tag, or commit SHA for --repo (defaults to github.default_ref)",
+            ),
+        ] = None,
         verbose: Annotated[
             bool,
             typer.Option("--verbose", "-V", help="Enable verbose logging (INFO level)"),
@@ -297,6 +318,29 @@ def register(app: typer.Typer) -> None:
                     err_console.print(f"[dim]Available: {', '.join(registry.list_names())}[/dim]")
                     raise typer.Exit(1)
 
+                # Re-instantiate code-migration with resume flag when requested
+                if resume and skill == "code-migration":
+                    from vaig.skills.code_migration import CodeMigrationSkill  # noqa: PLC0415
+
+                    active_skill = CodeMigrationSkill(resume=True)
+
+                # Attach GitHub config to skill when --repo is provided
+                if repo:
+                    if not settings.github.enabled:
+                        err_console.print(
+                            "[red]--repo requires GitHub integration to be enabled "
+                            "(set VAIG_GITHUB__TOKEN).[/red]"
+                        )
+                        raise typer.Exit(1)
+                    owner_name, _, repo_name = repo.partition("/")
+                    if not repo_name:
+                        err_console.print("[red]--repo must be in the format owner/repo[/red]")
+                        raise typer.Exit(1)
+                    effective_repo_ref = repo_ref or settings.github.default_ref
+                    console.print(
+                        f"[dim]📦 GitHub repo: [cyan]{repo}[/cyan] @ {effective_repo_ref}[/dim]"
+                    )
+
                 # Parse --phases (comma-separated phase names, e.g. "analyze,plan,execute")
                 phase_list = _parse_phases(phases)
 
@@ -461,6 +505,9 @@ async def _async_ask_impl(
     location: str | None = None,
     gke_project: str | None = None,
     gke_location: str | None = None,
+    resume: bool = False,
+    repo: str | None = None,
+    repo_ref: str | None = None,
 ) -> None:
     """Async implementation of the ask command.
 
@@ -633,6 +680,29 @@ async def _async_ask_impl(
             err_console.print(f"[red]Skill not found: {skill}[/red]")
             err_console.print(f"[dim]Available: {', '.join(registry.list_names())}[/dim]")
             raise typer.Exit(1)
+
+        # Re-instantiate code-migration with resume flag when requested
+        if resume and skill == "code-migration":
+            from vaig.skills.code_migration import CodeMigrationSkill  # noqa: PLC0415
+
+            active_skill = CodeMigrationSkill(resume=True)
+
+        # Attach GitHub config to skill when --repo is provided
+        if repo:
+            if not settings.github.enabled:
+                err_console.print(
+                    "[red]--repo requires GitHub integration to be enabled "
+                    "(set VAIG_GITHUB__TOKEN).[/red]"
+                )
+                raise typer.Exit(1)
+            owner_name, _, repo_name = repo.partition("/")
+            if not repo_name:
+                err_console.print("[red]--repo must be in the format owner/repo[/red]")
+                raise typer.Exit(1)
+            effective_repo_ref = repo_ref or settings.github.default_ref
+            console.print(
+                f"[dim]📦 GitHub repo: [cyan]{repo}[/cyan] @ {effective_repo_ref}[/dim]"
+            )
 
         # Parse --phases (comma-separated phase names, e.g. "analyze,plan,execute")
         phase_list = _parse_phases(phases)

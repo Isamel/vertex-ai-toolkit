@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import importlib.resources
+import json
 import logging
+import os
+import tempfile
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from vaig.core.project import ensure_project_dir as _ensure_project_dir
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.skills.code_migration.prompts import PHASE_PROMPTS, SYSTEM_INSTRUCTION
 from vaig.tools.file_tools import create_file_tools
@@ -215,6 +219,48 @@ class _MigrationTracker:
             lines.append(f"| {fn} | {ph} | {st} | {nt} |")
         return "\n".join(lines)
 
+    def save_state(self, path: Path) -> None:
+        """Persist tracker records to a JSON file using an atomic write.
+
+        Writes to ``{path}.tmp`` first and then renames to ``path`` so the
+        original file (if any) is never corrupted on a mid-write crash.
+
+        Args:
+            path: Destination file path (e.g. ``.vaig/migration-state.json``).
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {"records": dict(self._records)}
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=path.parent, prefix=path.name + ".", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2)
+            os.replace(tmp_path, path)
+        except Exception:
+            # Clean up tmp file on failure; do not leave partial files
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+    def load_state(self, path: Path) -> None:
+        """Load tracker records from a JSON file.
+
+        Silently does nothing if the file does not exist.
+
+        Args:
+            path: Source file path (e.g. ``.vaig/migration-state.json``).
+        """
+        if not path.exists():
+            return
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            self._records = raw.get("records", {})
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Failed to load migration state from %s: %s", path, exc)
+
 
 class CodeMigrationSkill(BaseSkill):
     """Code Migration skill — migrate a codebase from one language to another.
@@ -247,11 +293,17 @@ class CodeMigrationSkill(BaseSkill):
         source_lang: str = "python",
         target_lang: str = "go",
         workspace: Path | None = None,
+        resume: bool = False,
     ) -> None:
         self._source_lang = source_lang.lower()
         self._target_lang = target_lang.lower()
         self._workspace = workspace or Path.cwd()
         self._tracker = _MigrationTracker()
+        self._state_path = _ensure_project_dir() / "migration-state.json"
+
+        # Resume from previous run if requested
+        if resume:
+            self._tracker.load_state(self._state_path)
 
         # Load idiom map eagerly; None if no map exists for the pair
         self._idiom_data = _load_idiom_map(self._source_lang, self._target_lang)
@@ -408,6 +460,7 @@ class CodeMigrationSkill(BaseSkill):
             notes: Optional notes about this file's migration.
         """
         self._tracker.record(filename, phase, status, notes)
+        self._tracker.save_state(self._state_path)
 
     def get_migration_log(self) -> list[dict[str, Any]]:
         """Return all per-file migration records as a list of dicts.
