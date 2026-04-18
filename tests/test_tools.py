@@ -633,7 +633,7 @@ class TestSearchFiles:
 class TestCreateFileTools:
     def test_returns_correct_count(self, tmp_path: Path) -> None:
         tools = create_file_tools(tmp_path)
-        assert len(tools) == 6
+        assert len(tools) == 7
 
     def test_tool_names(self, tmp_path: Path) -> None:
         tools = create_file_tools(tmp_path)
@@ -642,6 +642,7 @@ class TestCreateFileTools:
             "read_file",
             "write_file",
             "edit_file",
+            "patch_file",
             "list_files",
             "search_files",
             "verify_completeness",

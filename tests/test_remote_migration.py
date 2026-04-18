@@ -1,7 +1,7 @@
 """Tests for GH-03 remote code migration — Phase 6.
 
 Covers:
-- Phase8RequiredError raised for --to-repo and --push stubs (GH-03-R5)
+- Phase8RequiredError model validation (GH-03-R5)
 - ProvenanceMetadata model validation (GH-03-R6)
 - --from-repo parsing: owner/repo[@ref] format (GH-03-R1)
 - --from-repo allowlist rejection (GH-03-R3)
@@ -19,7 +19,6 @@ import pytest
 
 from vaig.cli.commands._code import (
     _build_remote_context,
-    _check_phase8_stubs,
     _parse_from_repo,
     _validate_from_repo_allowlist,
 )
@@ -96,43 +95,6 @@ class TestProvenanceMetadata:
             migrated_at=datetime.now(tz=UTC),
         )
         assert len(meta.source_ref) == 40
-
-
-# ── T-15: Phase 8 stubs ──────────────────────────────────────────────────────
-
-class TestCheckPhase8Stubs:
-    """Tests for _check_phase8_stubs — GH-03-R5."""
-
-    __test__ = True
-
-    def test_to_repo_raises_phase8_required_error(self) -> None:
-        with pytest.raises(Phase8RequiredError) as exc_info:
-            _check_phase8_stubs(to_repo="owner/repo", push=False)
-        assert "Phase 8 CM-05" in str(exc_info.value)
-
-    def test_push_raises_phase8_required_error(self) -> None:
-        with pytest.raises(Phase8RequiredError) as exc_info:
-            _check_phase8_stubs(to_repo=None, push=True)
-        assert "Phase 8 CM-05" in str(exc_info.value)
-
-    def test_both_to_repo_and_push_raises(self) -> None:
-        # to_repo is checked first
-        with pytest.raises(Phase8RequiredError):
-            _check_phase8_stubs(to_repo="owner/repo", push=True)
-
-    def test_no_stubs_no_raise(self) -> None:
-        # Should not raise when neither flag is set
-        _check_phase8_stubs(to_repo=None, push=False)
-
-    def test_to_repo_message_contains_to_repo(self) -> None:
-        with pytest.raises(Phase8RequiredError) as exc_info:
-            _check_phase8_stubs(to_repo="owner/repo", push=False)
-        assert "--to-repo" in str(exc_info.value)
-
-    def test_push_message_contains_push(self) -> None:
-        with pytest.raises(Phase8RequiredError) as exc_info:
-            _check_phase8_stubs(to_repo=None, push=True)
-        assert "--push" in str(exc_info.value)
 
 
 # ── T-15: --from-repo parsing ────────────────────────────────────────────────
