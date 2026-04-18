@@ -1,0 +1,111 @@
+"""Document fetch tool — downloads a URL, converts HTML to Markdown."""
+
+from __future__ import annotations
+
+import re
+import urllib.parse
+from typing import TYPE_CHECKING
+from urllib.parse import urljoin
+
+import html2text
+import httpx
+
+from vaig.core.exceptions import ToolExecutionError
+from vaig.core.prompt_defense import wrap_untrusted_content
+from vaig.tools.base import ToolResult
+
+if TYPE_CHECKING:
+    from vaig.core.config import DocFetchConfig
+
+_SCRIPT_RE = re.compile(r"<script[^>]*>.*?</script>", re.DOTALL | re.IGNORECASE)
+_STYLE_RE = re.compile(r"<style[^>]*>.*?</style>", re.DOTALL | re.IGNORECASE)
+
+
+def fetch_doc(
+    url: str,
+    config: DocFetchConfig,
+    allowed_domains: list[str],
+    *,
+    _run_counter: list[int] | None = None,
+) -> ToolResult:
+    """Fetch a document from an allowed domain and return it as Markdown.
+
+    Args:
+        url: The URL to fetch.
+        config: Document fetch configuration (byte cap, timeout, per-run cap).
+        allowed_domains: List of allowed hostnames.
+        _run_counter: Optional mutable counter for per-run cap enforcement.
+
+    Returns:
+        ToolResult with Markdown content wrapped with untrusted content delimiters.
+
+    Raises:
+        ToolExecutionError: If the domain is not allowed, the per-run cap is
+            exhausted, a timeout occurs, or a redirect targets a disallowed domain.
+    """
+    parsed = urllib.parse.urlparse(url)
+    hostname = parsed.hostname or ""
+
+    if hostname not in allowed_domains:
+        raise ToolExecutionError(
+            f"fetch_doc: domain not allowed: {hostname}",
+            tool_name="fetch_doc",
+        )
+
+    if _run_counter is not None:
+        if _run_counter[0] >= config.per_run_cap:
+            raise ToolExecutionError(
+                f"fetch_doc: per_run_cap exhausted (limit={config.per_run_cap})",
+                tool_name="fetch_doc",
+            )
+        _run_counter[0] += 1
+
+    try:
+        response = httpx.get(url, follow_redirects=False, timeout=config.timeout_seconds)
+    except httpx.RequestError as exc:
+        raise ToolExecutionError(
+            f"fetch_doc: request failed: {exc}",
+            tool_name="fetch_doc",
+        ) from exc
+
+    # Handle redirects manually (max 1 hop)
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("location", "")
+        # Resolve relative redirect URLs against the original URL
+        resolved_location = urljoin(url, location)
+        redirect_parsed = urllib.parse.urlparse(resolved_location)
+        redirect_hostname = redirect_parsed.hostname or ""
+        if redirect_hostname not in allowed_domains:
+            raise ToolExecutionError(
+                f"fetch_doc: redirect to disallowed domain: {redirect_hostname}",
+                tool_name="fetch_doc",
+            )
+        try:
+            response = httpx.get(
+                resolved_location,
+                follow_redirects=False,
+                timeout=config.timeout_seconds,
+            )
+        except httpx.RequestError as exc:
+            raise ToolExecutionError(
+                f"fetch_doc: redirect request failed: {exc}",
+                tool_name="fetch_doc",
+            ) from exc
+
+    if response.status_code >= 400:
+        raise ToolExecutionError(
+            f"fetch_doc: HTTP {response.status_code} error for {url}",
+            tool_name="fetch_doc",
+        )
+
+    body = response.content[: config.max_bytes]
+    text = body.decode("utf-8", errors="replace")
+
+    text = _SCRIPT_RE.sub("", text)
+    text = _STYLE_RE.sub("", text)
+
+    h = html2text.HTML2Text()
+    h.ignore_links = False
+    markdown = h.handle(text)
+
+    return ToolResult(output=wrap_untrusted_content(markdown))

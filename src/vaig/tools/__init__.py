@@ -10,6 +10,7 @@ from vaig.tools.file_tools import (
     search_files,
     write_file,
 )
+from vaig.tools.knowledge import create_knowledge_tools
 from vaig.tools.plugin_loader import load_all_plugin_tools
 from vaig.tools.shell_tools import create_shell_tools, run_command
 
@@ -43,6 +44,7 @@ __all__ = [
     "agent_as_tool",
     # Always-available tools
     "create_file_tools",
+    "create_knowledge_tools",
     "create_shell_tools",
     "edit_file",
     "list_files",

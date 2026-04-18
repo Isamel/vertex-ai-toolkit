@@ -19,6 +19,7 @@ from vaig.core.events import (
     SkillUsed,
     ToolExecuted,
 )
+from vaig.core.evidence_ledger import EvidenceEntry, EvidenceLedger, new_ledger
 from vaig.core.exceptions import (
     ContextWindowExceededError,
     GCPAuthError,
@@ -54,6 +55,8 @@ __all__ = [
     "CostRecord",
     "CostTracker",
     "ErrorOccurred",
+    "EvidenceEntry",
+    "EvidenceLedger",
     "Event",
     "EventBus",
     "GCPAuthError",
@@ -83,6 +86,7 @@ __all__ = [
     "gather_with_errors",
     "get_config_snapshot",
     "get_settings",
+    "new_ledger",
     "run_sync",
     "switch_cluster",
     "switch_location",

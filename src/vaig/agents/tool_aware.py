@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import OnToolCall, ToolLoopMixin
 from vaig.core.config import DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, get_settings
+from vaig.core.evidence_ledger import new_ledger
 from vaig.core.exceptions import ContextWindowExceededError, MaxIterationsError
 from vaig.core.models import PipelineState
 from vaig.tools.base import ToolRegistry
@@ -296,6 +297,9 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 tool_result_cache=tool_result_cache,
                 required_sections=required_sections,
                 context_window=_context_window,
+                ledger=state.evidence_ledger if state is not None and state.evidence_ledger is not None else new_ledger(),
+                run_id=getattr(tool_call_store, "run_id", "") if tool_call_store else "",
+                skill=self._skill if hasattr(self, "_skill") and self._skill else "",
                 **loop_kwargs,
             )
         except MaxIterationsError:
@@ -326,6 +330,10 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             loop_result.usage.get("total_tokens", "?"),
         )
 
+        state_patch: dict[str, Any] = {}
+        if loop_result.ledger is not None:
+            state_patch["evidence_ledger"] = loop_result.ledger
+
         return AgentResult(
             agent_name=self.name,
             content=loop_result.text,
@@ -338,6 +346,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 "tools_executed": loop_result.tools_executed,
                 "context_window_pct": loop_result.peak_context_pct,
             },
+            state_patch=state_patch if state_patch else None,
         )
 
     def execute_stream(self, prompt: str, *, context: str = "") -> Iterator[str]:
@@ -365,6 +374,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
         tool_call_store: ToolCallStore | None = None,
         tool_result_cache: ToolResultCache | None = None,
         required_sections: list[str] | None = None,
+        state: PipelineState | None = None,
     ) -> AgentResult:
         """Execute a task using the async tool-use loop.
 
@@ -387,6 +397,10 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 iteration budget reaches 80%, a warning is injected into
                 the conversation for any sections still missing.  Ignored
                 when ``None`` or when ``max_iterations`` is 2 or fewer.
+            state: Optional current :class:`~vaig.core.models.PipelineState`
+                passed in by the orchestrator.  The agent may inspect it
+                but must not mutate it directly; emit deltas via
+                ``AgentResult.state_patch`` instead.
 
         Returns:
             ``AgentResult`` with the final text response and metadata.
@@ -430,6 +444,9 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 tool_result_cache=tool_result_cache,
                 required_sections=required_sections,
                 context_window=_context_window,
+                ledger=state.evidence_ledger if state is not None and state.evidence_ledger is not None else new_ledger(),
+                run_id=getattr(tool_call_store, "run_id", "") if tool_call_store else "",
+                skill=self._skill if hasattr(self, "_skill") and self._skill else "",
                 **loop_kwargs,
             )
         except MaxIterationsError:
@@ -460,6 +477,10 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
             loop_result.usage.get("total_tokens", "?"),
         )
 
+        state_patch: dict[str, Any] = {}
+        if loop_result.ledger is not None:
+            state_patch["evidence_ledger"] = loop_result.ledger
+
         return AgentResult(
             agent_name=self.name,
             content=loop_result.text,
@@ -472,6 +493,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 "tools_executed": loop_result.tools_executed,
                 "context_window_pct": loop_result.peak_context_pct,
             },
+            state_patch=state_patch if state_patch else None,
         )
 
     async def async_execute_stream(

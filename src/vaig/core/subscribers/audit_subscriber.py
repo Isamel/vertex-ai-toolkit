@@ -25,6 +25,7 @@ from vaig.core.events import (
     ApiCalled,
     CliCommandTracked,
     ErrorOccurred,
+    LoopStepEvent,
     RemediationExecuted,
     SessionEnded,
     SessionStarted,
@@ -143,7 +144,7 @@ class AuditSubscriber:
     # ── Subscription wiring ──────────────────────────────────
 
     def _subscribe_all(self) -> None:
-        """Register handlers for 8 audit event types."""
+        """Register handlers for 9 audit event types."""
         bus = EventBus.get()
         self._unsubscribers = [
             bus.subscribe(ApiCalled, self._on_api_called),
@@ -154,6 +155,7 @@ class AuditSubscriber:
             bus.subscribe(SessionEnded, self._on_session_ended),
             bus.subscribe(ErrorOccurred, self._on_error_occurred),
             bus.subscribe(RemediationExecuted, self._on_remediation_executed),
+            bus.subscribe(LoopStepEvent, self._on_loop_step),
         ]
 
     def unsubscribe_all(self) -> None:
@@ -375,6 +377,20 @@ class AuditSubscriber:
             self._append_record(record)
         except Exception:  # noqa: BLE001
             logger.debug("AuditSubscriber: failed to handle RemediationExecuted", exc_info=True)
+
+    def _on_loop_step(self, event: LoopStepEvent) -> None:
+        """LoopStepEvent → audit record with iteration, tools, and termination reason."""
+        try:
+            record = self._make_record(
+                event.event_type,
+                timestamp=event.timestamp,
+                skill=event.skill,
+                result=f"iter={event.iteration} tools={event.tool_calls_made} reason={event.termination_reason}",
+                tokens_in=event.tokens_used,
+            )
+            self._append_record(record)
+        except Exception:  # noqa: BLE001
+            logger.debug("AuditSubscriber: failed to handle LoopStepEvent", exc_info=True)
 
     # ── Flush logic ──────────────────────────────────────────
 

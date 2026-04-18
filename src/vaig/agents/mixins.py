@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import hashlib
 import inspect
 import logging
 import math
@@ -19,7 +20,8 @@ from vaig.core.async_utils import to_async
 from vaig.core.config import DEFAULT_CHARS_PER_TOKEN, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, get_settings
 from vaig.core.context_budget import ContextBudgetManager
 from vaig.core.event_bus import EventBus
-from vaig.core.events import ContextWindowChecked
+from vaig.core.events import ContextWindowChecked, LoopStepEvent
+from vaig.core.evidence_ledger import EvidenceEntry, EvidenceLedger, _hash_tool_args
 from vaig.core.exceptions import CONTEXT_WINDOW_ERROR_KEYWORDS, ContextWindowExceededError, MaxIterationsError
 from vaig.core.output_redactor import redact_sensitive_output
 from vaig.core.prompt_defense import wrap_untrusted_content
@@ -179,6 +181,49 @@ class ToolLoopMixin:
         except Exception:  # noqa: BLE001
             return 80.0, 95.0
 
+    def _emit_loop_step(
+        self,
+        *,
+        run_id: str,
+        skill: str,
+        loop_type: str,
+        iteration: int,
+        prompt: Any,
+        history: list[Any],
+        result: Any,
+        tool_calls_made: int,
+        budget_manager: ContextBudgetManager | None,
+        termination_reason: str,
+    ) -> None:
+        """Compute hashes and emit LoopStepEvent. Swallows all exceptions."""
+        try:
+            inputs_hash = hashlib.sha256(
+                f"{prompt!r}:{len(history)}".encode()
+            ).hexdigest()[:16]
+            outputs_hash = hashlib.sha256(
+                (result.text or "").encode()
+            ).hexdigest()[:16]
+            tokens_used = result.usage.get("total_tokens", 0) if result.usage else 0
+            budget_remaining = (
+                budget_manager.remaining_usd()
+                if budget_manager is not None and hasattr(budget_manager, "remaining_usd")
+                else 0.0
+            )
+            EventBus.get().emit(LoopStepEvent(
+                run_id=run_id,
+                skill=skill,
+                loop_type=loop_type,
+                iteration=iteration,
+                inputs_hash=inputs_hash,
+                outputs_hash=outputs_hash,
+                tokens_used=tokens_used,
+                tool_calls_made=tool_calls_made,
+                budget_remaining_usd=budget_remaining,
+                termination_reason=termination_reason,
+            ))
+        except Exception:  # noqa: BLE001
+            logger.debug("_emit_loop_step: failed to emit LoopStepEvent", exc_info=True)
+
     def _run_tool_loop(
         self,
         *,
@@ -200,6 +245,10 @@ class ToolLoopMixin:
         max_history_tokens: int = 28_000,
         context_window: int = DEFAULT_CONTEXT_WINDOW,
         budget_manager: ContextBudgetManager | None = None,
+        run_id: str = "",
+        skill: str = "",
+        loop_type: str = "",
+        ledger: EvidenceLedger | None = None,
     ) -> ToolLoopResult:
         """Drive a Gemini tool-use loop until text or max iterations.
 
@@ -244,6 +293,7 @@ class ToolLoopMixin:
         }
         tools_executed: list[dict[str, Any]] = []
         iteration = 0
+        result: ToolCallResult | None = None  # set on first LLM call; safe because loop gates access
         budget_warning_issued = False
         accumulated_llm_text = ""
         peak_context_pct: float = 0.0
@@ -280,7 +330,7 @@ class ToolLoopMixin:
 
             # -- Call Gemini with tool declarations -----------------------
             try:
-                result: ToolCallResult = client.generate_with_tools(
+                result = client.generate_with_tools(
                     prompt if iteration == 1 else [],
                     tool_declarations=declarations,
                     system_instruction=system_instruction,
@@ -325,20 +375,36 @@ class ToolLoopMixin:
                 )
                 raise
 
+            assert result is not None  # always set by generate_with_tools above
             # -- Accumulate token usage -----------------------------------
             for key in total_usage:
                 total_usage[key] += result.usage.get(key, 0)
 
             # -- Context window monitoring (G1) ---------------------------
-            peak_context_pct = self._monitor_context_window(
-                result=result,
-                context_window=context_window,
-                peak_context_pct=peak_context_pct,
-                iteration=iteration,
-                model=model,
-                warn_threshold=_warn_threshold,
-                error_threshold=_error_threshold,
-            )
+            try:
+                peak_context_pct = self._monitor_context_window(
+                    result=result,
+                    context_window=context_window,
+                    peak_context_pct=peak_context_pct,
+                    iteration=iteration,
+                    model=model,
+                    warn_threshold=_warn_threshold,
+                    error_threshold=_error_threshold,
+                )
+            except ContextWindowExceededError:
+                self._emit_loop_step(
+                    run_id=run_id,
+                    skill=skill,
+                    loop_type=loop_type,
+                    iteration=iteration,
+                    prompt=prompt,
+                    history=history,
+                    result=result,
+                    tool_calls_made=0,
+                    budget_manager=budget_manager,
+                    termination_reason="context_exceeded",
+                )
+                raise
 
             # -- Context budget tracking ----------------------------------
             if budget_manager is not None:
@@ -364,6 +430,18 @@ class ToolLoopMixin:
                 # This ensures callers always have a non-empty content string to display.
                 if not final_text and tools_executed:
                     final_text = self._synthesize_tool_summary(tools_executed)
+                self._emit_loop_step(
+                    run_id=run_id,
+                    skill=skill,
+                    loop_type=loop_type,
+                    iteration=iteration,
+                    prompt=prompt,
+                    history=history,
+                    result=result,
+                    tool_calls_made=0,
+                    budget_manager=budget_manager,
+                    termination_reason="text_response",
+                )
                 return ToolLoopResult(
                     text=final_text,
                     usage=total_usage,
@@ -372,6 +450,7 @@ class ToolLoopMixin:
                     model=result.model,
                     finish_reason=result.finish_reason,
                     peak_context_pct=peak_context_pct,
+                    ledger=ledger,
                 )
 
             # -- Case 2: function calls -- execute and continue -----------
@@ -460,6 +539,19 @@ class ToolLoopMixin:
                         iteration,
                         cached=is_cached,
                     )
+                    # Append to evidence ledger (SH-05-R-14)
+                    if ledger is not None:
+                        entry = EvidenceEntry(
+                            source_agent=agent_name,
+                            tool_name=tool_name,
+                            tool_args_hash=_hash_tool_args(tool_args),
+                            question="",
+                            answer_summary=(tool_result.output or "")[:500],
+                            raw_output_ref=getattr(tool_call_store, "run_id", "") if tool_call_store else "",
+                            supports=(),
+                            contradicts=(),
+                        )
+                        ledger = ledger.append(entry)
 
                 tools_executed.append(
                     {
@@ -486,6 +578,21 @@ class ToolLoopMixin:
             )
             history.append(types.Content(role="user", parts=response_parts))
 
+            # Emit LoopStepEvent for tool-calls iteration (X-01)
+            iteration_tool_calls = len(result.function_calls)
+            self._emit_loop_step(
+                run_id=run_id,
+                skill=skill,
+                loop_type=loop_type,
+                iteration=iteration,
+                prompt=prompt,
+                history=history,
+                result=result,
+                tool_calls_made=iteration_tool_calls,
+                budget_manager=budget_manager,
+                termination_reason="",
+            )
+
             # -- Budget warning injection ---------------------------------
             budget_warning_issued = self._check_and_inject_budget_warning(
                 history,
@@ -503,6 +610,19 @@ class ToolLoopMixin:
             f"Tool-use loop exceeded maximum iterations ({max_iterations}). Executed {len(tools_executed)} tool calls."
         )
         logger.warning(msg)
+        if iteration > 0 and result is not None:
+            self._emit_loop_step(
+                run_id=run_id,
+                skill=skill,
+                loop_type=loop_type,
+                iteration=iteration,
+                prompt=prompt,
+                history=history,
+                result=result,
+                tool_calls_made=len(tools_executed),
+                budget_manager=budget_manager,
+                termination_reason="max_iterations",
+            )
         raise MaxIterationsError(msg, iterations=max_iterations, partial_output=accumulated_llm_text)
 
     # ── Budget warning helper ────────────────────────────────
@@ -1078,6 +1198,10 @@ class ToolLoopMixin:
         max_history_tokens: int = 28_000,
         context_window: int = DEFAULT_CONTEXT_WINDOW,
         budget_manager: ContextBudgetManager | None = None,
+        run_id: str = "",
+        skill: str = "",
+        loop_type: str = "",
+        ledger: EvidenceLedger | None = None,
     ) -> ToolLoopResult:
         """Async version of :meth:`_run_tool_loop`.
 
@@ -1104,6 +1228,7 @@ class ToolLoopMixin:
         }
         tools_executed: list[dict[str, Any]] = []
         iteration = 0
+        result: ToolCallResult | None = None  # set on first LLM call; safe because loop gates access
         budget_warning_issued = False
         accumulated_llm_text = ""
         peak_context_pct: float = 0.0
@@ -1142,7 +1267,7 @@ class ToolLoopMixin:
 
             # -- Call Gemini with tool declarations (async) ----------------
             try:
-                result: ToolCallResult = await client.async_generate_with_tools(
+                result = await client.async_generate_with_tools(
                     prompt if iteration == 1 else [],
                     tool_declarations=declarations,
                     system_instruction=system_instruction,
@@ -1187,20 +1312,36 @@ class ToolLoopMixin:
                 )
                 raise
 
+            assert result is not None  # always set by async_generate_with_tools above
             # -- Accumulate token usage -----------------------------------
             for key in total_usage:
                 total_usage[key] += result.usage.get(key, 0)
 
             # -- Context window monitoring (G1) ---------------------------
-            peak_context_pct = self._monitor_context_window(
-                result=result,
-                context_window=context_window,
-                peak_context_pct=peak_context_pct,
-                iteration=iteration,
-                model=model,
-                warn_threshold=_warn_threshold,
-                error_threshold=_error_threshold,
-            )
+            try:
+                peak_context_pct = self._monitor_context_window(
+                    result=result,
+                    context_window=context_window,
+                    peak_context_pct=peak_context_pct,
+                    iteration=iteration,
+                    model=model,
+                    warn_threshold=_warn_threshold,
+                    error_threshold=_error_threshold,
+                )
+            except ContextWindowExceededError:
+                self._emit_loop_step(
+                    run_id=run_id,
+                    skill=skill,
+                    loop_type=loop_type,
+                    iteration=iteration,
+                    prompt=prompt,
+                    history=history,
+                    result=result,
+                    tool_calls_made=0,
+                    budget_manager=budget_manager,
+                    termination_reason="context_exceeded",
+                )
+                raise
 
             # -- Context budget tracking ----------------------------------
             if budget_manager is not None:
@@ -1226,6 +1367,18 @@ class ToolLoopMixin:
                 # This ensures callers always have a non-empty content string to display.
                 if not final_text and tools_executed:
                     final_text = self._synthesize_tool_summary(tools_executed)
+                self._emit_loop_step(
+                    run_id=run_id,
+                    skill=skill,
+                    loop_type=loop_type,
+                    iteration=iteration,
+                    prompt=prompt,
+                    history=history,
+                    result=result,
+                    tool_calls_made=0,
+                    budget_manager=budget_manager,
+                    termination_reason="text_response",
+                )
                 return ToolLoopResult(
                     text=final_text,
                     usage=total_usage,
@@ -1234,6 +1387,7 @@ class ToolLoopMixin:
                     model=result.model,
                     finish_reason=result.finish_reason,
                     peak_context_pct=peak_context_pct,
+                    ledger=ledger,
                 )
 
             # -- Case 2: function calls -- execute and continue -----------
@@ -1358,6 +1512,19 @@ class ToolLoopMixin:
                             iteration,
                             cached=is_cached,
                         )
+                        # Append to evidence ledger (SH-05-R-14)
+                        if ledger is not None:
+                            entry = EvidenceEntry(
+                                source_agent=agent_name,
+                                tool_name=tool_name,
+                                tool_args_hash=_hash_tool_args(tool_args),
+                                question="",
+                                answer_summary=(tool_result.output or "")[:500],
+                                raw_output_ref=getattr(tool_call_store, "run_id", "") if tool_call_store else "",
+                                supports=(),
+                                contradicts=(),
+                            )
+                            ledger = ledger.append(entry)
 
                     tools_executed.append(
                         {
@@ -1455,6 +1622,19 @@ class ToolLoopMixin:
                             iteration,
                             cached=is_cached,
                         )
+                        # Append to evidence ledger (SH-05-R-14)
+                        if ledger is not None:
+                            entry = EvidenceEntry(
+                                source_agent=agent_name,
+                                tool_name=tool_name,
+                                tool_args_hash=_hash_tool_args(tool_args),
+                                question="",
+                                answer_summary=(tool_result.output or "")[:500],
+                                raw_output_ref=getattr(tool_call_store, "run_id", "") if tool_call_store else "",
+                                supports=(),
+                                contradicts=(),
+                            )
+                            ledger = ledger.append(entry)
 
                     tools_executed.append(
                         {
@@ -1481,6 +1661,21 @@ class ToolLoopMixin:
             )
             history.append(types.Content(role="user", parts=response_parts))
 
+            # Emit LoopStepEvent for tool-calls iteration (X-01)
+            iteration_tool_calls = len(result.function_calls)
+            self._emit_loop_step(
+                run_id=run_id,
+                skill=skill,
+                loop_type=loop_type,
+                iteration=iteration,
+                prompt=prompt,
+                history=history,
+                result=result,
+                tool_calls_made=iteration_tool_calls,
+                budget_manager=budget_manager,
+                termination_reason="",
+            )
+
             # -- Budget warning injection ---------------------------------
             budget_warning_issued = self._check_and_inject_budget_warning(
                 history,
@@ -1498,6 +1693,19 @@ class ToolLoopMixin:
             f"Tool-use loop exceeded maximum iterations ({max_iterations}). Executed {len(tools_executed)} tool calls."
         )
         logger.warning(msg)
+        if iteration > 0 and result is not None:
+            self._emit_loop_step(
+                run_id=run_id,
+                skill=skill,
+                loop_type=loop_type,
+                iteration=iteration,
+                prompt=prompt,
+                history=history,
+                result=result,
+                tool_calls_made=len(tools_executed),
+                budget_manager=budget_manager,
+                termination_reason="max_iterations",
+            )
         raise MaxIterationsError(msg, iterations=max_iterations, partial_output=accumulated_llm_text)
 
     # ── Async tool execution (overridable) ────────────────────
@@ -1748,6 +1956,7 @@ class ToolLoopResult:
         "model",
         "finish_reason",
         "peak_context_pct",
+        "ledger",
     )
 
     def __init__(
@@ -1760,6 +1969,7 @@ class ToolLoopResult:
         model: str,
         finish_reason: str,
         peak_context_pct: float = 0.0,
+        ledger: EvidenceLedger | None = None,
     ) -> None:
         self.text = text
         self.usage = usage
@@ -1768,3 +1978,4 @@ class ToolLoopResult:
         self.model = model
         self.finish_reason = finish_reason
         self.peak_context_pct = peak_context_pct
+        self.ledger = ledger
