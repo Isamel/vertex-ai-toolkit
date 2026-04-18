@@ -19,6 +19,8 @@ from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.skills.service_health.prompts import (
     HEALTH_ANALYZER_PROMPT,
+    HEALTH_INVESTIGATOR_PROMPT,
+    HEALTH_PLANNER_PROMPT,
     HEALTH_VERIFIER_PROMPT,
     PHASE_PROMPTS,
     SYSTEM_INSTRUCTION,
@@ -915,6 +917,34 @@ class ServiceHealthSkill(BaseSkill):
                 "model": "gemini-2.5-flash",
                 "temperature": 0.2,
             },
+        ]
+
+        # ── Optional investigation phase (gated by feature flag) ─────────
+        if settings.investigation.enabled:
+            agents += [
+                {
+                    "name": "health_planner",
+                    "role": "Investigation Planner",
+                    "requires_tools": False,
+                    "system_instruction": HEALTH_PLANNER_PROMPT,
+                    "model": "gemini-2.5-flash",
+                    "temperature": 0.1,
+                    "agent_class": "SpecialistAgent",
+                },
+                {
+                    "name": "health_investigator",
+                    "role": "Hypothesis Investigator",
+                    "requires_tools": True,
+                    "tool_categories": ["kubernetes", "scaling", "mesh", "logging"],
+                    "system_instruction": HEALTH_INVESTIGATOR_PROMPT,
+                    "model": "gemini-2.5-flash",
+                    "max_iterations": settings.investigation.max_iterations,
+                    "temperature": 0.1,
+                    "agent_class": "InvestigationAgent",
+                },
+            ]
+
+        agents += [
             {
                 "name": "health_verifier",
                 "role": "Health Finding Verifier",

@@ -1271,3 +1271,58 @@ class ReportReview(BaseModel):
     overall_comment: str = ""
     submitted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+# ── K-03: Investigation Plan models (SPEC-SH-01) ─────────────────────────────
+
+
+class StepStatus(StrEnum):
+    """Lifecycle status for a single investigation step."""
+
+    pending = "pending"
+    running = "running"
+    complete = "complete"
+    skipped = "skipped"
+
+
+class InvestigationStep(BaseModel):
+    """A single step in an investigation plan.
+
+    Each step targets one root-cause finding and carries enough metadata
+    for the InvestigationAgent to execute the right tool without further
+    LLM reasoning.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    step_id: str
+    """Unique identifier for this step within the plan (e.g. ``step-0``)."""
+    target: str
+    """Kubernetes resource being investigated (e.g. ``pod/my-service-abc``)."""
+    tool_hint: str
+    """Suggested tool name from the HypothesisLibrary (e.g. ``kubectl_describe``)."""
+    hypothesis: str
+    """Human-readable hypothesis text (mapped from RootCauseHypothesis.what_would_confirm)."""
+    priority: int = 1
+    """Step priority: 1 = highest, 5 = lowest.  Root-cause steps get priority 1."""
+    depends_on: list[str] = Field(default_factory=list)
+    """List of ``step_id`` values that must complete before this step runs."""
+    status: StepStatus = StepStatus.pending
+    """Current lifecycle status of the step."""
+    budget_usd: float = 0.0
+    """Budget allocated to this step in USD."""
+
+
+class InvestigationPlan(BaseModel):
+    """A complete investigation plan produced by the health_planner agent."""
+
+    model_config = ConfigDict(frozen=True)
+
+    plan_id: str
+    """Unique plan identifier (typically the run_id)."""
+    steps: list[InvestigationStep] = Field(default_factory=list)
+    """Ordered list of investigation steps (root-cause steps first)."""
+    created_from: str
+    """Report fingerprint or run_id that triggered this plan."""
+    total_budget_allocated: float = 0.0
+    """Sum of budget_usd across all steps."""
