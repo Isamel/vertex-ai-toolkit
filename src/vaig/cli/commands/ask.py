@@ -25,7 +25,7 @@ from vaig.cli._helpers import (
 )
 from vaig.cli.commands._code import (
     _build_remote_context,
-    _check_phase8_stubs,
+    _check_write_path_flags,
     _execute_code_mode,
     _parse_from_repo,
     _try_chunked_ask,
@@ -289,13 +289,8 @@ def register(app: typer.Typer) -> None:
 
             # Code mode — use CodingAgent (Tasks 5.1, 5.4, 5.5, 5.6, 5.7)
             if code:
-                # GH-03-R5: Stub --to-repo and --push — raise immediately
-                from vaig.tools.repo.models import Phase8RequiredError
-                try:
-                    _check_phase8_stubs(to_repo=to_repo, push=push)
-                except Phase8RequiredError as exc:
-                    err_console.print(f"[red]Error:[/red] {exc}")
-                    raise typer.Exit(1)  # noqa: B904
+                # CM-05: warn when git is disabled but write-path flags used
+                _check_write_path_flags(to_repo=to_repo, push=push, settings=settings)
 
                 # GH-03-R1/R2/R3: --from-repo shallow clone integration
                 if from_repo:

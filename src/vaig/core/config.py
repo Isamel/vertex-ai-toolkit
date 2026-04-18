@@ -294,6 +294,43 @@ class AgentsConfig(BaseModel):
     """
 
 
+class GitConfig(BaseModel):
+    """Git integration configuration (CM-05).
+
+    All git operations are gated by ``enabled``.  When ``enabled = false``
+    (the default), no git commands are run and pipeline behaviour is identical
+    to pre-Phase-8 operation.
+    """
+
+    enabled: bool = False
+    auto_branch: bool = True
+    """Create a feature branch before any file writes."""
+    auto_commit: bool = True
+    """Commit all changes after each pipeline phase."""
+    auto_pr: bool = False
+    """Open a pull request via ``gh`` CLI after the run completes."""
+    pr_provider: str = "gh"
+    """PR provider — only ``"gh"`` (GitHub CLI) is supported."""
+    commit_signoff: bool = False
+    """Add ``Signed-off-by`` trailer to commits."""
+    branch_prefix: str = "vaig/"
+    """Prefix prepended to auto-generated branch names."""
+
+
+class PatchConfig(BaseModel):
+    """Patch-write configuration (CM-09).
+
+    Controls behaviour of the ``patch_file`` tool.  All defaults are safe
+    for general use — ``backup_enabled`` can be turned on to keep ``.orig``
+    backups alongside patched files.
+    """
+
+    backup_enabled: bool = False
+    """When True, save ``<path>.orig`` before applying each patch."""
+    max_hunk_size: int = 500
+    """Maximum number of lines allowed in a single hunk (0 = unlimited)."""
+
+
 class CodingConfig(BaseModel):
     """Coding agent configuration."""
 
@@ -376,6 +413,14 @@ class CodingConfig(BaseModel):
             "Checked against the full command string before execution. "
             "Extend this list in config to add project-specific denials."
         ),
+    )
+    git: GitConfig = Field(
+        default_factory=GitConfig,
+        description="Git integration — branch / commit / PR lifecycle (CM-05). Disabled by default.",
+    )
+    patch: PatchConfig = Field(
+        default_factory=PatchConfig,
+        description="Patch-write tool configuration (CM-09).",
     )
 
 

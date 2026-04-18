@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 from pathlib import Path
+from typing import Any
 
 from vaig.tools.base import ToolDef, ToolParam, ToolResult
 from vaig.tools.categories import CODING
@@ -376,6 +378,182 @@ def verify_completeness(paths: list[str], *, workspace: Path) -> ToolResult:
     return ToolResult(output="\n\n".join(parts), error=has_errors)
 
 
+# ── Task CM-09 — patch_file ─────────────────────────────────
+
+_HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def _parse_hunks(patch_str: str) -> list[dict[str, Any]] | str:
+    """Parse a unified diff string into a list of hunk descriptors.
+
+    Returns a list of dicts (one per hunk) on success, or an error string.
+    Each hunk dict has: ``old_start``, ``old_lines``, ``new_start``,
+    ``new_lines``, and ``ops`` (list of ``(op, text)`` tuples where
+    ``op`` is ``" "``, ``"-"``, or ``"+"``).
+    """
+    lines = patch_str.splitlines()
+
+    # Require at least one @@ header somewhere in the patch
+    has_hunk = any(_HUNK_HEADER_RE.match(ln) for ln in lines)
+    if not has_hunk:
+        return "Invalid unified diff: missing hunk header"
+
+    hunks: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+
+    for line in lines:
+        m = _HUNK_HEADER_RE.match(line)
+        if m:
+            if current is not None:
+                hunks.append(current)
+            old_start = int(m.group(1))
+            old_count = int(m.group(2)) if m.group(2) is not None else 1
+            new_start = int(m.group(3))
+            new_count = int(m.group(4)) if m.group(4) is not None else 1
+            current = {
+                "old_start": old_start,
+                "old_lines": old_count,
+                "new_start": new_start,
+                "new_lines": new_count,
+                "ops": [],
+            }
+        elif current is not None:
+            if line.startswith(("-", "+", " ")):
+                current["ops"].append((line[0], line[1:]))
+            # Lines that are pure "\ No newline at end of file" — skip silently
+
+    if current is not None:
+        hunks.append(current)
+
+    if not hunks:
+        return "Invalid unified diff: no hunks found"
+
+    return hunks
+
+
+def _apply_patch(
+    file_path: Path,
+    patch_str: str,
+    *,
+    backup_enabled: bool = False,
+) -> ToolResult:
+    """Apply a unified diff patch to *file_path* atomically.
+
+    All hunks succeed or none are applied (atomic).  Returns a
+    :class:`~vaig.tools.base.ToolResult` whose ``output`` is a JSON
+    string conforming to the CM-09 result contract::
+
+        {"success": true, "path": "<relative_or_abs_path>"}
+        {"success": false, "error": "<message>", "conflicts": [...]}
+
+    Args:
+        file_path: Absolute path to the target file.
+        patch_str: Unified diff string (must contain ``@@`` hunk headers).
+        backup_enabled: When True, write ``<file_path>.orig`` before patching.
+    """
+    path_str = str(file_path)
+
+    if not file_path.exists():
+        payload = json.dumps({"success": False, "error": f"File not found: {path_str}"})
+        return ToolResult(output=payload, error=True)
+
+    try:
+        original = file_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        payload = json.dumps({"success": False, "error": f"Cannot read file: {exc}"})
+        return ToolResult(output=payload, error=True)
+
+    parsed = _parse_hunks(patch_str)
+    if isinstance(parsed, str):
+        payload = json.dumps({"success": False, "error": parsed})
+        return ToolResult(output=payload, error=True)
+
+    hunks = parsed
+    file_lines = original.splitlines(keepends=True)
+    # Work on a mutable copy; apply hunks sequentially with offset tracking
+    result_lines: list[str] = list(file_lines)
+    offset = 0  # cumulative line shift from prior hunk insertions/deletions
+    conflicts: list[dict[str, Any]] = []
+
+    for hunk in hunks:
+        old_start = hunk["old_start"] - 1 + offset  # convert to 0-based
+        ops: list[tuple[str, str]] = hunk["ops"]
+
+        # Collect context+removal lines to verify against file
+        expected: list[str] = []
+        additions: list[str] = []
+        for op, text in ops:
+            line_with_nl = text if text.endswith("\n") else text + "\n"
+            if op in (" ", "-"):
+                expected.append(line_with_nl)
+            if op in (" ", "+"):
+                additions.append(line_with_nl)
+
+        actual_slice = result_lines[old_start : old_start + len(expected)]
+
+        # Strip trailing newline from last line for comparison tolerance
+        def _norm(lines: list[str]) -> list[str]:
+            if not lines:
+                return lines
+            normed = list(lines)
+            normed[-1] = normed[-1].rstrip("\n")
+            return normed
+
+        if _norm(actual_slice) != _norm(expected):
+            conflicts.append({
+                "hunk_start": hunk["old_start"],
+                "expected": "".join(expected),
+                "found": "".join(actual_slice),
+            })
+
+    if conflicts:
+        payload = json.dumps({
+            "success": False,
+            "error": "Hunk context mismatch",
+            "conflicts": conflicts,
+        })
+        return ToolResult(output=payload, error=True)
+
+    # All hunks validated — apply atomically
+    offset = 0
+    final_lines: list[str] = list(file_lines)
+
+    for hunk in hunks:
+        old_start = hunk["old_start"] - 1 + offset
+        hunk_ops: list[tuple[str, str]] = hunk["ops"]
+
+        expected_lines: list[str] = []
+        replacement: list[str] = []
+        for op, text in hunk_ops:
+            line_with_nl = text if text.endswith("\n") else text + "\n"
+            if op in (" ", "-"):
+                expected_lines.append(line_with_nl)
+            if op in (" ", "+"):
+                replacement.append(line_with_nl)
+
+        final_lines[old_start : old_start + len(expected_lines)] = replacement
+        delta = len(replacement) - len(expected_lines)
+        offset += delta
+
+    new_content = "".join(final_lines)
+
+    if backup_enabled:
+        backup_path = file_path.with_suffix(file_path.suffix + ".orig")
+        try:
+            backup_path.write_text(original, encoding="utf-8")
+        except OSError as exc:
+            logger.warning("patch_file: could not write backup %s: %s", backup_path, exc)
+
+    try:
+        file_path.write_text(new_content, encoding="utf-8")
+    except OSError as exc:
+        payload = json.dumps({"success": False, "error": f"Write failed: {exc}"})
+        return ToolResult(output=payload, error=True)
+
+    payload = json.dumps({"success": True, "path": path_str})
+    return ToolResult(output=payload)
+
+
 # ── Task 2.8 — Tool factory ─────────────────────────────────
 
 
@@ -506,6 +684,47 @@ def create_file_tools(workspace: Path) -> list[ToolDef]:
             execute=lambda paths, _ws=workspace: verify_completeness(
                 [p.strip() for p in paths.split(",") if p.strip()],
                 workspace=_ws,
+            ),
+        ),
+        ToolDef(
+            name="patch_file",
+            description=(
+                "Apply a unified diff patch to an existing file. "
+                "Prefer this over write_file when modifying existing files — it is safer "
+                "and more precise. The patch must contain unified diff hunk headers (@@ ... @@). "
+                "All hunks are applied atomically: if any hunk fails, no changes are made. "
+                "Returns JSON: {\"success\": true, \"path\": \"...\"} or "
+                "{\"success\": false, \"error\": \"...\", \"conflicts\": [...]}."
+            ),
+            categories=frozenset({CODING}),
+            parameters=[
+                ToolParam(
+                    name="path",
+                    type="string",
+                    description="Relative path to the file to patch (from workspace root)",
+                ),
+                ToolParam(
+                    name="patch",
+                    type="string",
+                    description=(
+                        "Unified diff string. Must contain @@ hunk headers. "
+                        "Example: '@@ -1,3 +1,4 @@\\n context\\n-old line\\n+new line\\n context'"
+                    ),
+                ),
+                ToolParam(
+                    name="backup",
+                    type="string",
+                    description=(
+                        "Set to 'true' to create a .orig backup before patching. "
+                        "Defaults to 'false'."
+                    ),
+                    required=False,
+                ),
+            ],
+            execute=lambda path, patch, backup="false", _ws=workspace: _apply_patch(
+                _resolve_safe_path(path, _ws) or (_ws / path),
+                patch,
+                backup_enabled=backup.lower() == "true",
             ),
         ),
     ]

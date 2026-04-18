@@ -20,7 +20,7 @@ from vaig.cli._helpers import (
     console,
     err_console,
 )
-from vaig.tools.repo.models import Phase8RequiredError, ProvenanceMetadata
+from vaig.tools.repo.models import ProvenanceMetadata
 
 if TYPE_CHECKING:
     from vaig.core.config import Settings
@@ -187,23 +187,32 @@ def _build_remote_context(
     return context_text, provenance_list
 
 
-def _check_phase8_stubs(to_repo: str | None, push: bool) -> None:
-    """Raise :class:`Phase8RequiredError` for write-path flags.
+def _check_write_path_flags(to_repo: str | None, push: bool, settings: Settings) -> None:
+    """Log a warning when ``--to-repo`` or ``--push`` are used without git enabled.
 
-    Calling ``--to-repo`` or ``--push`` is explicitly stubbed in Phase 6.
-    These features require Phase 8 CM-05 Git Integration.
+    When :attr:`~vaig.core.config.GitConfig.enabled` is True the flags are
+    handled by the git lifecycle in :func:`_execute_code_pipeline`; no action
+    is needed here.  When disabled, we warn the user that these flags have no
+    effect rather than raising an error (Phase 8 replaces the old stub).
 
     Args:
         to_repo: Value of the ``--to-repo`` CLI option (``None`` if omitted).
         push: Value of the ``--push`` CLI option.
-
-    Raises:
-        Phase8RequiredError: When either *to_repo* is set or *push* is True.
+        settings: Application settings (for ``coding.git.enabled`` check).
     """
+    if settings.coding.git.enabled:
+        return
     if to_repo is not None:
-        raise Phase8RequiredError("--to-repo (write to remote repository)")
+        logger.warning(
+            "--to-repo '%s' has no effect: coding.git.enabled is False. "
+            "Set coding.git.enabled=true in config to activate git integration.",
+            to_repo,
+        )
     if push:
-        raise Phase8RequiredError("--push (push changes to remote)")
+        logger.warning(
+            "--push has no effect: coding.git.enabled is False. "
+            "Set coding.git.enabled=true in config to activate git integration.",
+        )
 
 
 def _execute_code_mode(
@@ -316,8 +325,10 @@ def _execute_code_pipeline(
     """
     from vaig.agents.coding_pipeline import CodingSkillOrchestrator
     from vaig.core.exceptions import MaxIterationsError
+    from vaig.core.git_integration import GitManager, GitSafetyError, _sanitize_branch_name
 
     coding_config = settings.coding
+    git_manager = GitManager(coding_config.git, workspace=Path(coding_config.workspace_root).resolve())
 
     if coding_config.confirm_actions:
         logger.warning(
@@ -343,8 +354,28 @@ def _execute_code_pipeline(
     )
 
     try:
+        # ── Git pre-flight: create feature branch ─────────────
+        if git_manager.enabled and coding_config.git.auto_branch:
+            branch_name = _sanitize_branch_name(question[:60], prefix=coding_config.git.branch_prefix)
+            try:
+                git_manager.create_branch(branch_name)
+                logger.info("Git lifecycle: created branch '%s'", branch_name)
+            except GitSafetyError as exc:
+                err_console.print(f"[yellow]Git safety guard: {exc}[/yellow]")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Git lifecycle: create_branch failed (%s); continuing without branch", exc)
+
         console.print("[bold cyan]🤖 Pipeline running (Planner → Implementer → Verifier)...[/bold cyan]")
         result = orchestrator.run(question, context=context)
+
+        # ── Git post-flight: commit changes ───────────────────
+        if git_manager.enabled and coding_config.git.auto_commit and result.success:
+            try:
+                git_manager.commit_all(f"feat(code): {question[:72]}")
+                logger.info("Git lifecycle: committed changes")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Git lifecycle: commit_all failed (%s); continuing", exc)
+
     except MaxIterationsError as exc:
         err_console.print(
             f"\n[bold red]⚠ Max iterations reached ({exc.iterations})[/bold red]\n"

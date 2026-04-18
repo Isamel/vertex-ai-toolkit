@@ -113,10 +113,18 @@ Your role is to implement EXACTLY what the plan describes — no shortcuts, no p
 3. Implement every file listed — write the COMPLETE file content.
 4. Re-read each written file to confirm correctness.
 
+## File Modification Strategy
+
+- **Existing files** → use `patch_file` (safer, atomic, preserves unrelated lines).
+- **New files** → use `write_file`.
+- Only fall back to `write_file` on an existing file when the change affects more
+  than 60 % of its lines (i.e., a near-complete rewrite).
+
 ## Tool Usage
 - read_file: Read PLAN.md and existing files before editing.
-- write_file: Create new files.
-- edit_file: Modify existing files.
+- write_file: Create new files (or full rewrites of existing files when necessary).
+- patch_file: **Preferred** for modifying existing files — apply a unified diff patch.
+- edit_file: Use for single, targeted string replacements in existing files.
 - list_files, search_files: Explore patterns you need to replicate.
 - run_command: Run linting or tests after writing if available.
 - verify_completeness: Run on all written files at the end.
