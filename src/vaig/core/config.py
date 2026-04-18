@@ -1764,9 +1764,20 @@ class InvestigationConfig(BaseModel):
     When ``enabled`` is True, ``health_planner`` and ``health_investigator``
     agents are inserted into the service-health pipeline between the analyzer
     and verifier.  Disabled by default to preserve existing behaviour.
+
+    When ``autonomous_mode`` is True, the investigation pipeline runs
+    fully autonomously with budget enforcement and memory awareness (SH-09).
+    Requires ``enabled=True`` — a ``ValueError`` is raised at construction
+    time if ``autonomous_mode=True`` and ``enabled=False``.
     """
 
     enabled: bool = False
+    autonomous_mode: bool = False
+    budget_per_run_usd: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Maximum spend in USD per pipeline run when autonomous_mode is True. 0.0 means no cap.",
+    )
     max_iterations: int = Field(
         default=10,
         ge=1,
@@ -1786,6 +1797,15 @@ class InvestigationConfig(BaseModel):
         default=True,
         description="Enable MEM-05 memory-aware pre-action hook inside InvestigationAgent.",
     )
+
+    @model_validator(mode="after")
+    def _autonomous_requires_enabled(self) -> InvestigationConfig:
+        """Validate that autonomous_mode is only active when enabled=True."""
+        if self.autonomous_mode and not self.enabled:
+            raise ValueError(
+                "autonomous_mode=True requires enabled=True in InvestigationConfig"
+            )
+        return self
 
 
 class Settings(BaseSettings):

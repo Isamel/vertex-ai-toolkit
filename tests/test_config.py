@@ -1190,3 +1190,57 @@ class TestEffectiveGcsPrefix:
     def test_prefix_unchanged_when_no_org_id(self) -> None:
         cfg = ExportConfig(gcs_prefix="rag_data/")
         assert cfg.effective_gcs_prefix == "rag_data/"
+
+
+# ── T-01: InvestigationConfig autonomous_mode (SH-09) ───────────────────────
+
+
+class TestInvestigationConfigAutonomousMode:
+    """Tests for autonomous_mode and budget_per_run_usd on InvestigationConfig (T-01)."""
+
+    def test_defaults(self) -> None:
+        from vaig.core.config import InvestigationConfig
+
+        cfg = InvestigationConfig()
+        assert cfg.autonomous_mode is False
+        assert cfg.budget_per_run_usd == 0.0
+
+    def test_autonomous_mode_true_requires_enabled(self) -> None:
+        """autonomous_mode=True with enabled=False must raise ValueError."""
+        from vaig.core.config import InvestigationConfig
+
+        with pytest.raises(ValueError, match="autonomous_mode=True requires enabled=True"):
+            InvestigationConfig(autonomous_mode=True, enabled=False)
+
+    def test_autonomous_mode_true_with_enabled_true_is_valid(self) -> None:
+        from vaig.core.config import InvestigationConfig
+
+        cfg = InvestigationConfig(autonomous_mode=True, enabled=True)
+        assert cfg.autonomous_mode is True
+        assert cfg.enabled is True
+
+    def test_autonomous_mode_false_with_enabled_false_is_valid(self) -> None:
+        from vaig.core.config import InvestigationConfig
+
+        cfg = InvestigationConfig(autonomous_mode=False, enabled=False)
+        assert cfg.autonomous_mode is False
+
+    def test_budget_per_run_usd_custom(self) -> None:
+        from vaig.core.config import InvestigationConfig
+
+        cfg = InvestigationConfig(enabled=True, autonomous_mode=True, budget_per_run_usd=2.5)
+        assert cfg.budget_per_run_usd == 2.5
+
+    def test_budget_per_run_usd_zero_allowed(self) -> None:
+        from vaig.core.config import InvestigationConfig
+
+        cfg = InvestigationConfig(enabled=True, autonomous_mode=True, budget_per_run_usd=0.0)
+        assert cfg.budget_per_run_usd == 0.0
+
+    def test_budget_per_run_usd_negative_raises(self) -> None:
+        from pydantic import ValidationError
+
+        from vaig.core.config import InvestigationConfig
+
+        with pytest.raises(ValidationError):
+            InvestigationConfig(budget_per_run_usd=-1.0)

@@ -415,3 +415,49 @@ def test_importable_from_vaig_core() -> None:
 
     assert CorePipelineState is PipelineState
     assert core_apply_state_patch is apply_state_patch
+
+
+# ── T-02: PipelineState.investigation_plan (SH-09) ──────────────────────────
+
+
+class TestPipelineStateInvestigationPlan:
+    """Tests for the investigation_plan field added in T-02 (SH-09)."""
+
+    def test_default_is_none(self) -> None:
+        state = PipelineState()
+        assert state.investigation_plan is None
+
+    def test_accepts_none_explicitly(self) -> None:
+        state = PipelineState(investigation_plan=None)
+        assert state.investigation_plan is None
+
+    def test_accepts_arbitrary_dict(self) -> None:
+        plan_data = {"plan_id": "test-plan", "steps": []}
+        state = PipelineState(investigation_plan=plan_data)
+        assert state.investigation_plan == plan_data
+
+    def test_apply_state_patch_sets_investigation_plan(self) -> None:
+        from vaig.skills.service_health.schema import InvestigationPlan
+
+        state = PipelineState()
+        plan = InvestigationPlan(plan_id="patch-plan", created_from="run-1", steps=[])
+        patched = apply_state_patch(state, {"investigation_plan": plan})
+        assert patched is not None
+        assert patched.investigation_plan is plan
+
+    def test_apply_state_patch_clears_investigation_plan_with_none(self) -> None:
+        from vaig.skills.service_health.schema import InvestigationPlan
+
+        plan = InvestigationPlan(plan_id="existing", created_from="run-0", steps=[])
+        state = PipelineState(investigation_plan=plan)
+        # Patching with None is ignored by apply_state_patch (guard: is not None)
+        patched = apply_state_patch(state, {"investigation_plan": None})
+        assert patched is not None
+        assert patched.investigation_plan is plan  # unchanged — None patch is ignored
+
+    def test_investigation_plan_json_roundtrip(self) -> None:
+        plan_data = {"plan_id": "rtrip", "steps": ["s1", "s2"]}
+        state = PipelineState(investigation_plan=plan_data)
+        json_str = state.model_dump_json()
+        restored = PipelineState.model_validate_json(json_str)
+        assert restored.investigation_plan == plan_data
