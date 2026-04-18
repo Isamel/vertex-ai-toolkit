@@ -1673,6 +1673,101 @@ class MemoryConfig(BaseModel):
     )
 
 
+# ── K-01: Hypothesis Library, Self-Correction, Investigation config ──────────
+
+
+class HypothesisConfig(BaseModel):
+    """Configuration for the hypothesis prompt library (SPEC-X-03).
+
+    When ``enabled`` is True the HypothesisLibrary is instantiated and used
+    by the investigation planner to seed step tool_hints.
+    Disabled by default.
+    """
+
+    enabled: bool = False
+    custom_templates_path: Path | None = None
+    """Optional path to a YAML file with user-defined HypothesisTemplate overrides."""
+
+    @model_validator(mode="after")
+    def _auto_enable(self) -> HypothesisConfig:
+        if self.custom_templates_path is not None:
+            object.__setattr__(self, "enabled", True)
+        return self
+
+
+class SelfCorrectionConfig(BaseModel):
+    """Configuration for the self-correction controller (SPEC-SH-06).
+
+    Controls loop-detection and stale-iteration thresholds for the
+    InvestigationAgent.  Disabled by default.
+    """
+
+    enabled: bool = False
+    max_repeated_calls: int = Field(
+        default=3,
+        ge=1,
+        description="Same (tool, args_hash) appearances before flagging a circle.",
+    )
+    max_stale_iterations: int = Field(
+        default=5,
+        ge=1,
+        description="Consecutive iterations without a newly completed step before triggering FORCE_DIFFERENT.",
+    )
+    contradiction_sensitivity: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description="Sensitivity for contradiction detection (0=off, 1=strict).",
+    )
+    max_budget_per_step_usd: float = Field(
+        default=0.10,
+        ge=0.0,
+        description="Maximum budget allocated to a single investigation step in USD.",
+    )
+
+    @model_validator(mode="after")
+    def _auto_enable(self) -> SelfCorrectionConfig:
+        non_defaults = (
+            self.max_repeated_calls != 3
+            or self.max_stale_iterations != 5
+            or self.contradiction_sensitivity != 0.8
+            or self.max_budget_per_step_usd != 0.10
+        )
+        if non_defaults:
+            object.__setattr__(self, "enabled", True)
+        return self
+
+
+class InvestigationConfig(BaseModel):
+    """Configuration for the autonomous investigation pipeline (SPEC-SH-01, SH-02).
+
+    When ``enabled`` is True, ``health_planner`` and ``health_investigator``
+    agents are inserted into the service-health pipeline between the analyzer
+    and verifier.  Disabled by default to preserve existing behaviour.
+    """
+
+    enabled: bool = False
+    max_iterations: int = Field(
+        default=10,
+        ge=1,
+        description="Hard cap on investigator loop iterations per run.",
+    )
+    max_steps_per_plan: int = Field(
+        default=15,
+        ge=1,
+        description="Planner will not generate more than this many steps.",
+    )
+    circle_threshold: int = Field(
+        default=2,
+        ge=1,
+        description="Same (tool, args_hash) count before flagging a circle (overrides SelfCorrectionConfig when set).",
+    )
+    memory_correction: bool = Field(
+        default=True,
+        description="Enable MEM-05 memory-aware pre-action hook inside InvestigationAgent.",
+    )
+
+
 class Settings(BaseSettings):
     """Root application settings — merges env vars, YAML, and CLI overrides."""
 
@@ -1747,6 +1842,9 @@ class Settings(BaseSettings):
     auto_activation: AutoActivationConfig = Field(default_factory=lambda: AutoActivationConfig())
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    hypothesis: HypothesisConfig = Field(default_factory=HypothesisConfig)
+    self_correction: SelfCorrectionConfig = Field(default_factory=SelfCorrectionConfig)
+    investigation: InvestigationConfig = Field(default_factory=InvestigationConfig)
 
     @model_validator(mode="after")
     def _bridge_platform_org_id(self) -> Settings:
