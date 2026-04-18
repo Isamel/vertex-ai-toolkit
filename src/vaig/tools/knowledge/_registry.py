@@ -196,4 +196,42 @@ def create_knowledge_tools(
         )
         logger.info("Registered knowledge tool: query_pattern_history")
 
+    # ── recall_similar_cases — only when memory_rag_enabled ─────────────────
+    if settings.memory.enabled and settings.memory.memory_rag_enabled:
+        from vaig.core.memory.memory_rag import MemoryRAGIndex  # noqa: WPS433
+        from vaig.core.rag import RAGKnowledgeBase  # noqa: WPS433
+        from vaig.tools.knowledge.recall_similar_cases import recall_similar_cases  # noqa: WPS433
+
+        rag_kb = RAGKnowledgeBase(config=settings.export)
+        mem_rag_index = MemoryRAGIndex(rag_kb=rag_kb, config=settings.memory)
+        tools.append(
+            ToolDef(
+                name="recall_similar_cases",
+                description=(
+                    "Recall semantically similar historical cases from pattern memory. "
+                    "Returns narrative summaries of past diagnostic runs where similar "
+                    "findings occurred, to help contextualise current findings. "
+                    "Use this when you want to know if a problem has happened before "
+                    "and how it was handled."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="query",
+                        type="string",
+                        description=(
+                            "Free-text description of the current finding or situation. "
+                            "For example: 'OOMKilled pods in payments service'."
+                        ),
+                        required=True,
+                    ),
+                ],
+                execute=lambda query, _idx=mem_rag_index: recall_similar_cases(
+                    query, _idx
+                ),
+                categories=frozenset({KNOWLEDGE}),
+                cacheable=False,
+            )
+        )
+        logger.info("Registered knowledge tool: recall_similar_cases")
+
     return tools

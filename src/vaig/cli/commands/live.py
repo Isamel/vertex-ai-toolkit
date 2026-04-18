@@ -661,6 +661,7 @@ def register(app: typer.Typer) -> None:
             _helpers._init_telemetry(settings)
             _helpers._init_audit(settings)
             _helpers._init_memory(settings)
+            _helpers._init_fix_outcome(settings)
             _helpers._check_platform_auth(settings)
 
             # Apply --project / --project-id: mutate ONLY gcp.project_id

@@ -1638,6 +1638,40 @@ class MemoryConfig(BaseModel):
         description="Entries older than this (days) are ignored during analysis.",
     )
 
+    # ── MEM-03: Fix Outcome Tracking ──────────────────────────
+    outcome_tracking_enabled: bool = Field(
+        default=False,
+        description="Enable MEM-03 fix outcome tracking.",
+    )
+    outcome_store_path: str = Field(
+        default="~/.vaig/memory/outcomes",
+        description="JSONL store directory for FixOutcome records.",
+    )
+    outcome_fuzzy_match: bool = Field(
+        default=False,
+        description="Allow fuzzy fingerprint matching during correlation.",
+    )
+    outcome_correlation_window_runs: int = Field(
+        default=3,
+        ge=1,
+        description="Max subsequent runs to search before marking outcome as 'unknown' permanently.",
+    )
+
+    # ── MEM-04: Semantic Memory RAG ────────────────────────────
+    memory_rag_enabled: bool = Field(
+        default=False,
+        description="Enable MEM-04 semantic memory RAG.",
+    )
+    memory_rag_corpus_name: str = Field(
+        default="",
+        description="Vertex AI RAG corpus name for memory narratives (separate from knowledge RAG).",
+    )
+    memory_rag_max_narratives: int = Field(
+        default=500,
+        ge=1,
+        description="Max narratives to ingest; oldest dropped first.",
+    )
+
 
 class Settings(BaseSettings):
     """Root application settings — merges env vars, YAML, and CLI overrides."""

@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 _telemetry_subscriber: object | None = None
 _audit_subscriber: object | None = None
 _memory_subscriber: object | None = None
+_fix_outcome_subscriber: object | None = None
 
 
 def _init_telemetry(settings: Settings) -> None:
@@ -92,6 +93,27 @@ def _init_memory(settings: Settings) -> None:
             logger.info("MemorySubscriber initialized")
     except Exception:  # noqa: BLE001
         logger.warning("Failed to initialize MemorySubscriber — pattern memory disabled")
+
+
+def _init_fix_outcome(settings: Settings) -> None:
+    """Initialize the FixOutcomeSubscriber if outcome tracking is enabled.
+
+    Safe to call multiple times — the subscriber is created only once
+    (guarded by ``_fix_outcome_subscriber``).  Mirrors :func:`_init_memory`.
+    """
+    global _fix_outcome_subscriber  # noqa: PLW0603
+    if not settings.memory.outcome_tracking_enabled:
+        return
+    try:
+        if _fix_outcome_subscriber is None:
+            from vaig.core.subscribers.fix_outcome_subscriber import FixOutcomeSubscriber
+
+            _fix_outcome_subscriber = FixOutcomeSubscriber(settings)
+            logger.info("FixOutcomeSubscriber initialized")
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "Failed to initialize FixOutcomeSubscriber — fix outcome tracking disabled"
+        )
 
 
 # ── Telemetry decorator ───────────────────────────────────────

@@ -11,6 +11,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+__all__ = [
+    "FixOutcome",
+    "PatternEntry",
+    "RecurrenceSignal",
+]
+
 
 class PatternEntry(BaseModel):
     """A single persisted observation of a finding pattern.
@@ -87,3 +93,28 @@ class RecurrenceSignal(BaseModel):
             is_recurring=entry.occurrences >= 2,
             badge=badge,
         )
+
+
+class FixOutcome(BaseModel):
+    """Correlates an applied code fix with a subsequent health report.
+
+    Records the outcome of a fix strategy so the agent can learn which
+    strategies are effective over time.
+    """
+
+    fix_id: str = Field(description="Unique fix identifier (matches FixAppliedEvent.fix_id)")
+    fingerprint: str = Field(description="16-hex-char fingerprint of the finding that was fixed")
+    strategy: str = Field(default="", description="Fix strategy label (e.g. 'restart-pod')")
+    applied_at: datetime = Field(description="UTC timestamp of fix application")
+    outcome: Literal["resolved", "persisted", "worsened", "unknown"] = Field(
+        default="unknown",
+        description="Correlated result: resolved/persisted/worsened/unknown",
+    )
+    correlated_run_id: str = Field(
+        default="",
+        description="Run ID of the health report used for correlation (empty if uncorrelated)",
+    )
+    correlated_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp of correlation (None if uncorrelated)",
+    )

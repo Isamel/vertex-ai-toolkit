@@ -24,6 +24,7 @@ __all__ = [
     "ContextWindowChecked",
     "ErrorOccurred",
     "Event",
+    "FixAppliedEvent",
     "HealthReportCompleted",
     "LoopStepEvent",
     "OrchestratorPhaseCompleted",
@@ -486,3 +487,33 @@ class HealthReportCompleted(Event):
     namespace: str = ""
     cluster: str = ""
     finding_count: int = 0
+
+
+# ══════════════════════════════════════════════════════════════
+# Fix Outcome Events
+# ══════════════════════════════════════════════════════════════
+
+
+@dataclass(frozen=True)
+class FixAppliedEvent(Event):
+    """Emitted when a code fix is applied to a cluster resource.
+
+    Allows the fix outcome subsystem to correlate applied strategies
+    with subsequent health reports.
+
+    Attributes:
+        run_id: Pipeline run identifier at the time the fix was applied.
+        fix_id: Unique fix identifier (UUID or slug).
+        fingerprint: 16-hex-char fingerprint of the finding being fixed.
+        strategy: Fix strategy label (e.g. ``"restart-pod"``, ``"scale-up"``).
+        cluster: GKE cluster name.
+        namespace: Kubernetes namespace.
+    """
+
+    event_type: str = field(default="fix.applied", init=False)
+    run_id: str = ""
+    fix_id: str = ""
+    fingerprint: str = ""
+    strategy: str = ""
+    cluster: str = ""
+    namespace: str = ""

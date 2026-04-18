@@ -579,6 +579,27 @@ class RemediationExecutor:
                     cluster=cluster,
                 )
             )
+            if not result.error and classified.tier in (SafetyTier.SAFE, SafetyTier.REVIEW):
+                try:
+                    import uuid  # noqa: PLC0415
+
+                    from vaig.core.events import FixAppliedEvent  # noqa: PLC0415
+
+                    self._bus.emit(
+                        FixAppliedEvent(
+                            run_id=run_id or "",
+                            fix_id=str(uuid.uuid4()),
+                            fingerprint="",
+                            strategy=classified.raw_command,
+                            cluster=cluster,
+                            namespace="",
+                        )
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "RemediationExecutor: failed to emit FixAppliedEvent",
+                        exc_info=True,
+                    )
             return result
 
     async def _dispatch(
