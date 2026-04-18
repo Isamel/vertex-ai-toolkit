@@ -1,11 +1,8 @@
 """Tests for query_pattern_history tool."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
 
 from vaig.tools.knowledge.query_pattern_history import query_pattern_history
 

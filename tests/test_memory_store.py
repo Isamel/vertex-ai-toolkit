@@ -1,12 +1,10 @@
 """Tests for PatternMemoryStore."""
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from vaig.core.memory.models import PatternEntry
 from vaig.core.memory.pattern_store import PatternMemoryStore
 
 

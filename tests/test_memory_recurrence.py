@@ -1,10 +1,7 @@
 """Tests for RecurrenceAnalyzer."""
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
-
-import pytest
 
 from vaig.core.memory.pattern_store import PatternMemoryStore
 from vaig.core.memory.recurrence import RecurrenceAnalyzer

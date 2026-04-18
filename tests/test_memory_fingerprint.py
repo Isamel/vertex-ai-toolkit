@@ -1,8 +1,6 @@
 """Tests for ObservationFingerprint."""
 from __future__ import annotations
 
-import pytest
-
 from vaig.core.memory.fingerprint import ObservationFingerprint, _normalise
 
 
