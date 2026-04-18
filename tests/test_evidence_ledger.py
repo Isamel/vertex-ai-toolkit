@@ -273,3 +273,70 @@ class TestEvidenceLedgerPerformance:
             ledger = ledger.append(entry)
         assert ledger.already_answered("question 99")
         assert not ledger.already_answered("question 200")
+
+
+# ══════════════════════════════════════════════════════════════
+# T-03: EvidenceLedger.to_summary() (SH-09)
+# ══════════════════════════════════════════════════════════════
+
+
+class TestEvidenceLedgerToSummary:
+    """Tests for EvidenceLedger.to_summary() added in T-03 (SH-09)."""
+
+    def test_empty_ledger_returns_empty_string(self) -> None:
+        ledger = new_ledger()
+        assert ledger.to_summary() == ""
+
+    def test_single_entry_format(self) -> None:
+        entry = EvidenceEntry(
+            tool_name="kubectl_get_pods",
+            question="Are pods running?",
+            answer_summary="All pods running.",
+        )
+        ledger = new_ledger().append(entry)
+        summary = ledger.to_summary()
+        assert "kubectl_get_pods" in summary
+        assert "Are pods running?" in summary
+        assert "All pods running." in summary
+
+    def test_entry_line_starts_with_dash_bracket(self) -> None:
+        entry = EvidenceEntry(tool_name="my_tool", question="q", answer_summary="ans")
+        ledger = new_ledger().append(entry)
+        summary = ledger.to_summary()
+        assert summary.startswith("- [my_tool]")
+
+    def test_multiple_entries_produce_multiple_lines(self) -> None:
+        ledger = new_ledger()
+        for i in range(3):
+            ledger = ledger.append(
+                EvidenceEntry(tool_name=f"tool_{i}", question=f"q{i}", answer_summary=f"ans{i}")
+            )
+        lines = [ln for ln in ledger.to_summary().splitlines() if ln.strip()]
+        assert len(lines) == 3
+
+    def test_max_entries_limits_output(self) -> None:
+        ledger = new_ledger()
+        for i in range(20):
+            ledger = ledger.append(
+                EvidenceEntry(tool_name=f"t{i}", question=f"q{i}", answer_summary=f"a{i}")
+            )
+        summary = ledger.to_summary(max_entries=5)
+        lines = [ln for ln in summary.splitlines() if ln.strip()]
+        assert len(lines) == 5
+
+    def test_answer_summary_truncated_at_100_chars(self) -> None:
+        long_answer = "x" * 200
+        entry = EvidenceEntry(tool_name="tool", question="q", answer_summary=long_answer)
+        ledger = new_ledger().append(entry)
+        summary = ledger.to_summary()
+        # The answer in the summary line should not exceed 100 chars of original
+        assert "x" * 101 not in summary
+
+    def test_default_max_entries_is_ten(self) -> None:
+        ledger = new_ledger()
+        for i in range(15):
+            ledger = ledger.append(
+                EvidenceEntry(tool_name=f"t{i}", question=f"q{i}", answer_summary=f"a{i}")
+            )
+        lines = [ln for ln in ledger.to_summary().splitlines() if ln.strip()]
+        assert len(lines) == 10

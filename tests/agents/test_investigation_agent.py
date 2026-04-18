@@ -193,3 +193,72 @@ class TestInvestigationAgentExecute:
 
         assert sync_result.metadata["steps_completed"] == async_result.metadata["steps_completed"]
         assert sync_result.metadata["steps_skipped"] == async_result.metadata["steps_skipped"]
+
+
+# ── T-04: No-plan guard and state fallback (SH-09) ───────────────────────────
+
+
+class TestInvestigationAgentNoPlanGuard:
+    """Tests for the optional plan parameter and no-plan guard (T-04, SH-09)."""
+
+    __test__ = True
+
+    def test_no_plan_no_state_returns_failure(self) -> None:
+        """When neither plan nor state.investigation_plan is provided, return success=False."""
+        agent = _make_agent()
+        result = agent.execute()  # no plan, no state
+        assert result.success is False
+        assert result.metadata["steps_completed"] == 0
+        assert result.metadata["plan_id"] is None
+
+    def test_no_plan_with_empty_state_returns_failure(self) -> None:
+        """When state has no investigation_plan, return success=False."""
+        from unittest.mock import MagicMock
+
+        from vaig.core.models import PipelineState
+
+        agent = _make_agent()
+        state = MagicMock(spec=PipelineState)
+        state.investigation_plan = None  # explicitly None
+
+        result = agent.execute(state=state)
+        assert result.success is False
+        assert result.metadata["budget_exhausted"] is False
+
+    def test_plan_from_state_is_used(self) -> None:
+        """When plan=None but state.investigation_plan is set, use it."""
+        from unittest.mock import MagicMock
+
+        from vaig.core.models import PipelineState
+
+        agent = _make_agent()
+        agent._tool_registry.register(_make_tool("kubectl_describe"))
+
+        plan = _make_plan("step-0")
+        state = MagicMock(spec=PipelineState)
+        state.investigation_plan = plan
+        state.evidence_ledger = None  # no pre-existing ledger
+
+        result = agent.execute(state=state)
+        assert result.success is True
+        assert result.metadata["steps_completed"] == 1
+
+    def test_explicit_plan_takes_precedence_over_state(self) -> None:
+        """When both plan and state.investigation_plan exist, the explicit plan wins."""
+        from unittest.mock import MagicMock
+
+        from vaig.core.models import PipelineState
+
+        agent = _make_agent()
+        agent._tool_registry.register(_make_tool("kubectl_describe"))
+
+        explicit_plan = _make_plan("step-explicit")
+        state_plan = _make_plan("step-from-state", "step-extra")
+        state = MagicMock(spec=PipelineState)
+        state.investigation_plan = state_plan
+        state.evidence_ledger = None
+
+        result = agent.execute(plan=explicit_plan, state=state)
+        assert result.success is True
+        # Explicit plan has 1 step; state plan has 2 — explicit wins
+        assert result.metadata["steps_completed"] == 1

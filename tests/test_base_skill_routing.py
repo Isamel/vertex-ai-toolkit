@@ -247,6 +247,7 @@ class TestServiceHealthCapabilities:
         mock_settings = MagicMock()
         mock_settings.gke = real_settings.gke
         mock_settings.datadog.enabled = False
+        mock_settings.investigation.enabled = False  # prevent autonomous branch
 
         with patch("vaig.core.config.get_settings", return_value=mock_settings):
             return ServiceHealthSkill().get_parallel_agents_config()
@@ -261,6 +262,7 @@ class TestServiceHealthCapabilities:
         mock_settings = MagicMock()
         mock_settings.gke = real_settings.gke
         mock_settings.datadog.enabled = True
+        mock_settings.investigation.enabled = False  # prevent autonomous branch
 
         with patch("vaig.core.config.get_settings", return_value=mock_settings):
             return ServiceHealthSkill().get_parallel_agents_config()

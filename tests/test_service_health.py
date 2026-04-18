@@ -4364,3 +4364,77 @@ class TestDatadogPromptPreResolution:
         )
         tool_ref_section = prompt.split("## Data Collection Procedure")[0]
         assert "kubectl_get_labels" in tool_ref_section
+
+
+# ── T-05: autonomous_mode dispatch in get_parallel_agents_config (SH-09) ────
+
+
+class TestParallelAgentsConfigAutonomousMode:
+    """Tests for the autonomous_mode branch in get_parallel_agents_config (T-05, SH-09)."""
+
+    def _get_agents_with_investigation(
+        self,
+        autonomous_mode: bool = False,
+        budget_per_run_usd: float = 0.0,
+    ) -> list:
+        from unittest.mock import patch
+
+        from vaig.core.config import InvestigationConfig, Settings, reset_settings
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        reset_settings()
+        settings = Settings(
+            investigation=InvestigationConfig(
+                enabled=True,
+                autonomous_mode=autonomous_mode,
+                budget_per_run_usd=budget_per_run_usd,
+            )
+        )
+        with patch("vaig.core.config.get_settings", return_value=settings):
+            return ServiceHealthSkill().get_parallel_agents_config()
+
+    def test_investigation_disabled_has_no_planner_investigator(self) -> None:
+        """Without investigation enabled, no planner or investigator agent."""
+        from vaig.skills.service_health.skill import ServiceHealthSkill
+
+        agents = ServiceHealthSkill().get_parallel_agents_config()
+        names = [a["name"] for a in agents]
+        assert "health_planner" not in names
+        assert "health_investigator" not in names
+
+    def test_investigation_enabled_adds_planner_and_investigator(self) -> None:
+        """With investigation.enabled=True, planner and investigator are added."""
+        agents = self._get_agents_with_investigation(autonomous_mode=False)
+        names = [a["name"] for a in agents]
+        assert "health_planner" in names
+        assert "health_investigator" in names
+
+    def test_autonomous_mode_adds_self_correction(self) -> None:
+        """autonomous_mode=True must add self_correction to investigator kwargs."""
+        agents = self._get_agents_with_investigation(autonomous_mode=True)
+        investigator = next(a for a in agents if a["name"] == "health_investigator")
+        assert "self_correction" in investigator
+
+    def test_autonomous_mode_adds_pattern_store(self) -> None:
+        """autonomous_mode=True must add pattern_store to investigator kwargs."""
+        agents = self._get_agents_with_investigation(autonomous_mode=True)
+        investigator = next(a for a in agents if a["name"] == "health_investigator")
+        assert "pattern_store" in investigator
+
+    def test_autonomous_mode_false_no_self_correction(self) -> None:
+        """autonomous_mode=False must NOT add self_correction."""
+        agents = self._get_agents_with_investigation(autonomous_mode=False)
+        investigator = next(a for a in agents if a["name"] == "health_investigator")
+        assert "self_correction" not in investigator
+
+    def test_budget_zero_no_budget_manager(self) -> None:
+        """budget_per_run_usd=0.0 must NOT add budget_manager."""
+        agents = self._get_agents_with_investigation(autonomous_mode=True, budget_per_run_usd=0.0)
+        investigator = next(a for a in agents if a["name"] == "health_investigator")
+        assert "budget_manager" not in investigator
+
+    def test_budget_nonzero_adds_budget_manager(self) -> None:
+        """budget_per_run_usd > 0 must add budget_manager."""
+        agents = self._get_agents_with_investigation(autonomous_mode=True, budget_per_run_usd=1.5)
+        investigator = next(a for a in agents if a["name"] == "health_investigator")
+        assert "budget_manager" in investigator

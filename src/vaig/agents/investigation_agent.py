@@ -132,7 +132,7 @@ class InvestigationAgent(ToolAwareAgent):
 
     def execute(  # type: ignore[override]
         self,
-        plan: InvestigationPlan,
+        plan: InvestigationPlan | None = None,
         *,
         state: PipelineState | None = None,
         controller: SelfCorrectionController | None = None,
@@ -143,7 +143,10 @@ class InvestigationAgent(ToolAwareAgent):
         """Execute the investigation plan synchronously.
 
         Args:
-            plan: The :class:`InvestigationPlan` to execute.
+            plan: The :class:`InvestigationPlan` to execute.  When ``None``,
+                the plan is read from ``state.investigation_plan``.  A warning
+                is logged and an empty result is returned when no plan is
+                available from either source.
             state: Optional current pipeline state (ledger is read from here
                 if present).
             controller: Optional :class:`SelfCorrectionController`.  When
@@ -166,6 +169,24 @@ class InvestigationAgent(ToolAwareAgent):
             check_memory_before_action,
             compute_action_fingerprint,
         )
+
+        # ── Resolve plan ──────────────────────────────────────────────────
+        if plan is None:
+            if state is not None and state.investigation_plan is not None:
+                plan = state.investigation_plan
+            else:
+                logger.warning(
+                    "InvestigationAgent '%s': no plan provided and none found in state — returning empty result",
+                    self.name,
+                )
+                return AgentResult(
+                    agent_name=self.name,
+                    content="## Investigation Summary\n\nNo plan available.",
+                    success=False,
+                    usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                    metadata={"plan_id": None, "steps_completed": 0, "steps_skipped": 0, "iterations": 0, "budget_exhausted": False, "escalated": False},
+                    state_patch=None,
+                )
 
         if controller is None:
             controller = SelfCorrectionController(SelfCorrectionConfig())
@@ -215,11 +236,7 @@ class InvestigationAgent(ToolAwareAgent):
             if budget is not None:
                 try:
                     import asyncio  # noqa: PLC0415
-                    loop = asyncio.new_event_loop()
-                    try:
-                        loop.run_until_complete(budget.check())
-                    finally:
-                        loop.close()
+                    asyncio.run(budget.check())
                 except BudgetExhaustedError:
                     logger.info(
                         "InvestigationAgent: budget exhausted before step %s",
@@ -340,7 +357,7 @@ class InvestigationAgent(ToolAwareAgent):
 
     async def async_execute(  # type: ignore[override]
         self,
-        plan: InvestigationPlan,
+        plan: InvestigationPlan | None = None,
         *,
         state: PipelineState | None = None,
         controller: SelfCorrectionController | None = None,

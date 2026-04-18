@@ -920,7 +920,31 @@ class ServiceHealthSkill(BaseSkill):
         ]
 
         # ── Optional investigation phase (gated by feature flag) ─────────
-        if settings.investigation.enabled:
+        if settings.investigation.enabled is True:
+            investigator_kwargs: dict[str, Any] = {
+                "name": "health_investigator",
+                "role": "Hypothesis Investigator",
+                "requires_tools": True,
+                "tool_categories": ["kubernetes", "scaling", "mesh", "logging"],
+                "system_instruction": HEALTH_INVESTIGATOR_PROMPT,
+                "model": "gemini-2.5-flash",
+                "max_iterations": settings.investigation.max_iterations,
+                "temperature": 0.1,
+                "agent_class": "InvestigationAgent",
+            }
+            if settings.investigation.autonomous_mode is True:
+                from vaig.core.global_budget import GlobalBudgetManager  # noqa: PLC0415
+                from vaig.core.memory.pattern_store import PatternMemoryStore  # noqa: PLC0415
+                from vaig.core.self_correction import SelfCorrectionController  # noqa: PLC0415
+
+                investigator_kwargs["self_correction"] = SelfCorrectionController
+                if settings.investigation.budget_per_run_usd > 0.0:
+                    from vaig.core.config import GlobalBudgetConfig  # noqa: PLC0415
+                    investigator_kwargs["budget_manager"] = GlobalBudgetManager(
+                        config=GlobalBudgetConfig(max_cost_usd=settings.investigation.budget_per_run_usd)
+                    )
+                investigator_kwargs["pattern_store"] = PatternMemoryStore(base_dir=".vaig/memory/patterns")
+
             agents += [
                 {
                     "name": "health_planner",
@@ -931,17 +955,7 @@ class ServiceHealthSkill(BaseSkill):
                     "temperature": 0.1,
                     "agent_class": "SpecialistAgent",
                 },
-                {
-                    "name": "health_investigator",
-                    "role": "Hypothesis Investigator",
-                    "requires_tools": True,
-                    "tool_categories": ["kubernetes", "scaling", "mesh", "logging"],
-                    "system_instruction": HEALTH_INVESTIGATOR_PROMPT,
-                    "model": "gemini-2.5-flash",
-                    "max_iterations": settings.investigation.max_iterations,
-                    "temperature": 0.1,
-                    "agent_class": "InvestigationAgent",
-                },
+                investigator_kwargs,
             ]
 
         agents += [

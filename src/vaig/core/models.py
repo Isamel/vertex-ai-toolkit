@@ -148,6 +148,10 @@ class PipelineState(BaseModel):
     evidence_ledger: EvidenceLedger | None = Field(default=None)
     """Per-run evidence ledger. Populated by ToolAwareAgent and accumulated across loop iterations."""
 
+    investigation_plan: Any | None = Field(default=None)
+    """Active investigation plan (InvestigationPlan). Set by HealthPlannerAgent, consumed by InvestigationAgent.
+    Typed as Any to avoid a circular import at module load time."""
+
     def to_context_string(self) -> str:
         """Serialize the state into a human-readable string for prompt injection.
 
@@ -287,5 +291,11 @@ def apply_state_patch(
     # ── EvidenceLedger — replace entirely (immutable, caller owns the ref) ──
     if "evidence_ledger" in patch_dict and isinstance(patch_dict["evidence_ledger"], EvidenceLedger):
         updates["evidence_ledger"] = patch_dict["evidence_ledger"]
+
+    # ── InvestigationPlan — replace entirely (immutable, caller owns the ref) ──
+    if "investigation_plan" in patch_dict and patch_dict["investigation_plan"] is not None:
+        from vaig.skills.service_health.schema import InvestigationPlan as _InvPlan  # noqa: PLC0415
+        if isinstance(patch_dict["investigation_plan"], _InvPlan):
+            updates["investigation_plan"] = patch_dict["investigation_plan"]
 
     return state.model_copy(update=updates)

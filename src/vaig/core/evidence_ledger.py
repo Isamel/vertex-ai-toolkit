@@ -107,6 +107,23 @@ class EvidenceLedger(BaseModel):
         """Return all entries matching *question* — non-empty means already answered."""
         return self.search(question)
 
+    def to_summary(self, max_entries: int = 10) -> str:
+        """Return a concise multi-line summary of the last *max_entries* entries.
+
+        Each line has the format::
+
+            - [{tool_name}] {question}: {answer_summary[:100]}
+
+        Returns an empty string when the ledger has no entries.
+        """
+        if not self.entries:
+            return ""
+        lines = [
+            f"- [{e.tool_name}] {e.question}: {e.answer_summary[:100]}"
+            for e in self.entries[-max_entries:]
+        ]
+        return "\n".join(lines)
+
 
 def new_ledger() -> EvidenceLedger:
     """Create a fresh empty EvidenceLedger."""
