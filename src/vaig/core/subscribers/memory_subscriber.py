@@ -4,6 +4,10 @@ Subscribes to :class:`~vaig.core.events.HealthReportCompleted` on the
 :class:`~vaig.core.event_bus.EventBus` and persists finding fingerprints
 to the :class:`~vaig.core.memory.pattern_store.PatternMemoryStore`.
 
+When ``settings.memory.memory_rag_enabled`` is also True, the subscriber
+additionally ingests pattern narratives into the memory RAG corpus via
+:class:`~vaig.core.memory.memory_rag.MemoryRAGIndex` after each report.
+
 Mirrors the :class:`~vaig.core.subscribers.audit_subscriber.AuditSubscriber`
 pattern: all handlers are wrapped in ``try/except`` and silently log failures
 so that a broken store never disrupts the live pipeline.
@@ -22,6 +26,7 @@ from vaig.core.memory.pattern_store import PatternMemoryStore
 
 if TYPE_CHECKING:
     from vaig.core.config import Settings
+    from vaig.core.memory.memory_rag import MemoryRAGIndex
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +39,19 @@ class MemorySubscriber:
     When ``settings.memory.enabled`` is False this class is a no-op:
     the constructor returns immediately without subscribing.
 
+    When ``settings.memory.memory_rag_enabled`` is True, a
+    :class:`~vaig.core.memory.memory_rag.MemoryRAGIndex` is constructed and
+    pattern narratives are ingested into the memory RAG corpus after each
+    health report is processed.
+
     Args:
         settings: Application settings (provides ``memory`` config).
         store: Optional pre-built store for testing.  If not provided a new
             :class:`~vaig.core.memory.pattern_store.PatternMemoryStore` is
             created using ``settings.memory.store_path``.
+        rag_index: Optional pre-built :class:`~vaig.core.memory.memory_rag.MemoryRAGIndex`
+            for testing.  Created automatically when ``memory_rag_enabled`` is
+            True and a pre-built index is not provided.
     """
 
     def __init__(
@@ -46,14 +59,34 @@ class MemorySubscriber:
         settings: Settings,
         *,
         store: PatternMemoryStore | None = None,
+        rag_index: MemoryRAGIndex | None = None,
     ) -> None:
         self._settings = settings
         self._unsubscribers: list[Callable[[], None]] = []
+        self._rag_index: MemoryRAGIndex | None = None
 
         if not settings.memory.enabled:
             return
 
         self._store = store or PatternMemoryStore(base_dir=settings.memory.store_path)
+
+        if settings.memory.memory_rag_enabled:
+            if rag_index is not None:
+                self._rag_index = rag_index
+            else:
+                try:
+                    from vaig.core.memory.memory_rag import MemoryRAGIndex  # noqa: PLC0415
+                    from vaig.core.rag import RAGKnowledgeBase  # noqa: PLC0415
+
+                    rag_kb = RAGKnowledgeBase(config=settings.export)
+                    self._rag_index = MemoryRAGIndex(rag_kb=rag_kb, config=settings.memory)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "MemorySubscriber: failed to initialise MemoryRAGIndex — "
+                        "RAG ingestion disabled",
+                        exc_info=True,
+                    )
+
         self._subscribe_all()
 
     # ── Subscription wiring ──────────────────────────────────
@@ -83,6 +116,22 @@ class MemorySubscriber:
                 event.run_id,
                 exc_info=True,
             )
+
+        if self._rag_index is not None:
+            try:
+                entries = list(self._store.all_entries())
+                count = self._rag_index.ingest(entries)
+                if count:
+                    logger.debug(
+                        "MemorySubscriber: ingested %d narratives into memory RAG corpus",
+                        count,
+                    )
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "MemorySubscriber: RAG ingest failed for run %s",
+                    event.run_id,
+                    exc_info=True,
+                )
 
     def _process_report(self, event: HealthReportCompleted) -> None:
         """Load the report JSONL and record one fingerprint per finding.

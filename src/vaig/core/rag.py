@@ -455,3 +455,92 @@ class RAGKnowledgeBase:
             len(merged),
         )
         return RetrievalResult(chunks=merged, query=query)
+
+    # ── Memory RAG helpers ────────────────────────────────────
+
+    def retrieve_from_corpus(
+        self,
+        corpus_name: str,
+        query: str,
+        top_k: int = 5,
+    ) -> list[RetrievedChunk]:
+        """Retrieve chunks from an arbitrary *corpus_name* (not necessarily the default).
+
+        Used by :class:`~vaig.core.memory.memory_rag.MemoryRAGIndex` to query
+        the separate memory corpus.
+
+        Parameters
+        ----------
+        corpus_name:
+            The full Vertex AI RAG corpus resource name to query.
+        query:
+            Free-text search query.
+        top_k:
+            Maximum number of chunks to return.
+
+        Returns
+        -------
+        list[RetrievedChunk]
+            Retrieved chunks, or empty list on error.
+        """
+        if not corpus_name or not query.strip():
+            return []
+        self._ensure_initialized()
+        rag = _import_vertexai_rag()
+        try:
+            response = rag.retrieval_query(
+                rag_resources=[rag.RagResource(rag_corpus=corpus_name)],
+                text=query,
+                similarity_top_k=top_k,
+            )
+            return [
+                RetrievedChunk(
+                    text=str(ctx.text),
+                    score=float(getattr(ctx, "distance", 0.0)),
+                    source=str(getattr(ctx, "source_uri", "")),
+                )
+                for ctx in (response.contexts.contexts if response.contexts else [])
+            ]
+        except Exception:  # noqa: BLE001
+            logger.warning("retrieve_from_corpus failed for corpus '%s'", corpus_name)
+            return []
+
+    def ingest_narratives(self, corpus_name: str, narratives: list[str]) -> bool:
+        """Ingest plain-text narratives into *corpus_name* via the Vertex AI RAG API.
+
+        Uses ``rag.upload_file`` (direct text upload) when available in the
+        installed SDK version; otherwise silently no-ops and returns ``False``.
+
+        Parameters
+        ----------
+        corpus_name:
+            Target Vertex AI RAG corpus resource name.
+        narratives:
+            List of plain-text strings to ingest.
+
+        Returns
+        -------
+        bool
+            ``True`` if ingestion succeeded (or was no-op due to empty input).
+        """
+        if not corpus_name or not narratives:
+            return True
+        self._ensure_initialized()
+        rag = _import_vertexai_rag()
+        try:
+            for text in narratives:
+                if not text.strip():
+                    continue
+                rag.upload_file(
+                    corpus_name=corpus_name,
+                    path=None,
+                    display_name="memory-narrative",
+                    description=text[:200],
+                )
+            return True
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "ingest_narratives: upload to corpus '%s' failed — narratives not persisted",
+                corpus_name,
+            )
+            return False
