@@ -23,7 +23,14 @@ from vaig.cli._helpers import (
     handle_cli_error,
     track_command,
 )
-from vaig.cli.commands._code import _execute_code_mode, _try_chunked_ask
+from vaig.cli.commands._code import (
+    _build_remote_context,
+    _check_phase8_stubs,
+    _execute_code_mode,
+    _parse_from_repo,
+    _try_chunked_ask,
+    _validate_from_repo_allowlist,
+)
 from vaig.cli.commands.live import _execute_live_mode
 from vaig.core.gke import build_gke_config as _build_gke_config
 
@@ -128,6 +135,39 @@ def register(app: typer.Typer) -> None:
         debug: Annotated[
             bool,
             typer.Option("--debug", help="Enable debug logging (DEBUG level, shows paths and full tracebacks)"),
+        ] = False,
+        from_repo: Annotated[
+            str | None,
+            typer.Option(
+                "--from-repo",
+                help=(
+                    "Source GitHub repo in 'owner/repo[@ref]' format. "
+                    "Shallow-clones the repo as a read-only reference for the migration pipeline. "
+                    "Validated against github.allowed_repos before cloning."
+                ),
+            ),
+        ] = None,
+        to_repo: Annotated[
+            str | None,
+            typer.Option(
+                "--to-repo",
+                help=(
+                    "Target GitHub repo to push migrated code to. "
+                    "[STUB] Requires Phase 8 CM-05 Git Integration — "
+                    "raises an error immediately when used."
+                ),
+            ),
+        ] = None,
+        push: Annotated[
+            bool,
+            typer.Option(
+                "--push/--no-push",
+                help=(
+                    "Push migrated changes to the target remote repository. "
+                    "[STUB] Requires Phase 8 CM-05 Git Integration — "
+                    "raises an error immediately when used."
+                ),
+            ),
         ] = False,
     ) -> None:
         """Ask a single question and get a response.
@@ -249,6 +289,27 @@ def register(app: typer.Typer) -> None:
 
             # Code mode — use CodingAgent (Tasks 5.1, 5.4, 5.5, 5.6, 5.7)
             if code:
+                # GH-03-R5: Stub --to-repo and --push — raise immediately
+                from vaig.tools.repo.models import Phase8RequiredError
+                try:
+                    _check_phase8_stubs(to_repo=to_repo, push=push)
+                except Phase8RequiredError as exc:
+                    err_console.print(f"[red]Error:[/red] {exc}")
+                    raise typer.Exit(1)  # noqa: B904
+
+                # GH-03-R1/R2/R3: --from-repo shallow clone integration
+                if from_repo:
+                    repo_slug, ref = _parse_from_repo(from_repo)
+                    _validate_from_repo_allowlist(repo_slug, settings)
+                    console.print(
+                        f"[dim]🔗 Cloning source repo [cyan]{repo_slug}@{ref}[/cyan] (shallow)...[/dim]"
+                    )
+                    remote_context, _provenance = _build_remote_context(settings, repo_slug, ref)
+                    if context_str:
+                        context_str = context_str + "\n\n---\n\n" + remote_context
+                    else:
+                        context_str = remote_context
+
                 if workspace:
                     resolved_ws = workspace.resolve()
                     if not resolved_ws.is_dir():

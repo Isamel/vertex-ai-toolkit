@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,12 +20,190 @@ from vaig.cli._helpers import (
     console,
     err_console,
 )
+from vaig.tools.repo.models import Phase8RequiredError, ProvenanceMetadata
 
 if TYPE_CHECKING:
     from vaig.core.config import Settings
     from vaig.core.protocols import GeminiClientProtocol
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_from_repo(from_repo: str) -> tuple[str, str]:
+    """Parse ``owner/repo[@ref]`` into ``(owner/repo, ref)``.
+
+    Args:
+        from_repo: Repository string in ``owner/repo`` or ``owner/repo@ref`` format.
+
+    Returns:
+        Tuple of ``(repo_slug, ref)`` where *ref* defaults to ``"HEAD"`` when
+        not specified.
+
+    Examples:
+        >>> _parse_from_repo("octocat/hello-world")
+        ('octocat/hello-world', 'HEAD')
+        >>> _parse_from_repo("octocat/hello-world@main")
+        ('octocat/hello-world', 'main')
+        >>> _parse_from_repo("octocat/hello-world@abc1234")
+        ('octocat/hello-world', 'abc1234')
+    """
+    if "@" in from_repo:
+        repo_part, ref = from_repo.rsplit("@", 1)
+        return repo_part, ref
+    return from_repo, "HEAD"
+
+
+def _validate_from_repo_allowlist(repo_slug: str, settings: Settings) -> None:
+    """Raise ``typer.Exit(1)`` when *repo_slug* is not in the allowed_repos list.
+
+    No-op when the allowlist is empty (all repos allowed).
+
+    Args:
+        repo_slug: ``owner/repo`` identifier to check.
+        settings: Application settings containing ``github.allowed_repos``.
+
+    Raises:
+        typer.Exit: When the repo is not in the non-empty allowlist.
+    """
+    allowed = settings.github.allowed_repos
+    if allowed and repo_slug not in allowed:
+        err_console.print(
+            f"[red]Error:[/red] Repository '[cyan]{repo_slug}[/cyan]' is not in "
+            "the allowed_repos allowlist.\n"
+            "[dim]Configure github.allowed_repos in your config or add the repo.[/dim]"
+        )
+        raise typer.Exit(1)
+
+
+def _build_remote_context(
+    settings: Settings,
+    repo_slug: str,
+    ref: str,
+) -> tuple[str, list[ProvenanceMetadata]]:
+    """Shallow-clone *repo_slug* and return wrapped source content + provenance.
+
+    Performs the following steps:
+    1. Converts ``owner/repo`` → HTTPS clone URL.
+    2. Validates against the allowed_repos allowlist (GH-03-R3).
+    3. Runs :class:`~vaig.tools.repo.batch.TreeTriageReport` on the cloned tree
+       (GH-03-R9).
+    4. Reads all Tier-1 and Tier-2 files from the clone, wrapping each through
+       :func:`~vaig.core.prompt_defense.wrap_untrusted_content` (GH-03-R8).
+    5. Attaches :class:`ProvenanceMetadata` to each file reference (GH-03-R6).
+    6. Cleans up via the :func:`~vaig.tools.repo.shallow_clone.shallow_clone`
+       context manager (GH-03-R7).
+
+    Args:
+        settings: Application settings (used for GitHub config).
+        repo_slug: ``owner/repo`` identifier.
+        ref: Branch, tag, or commit SHA to clone.
+
+    Returns:
+        Tuple of ``(context_text, provenance_list)`` where *context_text* is
+        the combined file contents wrapped in untrusted-data delimiters and
+        *provenance_list* contains one :class:`ProvenanceMetadata` per file.
+    """
+    from vaig.core.prompt_defense import wrap_untrusted_content
+    from vaig.tools.repo.batch import Tier, TreeTriageReport, TriagedEntry
+    from vaig.tools.repo.shallow_clone import shallow_clone
+
+    github_config = settings.github
+    clone_url = f"https://github.com/{repo_slug}.git"
+
+    # Determine effective ref: use config default when caller passed "HEAD"
+    effective_ref = ref if ref != "HEAD" else github_config.default_ref
+
+    provenance_list: list[ProvenanceMetadata] = []
+    sections: list[str] = []
+
+    with shallow_clone(github_config, clone_url, ref=effective_ref) as clone_path:
+        # GH-03-R9: Run TreeTriageReport before pipeline starts
+        repo_files = sorted(clone_path.rglob("*"))
+        entries: list[TriagedEntry] = []
+        for p in repo_files:
+            if not p.is_file():
+                continue
+            rel = p.relative_to(clone_path)
+            # Simple tier assignment: source files → tier_1, tests → tier_2, rest → tier_3
+            rel_str = str(rel)
+            if rel_str.startswith("."):
+                continue
+            if any(part.startswith(".") for part in rel.parts):
+                continue
+            suffix = p.suffix.lower()
+            if suffix in {".py", ".ts", ".js", ".go", ".java", ".rs", ".rb", ".cs"}:
+                tier = Tier.TIER_1
+            elif suffix in {".yaml", ".yml", ".json", ".toml", ".cfg", ".ini", ".md"}:
+                tier = Tier.TIER_2
+            else:
+                tier = Tier.TIER_3
+            entries.append(TriagedEntry(path=rel_str, tier=tier))
+
+        triage_report = TreeTriageReport(
+            owner=repo_slug.split("/")[0],
+            repo=repo_slug.split("/")[1] if "/" in repo_slug else repo_slug,
+            ref=effective_ref,
+            entries=entries,
+            total_files=len(entries),
+        )
+        logger.info(
+            "GH-03 TreeTriageReport: %d files triaged in %s@%s",
+            triage_report.total_files,
+            repo_slug,
+            effective_ref,
+        )
+
+        migrated_at = datetime.now(tz=UTC)
+
+        # GH-03-R4 + R6 + R8: Read Tier-1/2 files, wrap, attach provenance
+        for entry in triage_report.entries:
+            if entry.tier not in (Tier.TIER_1, Tier.TIER_2):
+                continue
+            file_path = clone_path / entry.path
+            if not file_path.is_file():
+                continue
+            try:
+                raw_content = file_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+
+            # GH-03-R8: Wrap through prompt defense
+            wrapped = wrap_untrusted_content(raw_content)
+            sections.append(f"### {entry.path}\n\n{wrapped}")
+
+            provenance_list.append(
+                ProvenanceMetadata(
+                    source_repo=repo_slug,
+                    source_ref=effective_ref,
+                    source_path=entry.path,
+                    migrated_at=migrated_at,
+                )
+            )
+
+    context_text = (
+        f"## Remote Source Repository: {repo_slug}@{effective_ref}\n\n"
+        + "\n\n---\n\n".join(sections)
+    )
+    return context_text, provenance_list
+
+
+def _check_phase8_stubs(to_repo: str | None, push: bool) -> None:
+    """Raise :class:`Phase8RequiredError` for write-path flags.
+
+    Calling ``--to-repo`` or ``--push`` is explicitly stubbed in Phase 6.
+    These features require Phase 8 CM-05 Git Integration.
+
+    Args:
+        to_repo: Value of the ``--to-repo`` CLI option (``None`` if omitted).
+        push: Value of the ``--push`` CLI option.
+
+    Raises:
+        Phase8RequiredError: When either *to_repo* is set or *push* is True.
+    """
+    if to_repo is not None:
+        raise Phase8RequiredError("--to-repo (write to remote repository)")
+    if push:
+        raise Phase8RequiredError("--push (push changes to remote)")
 
 
 def _execute_code_mode(
