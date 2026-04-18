@@ -1,0 +1,140 @@
+# Idiom map: Java → Kotlin
+# Schema: source_lang, target_lang, idioms (list), dependencies (mapping)
+#
+# idioms entries:
+#   source_pattern:  Human-readable description of the Java idiom
+#   target_pattern:  Equivalent Kotlin idiom description
+#   description:     Explanation of the transformation
+#   example_before:  Java code example
+#   example_after:   Kotlin code example
+
+source_lang: java
+target_lang: kotlin
+
+idioms:
+  - source_pattern: "System.out.println(value)"
+    target_pattern: "println(value)"
+    description: "Replace Java print with Kotlin top-level println"
+    example_before: 'System.out.println("Hello, World!");'
+    example_after: 'println("Hello, World!")'
+
+  - source_pattern: "String.format(template, args...)"
+    target_pattern: "String template: \"${variable}\""
+    description: "Use Kotlin string templates instead of String.format"
+    example_before: 'String msg = String.format("Hello, %s! Age: %d", name, age);'
+    example_after: 'val msg = "Hello, $name! Age: $age"'
+
+  - source_pattern: "Getter/setter methods: getName(), setName(v)"
+    target_pattern: "Data class property: val/var name: Type"
+    description: "Kotlin properties replace Java-style getters/setters"
+    example_before: |
+      public class Person {
+          private String name;
+          public String getName() { return name; }
+          public void setName(String name) { this.name = name; }
+      }
+    example_after: |
+      data class Person(var name: String)
+
+  - source_pattern: "Null check: if (value != null) { ... }"
+    target_pattern: "Safe call: value?.let { ... } or value?.property"
+    description: "Use Kotlin's null-safety operators instead of explicit null checks"
+    example_before: |
+      if (user != null) {
+          System.out.println(user.getName());
+      }
+    example_after: "println(user?.name)"
+
+  - source_pattern: "instanceof check and cast"
+    target_pattern: "Smart cast: if (x is Type) { use x as Type }"
+    description: "Kotlin smart casts automatically cast after an is-check"
+    example_before: |
+      if (shape instanceof Circle) {
+          Circle c = (Circle) shape;
+          return c.radius * Math.PI;
+      }
+    example_after: |
+      if (shape is Circle) {
+          return shape.radius * Math.PI
+      }
+
+  - source_pattern: "for (int i = 0; i < n; i++) { ... }"
+    target_pattern: "for (i in 0 until n) { ... }"
+    description: "Use Kotlin ranges instead of C-style for loops"
+    example_before: |
+      for (int i = 0; i < list.size(); i++) {
+          process(list.get(i));
+      }
+    example_after: |
+      for (i in list.indices) {
+          process(list[i])
+      }
+
+  - source_pattern: "switch/case statement"
+    target_pattern: "when expression"
+    description: "Kotlin's when is more expressive than Java's switch"
+    example_before: |
+      switch (day) {
+          case MONDAY: return "Start of week"; break;
+          case FRIDAY: return "End of week"; break;
+          default: return "Midweek";
+      }
+    example_after: |
+      when (day) {
+          MONDAY -> "Start of week"
+          FRIDAY -> "End of week"
+          else -> "Midweek"
+      }
+
+  - source_pattern: "interface with default methods"
+    target_pattern: "interface with default implementations"
+    description: "Kotlin interfaces support default method bodies directly"
+    example_before: |
+      interface Greeter {
+          String greet(String name);
+          default String greetLoud(String name) { return greet(name).toUpperCase(); }
+      }
+    example_after: |
+      interface Greeter {
+          fun greet(name: String): String
+          fun greetLoud(name: String): String = greet(name).uppercase()
+      }
+
+  - source_pattern: "Optional<T> for nullable values"
+    target_pattern: "Nullable type: T?"
+    description: "Kotlin's type system handles nullability natively — no Optional wrapper needed"
+    example_before: |
+      Optional<String> findUser(int id) {
+          return Optional.ofNullable(db.get(id));
+      }
+    example_after: |
+      fun findUser(id: Int): String? = db[id]
+
+  - source_pattern: "Anonymous inner class / lambda"
+    target_pattern: "Lambda / function literal"
+    description: "Kotlin lambdas are cleaner than Java anonymous inner classes"
+    example_before: |
+      list.sort(new Comparator<String>() {
+          @Override
+          public int compare(String a, String b) { return a.compareTo(b); }
+      });
+    example_after: "list.sortWith { a, b -> a.compareTo(b) }"
+
+  - source_pattern: "try-with-resources: try (Resource r = ...) { ... }"
+    target_pattern: "use extension: resource.use { r -> ... }"
+    description: "Kotlin's use extension replaces try-with-resources for Closeable"
+    example_before: |
+      try (BufferedReader reader = new BufferedReader(new FileReader(path))) {
+          return reader.readLine();
+      }
+    example_after: |
+      return BufferedReader(FileReader(path)).use { it.readLine() }
+
+dependencies:
+  "org.springframework:spring-boot": "io.ktor:ktor-server-core"
+  "com.fasterxml.jackson.core:jackson-databind": "org.jetbrains.kotlinx:kotlinx-serialization-json"
+  "org.junit.jupiter:junit-jupiter": "io.kotest:kotest-runner-junit5"
+  "com.google.guava:guava": "kotlin-stdlib"
+  "org.slf4j:slf4j-api": "io.github.microutils:kotlin-logging-jvm"
+  "org.hibernate:hibernate-core": "org.jetbrains.exposed:exposed-core"
+  "com.google.code.gson:gson": "org.jetbrains.kotlinx:kotlinx-serialization-json"

@@ -1853,6 +1853,21 @@ class InvestigationConfig(BaseModel):
         return self
 
 
+class IdiomConfig(BaseModel):
+    """Configuration for CM-07 idiom map expansion.
+
+    Controls whether static bundled maps are supplemented by LLM-generated
+    maps (``auto_generate``) and where generated maps are cached on disk.
+
+    When ``enabled`` is ``False`` (the default), the existing bundled-only
+    behaviour is preserved and no new files are written.
+    """
+
+    enabled: bool = False
+    auto_generate: bool = False
+    cache_dir: str = "~/.vaig/idioms"
+
+
 class Settings(BaseSettings):
     """Root application settings — merges env vars, YAML, and CLI overrides."""
 
@@ -1930,6 +1945,7 @@ class Settings(BaseSettings):
     hypothesis: HypothesisConfig = Field(default_factory=HypothesisConfig)
     self_correction: SelfCorrectionConfig = Field(default_factory=SelfCorrectionConfig)
     investigation: InvestigationConfig = Field(default_factory=InvestigationConfig)
+    idiom: IdiomConfig = Field(default_factory=IdiomConfig)
 
     @model_validator(mode="after")
     def _bridge_platform_org_id(self) -> Settings:

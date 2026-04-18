@@ -1,0 +1,179 @@
+# Idiom map: Express.js → FastAPI
+# Schema: source_lang, target_lang, idioms (list), dependencies (mapping)
+#
+# idioms entries:
+#   source_pattern:  Express.js idiom description
+#   target_pattern:  FastAPI equivalent
+#   description:     Explanation of the transformation
+#   example_before:  Express.js code example
+#   example_after:   FastAPI code example
+
+source_lang: express
+target_lang: fastapi
+
+idioms:
+  - source_pattern: "Route definition: app.get('/path', handler)"
+    target_pattern: "@app.get('/path') decorator on async function"
+    description: "Express route handlers become FastAPI route functions with decorators"
+    example_before: |
+      app.get('/users', (req, res) => {
+        res.json({ users: [] });
+      });
+    example_after: |
+      @app.get('/users')
+      async def list_users() -> dict:
+          return {'users': []}
+
+  - source_pattern: "Route params: req.params.id"
+    target_pattern: "Path parameters: item_id: int in function signature"
+    description: "Express path params become typed FastAPI path parameters"
+    example_before: |
+      app.get('/users/:id', (req, res) => {
+        const id = req.params.id;
+        res.json(getUser(id));
+      });
+    example_after: |
+      @app.get('/users/{user_id}')
+      async def get_user(user_id: int) -> UserResponse:
+          return fetch_user(user_id)
+
+  - source_pattern: "Query params: req.query.page"
+    target_pattern: "Query parameters as function arguments with defaults"
+    description: "Express query params become typed function arguments in FastAPI"
+    example_before: |
+      app.get('/items', (req, res) => {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+      });
+    example_after: |
+      @app.get('/items')
+      async def list_items(page: int = 1, limit: int = 20) -> list[Item]:
+          return fetch_items(page, limit)
+
+  - source_pattern: "Request body: req.body with JSON middleware"
+    target_pattern: "Pydantic model as request body parameter"
+    description: "Express req.body maps to a typed Pydantic model in FastAPI"
+    example_before: |
+      app.post('/users', express.json(), (req, res) => {
+        const { name, email } = req.body;
+        createUser(name, email);
+        res.status(201).json({ created: true });
+      });
+    example_after: |
+      class CreateUserRequest(BaseModel):
+          name: str
+          email: str
+
+      @app.post('/users', status_code=201)
+      async def create_user(body: CreateUserRequest) -> dict:
+          create_user_in_db(body.name, body.email)
+          return {'created': True}
+
+  - source_pattern: "Middleware: app.use(fn)"
+    target_pattern: "Middleware with @app.middleware('http') or Depends()"
+    description: "Express middleware maps to FastAPI middleware or dependency injection"
+    example_before: |
+      app.use((req, res, next) => {
+        console.log(`${req.method} ${req.url}`);
+        next();
+      });
+    example_after: |
+      @app.middleware('http')
+      async def log_requests(request: Request, call_next):
+          print(f'{request.method} {request.url}')
+          return await call_next(request)
+
+  - source_pattern: "Error handling middleware: (err, req, res, next)"
+    target_pattern: "HTTPException or custom exception handler"
+    description: "Express error middleware maps to FastAPI exception handlers"
+    example_before: |
+      app.use((err, req, res, next) => {
+        res.status(500).json({ error: err.message });
+      });
+    example_after: |
+      from fastapi import HTTPException
+      from fastapi.responses import JSONResponse
+
+      @app.exception_handler(Exception)
+      async def generic_handler(request: Request, exc: Exception):
+          return JSONResponse(status_code=500, content={'error': str(exc)})
+
+  - source_pattern: "Response: res.json(data) / res.status(code).json(data)"
+    target_pattern: "Return value with response_model or JSONResponse"
+    description: "FastAPI auto-serializes return values; use response_model for validation"
+    example_before: |
+      res.status(200).json({ id: user.id, name: user.name });
+    example_after: |
+      @app.get('/me', response_model=UserOut)
+      async def get_me() -> UserOut:
+          return UserOut(id=user.id, name=user.name)
+
+  - source_pattern: "Headers: req.headers['authorization']"
+    target_pattern: "Header dependency: token: str = Header(...)"
+    description: "Request headers are accessed via FastAPI Header dependency"
+    example_before: |
+      app.get('/protected', (req, res) => {
+        const token = req.headers['authorization'];
+        if (!token) return res.status(401).json({ error: 'Unauthorized' });
+      });
+    example_after: |
+      from fastapi import Header, HTTPException
+
+      @app.get('/protected')
+      async def protected(authorization: str = Header(...)) -> dict:
+          if not authorization:
+              raise HTTPException(status_code=401, detail='Unauthorized')
+          return {'ok': True}
+
+  - source_pattern: "Router grouping: const router = express.Router()"
+    target_pattern: "APIRouter: router = APIRouter(prefix='/prefix')"
+    description: "Express Router groups map to FastAPI APIRouter with prefix"
+    example_before: |
+      const router = express.Router();
+      router.get('/', listUsers);
+      router.post('/', createUser);
+      app.use('/users', router);
+    example_after: |
+      router = APIRouter(prefix='/users', tags=['users'])
+
+      @router.get('/')
+      async def list_users(): ...
+
+      @router.post('/')
+      async def create_user(): ...
+
+      app.include_router(router)
+
+  - source_pattern: "Dependency injection via closures or factories"
+    target_pattern: "FastAPI Depends() for shared dependencies"
+    description: "Express factory patterns map to FastAPI's dependency injection with Depends()"
+    example_before: |
+      function makeHandler(db) {
+        return (req, res) => res.json(db.query());
+      }
+      app.get('/data', makeHandler(db));
+    example_after: |
+      def get_db():
+          db = SessionLocal()
+          try:
+              yield db
+          finally:
+              db.close()
+
+      @app.get('/data')
+      async def get_data(db: Session = Depends(get_db)) -> list:
+          return db.query(Item).all()
+
+dependencies:
+  "express": "fastapi"
+  "body-parser": "fastapi (built-in via Pydantic)"
+  "cors": "fastapi.middleware.cors.CORSMiddleware"
+  "helmet": "fastapi (use middleware for security headers)"
+  "morgan": "fastapi (use @app.middleware for logging)"
+  "jsonwebtoken": "python-jose or pyjwt"
+  "bcrypt": "passlib[bcrypt]"
+  "mongoose": "sqlalchemy + databases or motor (MongoDB)"
+  "sequelize": "sqlalchemy"
+  "dotenv": "pydantic-settings"
+  "joi": "pydantic"
+  "multer": "python-multipart"

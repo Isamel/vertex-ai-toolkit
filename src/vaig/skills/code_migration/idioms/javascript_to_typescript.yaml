@@ -1,0 +1,146 @@
+# Idiom map: JavaScript → TypeScript
+# Schema: source_lang, target_lang, idioms (list), dependencies (mapping)
+#
+# idioms entries:
+#   source_pattern:  JavaScript idiom description
+#   target_pattern:  TypeScript equivalent
+#   description:     Explanation of the transformation
+#   example_before:  JavaScript code example
+#   example_after:   TypeScript code example
+
+source_lang: javascript
+target_lang: typescript
+
+idioms:
+  - source_pattern: "var declaration"
+    target_pattern: "let / const declaration with type annotation"
+    description: "Replace var with let/const and add explicit types where needed"
+    example_before: |
+      var name = 'Alice';
+      var count = 0;
+    example_after: |
+      const name: string = 'Alice';
+      let count: number = 0;
+
+  - source_pattern: "function without types"
+    target_pattern: "function with parameter and return type annotations"
+    description: "Add type annotations to function signatures"
+    example_before: |
+      function add(a, b) {
+        return a + b;
+      }
+    example_after: |
+      function add(a: number, b: number): number {
+        return a + b;
+      }
+
+  - source_pattern: "Object as a key-value map"
+    target_pattern: "Record<K, V> or interface type"
+    description: "Use TypeScript Record or interface for typed key-value maps"
+    example_before: |
+      const cache = {};
+      cache['key'] = 'value';
+    example_after: |
+      const cache: Record<string, string> = {};
+      cache['key'] = 'value';
+
+  - source_pattern: "Array without type"
+    target_pattern: "Typed array: Type[] or Array<Type>"
+    description: "Annotate arrays with element types"
+    example_before: |
+      const items = [];
+      items.push('hello');
+    example_after: |
+      const items: string[] = [];
+      items.push('hello');
+
+  - source_pattern: "Any object shape without definition"
+    target_pattern: "interface or type alias"
+    description: "Define explicit shapes using interface or type"
+    example_before: |
+      function processUser(user) {
+        return user.name + ' ' + user.age;
+      }
+    example_after: |
+      interface User {
+        name: string;
+        age: number;
+      }
+      function processUser(user: User): string {
+        return `${user.name} ${user.age}`;
+      }
+
+  - source_pattern: "Optional chaining workaround: value && value.prop"
+    target_pattern: "Optional chaining: value?.prop (native TS support)"
+    description: "TypeScript natively supports optional chaining with null type narrowing"
+    example_before: |
+      const city = user && user.address && user.address.city;
+    example_after: |
+      const city: string | undefined = user?.address?.city;
+
+  - source_pattern: "require() module import"
+    target_pattern: "ES module import with types"
+    description: "Convert CommonJS require to ES module imports"
+    example_before: |
+      const fs = require('fs');
+      const { join } = require('path');
+    example_after: |
+      import fs from 'fs';
+      import { join } from 'path';
+
+  - source_pattern: "Callback-based async code"
+    target_pattern: "async/await with proper return types"
+    description: "Convert callbacks to async/await and annotate Promise return types"
+    example_before: |
+      function fetchData(url, callback) {
+        fetch(url).then(r => r.json()).then(data => callback(null, data));
+      }
+    example_after: |
+      async function fetchData(url: string): Promise<unknown> {
+        const response = await fetch(url);
+        return response.json();
+      }
+
+  - source_pattern: "typeof checks for runtime type narrowing"
+    target_pattern: "TypeScript type guards and narrowing"
+    description: "Use TS type guards for more precise narrowing than typeof"
+    example_before: |
+      function format(value) {
+        if (typeof value === 'string') return value.toUpperCase();
+        return String(value);
+      }
+    example_after: |
+      function format(value: string | number): string {
+        if (typeof value === 'string') return value.toUpperCase();
+        return String(value);
+      }
+
+  - source_pattern: "Spread operator for object merge (no types)"
+    target_pattern: "Typed spread with Partial<T> or intersection types"
+    description: "Add proper types to spread/merge operations"
+    example_before: |
+      const merged = Object.assign({}, defaults, overrides);
+    example_after: |
+      const merged: Config = { ...defaults, ...overrides };
+
+  - source_pattern: "Class without visibility modifiers"
+    target_pattern: "Class with private/protected/public modifiers"
+    description: "Add access modifiers to class members"
+    example_before: |
+      class Service {
+        constructor(url) { this.url = url; }
+        fetch() { return this.url; }
+      }
+    example_after: |
+      class Service {
+        constructor(private readonly url: string) {}
+        fetch(): string { return this.url; }
+      }
+
+dependencies:
+  "lodash": "@types/lodash + lodash"
+  "express": "@types/express + express"
+  "node": "@types/node"
+  "jest": "@types/jest + jest"
+  "uuid": "@types/uuid + uuid"
+  "moment": "dayjs (has built-in types)"
