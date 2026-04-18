@@ -412,6 +412,13 @@ class CodingSkillOrchestrator:
                     exc_info=True,
                 )
 
+        # Knowledge tools (optional — gated on knowledge.enabled)
+        if self._settings is not None and self._settings.knowledge.enabled:
+            from vaig.tools.knowledge._registry import create_knowledge_tools  # noqa: WPS433
+
+            for tool in create_knowledge_tools(self._settings, include_coding_domains=True):
+                registry.register(tool)
+
         return registry
 
     def _make_agent(
