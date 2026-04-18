@@ -33,6 +33,7 @@ def repo_list_tree(
     repo: str,
     ref: str = "",
     recursive: bool = True,
+    filter_extensions: list[str] | None = None,
 ) -> ToolResult:
     """List the file tree of a GitHub repository via the Git Trees API.
 
@@ -43,6 +44,8 @@ def repo_list_tree(
         ref: Branch, tag, or commit SHA. Defaults to ``config.default_ref``
             (``"main"``).
         recursive: When ``True`` (default), fetch the full recursive tree.
+        filter_extensions: Optional list of file extensions to include
+            (e.g. ``[".py", ".ts"]``).  When ``None``, all files are returned.
 
     Returns:
         ``ToolResult`` with a newline-separated list of file paths, or an
@@ -98,6 +101,11 @@ def repo_list_tree(
     paths = sorted(
         item["path"] for item in tree if item.get("type") == "blob"
     )
+
+    # Apply extension filter when provided
+    if filter_extensions:
+        exts = {ext if ext.startswith(".") else f".{ext}" for ext in filter_extensions}
+        paths = [p for p in paths if any(p.endswith(ext) for ext in exts)]
 
     if not paths:
         return ToolResult(output=f"No files found in {owner}/{repo}@{effective_ref}")

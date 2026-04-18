@@ -6,13 +6,12 @@ import base64
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 
 from vaig.core.config import GitHubConfig
 from vaig.tools.integrations.github import repo_list_tree, repo_read_file
 
 
-def _make_config(token: str = "test-token") -> GitHubConfig:
+def _make_config(token: str = "test-token") -> GitHubConfig:  # noqa: S107
     return GitHubConfig(enabled=True, token=token)  # type: ignore[arg-type]
 
 
@@ -100,6 +99,44 @@ class TestRepoListTree:
             repo_list_tree(config=_make_config(token="my-secret"), owner="acme", repo="myrepo")
 
         assert captured[0]["headers"].get("Authorization") == "Bearer my-secret"
+
+    def test_filter_extensions(self) -> None:
+        tree_data = {
+            "tree": [
+                {"path": "main.py", "type": "blob"},
+                {"path": "README.md", "type": "blob"},
+                {"path": "app.ts", "type": "blob"},
+                {"path": "style.css", "type": "blob"},
+            ]
+        }
+        with patch("httpx.get", return_value=_mock_response(200, tree_data)):
+            result = repo_list_tree(
+                config=_make_config(),
+                owner="acme",
+                repo="myrepo",
+                filter_extensions=[".py", ".ts"],
+            )
+
+        assert not result.error
+        assert result.output == "app.ts\nmain.py"
+
+    def test_filter_extensions_without_dot(self) -> None:
+        tree_data = {
+            "tree": [
+                {"path": "main.py", "type": "blob"},
+                {"path": "README.md", "type": "blob"},
+            ]
+        }
+        with patch("httpx.get", return_value=_mock_response(200, tree_data)):
+            result = repo_list_tree(
+                config=_make_config(),
+                owner="acme",
+                repo="myrepo",
+                filter_extensions=["py"],
+            )
+
+        assert not result.error
+        assert result.output == "main.py"
 
 
 # ── repo_read_file ────────────────────────────────────────────────────────────
