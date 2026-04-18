@@ -6,6 +6,8 @@ Gemini returns structured verification or analysis results.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -21,6 +23,8 @@ class VerificationReport(BaseModel):
         files_verified: List of file paths that were verified.
         issues: List of issue descriptions found during verification.
         summary: Human-readable summary of the verification result.
+        test_results: Optional structured test execution result injected by
+            the TestRunnerTool during pipeline verification.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -29,3 +33,10 @@ class VerificationReport(BaseModel):
     files_verified: list[str] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
     summary: str = ""
+    test_results: Any | None = Field(
+        default=None,
+        description=(
+            "Structured test execution result from TestRunnerTool. "
+            "Type is TestExecutionResult at runtime; Any avoids circular imports."
+        ),
+    )
