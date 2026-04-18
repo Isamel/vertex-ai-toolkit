@@ -1497,6 +1497,26 @@ class GitHubConfig(BaseModel):
     token: SecretStr = Field(default=SecretStr(""), repr=False)
     api_base: str = "https://api.github.com"
     default_ref: str = "main"
+    allowed_repos: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Allowlist of 'owner/repo' strings.  When non-empty, all repo tools "
+            "will reject requests targeting repositories not in this list.  "
+            "An empty list means all repos are allowed."
+        ),
+    )
+    rate_limit_rpm: int = Field(
+        default=60,
+        description="Maximum requests per minute to the GitHub API.",
+    )
+    max_file_size_kb: int = Field(
+        default=2048,
+        description="Maximum file size in KB that repo_read_file will return.",
+    )
+    cache_ttl_seconds: int = Field(
+        default=300,
+        description="TTL in seconds for cached GitHub API responses.",
+    )
 
     @model_validator(mode="after")
     def _auto_enable(self) -> GitHubConfig:
