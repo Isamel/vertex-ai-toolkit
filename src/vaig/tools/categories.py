@@ -50,3 +50,6 @@ INCIDENT_MANAGEMENT: str = "incident_management"
 #: External knowledge tools (web search, doc fetch, RAG corpus retrieval).
 #: Only injected into analyzer and hypothesis-loop agents.
 KNOWLEDGE: str = "knowledge"
+
+#: Repository code exploration tools (search code, commits, diffs, tree triage).
+REPO: str = "repo"
