@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from typer.testing import CliRunner
 
 from vaig.cli.app import app
@@ -20,7 +20,7 @@ class TestResumeFlagParsing:
         result = runner.invoke(app, ["ask", "--help"])
         assert "--resume" in result.output
 
-    def test_resume_flag_triggers_skill_reinstantiation(self, tmp_path: pytest.MonkeyPatch) -> None:
+    def test_resume_flag_triggers_skill_reinstantiation(self, tmp_path: Path) -> None:
         """When --resume and --skill code-migration are passed, CodeMigrationSkill(resume=True)."""
         with (
             patch("vaig.cli.commands.ask._helpers._get_settings") as mock_settings,

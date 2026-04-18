@@ -332,7 +332,7 @@ def register(app: typer.Typer) -> None:
                             "(set VAIG_GITHUB__TOKEN).[/red]"
                         )
                         raise typer.Exit(1)
-                    owner_name, _, repo_name = repo.partition("/")
+                    _owner, _, repo_name = repo.partition("/")
                     if not repo_name:
                         err_console.print("[red]--repo must be in the format owner/repo[/red]")
                         raise typer.Exit(1)
@@ -695,7 +695,7 @@ async def _async_ask_impl(
                     "(set VAIG_GITHUB__TOKEN).[/red]"
                 )
                 raise typer.Exit(1)
-            owner_name, _, repo_name = repo.partition("/")
+            _owner, _, repo_name = repo.partition("/")
             if not repo_name:
                 err_console.print("[red]--repo must be in the format owner/repo[/red]")
                 raise typer.Exit(1)

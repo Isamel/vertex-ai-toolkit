@@ -257,9 +257,23 @@ class _MigrationTracker:
             return
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-            self._records = raw.get("records", {})
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("Failed to load migration state from %s: %s", path, exc)
+            return
+
+        if not isinstance(raw, dict):
+            logger.warning("Failed to load migration state from %s: invalid top-level JSON shape", path)
+            self._records = {}
+            return
+
+        records_raw = raw.get("records", {})
+        normalized_records: dict[str, dict[str, Any]] = {}
+        if isinstance(records_raw, dict):
+            for filename, record in records_raw.items():
+                if isinstance(filename, str) and isinstance(record, dict):
+                    normalized_records[filename] = record
+
+        self._records = normalized_records
 
 
 class CodeMigrationSkill(BaseSkill):
@@ -460,7 +474,13 @@ class CodeMigrationSkill(BaseSkill):
             notes: Optional notes about this file's migration.
         """
         self._tracker.record(filename, phase, status, notes)
-        self._tracker.save_state(self._state_path)
+        try:
+            self._tracker.save_state(self._state_path)
+        except (OSError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Failed to persist migration state to %s after recording %s (%s/%s): %s",
+                self._state_path, filename, phase, status, exc,
+            )
 
     def get_migration_log(self) -> list[dict[str, Any]]:
         """Return all per-file migration records as a list of dicts.

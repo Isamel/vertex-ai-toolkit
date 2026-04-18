@@ -26,7 +26,12 @@ def ensure_project_subdir(name: str) -> Path:
 
     Returns:
         Absolute path to the `.vaig/{name}/` directory.
+
+    Raises:
+        ValueError: If ``name`` is absolute or contains ``..`` path traversal.
     """
+    if Path(name).is_absolute() or ".." in Path(name).parts:
+        raise ValueError(f"Subdirectory name must be relative without parent traversal: {name!r}")
     subdir = ensure_project_dir() / name
     subdir.mkdir(parents=True, exist_ok=True)
     return subdir

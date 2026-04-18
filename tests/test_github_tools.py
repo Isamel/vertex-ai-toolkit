@@ -6,13 +6,14 @@ import base64
 from unittest.mock import MagicMock, patch
 
 import httpx
+from pydantic import SecretStr
 
 from vaig.core.config import GitHubConfig
 from vaig.tools.integrations.github import repo_list_tree, repo_read_file
 
 
 def _make_config(token: str = "test-token") -> GitHubConfig:  # noqa: S107
-    return GitHubConfig(enabled=True, token=token)  # type: ignore[arg-type]
+    return GitHubConfig(enabled=True, token=SecretStr(token))
 
 
 def _mock_response(status_code: int, json_data: object | None = None) -> MagicMock:

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -21,8 +23,9 @@ def _auth_headers(config: GitHubConfig) -> dict[str, str]:
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    if config.token:
-        headers["Authorization"] = f"Bearer {config.token.get_secret_value()}"
+    token = config.token.get_secret_value() if config.token is not None else ""
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     return headers
 
 
@@ -136,7 +139,7 @@ def repo_read_file(
     """
     effective_ref = ref or config.default_ref
     base = config.api_base.rstrip("/")
-    url = f"{base}/repos/{owner}/{repo}/contents/{path}"
+    url = f"{base}/repos/{owner}/{repo}/contents/{quote(path, safe='/')}"
 
     try:
         resp = httpx.get(
@@ -178,8 +181,6 @@ def repo_read_file(
     raw_content = data.get("content", "")
 
     if encoding == "base64":
-        import base64
-
         try:
             content = base64.b64decode(raw_content).decode("utf-8", errors="replace")
         except Exception as exc:

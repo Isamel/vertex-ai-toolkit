@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import tempfile
 from pathlib import Path
 
 from vaig.core.project import ensure_project_subdir
@@ -13,10 +15,10 @@ logger = logging.getLogger(__name__)
 _CACHE_SUBDIR = "repo-cache"
 
 
-def _cache_path(subdir: Path, owner: str, repo: str, ref: str, file_path: str) -> Path:
+def _cache_path(root: Path, owner: str, repo: str, ref: str, file_path: str) -> Path:
     """Compute a deterministic cache file path for a GitHub file.
 
-    The path is ``{subdir}/{owner}/{repo}/{ref}/{file_path}``.  ``file_path``
+    The path is ``{root}/{owner}/{repo}/{ref}/{file_path}``.  ``file_path``
     may contain ``/`` separators which are preserved as nested directories so
     the cache mirrors the repository layout.
 
@@ -24,7 +26,7 @@ def _cache_path(subdir: Path, owner: str, repo: str, ref: str, file_path: str) -
     to avoid hitting OS path-length limits.
 
     Args:
-        subdir: Root cache directory (i.e. ``.vaig/repo-cache``).
+        root: Root cache directory (i.e. ``.vaig/repo-cache``).
         owner: Repository owner.
         repo: Repository name.
         ref: Branch, tag, or commit SHA.
@@ -33,11 +35,14 @@ def _cache_path(subdir: Path, owner: str, repo: str, ref: str, file_path: str) -
     Returns:
         Absolute :class:`~pathlib.Path` to the cache file.
     """
-    candidate = subdir / owner / repo / ref / file_path
+    for segment_name, segment in [("owner", owner), ("repo", repo), ("ref", ref), ("file_path", file_path)]:
+        if ".." in Path(segment).parts or Path(segment).is_absolute():
+            raise ValueError(f"Invalid {segment_name}: must be relative without parent traversal: {segment!r}")
+    candidate = root / owner / repo / ref / file_path
     # Guard against excessively long paths (255-byte component limit on most FS)
     if len(str(candidate)) > 4096 or any(len(p) > 255 for p in candidate.parts):
         digest = hashlib.sha256(file_path.encode()).hexdigest()
-        candidate = subdir / owner / repo / ref / digest
+        candidate = root / owner / repo / ref / digest
     return candidate
 
 
@@ -118,9 +123,19 @@ class RepoCache:
         path = _cache_path(self._root, owner, repo, ref, file_path)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                    fh.write(content)
+                os.replace(tmp_path, path)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         except OSError as exc:
-            logger.warning("RepoCache: failed to write %s: %s", path, exc)
+            logger.warning("Failed to write cache file %s: %s", path, exc)
 
     def invalidate(self, owner: str, repo: str, ref: str, file_path: str) -> bool:
         """Remove a single cached file.
