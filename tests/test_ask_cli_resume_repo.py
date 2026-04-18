@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +12,13 @@ from vaig.cli.app import app
 
 runner = CliRunner()
 
+_ANSI_RE = re.compile(r"\x1b\[[^m]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from text (Rich/typer help output)."""
+    return _ANSI_RE.sub("", text)
+
 
 class TestResumeFlagParsing:
     """Verify --resume flag is accepted by the CLI without error."""
@@ -18,7 +26,7 @@ class TestResumeFlagParsing:
     def test_resume_flag_is_accepted_by_cli(self) -> None:
         """--resume should be a known flag (no 'No such option' error)."""
         result = runner.invoke(app, ["ask", "--help"])
-        assert "--resume" in result.output
+        assert "--resume" in _strip_ansi(result.output)
 
     def test_resume_flag_triggers_skill_reinstantiation(self, tmp_path: Path) -> None:
         """When --resume and --skill code-migration are passed, CodeMigrationSkill(resume=True)."""
