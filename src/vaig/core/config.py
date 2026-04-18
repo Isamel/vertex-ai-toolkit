@@ -341,9 +341,9 @@ class WorkspaceRAGConfig(BaseModel):
     enabled: bool = False
     """When True, build and expose a local vector-search index over workspace files."""
     reindex_on_run: bool = False
-    """When True, rebuild the index on every pipeline run (slow but always fresh)."""
+    """When True and the index is stale, rebuild before the first search."""
     max_chunks: int = 500
-    """Maximum number of chunks to index (oldest are dropped when exceeded)."""
+    """Maximum number of chunks to index (files are processed in discovery order; excess chunks are discarded)."""
     extensions: list[str] = Field(
         default_factory=lambda: [".py", ".ts", ".go", ".java", ".md"],
         description="File extensions to include in the workspace index.",

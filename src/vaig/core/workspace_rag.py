@@ -20,6 +20,11 @@ _CHROMADB_MISSING_MSG = (
 _CHUNK_LINES = 200
 _OVERLAP_LINES = 20
 _MAX_FILE_BYTES = 1_000_000  # 1 MB
+_SKIP_DIRS = frozenset({
+    ".vaig", ".venv", "venv", ".env", "node_modules", ".git",
+    "__pycache__", ".mypy_cache", ".ruff_cache", ".pytest_cache",
+    ".tox", "dist", "build", ".eggs", ".nox",
+})
 
 
 def _require_chromadb() -> Any:
@@ -141,11 +146,18 @@ class WorkspaceRAG:
     # ── Private helpers ───────────────────────────────────────
 
     def _collect_files(self) -> list[Path]:
-        """Return all workspace files matching configured extensions."""
+        """Return all workspace files matching configured extensions.
+
+        Skips common non-source directories (.git, .venv, node_modules, etc.)
+        to avoid indexing irrelevant or very large directory trees.
+        """
         exts = set(self._config.extensions)
         result: list[Path] = []
         for path in self._workspace.rglob("*"):
             if not path.is_file():
+                continue
+            # Skip files inside directories we never want to index
+            if any(part in _SKIP_DIRS for part in path.relative_to(self._workspace).parts):
                 continue
             if path.suffix not in exts:
                 continue

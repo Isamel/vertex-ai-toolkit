@@ -38,12 +38,10 @@ def test_coding_config_no_workspace_rag_key() -> None:
 
 
 def test_env_var_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    """VAIG_CODING__WORKSPACE_RAG__ENABLED=true activates the config."""
+    """VAIG_CODING__WORKSPACE_RAG__ENABLED=true activates the config via Settings."""
     monkeypatch.setenv("VAIG_CODING__WORKSPACE_RAG__ENABLED", "true")
 
-    # Settings reads from env — test CodingConfig nested parse directly
-    from vaig.core.config import CodingConfig, WorkspaceRAGConfig
+    from vaig.core.config import Settings
 
-    rag_cfg = WorkspaceRAGConfig(enabled=True)
-    coding = CodingConfig(workspace_rag=rag_cfg)
-    assert coding.workspace_rag.enabled is True
+    settings = Settings()
+    assert settings.coding.workspace_rag.enabled is True
