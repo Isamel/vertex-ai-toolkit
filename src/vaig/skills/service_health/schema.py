@@ -26,6 +26,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from vaig.core.memory.models import RecurrenceSignal
+
 logger = logging.getLogger(__name__)
 
 # ── Text-normalisation regexes (for smart timeline collapse) ──
@@ -420,6 +422,14 @@ class Finding(BaseModel):
     causes: list[str] = Field(
         default_factory=list,
         description="Finding.id slugs of downstream effects (findings caused by this one)",
+    )
+    recurrence: RecurrenceSignal | None = Field(
+        default=None,
+        description=(
+            "Populated post-Gemini by the RecurrenceAnalyzer.  None during the "
+            "Gemini call — excluded from response_schema to avoid confusing the model."
+        ),
+        exclude=True,
     )
 
 

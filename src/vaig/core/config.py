@@ -1603,6 +1603,42 @@ class KnowledgeConfig(BaseModel):
         return self
 
 
+class MemoryConfig(BaseModel):
+    """Pattern memory configuration — controls recurrence detection.
+
+    When ``enabled`` is True, ``vaig live`` persists finding fingerprints
+    to a local JSONL store and annotates repeated findings with
+    recurrence badges (NEW / RECURRING / CHRONIC).
+
+    Disabled by default to preserve existing behaviour.
+    Enable with ``memory.enabled = true`` in config or
+    ``VAIG_MEMORY__ENABLED=true``.
+    """
+
+    enabled: bool = False
+    store_path: str = "~/.vaig/memory"
+    """Directory where JSONL pattern files are stored.
+
+    Each run produces a ``{run_id}.jsonl`` file.  The analyzer reads
+    across all files to compute historical occurrence counts.
+    """
+    recurrence_threshold: int = Field(
+        default=2,
+        ge=2,
+        description="Minimum occurrences before a finding is marked RECURRING.",
+    )
+    chronic_threshold: int = Field(
+        default=5,
+        ge=2,
+        description="Minimum occurrences before a finding is marked CHRONIC.",
+    )
+    max_age_days: int = Field(
+        default=90,
+        ge=1,
+        description="Entries older than this (days) are ignored during analysis.",
+    )
+
+
 class Settings(BaseSettings):
     """Root application settings — merges env vars, YAML, and CLI overrides."""
 
@@ -1676,6 +1712,7 @@ class Settings(BaseSettings):
     review: ReviewConfig = Field(default_factory=ReviewConfig)
     auto_activation: AutoActivationConfig = Field(default_factory=lambda: AutoActivationConfig())
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
 
     @model_validator(mode="after")
     def _bridge_platform_org_id(self) -> Settings:

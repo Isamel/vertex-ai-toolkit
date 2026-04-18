@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 # Keep a module-level reference so the subscriber isn't garbage-collected.
 _telemetry_subscriber: object | None = None
 _audit_subscriber: object | None = None
+_memory_subscriber: object | None = None
 
 
 def _init_telemetry(settings: Settings) -> None:
@@ -72,6 +73,25 @@ def _init_audit(settings: Settings) -> None:
             logger.info("AuditSubscriber initialized")
     except Exception:  # noqa: BLE001
         logger.warning("Failed to initialize AuditSubscriber — audit logging disabled")
+
+
+def _init_memory(settings: Settings) -> None:
+    """Initialize the MemorySubscriber if pattern memory is enabled.
+
+    Safe to call multiple times — the subscriber is created only once
+    (guarded by ``_memory_subscriber``).  Mirrors :func:`_init_audit`.
+    """
+    global _memory_subscriber  # noqa: PLW0603
+    if not settings.memory.enabled:
+        return
+    try:
+        if _memory_subscriber is None:
+            from vaig.core.subscribers.memory_subscriber import MemorySubscriber
+
+            _memory_subscriber = MemorySubscriber(settings)
+            logger.info("MemorySubscriber initialized")
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to initialize MemorySubscriber — pattern memory disabled")
 
 
 # ── Telemetry decorator ───────────────────────────────────────
