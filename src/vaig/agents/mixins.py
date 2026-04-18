@@ -293,6 +293,7 @@ class ToolLoopMixin:
         }
         tools_executed: list[dict[str, Any]] = []
         iteration = 0
+        result: ToolCallResult | None = None  # set on first LLM call; safe because loop gates access
         budget_warning_issued = False
         accumulated_llm_text = ""
         peak_context_pct: float = 0.0
@@ -329,7 +330,7 @@ class ToolLoopMixin:
 
             # -- Call Gemini with tool declarations -----------------------
             try:
-                result: ToolCallResult = client.generate_with_tools(
+                result = client.generate_with_tools(
                     prompt if iteration == 1 else [],
                     tool_declarations=declarations,
                     system_instruction=system_instruction,
@@ -374,6 +375,7 @@ class ToolLoopMixin:
                 )
                 raise
 
+            assert result is not None  # always set by generate_with_tools above
             # -- Accumulate token usage -----------------------------------
             for key in total_usage:
                 total_usage[key] += result.usage.get(key, 0)
@@ -540,7 +542,7 @@ class ToolLoopMixin:
                     # Append to evidence ledger (SH-05-R-14)
                     if ledger is not None:
                         entry = EvidenceEntry(
-                            source_agent=getattr(self, "_agent_name", "") or getattr(self, "name", ""),
+                            source_agent=agent_name,
                             tool_name=tool_name,
                             tool_args_hash=_hash_tool_args(tool_args),
                             question="",
@@ -577,6 +579,7 @@ class ToolLoopMixin:
             history.append(types.Content(role="user", parts=response_parts))
 
             # Emit LoopStepEvent for tool-calls iteration (X-01)
+            iteration_tool_calls = len(result.function_calls)
             self._emit_loop_step(
                 run_id=run_id,
                 skill=skill,
@@ -585,7 +588,7 @@ class ToolLoopMixin:
                 prompt=prompt,
                 history=history,
                 result=result,
-                tool_calls_made=len(result.function_calls),
+                tool_calls_made=iteration_tool_calls,
                 budget_manager=budget_manager,
                 termination_reason="",
             )
@@ -607,18 +610,19 @@ class ToolLoopMixin:
             f"Tool-use loop exceeded maximum iterations ({max_iterations}). Executed {len(tools_executed)} tool calls."
         )
         logger.warning(msg)
-        self._emit_loop_step(
-            run_id=run_id,
-            skill=skill,
-            loop_type=loop_type,
-            iteration=iteration,
-            prompt=prompt,
-            history=history,
-            result=result,  # noqa: possibly-undefined – loop ran ≥1 time
-            tool_calls_made=len(tools_executed),
-            budget_manager=budget_manager,
-            termination_reason="max_iterations",
-        )
+        if iteration > 0 and result is not None:
+            self._emit_loop_step(
+                run_id=run_id,
+                skill=skill,
+                loop_type=loop_type,
+                iteration=iteration,
+                prompt=prompt,
+                history=history,
+                result=result,
+                tool_calls_made=len(tools_executed),
+                budget_manager=budget_manager,
+                termination_reason="max_iterations",
+            )
         raise MaxIterationsError(msg, iterations=max_iterations, partial_output=accumulated_llm_text)
 
     # ── Budget warning helper ────────────────────────────────
@@ -1224,6 +1228,7 @@ class ToolLoopMixin:
         }
         tools_executed: list[dict[str, Any]] = []
         iteration = 0
+        result: ToolCallResult | None = None  # set on first LLM call; safe because loop gates access
         budget_warning_issued = False
         accumulated_llm_text = ""
         peak_context_pct: float = 0.0
@@ -1262,7 +1267,7 @@ class ToolLoopMixin:
 
             # -- Call Gemini with tool declarations (async) ----------------
             try:
-                result: ToolCallResult = await client.async_generate_with_tools(
+                result = await client.async_generate_with_tools(
                     prompt if iteration == 1 else [],
                     tool_declarations=declarations,
                     system_instruction=system_instruction,
@@ -1307,6 +1312,7 @@ class ToolLoopMixin:
                 )
                 raise
 
+            assert result is not None  # always set by async_generate_with_tools above
             # -- Accumulate token usage -----------------------------------
             for key in total_usage:
                 total_usage[key] += result.usage.get(key, 0)
@@ -1509,7 +1515,7 @@ class ToolLoopMixin:
                         # Append to evidence ledger (SH-05-R-14)
                         if ledger is not None:
                             entry = EvidenceEntry(
-                                source_agent=getattr(self, "_agent_name", "") or getattr(self, "name", ""),
+                                source_agent=agent_name,
                                 tool_name=tool_name,
                                 tool_args_hash=_hash_tool_args(tool_args),
                                 question="",
@@ -1619,7 +1625,7 @@ class ToolLoopMixin:
                         # Append to evidence ledger (SH-05-R-14)
                         if ledger is not None:
                             entry = EvidenceEntry(
-                                source_agent=getattr(self, "_agent_name", "") or getattr(self, "name", ""),
+                                source_agent=agent_name,
                                 tool_name=tool_name,
                                 tool_args_hash=_hash_tool_args(tool_args),
                                 question="",
@@ -1656,6 +1662,7 @@ class ToolLoopMixin:
             history.append(types.Content(role="user", parts=response_parts))
 
             # Emit LoopStepEvent for tool-calls iteration (X-01)
+            iteration_tool_calls = len(result.function_calls)
             self._emit_loop_step(
                 run_id=run_id,
                 skill=skill,
@@ -1664,7 +1671,7 @@ class ToolLoopMixin:
                 prompt=prompt,
                 history=history,
                 result=result,
-                tool_calls_made=len(result.function_calls),
+                tool_calls_made=iteration_tool_calls,
                 budget_manager=budget_manager,
                 termination_reason="",
             )
@@ -1686,18 +1693,19 @@ class ToolLoopMixin:
             f"Tool-use loop exceeded maximum iterations ({max_iterations}). Executed {len(tools_executed)} tool calls."
         )
         logger.warning(msg)
-        self._emit_loop_step(
-            run_id=run_id,
-            skill=skill,
-            loop_type=loop_type,
-            iteration=iteration,
-            prompt=prompt,
-            history=history,
-            result=result,  # noqa: possibly-undefined – loop ran ≥1 time
-            tool_calls_made=len(tools_executed),
-            budget_manager=budget_manager,
-            termination_reason="max_iterations",
-        )
+        if iteration > 0 and result is not None:
+            self._emit_loop_step(
+                run_id=run_id,
+                skill=skill,
+                loop_type=loop_type,
+                iteration=iteration,
+                prompt=prompt,
+                history=history,
+                result=result,
+                tool_calls_made=len(tools_executed),
+                budget_manager=budget_manager,
+                termination_reason="max_iterations",
+            )
         raise MaxIterationsError(msg, iterations=max_iterations, partial_output=accumulated_llm_text)
 
     # ── Async tool execution (overridable) ────────────────────

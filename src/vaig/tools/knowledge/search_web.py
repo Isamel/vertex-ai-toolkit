@@ -47,7 +47,13 @@ def search_web(
         "max_results": max_results if max_results is not None else config.max_results,
     }
 
-    response = httpx.post("https://api.tavily.com/search", json=payload)
+    try:
+        response = httpx.post("https://api.tavily.com/search", json=payload, timeout=30)
+    except httpx.RequestError as exc:
+        raise ToolExecutionError(
+            f"search_web: HTTP request failed: {exc}",
+            tool_name="search_web",
+        ) from exc
 
     if response.status_code >= 300:
         raise ToolExecutionError(

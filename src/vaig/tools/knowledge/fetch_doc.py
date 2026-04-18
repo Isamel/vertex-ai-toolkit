@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import urllib.parse
 from typing import TYPE_CHECKING
+from urllib.parse import urljoin
 
 import html2text
 import httpx
@@ -61,16 +62,18 @@ def fetch_doc(
 
     try:
         response = httpx.get(url, follow_redirects=False, timeout=config.timeout_seconds)
-    except httpx.TimeoutException as exc:
+    except httpx.RequestError as exc:
         raise ToolExecutionError(
-            f"fetch_doc: request timed out after {config.timeout_seconds}s: {exc}",
+            f"fetch_doc: request failed: {exc}",
             tool_name="fetch_doc",
         ) from exc
 
     # Handle redirects manually (max 1 hop)
     if 300 <= response.status_code < 400:
         location = response.headers.get("location", "")
-        redirect_parsed = urllib.parse.urlparse(location)
+        # Resolve relative redirect URLs against the original URL
+        resolved_location = urljoin(url, location)
+        redirect_parsed = urllib.parse.urlparse(resolved_location)
         redirect_hostname = redirect_parsed.hostname or ""
         if redirect_hostname not in allowed_domains:
             raise ToolExecutionError(
@@ -79,15 +82,21 @@ def fetch_doc(
             )
         try:
             response = httpx.get(
-                location,
+                resolved_location,
                 follow_redirects=False,
                 timeout=config.timeout_seconds,
             )
-        except httpx.TimeoutException as exc:
+        except httpx.RequestError as exc:
             raise ToolExecutionError(
-                f"fetch_doc: redirect request timed out after {config.timeout_seconds}s: {exc}",
+                f"fetch_doc: redirect request failed: {exc}",
                 tool_name="fetch_doc",
             ) from exc
+
+    if response.status_code >= 400:
+        raise ToolExecutionError(
+            f"fetch_doc: HTTP {response.status_code} error for {url}",
+            tool_name="fetch_doc",
+        )
 
     body = response.content[: config.max_bytes]
     text = body.decode("utf-8", errors="replace")

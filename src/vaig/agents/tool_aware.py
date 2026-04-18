@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
 from vaig.agents.mixins import OnToolCall, ToolLoopMixin
 from vaig.core.config import DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, get_settings
+from vaig.core.evidence_ledger import new_ledger
 from vaig.core.exceptions import ContextWindowExceededError, MaxIterationsError
 from vaig.core.models import PipelineState
 from vaig.tools.base import ToolRegistry
@@ -296,7 +297,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 tool_result_cache=tool_result_cache,
                 required_sections=required_sections,
                 context_window=_context_window,
-                ledger=state.evidence_ledger if state is not None else None,
+                ledger=state.evidence_ledger if state is not None and state.evidence_ledger is not None else new_ledger(),
                 run_id=getattr(tool_call_store, "run_id", "") if tool_call_store else "",
                 skill=self._skill if hasattr(self, "_skill") and self._skill else "",
                 **loop_kwargs,
@@ -443,7 +444,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 tool_result_cache=tool_result_cache,
                 required_sections=required_sections,
                 context_window=_context_window,
-                ledger=state.evidence_ledger if state is not None else None,
+                ledger=state.evidence_ledger if state is not None and state.evidence_ledger is not None else new_ledger(),
                 run_id=getattr(tool_call_store, "run_id", "") if tool_call_store else "",
                 skill=self._skill if hasattr(self, "_skill") and self._skill else "",
                 **loop_kwargs,
