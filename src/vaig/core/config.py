@@ -331,6 +331,25 @@ class PatchConfig(BaseModel):
     """Maximum number of lines allowed in a single hunk (0 = unlimited)."""
 
 
+class WorkspaceRAGConfig(BaseModel):
+    """Workspace RAG index configuration (CM-08).
+
+    Controls the local vector-search index over workspace files.
+    Disabled by default — requires ``chromadb`` to be installed.
+    """
+
+    enabled: bool = False
+    """When True, build and expose a local vector-search index over workspace files."""
+    reindex_on_run: bool = False
+    """When True and the index is stale, rebuild before the first search."""
+    max_chunks: int = 500
+    """Maximum number of chunks to index (files are processed in discovery order; excess chunks are discarded)."""
+    extensions: list[str] = Field(
+        default_factory=lambda: [".py", ".ts", ".go", ".java", ".md"],
+        description="File extensions to include in the workspace index.",
+    )
+
+
 class CodingConfig(BaseModel):
     """Coding agent configuration."""
 
@@ -421,6 +440,10 @@ class CodingConfig(BaseModel):
     patch: PatchConfig = Field(
         default_factory=PatchConfig,
         description="Patch-write tool configuration (CM-09).",
+    )
+    workspace_rag: WorkspaceRAGConfig = Field(
+        default_factory=WorkspaceRAGConfig,
+        description="Workspace RAG index for local code search (CM-08). Disabled by default.",
     )
 
 

@@ -436,6 +436,51 @@ class CodingSkillOrchestrator:
                     "Knowledge tools dependencies not available. Skipping knowledge tool registration.",
                 )
 
+        # Workspace RAG tool (optional — gated on workspace_rag.enabled + chromadb)
+        if self._coding_config.workspace_rag.enabled:
+            try:
+                from vaig.core.workspace_rag import WorkspaceRAG  # noqa: WPS433
+                from vaig.tools.base import ToolDef, ToolParam, ToolResult  # noqa: WPS433
+
+                rag = WorkspaceRAG(workspace, self._coding_config.workspace_rag)
+
+                def _search_workspace(query: str, k: int = 5) -> ToolResult:
+                    """Search workspace code for relevant snippets."""
+                    import json  # noqa: WPS433
+
+                    results = rag.search(query, k=k)
+                    return ToolResult(output=json.dumps(results, indent=2))
+
+                registry.register(
+                    ToolDef(
+                        name="search_workspace_knowledge",
+                        description=(
+                            "Search the local workspace codebase for relevant code snippets "
+                            "using semantic similarity. Returns file paths and matching chunks."
+                        ),
+                        parameters=[
+                            ToolParam(
+                                name="query",
+                                type="string",
+                                description="Search query",
+                            ),
+                            ToolParam(
+                                name="k",
+                                type="integer",
+                                description="Number of results (default 5)",
+                                required=False,
+                            ),
+                        ],
+                        execute=_search_workspace,
+                    )
+                )
+                logger.debug("CodingSkillOrchestrator: search_workspace_knowledge registered")
+            except ImportError:
+                logger.warning(
+                    "chromadb not available — workspace RAG tool not registered. "
+                    "Install with: pip install chromadb",
+                )
+
         return registry
 
     def _run_fix_forward(
