@@ -660,6 +660,7 @@ def register(app: typer.Typer) -> None:
             # TelemetrySubscriber so events are forwarded to the SQLite store.
             _helpers._init_telemetry(settings)
             _helpers._init_audit(settings)
+            _helpers._init_memory(settings)
             _helpers._check_platform_auth(settings)
 
             # Apply --project / --project-id: mutate ONLY gcp.project_id
@@ -1445,6 +1446,7 @@ def _execute_orchestrated_skill(
         # Persist report locally for quality analysis (vaig optimize --reports).
         # Uses its own run_id when export is disabled.
         _persist_report_locally(orch_result, run_id=run_id)
+        _emit_health_report_completed(settings, orch_result, run_id=run_id)
 
         # Auto-export report if configured.
         # ADR-4: auto-export fires here for the health report only, immediately after the live
@@ -1556,6 +1558,39 @@ def _persist_report_locally(
         logger.debug("Persisted report locally for run %s", effective_run_id)
     except Exception:  # noqa: BLE001
         logger.warning("Failed to persist report locally", exc_info=True)
+
+
+def _emit_health_report_completed(
+    settings: Settings,
+    orch_result: OrchestratorResult,
+    *,
+    run_id: str | None = None,
+) -> None:
+    """Emit a ``HealthReportCompleted`` event on the EventBus.
+
+    The event carries the run_id and the path to the locally-persisted JSONL
+    report so that the :class:`~vaig.core.subscribers.memory_subscriber.MemorySubscriber`
+    can read findings and record fingerprints without coupling to this function.
+
+    Errors are logged and swallowed so they never interrupt the CLI flow.
+    """
+    if not settings.memory.enabled or orch_result.structured_report is None:
+        return
+    try:
+        from pathlib import Path
+
+        from vaig.core.event_bus import EventBus
+        from vaig.core.events import HealthReportCompleted
+        from vaig.core.report_store import _DEFAULT_DIR  # noqa: PLC2701
+
+        effective_run_id = run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        report_path = str(Path(_DEFAULT_DIR) / f"{effective_run_id}.jsonl")
+        EventBus.get().emit(
+            HealthReportCompleted(run_id=effective_run_id, report_path=report_path)
+        )
+        logger.debug("Emitted HealthReportCompleted for run %s", effective_run_id)
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to emit HealthReportCompleted", exc_info=True)
 
 
 def _auto_export_report(

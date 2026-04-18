@@ -145,4 +145,55 @@ def create_knowledge_tools(
             ", ".join(t.name for t in tools),
         )
 
+    # ── query_pattern_history — only when memory.enabled ────────────────────
+    if settings.memory.enabled:
+        from vaig.tools.knowledge.query_pattern_history import query_pattern_history  # noqa: WPS433
+
+        cfg_mem = settings.memory
+        tools.append(
+            ToolDef(
+                name="query_pattern_history",
+                description=(
+                    "Look up historical recurrence data for a finding pattern. "
+                    "Returns the recurrence badge (NEW / RECURRING / CHRONIC), "
+                    "occurrence count, and first/last seen timestamps. "
+                    "Use this before finalising a finding to enrich it with "
+                    "historical context from previous diagnostic runs."
+                ),
+                parameters=[
+                    ToolParam(
+                        name="category",
+                        type="string",
+                        description="Finding category, e.g. 'pod-health'.",
+                        required=True,
+                    ),
+                    ToolParam(
+                        name="service",
+                        type="string",
+                        description="Service or resource the finding affects.",
+                        required=True,
+                    ),
+                    ToolParam(
+                        name="title",
+                        type="string",
+                        description="Human-readable finding title.",
+                        required=True,
+                    ),
+                    ToolParam(
+                        name="description",
+                        type="string",
+                        description="Finding description text.",
+                        required=True,
+                    ),
+                ],
+                execute=lambda category, service, title, description, _cfg=cfg_mem: query_pattern_history(
+                    category, service, title, description, _cfg
+                ),
+                categories=frozenset({KNOWLEDGE}),
+                cacheable=True,
+                cache_ttl_seconds=60,
+            )
+        )
+        logger.info("Registered knowledge tool: query_pattern_history")
+
     return tools

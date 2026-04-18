@@ -681,6 +681,20 @@ Rules:
 - 1-2 findings: Keep descriptions and root causes brief. Use empty lists for unused severity levels.
 - 6+ findings: Each finding's ``description`` ≤ 3 sentences.
 - NEVER pad with generic Kubernetes explanations. The audience knows K8s.
+
+### Recurrence Badges (MANDATORY when present)
+Some findings may carry a ``recurrence`` annotation from historical pattern memory.
+When present, the annotation contains a ``badge`` field with one of:
+- ``NEW`` — first time this pattern has been seen
+- ``RECURRING`` — seen 2–4 times across previous runs
+- ``CHRONIC`` — seen 5 or more times; systemic issue
+
+Rules:
+- Include the badge in the finding's ``title`` prefix, e.g. ``[RECURRING] CrashLoop in payment-svc``.
+- For RECURRING or CHRONIC findings, add a short note in ``root_cause`` referencing the historical count,
+  e.g. ``"This pattern has been observed 3 times since <first_seen date>."``.
+- NEVER fabricate recurrence data — only use what is present in the annotation.
+- If ``recurrence`` is None or absent, do NOT mention recurrence at all.
 {datadog_api_section}"""
 
 
