@@ -23,6 +23,7 @@ from vaig.core.events import (
     BudgetChecked,
     CliCommandTracked,
     ErrorOccurred,
+    LoopStepEvent,
     OrchestratorPhaseCompleted,
     OrchestratorToolsCompleted,
     SessionEnded,
@@ -66,7 +67,7 @@ class TelemetrySubscriber:
     # ── Subscription wiring ──────────────────────────────────
 
     def _subscribe_all(self) -> None:
-        """Register handlers for all 10 event types on the singleton EventBus."""
+        """Register handlers for all 11 event types on the singleton EventBus."""
         bus = EventBus.get()
         self._unsubscribers = [
             bus.subscribe(ToolExecuted, self._on_tool_executed),
@@ -79,6 +80,7 @@ class TelemetrySubscriber:
             bus.subscribe(BudgetChecked, self._on_budget_checked),
             bus.subscribe(OrchestratorPhaseCompleted, self._on_orchestrator_phase_completed),
             bus.subscribe(OrchestratorToolsCompleted, self._on_orchestrator_tools_completed),
+            bus.subscribe(LoopStepEvent, self._on_loop_step),
         ]
 
     def unsubscribe_all(self) -> None:
@@ -244,3 +246,23 @@ class TelemetrySubscriber:
             )
         except Exception:  # noqa: BLE001
             logger.debug("TelemetrySubscriber: failed to handle OrchestratorToolsCompleted", exc_info=True)
+
+    def _on_loop_step(self, event: LoopStepEvent) -> None:
+        """LoopStepEvent → emit(loop, loop_step) with iteration metadata."""
+        try:
+            self._collector.emit(
+                event_type="loop",
+                event_name="loop_step",
+                metadata={
+                    "run_id": event.run_id,
+                    "skill": event.skill,
+                    "loop_type": event.loop_type,
+                    "iteration": event.iteration,
+                    "tokens_used": event.tokens_used,
+                    "tool_calls_made": event.tool_calls_made,
+                    "budget_remaining_usd": event.budget_remaining_usd,
+                    "termination_reason": event.termination_reason,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("TelemetrySubscriber: failed to handle LoopStepEvent", exc_info=True)

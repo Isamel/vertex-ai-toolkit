@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from vaig.core.evidence_ledger import EvidenceLedger
+
 # ── Session Sharing Models ───────────────────────────────────────────────────
 
 
@@ -143,6 +145,9 @@ class PipelineState(BaseModel):
     agent_outputs: dict[str, str] = Field(default_factory=dict)
     """Maps agent name → raw output text for downstream consumption."""
 
+    evidence_ledger: EvidenceLedger | None = Field(default=None)
+    """Per-run evidence ledger. Populated by ToolAwareAgent and accumulated across loop iterations."""
+
     def to_context_string(self) -> str:
         """Serialize the state into a human-readable string for prompt injection.
 
@@ -269,14 +274,18 @@ def apply_state_patch(
     else:
         new_outputs = dict(state.agent_outputs)
 
-    return state.model_copy(
-        update={
-            "findings": new_findings,
-            "metrics": new_metrics,
-            "errors": new_errors,
-            "affected_resources": new_affected,
-            "management_context": new_mgmt,
-            "flags": new_flags,
-            "agent_outputs": new_outputs,
-        }
-    )
+    updates: dict[str, Any] = {
+        "findings": new_findings,
+        "metrics": new_metrics,
+        "errors": new_errors,
+        "affected_resources": new_affected,
+        "management_context": new_mgmt,
+        "flags": new_flags,
+        "agent_outputs": new_outputs,
+    }
+
+    # ── EvidenceLedger — replace entirely (immutable, caller owns the ref) ──
+    if "evidence_ledger" in patch_dict and isinstance(patch_dict["evidence_ledger"], EvidenceLedger):
+        updates["evidence_ledger"] = patch_dict["evidence_ledger"]
+
+    return state.model_copy(update=updates)
