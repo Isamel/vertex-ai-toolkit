@@ -10,6 +10,7 @@ from vaig.tools.categories import REPO
 
 if TYPE_CHECKING:
     from vaig.core.config import Settings
+    from vaig.tools.base import ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +18,9 @@ logger = logging.getLogger(__name__)
 def create_github_repo_tools(settings: Settings) -> list[ToolDef]:
     """Create GitHub repository tools gated on ``settings.github.enabled``.
 
-    Wraps all five repo tools (``repo_list_tree``, ``repo_read_file``,
-    ``repo_search_code``, ``repo_get_commits``, ``repo_diff``) as
-    :class:`~vaig.tools.base.ToolDef` objects.
+    Wraps all six repo tools (``repo_list_tree``, ``repo_read_file``,
+    ``repo_search_code``, ``repo_get_commits``, ``repo_diff``,
+    ``search_repo_knowledge``) as :class:`~vaig.tools.base.ToolDef` objects.
 
     Returns an empty list when GitHub is not enabled.
     """
@@ -33,6 +34,7 @@ def create_github_repo_tools(settings: Settings) -> list[ToolDef]:
         repo_read_file,
         repo_search_code,
     )
+    from vaig.tools.repo.knowledge import search_repo_knowledge
 
     cfg = settings.github
     tools: list[ToolDef] = []
@@ -152,6 +154,49 @@ def create_github_repo_tools(settings: Settings) -> list[ToolDef]:
             execute=lambda owner, repo, base, head, path="", _cfg=cfg: repo_diff(
                 config=_cfg, owner=owner, repo=repo, base=base, head=head, path=path
             ),
+            categories=frozenset({REPO}),
+            cacheable=False,
+        )
+    )
+
+    # ── search_repo_knowledge ─────────────────────────────────
+    import asyncio as _asyncio
+
+    def _run_search_repo_knowledge(
+        owner: str,
+        repo: str,
+        query: str,
+        ref: str = "HEAD",
+        top_k: int = 5,
+        _settings: Settings = settings,
+    ) -> ToolResult:
+        return _asyncio.run(
+            search_repo_knowledge(
+                settings=_settings,
+                owner=owner,
+                repo=repo,
+                query=query,
+                ref=ref,
+                top_k=int(top_k),
+            )
+        )
+
+    tools.append(
+        ToolDef(
+            name="search_repo_knowledge",
+            description=(
+                "Search a repository's on-demand RAG knowledge index. "
+                "Builds the index on first call (Tier 1 files only); subsequent calls use cache. "
+                "Use to perform semantic search over repository source files."
+            ),
+            parameters=[
+                ToolParam(name="owner", type="string", description="Repository owner (user or org)", required=True),
+                ToolParam(name="repo", type="string", description="Repository name", required=True),
+                ToolParam(name="query", type="string", description="Natural-language search query", required=True),
+                ToolParam(name="ref", type="string", description="Branch, tag, or commit SHA (defaults to HEAD)", required=False),
+                ToolParam(name="top_k", type="integer", description="Maximum number of result chunks (default: 5)", required=False),
+            ],
+            execute=_run_search_repo_knowledge,
             categories=frozenset({REPO}),
             cacheable=False,
         )
