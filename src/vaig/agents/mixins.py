@@ -17,6 +17,7 @@ from google.genai import types
 
 from vaig.core.async_utils import to_async
 from vaig.core.config import DEFAULT_CHARS_PER_TOKEN, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, get_settings
+from vaig.core.context_budget import ContextBudgetManager
 from vaig.core.event_bus import EventBus
 from vaig.core.events import ContextWindowChecked
 from vaig.core.exceptions import CONTEXT_WINDOW_ERROR_KEYWORDS, ContextWindowExceededError, MaxIterationsError
@@ -198,6 +199,7 @@ class ToolLoopMixin:
         required_sections: list[str] | None = None,
         max_history_tokens: int = 28_000,
         context_window: int = DEFAULT_CONTEXT_WINDOW,
+        budget_manager: ContextBudgetManager | None = None,
     ) -> ToolLoopResult:
         """Drive a Gemini tool-use loop until text or max iterations.
 
@@ -221,6 +223,10 @@ class ToolLoopMixin:
             on_tool_call: Optional callback invoked after each tool
                 execution with ``(tool_name, tool_args, duration_secs,
                 success)``.  Useful for live progress logging.
+            budget_manager: Optional :class:`~vaig.core.context_budget.ContextBudgetManager`
+                for tracking token usage per phase.  When provided, records
+                prompt tokens under the ``"tool_loop"`` phase after each API
+                call and logs a WARNING if the budget is exceeded.
 
         Returns:
             ``ToolLoopResult`` with final text, usage, tool metadata,
@@ -333,6 +339,18 @@ class ToolLoopMixin:
                 warn_threshold=_warn_threshold,
                 error_threshold=_error_threshold,
             )
+
+            # -- Context budget tracking ----------------------------------
+            if budget_manager is not None:
+                _prompt_tokens = result.usage.get("prompt_tokens", 0)
+                budget_manager.record_usage("tool_loop", _prompt_tokens)
+                if budget_manager.is_over_budget("tool_loop") and not budget_warning_issued:
+                    logger.warning(
+                        "Context budget exceeded for phase 'tool_loop' on iteration %d "
+                        "(remaining: %d tokens)",
+                        iteration,
+                        budget_manager.remaining("tool_loop"),
+                    )
 
             # -- Case 1: text response (no function calls) -- done --------
             if not result.function_calls:
@@ -1059,6 +1077,7 @@ class ToolLoopMixin:
         required_sections: list[str] | None = None,
         max_history_tokens: int = 28_000,
         context_window: int = DEFAULT_CONTEXT_WINDOW,
+        budget_manager: ContextBudgetManager | None = None,
     ) -> ToolLoopResult:
         """Async version of :meth:`_run_tool_loop`.
 
@@ -1182,6 +1201,18 @@ class ToolLoopMixin:
                 warn_threshold=_warn_threshold,
                 error_threshold=_error_threshold,
             )
+
+            # -- Context budget tracking ----------------------------------
+            if budget_manager is not None:
+                _prompt_tokens = result.usage.get("prompt_tokens", 0)
+                budget_manager.record_usage("tool_loop", _prompt_tokens)
+                if budget_manager.is_over_budget("tool_loop") and not budget_warning_issued:
+                    logger.warning(
+                        "Context budget exceeded for phase 'tool_loop' on iteration %d "
+                        "(remaining: %d tokens)",
+                        iteration,
+                        budget_manager.remaining("tool_loop"),
+                    )
 
             # -- Case 1: text response (no function calls) -- done --------
             if not result.function_calls:

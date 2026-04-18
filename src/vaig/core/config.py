@@ -1360,6 +1360,27 @@ class ReviewConfig(BaseModel):
     """When True, remediation is blocked until the report review is approved."""
 
 
+class AutoActivationConfig(BaseModel):
+    """Configuration for the auto-activation policy system.
+
+    Controls whether capabilities can be auto-activated based on context and
+    what the default activation mode is for newly registered capabilities.
+
+    Feature-flagged: disabled by default (``enabled=False``).
+    Enable explicitly with ``auto_activation.enabled = true`` in config
+    or ``VAIG_AUTO_ACTIVATION__ENABLED=true``.
+    """
+
+    enabled: bool = False
+    """Master feature flag — auto-activation is disabled until explicitly enabled."""
+    default_mode: str = "auto_triggered"
+    """Default ActivationMode for capabilities that do not specify one.
+
+    Must be one of: ``auto_always``, ``auto_triggered``, ``auto_on_input``, ``opt_in``.
+    Stored as string to avoid a circular import from config → auto_orchestration.
+    """
+
+
 class ScheduleTarget(BaseModel):
     """A single GKE cluster/namespace to scan on a schedule."""
 
@@ -1500,6 +1521,7 @@ class Settings(BaseSettings):
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     remediation: RemediationConfig = Field(default_factory=RemediationConfig)
     review: ReviewConfig = Field(default_factory=ReviewConfig)
+    auto_activation: AutoActivationConfig = Field(default_factory=lambda: AutoActivationConfig())
 
     @model_validator(mode="after")
     def _bridge_platform_org_id(self) -> Settings:
