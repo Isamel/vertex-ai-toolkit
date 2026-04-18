@@ -102,3 +102,15 @@ class ContextBudgetManager:
             Mapping of phase name to tokens consumed so far.
         """
         return dict(self._usage)
+
+    def remaining_usd(self) -> float:
+        """Return remaining USD budget.
+
+        This class tracks tokens, not USD cost.  Returns ``0.0`` as a stub so
+        callers can use a uniform interface alongside
+        :class:`~vaig.core.global_budget.GlobalBudgetManager`.
+
+        Returns:
+            Always ``0.0``.
+        """
+        return 0.0
