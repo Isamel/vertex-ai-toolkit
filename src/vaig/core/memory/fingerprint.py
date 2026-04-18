@@ -13,7 +13,7 @@ import re
 # Reuse canonical regex patterns from schema.py to normalise transient tokens.
 # These patterns are intentionally re-declared here to keep the memory
 # sub-package free of circular imports with service_health.schema.
-_POD_HASH_RE = re.compile(r"-[a-z0-9]{5,10}-[a-z0-9]{5}\b")
+_POD_HASH_RE = re.compile(r"-[a-z0-9]{5,10}-[a-z0-9]{4,7}\b")
 _COUNTER_RE = re.compile(r"\b\d+\b")
 _TIMESTAMP_RE = re.compile(
     r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?"

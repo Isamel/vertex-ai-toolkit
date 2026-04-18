@@ -85,7 +85,14 @@ class MemorySubscriber:
             )
 
     def _process_report(self, event: HealthReportCompleted) -> None:
-        """Load the report JSONL and record one fingerprint per finding."""
+        """Load the report JSONL and record one fingerprint per finding.
+
+        NOTE: If :class:`~vaig.core.memory.recurrence.RecurrenceAnalyzer` is
+        also called inline with the same ``run_id`` and the same
+        :class:`~vaig.core.memory.pattern_store.PatternMemoryStore`, findings
+        will be counted twice.  Callers that wire both the analyzer and this
+        subscriber must use separate stores or deduplicate by run_id externally.
+        """
         import json
         from pathlib import Path
 

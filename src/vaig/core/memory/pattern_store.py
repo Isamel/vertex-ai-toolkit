@@ -49,20 +49,22 @@ class PatternMemoryStore:
 
             for path in sorted(self._base_dir.glob("*.jsonl")):
                 try:
-                    for line in path.read_text(encoding="utf-8").splitlines():
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            data = json.loads(line)
-                            entry = PatternEntry.model_validate(data)
-                            existing = self._index.get(entry.fingerprint)
-                            if existing is None or entry.last_seen > existing.last_seen:
-                                # Keep the entry with the most occurrences
-                                if existing is None or entry.occurrences >= existing.occurrences:
+                    with path.open(encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                data = json.loads(line)
+                                entry = PatternEntry.model_validate(data)
+                                existing = self._index.get(entry.fingerprint)
+                                # Use >= so that entries within the same second
+                                # (e.g. multiple observations during fast tests)
+                                # are not silently dropped.
+                                if existing is None or entry.last_seen >= existing.last_seen:
                                     self._index[entry.fingerprint] = entry
-                        except Exception:  # noqa: BLE001
-                            logger.debug("Skipping malformed memory entry in %s", path)
+                            except Exception:  # noqa: BLE001
+                                logger.debug("Skipping malformed memory entry in %s", path)
                 except Exception:  # noqa: BLE001
                     logger.debug("Could not read memory file %s", path)
         except Exception:  # noqa: BLE001
@@ -127,6 +129,7 @@ class PatternMemoryStore:
             self._base_dir.mkdir(parents=True, exist_ok=True)
             path = self._base_dir / f"{run_id}.jsonl"
             line = entry.model_dump_json() + "\n"
-            path.open("a", encoding="utf-8").write(line)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(line)
         except Exception:  # noqa: BLE001
             logger.debug("Could not append to memory store for run %s", run_id)

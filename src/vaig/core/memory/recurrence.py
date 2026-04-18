@@ -72,6 +72,10 @@ class RecurrenceAnalyzer:
                     description=finding.get("description", ""),
                 )
 
+                # Capture staleness BEFORE record() updates last_seen to now.
+                pre_record = self._store.lookup(fp)
+                stale = pre_record is not None and self._is_stale(pre_record)
+
                 entry = self._store.record(
                     run_id=run_id,
                     fingerprint=fp,
@@ -81,7 +85,7 @@ class RecurrenceAnalyzer:
                     category=finding.get("category", ""),
                 )
 
-                if self._is_stale(entry):
+                if stale:
                     # Treat stale entries as new — reset to single occurrence
                     entry = PatternEntry(
                         fingerprint=fp,
