@@ -344,7 +344,7 @@ class ToolLoopMixin:
             if budget_manager is not None:
                 _prompt_tokens = result.usage.get("prompt_tokens", 0)
                 budget_manager.record_usage("tool_loop", _prompt_tokens)
-                if budget_manager.is_over_budget("tool_loop"):
+                if budget_manager.is_over_budget("tool_loop") and not budget_warning_issued:
                     logger.warning(
                         "Context budget exceeded for phase 'tool_loop' on iteration %d "
                         "(remaining: %d tokens)",
@@ -1206,7 +1206,7 @@ class ToolLoopMixin:
             if budget_manager is not None:
                 _prompt_tokens = result.usage.get("prompt_tokens", 0)
                 budget_manager.record_usage("tool_loop", _prompt_tokens)
-                if budget_manager.is_over_budget("tool_loop"):
+                if budget_manager.is_over_budget("tool_loop") and not budget_warning_issued:
                     logger.warning(
                         "Context budget exceeded for phase 'tool_loop' on iteration %d "
                         "(remaining: %d tokens)",

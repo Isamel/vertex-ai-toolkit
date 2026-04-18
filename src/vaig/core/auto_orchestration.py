@@ -41,7 +41,7 @@ class ActivationMode(StrEnum):
     Attributes:
         AUTO_ALWAYS: Capability is always active regardless of context.
         AUTO_TRIGGERED: Capability activates when its condition function returns True.
-        AUTO_ON_INPUT: Capability activates when the context contains an ``input`` key.
+        AUTO_ON_INPUT: Capability activates when the context contains ``has_user_input`` set to ``True``.
         OPT_IN: Capability is disabled by default; must be explicitly enabled.
     """
 
@@ -172,7 +172,7 @@ class AutoActivationPolicy:
 
         # Rule 2: OPT_IN — only activate when explicitly opted-in via context
         if mode == ActivationMode.OPT_IN:
-            return context.get("opt_in", {}).get(capability) is True
+            return (context.get("opt_in") or {}).get(capability) is True
 
         # Rule 3: AUTO_ALWAYS — always active
         if mode == ActivationMode.AUTO_ALWAYS:

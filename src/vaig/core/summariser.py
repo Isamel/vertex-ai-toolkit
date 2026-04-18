@@ -45,8 +45,9 @@ def summarise_text(
     Args:
         text: The content to summarise (treated as untrusted).
         client: A generative model client that exposes a ``generate`` method
-            accepting ``prompt``, ``system``, and ``temperature`` keyword
-            arguments and returning a string.
+            accepting ``prompt``, ``system_instruction``, and ``temperature``
+            keyword arguments and returning a
+            :class:`~vaig.core.client.GenerationResult`.
         max_output_tokens: Maximum tokens for the generated summary.
 
     Returns:
@@ -57,7 +58,7 @@ def summarise_text(
     try:
         return client.generate(  # type: ignore[attr-defined,no-any-return]
             prompt=wrapped,
-            system=_SYSTEM_PROMPT,
+            system_instruction=_SYSTEM_PROMPT,
             temperature=0.3,
             max_output_tokens=max_output_tokens,
         )

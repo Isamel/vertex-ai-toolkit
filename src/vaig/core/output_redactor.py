@@ -85,7 +85,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
     (
         "DB connection string",
-        re.compile(r"((postgres|mysql|mongodb)://)[^\"'\s]{10,}"),
+        re.compile(r"((?:postgres|mysql|mongodb)://)[^\"'\s]{10,}"),
     ),
 ]
 
