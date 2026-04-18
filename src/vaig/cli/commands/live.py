@@ -618,6 +618,20 @@ def register(app: typer.Typer) -> None:
                 help="Show every tool call as it happens (verbose execution output)",
             ),
         ] = False,
+        repo: Annotated[
+            str | None,
+            typer.Option(
+                "--repo",
+                help="GitHub repo in owner/repo format for commit correlation (e.g. myorg/myservice)",
+            ),
+        ] = None,
+        repo_ref: Annotated[
+            str,
+            typer.Option(
+                "--repo-ref",
+                help="Git ref to use for repo correlation (default: HEAD)",
+            ),
+        ] = "HEAD",
     ) -> None:
         """Investigate live GKE/GCP infrastructure using AI with infrastructure tools.
 
@@ -753,6 +767,8 @@ def register(app: typer.Typer) -> None:
                     skill=active_skill,
                     skill_name=skill,
                     model_id=model or settings.models.default,
+                    repo=repo,
+                    repo_ref=repo_ref,
                 )
                 return
 
@@ -787,6 +803,8 @@ def register(app: typer.Typer) -> None:
                         open_browser=open_browser if not watch else False,
                         all_namespaces=all_namespaces,
                         detailed=detailed,
+                        repo=repo,
+                        repo_ref=repo_ref,
                     )
                 _execute_live_mode(
                     client,
@@ -802,6 +820,8 @@ def register(app: typer.Typer) -> None:
                     tool_result_cache=tool_result_cache,
                     open_browser=open_browser if not watch else False,
                     detailed=detailed,
+                    repo=repo,
+                    repo_ref=repo_ref,
                 )
                 return None
 
@@ -977,6 +997,8 @@ def _display_dry_run_plan(
     skill: BaseSkill | None = None,
     skill_name: str | None = None,
     model_id: str = "",
+    repo: str | None = None,
+    repo_ref: str = "HEAD",
 ) -> None:
     """Render the dry-run execution plan without running anything.
 
@@ -1046,7 +1068,7 @@ def _display_dry_run_plan(
     console.print()
 
     # ── Tools ─────────────────────────────────────────────────
-    tool_registry = _register_live_tools(gke_config, settings=settings)
+    tool_registry = _register_live_tools(gke_config, settings=settings, repo=repo, repo_ref=repo_ref)
     tools = tool_registry.list_tools()
     tool_count = len(tools)
 
@@ -1311,6 +1333,8 @@ def _execute_orchestrated_skill(
     open_browser: bool = False,
     all_namespaces: bool = False,
     detailed: bool = False,
+    repo: str | None = None,
+    repo_ref: str = "HEAD",
 ) -> HealthReport | None:
     """Execute a skill through the Orchestrator's tool-aware pipeline.
 
@@ -1330,7 +1354,7 @@ def _execute_orchestrated_skill(
     # Build tool registry once — pass it to execute_skill_headless to
     # avoid duplicate registry construction (it accepts an optional
     # pre-built registry since the refactor for Copilot review #12).
-    tool_registry = _register_live_tools(gke_config, settings=settings)
+    tool_registry = _register_live_tools(gke_config, settings=settings, repo=repo, repo_ref=repo_ref)
     tool_count = len(tool_registry.list_tools())
 
     if tool_count == 0:
@@ -1798,6 +1822,8 @@ def _execute_live_mode(
     tool_result_cache: ToolResultCache | None = None,
     open_browser: bool = False,
     detailed: bool = False,
+    repo: str | None = None,
+    repo_ref: str = "HEAD",
 ) -> None:
     """Execute an infrastructure investigation using the InfraAgent.
 
@@ -2018,6 +2044,8 @@ async def _async_execute_orchestrated_skill(
     open_browser: bool = False,
     all_namespaces: bool = False,
     detailed: bool = False,
+    repo: str | None = None,
+    repo_ref: str = "HEAD",
 ) -> None:
     """Async version of :func:`_execute_orchestrated_skill`.
 
@@ -2028,7 +2056,7 @@ async def _async_execute_orchestrated_skill(
 
     skill_meta = skill.get_metadata()
 
-    tool_registry = _register_live_tools(gke_config, settings=settings)
+    tool_registry = _register_live_tools(gke_config, settings=settings, repo=repo, repo_ref=repo_ref)
 
     gke_credentials = None
     if settings is not None:

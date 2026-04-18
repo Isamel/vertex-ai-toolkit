@@ -60,6 +60,8 @@ Produce a structured InvestigationPlan JSON with the following fields:
    - `kubectl_get` for network policies, resource quotas, deployments
    - `kubectl_exec` for DNS resolution, network connectivity
    - `kubectl_rollout` for deployment rollbacks, image pull failures
+   - `commit_correlation` for findings that may be explained by a recent code change (only when repo context is available)
+   - `chart_regression` for findings showing metric degradation that correlates with a deployment or chart change (only when repo context is available)
 5. **Hypothesis text**: Use the `what_would_confirm` field from the matching RootCauseHypothesis, or write a concise confirmation criterion if none is available.
 6. **No hallucinations**: Only reference resources and findings that appear in the input data.
 

@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -1326,3 +1326,36 @@ class InvestigationPlan(BaseModel):
     """Report fingerprint or run_id that triggered this plan."""
     total_budget_allocated: float = 0.0
     """Sum of budget_usd across all steps."""
+
+
+# ── GH-02: Config Drift Finding ──────────────────────────────
+
+
+class ConfigDriftFinding(BaseModel):
+    """Finding when recent commits correlate with an observed anomaly.
+
+    Produced when the live investigation pipeline correlates a service
+    anomaly with recent commits in the linked GitHub repository.
+    Requires ``--repo`` to be provided on the CLI.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    finding_type: Literal["config_drift"] = "config_drift"
+    commit_sha: str = Field(description="Git commit SHA that introduced the suspected change")
+    changed_files: list[str] = Field(
+        default_factory=list,
+        description="List of file paths changed in the commit",
+    )
+    suspected_config_keys: list[str] = Field(
+        default_factory=list,
+        description="Config keys / environment variables suspected to cause the drift",
+    )
+    severity: Severity = Severity.HIGH
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def coerce_severity(cls, v: object) -> object:
+        return _make_enum_coercer(Severity, Severity.HIGH)(v)
+
+    description: str = Field(default="", description="Human-readable explanation of the suspected config drift")
