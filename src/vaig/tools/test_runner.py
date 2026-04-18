@@ -49,6 +49,8 @@ class TestExecutionResult(BaseModel):
         success: Convenience flag — True when ``state == "tests_passed"``.
     """
 
+    __test__ = False  # Prevent pytest from collecting this as a test class
+
     state: TestState = "no_tests_found"
     passed: int = 0
     failed: int = 0
@@ -92,10 +94,21 @@ def _detect_test_command(workspace: Path) -> str:
             return "pytest"
 
     # One-level-deep conftest.py scan
-    for child in workspace.iterdir():
-        if child.is_dir() and (child / "conftest.py").exists():
-            logger.debug("_detect_test_command: found %s/conftest.py → using pytest", child.name)
-            return "pytest"
+    try:
+        children = list(workspace.iterdir())
+    except PermissionError:
+        logger.debug("_detect_test_command: permission denied listing workspace — skipping scan")
+        return ""
+
+    for child in children:
+        try:
+            if child.is_dir() and (child / "conftest.py").exists():
+                logger.debug(
+                    "_detect_test_command: found %s/conftest.py → using pytest", child.name
+                )
+                return "pytest"
+        except PermissionError:
+            continue
 
     return ""
 
