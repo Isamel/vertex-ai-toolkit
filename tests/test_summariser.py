@@ -26,7 +26,7 @@ class TestSummariseTextNormal:
 
         call_kwargs = client.generate.call_args.kwargs
         assert "prompt" in call_kwargs
-        assert "system" in call_kwargs
+        assert "system_instruction" in call_kwargs
         assert "temperature" in call_kwargs
         # The prompt should wrap the original text
         assert "Input text" in call_kwargs["prompt"]
