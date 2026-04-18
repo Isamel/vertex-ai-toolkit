@@ -1,0 +1,148 @@
+# Idiom map: Angular → React
+# Schema: source_lang, target_lang, idioms (list), dependencies (mapping)
+#
+# idioms entries:
+#   source_pattern:  Angular concept/idiom description
+#   target_pattern:  React equivalent
+#   description:     Explanation of the transformation
+#   example_before:  Angular code example
+#   example_after:   React code example
+
+source_lang: angular
+target_lang: react
+
+idioms:
+  - source_pattern: "Component with @Component decorator and template"
+    target_pattern: "Function component returning JSX"
+    description: "Angular components map to React function components; template becomes JSX return"
+    example_before: |
+      @Component({
+        selector: 'app-hello',
+        template: '<h1>Hello, {{ name }}</h1>'
+      })
+      export class HelloComponent {
+        name = 'World';
+      }
+    example_after: |
+      function HelloComponent() {
+        const name = 'World';
+        return <h1>Hello, {name}</h1>;
+      }
+
+  - source_pattern: "@Input() property decorator"
+    target_pattern: "Component props with TypeScript interface"
+    description: "Angular @Input maps to React props passed to the component"
+    example_before: |
+      @Component({ selector: 'app-user', template: '{{ user.name }}' })
+      export class UserComponent {
+        @Input() user!: User;
+      }
+    example_after: |
+      interface UserProps { user: User; }
+      function UserComponent({ user }: UserProps) {
+        return <span>{user.name}</span>;
+      }
+
+  - source_pattern: "@Output() EventEmitter for child-to-parent events"
+    target_pattern: "Callback props (e.g. onSave: (data: T) => void)"
+    description: "Angular EventEmitter maps to callback props in React"
+    example_before: |
+      @Output() saved = new EventEmitter<string>();
+      onSave() { this.saved.emit(this.value); }
+    example_after: |
+      interface Props { onSave: (value: string) => void; }
+      function Form({ onSave }: Props) {
+        return <button onClick={() => onSave(value)}>Save</button>;
+      }
+
+  - source_pattern: "ngOnInit lifecycle hook"
+    target_pattern: "useEffect with empty dependency array"
+    description: "ngOnInit initialisation logic moves to useEffect(fn, [])"
+    example_before: |
+      ngOnInit(): void {
+        this.data = this.service.load();
+      }
+    example_after: |
+      useEffect(() => {
+        setData(service.load());
+      }, []);
+
+  - source_pattern: "ngOnDestroy lifecycle hook"
+    target_pattern: "useEffect cleanup function return"
+    description: "ngOnDestroy teardown logic becomes the return value of useEffect"
+    example_before: |
+      private sub!: Subscription;
+      ngOnInit() { this.sub = this.events$.subscribe(handler); }
+      ngOnDestroy() { this.sub.unsubscribe(); }
+    example_after: |
+      useEffect(() => {
+        const sub = events$.subscribe(handler);
+        return () => sub.unsubscribe();
+      }, []);
+
+  - source_pattern: "Two-way binding with [(ngModel)]"
+    target_pattern: "Controlled input: value + onChange handler"
+    description: "Angular two-way binding becomes controlled component pattern in React"
+    example_before: |
+      <input [(ngModel)]="username">
+    example_after: |
+      <input value={username} onChange={e => setUsername(e.target.value)} />
+
+  - source_pattern: "*ngIf structural directive"
+    target_pattern: "Conditional rendering with && or ternary"
+    description: "Angular *ngIf maps to JSX conditional rendering"
+    example_before: |
+      <div *ngIf="isLoggedIn">Welcome back!</div>
+    example_after: |
+      {isLoggedIn && <div>Welcome back!</div>}
+
+  - source_pattern: "*ngFor structural directive"
+    target_pattern: "Array.map() in JSX"
+    description: "Angular *ngFor maps to Array.map() in JSX"
+    example_before: |
+      <li *ngFor="let item of items">{{ item.name }}</li>
+    example_after: |
+      {items.map(item => <li key={item.id}>{item.name}</li>)}
+
+  - source_pattern: "Service with @Injectable() for state/logic"
+    target_pattern: "Custom hook or context provider"
+    description: "Angular services for shared logic become custom hooks; for global state use Context or Zustand"
+    example_before: |
+      @Injectable({ providedIn: 'root' })
+      export class UserService {
+        getUser(id: number) { return this.http.get<User>(`/api/users/${id}`); }
+      }
+    example_after: |
+      function useUser(id: number) {
+        const [user, setUser] = useState<User | null>(null);
+        useEffect(() => { fetchUser(id).then(setUser); }, [id]);
+        return user;
+      }
+
+  - source_pattern: "Angular Router: RouterModule + routerLink"
+    target_pattern: "React Router: <BrowserRouter> + <Link>"
+    description: "Angular routing maps to React Router v6 patterns"
+    example_before: |
+      <a routerLink="/about">About</a>
+    example_after: |
+      import { Link } from 'react-router-dom';
+      <Link to="/about">About</Link>
+
+  - source_pattern: "Reactive Forms with FormGroup/FormControl"
+    target_pattern: "react-hook-form or controlled components"
+    description: "Angular Reactive Forms map to react-hook-form for complex forms"
+    example_before: |
+      this.form = this.fb.group({ email: ['', Validators.required] });
+    example_after: |
+      const { register, handleSubmit } = useForm<FormData>();
+      <input {...register('email', { required: true })} />
+
+dependencies:
+  "@angular/core": "react"
+  "@angular/common": "react"
+  "@angular/router": "react-router-dom"
+  "@angular/forms": "react-hook-form"
+  "@angular/common/http": "axios or fetch API"
+  "rxjs": "tanstack-query or swr"
+  "@ngrx/store": "zustand or jotai"
+  "@angular/animations": "framer-motion"

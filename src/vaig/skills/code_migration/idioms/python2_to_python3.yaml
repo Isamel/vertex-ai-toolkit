@@ -1,0 +1,133 @@
+# Idiom map: Python 2 → Python 3
+# Schema: source_lang, target_lang, idioms (list), dependencies (mapping)
+#
+# idioms entries:
+#   source_pattern:  Python 2 idiom description
+#   target_pattern:  Python 3 equivalent idiom
+#   description:     Explanation of the transformation
+#   example_before:  Python 2 code example
+#   example_after:   Python 3 code example
+
+source_lang: python2
+target_lang: python3
+
+idioms:
+  - source_pattern: "print statement: print value"
+    target_pattern: "print function: print(value)"
+    description: "print is a function in Python 3, not a statement"
+    example_before: 'print "Hello, World!"'
+    example_after: 'print("Hello, World!")'
+
+  - source_pattern: "Integer division: 5 / 2 returns 2"
+    target_pattern: "True division: 5 / 2 returns 2.5; use 5 // 2 for integer division"
+    description: "Python 3 / operator always performs true division"
+    example_before: |
+      result = 5 / 2   # returns 2
+      remainder = 5 % 2
+    example_after: |
+      result = 5 / 2    # returns 2.5
+      int_div = 5 // 2  # returns 2
+      remainder = 5 % 2
+
+  - source_pattern: "unicode/str: u'hello' vs 'hello' (bytes)"
+    target_pattern: "str is unicode by default; use b'hello' for bytes"
+    description: "Python 3 str is always unicode; bytes requires explicit b'' prefix"
+    example_before: |
+      text = u'Hello'
+      raw = 'bytes data'
+    example_after: |
+      text = 'Hello'       # str is unicode
+      raw = b'bytes data'  # explicit bytes
+
+  - source_pattern: "raise Exception, 'message'"
+    target_pattern: "raise Exception('message')"
+    description: "Python 3 raise syntax uses parentheses"
+    example_before: "raise ValueError, 'invalid value'"
+    example_after: "raise ValueError('invalid value')"
+
+  - source_pattern: "except ExcType, variable:"
+    target_pattern: "except ExcType as variable:"
+    description: "Python 3 uses 'as' keyword in except clauses"
+    example_before: |
+      try:
+          risky()
+      except ValueError, e:
+          print e
+    example_after: |
+      try:
+          risky()
+      except ValueError as e:
+          print(e)
+
+  - source_pattern: "dict.keys() / .values() / .items() return lists"
+    target_pattern: "dict.keys() / .values() / .items() return views"
+    description: "Python 3 dict methods return view objects; wrap in list() if needed"
+    example_before: |
+      keys = d.keys()   # list
+      for k in d.iterkeys():
+          pass
+    example_after: |
+      keys = list(d.keys())  # explicit list conversion
+      for k in d:            # iterate directly
+          pass
+
+  - source_pattern: "xrange() for memory-efficient iteration"
+    target_pattern: "range() (Python 3 range is lazy by default)"
+    description: "xrange was removed; Python 3 range() is lazy like Python 2 xrange"
+    example_before: |
+      for i in xrange(1000000):
+          process(i)
+    example_after: |
+      for i in range(1000000):
+          process(i)
+
+  - source_pattern: "filter()/map() return lists"
+    target_pattern: "filter()/map() return iterators; wrap in list() if needed"
+    description: "Python 3 filter() and map() return lazy iterators"
+    example_before: |
+      evens = filter(lambda x: x % 2 == 0, numbers)
+      doubled = map(lambda x: x * 2, numbers)
+    example_after: |
+      evens = list(filter(lambda x: x % 2 == 0, numbers))
+      doubled = list(map(lambda x: x * 2, numbers))
+      # Or use list comprehensions (preferred):
+      evens = [x for x in numbers if x % 2 == 0]
+
+  - source_pattern: "reduce() builtin"
+    target_pattern: "functools.reduce()"
+    description: "reduce was moved to functools in Python 3"
+    example_before: |
+      total = reduce(lambda a, b: a + b, numbers)
+    example_after: |
+      from functools import reduce
+      total = reduce(lambda a, b: a + b, numbers)
+
+  - source_pattern: "Class definition: class Foo:"
+    target_pattern: "class Foo: (inherits object implicitly)"
+    description: "All Python 3 classes are new-style; no need to inherit from object explicitly"
+    example_before: |
+      class Foo(object):
+          pass
+    example_after: |
+      class Foo:
+          pass
+
+  - source_pattern: "basestring type check"
+    target_pattern: "str type check"
+    description: "basestring was removed in Python 3; use str for both str and bytes checks"
+    example_before: |
+      if isinstance(value, basestring):
+          pass
+    example_after: |
+      if isinstance(value, str):
+          pass
+
+dependencies:
+  "urllib2": "urllib.request, urllib.error"
+  "urlparse": "urllib.parse"
+  "ConfigParser": "configparser"
+  "Queue": "queue"
+  "cPickle": "pickle"
+  "StringIO": "io.StringIO"
+  "BytesIO": "io.BytesIO"
+  "__builtin__": "builtins"

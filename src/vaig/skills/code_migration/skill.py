@@ -9,7 +9,7 @@ import os
 import tempfile
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -17,6 +17,10 @@ from vaig.core.project import ensure_project_dir as _ensure_project_dir
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.skills.code_migration.prompts import PHASE_PROMPTS, SYSTEM_INSTRUCTION
 from vaig.tools.file_tools import create_file_tools
+
+if TYPE_CHECKING:
+    from vaig.core.client import GeminiClient
+    from vaig.core.config import IdiomConfig
 
 logger = logging.getLogger(__name__)
 
@@ -69,42 +73,22 @@ class MigrationPhase(StrEnum):
         return _mapping.get(phase, cls.INVENTORY)
 
 
-def _load_idiom_map(source_lang: str, target_lang: str) -> dict[str, Any] | None:
-    """Load an idiom map YAML file for the given language pair.
-
-    Looks for ``{source_lang}_to_{target_lang}.yaml`` in the bundled
-    ``vaig.skills.code_migration.idioms`` package, using :mod:`importlib.resources`
-    so the file is accessible whether the package is installed as a wheel or run
-    from source.
+def _parse_idiom_yaml(content: str, filename: str) -> dict[str, Any] | None:
+    """Parse and validate YAML content for an idiom map.
 
     Args:
-        source_lang: Source programming language (e.g. ``"python"``).
-        target_lang: Target programming language (e.g. ``"go"``).
+        content: Raw YAML string.
+        filename: Source filename used for log messages.
 
     Returns:
-        Parsed YAML dict on success, or ``None`` if no map is found or the file
-        is invalid / missing.
+        Parsed dict on success, or ``None`` if parsing/validation fails.
     """
-    filename = f"{source_lang.lower()}_to_{target_lang.lower()}.yaml"
-
-    try:
-        idioms_pkg = importlib.resources.files("vaig.skills.code_migration.idioms")
-        resource = idioms_pkg.joinpath(filename)
-        content = resource.read_text(encoding="utf-8")
-    except (FileNotFoundError, ModuleNotFoundError):
-        logger.debug("No idiom map found for %s→%s", source_lang, target_lang)
-        return None
-    except OSError as exc:
-        logger.warning("Failed to read idiom map %s: %s", filename, exc)
-        return None
-
     try:
         raw = yaml.safe_load(content)
     except yaml.YAMLError as exc:
         logger.warning("Failed to parse idiom map %s: %s", filename, exc)
         return None
 
-    # Schema validation: safe_load can return None or non-dict for empty/invalid files
     if raw is None:
         logger.warning("Idiom map %s is empty", filename)
         return None
@@ -124,6 +108,102 @@ def _load_idiom_map(source_lang: str, target_lang: str) -> dict[str, Any] | None
         len(data.get("dependencies", {})),
     )
     return data
+
+
+def _load_idiom_map(
+    source_lang: str,
+    target_lang: str,
+    *,
+    idiom_config: IdiomConfig | None = None,
+    client: GeminiClient | None = None,
+) -> dict[str, Any] | None:
+    """Load an idiom map for the given language pair using a 3-tier fallback.
+
+    **Tier 1 — Bundled**: Looks for ``{source_lang}_to_{target_lang}.yaml`` in
+    the bundled ``vaig.skills.code_migration.idioms`` package, using
+    :mod:`importlib.resources` so the file is accessible whether the package is
+    installed as a wheel or run from source.
+
+    **Tier 2 — User cache**: If the bundled map is not found, looks in the
+    ``idiom_config.cache_dir`` directory (default: ``~/.vaig/idioms/``) for a
+    previously generated map.
+
+    **Tier 3 — LLM generate**: If neither bundled nor cached maps exist, and
+    ``idiom_config.auto_generate`` is ``True`` and a ``client`` is provided,
+    generates a new map using the LLM and caches it for future use.
+
+    If all tiers fail, returns ``None`` (graceful degradation).
+
+    Args:
+        source_lang: Source programming language (e.g. ``"python"``).
+        target_lang: Target programming language (e.g. ``"go"``).
+        idiom_config: Optional :class:`~vaig.core.config.IdiomConfig` that
+            controls caching and LLM generation.  When ``None``, tiers 2 and 3
+            are skipped.
+        client: Optional :class:`~vaig.core.client.GeminiClient` used for
+            tier-3 generation.  Ignored when ``idiom_config.auto_generate`` is
+            ``False`` or ``idiom_config`` is ``None``.
+
+    Returns:
+        Parsed YAML dict on success, or ``None`` if no map is found or could be
+        generated.
+    """
+    source_lang = source_lang.lower()
+    target_lang = target_lang.lower()
+    filename = f"{source_lang}_to_{target_lang}.yaml"
+
+    # ── Tier 1: bundled map ───────────────────────────────────────────────
+    try:
+        idioms_pkg = importlib.resources.files("vaig.skills.code_migration.idioms")
+        resource = idioms_pkg.joinpath(filename)
+        content = resource.read_text(encoding="utf-8")
+        logger.debug("_load_idiom_map: bundled map found for %s→%s", source_lang, target_lang)
+        return _parse_idiom_yaml(content, filename)
+    except (FileNotFoundError, ModuleNotFoundError):
+        logger.debug("_load_idiom_map: no bundled map for %s→%s", source_lang, target_lang)
+    except OSError as exc:
+        logger.warning("_load_idiom_map: failed to read bundled map %s: %s", filename, exc)
+
+    if idiom_config is None:
+        return None
+
+    # ── Tier 2: user cache ────────────────────────────────────────────────
+    cache_dir = Path(idiom_config.cache_dir).expanduser()
+    cache_path = cache_dir / filename
+    if cache_path.exists():
+        try:
+            cached_content = cache_path.read_text(encoding="utf-8")
+            logger.debug("_load_idiom_map: cache hit for %s→%s at %s", source_lang, target_lang, cache_path)
+            return _parse_idiom_yaml(cached_content, filename)
+        except OSError as exc:
+            logger.warning("_load_idiom_map: failed to read cache %s: %s", cache_path, exc)
+
+    # ── Tier 3: LLM generation ────────────────────────────────────────────
+    if not idiom_config.auto_generate or client is None:
+        logger.debug(
+            "_load_idiom_map: auto_generate=%s, client=%s — skipping LLM for %s→%s",
+            idiom_config.auto_generate,
+            "provided" if client is not None else "None",
+            source_lang,
+            target_lang,
+        )
+        return None
+
+    logger.info("_load_idiom_map: generating idiom map via LLM for %s→%s", source_lang, target_lang)
+    try:
+        from vaig.skills.code_migration.idiom_generator import IdiomGenerator
+
+        generator = IdiomGenerator(client, cache_dir=cache_dir)
+        yaml_content = generator.generate(source_lang, target_lang)
+        return _parse_idiom_yaml(yaml_content, filename)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "_load_idiom_map: LLM generation failed for %s→%s: %s",
+            source_lang,
+            target_lang,
+            exc,
+        )
+        return None
 
 
 def _format_idiom_map(idiom_data: dict[str, Any]) -> str:
@@ -308,6 +388,8 @@ class CodeMigrationSkill(BaseSkill):
         target_lang: str = "go",
         workspace: Path | None = None,
         resume: bool = False,
+        idiom_config: IdiomConfig | None = None,
+        client: GeminiClient | None = None,
     ) -> None:
         self._source_lang = source_lang.lower()
         self._target_lang = target_lang.lower()
@@ -319,8 +401,13 @@ class CodeMigrationSkill(BaseSkill):
         if resume:
             self._tracker.load_state(self._state_path)
 
-        # Load idiom map eagerly; None if no map exists for the pair
-        self._idiom_data = _load_idiom_map(self._source_lang, self._target_lang)
+        # Load idiom map eagerly via 3-tier fallback; None if no map exists
+        self._idiom_data = _load_idiom_map(
+            self._source_lang,
+            self._target_lang,
+            idiom_config=idiom_config,
+            client=client,
+        )
 
     # ── BaseSkill interface ───────────────────────────────────────────────
 
