@@ -327,3 +327,177 @@ class TestBundledYamlMaps:
             assert "description" in idiom, f"idiom[{i}] missing description"
             assert "example_before" in idiom, f"idiom[{i}] missing example_before"
             assert "example_after" in idiom, f"idiom[{i}] missing example_after"
+
+
+# ── IdiomConfig.enabled gate tests ───────────────────────────────────────────
+
+class TestIdiomConfigEnabledGate:
+    """When idiom_config.enabled=False, tiers 2 and 3 must be skipped."""
+
+    def test_disabled_config_skips_tier2(self, tmp_path: Path) -> None:
+        from vaig.core.config import IdiomConfig
+        from vaig.skills.code_migration.skill import _load_idiom_map
+
+        cache_file = tmp_path / "rust_to_go.yaml"
+        cache_file.write_text(_SAMPLE_YAML, encoding="utf-8")
+
+        config = IdiomConfig(enabled=False, auto_generate=False, cache_dir=str(tmp_path))
+        result = _load_idiom_map("rust", "go", idiom_config=config)
+
+        assert result is None
+
+    def test_disabled_config_skips_tier3(self, tmp_path: Path) -> None:
+        from vaig.core.config import IdiomConfig
+        from vaig.skills.code_migration.skill import _load_idiom_map
+
+        client = _make_mock_client(_SAMPLE_YAML)
+        config = IdiomConfig(enabled=False, auto_generate=True, cache_dir=str(tmp_path))
+        result = _load_idiom_map("rust", "go", idiom_config=config, client=client)
+
+        client.generate.assert_not_called()
+        assert result is None
+
+
+# ── Cache validation tests ────────────────────────────────────────────────────
+
+class TestCacheValidation:
+    """LLM output must be validated before writing to cache."""
+
+    def test_invalid_yaml_raises_value_error(self, tmp_path: Path) -> None:
+        from vaig.skills.code_migration.idiom_generator import IdiomGenerator
+
+        gen = IdiomGenerator(_make_mock_client(""), cache_dir=tmp_path)
+
+        with pytest.raises(ValueError, match="not valid YAML"):
+            gen._save_to_cache("rust", "go", "not: valid: yaml: [broken")
+
+    def test_non_dict_yaml_raises_value_error(self, tmp_path: Path) -> None:
+        from vaig.skills.code_migration.idiom_generator import IdiomGenerator
+
+        gen = IdiomGenerator(_make_mock_client(""), cache_dir=tmp_path)
+
+        with pytest.raises(ValueError, match="unexpected top-level type"):
+            gen._save_to_cache("rust", "go", "- item1\n- item2\n")
+
+    def test_invalid_yaml_not_written_to_disk(self, tmp_path: Path) -> None:
+        from vaig.skills.code_migration.idiom_generator import IdiomGenerator
+
+        gen = IdiomGenerator(_make_mock_client(""), cache_dir=tmp_path)
+
+        with pytest.raises(ValueError):
+            gen._save_to_cache("rust", "go", "not: valid: yaml: [broken")
+
+        assert not (tmp_path / "rust_to_go.yaml").exists()
+
+    def test_generate_raises_on_invalid_llm_output(self, tmp_path: Path) -> None:
+        from vaig.skills.code_migration.idiom_generator import IdiomGenerator
+
+        client = _make_mock_client("not: valid: yaml: [broken")
+        gen = IdiomGenerator(client, cache_dir=tmp_path)
+
+        with pytest.raises(ValueError, match="not valid YAML"):
+            gen.generate("rust", "go")
+
+
+# ── Path sanitization tests ───────────────────────────────────────────────────
+
+class TestCachePathSanitization:
+    """Language tokens must be sanitised to prevent path traversal."""
+
+    def test_path_traversal_sanitized(self, tmp_path: Path) -> None:
+        from vaig.skills.code_migration.idiom_generator import IdiomGenerator
+
+        gen = IdiomGenerator(_make_mock_client(""), cache_dir=tmp_path)
+        path = gen.cache_path("../../../etc/passwd", "go")
+
+        # Traversal sequences must be gone; path must stay within cache_dir
+        assert ".." not in path.parts
+        assert path.parent == tmp_path
+
+    def test_special_chars_sanitized(self, tmp_path: Path) -> None:
+        from vaig.skills.code_migration.idiom_generator import IdiomGenerator
+
+        gen = IdiomGenerator(_make_mock_client(""), cache_dir=tmp_path)
+        path = gen.cache_path("rust!@#$%", "go")
+
+        # Filename should contain only safe characters
+        assert "!" not in path.name
+        assert "@" not in path.name
+
+    def test_normal_languages_unchanged(self, tmp_path: Path) -> None:
+        from vaig.skills.code_migration.idiom_generator import IdiomGenerator
+
+        gen = IdiomGenerator(_make_mock_client(""), cache_dir=tmp_path)
+        path = gen.cache_path("python3", "go")
+
+        assert path == tmp_path / "python3_to_go.yaml"
+
+
+# ── _format_idiom_map extended fields test ────────────────────────────────────
+
+class TestFormatIdiomMapExtendedFields:
+    """_format_idiom_map must render description, example_before, example_after."""
+
+    def test_format_renders_description(self) -> None:
+        from vaig.skills.code_migration.skill import _format_idiom_map
+
+        data = {
+            "source_lang": "rust",
+            "target_lang": "go",
+            "idioms": [
+                {
+                    "source_pattern": "ownership",
+                    "target_pattern": "garbage collection",
+                    "description": "Rust ownership vs Go GC",
+                    "example_before": "let s = String::from(\"hello\");",
+                    "example_after": 's := "hello"',
+                }
+            ],
+        }
+        rendered = _format_idiom_map(data)
+
+        assert "Rust ownership vs Go GC" in rendered
+
+    def test_format_renders_example_before_and_after(self) -> None:
+        from vaig.skills.code_migration.skill import _format_idiom_map
+
+        data = {
+            "source_lang": "rust",
+            "target_lang": "go",
+            "idioms": [
+                {
+                    "source_pattern": "ownership",
+                    "target_pattern": "garbage collection",
+                    "description": "Ownership vs GC",
+                    "example_before": "let s = String::from(\"hello\");",
+                    "example_after": 's := "hello"',
+                }
+            ],
+        }
+        rendered = _format_idiom_map(data)
+
+        assert "Before:" in rendered
+        assert "After:" in rendered
+        assert 'let s = String::from("hello");' in rendered
+        assert 's := "hello"' in rendered
+
+    def test_format_skips_extended_section_when_fields_absent(self) -> None:
+        from vaig.skills.code_migration.skill import _format_idiom_map
+
+        data = {
+            "source_lang": "python",
+            "target_lang": "go",
+            "idioms": [
+                {
+                    "source_pattern": "list comprehension",
+                    "target_pattern": "for loop",
+                    "notes": "Go has no list comprehension",
+                }
+            ],
+        }
+        rendered = _format_idiom_map(data)
+
+        # Extended section should NOT appear — no description/example fields
+        assert "Idiom Details" not in rendered
+        # But the table row must still appear
+        assert "list comprehension" in rendered

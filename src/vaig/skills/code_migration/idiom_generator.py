@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -93,6 +96,7 @@ class IdiomGenerator:
         Raises:
             RuntimeError: If the LLM call fails and no cached content is
                 available.
+            ValueError: If the LLM returns content that is not valid YAML.
         """
         source_lang = source_lang.lower()
         target_lang = target_lang.lower()
@@ -110,14 +114,19 @@ class IdiomGenerator:
     def cache_path(self, source_lang: str, target_lang: str) -> Path:
         """Return the expected cache file path for a language pair.
 
+        Language tokens are sanitised to alphanumeric, underscore, and hyphen
+        characters only to prevent path traversal.
+
         Args:
-            source_lang: Source language (lowercased automatically).
-            target_lang: Target language (lowercased automatically).
+            source_lang: Source language (lowercased and sanitised automatically).
+            target_lang: Target language (lowercased and sanitised automatically).
 
         Returns:
             Absolute :class:`~pathlib.Path` to the YAML cache file.
         """
-        filename = f"{source_lang.lower()}_to_{target_lang.lower()}.yaml"
+        safe_source = re.sub(r"[^a-z0-9_\-]", "_", source_lang.lower())
+        safe_target = re.sub(r"[^a-z0-9_\-]", "_", target_lang.lower())
+        filename = f"{safe_source}_to_{safe_target}.yaml"
         return self._cache_dir / filename
 
     def is_cached(self, source_lang: str, target_lang: str) -> bool:
@@ -144,13 +153,42 @@ class IdiomGenerator:
     def _save_to_cache(self, source_lang: str, target_lang: str, content: str) -> None:
         """Persist YAML content to the cache directory.
 
-        Creates parent directories as needed.  Failures are logged as
-        warnings and do NOT propagate — caching is best-effort.
+        Validates the YAML before writing to prevent cache poisoning — invalid
+        content is rejected with a ``ValueError`` instead of being cached.
+        Uses an atomic write (temp-file + ``os.replace``) so a partial write
+        never corrupts an existing cache entry.
+
+        Creates parent directories as needed.
+
+        Raises:
+            ValueError: If ``content`` is not valid YAML or does not parse to a dict.
         """
+        # Validate before touching the filesystem (fix 3 — no cache poisoning)
+        try:
+            parsed = yaml.safe_load(content)
+        except yaml.YAMLError as exc:
+            raise ValueError(f"IdiomGenerator: LLM output is not valid YAML for {source_lang}→{target_lang}: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"IdiomGenerator: LLM YAML for {source_lang}→{target_lang} has unexpected "
+                f"top-level type {type(parsed).__name__} (expected dict)"
+            )
+
         path = self.cache_path(source_lang, target_lang)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            # Atomic write — write to temp file then os.replace (fix 7)
+            tmp_fd, tmp_path_str = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                    fh.write(content)
+                os.replace(tmp_path_str, path)
+            except Exception:
+                try:
+                    os.unlink(tmp_path_str)
+                except OSError:
+                    pass
+                raise
             logger.debug("IdiomGenerator: cached %s→%s → %s", source_lang, target_lang, path)
         except OSError as exc:
             logger.warning("IdiomGenerator: failed to write cache %s: %s", path, exc)

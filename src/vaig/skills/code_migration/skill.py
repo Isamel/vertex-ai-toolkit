@@ -167,6 +167,11 @@ def _load_idiom_map(
     if idiom_config is None:
         return None
 
+    # ── Respect enabled flag — treat disabled config as absent ────────────
+    if not idiom_config.enabled:
+        logger.debug("_load_idiom_map: idiom_config.enabled=False — skipping tiers 2 and 3")
+        return None
+
     # ── Tier 2: user cache ────────────────────────────────────────────────
     cache_dir = Path(idiom_config.cache_dir).expanduser()
     cache_path = cache_dir / filename
@@ -231,6 +236,28 @@ def _format_idiom_map(idiom_data: dict[str, Any]) -> str:
             notes = entry.get("notes", "").replace("|", "\\|")
             lines.append(f"| {sp} | {tp} | {notes} |")
         lines.append("")
+
+        # Render extended fields (description / example_before / example_after)
+        # when present — these appear in CM-07 generated maps
+        extended = [e for e in idioms if any(k in e for k in ("description", "example_before", "example_after"))]
+        if extended:
+            lines.append("### Idiom Details\n")
+            for entry in extended:
+                sp = entry.get("source_pattern", "")
+                tp = entry.get("target_pattern", "")
+                lines.append(f"#### `{sp}` → `{tp}`\n")
+                description = entry.get("description", "")
+                if description:
+                    lines.append(f"{description}\n")
+                example_before = entry.get("example_before", "")
+                if example_before:
+                    lines.append("**Before:**")
+                    lines.append(f"```\n{example_before.rstrip()}\n```\n")
+                example_after = entry.get("example_after", "")
+                if example_after:
+                    lines.append("**After:**")
+                    lines.append(f"```\n{example_after.rstrip()}\n```\n")
+            lines.append("")
 
     deps: dict[str, str] = idiom_data.get("dependencies", {})
     if deps:
