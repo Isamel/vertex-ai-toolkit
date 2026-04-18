@@ -868,7 +868,7 @@ class HealthReport(BaseModel):
         ``HEALTH_REPORTER_PROMPT``: Executive Summary → Cluster Overview →
         Service Status → Findings (by severity) → Downgraded Findings →
         Root Cause Hypotheses → Evidence Details → Recommended Actions →
-        Manual Investigation Required → Timeline.
+        Manual Investigation Required → Timeline → Causal Graph.
         """
         parts: list[str] = []
         parts.append("# Service Health Report")
@@ -1212,6 +1212,8 @@ class HealthReport(BaseModel):
     def _render_causal_graph(self, parts: list[str]) -> None:
         """Render the causal graph Mermaid block when present."""
         if self.causal_graph_mermaid is None:
+            return
+        if not self.causal_graph_mermaid.strip():
             return
         parts.append("## Causal Graph")
         parts.append("")

@@ -18,11 +18,14 @@ Single-agent mode is retained via :class:`~vaig.agents.coding.CodingAgent`.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from pydantic import ValidationError
 
 from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS, CodingConfig, Settings
@@ -518,12 +521,12 @@ class CodingSkillOrchestrator:
         verifier responses keep working unchanged.
         """
         # Strip optional markdown fences: ```json ... ``` or ``` ... ```
-        stripped = re.sub(r"^```[a-z]*\s*", "", verification_report.strip(), flags=re.IGNORECASE)
+        stripped = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", verification_report.strip(), flags=re.IGNORECASE)
         stripped = re.sub(r"\s*```$", "", stripped.strip())
         try:
             report = VerificationReport.model_validate_json(stripped)
             return report.success
-        except Exception:
+        except (json.JSONDecodeError, ValidationError):
             return CodingSkillOrchestrator._parse_success(verification_report)
 
     @staticmethod
