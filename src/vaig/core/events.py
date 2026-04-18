@@ -22,6 +22,7 @@ __all__ = [
     "ContextWindowChecked",
     "ErrorOccurred",
     "Event",
+    "LoopStepEvent",
     "OrchestratorPhaseCompleted",
     "OrchestratorToolsCompleted",
     "QuotaExceeded",
@@ -384,3 +385,38 @@ class ReportReviewed(Event):
     run_id: str = ""
     status: str = ""
     reviewer: str = ""
+
+
+@dataclass(frozen=True)
+class LoopStepEvent(Event):
+    """Emitted at the end of each agent tool-use loop iteration.
+
+    Feeds BQ audit trail and telemetry without schema changes.
+
+    Attributes:
+        run_id: Unique identifier for the pipeline run (from ToolCallStore.run_id).
+        skill: Active skill/persona name.
+        loop_type: Loop classification — ``"hypothesis"``, ``"self_correction"``,
+            ``"fix_forward"``, or empty for unclassified loops.
+        iteration: 1-based loop iteration counter.
+        inputs_hash: 16-char SHA-256 prefix of ``f"{prompt!r}:{len(history)}"``.
+        outputs_hash: 16-char SHA-256 prefix of ``result.text`` (empty str if none).
+        tokens_used: Total tokens consumed in this iteration (prompt + completion).
+        tool_calls_made: Number of function calls dispatched this iteration (0 = text response).
+        budget_remaining_usd: Remaining USD budget at time of emission (0.0 if unknown).
+        termination_reason: Why the loop terminated on this iteration:
+            ``"text_response"``, ``"max_iterations"``, ``"context_exceeded"``,
+            ``"budget_exceeded"``, or ``""`` (loop continues).
+    """
+
+    event_type: str = field(default="loop.step", init=False)
+    run_id: str = ""
+    skill: str = ""
+    loop_type: str = ""
+    iteration: int = 0
+    inputs_hash: str = ""
+    outputs_hash: str = ""
+    tokens_used: int = 0
+    tool_calls_made: int = 0
+    budget_remaining_usd: float = 0.0
+    termination_reason: str = ""
