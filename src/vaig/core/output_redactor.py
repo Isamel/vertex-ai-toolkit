@@ -59,6 +59,34 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
             r'(["\']?(?:secret|key|token|hash)["\']?\s*[:=]\s*["\']?)[0-9a-fA-F]{32,}',
         ),
     ),
+    (
+        "AWS access key",
+        re.compile(r"(AKIA)[0-9A-Z]{16}"),
+    ),
+    (
+        "AWS secret key",
+        re.compile(
+            r'(["\']?(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?secret)["\']?\s*[:=]\s*["\']?)'
+            r"[A-Za-z0-9/+]{40}",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "GitHub ghp_ token",
+        re.compile(r"(ghp_)[A-Za-z0-9]{36}"),
+    ),
+    (
+        "GitHub gho_ token",
+        re.compile(r"(gho_)[A-Za-z0-9]{36}"),
+    ),
+    (
+        "Slack webhook URL",
+        re.compile(r"(https://hooks\.slack\.com/services/T)[^\"'\s]{30,}"),
+    ),
+    (
+        "DB connection string",
+        re.compile(r"((postgres|mysql|mongodb)://)[^\"'\s]{10,}"),
+    ),
 ]
 
 _REDACTED = "***REDACTED***"
