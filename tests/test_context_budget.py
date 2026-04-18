@@ -120,3 +120,16 @@ class TestSummary:
         s = manager.summary()
         s["a"] = 99999
         assert manager.summary()["a"] == 0
+
+
+class TestRemainingUsd:
+    """remaining_usd stub always returns 0.0."""
+
+    def test_remaining_usd_returns_zero(self) -> None:
+        manager = ContextBudgetManager(10_000, {"tool_loop": 1.0})
+        assert manager.remaining_usd() == 0.0
+
+    def test_remaining_usd_returns_zero_after_usage(self) -> None:
+        manager = ContextBudgetManager(10_000, {"tool_loop": 1.0})
+        manager.record_usage("tool_loop", 5_000)
+        assert manager.remaining_usd() == 0.0

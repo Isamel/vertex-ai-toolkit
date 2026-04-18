@@ -22,7 +22,13 @@ from vaig.core.context_budget import ContextBudgetManager
 from vaig.core.event_bus import EventBus
 from vaig.core.events import ContextWindowChecked, LoopStepEvent
 from vaig.core.evidence_ledger import EvidenceEntry, EvidenceLedger, _hash_tool_args
-from vaig.core.exceptions import CONTEXT_WINDOW_ERROR_KEYWORDS, ContextWindowExceededError, MaxIterationsError
+from vaig.core.exceptions import (
+    CONTEXT_WINDOW_ERROR_KEYWORDS,
+    BudgetExhaustedError,
+    CircuitBreakerOpenError,
+    ContextWindowExceededError,
+    MaxIterationsError,
+)
 from vaig.core.output_redactor import redact_sensitive_output
 from vaig.core.prompt_defense import wrap_untrusted_content
 from vaig.session.summarizer import SUMMARIZATION_PROMPT, estimate_history_tokens
@@ -35,7 +41,9 @@ MAX_TOOL_ARG_LENGTH: int = 50_000
 
 if TYPE_CHECKING:
     from vaig.core.cache import ToolResultCache
+    from vaig.core.circuit_breaker import CircuitBreaker
     from vaig.core.client import ToolCallResult
+    from vaig.core.global_budget import GlobalBudgetManager
     from vaig.core.protocols import GeminiClientProtocol
     from vaig.core.tool_call_store import ToolCallStore
 
@@ -245,6 +253,8 @@ class ToolLoopMixin:
         max_history_tokens: int = 28_000,
         context_window: int = DEFAULT_CONTEXT_WINDOW,
         budget_manager: ContextBudgetManager | None = None,
+        global_budget_mgr: GlobalBudgetManager | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
         run_id: str = "",
         skill: str = "",
         loop_type: str = "",
@@ -276,6 +286,14 @@ class ToolLoopMixin:
                 for tracking token usage per phase.  When provided, records
                 prompt tokens under the ``"tool_loop"`` phase after each API
                 call and logs a WARNING if the budget is exceeded.
+            global_budget_mgr: Optional :class:`~vaig.core.global_budget.GlobalBudgetManager`
+                for enforcing cross-run resource limits (tokens, cost, tool calls,
+                wall time).  When provided, ``check()`` is called after each API
+                call and raises :class:`~vaig.core.exceptions.BudgetExhaustedError`
+                if any limit is exceeded.
+            circuit_breaker: Optional :class:`~vaig.core.circuit_breaker.CircuitBreaker`
+                for transient failure protection.  When provided, ``allow_request()``
+                is called before each API call and failures are recorded.
 
         Returns:
             ``ToolLoopResult`` with final text, usage, tool metadata,
@@ -328,6 +346,13 @@ class ToolLoopMixin:
             if iteration > 1 and _inter_call_delay > 0:
                 time.sleep(_inter_call_delay)
 
+            # -- Circuit breaker: check before API call -------------------
+            if circuit_breaker is not None:
+                try:
+                    asyncio.get_event_loop().run_until_complete(circuit_breaker.allow_request())
+                except CircuitBreakerOpenError:
+                    raise
+
             # -- Call Gemini with tool declarations -----------------------
             try:
                 result = client.generate_with_tools(
@@ -339,6 +364,13 @@ class ToolLoopMixin:
                     **gen_kwargs,
                 )
             except Exception as _api_exc:
+                # Record failure in circuit breaker
+                if circuit_breaker is not None:
+                    try:
+                        asyncio.get_event_loop().run_until_complete(circuit_breaker.record_failure())
+                    except Exception:  # noqa: BLE001
+                        pass
+
                 # If it's already a ContextWindowExceededError (e.g. from circuit breaker),
                 # re-raise immediately — don't let the broad except swallow it.
                 if isinstance(_api_exc, ContextWindowExceededError):
@@ -376,9 +408,29 @@ class ToolLoopMixin:
                 raise
 
             assert result is not None  # always set by generate_with_tools above
+
+            # -- Record success in circuit breaker -----------------------
+            if circuit_breaker is not None:
+                try:
+                    asyncio.get_event_loop().run_until_complete(circuit_breaker.record_success())
+                except Exception:  # noqa: BLE001
+                    pass
+
             # -- Accumulate token usage -----------------------------------
             for key in total_usage:
                 total_usage[key] += result.usage.get(key, 0)
+
+            # -- Global budget check (tokens + cost) ----------------------
+            if global_budget_mgr is not None:
+                try:
+                    _prompt_tokens_gb = result.usage.get("prompt_tokens", 0)
+                    _completion_tokens_gb = result.usage.get("completion_tokens", 0)
+                    asyncio.get_event_loop().run_until_complete(
+                        global_budget_mgr.record_tokens(_prompt_tokens_gb + _completion_tokens_gb)
+                    )
+                    asyncio.get_event_loop().run_until_complete(global_budget_mgr.check())
+                except BudgetExhaustedError:
+                    raise
 
             # -- Context window monitoring (G1) ---------------------------
             try:
@@ -1198,6 +1250,8 @@ class ToolLoopMixin:
         max_history_tokens: int = 28_000,
         context_window: int = DEFAULT_CONTEXT_WINDOW,
         budget_manager: ContextBudgetManager | None = None,
+        global_budget_mgr: GlobalBudgetManager | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
         run_id: str = "",
         skill: str = "",
         loop_type: str = "",
@@ -1265,6 +1319,10 @@ class ToolLoopMixin:
             if iteration > 1 and _inter_call_delay > 0:
                 await asyncio.sleep(_inter_call_delay)
 
+            # -- Circuit breaker: check before API call -------------------
+            if circuit_breaker is not None:
+                await circuit_breaker.allow_request()
+
             # -- Call Gemini with tool declarations (async) ----------------
             try:
                 result = await client.async_generate_with_tools(
@@ -1276,6 +1334,13 @@ class ToolLoopMixin:
                     **gen_kwargs,
                 )
             except Exception as _api_exc:
+                # Record failure in circuit breaker
+                if circuit_breaker is not None:
+                    try:
+                        await circuit_breaker.record_failure()
+                    except Exception:  # noqa: BLE001
+                        pass
+
                 # If it's already a ContextWindowExceededError (e.g. from circuit breaker),
                 # re-raise immediately — don't let the broad except swallow it.
                 if isinstance(_api_exc, ContextWindowExceededError):
@@ -1313,9 +1378,24 @@ class ToolLoopMixin:
                 raise
 
             assert result is not None  # always set by async_generate_with_tools above
+
+            # -- Record success in circuit breaker -----------------------
+            if circuit_breaker is not None:
+                try:
+                    await circuit_breaker.record_success()
+                except Exception:  # noqa: BLE001
+                    pass
+
             # -- Accumulate token usage -----------------------------------
             for key in total_usage:
                 total_usage[key] += result.usage.get(key, 0)
+
+            # -- Global budget check (tokens + cost) ----------------------
+            if global_budget_mgr is not None:
+                _prompt_tokens_gb = result.usage.get("prompt_tokens", 0)
+                _completion_tokens_gb = result.usage.get("completion_tokens", 0)
+                await global_budget_mgr.record_tokens(_prompt_tokens_gb + _completion_tokens_gb)
+                await global_budget_mgr.check()
 
             # -- Context window monitoring (G1) ---------------------------
             try:

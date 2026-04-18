@@ -675,7 +675,7 @@ class Orchestrator:
             # ── Cost circuit breaker ──────────────────────────────────────
             run_cost_usd += _compute_step_cost(agent_result, agent.model)
             result.run_cost_usd = run_cost_usd
-            if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+            if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
                 logger.warning(
                     "Cost circuit breaker triggered after agent %s: run_cost_usd=%.6f > max_cost_per_run=%.6f",
                     agent.name,
@@ -979,6 +979,24 @@ class Orchestrator:
             logger.error("Orchestrator error in execute_with_tools: %s", exc, exc_info=True)
             raise VAIGError(f"Pipeline execution failed: {exc}") from exc
 
+    # ── Private helpers ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _is_cost_budget_exceeded(
+        run_cost_usd: float,
+        max_cost_per_run: float,
+    ) -> bool:
+        """Return ``True`` when the per-run cost limit is set and exceeded.
+
+        Args:
+            run_cost_usd: Accumulated cost for the current run.
+            max_cost_per_run: Budget limit from settings (``0.0`` = unlimited).
+
+        Returns:
+            ``True`` if ``max_cost_per_run > 0`` and ``run_cost_usd`` exceeds it.
+        """
+        return max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run
+
     def _execute_with_tools_impl(
         self,
         query: str,
@@ -1263,7 +1281,7 @@ class Orchestrator:
                 # ── Cost circuit breaker ──────────────────────────────────
                 run_cost_usd += _compute_step_cost(agent_result, agent.model)
                 result.run_cost_usd = run_cost_usd
-                if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
                     logger.warning(
                         "Cost circuit breaker triggered after agent %s: run_cost_usd=%.6f > max_cost_per_run=%.6f",
                         agent.name,
@@ -1420,7 +1438,7 @@ class Orchestrator:
                         _accumulate_usage(result, retry_result)
                         run_cost_usd += _compute_step_cost(retry_result, agent.model)
                         result.run_cost_usd = run_cost_usd
-                        if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                        if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
                             logger.warning(
                                 "Cost circuit breaker triggered after gatherer retry %s: "
                                 "run_cost_usd=%.6f > max_cost_per_run=%.6f",
@@ -1525,7 +1543,7 @@ class Orchestrator:
                             _accumulate_usage(result, json_retry_result)
                             run_cost_usd += _compute_step_cost(json_retry_result, agent.model)
                             result.run_cost_usd = run_cost_usd
-                            if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                            if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
                                 logger.warning(
                                     "Cost circuit breaker triggered after JSON retry %s: "
                                     "run_cost_usd=%.6f > max_cost_per_run=%.6f",
@@ -1633,7 +1651,7 @@ class Orchestrator:
                         _accumulate_usage(result, reporter_retry)
                         run_cost_usd += _compute_step_cost(reporter_retry, agent.model)
                         result.run_cost_usd = run_cost_usd
-                        if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                        if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
                             result.success = False
                             result.budget_exceeded = True
                             result.synthesized_output = (
@@ -1905,7 +1923,7 @@ class Orchestrator:
             # ── Cost circuit breaker ──────────────────────────────────────
             run_cost_usd += _compute_step_cost(agent_result, agent.model)
             result.run_cost_usd = run_cost_usd
-            if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+            if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
                 logger.warning(
                     "Cost circuit breaker triggered after agent %s: run_cost_usd=%.6f > max_cost_per_run=%.6f",
                     agent.name,
@@ -2346,7 +2364,7 @@ class Orchestrator:
                 # ── Cost circuit breaker ──────────────────────────────────
                 run_cost_usd += _compute_step_cost(agent_result, agent.model)
                 result.run_cost_usd = run_cost_usd
-                if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
                     logger.warning(
                         "Cost circuit breaker triggered after agent %s: run_cost_usd=%.6f > max_cost_per_run=%.6f",
                         agent.name,
@@ -2487,7 +2505,7 @@ class Orchestrator:
                         _accumulate_usage(result, retry_result)
                         run_cost_usd += _compute_step_cost(retry_result, agent.model)
                         result.run_cost_usd = run_cost_usd
-                        if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                        if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
                             result.success = False
                             result.budget_exceeded = True
                             result.synthesized_output = (
@@ -2578,7 +2596,7 @@ class Orchestrator:
                             _accumulate_usage(result, json_retry_result)
                             run_cost_usd += _compute_step_cost(json_retry_result, agent.model)
                             result.run_cost_usd = run_cost_usd
-                            if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                            if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
                                 result.success = False
                                 result.budget_exceeded = True
                                 result.synthesized_output = (
@@ -2681,7 +2699,7 @@ class Orchestrator:
                         _accumulate_usage(result, reporter_retry)
                         run_cost_usd += _compute_step_cost(reporter_retry, agent.model)
                         result.run_cost_usd = run_cost_usd
-                        if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+                        if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
                             result.success = False
                             result.budget_exceeded = True
                             result.synthesized_output = (
@@ -2963,7 +2981,7 @@ class Orchestrator:
         max_failures: int = self._settings.agents.max_failures_before_fallback
 
         # ── Post-parallel cost check ──────────────────────────────────────
-        if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+        if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
             logger.warning(
                 "Cost circuit breaker triggered after parallel phase: run_cost_usd=%.6f > max_cost_per_run=%.6f",
                 run_cost_usd,
@@ -3021,7 +3039,7 @@ class Orchestrator:
             # ── Cost circuit breaker ──────────────────────────────────────
             run_cost_usd += _compute_step_cost(agent_result, agent.model)
             result.run_cost_usd = run_cost_usd
-            if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+            if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
                 logger.warning(
                     "Cost circuit breaker triggered after agent %s: run_cost_usd=%.6f > max_cost_per_run=%.6f",
                     agent.name,
@@ -3295,7 +3313,7 @@ class Orchestrator:
         max_failures: int = self._settings.agents.max_failures_before_fallback
 
         # ── Post-parallel cost check ──────────────────────────────────────
-        if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+        if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
             logger.warning(
                 "Cost circuit breaker triggered after async parallel phase: run_cost_usd=%.6f > max_cost_per_run=%.6f",
                 run_cost_usd,
@@ -3353,7 +3371,7 @@ class Orchestrator:
             # ── Cost circuit breaker ──────────────────────────────────────
             run_cost_usd += _compute_step_cost(agent_result, agent.model)
             result.run_cost_usd = run_cost_usd
-            if max_cost_per_run > 0.0 and run_cost_usd > max_cost_per_run:
+            if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
                 logger.warning(
                     "Cost circuit breaker triggered after async agent %s: run_cost_usd=%.6f > max_cost_per_run=%.6f",
                     agent.name,

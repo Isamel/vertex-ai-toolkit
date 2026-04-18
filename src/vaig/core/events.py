@@ -18,6 +18,8 @@ __all__ = [
     "AgentProgressStarted",
     "ApiCalled",
     "BudgetChecked",
+    "BudgetExhausted",
+    "CircuitBreakerTripped",
     "CliCommandTracked",
     "ContextWindowChecked",
     "ErrorOccurred",
@@ -385,6 +387,41 @@ class ReportReviewed(Event):
     run_id: str = ""
     status: str = ""
     reviewer: str = ""
+
+
+@dataclass(frozen=True)
+class BudgetExhausted(Event):
+    """Emitted when the global budget manager exhausts any configured limit.
+
+    Attributes:
+        dimension: Which budget dimension was exceeded
+            (``"tokens"``, ``"cost_usd"``, ``"tool_calls"``, ``"wall_seconds"``).
+        used: Usage at the time the limit was hit.
+        limit: The configured limit for this dimension.
+        run_id: Optional pipeline run identifier.
+    """
+
+    event_type: str = field(default="budget.exhausted", init=False)
+    dimension: str = ""
+    used: float = 0.0
+    limit: float = 0.0
+    run_id: str = ""
+
+
+@dataclass(frozen=True)
+class CircuitBreakerTripped(Event):
+    """Emitted when the circuit breaker transitions to the OPEN state.
+
+    Attributes:
+        failure_count: Number of consecutive failures that triggered the trip.
+        recovery_timeout: Seconds until the breaker enters HALF-OPEN state.
+        run_id: Optional pipeline run identifier.
+    """
+
+    event_type: str = field(default="circuit_breaker.tripped", init=False)
+    failure_count: int = 0
+    recovery_timeout: float = 0.0
+    run_id: str = ""
 
 
 @dataclass(frozen=True)

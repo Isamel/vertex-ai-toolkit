@@ -830,6 +830,42 @@ class PlatformConfig(BaseModel):
         return self
 
 
+class GlobalBudgetConfig(BaseModel):
+    """Global run-scoped budget limits for pipeline executions.
+
+    All values default to ``0`` which means **unlimited** — no behavioral
+    change in existing code when this config is not explicitly set.
+
+    Attributes:
+        max_tokens: Maximum total input+output tokens across all agents in one run.
+        max_tool_calls: Maximum total tool calls across all agents in one run.
+        max_wall_seconds: Maximum wall-clock seconds allowed for one run.
+        max_cost_usd: Maximum USD cost allowed for one run.
+    """
+
+    max_tokens: int = 0
+    max_tool_calls: int = 0
+    max_wall_seconds: float = 0.0
+    max_cost_usd: float = 0.0
+
+
+class CircuitBreakerConfig(BaseModel):
+    """Per-tool circuit breaker configuration.
+
+    Controls when a tool's circuit breaker opens (too many failures) and
+    how long before it probes again (recovery timeout).
+
+    Attributes:
+        failure_threshold: Number of consecutive failures before the breaker opens.
+        recovery_timeout: Seconds to wait in OPEN state before allowing a probe call.
+        window_size: Number of recent calls to consider for failure rate (reserved).
+    """
+
+    failure_threshold: int = 3
+    recovery_timeout: float = 30.0
+    window_size: int = 10
+
+
 class BudgetConfig(BaseModel):
     """Token budget tracking configuration.
 
@@ -1614,6 +1650,8 @@ class Settings(BaseSettings):
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     plugins: PluginConfig = Field(default_factory=PluginConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
+    global_budget: GlobalBudgetConfig = Field(default_factory=GlobalBudgetConfig)
+    circuit_breaker: CircuitBreakerConfig = Field(default_factory=CircuitBreakerConfig)
     platform: PlatformConfig = Field(default_factory=PlatformConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     context_window: ContextWindowConfig = Field(default_factory=ContextWindowConfig)

@@ -180,6 +180,41 @@ class QuotaExceededError(VAIGError):
         )
 
 
+class BudgetExhaustedError(VAIGError):
+    """Raised when the global budget (tokens, cost, tool calls, or wall time) is exhausted.
+
+    Attributes:
+        dimension: Which limit was hit (``"tokens"``, ``"cost_usd"``, ``"tool_calls"``, ``"wall_seconds"``).
+        used: Current usage at the time of rejection.
+        limit: The configured limit for this dimension.
+    """
+
+    def __init__(self, *, dimension: str, used: float, limit: float) -> None:
+        self.dimension = dimension
+        self.used = used
+        self.limit = limit
+        super().__init__(
+            f"Global budget exhausted: {dimension} usage {used}/{limit}"
+        )
+
+
+class CircuitBreakerOpenError(VAIGError):
+    """Raised when the circuit breaker is in the OPEN state and rejects a request.
+
+    Attributes:
+        failure_count: Number of consecutive failures that tripped the breaker.
+        recovery_timeout: Seconds until the breaker enters HALF-OPEN state.
+    """
+
+    def __init__(self, *, failure_count: int, recovery_timeout: float) -> None:
+        self.failure_count = failure_count
+        self.recovery_timeout = recovery_timeout
+        super().__init__(
+            f"Circuit breaker is OPEN after {failure_count} failures; "
+            f"retry after {recovery_timeout:.1f}s"
+        )
+
+
 class TokenBudgetError(VAIGError):
     """Raised when the token budget cannot be computed or is invalid.
 
