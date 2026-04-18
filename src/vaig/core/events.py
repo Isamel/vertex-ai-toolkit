@@ -24,6 +24,7 @@ __all__ = [
     "ContextWindowChecked",
     "ErrorOccurred",
     "Event",
+    "HealthReportCompleted",
     "LoopStepEvent",
     "OrchestratorPhaseCompleted",
     "OrchestratorToolsCompleted",
@@ -457,3 +458,31 @@ class LoopStepEvent(Event):
     tool_calls_made: int = 0
     budget_remaining_usd: float = 0.0
     termination_reason: str = ""
+
+
+# ══════════════════════════════════════════════════════════════
+# Pattern Memory Events
+# ══════════════════════════════════════════════════════════════
+
+
+@dataclass(frozen=True)
+class HealthReportCompleted(Event):
+    """Emitted after a health report has been persisted locally.
+
+    Signals the memory subsystem to record finding fingerprints and
+    annotate the report with recurrence data.
+
+    Attributes:
+        run_id: Unique identifier for the pipeline run.
+        report_path: Absolute path to the saved JSONL report file.
+        namespace: Kubernetes namespace that was analysed (empty = all).
+        cluster: GKE cluster name.
+        finding_count: Number of findings in the report.
+    """
+
+    event_type: str = field(default="health_report.completed", init=False)
+    run_id: str = ""
+    report_path: str = ""
+    namespace: str = ""
+    cluster: str = ""
+    finding_count: int = 0
