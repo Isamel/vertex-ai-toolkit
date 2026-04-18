@@ -257,9 +257,10 @@ def repo_search_code(
     if err := _check_allowed_repos(config, owner, repo):
         return err
 
-    effective_ref = ref or config.default_ref
     base = config.api_base.rstrip("/")
     # GitHub code search: repo:<owner>/<repo> <query>
+    # Note: ref parameter is accepted but NOT forwarded — GitHub Code Search
+    # API only searches the default branch.
     full_query = f"repo:{owner}/{repo} {query}"
     url = f"{base}/search/code"
 
@@ -267,7 +268,9 @@ def repo_search_code(
         resp = httpx.get(
             url,
             headers=_auth_headers(config),
-            params={"q": full_query, "ref": effective_ref, "per_page": "30"},
+            # Note: GitHub Code Search API only searches the default branch.
+            # The 'ref' parameter is not supported by this endpoint.
+            params={"q": full_query, "per_page": "30"},
             timeout=_GITHUB_TIMEOUT,
             follow_redirects=True,
         )
@@ -347,6 +350,7 @@ def repo_get_commits(
     base = config.api_base.rstrip("/")
     url = f"{base}/repos/{owner}/{repo}/commits"
 
+    # GitHub Commits API returns max 100 per page; cap to avoid ambiguity.
     params: dict[str, Any] = {"sha": effective_ref, "per_page": str(min(limit, 100))}
     if path:
         params["path"] = path
@@ -477,7 +481,7 @@ def repo_diff(
                 if in_target and current:
                     sections.extend(current)
                 current = [line]
-                in_target = path in line
+                in_target = f" a/{path}" in line or f" b/{path}" in line
             elif in_target:
                 current.append(line)
         if in_target and current:

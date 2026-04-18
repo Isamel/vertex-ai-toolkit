@@ -51,7 +51,7 @@ def _validate_repo_url(config: GitHubConfig, url: str) -> None:
     #   https://github.com/owner/repo
     #   https://github.com/owner/repo.git
     #   https://x-access-token:TOKEN@github.com/owner/repo.git
-    parts = url.rstrip("/").rstrip(".git").split("/")
+    parts = url.rstrip("/").removesuffix(".git").split("/")
     if len(parts) >= 2:
         owner_repo = "/".join(parts[-2:])
     else:
@@ -107,38 +107,51 @@ def shallow_clone(
         )
         dest = Path(tmpdir) / "repo"
 
-        cmd: list[str] = [
-            "git",
-            "clone",
-            "--depth", str(depth),
-            "--branch", effective_ref,
-            "--single-branch",
-            "--",
-            url,
-            str(dest),
-        ]
+        # Detect whether ref looks like a commit SHA (40 or 7+ hex chars).
+        # git clone --branch only accepts branch/tag names, not SHAs.
+        _is_sha = bool(effective_ref and len(effective_ref) >= 7 and all(c in "0123456789abcdef" for c in effective_ref.lower()))
 
-        logger.debug("shallow_clone: running %s", cmd)
+        if _is_sha:
+            # For SHAs: init + remote add + fetch --depth
+            dest.mkdir(parents=True, exist_ok=True)
+            cmds: list[list[str]] = [
+                ["git", "init", str(dest)],
+                ["git", "-C", str(dest), "remote", "add", "origin", url],
+                ["git", "-C", str(dest), "fetch", "--depth", str(depth), "origin", effective_ref],
+                ["git", "-C", str(dest), "checkout", "FETCH_HEAD"],
+            ]
+        else:
+            cmds = [
+                [
+                    "git", "clone",
+                    "--depth", str(depth),
+                    "--branch", effective_ref,
+                    "--single-branch",
+                    "--", url, str(dest),
+                ],
+            ]
+
+        logger.debug("shallow_clone: running %d commands for %s@%s", len(cmds), url, effective_ref)
 
         try:
-            result = subprocess.run(  # noqa: S603
-                cmd,
-                shell=False,  # noqa: S603
-                capture_output=True,
-                text=True,
-                timeout=_GIT_CLONE_TIMEOUT,
-                check=False,
-            )
+            for cmd in cmds:
+                result = subprocess.run(  # noqa: S603
+                    cmd,
+                    shell=False,  # noqa: S603
+                    capture_output=True,
+                    text=True,
+                    timeout=_GIT_CLONE_TIMEOUT,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    stderr = result.stderr.strip()
+                    raise RuntimeError(
+                        f"git command failed (exit {result.returncode}): {stderr}"
+                    )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
                 f"git clone timed out after {_GIT_CLONE_TIMEOUT}s for {url}"
             ) from exc
-
-        if result.returncode != 0:
-            stderr = result.stderr.strip()
-            raise RuntimeError(
-                f"git clone failed (exit {result.returncode}): {stderr}"
-            )
 
         logger.info("shallow_clone: cloned %s@%s to %s", url, effective_ref, dest)
         yield dest
