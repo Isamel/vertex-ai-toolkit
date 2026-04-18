@@ -225,6 +225,16 @@ class ServiceHealthSkill(BaseSkill):
         template = PHASE_PROMPTS.get(phase.value, PHASE_PROMPTS["analyze"])
         return template.format(context=context, user_input=user_input)
 
+    def _get_api_client(self, gke_config: Any) -> Any:
+        """Return the Kubernetes ``ApiClient`` for *gke_config*, or ``None`` on error."""
+        from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415
+        from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415
+
+        clients = _gke_clients._create_k8s_clients(gke_config)
+        if not isinstance(clients, _ToolResult):
+            return clients[3]  # ApiClient is the 4th element
+        return None
+
     def pre_execute_parallel(self, query: str) -> None:
         """Pre-warm the K8s client cache and pre-fetch kubectl_top metrics.
 
@@ -584,19 +594,13 @@ class ServiceHealthSkill(BaseSkill):
         elif _acd_setting is True:
             argocd_active = True
         else:
-            from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415
-            from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415
             from vaig.tools.gke.argocd import detect_argocd  # noqa: PLC0415
             _effective_gke = settings.gke.model_copy(
                 update={"default_namespace": namespace}
             )
-            _acd_api_client = None
-            _acd_clients = _gke_clients._create_k8s_clients(_effective_gke)
-            if not isinstance(_acd_clients, _ToolResult):
-                _acd_api_client = _acd_clients[3]  # ApiClient is the 4th element
             argocd_active = detect_argocd(
                 namespace=namespace,
-                api_client=_acd_api_client,
+                api_client=self._get_api_client(_effective_gke),
             )
 
         gatherer_prompt = build_gatherer_prompt(
@@ -756,16 +760,10 @@ class ServiceHealthSkill(BaseSkill):
         elif _ar_setting is True:
             argo_rollouts_active = True
         else:
-            from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415
-            from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415
             from vaig.tools.gke.argo_rollouts import detect_argo_rollouts  # noqa: PLC0415
-            _ar_api_client = None
-            _ar_clients = _gke_clients._create_k8s_clients(effective_gke)
-            if not isinstance(_ar_clients, _ToolResult):
-                _ar_api_client = _ar_clients[3]  # ApiClient is the 4th element
             argo_rollouts_active = detect_argo_rollouts(
                 namespace=effective_namespace,
-                api_client=_ar_api_client,
+                api_client=self._get_api_client(effective_gke),
             )
 
         # Resolve the 3-state ArgoCD flag:
@@ -778,16 +776,10 @@ class ServiceHealthSkill(BaseSkill):
         elif _acd_setting is True:
             argocd_active = True
         else:
-            from vaig.tools.base import ToolResult as _ToolResult  # noqa: PLC0415  # noqa: F811
-            from vaig.tools.gke import _clients as _gke_clients  # noqa: PLC0415  # noqa: F811
             from vaig.tools.gke.argocd import detect_argocd  # noqa: PLC0415
-            _acd_api_client = None
-            _acd_clients = _gke_clients._create_k8s_clients(effective_gke)
-            if not isinstance(_acd_clients, _ToolResult):
-                _acd_api_client = _acd_clients[3]  # ApiClient is the 4th element
             argocd_active = detect_argocd(
                 namespace=effective_namespace,
-                api_client=_acd_api_client,
+                api_client=self._get_api_client(effective_gke),
             )
 
         agents: list[dict[str, Any]] = [
@@ -1006,8 +998,9 @@ class ServiceHealthSkill(BaseSkill):
     ) -> HealthReport:
         """Run async recommendation enrichment from a synchronous context.
 
-        Creates a lightweight :class:`~vaig.core.client.GeminiClient` scoped to
-        this enrichment pass and delegates to :func:`enrich_recommendations`.
+        Lazily initialises and reuses :attr:`_gemini_client` (and
+        :attr:`_enrichment_pool`) across calls, then delegates to
+        :func:`enrich_recommendations`.
         Uses a :class:`~concurrent.futures.ThreadPoolExecutor` with a hard
         *overall_timeout* to guarantee the enrichment never blocks the report
         pipeline — even when GCP auth probes hang (e.g. inside CI or
