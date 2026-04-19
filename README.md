@@ -17,6 +17,17 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
   - **Greenfield** — scaffold new projects from scratch with a 6-stage pipeline
   - **Service Health** — comprehensive GKE service diagnostics (4-agent pipeline with two-pass gathering)
   - Plus 33 built-in skills for SRE, DevOps, and platform engineering
+- **Autonomous Live Mode** — `vaig live "question" --interactive` enters a drill-in REPL after any investigation; full context, tool access, and follow-up questions in one session (X-05)
+- **Autonomous Investigation Pipeline** — self-directed multi-step investigation: detect anomalies → generate hypotheses → run evidence-gathering tools → correlate with git commits → produce report; budget-aware with circuit breaker (SH-09)
+- **Pattern Memory** — `PatternMemoryStore` detects recurring incident patterns across sessions; `SemanticMemoryIndex` enables vector-based retrieval of past findings to avoid re-investigating known issues (MEM-01–04)
+- **Git Integration** — `GitManager` + `patch_file` tool: apply unified diffs, branch, stage, commit, and push directly from agent pipelines (CM-05, CM-09)
+- **Workspace RAG** — `WorkspaceRAG` indexes local files into a Vertex AI RAG corpus for semantic code search during migrations (CM-08)
+- **Idiom Map LLM Fallback** — `IdiomGenerator` expands YAML idiom definitions using Gemini when no explicit mapping exists; results cached to disk (CM-07)
+- **Hypothesis Library** — `HypothesisLibrary` template engine + `AutonomousInvestigationPlanner` for systematic, evidence-driven investigation without manual prompting
+- **GitHub Repo Navigator** — 6 tools for repo browsing, code search, commit history, and batch file fetch; enables remote code migration and RAG corpus creation from any GitHub repo (GH-01–05)
+- **Live Mode Repo Correlation** — commit-aware hypotheses: `vaig live` correlates GKE anomalies with recent git commits to identify deployment-induced regressions (GH-02)
+- **Global Budget Manager & Circuit Breaker** — per-session spend cap with warn/stop action; circuit breaker trips on repeated API errors to prevent runaway costs (X-02)
+- **Prompt Injection Hardening** — `wrap_untrusted_content()` wraps external data before agent exposure; auto-activation policy engine controls which features activate based on config (Phase 1)
 - **CodingSkillOrchestrator** — 3-agent orchestration (Planner → Implementer → Verifier) for complex coding tasks; activate with `--pipeline` on `vaig ask --code`
 - **Multi-agent orchestration** — skills spawn specialized agents with different roles and models
 - **Async fanout** — true parallel agent execution via ThreadPoolExecutor for multi-agent workflows
@@ -89,6 +100,15 @@ vaig ask "Investigate why API latency spiked" -s rca -f error.log
 
 # Use a specific model
 vaig chat --model gemini-2.5-flash
+
+# Live GKE investigation + interactive drill-in REPL
+vaig live "Why is the payments service throwing 503s?" --interactive
+
+# Autonomous investigation — no question needed, self-directed; enable via config
+vaig live "what's causing high latency in production?" --namespace production --config autonomous.yaml
+
+# Migrate code between languages using the coding pipeline
+vaig ask "Migrate this Python module to Go" -s code-migration -f service.py --code
 
 # Submit feedback on the last run
 vaig feedback --rating 5 --last
@@ -312,6 +332,48 @@ Options:
   -c, --config PATH   Path to config YAML
   --force             Re-authenticate even if already logged in
 ```
+
+### `vaig live` (Interactive Drill-In REPL)
+
+Run a GKE investigation and optionally enter an interactive follow-up REPL after the report is generated.
+
+```bash
+vaig live QUESTION [OPTIONS]
+
+Options:
+  -i, --interactive    After the pipeline finishes, enter an interactive REPL
+                       with full pipeline context, tool access, and follow-up Q&A
+  -w, --watch INTEGER  Watch mode — re-run every N seconds and show diffs
+  --namespace TEXT     Kubernetes namespace
+  -A, --all-namespaces Scan all non-system namespaces
+  --dry-run            Print what would happen without executing
+  --format TEXT        Output format: json, md, html
+  -O, --open           Open HTML report in browser
+  -p, --project TEXT   GCP project override
+  --gke-project TEXT   GKE project override
+  -V, --verbose        Verbose logging
+  -d, --debug          Debug logging
+```
+
+Examples:
+
+```bash
+# Investigate and then drill in interactively
+vaig live "Why are payments pods OOMKilling?" --interactive
+
+# Autonomous investigation — enable via config: investigation.autonomous_mode: true
+vaig live "what's causing high latency in production?" --namespace production --config autonomous.yaml
+
+# Watch mode with diff on each iteration
+vaig live "monitor pod health" --watch 30 --namespace staging --format html
+```
+
+> **Autonomous mode** is enabled via config, not a CLI flag. Create a YAML config with:
+> ```yaml
+> investigation:
+>   autonomous_mode: true
+> ```
+> Then pass it with `--config autonomous.yaml`. The investigation will run self-directed without requiring further prompting.
 
 ### `vaig logout`
 
@@ -875,80 +937,96 @@ vertex-ai-toolkit/
 │   ├── __init__.py
 │   ├── __main__.py
 │   ├── core/
-│   │   ├── config.py          # Pydantic Settings (layered config)
-│   │   ├── config_switcher.py # Runtime config switching (project, location, cluster)
-│   │   ├── auth.py            # ADC + SA impersonation + dual-auth
-│   │   ├── client.py          # GeminiClient (streaming, multi-model)
-│   │   ├── cost_tracker.py    # Per-request cost tracking (SQLite)
-│   │   ├── models.py          # PipelineState + shared data models
-│   │   ├── prompt_tuner.py    # Adaptive prompt tuning from report quality signals
-│   │   ├── report_store.py    # Local report persistence for quality analysis
-│   │   ├── rag.py             # Vertex AI RAG Engine integration (RAGKnowledgeBase)
-│   │   ├── optimizer.py       # Tool call pattern analysis
-│   │   ├── prompt_defense.py  # wrap_untrusted_content() for prompt injection defense
-│   │   └── tool_call_store.py # ToolCallStore — per-tool-call JSONL recording
+│   │   ├── config.py              # Pydantic Settings (layered config)
+│   │   ├── config_switcher.py     # Runtime config switching (project, location, cluster)
+│   │   ├── auth.py                # ADC + SA impersonation + dual-auth
+│   │   ├── client.py              # GeminiClient (streaming, multi-model)
+│   │   ├── cost_tracker.py        # Per-request cost tracking (SQLite)
+│   │   ├── models.py              # PipelineState + shared data models
+│   │   ├── prompt_tuner.py        # Adaptive prompt tuning from report quality signals
+│   │   ├── report_store.py        # Local report persistence for quality analysis
+│   │   ├── rag.py                 # Vertex AI RAG Engine integration (RAGKnowledgeBase)
+│   │   ├── optimizer.py           # Tool call pattern analysis
+│   │   ├── prompt_defense.py      # wrap_untrusted_content() for prompt injection defense
+│   │   ├── tool_call_store.py     # ToolCallStore — per-tool-call JSONL recording
+│   │   ├── budget_manager.py      # GlobalBudgetManager + CircuitBreaker (X-02)
+│   │   ├── git_integration.py     # GitManager — branch/stage/commit/push (CM-05)
+│   │   ├── workspace_rag.py       # WorkspaceRAG — local file RAG corpus (CM-08)
+│   │   └── auto_activation.py     # AutoActivationPolicy engine (Phase 1)
+│   ├── memory/
+│   │   ├── pattern_store.py       # PatternMemoryStore — recurrence detection (MEM-01, MEM-02)
+│   │   └── semantic_index.py      # SemanticMemoryIndex — vector retrieval (MEM-03, MEM-04)
+│   ├── investigation/
+│   │   ├── planner.py             # AutonomousInvestigationPlanner (Phase 5)
+│   │   └── hypothesis.py          # HypothesisLibrary template engine
+│   ├── github/
+│   │   ├── navigator.py           # GitHubRepoNavigator + batch tools (GH-01, GH-05)
+│   │   ├── correlation.py         # Commit-aware hypothesis correlation (GH-02)
+│   │   ├── migration.py           # Remote clone + migrate + push (GH-03)
+│   │   └── knowledge.py           # On-demand RAG corpus from GitHub repo (GH-04)
 │   ├── context/
-│   │   ├── filters.py      # .gitignore patterns, binary detection
-│   │   ├── loader.py       # File loaders (text, PDF, image, audio, ETL)
-│   │   └── builder.py      # ContextBuilder + ContextBundle
+│   │   ├── filters.py             # .gitignore patterns, binary detection
+│   │   ├── loader.py              # File loaders (text, PDF, image, audio, ETL)
+│   │   └── builder.py             # ContextBuilder + ContextBundle
 │   ├── session/
-│   │   ├── store.py        # SQLite persistence
-│   │   └── manager.py      # SessionManager + ActiveSession
+│   │   ├── store.py               # SQLite persistence
+│   │   └── manager.py             # SessionManager + ActiveSession
 │   ├── skills/
-│   │   ├── base.py         # BaseSkill ABC, SkillPhase, SkillResult
-│   │   ├── registry.py     # Discovery, loading, lazy initialization
-│   │   ├── rca/            # Root Cause Analysis skill
-│   │   ├── anomaly/        # Anomaly Detection skill
-│   │   ├── migration/      # ETL Migration skill (Pentaho → AWS Glue)
-│   │   ├── code_migration/ # Code Migration skill (language-to-language, e.g. Python → Go)
-│   │   │   └── idioms/     # YAML idiom + dependency mappings
-│   │   ├── greenfield/     # Greenfield project scaffolding (6-stage pipeline)
-│   │   └── ...             # 33 built-in skills total
+│   │   ├── base.py                # BaseSkill ABC, SkillPhase, SkillResult
+│   │   ├── registry.py            # Discovery, loading, lazy initialization
+│   │   ├── rca/                   # Root Cause Analysis skill
+│   │   ├── anomaly/               # Anomaly Detection skill
+│   │   ├── migration/             # ETL Migration skill (Pentaho → AWS Glue)
+│   │   ├── code_migration/        # Code Migration skill (language-to-language, e.g. Python → Go)
+│   │   │   ├── idioms/            # YAML idiom + dependency mappings
+│   │   │   └── idiom_generator.py # IdiomGenerator with LLM fallback (CM-07)
+│   │   ├── greenfield/            # Greenfield project scaffolding (6-stage pipeline)
+│   │   └── ...                    # 33 built-in skills total
 │   ├── agents/
-│   │   ├── base.py            # AgentRole, AgentConfig, BaseAgent ABC
-│   │   ├── specialist.py      # SpecialistAgent (wraps GeminiClient)
-│   │   ├── orchestrator.py    # Multi-agent coordination + async fanout
-│   │   ├── coding_pipeline.py # CodingSkillOrchestrator (Planner→Implementer→Verifier)
-│   │   └── registry.py        # Agent factory
+│   │   ├── base.py                # AgentRole, AgentConfig, BaseAgent ABC
+│   │   ├── specialist.py          # SpecialistAgent (wraps GeminiClient)
+│   │   ├── orchestrator.py        # Multi-agent coordination + async fanout
+│   │   ├── coding_pipeline.py     # CodingSkillOrchestrator (Planner→Implementer→Verifier)
+│   │   └── registry.py            # Agent factory
 │   ├── tools/
-│   │   ├── base.py           # ToolResult, ToolCallRecord
-│   │   ├── file_tools.py     # File tools incl. verify_completeness
-│   │   ├── gke_tools.py      # GKE tool wrappers (legacy)
+│   │   ├── base.py                # ToolResult, ToolCallRecord
+│   │   ├── file_tools.py          # File tools incl. patch_file (CM-09) + verify_completeness
+│   │   ├── gke_tools.py           # GKE tool wrappers (legacy)
 │   │   └── gke/
-│   │       ├── _cache.py       # TTL cache for discovery/mesh resources
-│   │       ├── _clients.py     # K8s client factory + auth
-│   │       ├── _formatters.py  # Output formatters for GKE resources
-│   │       ├── _registry.py    # Tool registration (23 base + 4 Helm + 5 ArgoCD)
-│   │       ├── _resources.py   # Core resource readers
-│   │       ├── argocd.py       # ArgoCD Application introspection (5 tools)
-│   │       ├── diagnostics.py  # Pod/workload diagnostics
-│   │       ├── discovery.py    # Cluster discovery tools
-│   │       ├── helm.py         # Helm release introspection (4 tools)
-│   │       ├── kubectl.py      # kubectl-style operations + get_labels
-│   │       ├── mesh.py         # ASM/Istio mesh introspection tools
-│   │       ├── mutations.py    # Write operations (scale, restart, etc.)
-│   │       └── security.py     # RBAC check + exec_command
+│   │       ├── _cache.py          # TTL cache for discovery/mesh resources
+│   │       ├── _clients.py        # K8s client factory + auth
+│   │       ├── _formatters.py     # Output formatters for GKE resources
+│   │       ├── _registry.py       # Tool registration (23 base + 4 Helm + 5 ArgoCD)
+│   │       ├── _resources.py      # Core resource readers
+│   │       ├── argocd.py          # ArgoCD Application introspection (5 tools)
+│   │       ├── diagnostics.py     # Pod/workload diagnostics
+│   │       ├── discovery.py       # Cluster discovery tools
+│   │       ├── helm.py            # Helm release introspection (4 tools)
+│   │       ├── kubectl.py         # kubectl-style operations + get_labels
+│   │       ├── mesh.py            # ASM/Istio mesh introspection tools
+│   │       ├── mutations.py       # Write operations (scale, restart, etc.)
+│   │       └── security.py        # RBAC check + exec_command
 │   └── cli/
-│       ├── app.py          # Typer commands
+│       ├── app.py                 # Typer commands
 │       ├── commands/
-│       │   ├── auth.py     # vaig login/logout/whoami/status
-│       │   └── web.py      # vaig web (FastAPI server)
-│       └── repl.py         # Interactive REPL (prompt-toolkit)
-│   ├── web/                # Web UI (FastAPI + HTMX + SSE)
-│   │   ├── app.py          # FastAPI application factory
-│   │   ├── routes/         # ask, chat, live, settings, health, ollama
-│   │   ├── templates/      # Jinja2 HTML templates (base, ask, chat, live)
-│   │   ├── static/         # CSS with dark/light theme support
-│   │   └── session/        # Firestore session persistence
-│   └── platform/           # Admin portal (opt-in)
-│       ├── app.py          # FastAPI admin API
-│       ├── api/            # Auth, CLI management, config policy endpoints
-│       ├── core/           # JWT, Firestore repository, dependencies
-│       └── models/         # Auth, organization data models
-├── tests/                  # 183 test files, 6,772 tests
+│       │   ├── auth.py            # vaig login/logout/whoami/status
+│       │   └── web.py             # vaig web (FastAPI server)
+│       └── repl.py                # Interactive REPL (prompt-toolkit)
+│   ├── web/                       # Web UI (FastAPI + HTMX + SSE)
+│   │   ├── app.py                 # FastAPI application factory
+│   │   ├── routes/                # ask, chat, live, settings, health, ollama
+│   │   ├── templates/             # Jinja2 HTML templates (base, ask, chat, live)
+│   │   ├── static/                # CSS with dark/light theme support
+│   │   └── session/               # Firestore session persistence
+│   └── platform/                  # Admin portal (opt-in)
+│       ├── app.py                 # FastAPI admin API
+│       ├── api/                   # Auth, CLI management, config policy endpoints
+│       ├── core/                  # JWT, Firestore repository, dependencies
+│       └── models/                # Auth, organization data models
+├── tests/                         # 183 test files, 6,772 tests
 └── .github/workflows/
-    ├── ci.yml              # Test + Lint + Type check on PR/push
-    └── build.yml           # PyInstaller standalone binary builds
+    ├── ci.yml                     # Test + Lint + Type check on PR/push
+    └── build.yml                  # PyInstaller standalone binary builds
 ```
 
 ## Development

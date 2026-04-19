@@ -6,44 +6,17 @@ Complete reference for all `vaig` CLI commands and options.
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--version` | `-v` | Show version and exit |
+| `--version` | | Show version and exit |
 | `--verbose` | `-V` | Enable verbose output |
-| `--log-level` | | Set log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `--debug` | `-d` | Enable debug logging |
+
+---
 
 ## Top-Level Commands
 
-### `vaig web`
-
-Start the VAIG web server. Launches a FastAPI web interface with the same toolkit features available in the CLI (ask, chat, live modes) plus a browser-based UI with SSE streaming and dark/light theme toggle.
-
-Requires web extras: `pip install vertex-ai-toolkit[web]`
-
-```bash
-vaig web [OPTIONS]
-```
-
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--host` | `-h` | Bind address | `0.0.0.0` |
-| `--port` | `-p` | Bind port (also via `PORT` env var) | `8080` |
-| `--reload` | | Enable auto-reload for development | `false` |
-
-**Examples:**
-
-```bash
-# Start with defaults (0.0.0.0:8080)
-vaig web
-
-# Custom port
-vaig web --port 9090
-
-# Development mode with auto-reload
-vaig web --reload
-```
-
 ### `vaig ask`
 
-Send a single question to the AI and get a response. Supports file context, skills, and export.
+Send a single question to the AI and get a response. Supports file context, directory context, skills, code-migration, and export.
 
 ```bash
 vaig ask "Your question here" [OPTIONS]
@@ -54,6 +27,8 @@ vaig ask "Your question here" [OPTIONS]
 | `--config` | `-c` | Path to config file | Auto-detected |
 | `--model` | `-m` | Model to use | `gemini-2.5-pro` |
 | `--file` | `-f` | File(s) to include as context (repeatable) | — |
+| `--dir` | `-d` | Directory(ies) as context — recursively included (repeatable) | — |
+| `--examples` | `-e` | Reference/example files for code migration (repeatable) | — |
 | `--output` | `-o` | Output file path | stdout |
 | `--format` | | Export format: `json`, `md`, `html` | — |
 | `--skill` | `-s` | Skill to use | — |
@@ -66,6 +41,17 @@ vaig ask "Your question here" [OPTIONS]
 | `--cluster` | | GKE cluster name | Config value |
 | `--namespace` | | Kubernetes namespace | Config value |
 | `--project-id` | | GCP project ID override | Config value |
+| `--project` | `-p` | GCP project ID (alias for `--project-id`) | Config value |
+| `--location` | | GCP location override | Config value |
+| `--gke-project` | | GKE project ID (overrides `gke.project_id`) | Config value |
+| `--gke-location` | | GKE cluster location (overrides `gke.location`) | Config value |
+| `--phases` | | Comma-separated skill phases to run (e.g. `plan,implement`) | All phases |
+| `--resume` | | Resume a code-migration run from saved state | `false` |
+| `--from-repo` | | Shallow-clone source repo as context: `owner/repo[@ref]` | — |
+| `--to-repo` | | Target repo for code migration (stub) | — |
+| `--push` / `--no-push` | | Push changes after migration (stub) | `false` |
+| `--verbose` | `-V` | Enable verbose logging (INFO level) | `false` |
+| `--debug` | | Enable debug logging (DEBUG level) | `false` |
 
 **Examples:**
 
@@ -78,6 +64,9 @@ vaig ask "Review this for performance issues" -f slow_query.py -s perf-analysis
 
 # Multiple files
 vaig ask "Compare these implementations" -f v1/handler.py -f v2/handler.py
+
+# Directory context (recursive)
+vaig ask "Find any SQL injection risks" --dir src/
 
 # Export to markdown
 vaig ask "Analyze this config" -f nginx.conf --format md -o report.md
@@ -93,7 +82,16 @@ vaig ask "Implement a retry decorator with exponential backoff" --code --pipelin
 
 # Live infrastructure query
 vaig ask "What's the CPU usage of the API pods?" --live --cluster prod
+
+# Code migration from a remote repo
+vaig ask "Migrate this service from Flask to FastAPI" \
+  --from-repo my-org/legacy-service --phases plan,implement
+
+# Resume an interrupted migration
+vaig ask "Continue the migration" --resume
 ```
+
+---
 
 ### `vaig chat`
 
@@ -135,9 +133,11 @@ vaig chat -n "kubernetes-debugging"
 vaig chat -m gemini-2.5-flash
 ```
 
+---
+
 ### `vaig live`
 
-Interactive infrastructure investigation mode with live GKE and GCloud tools.
+Interactive infrastructure investigation mode with live GKE and GCloud tools. Runs a multi-agent pipeline against your cluster and produces a structured health report. After the report, use `--interactive` to open a drill-in REPL to ask follow-up questions with full cluster context.
 
 ```bash
 vaig live "Your investigation query" [OPTIONS]
@@ -154,11 +154,27 @@ vaig live "Your investigation query" [OPTIONS]
 | `--cluster` | | GKE cluster name | Config value |
 | `--namespace` | | Kubernetes namespace | Config value |
 | `--project-id` | | GCP project ID override | Config value |
+| `--project` | `-p` | GCP project ID (alias for `--project-id`) | Config value |
+| `--location` | | GCP location override | Config value |
+| `--gke-project` | | GKE project ID (overrides `gke.project_id`) | Config value |
+| `--gke-location` | | GKE cluster location (overrides `gke.location`) | Config value |
+| `--all-namespaces` | | Scan all non-system namespaces | `false` |
+| `--interactive` | `-i` | Open drill-in REPL after the report to ask follow-up questions | `false` |
+| `--watch` | `-w` | Re-execute every N seconds (minimum 10) — live polling mode | — |
+| `--dry-run` / `--dry` | | Show execution plan without running | `false` |
+| `--summary` | | Show compact summary instead of full report | `false` |
+| `--detailed` | | Show every tool call as it happens | `false` |
+| `--no-bell` | | Suppress terminal bell after pipeline completes | `false` |
+| `--open` | `-O` | Open HTML report in default browser (requires `--format html`) | `false` |
+| `--repo` | | GitHub repo for correlation: `owner/repo` | — |
+| `--repo-ref` | | Git ref for repo correlation (branch, tag, SHA) | — |
+| `--verbose` | `-V` | Enable verbose logging (INFO level) | `false` |
+| `--debug` | `-d` | Enable debug logging (DEBUG level) | `false` |
 
 **Examples:**
 
 ```bash
-# Investigate a service
+# Basic investigation
 vaig live "Why is payment-service slow?" --cluster prod --namespace default
 
 # Health check with a skill
@@ -172,7 +188,35 @@ vaig live "Investigate the spike in 5xx errors at 14:30 UTC" \
 # Export investigation results
 vaig live "Check all pod resource utilization" \
   --cluster prod -o capacity-report.md --format md
+
+# Open HTML report in browser
+vaig live "Cluster health summary" --format html --open
+
+# Drill-in REPL after the report
+vaig live "What pods are in CrashLoopBackOff?" --cluster prod --interactive
+
+# Preview execution plan without running
+vaig live "Investigate memory pressure" --cluster prod --dry-run
+
+# Live polling every 60 seconds
+vaig live "Are there any OOMKilled pods?" --cluster prod --watch 60
+
+# Correlate findings with a GitHub repo
+vaig live "Did recent deploys cause errors?" \
+  --cluster prod --repo my-org/my-service --repo-ref main
+
+# Compact summary
+vaig live "Cluster overview" --cluster prod --summary
+
+# Scan all namespaces
+vaig live "Any issues across all namespaces?" --all-namespaces --cluster prod
 ```
+
+> **Tip:** Combine `--interactive` with `--skill rca` to investigate root causes in depth after the initial report.
+
+> **Note on `-w` short flag:** The meaning of `-w` differs by command. On `vaig live`, `-w` is short for `--watch INTEGER` (poll interval in seconds). On `vaig ask` and `vaig chat`, `-w` is short for `--workspace PATH` (workspace root for the coding agent). Always check the command's option table to avoid confusion.
+
+---
 
 ### `vaig discover`
 
@@ -225,6 +269,124 @@ vaig discover -A -o report.md
 vaig discover --namespace default --cluster prod-cluster --gke-project my-gke-project
 ```
 
+---
+
+### `vaig check`
+
+Terraform-compatible health check for a Kubernetes namespace. Returns a structured JSON result and exits with a machine-readable code — designed for use in CI/CD pipelines and infrastructure-as-code health gates.
+
+**Exit codes:**
+- `0` — healthy
+- `1` — unhealthy (issues found)
+- `2` — error or timeout
+
+```bash
+vaig check [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--namespace` | `-n` | Kubernetes namespace to check | Config default |
+| `--cluster` | | GKE cluster name | Config value |
+| `--project` | `-p` | GCP project ID override | Config value |
+| `--location` | `-l` | GCP location override | Config value |
+| `--timeout` | | Maximum seconds to wait for analysis | Config value |
+| `--cached` | | Return cached result if available (skip live analysis) | `false` |
+| `--cache-ttl` | | Cache TTL in seconds (how long a cached result is valid) | Config value |
+| `--config` | `-c` | Path to config file | Auto-detected |
+| `--model` | `-m` | Model to use | Config value |
+| `--verbose` | `-V` | Enable verbose logging (INFO level) | `false` |
+| `--debug` | `-d` | Enable debug logging (DEBUG level) | `false` |
+
+**Output (stdout, always JSON):**
+
+```json
+{
+  "status": "healthy",
+  "namespace": "production",
+  "cluster": "prod-cluster",
+  "findings": [],
+  "run_id": "20250601T120000Z"
+}
+```
+
+**Examples:**
+
+```bash
+# Basic health check (CI/CD gate)
+vaig check --namespace production
+
+# Use cached result for fast checks
+vaig check --namespace production --cached
+
+# Override cluster and project
+vaig check -n staging --cluster staging-cluster -p my-project
+
+# With a timeout
+vaig check --namespace production --timeout 120
+
+# Use in shell scripts
+if vaig check --namespace production; then
+  echo "Cluster is healthy"
+else
+  echo "Issues detected — check output"
+fi
+```
+
+---
+
+### `vaig remediate`
+
+Execute recommended actions from the last health report. Reads recommendations from the most recent `vaig discover` / `vaig live` report and applies them with safety tier enforcement.
+
+**Safety tiers:**
+- `SAFE` (green) — auto-executable with `--approve`
+- `REVIEW` (yellow) — requires `--execute` after showing the plan
+- `BLOCKED` (red) — never executed; shows reason and alternatives
+
+Requires `remediation.enabled: true` in your configuration.
+
+```bash
+vaig remediate [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--list` | | List all recommended actions from the last health report | `false` |
+| `--finding` | `-f` | Finding ID (or index, or partial title) to remediate | — |
+| `--approve` | | Auto-approve and execute SAFE tier commands | `false` |
+| `--dry-run` | | Show what would happen without executing | `false` |
+| `--execute` | | Approve and execute REVIEW tier commands after showing plan | `false` |
+| `--config` | `-c` | Path to config file | Auto-detected |
+| `--verbose` | `-V` | Enable verbose logging (INFO level) | `false` |
+| `--debug` | `-d` | Enable debug logging (DEBUG level) | `false` |
+
+**Examples:**
+
+```bash
+# See all recommended actions from last report
+vaig remediate --list
+
+# Preview what a finding would do (safe, no changes)
+vaig remediate --finding crashloop-payment-svc --dry-run
+
+# Execute a SAFE action
+vaig remediate --finding crashloop-payment-svc --approve
+
+# Execute a REVIEW action after reviewing the plan
+vaig remediate --finding high-memory-usage --execute
+
+# Reference by index from --list output
+vaig remediate --finding 3 --approve
+
+# Reference by partial title
+vaig remediate --finding "memory pressure" --dry-run
+```
+
+> **Note:** `vaig remediate` always reads from the _most recent_ local health report. Run `vaig discover` or `vaig live` first to generate a fresh report.
+
+---
+
 ### `vaig doctor`
 
 Run diagnostic checks on your VAIG environment. Verifies GCP authentication, Vertex AI API access, Kubernetes connectivity, observability integrations, and optional dependencies.
@@ -274,6 +436,8 @@ vaig doctor --cluster prod-cluster --gke-project my-gke-project
 
 Exit codes: `0` if all critical checks pass, `1` if any critical check (GCP Auth or Vertex AI API) fails.
 
+---
+
 ### `vaig export`
 
 Export a past session to a file.
@@ -303,6 +467,8 @@ vaig export abc123 -f html -o report.html
 # Print to stdout
 vaig export abc123
 ```
+
+---
 
 ### `vaig feedback`
 
@@ -338,6 +504,8 @@ vaig feedback -r 3 --run-id 20250601T120000Z
 ```
 
 > **Note:** Export must be enabled in your configuration (`export.enabled=true`) for feedback to be saved.
+
+---
 
 ### `vaig optimize`
 
@@ -384,7 +552,445 @@ vaig optimize --reports
 vaig optimize --reports --last 10
 ```
 
+---
+
+### `vaig web`
+
+Start the VAIG web server. Launches a FastAPI web interface with the same toolkit features available in the CLI (ask, chat, live modes) plus a browser-based UI with SSE streaming and dark/light theme toggle.
+
+Requires web extras: `pip install vertex-ai-toolkit[web]`
+
+```bash
+vaig web [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--host` | `-h` | Bind address | `0.0.0.0` |
+| `--port` | `-p` | Bind port (also via `PORT` env var) | `8080` |
+| `--reload` | | Enable auto-reload for development | `false` |
+
+**Examples:**
+
+```bash
+# Start with defaults (0.0.0.0:8080)
+vaig web
+
+# Custom port
+vaig web --port 9090
+
+# Development mode with auto-reload
+vaig web --reload
+```
+
+---
+
+### `vaig webhook-server`
+
+Start the VAIG webhook server for Datadog alerts. Launches a Uvicorn/FastAPI server that receives Datadog alert webhooks (`POST /webhook/datadog`), triggers `vaig` health analyses on affected services, and dispatches results to PagerDuty and Google Chat.
+
+Requires web extras: `pip install vertex-ai-toolkit[web]`
+
+```bash
+vaig webhook-server [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--host` | `-h` | Bind address | `0.0.0.0` |
+| `--port` | `-p` | Bind port (also via `PORT` env var) | `8080` |
+| `--hmac-secret` | | Datadog webhook HMAC secret for signature verification (also via `VAIG_WEBHOOK_SERVER__HMAC_SECRET`) | `""` |
+| `--max-analyses` | | Maximum analyses per UTC day (cost protection) | `50` |
+| `--dedup-cooldown` | | Seconds before re-analyzing the same alert | `300` |
+| `--reload` | | Enable auto-reload for development | `false` |
+
+**Examples:**
+
+```bash
+# Start with defaults
+vaig webhook-server
+
+# Custom port
+vaig webhook-server --port 9090
+
+# Enable HMAC signature verification
+vaig webhook-server --hmac-secret my-secret
+
+# Raise analysis budget and dedup cooldown
+vaig webhook-server --max-analyses 100 --dedup-cooldown 600
+
+# Development mode
+vaig webhook-server --reload
+```
+
+---
+
+### `vaig login`
+
+Authenticate with the platform backend using the OAuth PKCE flow. Opens a browser window for Google OAuth consent and stores tokens locally at `~/.vaig/credentials.json`.
+
+Requires `platform.enabled: true` in your configuration.
+
+```bash
+vaig login [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--config` | `-c` | Path to config file | Auto-detected |
+| `--force` | | Re-authenticate even if already logged in | `false` |
+
+**Examples:**
+
+```bash
+# Login to platform
+vaig login
+
+# Force re-authentication
+vaig login --force
+```
+
+---
+
+### `vaig logout`
+
+Log out from the platform and clear local credentials.
+
+Requires `platform.enabled: true` in your configuration.
+
+```bash
+vaig logout [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--config` | `-c` | Path to config file | Auto-detected |
+
+```bash
+vaig logout
+```
+
+---
+
+### `vaig whoami`
+
+Show the currently authenticated platform user, including email, organization, role, and CLI ID.
+
+Requires `platform.enabled: true` in your configuration.
+
+```bash
+vaig whoami [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--config` | `-c` | Path to config file | Auto-detected |
+
+```bash
+vaig whoami
+```
+
+---
+
+### `vaig status`
+
+Show platform registration status. Displays authentication state, organization, role, CLI ID, and whether a config policy is enforced.
+
+Requires `platform.enabled: true` in your configuration.
+
+```bash
+vaig status [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--config` | `-c` | Path to config file | Auto-detected |
+
+```bash
+vaig status
+```
+
+---
+
 ## Sub-Command Groups
+
+### `vaig schedule`
+
+Manage scheduled health checks. Schedule recurring `vaig discover` runs using an interval or a cron expression, and control the scheduler daemon.
+
+#### `vaig schedule add`
+
+Register a new scheduled scan.
+
+```bash
+vaig schedule add [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--cluster` | `-c` | GKE cluster name | Config value |
+| `--namespace` | `-n` | Kubernetes namespace to scan | Config default |
+| `--interval` | `-i` | Repeat interval in minutes | — |
+| `--cron` | | Cron expression (e.g. `"0 */6 * * *"`) | — |
+| `--all-namespaces` | `-A` | Scan all non-system namespaces | `false` |
+| `--skip-healthy` / `--include-healthy` | | Omit healthy workloads from reports | `false` |
+
+Either `--interval` or `--cron` is required.
+
+```bash
+# Every 30 minutes on the default namespace
+vaig schedule add --interval 30 --namespace production
+
+# Every 6 hours via cron
+vaig schedule add --cron "0 */6 * * *" --namespace staging
+
+# All namespaces, skip healthy
+vaig schedule add --interval 60 --all-namespaces --skip-healthy
+```
+
+#### `vaig schedule list`
+
+```bash
+vaig schedule list
+```
+
+List all registered scheduled scans with their IDs, clusters, namespaces, schedule, and last-run time.
+
+#### `vaig schedule remove`
+
+```bash
+vaig schedule remove SCHEDULE_ID
+```
+
+Remove a scheduled scan by ID.
+
+#### `vaig schedule run-now`
+
+```bash
+vaig schedule run-now SCHEDULE_ID
+```
+
+Trigger an immediate run of a scheduled scan, regardless of its next scheduled time.
+
+#### `vaig schedule start`
+
+Start the scheduler daemon. Must be running for scheduled scans to fire.
+
+```bash
+vaig schedule start [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--host` | `-h` | Bind address for scheduler API | `0.0.0.0` |
+| `--port` | `-p` | Port for scheduler API | `8081` |
+
+```bash
+# Start with defaults
+vaig schedule start
+
+# Custom port
+vaig schedule start --port 9000
+```
+
+#### `vaig schedule stop`
+
+```bash
+vaig schedule stop
+```
+
+Stop the running scheduler daemon.
+
+#### `vaig schedule status`
+
+```bash
+vaig schedule status
+```
+
+Show scheduler daemon status and upcoming run times.
+
+---
+
+### `vaig compare`
+
+Cross-cluster comparison tools.
+
+#### `vaig compare run`
+
+Compare deployment configurations across multiple clusters side-by-side.
+
+```bash
+vaig compare run [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--clusters` | | Comma-separated list of cluster names to compare | **Required** |
+| `--namespace` | `-n` | Kubernetes namespace | Config default |
+| `--deployment` | `-d` | Deployment name to compare | — |
+| `--export` | | Output format for comparison report: `json`, `md`, `html` | — |
+| `--verbose` | `-v` | Enable verbose output | `false` |
+
+```bash
+# Compare two clusters
+vaig compare run --clusters prod-us,prod-eu --namespace default
+
+# Compare a specific deployment
+vaig compare run --clusters prod,staging -n payments -d payment-api
+
+# Export the comparison
+vaig compare run --clusters prod,staging --export json
+```
+
+---
+
+### `vaig fleet`
+
+Multi-cluster fleet management.
+
+#### `vaig fleet discover`
+
+Scan multiple clusters in parallel and produce a consolidated fleet health report.
+
+```bash
+vaig fleet discover [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--parallel` | | Run cluster scans in parallel | `false` |
+| `--max-workers` | | Maximum parallel workers | Config value |
+| `--budget` | | Maximum total cost budget (USD) | — |
+| `--detailed` | | Show every tool call as it happens | `false` |
+| `--export` | | Output format for fleet report: `json`, `md`, `html` | — |
+| `--namespace` | `-n` | Namespace to scan on each cluster | Config default |
+| `--all-namespaces` | `-A` | Scan all non-system namespaces on each cluster | `false` |
+| `--skip-healthy` / `--no-skip-healthy` | | Omit healthy workloads from the report | `false` |
+| `--verbose` | `-V` | Enable verbose logging (INFO level) | `false` |
+
+```bash
+# Scan all configured clusters sequentially
+vaig fleet discover
+
+# Parallel scan with a cost budget
+vaig fleet discover --parallel --max-workers 4 --budget 5.00
+
+# Focus on issues only
+vaig fleet discover --parallel --skip-healthy
+
+# Export consolidated report
+vaig fleet discover --parallel --export json
+```
+
+---
+
+### `vaig incident`
+
+Incident management — export findings and review recent incidents.
+
+#### `vaig incident export`
+
+Export a finding to an external incident management system (Jira or PagerDuty).
+
+```bash
+vaig incident export [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--to` | | Target system: `jira` or `pagerduty` | **Required** |
+| `--finding` | | Finding ID to export | **Required** |
+| `--cluster` | | Cluster the finding belongs to | Config value |
+
+```bash
+# Export to Jira
+vaig incident export --to jira --finding crashloop-payment-svc
+
+# Export to PagerDuty
+vaig incident export --to pagerduty --finding high-memory-usage --cluster prod
+```
+
+#### `vaig incident list`
+
+List recent findings across all clusters.
+
+```bash
+vaig incident list [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--last` | | Number of recent findings to show | Config default |
+
+```bash
+# List recent findings
+vaig incident list
+
+# Show last 20
+vaig incident list --last 20
+```
+
+---
+
+### `vaig train`
+
+Fine-tuning pipeline — prepare training data and submit Vertex AI tuning jobs.
+
+#### `vaig train prepare`
+
+Extract rated examples from BigQuery (via `vaig feedback`) and generate a training JSONL file for Vertex AI fine-tuning.
+
+Requires `training.enabled: true` in your configuration.
+
+```bash
+vaig train prepare [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--min-rating` | | Minimum feedback rating to include (1–5) | Config value |
+| `--output` | `-o` | Output JSONL file path | stdout |
+| `--dry-run` | | Report statistics without writing a file | `false` |
+| `--max-examples` | | Maximum number of examples to include | Config value |
+
+```bash
+# Prepare training data (all rated examples)
+vaig train prepare -o training-data.jsonl
+
+# Only include high-quality examples (rating ≥ 4)
+vaig train prepare --min-rating 4 -o training-data.jsonl
+
+# Preview statistics without writing
+vaig train prepare --dry-run
+
+# Limit to 1000 examples
+vaig train prepare --max-examples 1000 -o training-data.jsonl
+```
+
+#### `vaig train submit`
+
+Upload training JSONL to GCS and submit a Vertex AI supervised fine-tuning job.
+
+Requires `training.enabled: true` in your configuration.
+
+```bash
+vaig train submit [OPTIONS]
+```
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--input` | `-i` | Path to JSONL training file | **Required** |
+| `--dry-run` | | Validate and report without submitting | `false` |
+
+```bash
+# Submit a tuning job
+vaig train submit --input training-data.jsonl
+
+# Validate without submitting
+vaig train submit --input training-data.jsonl --dry-run
+```
+
+---
 
 ### `vaig sessions`
 
@@ -454,6 +1060,8 @@ vaig sessions delete abc123
 vaig sessions delete abc123 -f
 ```
 
+---
+
 ### `vaig models`
 
 #### `vaig models list`
@@ -463,6 +1071,8 @@ vaig models list
 ```
 
 List all available Gemini models configured in your project.
+
+---
 
 ### `vaig skills`
 
@@ -507,6 +1117,8 @@ Scaffold a new custom skill with boilerplate code.
 vaig skills create my-audit -d "Custom security audit" -t "security,audit"
 vaig skills create etl-review -d "ETL pipeline review" -o ./skills/
 ```
+
+---
 
 ### `vaig stats`
 
@@ -559,6 +1171,8 @@ Remove telemetry events older than N days. Requires `--confirm` flag.
 vaig stats clear --days 30 --confirm
 ```
 
+---
+
 ### `vaig mcp`
 
 Manage MCP (Model Context Protocol) servers.
@@ -587,90 +1201,7 @@ vaig mcp call
 
 Interactively call an MCP tool for testing.
 
-### `vaig login`
-
-Authenticate with the platform backend using the OAuth PKCE flow. Opens a browser window for Google OAuth consent and stores tokens locally at `~/.vaig/credentials.json`.
-
-Requires `platform.enabled: true` in your configuration.
-
-```bash
-vaig login [OPTIONS]
-```
-
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--config` | `-c` | Path to config file | Auto-detected |
-| `--force` | | Re-authenticate even if already logged in | `false` |
-
-**Examples:**
-
-```bash
-# Login to platform
-vaig login
-
-# Force re-authentication
-vaig login --force
-```
-
-### `vaig logout`
-
-Log out from the platform and clear local credentials.
-
-Requires `platform.enabled: true` in your configuration.
-
-```bash
-vaig logout [OPTIONS]
-```
-
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--config` | `-c` | Path to config file | Auto-detected |
-
-**Examples:**
-
-```bash
-vaig logout
-```
-
-### `vaig whoami`
-
-Show the currently authenticated platform user, including email, organization, role, and CLI ID.
-
-Requires `platform.enabled: true` in your configuration.
-
-```bash
-vaig whoami [OPTIONS]
-```
-
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--config` | `-c` | Path to config file | Auto-detected |
-
-**Examples:**
-
-```bash
-vaig whoami
-```
-
-### `vaig status`
-
-Show platform registration status. Displays authentication state, organization, role, CLI ID, and whether a config policy is enforced.
-
-Requires `platform.enabled: true` in your configuration.
-
-```bash
-vaig status [OPTIONS]
-```
-
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--config` | `-c` | Path to config file | Auto-detected |
-
-**Examples:**
-
-```bash
-vaig status
-```
+---
 
 ## Environment Variables
 
@@ -688,6 +1219,96 @@ export VAIG_LOGGING__LEVEL=DEBUG
 
 # Override GKE cluster
 export VAIG_GKE__CLUSTER_NAME=my-cluster
+
+# Enable remediation
+export VAIG_REMEDIATION__ENABLED=true
+
+# Enable training pipeline
+export VAIG_TRAINING__ENABLED=true
+
+# Webhook HMAC secret
+export VAIG_WEBHOOK_SERVER__HMAC_SECRET=my-hmac-secret
+```
+
+---
+
+## Common Patterns
+
+### Quick cluster health check
+
+```bash
+# Full scan — all namespaces, skip healthy, open HTML report
+vaig discover --all-namespaces --skip-healthy --format html --open
+```
+
+### CI/CD health gate
+
+```bash
+# Exit 0 if healthy, 1 if issues found — safe for pipelines
+vaig check --namespace production --cached
+```
+
+### Investigate → remediate workflow
+
+```bash
+# 1. Discover issues
+vaig discover --namespace production --skip-healthy -o report.md
+
+# 2. See recommended actions
+vaig remediate --list
+
+# 3. Preview a safe action
+vaig remediate --finding 1 --dry-run
+
+# 4. Execute it
+vaig remediate --finding 1 --approve
+```
+
+### Live investigation with drill-in
+
+```bash
+# Run analysis then drop into interactive REPL
+vaig live "Check for memory pressure" --cluster prod --interactive
+```
+
+### Scheduled recurring scans
+
+```bash
+# Register a nightly scan at 2am
+vaig schedule add --cron "0 2 * * *" --namespace production --skip-healthy
+
+# Start the scheduler daemon
+vaig schedule start
+
+# Check status
+vaig schedule status
+```
+
+### Fleet-wide parallel scan
+
+```bash
+# Scan all clusters in parallel, export consolidated report
+vaig fleet discover --parallel --max-workers 4 --skip-healthy --export fleet.md
+```
+
+### Fine-tuning pipeline
+
+```bash
+# 1. Collect feedback over time
+vaig feedback -r 5 --last -m "Excellent RCA"
+
+# 2. Prepare high-quality training examples
+vaig train prepare --min-rating 4 -o training.jsonl
+
+# 3. Submit tuning job
+vaig train submit --input training.jsonl
+```
+
+### Watch mode — live polling
+
+```bash
+# Re-run analysis every 2 minutes, compact output
+vaig live "Any OOMKilled pods?" --cluster prod --watch 120 --summary
 ```
 
 ---

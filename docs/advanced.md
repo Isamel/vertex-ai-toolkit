@@ -452,11 +452,11 @@ Retry flow:
 ## Logging and Debugging
 
 ```bash
-# Verbose mode — sets log level to DEBUG
+# Verbose mode — sets log level to INFO
 vaig ask "test" --verbose
 
-# Specific log level
-vaig ask "test" --log-level DEBUG
+# Debug mode — sets log level to DEBUG
+vaig ask "test" --debug
 
 # Via config
 # vaig.yaml
@@ -474,6 +474,642 @@ Log output includes:
 - Skill loading and agent pipeline setup
 - Session create/load/save events
 - Retry attempts and fallbacks
+
+---
+
+## Surgical File Editing with `patch_file`
+
+The `patch_file` tool applies a **unified diff** to an existing file. It is the precision instrument of the file-editing toolkit — safer and more transparent than `write_file` for modifying files that already exist.
+
+### When to Use Which Tool
+
+| Tool | Best For |
+|------|----------|
+| `read_file` | Reading files before editing |
+| `write_file` | Creating new files or completely replacing content |
+| `edit_file` | Single exact-string substitution (Claude Code pattern) |
+| `patch_file` | Multi-hunk surgical edits — add/remove/modify specific lines |
+
+Use `patch_file` over `write_file` when you need to modify an existing file and want to express the change as a diff rather than rewriting the entire content. This is especially valuable for large files where transmitting the full new content is expensive, and for changes that need to be human-auditable.
+
+### Unified Diff Format
+
+The patch must follow the standard unified diff format with `@@ ... @@` hunk headers:
+
+```
+@@ -<old_start>[,<old_count>] +<new_start>[,<new_count>] @@
+ context line
+-removed line
++added line
+ context line
+```
+
+- Lines starting with ` ` (space) are context — they must match the file exactly
+- Lines starting with `-` are removed
+- Lines starting with `+` are added
+- The `@@` header counts are optional; VAIG re-derives them from the ops
+
+**Example: a two-hunk patch**
+
+```diff
+@@ -3,7 +3,8 @@
+ import logging
+ import os
++import re
+ from pathlib import Path
+ 
+ logger = logging.getLogger(__name__)
+-LOG_LEVEL = "INFO"
++LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+```
+
+### Atomic Application
+
+All hunks in a patch succeed together or **none are applied**. If any hunk's context lines do not match the current file, the entire patch is rejected and the file is left unchanged. The response is a JSON object:
+
+```json
+{"success": true, "path": "src/mymodule.py"}
+```
+
+```json
+{
+  "success": false,
+  "error": "Hunk context mismatch",
+  "conflicts": [
+    {
+      "hunk_start": 42,
+      "expected": "    LOG_LEVEL = \"INFO\"\n",
+      "found":    "    LOG_LEVEL = \"WARNING\"\n"
+    }
+  ]
+}
+```
+
+### Backup Behavior
+
+Set `patch.backup_enabled: true` in config (or pass `backup: "true"` in the tool call) to create a `.orig` backup before patching:
+
+```yaml
+# vaig.yaml
+coding:
+  patch:
+    backup_enabled: true             # Creates src/auth.py.orig before patching
+    max_hunk_size: 500               # Max lines per hunk (0 = unlimited)
+```
+
+When `backup_enabled` is true, VAIG writes `<filepath>.orig` beside the target file before applying changes. If writing the backup fails (e.g. disk full), a warning is logged but patching continues.
+
+### Error Handling
+
+| Error | Meaning | Fix |
+|-------|---------|-----|
+| `"File not found"` | Target file does not exist | Use `write_file` to create it first |
+| `"Invalid unified diff: missing hunk header"` | Patch has no `@@` header | Add proper `@@ -L,N +L,N @@` headers |
+| `"Hunk context mismatch"` | Context lines don't match file | Re-read the file and regenerate the patch |
+| `"Write failed"` | Disk/permissions issue | Check file permissions and disk space |
+
+### Full Example: Applying a Multi-Hunk Patch via CLI
+
+```bash
+vaig ask "Add request ID logging to the auth middleware" \
+    --code -w /path/to/project
+```
+
+The agent will call `patch_file` with something like:
+
+```
+path: "src/middleware/auth.py"
+patch: |
+  @@ -1,5 +1,6 @@
+   import logging
+  +import uuid
+   from fastapi import Request
+   
+   logger = logging.getLogger(__name__)
+  @@ -18,6 +19,7 @@
+   async def auth_middleware(request: Request, call_next):
+  +    request_id = str(uuid.uuid4())
+  +    logger.info("request_id=%s path=%s", request_id, request.url.path)
+       token = request.headers.get("Authorization")
+backup: "true"
+```
+
+---
+
+## Git Integration (Automated Workflow)
+
+`GitManager` wraps the `git` and `gh` CLIs to automate the full branch → commit → push → PR lifecycle during coding pipeline runs. Disabled by default — enable explicitly in config.
+
+### Safety Model
+
+- **Never commits to `main` or `master`** — `GitSafetyError` is raised if the current branch is a protected branch when `commit_all` or `push` is called
+- **Dirty tree detection** — `check_clean()` returns `False` when uncommitted changes exist; the pipeline can abort rather than creating a noisy diff
+- **No-op when disabled** — every method returns immediately when `coding.git.enabled: false`, so the same code path works in both modes
+
+### Full Lifecycle
+
+```
+check_clean()          → Assert working tree is clean before starting
+create_branch(name)    → git checkout -b vaig/<task-slug>
+  ... pipeline writes files ...
+commit_all(message)    → git add -A && git commit -m "<message>"
+push(set_upstream=True)→ git push -u origin vaig/<task-slug>
+create_pr(title, body) → gh pr create --title "..." --body "..." --base main
+```
+
+### Configuration
+
+```yaml
+# vaig.yaml
+coding:
+  git:
+    enabled: true                    # Master switch — off by default
+    auto_branch: true                # Create feature branch before writes
+    auto_commit: true                # Commit after each pipeline phase
+    auto_pr: true                    # Open PR via gh CLI when run completes
+    pr_provider: "gh"                # Only "gh" (GitHub CLI) is supported
+    branch_prefix: "vaig/"          # All auto branches are "vaig/<slug>"
+    commit_signoff: false            # Append Signed-off-by trailer
+```
+
+### Branch Naming
+
+Branch names are derived from the task description using `_sanitize_branch_name()`:
+
+- Lowercased
+- Non-alphanumeric characters replaced with hyphens
+- Leading/trailing hyphens stripped
+- Truncated to 60 characters
+- Prefixed with `branch_prefix` (default `vaig/`)
+
+```
+"Add retry logic to GCS upload"  →  vaig/add-retry-logic-to-gcs-upload
+"Fix auth bug #123"               →  vaig/fix-auth-bug-123
+```
+
+Override the prefix in config:
+
+```yaml
+coding:
+  git:
+    branch_prefix: "bot/"           # → bot/add-retry-logic-to-gcs-upload
+```
+
+### Enabling Auto-Commit for Coding Tasks
+
+```yaml
+# vaig.yaml — minimal git integration (branch + commit, no PR)
+coding:
+  git:
+    enabled: true
+    auto_branch: true
+    auto_commit: true
+    auto_pr: false
+```
+
+```bash
+vaig ask "Refactor the database connection pool" \
+    --code --pipeline -w /path/to/project
+# → Creates vaig/refactor-the-database-connection-pool
+# → Commits all changes with a conventional commit message
+```
+
+### Full Auto-PR Pipeline
+
+```yaml
+# vaig.yaml — full auto-PR pipeline
+coding:
+  git:
+    enabled: true
+    auto_branch: true
+    auto_commit: true
+    auto_pr: true
+    pr_provider: "gh"
+    commit_signoff: true
+```
+
+```bash
+# Prerequisites: gh must be authenticated (gh auth login)
+vaig ask "Add OpenTelemetry tracing to the FastAPI app" \
+    --code --pipeline -w /path/to/project
+# → Branch: vaig/add-opentelemetry-tracing-to-the-fastapi-app
+# → Commits changes
+# → Pushes branch to origin
+# → Opens PR: "Add OpenTelemetry tracing to the FastAPI app" → main
+# → Prints the PR URL
+```
+
+### Programmatic Usage
+
+```python
+from pathlib import Path
+from vaig.core.config import GitConfig
+from vaig.core.git_integration import GitManager
+
+config = GitConfig(enabled=True, auto_branch=True, auto_commit=True, auto_pr=True)
+manager = GitManager(config, workspace=Path("my_project"))
+
+if not manager.check_clean():
+    raise RuntimeError("Workspace has uncommitted changes — stash or commit first")
+
+manager.create_branch("vaig/my-feature")
+# ... implement feature, write files ...
+manager.commit_all("feat(auth): add JWT refresh token rotation")
+manager.push()
+pr_url = manager.create_pr(
+    title="feat(auth): add JWT refresh token rotation",
+    body="Implements sliding-window refresh token rotation with Redis backing.",
+)
+print(pr_url)
+```
+
+---
+
+## Workspace RAG (Semantic Code Search)
+
+Workspace RAG builds a local vector index over your workspace source files using **ChromaDB**, enabling semantic search during coding sessions. The agent can ask "find code related to authentication" and get relevant file chunks back rather than relying on regex grep alone.
+
+### Prerequisites
+
+```bash
+pip install chromadb
+# or
+pip install 'vertex-ai-toolkit[rag]'
+```
+
+### What Gets Indexed
+
+`WorkspaceRAG` walks the workspace recursively and indexes files matching `extensions`. It **skips** these directories automatically:
+
+| Skipped Directory | Reason |
+|-------------------|--------|
+| `.vaig/` | Internal VAIG data |
+| `.venv/`, `venv/`, `.env/` | Virtual environments |
+| `node_modules/` | JS dependencies |
+| `.git/` | Git objects |
+| `__pycache__/`, `.mypy_cache/`, `.ruff_cache/`, `.pytest_cache/` | Build/cache artifacts |
+| `.tox/`, `.nox/` | Test environments |
+| `dist/`, `build/`, `.eggs/` | Distribution outputs |
+
+Files larger than **1 MB** are also skipped (logged at DEBUG level).
+
+### Chunking Strategy
+
+Files are split into overlapping **line-based chunks**:
+
+- **Chunk size**: 200 lines
+- **Overlap**: 20 lines between adjacent chunks
+- **ID format**: `relative/path/to/file.py::0`, `::1`, `::2`, …
+
+The overlap prevents boundary effects where a relevant code block spans the edge of two chunks.
+
+### Index Storage
+
+The ChromaDB index is stored persistently at:
+
+```
+<workspace_root>/.vaig/workspace-index/
+```
+
+On subsequent runs, the existing index is reused. Stale detection works by comparing the `mtime` of indexed files against the `build_timestamp` recorded when the index was last built.
+
+### Configuration
+
+```yaml
+# vaig.yaml
+coding:
+  workspace_rag:
+    enabled: true                    # Master switch — requires chromadb
+    reindex_on_run: true             # Rebuild index if files changed since last run
+    max_chunks: 500                  # Cap on total chunks indexed (discovery order)
+    extensions:                      # File extensions to include
+      - .py
+      - .ts
+      - .go
+      - .java
+      - .md
+```
+
+### Enabling Workspace RAG for a Large Codebase
+
+```yaml
+# vaig.yaml — tuned for a large monorepo
+coding:
+  workspace_rag:
+    enabled: true
+    reindex_on_run: false            # Manual reindex (too slow for huge repos)
+    max_chunks: 2000                 # Increase cap for large projects
+    extensions:
+      - .py
+      - .ts
+      - .tsx
+      - .go
+      - .java
+      - .kt
+      - .md
+      - .yaml
+```
+
+```bash
+# Initial index build (explicit, before a long coding session)
+vaig ask "build the workspace index" --code -w /path/to/monorepo
+
+# Subsequent runs reuse the cached index
+vaig ask "Find all places we handle authentication errors" \
+    --code -w /path/to/monorepo
+```
+
+### Programmatic Usage
+
+```python
+from pathlib import Path
+from vaig.core.config import WorkspaceRAGConfig
+from vaig.core.workspace_rag import WorkspaceRAG
+
+config = WorkspaceRAGConfig(
+    enabled=True,
+    reindex_on_run=True,
+    max_chunks=1000,
+    extensions=[".py", ".ts", ".go"],
+)
+rag = WorkspaceRAG(workspace=Path("/path/to/project"), config=config)
+
+# Build or refresh the index
+chunk_count = rag.build_index()
+print(f"Indexed {chunk_count} chunks")
+
+# Search
+results = rag.search("JWT token validation", k=5)
+for r in results:
+    print(f"[{r['score']:.3f}] {r['file']}")
+    print(r['chunk'][:200])
+    print("---")
+```
+
+Search returns a list of `{"file": str, "chunk": str, "score": float}` dicts sorted from most to least relevant. Scores are derived from ChromaDB's L2 distance via `score = 1.0 / (1.0 + distance)` (higher is better).
+
+---
+
+## Idiom Maps for Code Migration
+
+The `migration` skill uses **idiom maps** — YAML files that describe idiomatic transformations between language pairs — to guide the LLM when migrating code. Rather than asking the model to invent transformations from scratch, it consults a curated catalog of patterns.
+
+### 3-Tier Fallback Chain
+
+```
+1. Bundled maps (shipped with VAIG)
+        ↓  not found
+2. Cached maps (~/.vaig/idioms/)
+        ↓  not found
+3. LLM-generated map (IdiomGenerator) — requires idiom.auto_generate: true
+```
+
+At tier 3, `IdiomGenerator` calls the Gemini API, validates the output is valid YAML, and writes it atomically to the cache directory. Subsequent calls for the same language pair hit tier 2.
+
+### Bundled Idiom Maps
+
+VAIG ships 7 idiom maps out of the box:
+
+| File | Migration Path |
+|------|---------------|
+| `python2_to_python3.yaml` | Python 2 → Python 3 |
+| `python_to_go.yaml` | Python → Go |
+| `javascript_to_typescript.yaml` | JavaScript → TypeScript |
+| `java_to_kotlin.yaml` | Java → Kotlin |
+| `angular_to_react.yaml` | Angular → React |
+| `express_to_fastapi.yaml` | Express.js → FastAPI |
+| `pentaho_to_glue.yaml` | Pentaho ETL → AWS Glue |
+
+### Idiom Map Schema
+
+Each YAML file follows this schema:
+
+```yaml
+source_lang: java
+target_lang: kotlin
+
+idioms:
+  - source_pattern: "Null check with if statement"
+    target_pattern: "Elvis operator or safe call"
+    description: "Kotlin provides null-safe operators to replace verbose null checks"
+    example_before: |
+      String name = person.getName();
+      if (name != null) {
+          System.out.println(name.length());
+      }
+    example_after: |
+      val name = person.name
+      println(name?.length)
+
+dependencies:
+  "org.junit:junit": "org.junit.jupiter:junit-jupiter"
+  "com.google.guava:guava": "standard library (use Kotlin stdlib)"
+```
+
+### Creating Custom Idiom Maps
+
+Place custom YAML files in `~/.vaig/idioms/` following the naming convention `<source>_to_<target>.yaml`. They are loaded at tier 2 (cache) and take precedence over LLM generation.
+
+```bash
+# Create a custom map for Ruby → Python
+cat > ~/.vaig/idioms/ruby_to_python.yaml << 'EOF'
+source_lang: ruby
+target_lang: python
+
+idioms:
+  - source_pattern: "Symbol to proc"
+    target_pattern: "Lambda or operator.methodcaller"
+    description: "Ruby's & :method shorthand maps to Python's operator module"
+    example_before: |
+      names = users.map(&:name)
+    example_after: |
+      from operator import attrgetter
+      names = list(map(attrgetter('name'), users))
+
+dependencies:
+  "rails": "django or fastapi"
+  "activerecord": "sqlalchemy"
+EOF
+```
+
+### Configuration
+
+```yaml
+# vaig.yaml
+idiom:
+  enabled: true                      # Master switch for idiom map expansion
+  auto_generate: true                # Generate maps via LLM on cache miss
+  cache_dir: "~/.vaig/idioms"        # Where generated maps are stored
+```
+
+### Example: Migrating Java to Kotlin with Custom Idioms
+
+```bash
+# Uses the bundled java_to_kotlin.yaml
+vaig ask "Migrate this service to Kotlin" \
+    -f src/main/java/com/example/UserService.java \
+    --skill migration
+
+# With LLM generation enabled for an unsupported pair (e.g. Ruby → Python)
+# vaig.yaml: idiom.auto_generate: true
+vaig ask "Migrate this Rails model to Django" \
+    -f app/models/user.rb \
+    --skill migration
+```
+
+```python
+from vaig.skills.code_migration.idiom_generator import IdiomGenerator
+from vaig.core.client import GeminiClient
+
+client = GeminiClient(settings)
+generator = IdiomGenerator(client, cache_dir="~/.vaig/idioms")
+
+# Check if already cached
+if generator.is_cached("java", "kotlin"):
+    print("Using cached map")
+
+# Generate (or load from cache)
+yaml_content = generator.generate("java", "kotlin")
+idiom_map = generator.parse_yaml(yaml_content)
+print(f"Loaded {len(idiom_map.get('idioms', []))} idioms")
+```
+
+---
+
+## Workspace Isolation (Jail Mode)
+
+Workspace isolation (also called **jail mode**) protects the original workspace by executing the pipeline against a **temporary copy** instead of the real directory. If the pipeline fails or produces bad output, the original workspace is untouched.
+
+### How It Works
+
+1. The workspace is copied to a system temp directory (via `shutil.copytree`)
+2. The coding pipeline runs entirely inside the temp copy
+3. On **success** — the temp directory's output is copied back to the original workspace
+4. On **failure** — the temp directory is discarded; the original workspace is unchanged
+
+This is particularly valuable when using `--pipeline` on production codebases where an interrupted run could leave partially-written files.
+
+### Configuration
+
+```yaml
+# vaig.yaml
+coding:
+  workspace_isolation: true          # Enable jail mode
+
+  # Patterns excluded when copying workspace to the temp jail
+  # Uses shutil.ignore_patterns semantics
+  jail_ignore_patterns:
+    - ".git"
+    - "node_modules"
+    - "__pycache__"
+    - "*.pyc"
+    - ".venv"
+    - "dist"
+    - "build"
+```
+
+### When to Use It
+
+| Situation | Use jail mode? |
+|-----------|---------------|
+| Exploratory refactoring of production code | ✅ Yes |
+| Greenfield generation into an empty directory | ❌ Not needed |
+| Long-running pipeline on a large codebase | ✅ Yes |
+| Single-file edits with `confirm_actions: true` | ❌ Overkill |
+
+```bash
+# Enable jail mode for a risky refactor
+VAIG_CODING__WORKSPACE_ISOLATION=true \
+vaig ask "Migrate all async routes from aiohttp to FastAPI" \
+    --code --pipeline -w /path/to/project
+```
+
+---
+
+## Fix-Forward Loop
+
+The fix-forward loop enables the **Implementer → Verifier** cycle to retry automatically when the verifier detects failures (syntax errors, incomplete placeholders, or test failures). Without it, a single verifier failure halts the pipeline permanently.
+
+### How `max_fix_iterations` Works
+
+```
+Implementer writes files
+    ↓
+Verifier checks files
+    ↓ PASS → done
+    ↓ FAIL and iterations < max_fix_iterations
+        → Implementer receives failure report, attempts fixes
+        → Verifier re-checks
+        → Repeat up to max_fix_iterations times
+    ↓ FAIL and iterations == max_fix_iterations → pipeline reports error
+```
+
+The default (`max_fix_iterations: 1`) means no retry — the pipeline fails on first verifier rejection, matching the original behaviour. Set to `3` or higher to enable self-correction.
+
+### Test Command Integration
+
+When `test_command` is set, the verifier runs it after static checks:
+
+```yaml
+coding:
+  test_command: "pytest -x --tb=short"   # Run pytest; fail fast on first error
+  test_timeout: 120                       # Kill test run after 120 seconds
+```
+
+When `test_command` is empty, VAIG auto-detects pytest by looking for `pyproject.toml` or `conftest.py` in the workspace root.
+
+### Configuration
+
+```yaml
+# vaig.yaml — Python project with self-correction
+coding:
+  pipeline_mode: true
+  max_fix_iterations: 3              # Up to 3 Implementer→Verifier retries
+  test_command: "pytest -x --tb=short src/tests/"
+  test_timeout: 180                  # 3-minute timeout for the test suite
+```
+
+```yaml
+# vaig.yaml — Go project
+coding:
+  pipeline_mode: true
+  max_fix_iterations: 2
+  test_command: "go test ./..."
+  test_timeout: 120
+  allowed_commands:
+    - go
+    - gofmt
+```
+
+```bash
+# Override max_fix_iterations at runtime
+VAIG_CODING__MAX_FIX_ITERATIONS=3 \
+vaig ask "Implement the OAuth2 PKCE flow" \
+    --code --pipeline -w /path/to/project
+```
+
+### Combining Fix-Forward with Git
+
+```yaml
+# vaig.yaml — full self-correcting pipeline with git
+coding:
+  pipeline_mode: true
+  max_fix_iterations: 3
+  test_command: "pytest -x --tb=short"
+  test_timeout: 120
+  git:
+    enabled: true
+    auto_branch: true
+    auto_commit: true
+    auto_pr: true
+```
+
+With this configuration, VAIG will:
+1. Create a feature branch
+2. Implement the requested changes
+3. Run pytest — retry up to 3 times if tests fail
+4. Commit the final passing state
+5. Push the branch and open a PR
 
 ---
 
