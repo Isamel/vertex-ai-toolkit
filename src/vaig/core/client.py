@@ -55,6 +55,7 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
     google_exceptions.InternalServerError,  # 500
     google_exceptions.DeadlineExceeded,  # 504
     google_exceptions.Aborted,  # transient
+    google_exceptions.Cancelled,  # 400 CANCELLED — Vertex AI server-side cancellation under load
 )
 
 # HTTP status codes that the SDK already retries via HttpRetryOptions.
@@ -754,6 +755,21 @@ class GeminiClient:
                     raise ContextWindowExceededError(
                         f"Context window exceeded (API {exc.code}): {exc}",
                     ) from exc
+                # 400 CANCELLED — Vertex AI server-side cancellation under load.
+                # Treat as transient and retry with backoff (same as 429).
+                if exc.code == 400 and "cancelled" in str(exc).lower():
+                    if attempt < retry_cfg.max_retries:
+                        sleep_time, delay = self._compute_backoff_delay(delay, retry_cfg, is_rate_limit=False)
+                        logger.warning(
+                            "Vertex AI 400 CANCELLED on attempt %d/%d — retrying in %.2fs",
+                            attempt + 1,
+                            retry_cfg.max_retries + 1,
+                            sleep_time,
+                        )
+                        time.sleep(sleep_time)
+                        continue
+                    last_exception = exc
+                    break
                 raise  # Non-retryable (400, 403, etc.) — propagate immediately.
             except Exception as exc:
                 if _is_ssl_or_connection_error(exc) and not self._using_fallback:
@@ -900,6 +916,21 @@ class GeminiClient:
                     raise ContextWindowExceededError(
                         f"Context window exceeded (API {exc.code}): {exc}",
                     ) from exc
+                # 400 CANCELLED — Vertex AI server-side cancellation under load.
+                # Treat as transient and retry with backoff (same as 429).
+                if exc.code == 400 and "cancelled" in str(exc).lower():
+                    if attempt < retry_cfg.max_retries:
+                        sleep_time, delay = self._compute_backoff_delay(delay, retry_cfg, is_rate_limit=False)
+                        logger.warning(
+                            "Vertex AI 400 CANCELLED on attempt %d/%d — retrying in %.2fs",
+                            attempt + 1,
+                            retry_cfg.max_retries + 1,
+                            sleep_time,
+                        )
+                        await asyncio.sleep(sleep_time)
+                        continue
+                    last_exception = exc
+                    break
                 raise  # Non-retryable (400, 403, etc.) — propagate immediately.
             except Exception as exc:
                 if _is_ssl_or_connection_error(exc) and not self._using_fallback:

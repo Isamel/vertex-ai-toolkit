@@ -9,7 +9,7 @@ Layer 2 — vaig catches ``genai_errors.APIError``:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from google.genai import errors as genai_errors
@@ -177,6 +177,43 @@ class TestSyncGenaiErrorHandling:
         assert exc_info.value.code == 400
         assert fn.call_count == 1  # No retries
 
+    @patch("vaig.core.client.time.sleep")
+    def test_genai_400_cancelled_retries_with_backoff(
+        self,
+        mock_sleep: MagicMock,
+        client: GeminiClient,
+    ) -> None:
+        """A genai ClientError 400 CANCELLED IS retried at app level (transient)."""
+        fn = MagicMock(
+            side_effect=[
+                genai_errors.ClientError(400, "400 CANCELLED. The operation was cancelled."),
+                "success",
+            ],
+        )
+
+        result = client._retry_with_backoff(fn)
+
+        assert result == "success"
+        assert fn.call_count == 2
+        mock_sleep.assert_called_once()
+
+    @patch("vaig.core.client.time.sleep")
+    def test_genai_400_cancelled_exhausts_retries(
+        self,
+        mock_sleep: MagicMock,
+        client: GeminiClient,
+        settings: Settings,
+    ) -> None:
+        """A genai ClientError 400 CANCELLED that persists raises GeminiConnectionError after all retries."""
+        fn = MagicMock(
+            side_effect=genai_errors.ClientError(400, "400 CANCELLED. The operation was cancelled."),
+        )
+
+        with pytest.raises(GeminiConnectionError):
+            client._retry_with_backoff(fn)
+
+        assert fn.call_count == settings.retry.max_retries + 1
+
     def test_genai_403_propagates_immediately(
         self,
         client: GeminiClient,
@@ -306,6 +343,46 @@ class TestAsyncGenaiErrorHandling:
 
         assert exc_info.value.code == 400
         assert call_count == 1
+
+    @pytest.mark.asyncio()
+    @patch("vaig.core.client.asyncio.sleep")
+    async def test_async_genai_400_cancelled_retries_with_backoff(
+        self,
+        mock_sleep: AsyncMock,
+        client: GeminiClient,
+    ) -> None:
+        """Async: genai ClientError 400 CANCELLED IS retried at app level (transient)."""
+        call_count = 0
+
+        async def fn() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise genai_errors.ClientError(400, "400 CANCELLED. The operation was cancelled.")
+            return "success"
+
+        result = await client._async_retry_with_backoff(fn)
+
+        assert result == "success"
+        assert call_count == 2
+        mock_sleep.assert_called_once()
+
+    @pytest.mark.asyncio()
+    @patch("vaig.core.client.asyncio.sleep")
+    async def test_async_genai_400_cancelled_exhausts_retries(
+        self,
+        mock_sleep: AsyncMock,
+        client: GeminiClient,
+        settings: Settings,
+    ) -> None:
+        """Async: genai ClientError 400 CANCELLED that persists raises GeminiConnectionError after all retries."""
+        async def fn() -> str:
+            raise genai_errors.ClientError(400, "400 CANCELLED. The operation was cancelled.")
+
+        with pytest.raises(GeminiConnectionError):
+            await client._async_retry_with_backoff(fn)
+
+        assert mock_sleep.call_count == settings.retry.max_retries
 
     @pytest.mark.asyncio()
     @patch.object(GeminiClient, "_async_reinitialize_with_fallback")
