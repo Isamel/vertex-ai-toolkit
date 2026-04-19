@@ -158,31 +158,32 @@ class TestTransformTelemetry:
 
     # ── Timestamp normalisation ──────────────────────────────────────────
 
-    def test_iso_string_timestamp_parsed_to_datetime(self) -> None:
+    def test_iso_string_timestamp_parsed_to_iso_string(self) -> None:
         row = transform_telemetry_record(_make_telemetry(timestamp="2025-06-01T12:00:00+00:00"))
-        assert isinstance(row["timestamp"], datetime)
+        assert isinstance(row["timestamp"], str)
+        assert datetime.fromisoformat(row["timestamp"]).tzinfo is not None
 
     def test_naive_iso_string_gets_utc_tzinfo(self) -> None:
         row = transform_telemetry_record(_make_telemetry(timestamp="2025-06-01T12:00:00"))
-        ts = row["timestamp"]
-        assert isinstance(ts, datetime)
+        ts = datetime.fromisoformat(row["timestamp"])
         assert ts.tzinfo is not None
 
-    def test_datetime_object_passthrough(self) -> None:
+    def test_datetime_object_serialized_to_iso(self) -> None:
         dt = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
         row = transform_telemetry_record(_make_telemetry(timestamp=dt))
-        assert row["timestamp"] == dt
+        assert row["timestamp"] == dt.isoformat()
 
     def test_naive_datetime_gets_utc(self) -> None:
         naive = datetime(2025, 6, 1, 12, 0, 0)
         row = transform_telemetry_record(_make_telemetry(timestamp=naive))
-        assert row["timestamp"].tzinfo is not None
+        parsed = datetime.fromisoformat(row["timestamp"])
+        assert parsed.tzinfo is not None
 
     def test_unix_float_timestamp_parsed(self) -> None:
         unix_ts = 1_748_779_200.0  # 2025-06-01 12:00:00 UTC
         row = transform_telemetry_record(_make_telemetry(timestamp=unix_ts))
-        assert isinstance(row["timestamp"], datetime)
-        assert row["timestamp"].year == 2025
+        parsed = datetime.fromisoformat(row["timestamp"])
+        assert parsed.year == 2025
 
     # ── Metadata serialisation ───────────────────────────────────────────
 
@@ -224,7 +225,8 @@ class TestTransformTelemetry:
         before = datetime.now(UTC)
         row = transform_telemetry_record({"event_type": "session"})
         after = datetime.now(UTC)
-        assert before <= row["timestamp"] <= after
+        parsed = datetime.fromisoformat(row["timestamp"])
+        assert before <= parsed <= after
 
     def test_success_inferred_from_absent_error_when_success_missing(self) -> None:
         row = transform_telemetry_record({"event_type": "tool_call"})
@@ -345,10 +347,11 @@ class TestTransformToolCall:
         row = transform_tool_call_record({"tool_name": "noop"})
         assert row["output_summary"] == ""
 
-    def test_timestamp_string_parsed_to_datetime(self) -> None:
+    def test_timestamp_string_parsed_to_iso(self) -> None:
         row = transform_tool_call_record(_make_tool_call(timestamp="2025-06-01T13:00:00Z"))
-        # Must parse the 'Z' suffix and return a UTC-aware datetime at the exact moment
-        assert row["timestamp"] == datetime(2025, 6, 1, 13, 0, 0, tzinfo=UTC)
+        # Must parse the 'Z' suffix and return an ISO-8601 string at the exact moment
+        expected = datetime(2025, 6, 1, 13, 0, 0, tzinfo=UTC).isoformat()
+        assert row["timestamp"] == expected
 
     def test_error_message_none_when_absent(self) -> None:
         row = transform_tool_call_record({"tool_name": "noop"})
@@ -468,19 +471,19 @@ class TestTransformHealthReport:
 
     # ── Timestamp is current UTC ─────────────────────────────────────────
 
-    def test_timestamp_is_datetime(self) -> None:
+    def test_timestamp_is_iso_string(self) -> None:
         row = transform_health_report(_make_health_report_dict(), run_id="r")
-        assert isinstance(row["timestamp"], datetime)
-
-    def test_timestamp_is_utc_aware(self) -> None:
-        row = transform_health_report(_make_health_report_dict(), run_id="r")
-        assert row["timestamp"].tzinfo is not None
+        assert isinstance(row["timestamp"], str)
+        # Must be parseable as ISO-8601
+        parsed = datetime.fromisoformat(row["timestamp"])
+        assert parsed.tzinfo is not None
 
     def test_timestamp_is_approximately_now(self) -> None:
         before = datetime.now(UTC)
         row = transform_health_report(_make_health_report_dict(), run_id="r")
         after = datetime.now(UTC)
-        assert before <= row["timestamp"] <= after
+        parsed = datetime.fromisoformat(row["timestamp"])
+        assert before <= parsed <= after
 
     # ── Enum value handling (Pydantic model_dump output) ─────────────────
 
@@ -621,16 +624,46 @@ class TestTransformFeedback:
 
     # ── Timestamp is current UTC ─────────────────────────────────────────
 
-    def test_timestamp_is_datetime(self) -> None:
+    def test_timestamp_is_iso_string(self) -> None:
         row = transform_feedback_record(_make_feedback(), run_id="r")
-        assert isinstance(row["timestamp"], datetime)
-
-    def test_timestamp_is_utc_aware(self) -> None:
-        row = transform_feedback_record(_make_feedback(), run_id="r")
-        assert row["timestamp"].tzinfo is not None
+        assert isinstance(row["timestamp"], str)
+        # Must be parseable as ISO-8601
+        parsed = datetime.fromisoformat(row["timestamp"])
+        assert parsed.tzinfo is not None
 
     def test_timestamp_is_approximately_now(self) -> None:
         before = datetime.now(UTC)
         row = transform_feedback_record(_make_feedback(), run_id="r")
         after = datetime.now(UTC)
-        assert before <= row["timestamp"] <= after
+        parsed = datetime.fromisoformat(row["timestamp"])
+        assert before <= parsed <= after
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Contract tests — JSON serializability (prevents datetime/set/etc leaking)
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestJsonSerializabilityContract:
+    """Every transformer output MUST be json.dumps-serializable.
+
+    BigQuery's insert_rows_json calls json.dumps internally. If any field
+    contains a non-serializable type (datetime, set, bytes, etc.), the insert
+    fails at runtime. These tests catch that class of bug at CI time.
+    """
+
+    def test_telemetry_record_is_json_serializable(self) -> None:
+        row = transform_telemetry_record(_make_telemetry())
+        json.dumps(row)  # raises TypeError if not serializable
+
+    def test_tool_call_record_is_json_serializable(self) -> None:
+        row = transform_tool_call_record(_make_tool_call())
+        json.dumps(row)  # raises TypeError if not serializable
+
+    def test_health_report_is_json_serializable(self) -> None:
+        row = transform_health_report(_make_health_report_dict(), run_id="r")
+        json.dumps(row)  # raises TypeError if not serializable
+
+    def test_feedback_record_is_json_serializable(self) -> None:
+        row = transform_feedback_record(_make_feedback(), run_id="r")
+        json.dumps(row)  # raises TypeError if not serializable
