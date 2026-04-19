@@ -323,7 +323,7 @@ logging:
   tool_results_dir: ~/.vaig          # Directory for tool result files
 ```
 
-Override via CLI: `--verbose` sets INFO-level detail, `--debug` enables full DEBUG output.
+Override via CLI: `--verbose` sets INFO-level detail, `--debug` enables full DEBUG output, and `--log-level TEXT` sets any level explicitly (takes precedence over `--verbose`/`--debug`).
 
 ### `coding` — Coding Agent Configuration
 

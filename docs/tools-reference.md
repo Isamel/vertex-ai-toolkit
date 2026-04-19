@@ -46,16 +46,13 @@ Read the contents of a file.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `path` | string | Yes | Relative path from workspace root |
-| `start_line` | integer | No | Start reading from this line (1-indexed) |
-| `end_line` | integer | No | Stop reading at this line |
 
-**Returns:** File content as text, with line numbers when range is specified.
+**Returns:** File content as text.
 
 **💡 When to use:** First step before any edit; reading config files; reviewing generated output.
 
 ```
 read_file(path="src/main.py")
-read_file(path="src/main.py", start_line=10, end_line=50)
 ```
 
 ---
@@ -120,7 +117,7 @@ Apply a unified diff patch to a file atomically. Preferred over `write_file` for
 ```
 patch_file(
   path="src/config.py",
-  patch="--- a/src/config.py\n+++ b/src/config.py\n@@ -10,3 +10,3 @@\n-DEBUG = True\n+DEBUG = False\n",
+  patch="--- a/src/config.py\n+++ b/src/config.py\n@@ -10,1 +10,1 @@\n-DEBUG = True\n+DEBUG = False\n",
   backup="true"
 )
 ```
@@ -129,21 +126,19 @@ patch_file(
 
 ### `list_files`
 
-List files in a directory, optionally filtered by pattern.
+List files in a directory.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `path` | string | No | Directory to list (default: workspace root) |
-| `pattern` | string | No | Glob pattern filter (e.g., `*.py`) |
-| `recursive` | boolean | No | Include subdirectories (default: `false`) |
 
-**Returns:** Sorted list of file paths matching the filter.
+**Returns:** Sorted list of entries (directories end with `/`). Skips hidden files and common ignored names (`.git`, `node_modules`, `__pycache__`).
 
 **💡 When to use:** Discovering what files exist before reading; scoping searches.
 
 ```
 list_files()
-list_files(path="src", pattern="*.py", recursive=true)
+list_files(path="src")
 ```
 
 ---

@@ -512,7 +512,7 @@ The patch must follow the standard unified diff format with `@@ ... @@` hunk hea
 **Example: a two-hunk patch**
 
 ```diff
-@@ -3,7 +3,8 @@
+@@ -3,6 +3,7 @@
  import logging
  import os
 +import re
@@ -580,13 +580,13 @@ The agent will call `patch_file` with something like:
 ```
 path: "src/middleware/auth.py"
 patch: |
-  @@ -1,5 +1,6 @@
+  @@ -1,4 +1,5 @@
    import logging
   +import uuid
    from fastapi import Request
    
    logger = logging.getLogger(__name__)
-  @@ -18,6 +19,7 @@
+  @@ -18,2 +19,4 @@
    async def auth_middleware(request: Request, call_next):
   +    request_id = str(uuid.uuid4())
   +    logger.info("request_id=%s path=%s", request_id, request.url.path)

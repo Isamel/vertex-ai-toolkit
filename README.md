@@ -21,7 +21,7 @@ Multi-agent AI assistant powered by **Google Vertex AI Gemini** models. Interact
 - **Autonomous Investigation Pipeline** — self-directed multi-step investigation: detect anomalies → generate hypotheses → run evidence-gathering tools → correlate with git commits → produce report; budget-aware with circuit breaker (SH-09)
 - **Pattern Memory** — `PatternMemoryStore` detects recurring incident patterns across sessions; `SemanticMemoryIndex` enables vector-based retrieval of past findings to avoid re-investigating known issues (MEM-01–04)
 - **Git Integration** — `GitManager` + `patch_file` tool: apply unified diffs, branch, stage, commit, and push directly from agent pipelines (CM-05, CM-09)
-- **Workspace RAG** — `WorkspaceRAG` indexes local files into a Vertex AI RAG corpus for semantic code search during migrations (CM-08)
+- **Workspace RAG** — `WorkspaceRAG` indexes local files into a local ChromaDB semantic index (`<workspace>/.vaig/workspace-index/`) for semantic code search during migrations (CM-08)
 - **Idiom Map LLM Fallback** — `IdiomGenerator` expands YAML idiom definitions using Gemini when no explicit mapping exists; results cached to disk (CM-07)
 - **Hypothesis Library** — `HypothesisLibrary` template engine + `AutonomousInvestigationPlanner` for systematic, evidence-driven investigation without manual prompting
 - **GitHub Repo Navigator** — 6 tools for repo browsing, code search, commit history, and batch file fetch; enables remote code migration and RAG corpus creation from any GitHub repo (GH-01–05)

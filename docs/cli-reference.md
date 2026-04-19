@@ -6,9 +6,10 @@ Complete reference for all `vaig` CLI commands and options.
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--version` | | Show version and exit |
-| `--verbose` | `-V` | Enable verbose output |
-| `--debug` | `-d` | Enable debug logging |
+| `--version` | `-v` | Show version and exit |
+| `--verbose` | `-V` | Enable verbose logging (INFO level) |
+| `--debug` | `-d` | Enable debug logging (DEBUG level). **Note:** `-d` is context-sensitive — it maps to `--dir` in `vaig ask` and `--deployment` in `vaig compare run`. Always check the command's option table. |
+| `--log-level TEXT` | | Set log level (DEBUG, INFO, WARNING, ERROR, CRITICAL). Takes precedence over `--verbose`/`--debug`. |
 
 ---
 
@@ -214,7 +215,7 @@ vaig live "Any issues across all namespaces?" --all-namespaces --cluster prod
 
 > **Tip:** Combine `--interactive` with `--skill rca` to investigate root causes in depth after the initial report.
 
-> **Note on `-w` short flag:** The meaning of `-w` differs by command. On `vaig live`, `-w` is short for `--watch INTEGER` (poll interval in seconds). On `vaig ask` and `vaig chat`, `-w` is short for `--workspace PATH` (workspace root for the coding agent). Always check the command's option table to avoid confusion.
+> **Note on short flags with multiple meanings:** Several short flags differ by command. `-w`: on `vaig live` maps to `--watch INTEGER`; on `vaig ask`/`vaig chat` maps to `--workspace PATH`. `-d`: globally maps to `--debug`, but maps to `--dir` in `vaig ask` and `--deployment` in `vaig compare run`. `-c`: globally maps to `--config`, but maps to `--cluster` in `vaig schedule add` and `vaig fleet` commands. Always check the command's option table to avoid confusion.
 
 ---
 
@@ -728,9 +729,7 @@ vaig schedule add [OPTIONS]
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
-| `--cluster` | `-c` | GKE cluster name | Config value |
-| `--namespace` | `-n` | Kubernetes namespace to scan | Config default |
-| `--interval` | `-i` | Repeat interval in minutes | — |
+| `--cluster` | `-c` | GKE cluster name (⚠️ conflicts with global `-c` for `--config`) | Config value |
 | `--cron` | | Cron expression (e.g. `"0 */6 * * *"`) | — |
 | `--all-namespaces` | `-A` | Scan all non-system namespaces | `false` |
 | `--skip-healthy` / `--include-healthy` | | Omit healthy workloads from reports | `false` |
@@ -827,9 +826,9 @@ vaig compare run [OPTIONS]
 |--------|-------|-------------|---------|
 | `--clusters` | | Comma-separated list of cluster names to compare | **Required** |
 | `--namespace` | `-n` | Kubernetes namespace | Config default |
-| `--deployment` | `-d` | Deployment name to compare | — |
+| `--deployment` | | Deployment name to compare | — |
 | `--export` | | Output format for comparison report: `json`, `md`, `html` | — |
-| `--verbose` | `-v` | Enable verbose output | `false` |
+| `--verbose` | `-V` | Enable verbose output | `false` |
 
 ```bash
 # Compare two clusters
