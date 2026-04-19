@@ -305,7 +305,7 @@ def transform_health_report(
     report_markdown = _truncate(str(raw_md), _TRUNCATE_HEALTH_MARKDOWN) if raw_md else None
 
     return {
-        "timestamp": datetime.now(UTC),
+        "timestamp": datetime.now(UTC).isoformat(),
         "run_id": str(run_id),
         "cluster_name": str(cluster_name),
         "namespace": str(namespace),
@@ -360,7 +360,7 @@ def transform_feedback_record(
         auto_quality_score = 0.0
 
     return {
-        "timestamp": datetime.now(UTC),
+        "timestamp": datetime.now(UTC).isoformat(),
         "run_id": str(run_id),
         "rating": rating,
         "comment": str(feedback.get("comment") or ""),

@@ -468,19 +468,19 @@ class TestTransformHealthReport:
 
     # ── Timestamp is current UTC ─────────────────────────────────────────
 
-    def test_timestamp_is_datetime(self) -> None:
+    def test_timestamp_is_iso_string(self) -> None:
         row = transform_health_report(_make_health_report_dict(), run_id="r")
-        assert isinstance(row["timestamp"], datetime)
-
-    def test_timestamp_is_utc_aware(self) -> None:
-        row = transform_health_report(_make_health_report_dict(), run_id="r")
-        assert row["timestamp"].tzinfo is not None
+        assert isinstance(row["timestamp"], str)
+        # Must be parseable as ISO-8601
+        parsed = datetime.fromisoformat(row["timestamp"])
+        assert parsed.tzinfo is not None
 
     def test_timestamp_is_approximately_now(self) -> None:
         before = datetime.now(UTC)
         row = transform_health_report(_make_health_report_dict(), run_id="r")
         after = datetime.now(UTC)
-        assert before <= row["timestamp"] <= after
+        parsed = datetime.fromisoformat(row["timestamp"])
+        assert before <= parsed <= after
 
     # ── Enum value handling (Pydantic model_dump output) ─────────────────
 
@@ -621,16 +621,16 @@ class TestTransformFeedback:
 
     # ── Timestamp is current UTC ─────────────────────────────────────────
 
-    def test_timestamp_is_datetime(self) -> None:
+    def test_timestamp_is_iso_string(self) -> None:
         row = transform_feedback_record(_make_feedback(), run_id="r")
-        assert isinstance(row["timestamp"], datetime)
-
-    def test_timestamp_is_utc_aware(self) -> None:
-        row = transform_feedback_record(_make_feedback(), run_id="r")
-        assert row["timestamp"].tzinfo is not None
+        assert isinstance(row["timestamp"], str)
+        # Must be parseable as ISO-8601
+        parsed = datetime.fromisoformat(row["timestamp"])
+        assert parsed.tzinfo is not None
 
     def test_timestamp_is_approximately_now(self) -> None:
         before = datetime.now(UTC)
         row = transform_feedback_record(_make_feedback(), run_id="r")
         after = datetime.now(UTC)
-        assert before <= row["timestamp"] <= after
+        parsed = datetime.fromisoformat(row["timestamp"])
+        assert before <= parsed <= after
