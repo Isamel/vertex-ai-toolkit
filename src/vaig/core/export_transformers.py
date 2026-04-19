@@ -106,7 +106,7 @@ def transform_telemetry_record(record: dict[str, Any]) -> dict[str, Any]:
     +--------------------+--------------------------------------+
     | BQ column          | Source field                         |
     +====================+======================================+
-    | timestamp          | timestamp (str → datetime, UTC)      |
+    | timestamp          | timestamp (str → ISO-8601 UTC)       |
     | event_type         | event_type (str)                     |
     | tool_name          | tool_name (str)                      |
     | agent_name         | agent_name / event_name (str)        |
@@ -141,7 +141,7 @@ def transform_telemetry_record(record: dict[str, Any]) -> dict[str, Any]:
         success = error_message is None
 
     return {
-        "timestamp": _parse_timestamp(record.get("timestamp")),
+        "timestamp": _parse_timestamp(record.get("timestamp")).isoformat(),
         "event_type": str(record.get("event_type") or ""),
         "tool_name": str(record.get("tool_name") or ""),
         "agent_name": str(agent_name),
@@ -169,7 +169,7 @@ def transform_tool_call_record(record: dict[str, Any]) -> dict[str, Any]:
     +--------------------+-------------------------------------------+
     | BQ column          | Source field                              |
     +====================+===========================================+
-    | timestamp          | timestamp (str → datetime, UTC)           |
+    | timestamp          | timestamp (str → ISO-8601 UTC)            |
     | tool_name          | tool_name (str)                           |
     | agent_name         | agent_name (str)                          |
     | input_params       | input_params (JSON str)                   |
@@ -197,7 +197,7 @@ def transform_tool_call_record(record: dict[str, Any]) -> dict[str, Any]:
     output_summary = _truncate(str(raw_output), _TRUNCATE_OUTPUT_SUMMARY)
 
     return {
-        "timestamp": _parse_timestamp(record.get("timestamp")),
+        "timestamp": _parse_timestamp(record.get("timestamp")).isoformat(),
         "tool_name": str(record.get("tool_name") or ""),
         "agent_name": str(record.get("agent_name") or ""),
         "input_params": _to_json_string(record.get("input_params") or {}),
@@ -236,7 +236,7 @@ def transform_health_report(
     +--------------------+--------------------------------------------------+
     | BQ column          | Source                                           |
     +====================+==================================================+
-    | timestamp          | datetime.now(UTC) — report generation time       |
+    | timestamp          | ISO-8601 UTC string — report generation time    |
     | run_id             | parameter                                        |
     | cluster_name       | parameter                                        |
     | namespace          | parameter                                        |
@@ -335,7 +335,7 @@ def transform_feedback_record(
     +----------------------+--------------------------------------------+
     | BQ column            | Source                                     |
     +======================+============================================+
-    | timestamp            | datetime.now(UTC)                          |
+    | timestamp            | ISO-8601 UTC string (now)                  |
     | run_id               | parameter                                  |
     | rating               | rating (int, clamped 1–5)                  |
     | comment              | comment (str)                              |
