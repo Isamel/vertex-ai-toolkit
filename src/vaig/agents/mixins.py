@@ -401,15 +401,16 @@ class ToolLoopMixin:
                         usage=dict(total_usage),
                     ) from _api_exc
 
-                # Vertex AI server-side cancellation (400 CANCELLED) — transient, re-raise
-                # so the client-level retry logic (_retry_with_backoff) can handle it.
+                # Vertex AI server-side cancellation (400 CANCELLED). Retryability
+                # is decided in the client retry layer; at this point we only
+                # avoid emitting a noisy stack trace after retries are exhausted.
                 if (
                     isinstance(_api_exc, genai_errors.ClientError)
                     and _api_exc.code == 400
                     and "cancelled" in _msg_lower
                 ):
                     logger.warning(
-                        "ToolLoopMixin received 400 CANCELLED on iteration %d — transient server cancellation, re-raising for retry",
+                        "ToolLoopMixin 400 CANCELLED on iteration %d — transient server cancellation",
                         iteration,
                     )
                     raise
@@ -1384,15 +1385,16 @@ class ToolLoopMixin:
                         usage=dict(total_usage),
                     ) from _api_exc
 
-                # Vertex AI server-side cancellation (400 CANCELLED) — transient, re-raise
-                # so the client-level retry logic (_retry_with_backoff) can handle it.
+                # Vertex AI server-side cancellation (400 CANCELLED). Retryability
+                # is decided in the client retry layer; at this point we only
+                # avoid emitting a noisy stack trace after retries are exhausted.
                 if (
                     isinstance(_api_exc, genai_errors.ClientError)
                     and _api_exc.code == 400
                     and "cancelled" in _msg_lower
                 ):
                     logger.warning(
-                        "ToolLoopMixin received 400 CANCELLED on iteration %d — transient server cancellation, re-raising for retry",
+                        "ToolLoopMixin 400 CANCELLED on iteration %d — transient server cancellation",
                         iteration,
                     )
                     raise
