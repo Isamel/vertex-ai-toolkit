@@ -2281,13 +2281,13 @@ class TestParallelAgentsConfig:
         assert "Investigation Checklist" in prompt
 
     def test_logging_gatherer_covers_cloud_logging(self) -> None:
-        """logging_gatherer prompt must cover Cloud Logging queries (7a, 7b)."""
+        """logging_gatherer prompt must cover Cloud Logging queries (7a–7e)."""
         agents = self._get_agents()
         logging_agent = next(a for a in agents if a["name"] == "logging_gatherer")
         prompt = logging_agent["system_instruction"]
         assert "gcloud_logging_query" in prompt
         assert 'severity>=ERROR AND resource.type="k8s_container"' in prompt
-        assert 'severity>=WARNING AND resource.type="k8s_pod"' in prompt
+        assert "istio-proxy" in prompt, "Should include Envoy access log queries"
         assert "Cloud Logging Findings" in prompt
         assert "MANDATORY" in prompt
 
@@ -3098,11 +3098,11 @@ class TestDatadogGathererPipelineConfig:
             f"datadog_gatherer uses '{datadog_agent['model']}', expected 'gemini-2.5-flash'"
         )
 
-    def test_datadog_gatherer_max_iterations_is_eight(self) -> None:
-        """datadog_gatherer must have max_iterations=8 (6 Datadog tool calls — step 0 label resolution plus calls 1–5 — + 2 overhead iterations)."""
+    def test_datadog_gatherer_max_iterations_is_twelve(self) -> None:
+        """datadog_gatherer must have max_iterations=12 (resource-gated tool expansion requires extra iterations)."""
         agents = self._get_agents(datadog_enabled=True)
         datadog_agent = next(a for a in agents if a["name"] == "datadog_gatherer")
-        assert datadog_agent["max_iterations"] == 8
+        assert datadog_agent["max_iterations"] == 12
 
     def test_datadog_gatherer_temperature_is_zero(self) -> None:
         """datadog_gatherer must use temperature=0.0 for deterministic API calls."""

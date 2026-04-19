@@ -593,6 +593,61 @@ class GKENamespaceSummary(BaseModel):
     total_waste_usd: float | None = Field(default=None, description="Estimated total monthly waste in the namespace (USD); None if usage data unavailable")
 
 
+class CostDataQuality(BaseModel):
+    """Summary of the cost data quality for a GKE cost report.
+
+    Captures which source provided usage metrics, how fresh the data is,
+    how many workloads have real (non-estimated) data, and whether multiple
+    sources disagreed on usage figures.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    primary_source: str = Field(
+        default="unknown",
+        description=(
+            "Dominant metrics source across all workloads. "
+            "Values: 'cloud_monitoring_60m', 'cloud_monitoring_24h', "
+            "'metrics_server', 'datadog', 'requests_fallback', 'unknown'."
+        ),
+    )
+    freshness: str = Field(
+        default="unknown",
+        description=(
+            "Dominant freshness descriptor. "
+            "Values: '60m_avg', '24h_avg', 'snapshot', '1h_avg', 'unknown'."
+        ),
+    )
+    coverage_count: int = Field(
+        default=0,
+        description="Number of workloads with non-fallback (real) usage data.",
+    )
+    total_count: int = Field(
+        default=0,
+        description="Total number of workloads in the report.",
+    )
+    confidence: str = Field(
+        default="low",
+        description=(
+            "Overall confidence in cost figures. "
+            "'high' = all workloads have real L1/L2 data; "
+            "'medium' = some workloads use L3 (Datadog) or 24h window; "
+            "'low' = one or more workloads fell back to request-based estimates."
+        ),
+    )
+    fallback_count: int = Field(
+        default=0,
+        description="Number of workloads using requests_fallback (L4) — no real usage data.",
+    )
+    cross_check_discrepancies: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Workload names where two sources disagreed by more than 10%% "
+            "on CPU or memory usage. Best-effort; may be empty even when sources differ."
+        ),
+    )
+
+
 class GKEWorkloadCost(BaseModel):
     """Cost estimate for a single Kubernetes workload (Deployment/StatefulSet)."""
 
@@ -619,6 +674,23 @@ class GKEWorkloadCost(BaseModel):
             "True when usage metrics were unavailable from Cloud Monitoring and the "
             "usage cost was estimated using resource requests (100%% utilization assumption). "
             "Consumers should display an '(estimated)' indicator alongside cost figures."
+        ),
+    )
+    metrics_source: str | None = Field(
+        default=None,
+        description=(
+            "The source that provided usage metrics for this workload. "
+            "Values: 'cloud_monitoring_60m', 'cloud_monitoring_24h', "
+            "'metrics_server', 'datadog', 'requests_fallback'. "
+            "None when no usage data was attempted."
+        ),
+    )
+    metrics_freshness: str | None = Field(
+        default=None,
+        description=(
+            "Freshness descriptor for the usage metrics. "
+            "Values: '60m_avg', '24h_avg', 'snapshot', '1h_avg'. "
+            "None when metrics_source is None."
         ),
     )
 
@@ -682,6 +754,14 @@ class GKECostReport(BaseModel):
             "True when one or more workloads had no monitoring data and usage costs were "
             "estimated using resource requests (100%% utilization assumption). "
             "The report totals include these estimated values."
+        ),
+    )
+    cost_data_quality: CostDataQuality | None = Field(
+        default=None,
+        description=(
+            "Summary of cost data quality: which source provided metrics, "
+            "confidence level, coverage, and any cross-source discrepancies. "
+            "None when cost estimation was not run."
         ),
     )
 

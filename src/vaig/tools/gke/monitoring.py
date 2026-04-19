@@ -813,3 +813,73 @@ def get_workload_usage_metrics(
         )
 
     return result
+
+
+# ── 24h retry wrapper for cost pipeline (Layer 1) ────────────
+
+
+def _get_monitoring_usage_with_retry(
+    namespace: str,
+    workload_pod_names: dict[str, list[str]],
+    *,
+    gke_config: GKEConfig,
+) -> tuple[dict[str, WorkloadUsageMetrics], str]:
+    """Query Cloud Monitoring with a 60m window, retrying with 24h on empty results.
+
+    This is the Layer 1 probe in the multi-source cost measurement pipeline.
+    Tries a 60-minute average first (fresh data).  If empty, retries with a
+    24-hour window (handles new / low-traffic workloads that lack recent data).
+
+    Args:
+        namespace: Kubernetes namespace.
+        workload_pod_names: Workload → list[pod_name] mapping.
+        gke_config: GKE cluster configuration.
+
+    Returns:
+        ``(usage_dict, window_label)`` where ``window_label`` is one of:
+        - ``"60m"`` – data found within the last 60 minutes
+        - ``"24h"`` – data found only within the 24h window
+        - ``"none"`` – both windows returned empty results
+    """
+    try:
+        usage_60m = get_workload_usage_metrics(
+            namespace=namespace,
+            workload_pod_names=workload_pod_names,
+            gke_config=gke_config,
+            window_minutes=60,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "_get_monitoring_usage_with_retry: 60m query failed for ns=%s: %s",
+            namespace,
+            exc,
+        )
+        usage_60m = {}
+
+    if usage_60m:
+        return usage_60m, "60m"
+
+    # 60m was empty — retry with 24h window
+    logger.debug(
+        "_get_monitoring_usage_with_retry: 60m returned empty for ns=%s, retrying with 24h",
+        namespace,
+    )
+    try:
+        usage_24h = get_workload_usage_metrics(
+            namespace=namespace,
+            workload_pod_names=workload_pod_names,
+            gke_config=gke_config,
+            window_minutes=1440,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "_get_monitoring_usage_with_retry: 24h query failed for ns=%s: %s",
+            namespace,
+            exc,
+        )
+        return {}, "none"
+
+    if usage_24h:
+        return usage_24h, "24h"
+
+    return {}, "none"

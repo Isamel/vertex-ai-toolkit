@@ -402,30 +402,29 @@ class TestMonitoringErrorSurfacing:
 
         boom = RuntimeError("Cloud Monitoring unavailable")
 
-        # Attach caplog handler directly to the specific logger so that
-        # propagate=False on a parent logger (set by setup_logging in other
-        # tests) does not prevent caplog from capturing records.
-        cost_logger = logging.getLogger("vaig.tools.gke.cost_estimation")
-        cost_logger.addHandler(caplog.handler)
+        # Attach caplog handler to the monitoring logger so we can verify
+        # that the exception is logged as a WARNING from the retry helper.
+        monitoring_logger = logging.getLogger("vaig.tools.gke.monitoring")
+        monitoring_logger.addHandler(caplog.handler)
         try:
             with patch(
                 "vaig.tools.gke.monitoring.get_workload_usage_metrics",
                 side_effect=boom,
-            ), caplog.at_level(logging.ERROR, logger="vaig.tools.gke.cost_estimation"):
+            ), caplog.at_level(logging.WARNING, logger="vaig.tools.gke.monitoring"):
                 report = fetch_workload_costs(_make_gke_config())
         finally:
-            cost_logger.removeHandler(caplog.handler)
+            monitoring_logger.removeHandler(caplog.handler)
 
-        # monitoring_status must be set
+        # monitoring_status must be set — multi-source pipeline reports no_data
+        # when all layers (L1 monitoring, L2 metrics-server, L3 datadog) fail.
         assert report.monitoring_status is not None
-        assert "RuntimeError" in report.monitoring_status
-        assert "Cloud Monitoring unavailable" in report.monitoring_status
+        assert "no_data" in report.monitoring_status
 
-        # Must be logged at ERROR level (captured from any logger)
-        error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
-        assert len(error_records) >= 1
-        combined = " ".join(str(r.getMessage()) for r in error_records)
-        assert "RuntimeError" in combined
+        # Exception must be logged at WARNING level by the retry helper
+        warn_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(warn_records) >= 1
+        combined = " ".join(str(r.getMessage()) for r in warn_records)
+        assert "Cloud Monitoring unavailable" in combined
 
     @patch("vaig.tools.gke.cost_estimation._create_k8s_clients")
     @patch("vaig.tools.gke.cost_estimation.detect_autopilot", return_value=True)

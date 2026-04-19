@@ -10,6 +10,7 @@ structured JSON report (rendered to Markdown).
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import logging
 from typing import Any, NamedTuple
 
@@ -17,6 +18,7 @@ from pydantic import ValidationError
 
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
+from vaig.skills.service_health.contradiction_validator import detect_contradictions
 from vaig.skills.service_health.prompts import (
     HEALTH_ANALYZER_PROMPT,
     HEALTH_INVESTIGATOR_PROMPT,
@@ -32,12 +34,67 @@ from vaig.skills.service_health.prompts import (
     build_reporter_prompt,
     build_workload_gatherer_prompt,
 )
-from vaig.skills.service_health.schema import HealthReport
+from vaig.skills.service_health.schema import Finding, HealthReport
 from vaig.tools.base import ToolResult
 from vaig.tools.gke._clients import ensure_client_initialized
 from vaig.utils.json_cleaner import clean_llm_json
 
 logger = logging.getLogger(__name__)
+
+
+# ── Finding dedup helpers (SPEC-RP-01) ───────────────────────────────────────
+
+
+def _finding_fingerprint(finding: Finding) -> str:
+    """Return a SHA-1 fingerprint for *finding* used for duplicate detection.
+
+    The fingerprint is computed over title, category, and the kind/name of
+    the first affected resource (normalised to lowercase, stripped of
+    whitespace).  It is intentionally NOT a security hash — the ``# noqa:
+    S324`` comment suppresses the bandit warning.
+    """
+    kind = ""
+    name = ""
+    if finding.affected_resources:
+        parts = finding.affected_resources[0].split("/", 1)
+        if len(parts) == 2:  # noqa: PLR2004
+            kind, name = parts[0], parts[1]
+        else:
+            kind = parts[0]
+    raw = "|".join([
+        finding.title.lower().strip(),
+        finding.category.lower().strip(),
+        kind,
+        name,
+    ])
+    return hashlib.sha1(raw.encode()).hexdigest()  # noqa: S324
+
+
+def _dedup_findings(findings: list[Finding]) -> list[Finding]:
+    """Return *findings* with duplicates removed (first occurrence wins).
+
+    Duplicates are detected by fingerprint (see :func:`_finding_fingerprint`).
+    The input list is NOT mutated.  On any unexpected exception the original
+    list is returned unchanged so dedup never breaks the pipeline.
+    """
+    try:
+        seen: dict[str, bool] = {}
+        result: list[Finding] = []
+        for f in findings:
+            fp = _finding_fingerprint(f)
+            if fp in seen:
+                logger.warning(
+                    "Duplicate finding dropped: fingerprint=%.8s title=%r",
+                    fp,
+                    f.title,
+                )
+            else:
+                seen[fp] = True
+                result.append(f)
+        return result
+    except Exception:  # noqa: BLE001
+        logger.error("_dedup_findings failed — returning original list", exc_info=True)
+        return findings
 
 # ── Label priority for Datadog service name resolution ───────────────────
 # Used by ``_resolve_dd_service_name`` to extract the DD service identity
@@ -836,6 +893,7 @@ class ServiceHealthSkill(BaseSkill):
                     namespace=effective_namespace,
                     argo_rollouts_enabled=argo_rollouts_active,
                     prefetched_pod_metrics=prefetched["pods"],
+                    user_query=kwargs.get("user_query", ""),
                 ),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
@@ -857,7 +915,10 @@ class ServiceHealthSkill(BaseSkill):
                     "storage", "pvc", "volume", "argocd", "gitops",
                     "helm", "configmap", "secret", "infrastructure",
                 ],
-                "system_instruction": build_event_gatherer_prompt(namespace=effective_namespace),
+                "system_instruction": build_event_gatherer_prompt(
+                    namespace=effective_namespace,
+                    user_query=kwargs.get("user_query", ""),
+                ),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
                 "max_iterations": 10,
@@ -903,7 +964,7 @@ class ServiceHealthSkill(BaseSkill):
                     ),
                     "model": "gemini-2.5-flash",
                     "temperature": 0.0,
-                    "max_iterations": 8,
+                    "max_iterations": 12,
                 }
             )
 
@@ -925,9 +986,8 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_investigator",
                 "role": "Hypothesis Investigator",
                 "requires_tools": True,
-                "tool_categories": ["kubernetes", "scaling", "mesh", "logging"],
+                "tool_categories": ["kubernetes", "scaling", "mesh", "logging", "datadog"],
                 "system_instruction": HEALTH_INVESTIGATOR_PROMPT,
-                "model": "gemini-2.5-flash",
                 "max_iterations": settings.investigation.max_iterations,
                 "temperature": 0.1,
                 "agent_class": "InvestigationAgent",
@@ -963,7 +1023,7 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_verifier",
                 "role": "Health Finding Verifier",
                 "requires_tools": True,
-                "tool_categories": ["kubernetes", "scaling", "mesh", "datadog"],
+                "tool_categories": ["kubernetes", "scaling", "mesh", "datadog", "logging", "monitoring"],
                 "system_instruction": HEALTH_VERIFIER_PROMPT,
                 "model": "gemini-2.5-flash",
                 "max_iterations": 15,
@@ -1012,6 +1072,25 @@ class ServiceHealthSkill(BaseSkill):
         cleaned = clean_llm_json(content)
         try:
             report = HealthReport.model_validate_json(cleaned)
+
+            # ── SPEC-RP-01: Dedup findings by fingerprint ─────────────────
+            if report.findings:
+                deduped = _dedup_findings(report.findings)
+                if len(deduped) != len(report.findings):
+                    logger.info(
+                        "Finding dedup: %d → %d findings (%d duplicates removed)",
+                        len(report.findings),
+                        len(deduped),
+                        len(report.findings) - len(deduped),
+                    )
+                    report = report.model_copy(update={"findings": deduped})
+
+            # ── SPEC-SH-13: Contradiction detection ───────────────────────
+            contradiction_findings = detect_contradictions(report)
+            if contradiction_findings:
+                report = report.model_copy(
+                    update={"findings": report.findings + contradiction_findings}
+                )
 
             # Warn if report has no meaningful data
             if not report.findings and not report.service_statuses:

@@ -4420,3 +4420,182 @@ class TestDiagnoseDatadogMetrics:
             url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
             # urllib.parse.quote_plus encodes * as %2A
             assert "%2A" in url or "quote_plus" in url  # encoded wildcard
+
+
+# ── TestQueryDatadogErrorSpans ────────────────────────────────
+
+
+class TestQueryDatadogErrorSpans:
+    """Tests for query_datadog_error_spans (SPEC-DD-01)."""
+
+    def _make_span(
+        self,
+        route: str = "/api/v1/resource",
+        status: str = "500",
+        error_type: str = "RuntimeError",
+        upstream: str = "backend-svc",
+    ) -> dict:
+        return {
+            "attributes": {
+                "attributes": {
+                    "http.route": route,
+                    "http.status_code": status,
+                    "error.type": error_type,
+                    "@upstream_cluster": upstream,
+                }
+            }
+        }
+
+    def test_happy_path_groups_spans(self) -> None:
+        """Happy path: mock _dd_raw_get returns spans, assert grouped output."""
+        from vaig.core.config import DatadogAPIConfig
+        from vaig.tools.gke.datadog_api import query_datadog_error_spans
+
+        fake_response = {
+            "data": [
+                self._make_span("/api/v1/users", "500", "NullPointerException", "auth-svc"),
+                self._make_span("/api/v1/users", "500", "NullPointerException", "auth-svc"),
+                self._make_span("/api/v1/items", "503", "TimeoutError", "catalog-svc"),
+            ]
+        }
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="a", site="datadoghq.com")
+
+        with (
+            patch.dict("sys.modules", _make_dd_modules()),
+            patch("vaig.tools.gke.datadog_api._dd_raw_get", return_value=fake_response),
+            patch("vaig.tools.gke.datadog_api._get_dd_api_client") as mock_ctx,
+        ):
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            result = query_datadog_error_spans(
+                service="my-api",
+                env="production",
+                start_time="2024-01-01T00:00:00Z",
+                end_time="2024-01-01T01:00:00Z",
+                config=config,
+            )
+
+        assert not result.error
+        assert "/api/v1/users" in result.output
+        assert "NullPointerException" in result.output
+        assert "auth-svc" in result.output
+        # Highest count appears first
+        lines = result.output.splitlines()
+        assert any("2" in line and "/api/v1/users" in line for line in lines)
+
+    def test_empty_spans_returns_no_spans_message(self) -> None:
+        """mock returns empty data → assert 'No error spans found'."""
+        from vaig.core.config import DatadogAPIConfig
+        from vaig.tools.gke.datadog_api import query_datadog_error_spans
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="a", site="datadoghq.com")
+
+        with (
+            patch.dict("sys.modules", _make_dd_modules()),
+            patch("vaig.tools.gke.datadog_api._dd_raw_get", return_value={"data": []}),
+            patch("vaig.tools.gke.datadog_api._get_dd_api_client") as mock_ctx,
+        ):
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            result = query_datadog_error_spans(
+                service="my-api",
+                env="production",
+                start_time="2024-01-01T00:00:00Z",
+                end_time="2024-01-01T01:00:00Z",
+                config=config,
+            )
+
+        assert not result.error
+        assert "No error spans found" in result.output
+
+    def test_api_exception_returns_error(self) -> None:
+        """mock raises ApiException(403) → assert result.error."""
+        from vaig.core.config import DatadogAPIConfig
+        from vaig.tools.gke.datadog_api import query_datadog_error_spans
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="a", site="datadoghq.com")
+        dd_modules = _make_dd_modules()
+        ApiException = dd_modules["datadog_api_client.exceptions"].ApiException  # type: ignore[union-attr]
+        exc = ApiException("Forbidden")
+        exc.status = 403
+
+        with (
+            patch.dict("sys.modules", dd_modules),
+            patch("vaig.tools.gke.datadog_api._dd_raw_get", side_effect=exc),
+            patch("vaig.tools.gke.datadog_api._get_dd_api_client") as mock_ctx,
+        ):
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            result = query_datadog_error_spans(
+                service="my-api",
+                env="production",
+                start_time="2024-01-01T00:00:00Z",
+                end_time="2024-01-01T01:00:00Z",
+                config=config,
+            )
+
+        assert result.error
+
+    def test_ssl_error_returns_error(self) -> None:
+        """mock raises SSLError → assert result.error."""
+        import ssl
+
+        from vaig.core.config import DatadogAPIConfig
+        from vaig.tools.gke.datadog_api import query_datadog_error_spans
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="a", site="datadoghq.com")
+
+        with (
+            patch.dict("sys.modules", _make_dd_modules()),
+            patch("vaig.tools.gke.datadog_api._dd_raw_get", side_effect=ssl.SSLError("cert verify failed")),
+            patch("vaig.tools.gke.datadog_api._get_dd_api_client") as mock_ctx,
+        ):
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            result = query_datadog_error_spans(
+                service="my-api",
+                env="production",
+                start_time="2024-01-01T00:00:00Z",
+                end_time="2024-01-01T01:00:00Z",
+                config=config,
+            )
+
+        assert result.error
+
+    def test_limit_capped_at_200(self) -> None:
+        """Passing limit=500 → POST body limit must be ≤ 200."""
+        from vaig.core.config import DatadogAPIConfig
+        from vaig.tools.gke.datadog_api import query_datadog_error_spans
+
+        config = DatadogAPIConfig(enabled=True, api_key="k", app_key="a", site="datadoghq.com")
+
+        with (
+            patch.dict("sys.modules", _make_dd_modules()),
+            patch("vaig.tools.gke.datadog_api._dd_raw_get", return_value={"data": []}) as mock_raw,
+            patch("vaig.tools.gke.datadog_api._get_dd_api_client") as mock_ctx,
+        ):
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            query_datadog_error_spans(
+                service="my-api",
+                env="production",
+                start_time="2024-01-01T00:00:00Z",
+                end_time="2024-01-01T01:00:00Z",
+                limit=500,
+                config=config,
+            )
+
+        assert mock_raw.called
+        # payload is the 5th positional arg (keyword arg)
+        call_kwargs = mock_raw.call_args.kwargs
+        payload = call_kwargs.get("payload") or mock_raw.call_args.args[3] if len(mock_raw.call_args.args) > 3 else None
+        if payload is None:
+            # Try positional
+            all_args = list(mock_raw.call_args.args) + list(mock_raw.call_args.kwargs.values())
+            for arg in all_args:
+                if isinstance(arg, dict) and "data" in arg:
+                    payload = arg
+                    break
+        assert payload is not None
+        limit_in_body = payload["data"]["attributes"]["page"]["limit"]
+        assert limit_in_body <= 200

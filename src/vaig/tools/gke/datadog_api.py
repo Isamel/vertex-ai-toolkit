@@ -17,7 +17,7 @@ from vaig.tools.base import ToolResult
 from . import _cache
 
 if TYPE_CHECKING:
-    pass
+    from vaig.core.config import GKEConfig
 
 logger = logging.getLogger(__name__)
 
@@ -376,11 +376,17 @@ def _dd_raw_get(
     config: DatadogAPIConfig,
     path: str,
     params: dict[str, str] | None = None,
+    method: str = "GET",
+    payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Raw GET against the Datadog v1 API.
+    """Raw GET or POST against the Datadog API.
 
     Mirrors the inline auth+GET pattern used in ``diagnose_datadog_metrics``
     (rest_client, ``DD-API-KEY`` / ``DD-APPLICATION-KEY`` headers, JSON decode).
+
+    When *method* is ``"POST"``, *payload* is serialised to JSON and sent as
+    the request body.  The ``Content-Type: application/json`` header is added
+    automatically.
 
     Returns an empty dict on any failure (non-200, exception, non-dict body).
     Never raises.
@@ -398,7 +404,12 @@ def _dd_raw_get(
         if params:
             qs = "?" + urllib.parse.urlencode(params)
         url = f"https://api.{config.site}{path}{qs}"
-        resp = rest.request("GET", url, headers=auth_headers, timeout=5)
+        if method.upper() == "POST":
+            auth_headers["Content-Type"] = "application/json"
+            body_bytes = _json.dumps(payload or {}).encode("utf-8")
+            resp = rest.request("POST", url, headers=auth_headers, body=body_bytes, timeout=5)
+        else:
+            resp = rest.request("GET", url, headers=auth_headers, timeout=5)
         resp_status = getattr(resp, "status", 200)
         if resp_status and resp_status >= 400:  # noqa: PLR2004
             logger.debug("_dd_raw_get: HTTP %s for %s", resp_status, path)
@@ -1751,6 +1762,126 @@ def diagnose_datadog_metrics(
         )
 
 
+def query_datadog_error_spans(
+    service: str,
+    env: str,
+    start_time: str,
+    end_time: str,
+    *,
+    limit: int = 50,
+    config: DatadogAPIConfig | None = None,
+    _custom_client_ctx: Any = None,
+) -> ToolResult:
+    """Return top error spans for a service, grouped by endpoint / status / exception / upstream.
+
+    Queries the Datadog Spans Search v2 API (``POST /api/v2/spans/events/search``)
+    with ``@error:true`` to fetch error spans for the given service and environment,
+    then groups them by HTTP route, status code, exception class, and upstream service.
+
+    Args:
+        service: Datadog service name (e.g. ``"my-api"``).
+        env: Datadog environment tag value (e.g. ``"production"``).
+        start_time: ISO-8601 start timestamp for the query window
+            (e.g. ``"2024-01-01T00:00:00Z"``).
+        end_time: ISO-8601 end timestamp for the query window
+            (e.g. ``"2024-01-01T01:00:00Z"``).
+        limit: Maximum number of spans to retrieve (capped at 200).
+        config: Optional :class:`DatadogAPIConfig` (for testing / injection).
+        _custom_client_ctx: Optional pre-configured client context (for testing).
+
+    Returns:
+        :class:`ToolResult` with grouped error spans or an error message.
+    """
+    try:
+        from datadog_api_client.exceptions import ApiException  # noqa: WPS433
+    except ImportError:
+        return ToolResult(output=_ERR_NOT_INSTALLED, error=True)
+
+    if config is None:
+        from vaig.core.config import get_settings  # noqa: WPS433
+
+        config = get_settings().datadog
+
+    if not config.enabled:
+        return ToolResult(output=_ERR_NOT_ENABLED, error=True)
+
+    try:
+        sanitized_service = _sanitize_service_name(service)
+        sanitized_env = _sanitize_tag_value("env", env)
+    except ValueError as exc:
+        return ToolResult(output=str(exc), error=True)
+
+    actual_limit = min(limit, 200)
+
+    body: dict[str, Any] = {
+        "data": {
+            "attributes": {
+                "filter": {
+                    "query": f"service:{sanitized_service} env:{sanitized_env} @error:true",
+                    "from": start_time,
+                    "to": end_time,
+                },
+                "page": {"limit": actual_limit},
+                "sort": "-timestamp",
+            },
+            "type": "search_request",
+        }
+    }
+
+    def _run(client_ctx: Any) -> ToolResult:
+        response = _dd_raw_get(
+            client_ctx,
+            config,  # type: ignore[arg-type]
+            "/api/v2/spans/events/search",
+            method="POST",
+            payload=body,
+        )
+
+        spans = response.get("data", [])
+        if not spans:
+            return ToolResult(output="No error spans found in the specified time range.")
+
+        # Group by (route, status_code, exception_class, upstream)
+        groups: dict[tuple[str, str, str, str], int] = {}
+        for span in spans:
+            attrs = span.get("attributes", {}).get("attributes", {})
+            route = str(attrs.get("http.route") or attrs.get("http.url") or "unknown")
+            status = str(attrs.get("http.status_code", "?"))
+            exc_class = str(attrs.get("error.type") or attrs.get("error.kind") or "unknown")
+            upstream = str(attrs.get("@upstream_cluster") or attrs.get("upstream_cluster") or "n/a")
+            key = (route, status, exc_class, upstream)
+            groups[key] = groups.get(key, 0) + 1
+
+        lines = [
+            f"Error spans for service={sanitized_service} env={sanitized_env} "
+            f"({len(spans)} spans, grouped by endpoint | status | exception | upstream | count):"
+        ]
+        for (route, status, exc_class, upstream), count in sorted(
+            groups.items(), key=lambda x: -x[1]
+        ):
+            lines.append(f"  {route} | {status} | {exc_class} | {upstream} | {count}")
+        return ToolResult(output="\n".join(lines))
+
+    try:
+        if _custom_client_ctx is not None:
+            return _run(_custom_client_ctx)
+        with _get_dd_api_client(config) as client:
+            return _run(client)
+    except ApiException as exc:
+        status = getattr(exc, "status", 0)
+        return ToolResult(output=_dd_error_message(status), error=True)
+    except ssl.SSLError as exc:
+        return _ssl_error_result("query_datadog_error_spans", exc)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected error in query_datadog_error_spans")
+        return ToolResult(
+            output=f"Unexpected error querying Datadog error spans: {exc}",
+            error=True,
+        )
+
+
 # ── Async wrappers ───────────────────────────────────────────
 
 from vaig.core.async_utils import to_async  # noqa: E402
@@ -1761,3 +1892,147 @@ async_get_datadog_service_catalog = to_async(get_datadog_service_catalog)
 async_get_datadog_apm_services = to_async(get_datadog_apm_services)
 async_get_datadog_service_dependencies = to_async(get_datadog_service_dependencies)
 async_diagnose_datadog_metrics = to_async(diagnose_datadog_metrics)
+async_query_datadog_error_spans = to_async(query_datadog_error_spans)
+
+
+# ── Workload usage for cost pipeline (Layer 3) ───────────────
+
+def get_datadog_workload_usage(
+    namespace: str,
+    workload_names: list[str],
+    *,
+    gke_config: GKEConfig,
+    config: DatadogAPIConfig | None = None,
+) -> dict[str, Any]:
+    """Fetch per-workload CPU and memory usage from Datadog for cost estimation.
+
+    This is Layer 3 in the multi-source cost measurement pipeline.  Called only
+    when Cloud Monitoring (L1) and Metrics Server (L2) both return no data.
+
+    Queries:
+    - ``avg:kubernetes.cpu.usage.total{...} by {pod_name}`` (nanocores/s → vCPU)
+    - ``avg:kubernetes.memory.rss{...} by {pod_name}`` (bytes → GiB)
+
+    Args:
+        namespace: Kubernetes namespace to filter on.
+        workload_names: List of workload names (used to build pod-name prefix matching).
+        gke_config: GKE cluster config (provides cluster name for tag filter).
+        config: :class:`DatadogAPIConfig`; when ``None`` uses ``DatadogAPIConfig()``
+            (disabled by default → returns ``{}`` immediately).
+
+    Returns:
+        Dict mapping workload_name → :class:`WorkloadUsageMetrics`.
+        Returns ``{}`` when Datadog is disabled, not installed, or on any error.
+    """
+    from vaig.tools.gke.monitoring import ContainerUsageMetrics, WorkloadUsageMetrics  # noqa: WPS433
+
+    _cfg = config if config is not None else DatadogAPIConfig()
+    if not _cfg.enabled:
+        return {}
+
+    # Determine cluster tag value
+    cluster_tag = _cfg.cluster_name_override or getattr(gke_config, "cluster_name", "")
+
+    try:
+        from datadog_api_client.v1.api.metrics_api import MetricsApi  # noqa: WPS433
+    except ImportError:  # pragma: no cover
+        logger.debug("get_datadog_workload_usage: datadog-api-client not installed")
+        return {}
+
+    import time as _time  # noqa: WPS433
+
+    now = int(_time.time())
+    start = now - 3600  # 1-hour window
+
+    cpu_query = (
+        f"avg:kubernetes.cpu.usage.total"
+        f"{{kube_namespace:{namespace},kube_cluster_name:{cluster_tag}}} by {{pod_name}}"
+    )
+    mem_query = (
+        f"avg:kubernetes.memory.rss"
+        f"{{kube_namespace:{namespace},kube_cluster_name:{cluster_tag}}} by {{pod_name}}"
+    )
+
+    def _avg_series(series: Any) -> dict[str, float]:
+        """Return pod_name → average metric value from a Datadog series list."""
+        result: dict[str, float] = {}
+        for s in series or []:
+            scope = getattr(s, "scope", "") or ""
+            # scope looks like "pod_name:my-pod-abc12"
+            pod_name = ""
+            for part in scope.split(","):
+                part = part.strip()
+                if part.startswith("pod_name:"):
+                    pod_name = part[len("pod_name:"):]
+                    break
+            if not pod_name:
+                continue
+            points = getattr(s, "pointlist", []) or []
+            vals = [v for p in points if (v := _point_value(p)) is not None]
+            if vals:
+                result[pod_name] = sum(vals) / len(vals)
+        return result
+
+    try:
+        with _get_dd_api_client(_cfg) as client:
+            api = MetricsApi(client)  # type: ignore[no-untyped-call]
+            cpu_resp = api.query_metrics(_from=start, to=now, query=cpu_query)
+            mem_resp = api.query_metrics(_from=start, to=now, query=mem_query)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("get_datadog_workload_usage: query failed: %s", exc)
+        return {}
+
+    cpu_by_pod = _avg_series(getattr(cpu_resp, "series", []))
+    mem_by_pod = _avg_series(getattr(mem_resp, "series", []))
+
+    if not cpu_by_pod and not mem_by_pod:
+        return {}
+
+    # Group pod metrics back to workload names (prefix match)
+    # workload_names = ["my-api", "worker"]
+    # pod_name = "my-api-abc12-xyz78" → matched to "my-api" (longest prefix)
+    def _match_workload(pod_name: str) -> str | None:
+        best: str | None = None
+        best_len = 0
+        for wl in workload_names:
+            # Pod names are typically workload_name + "-" + hash
+            if pod_name.startswith(wl + "-") or pod_name == wl:
+                if len(wl) > best_len:
+                    best = wl
+                    best_len = len(wl)
+        return best
+
+    # workload → {cpu_sum, mem_sum, count}
+    wl_cpu: dict[str, list[float]] = {}
+    wl_mem: dict[str, list[float]] = {}
+
+    for pod_name, cpu_nanocores in cpu_by_pod.items():
+        wl = _match_workload(pod_name)
+        if wl:
+            wl_cpu.setdefault(wl, []).append(cpu_nanocores / 1e9)
+
+    for pod_name, mem_bytes in mem_by_pod.items():
+        wl = _match_workload(pod_name)
+        if wl:
+            wl_mem.setdefault(wl, []).append(mem_bytes / (1024**3))
+
+    all_wl = set(wl_cpu) | set(wl_mem)
+    if not all_wl:
+        return {}
+
+    output: dict[str, WorkloadUsageMetrics] = {}
+    for wl_name in all_wl:
+        cpu_vals = wl_cpu.get(wl_name, [])
+        mem_vals = wl_mem.get(wl_name, [])
+        avg_cpu = sum(cpu_vals) / len(cpu_vals) if cpu_vals else None
+        avg_mem = sum(mem_vals) / len(mem_vals) if mem_vals else None
+        c_metrics = {
+            "_datadog": ContainerUsageMetrics(
+                container_name="_datadog",
+                avg_cpu_cores=avg_cpu,
+                avg_memory_gib=avg_mem,
+            )
+        }
+        output[wl_name] = WorkloadUsageMetrics(namespace=namespace, workload_name=wl_name, containers=c_metrics)
+
+    return output  # type: ignore[return-value]

@@ -22,6 +22,7 @@ from vaig.core.prompt_defense import (
 from ._shared import (
     _DATADOG_API_TOOLS_TABLE,
     _PRIORITY_HIERARCHY,
+    _build_mandatory_tools_section,
 )
 
 
@@ -225,6 +226,7 @@ def build_workload_gatherer_prompt(
     datadog_api_enabled: bool = False,  # noqa: ARG001 — deprecated; Batch 2 will remove callers
     argo_rollouts_enabled: bool = False,
     prefetched_pod_metrics: str = "",
+    user_query: str = "",
 ) -> str:
     """Build the system instruction for the ``workload_gatherer`` sub-agent.
 
@@ -286,6 +288,8 @@ def build_workload_gatherer_prompt(
             "the cluster. Prioritise namespaces with the highest pod count."
         )
     )
+    # ── SPEC-SH-10: inject mandatory tools section ────────────────────────
+    mandatory_tools_section = _build_mandatory_tools_section(query=user_query, namespace=namespace)
     prompt = f"""{ANTI_INJECTION_RULE}
 
 ## Anti-Hallucination Rules
@@ -489,7 +493,7 @@ pipe-separated metric names typically indicate external metrics from Cloud Monit
 ### PRIORITY HIERARCHY — Kubernetes vs Datadog
 {_PRIORITY_HIERARCHY}
 
-### MANDATORY OUTPUT FORMAT
+{mandatory_tools_section}### MANDATORY OUTPUT FORMAT
 
 Produce exactly these sections at the end of your response:
 
@@ -846,6 +850,36 @@ You MUST call ``query_datadog_metrics(cluster_name="{cluster}", metric="memory")
 Record both the original failure and any fallback attempts in Raw Findings so the
 analyst can see which metric source or strategy was actually used.
 
+### Valid Metric Template Keys
+
+The following are the ONLY valid values for the ``metric`` parameter of
+``query_datadog_metrics``.  Do NOT invent or guess other metric names:
+
+**k8s_agent mode** (infrastructure): ``cpu``, ``memory``, ``restarts``,
+``network_in``, ``network_out``, ``disk_read``, ``disk_write``
+
+**APM mode** (trace.*): ``requests``, ``errors``, ``latency``, ``error_rate``,
+``apdex``
+
+### Tool Error Recovery
+
+When a tool call returns an error, follow these rules (MAX ONE RETRY per tool):
+
+1. **Unknown metric template key** (error contains "unknown metric" or similar):
+   - Call ``diagnose_datadog_metrics`` to inspect what metrics are actually available.
+   - Retry once with a valid metric key from the list above.
+   - If it still fails, record the error and move on.
+
+2. **No service catalog found** (``get_datadog_service_catalog`` returns empty or
+   "service not found"):
+   - Do NOT retry. Skip this call and record "Service not in Datadog catalog" in
+     Raw Findings. This is a configuration gap, not a tool error.
+
+3. **Any other tool error**:
+   - Annotate Raw Findings with the exact error message.
+   - Do NOT fabricate substitute data.
+   - Continue with remaining tool calls — one failure does not abort the phase.
+
 ### Call 3 — Datadog Monitors
 
 You MUST call ``get_datadog_monitors(cluster_name="{cluster}")``
@@ -883,6 +917,31 @@ When ``service_name`` IS resolved:
 — fetch live throughput (req/s), error rate (%), and avg latency (ms).
 
 **Tier 3 rule**: if no service identity was found, call the tool anyway without ``service_name`` and record the guidance.
+
+### Call 6 — Error Span Drill-Down (conditional)
+
+If APM data from Call 5 shows **error_rate > 1% AND throughput > 0.001 req/s**, you
+MUST also call ``query_datadog_error_spans`` before concluding:
+
+``query_datadog_error_spans(service="<dd_service>", env="<dd_env>", start_time="<iso>", end_time="<iso>")``
+
+This surfaces the top error spans grouped by endpoint, HTTP status code, exception class,
+and upstream cluster — essential context for root-cause analysis of elevated error rates.
+If the error rate condition is NOT met, skip this call and record "Skipped — error rate
+below threshold" in the output.
+
+### Envoy Admin Drill-Down (use exec_command when upstream errors suspected)
+
+When upstream errors are present in Datadog spans but ``upstream_cluster`` detail is
+missing, run the following ``exec_command`` calls on the affected pod's ``istio-proxy``
+sidecar:
+
+```
+kubectl exec -n {namespace} <pod> -c istio-proxy -- curl -s localhost:15000/clusters
+kubectl exec -n {namespace} <pod> -c istio-proxy -- curl -s 'localhost:15000/stats?filter=upstream_rq_5xx'
+```
+
+Use these to identify which upstream cluster is generating 5xx responses.
 
 ## MANDATORY OUTPUT FORMAT
 
@@ -934,7 +993,7 @@ If no issues: "No active Datadog monitors or APM anomalies detected.")
     return prompt
 
 
-def build_event_gatherer_prompt(namespace: str = "") -> str:
+def build_event_gatherer_prompt(namespace: str = "", user_query: str = "") -> str:
     """Build the system instruction for the ``event_gatherer`` sub-agent.
 
     The ``event_gatherer`` is responsible for **Steps 3, 8, 9, 10** of the
@@ -976,6 +1035,8 @@ def build_event_gatherer_prompt(namespace: str = "") -> str:
             "non-system namespaces found in the cluster."
         )
     )
+    # ── SPEC-SH-10: inject mandatory tools section ────────────────────────
+    mandatory_tools_section = _build_mandatory_tools_section(query=user_query, namespace=namespace)
     prompt = f"""{ANTI_INJECTION_RULE}
 
 ## Anti-Hallucination Rules
@@ -1045,7 +1106,7 @@ Inspect the returned labels and annotations:
 - If a tool call returns no data, record "No data returned" — NEVER fabricate events or messages.
 - Include ALL Warning events, not just the most recent ones.
 
-### MANDATORY OUTPUT FORMAT
+{mandatory_tools_section}### MANDATORY OUTPUT FORMAT
 
 Produce exactly these sections at the end of your response:
 
@@ -1137,36 +1198,82 @@ reveals errors that are invisible in pod status.
 
 ## Your Scope
 
-### Step 7a — Error-Level Logs (ALWAYS execute this query)
-You MUST call ``gcloud_logging_query`` with a filter that includes
-``severity>=ERROR AND resource.type="k8s_container"`` scoped to the target namespace.
+### Step 7a — Error-Level Logs — Query A (ALWAYS execute)
+You MUST call ``gcloud_logging_query`` to capture application container errors:
 
-Example filter (substitute actual namespace):
 ```
 severity>=ERROR AND resource.type="k8s_container" AND resource.labels.namespace_name="{safe_ns}"
 ```
 
 Recommended params: ``interval_hours=1.0``, ``limit=50``
 
-If multiple namespaces are under investigation, run this query for each namespace.
+### Step 7b — Envoy Access Errors — Query B (ALWAYS execute)
+You MUST call ``gcloud_logging_query`` to capture Envoy/sidecar access errors.
+Use a **≤15 minute window** to avoid log volume explosion:
 
-### Step 7b — Warning-Level Pod Logs (ALWAYS execute this query)
-You MUST call ``gcloud_logging_query`` with a filter that includes
-``severity>=WARNING AND resource.type="k8s_pod"`` scoped to the target namespace.
-
-Example filter:
 ```
-severity>=WARNING AND resource.type="k8s_pod" AND resource.labels.namespace_name="{safe_ns}"
+severity>=ERROR AND resource.type="k8s_container"
+AND resource.labels.container_name="istio-proxy"
+AND resource.labels.namespace_name="{safe_ns}"
 ```
 
-Recommended params: ``interval_hours=0.5``, ``limit=30``
+Recommended params: ``interval_hours=0.25``, ``limit=50``
 
-### Optional Step 7c — Service-specific log drill-down
-If Step 7a reveals errors for a specific container, run a targeted query:
+### Step 7c — Envoy Upstream Errors — Query C (ALWAYS execute)
+You MUST call ``gcloud_logging_query`` to surface upstream connection failures:
+
+```
+severity>=WARNING AND resource.type="k8s_container"
+AND resource.labels.container_name="istio-proxy"
+AND textPayload=~"upstream connect error"
+AND resource.labels.namespace_name="{safe_ns}"
+```
+
+Recommended params: ``interval_hours=1.0``, ``limit=30``
+
+### Step 7d — Istiod Discovery Logs — Query D (ALWAYS execute)
+You MUST call ``gcloud_logging_query`` for control-plane discovery errors.
+
+**Important caveat**: istiod emits frequent ``INFO`` and ``WARNING`` messages related
+to certificate rotation and xDS push that are **NOT** application errors.  Only flag
+entries with a message directly referencing your target service or namespace.
+
+```
+severity>=WARNING AND resource.type="k8s_container"
+AND resource.labels.container_name="discovery"
+AND resource.labels.namespace_name="{safe_ns}"
+```
+
+Recommended params: ``interval_hours=0.5``, ``limit=20``
+
+### Step 7e — CNI / Injection Errors — Query E (ALWAYS execute)
+You MUST call ``gcloud_logging_query`` for CNI or Istio injection failures:
+
+```
+severity>=ERROR AND resource.type="k8s_container"
+AND (resource.labels.container_name="istio-init" OR resource.labels.container_name="istio-cni-node")
+AND resource.labels.namespace_name="{safe_ns}"
+```
+
+Recommended params: ``interval_hours=1.0``, ``limit=20``
+
+### Optional Step 7f — Service-specific log drill-down
+If Query A (Step 7a) reveals errors for a specific container, run a targeted query:
 ```
 severity>=ERROR AND resource.type="k8s_container" AND resource.labels.container_name="<container>"
 AND resource.labels.namespace_name="{safe_ns}"
 ```
+
+### Retry-on-Zero Policy
+
+If any query returns 0 results, apply this policy before recording "no data":
+
+1. **Broaden the time window 2×** and retry (e.g., ``interval_hours=0.5`` → ``interval_hours=1.0``).
+2. If still 0, **try the next unused query template** from the list above (Queries A–E).
+3. After **3 total attempts** for the same signal, record:
+   ``[NO LOGS FOUND after 3 attempts — query: <filter>, widest window: <hours>h]``
+
+Do NOT keep retrying beyond 3 attempts. Move on to the next query.
 
 ### Cloud Logging Query Patterns:
 - Always scope to ``resource.labels.namespace_name`` — do NOT query cluster-wide (too noisy).
@@ -1177,8 +1284,8 @@ AND resource.labels.namespace_name="{safe_ns}"
 
 ### Data collection rules:
 - You MUST call ``gcloud_logging_query`` at least once (Step 7a) per namespace.
-- If a query returns 0 results, write "No errors found in Cloud Logging for <namespace>
-  (severity>=ERROR, last 1h)" — do NOT invent log entries.
+- If a query returns 0 results, apply the Retry-on-Zero Policy above before recording
+  "No errors found in Cloud Logging for <namespace>". Do NOT invent log entries.
 - Log entry fields to capture: timestamp, severity, resource labels (pod/container/namespace),
   textPayload or jsonPayload.message, any exception stacks.
 - If the target namespace is unknown, check the query context or use the most active
@@ -1190,15 +1297,25 @@ Produce exactly this section at the end of your response:
 
 ## Cloud Logging Findings
 
-### Step 7a Results — Error-Level Logs (k8s_container, severity>=ERROR)
+### Step 7a Results — App Error Logs (k8s_container, severity>=ERROR)
 (List each unique error pattern: timestamp, container name, error message.
 If no errors found: "No ERROR-level logs found for <namespace> in the last 1 hour.")
 
-### Step 7b Results — Warning-Level Logs (k8s_pod, severity>=WARNING)
-(List each unique warning pattern: timestamp, pod name, message.
-If no warnings found: "No WARNING-level logs found for <namespace> in the last 30 minutes.")
+### Step 7b Results — Envoy Access Errors (istio-proxy, severity>=ERROR, ≤15min)
+(List each unique Envoy error pattern: timestamp, message.
+If no errors found: "No Envoy access errors found.")
 
-### Step 7c Results — Service-Specific Logs (if executed)
+### Step 7c Results — Envoy Upstream Errors (upstream connect error)
+(List upstream connect error patterns found, or "Not found.")
+
+### Step 7d Results — Istiod Discovery Logs (discovery, severity>=WARNING)
+(List relevant entries — flag ONLY items referencing the target service/namespace.
+Note: certificate rotation and xDS push messages are expected noise — do NOT flag them.)
+
+### Step 7e Results — CNI / Injection Errors (istio-init | istio-cni-node)
+(List injection errors found, or "No CNI/injection errors found.")
+
+### Step 7f Results — Service-Specific Logs (if executed)
 (List targeted log results for specific containers, or "Not executed — no specific container errors found in 7a.")
 
 ### Log Summary

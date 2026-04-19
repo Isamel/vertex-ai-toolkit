@@ -4,6 +4,9 @@ Contains tool reference tables, the priority hierarchy, the Datadog API step
 block, and the builder functions that assemble them into prompt fragments.
 """
 
+import re
+from typing import Final
+
 _CORE_TOOLS_TABLE = """\
 | `kubectl_get` | `resource` | `name`, `namespace`, `output`, `label_selector`, `field_selector` |
 | `kubectl_describe` | `resource_type`, `name` | `namespace` |
@@ -45,7 +48,8 @@ _DATADOG_API_TOOLS_TABLE = """\
 | `get_datadog_monitors` | | `cluster_name`, `state`, `service`, `env` |
 | `get_datadog_service_catalog` | | `env`, `cluster_name`, `service_name` |
 | `get_datadog_apm_services` | | `service_name` (optional — returns guidance if omitted), `env` — auto-tries web/gRPC/Kafka metric families |
-| `get_datadog_service_dependencies` | `service_name` | — returns upstream (called_by) and downstream (calls) services plus structured DependencyEdge data |"""
+| `get_datadog_service_dependencies` | `service_name` | — returns upstream (called_by) and downstream (calls) services plus structured DependencyEdge data |
+| `query_datadog_error_spans` | `service`, `env`, `start_time`, `end_time` | Drill into error spans: endpoint, status code, exception class, upstream service |"""
 
 _PRIORITY_HIERARCHY = """\
 1. Kubernetes cluster data is the ABSOLUTE source of truth for deployment status.
@@ -182,3 +186,62 @@ def _build_tool_reference_table(
     if datadog_api_enabled:
         sections.append(_DATADOG_API_TOOLS_TABLE)
     return "\n".join(sections)
+
+
+# ── Resource-triggered tool gating (SPEC-SH-10) ──────────────────────────────
+
+_RESOURCE_TRIGGERED_TOOLS: Final[list[tuple[re.Pattern[str], list[str]]]] = [
+    (
+        re.compile(r"istio|ingressgateway|virtualservice|destinationrule|mesh", re.IGNORECASE),
+        ["istio_get_virtual_services", "istio_get_destination_rules", "check_mtls_status"],
+    ),
+    (
+        re.compile(r"argocd|gitops|application\.argoproj\.io", re.IGNORECASE),
+        ["argocd_list_applications", "argocd_app_status", "argocd_app_diff"],
+    ),
+    (
+        re.compile(r"helm|helmrelease|chart", re.IGNORECASE),
+        ["helm_list_releases", "helm_release_status", "helm_release_history"],
+    ),
+    (
+        re.compile(r"argo-rollout|rollout|canary|bluegreen|blue-green", re.IGNORECASE),
+        ["get_rollout_status", "get_rollout_history", "kubectl_get_analysisrun"],
+    ),
+]
+
+
+def _build_mandatory_tools_section(query: str = "", namespace: str = "") -> str:
+    """Return a mandatory-tools hint block when the query/namespace matches known patterns.
+
+    Checks *query* and *namespace* against :data:`_RESOURCE_TRIGGERED_TOOLS` and
+    returns a formatted ``⚠️ MANDATORY TOOLS`` section listing every tool group
+    that matched.  Returns ``""`` when there are no matches or both inputs are empty.
+
+    Args:
+        query: User query string — used to detect technology-specific patterns.
+        namespace: Kubernetes namespace — also checked for pattern matches.
+
+    Returns:
+        Formatted multi-line hint string or ``""`` when no match.
+    """
+    combined = f"{query} {namespace}".strip()
+    if not combined:
+        return ""
+
+    matched: list[tuple[str, list[str]]] = []
+    for pattern, tools in _RESOURCE_TRIGGERED_TOOLS:
+        if pattern.search(combined):
+            matched.append((pattern.pattern, tools))
+
+    if not matched:
+        return ""
+
+    lines = [
+        "⚠️ MANDATORY TOOLS — resource/namespace pattern detected:",
+        "",
+    ]
+    for _pattern, tools in matched:
+        for tool in tools:
+            lines.append(f"- You MUST call `{tool}` during this investigation.")
+    lines.append("")
+    return "\n".join(lines)

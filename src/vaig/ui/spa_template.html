@@ -852,6 +852,7 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
           <div class="cost-grid" id="gke-cost-summary-grid"></div>
           <div id="gke-cost-estimated-banner" style="display:none"></div>
           <div id="gke-cost-namespace-summaries"></div>
+          <div id="gke-cost-data-quality" style="display:none"></div>
           <div id="gke-cost-workloads"></div>
         </div>
       </div>
@@ -1376,6 +1377,66 @@ function renderGKECost() {
     } else {
       nsSummariesEl.innerHTML = '';
     }
+  }
+
+  // ── Cost Data Quality section ──────────────────────────────────
+  const cdq = gkeCost.cost_data_quality;
+  const cdqEl = document.getElementById('gke-cost-data-quality');
+  if (cdqEl && cdq) {
+    const conf = (cdq.confidence || 'low').toLowerCase();
+    const confColors = { high: '#2e7d32', medium: '#e65100', low: '#b71c1c' };
+    const confIcons  = { high: '✅', medium: '⚠️', low: '🔴' };
+    const bgColors   = { high: '#e8f5e9', medium: '#fff3e0', low: '#ffebee' };
+    const borderColors = { high: '#a5d6a7', medium: '#ffcc80', low: '#ef9a9a' };
+
+    const color  = confColors[conf]  || confColors.low;
+    const icon   = confIcons[conf]   || confIcons.low;
+    const bg     = bgColors[conf]    || bgColors.low;
+    const border = borderColors[conf] || borderColors.low;
+
+    const coveragePct = cdq.total_count > 0
+      ? Math.round((cdq.coverage_count / cdq.total_count) * 100)
+      : 0;
+
+    const sourceLabel = {
+      cloud_monitoring_60m: 'Cloud Monitoring (60m avg)',
+      cloud_monitoring_24h: 'Cloud Monitoring (24h avg)',
+      metrics_server:       'Kubernetes Metrics Server',
+      datadog:              'Datadog (1h avg)',
+      requests_fallback:    'Request-based estimate (no real data)',
+      unknown:              'Unknown',
+    };
+
+    const discHtml = (cdq.cross_check_discrepancies || []).length > 0
+      ? '<div style="margin-top:0.5rem;padding:0.5rem;background:#fff8e1;border:1px solid #ffe082;border-radius:4px;font-size:0.8rem;">'
+        + '<strong>⚠️ Sources disagree (&gt;10%% divergence):</strong> '
+        + cdq.cross_check_discrepancies.map(esc).join(', ')
+        + '</div>'
+      : '';
+
+    cdqEl.style.display = 'block';
+    cdqEl.innerHTML = `
+      <div style="margin:0.75rem 0;padding:0.75rem 1rem;background:${bg};border:1px solid ${border};border-radius:6px;">
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem;">
+          <span style="font-size:1.1rem;">${icon}</span>
+          <strong style="color:${color};font-size:0.9rem;">Cost Data Quality: ${conf.charAt(0).toUpperCase() + conf.slice(1)}</strong>
+          <span style="margin-left:auto;font-size:0.78rem;color:#555;">
+            Source: <em>${esc(sourceLabel[cdq.primary_source] || cdq.primary_source || 'unknown')}</em>
+            &nbsp;|&nbsp; Freshness: <em>${esc(cdq.freshness || 'unknown')}</em>
+          </span>
+        </div>
+        <div style="font-size:0.8rem;color:#444;margin-bottom:0.35rem;">
+          Coverage: ${cdq.coverage_count} / ${cdq.total_count} workloads with real metrics
+          (${coveragePct}%)
+          ${cdq.fallback_count > 0 ? `&nbsp;— <span style="color:#b71c1c;">${cdq.fallback_count} using request-based fallback (waste may be $0)</span>` : ''}
+        </div>
+        <div style="background:#e0e0e0;border-radius:4px;height:6px;overflow:hidden;">
+          <div style="height:100%;width:${coveragePct}%;background:${color};border-radius:4px;"></div>
+        </div>
+        ${discHtml}
+      </div>`;
+  } else if (cdqEl) {
+    cdqEl.style.display = 'none';
   }
 
   // ── Per-workload breakdown ─────────────────────────────────────

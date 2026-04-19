@@ -28,11 +28,11 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from vaig.core.config import GKEConfig
+    from vaig.core.config import DatadogAPIConfig, GKEConfig
     from vaig.skills.service_health.schema import GKECostReport
 
 logger = logging.getLogger(__name__)
@@ -800,6 +800,187 @@ def _compute_namespace_summaries(
     return result
 
 
+# ── Multi-source usage resolution (Layers 1-4) ───────────────
+
+
+@dataclass
+class UsageResolutionResult:
+    """Result from :func:`_resolve_workload_usage`.
+
+    Attributes:
+        usage: workload_name → :class:`WorkloadUsageMetrics` dict.
+            Empty dict when all layers returned no data.
+        source: Which layer provided the data.
+            Values: ``"cloud_monitoring_60m"``, ``"cloud_monitoring_24h"``,
+            ``"metrics_server"``, ``"datadog"``, ``"none"``.
+        freshness: Human-readable freshness label for the source.
+            Values: ``"60m_avg"``, ``"24h_avg"``, ``"snapshot"``, ``"1h_avg"``, ``"none"``.
+    """
+
+    usage: dict[str, Any] = field(default_factory=dict)
+    source: str = "none"
+    freshness: str = "none"
+
+
+def _resolve_workload_usage(
+    namespace: str,
+    workload_pod_names: dict[str, list[str]],
+    gke_config: GKEConfig,
+    datadog_config: DatadogAPIConfig | None = None,
+) -> UsageResolutionResult:
+    """Resolve workload usage metrics through the 4-layer pipeline.
+
+    Layers are tried in order; the first one returning data wins:
+
+    L1 — Cloud Monitoring 60m (+ 24h retry on empty)
+    L2 — Kubernetes Metrics Server (live snapshot)
+    L3 — Datadog (only when ``datadog_config.enabled == True``)
+    L4 — No real data available (returns empty result; caller uses requests as fallback)
+
+    Args:
+        namespace: Kubernetes namespace.
+        workload_pod_names: Workload → list[pod_name] mapping.
+        gke_config: GKE cluster configuration.
+        datadog_config: Optional Datadog configuration.  When ``None`` or
+            ``enabled=False``, Layer 3 is skipped.
+
+    Returns:
+        :class:`UsageResolutionResult` with the best available data.
+    """
+    # ── Layer 1: Cloud Monitoring ─────────────────────────────
+    try:
+        from vaig.tools.gke.monitoring import _get_monitoring_usage_with_retry  # noqa: WPS433
+        usage_l1, window = _get_monitoring_usage_with_retry(
+            namespace,
+            workload_pod_names,
+            gke_config=gke_config,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_resolve_workload_usage: L1 (monitoring) failed for ns=%s: %s", namespace, exc)
+        usage_l1, window = {}, "none"
+
+    if usage_l1:
+        if window == "60m":
+            return UsageResolutionResult(usage=usage_l1, source="cloud_monitoring_60m", freshness="60m_avg")
+        return UsageResolutionResult(usage=usage_l1, source="cloud_monitoring_24h", freshness="24h_avg")
+
+    # ── Layer 2: Metrics Server ───────────────────────────────
+    try:
+        from vaig.tools.gke.metrics_server import get_metrics_server_usage  # noqa: WPS433
+        usage_l2 = get_metrics_server_usage(
+            namespace,
+            workload_pod_names,
+            gke_config=gke_config,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("_resolve_workload_usage: L2 (metrics_server) failed for ns=%s: %s", namespace, exc)
+        usage_l2 = {}
+
+    if usage_l2:
+        return UsageResolutionResult(usage=usage_l2, source="metrics_server", freshness="snapshot")
+
+    # ── Layer 3: Datadog ──────────────────────────────────────
+    if datadog_config is not None and datadog_config.enabled:
+        try:
+            from vaig.tools.gke.datadog_api import get_datadog_workload_usage  # noqa: WPS433
+            workload_names = list(workload_pod_names.keys())
+            usage_l3 = get_datadog_workload_usage(
+                namespace,
+                workload_names,
+                gke_config=gke_config,
+                config=datadog_config,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("_resolve_workload_usage: L3 (datadog) failed for ns=%s: %s", namespace, exc)
+            usage_l3 = {}
+
+        if usage_l3:
+            return UsageResolutionResult(usage=usage_l3, source="datadog", freshness="1h_avg")
+
+    # ── Layer 4: No real data ─────────────────────────────────
+    logger.info(
+        "_resolve_workload_usage: all layers returned empty for ns=%s — "
+        "will use requests as fallback (waste figures unreliable)",
+        namespace,
+    )
+    return UsageResolutionResult(usage={}, source="none", freshness="none")
+
+
+def _compute_cost_data_quality(
+    workloads: list[Any],
+    cross_check_data: dict[str, Any],
+) -> Any | None:
+    """Compute a :class:`CostDataQuality` summary from resolved workload metrics.
+
+    Inspects the ``metrics_source`` field on each workload to determine the
+    dominant source, count fallbacks, and assign a confidence level.
+
+    Args:
+        workloads: List of ``GKEWorkloadCost`` objects (after metrics have been
+            assigned).  The ``metrics_source`` field drives classification.
+        cross_check_data: Reserved for future cross-source discrepancy data.
+            Currently unused; pass an empty dict.
+
+    Returns:
+        A :class:`CostDataQuality` instance, or ``None`` when the workloads
+        list is empty.
+    """
+    if not workloads:
+        return None
+
+    from vaig.skills.service_health.schema import CostDataQuality  # noqa: WPS433
+
+    total = len(workloads)
+    source_counts: dict[str, int] = {}
+    fallback_count = 0
+    for wl in workloads:
+        src = getattr(wl, "metrics_source", None) or "none"
+        source_counts[src] = source_counts.get(src, 0) + 1
+        if src in ("none", "requests_fallback"):
+            fallback_count += 1
+
+    coverage_count = total - fallback_count
+
+    # Dominant source = highest count
+    primary_source = max(source_counts, key=lambda k: source_counts[k])
+    if primary_source == "none":
+        primary_source = "requests_fallback"
+
+    # Freshness label derived from primary source
+    _freshness_map = {
+        "cloud_monitoring_60m": "60m_avg",
+        "cloud_monitoring_24h": "24h_avg",
+        "metrics_server": "snapshot",
+        "datadog": "1h_avg",
+        "requests_fallback": "none",
+        "none": "none",
+    }
+    freshness = _freshness_map.get(primary_source, "unknown")
+
+    # Confidence logic:
+    # low    → any fallback
+    # medium → no fallback but any 24h or datadog
+    # high   → all real L1-60m or L2 data
+    if fallback_count > 0:
+        confidence = "low"
+    elif source_counts.get("cloud_monitoring_24h", 0) > 0 or source_counts.get("datadog", 0) > 0:
+        confidence = "medium"
+    else:
+        confidence = "high"
+
+    cross_check_discrepancies: list[str] = list(cross_check_data.get("discrepancies", []))
+
+    return CostDataQuality(
+        primary_source=primary_source,
+        freshness=freshness,
+        coverage_count=coverage_count,
+        total_count=total,
+        confidence=confidence,
+        fallback_count=fallback_count,
+        cross_check_discrepancies=cross_check_discrepancies,
+    )
+
+
 def fetch_workload_costs(
     gke_config: GKEConfig,
     namespaces: list[str] | None = None,
@@ -971,9 +1152,8 @@ def fetch_workload_costs(
             key = (ns, workload_name)
             workload_pods.setdefault(key, []).append(pod)
 
-    # ── 5. Fetch usage metrics from Cloud Monitoring per namespace ─────────
-    # Build workload_pod_names per namespace for the monitoring query.
-    # ns_workload_pods: namespace → {workload_name: [pod_names]}
+    # ── 5. Resolve usage metrics via multi-source pipeline ───────
+    # Build workload_pod_names per namespace for all metric queries.
     ns_workload_pod_names: dict[str, dict[str, list[str]]] = {}
     for (ns, wl_name), pods in workload_pods.items():
         pod_names = [
@@ -984,98 +1164,76 @@ def fetch_workload_costs(
         if pod_names:
             ns_workload_pod_names.setdefault(ns, {}).setdefault(wl_name, []).extend(pod_names)
 
-    # Import lazily so monitoring module is optional at runtime
-    try:
-        from vaig.tools.gke.monitoring import get_workload_usage_metrics  # noqa: WPS433
-        monitoring_available = True
-    except ImportError:
-        monitoring_available = False
+    # Resolve per-namespace: ns → UsageResolutionResult
+    datadog_cfg = getattr(gke_config, "datadog", None)
+    ns_resolution: dict[str, UsageResolutionResult] = {}
+    for ns, workload_pod_names in ns_workload_pod_names.items():
+        ns_resolution[ns] = _resolve_workload_usage(
+            ns,
+            workload_pod_names,
+            gke_config,
+            datadog_config=datadog_cfg,
+        )
 
-    # ns_usage_metrics: namespace → {workload_name: WorkloadUsageMetrics}
-    ns_usage_metrics: dict[str, dict[str, Any]] = {}
-    monitoring_status: str | None = None  # None = not explicitly checked / status not set; "ok" = metrics fetched; str = issue
-    if monitoring_available:
-        for ns, workload_pod_names in ns_workload_pod_names.items():
-            try:
-                usage = get_workload_usage_metrics(
-                    namespace=ns,
-                    workload_pod_names=workload_pod_names,
-                    gke_config=gke_config,
-                )
-                ns_usage_metrics[ns] = usage
-                if not usage:
-                    # Query succeeded but returned no data for this namespace
-                    if monitoring_status is None:
-                        monitoring_status = f"no_data: empty metrics returned for ns={ns}"
-                else:
-                    monitoring_status = "ok"
-            except Exception as exc:  # noqa: BLE001
-                exc_desc = f"{type(exc).__name__}: {exc}"
-                logger.error(
-                    "GKE cost estimation: usage metrics query failed for ns=%s: %s",
-                    ns,
-                    exc_desc,
-                )
-                if monitoring_status is None:
-                    monitoring_status = f"Monitoring query failed for ns={ns}: {exc_desc}"
-
-    # Log a clear summary of monitoring data availability
-    if not monitoring_available:
-        logger.info("GKE cost estimation: Cloud Monitoring library not available — using request-based estimates")
-    elif monitoring_status is None:
-        logger.info("GKE cost estimation: no namespaces queried for monitoring data")
-    elif monitoring_status == "ok":
-        logger.info("GKE cost estimation: Cloud Monitoring metrics fetched successfully")
-    elif monitoring_status.startswith("no_data"):
-        logger.info("GKE cost estimation: Cloud Monitoring query returned no data — %s", monitoring_status)
-    else:
-        logger.warning("GKE cost estimation: monitoring issue — %s", monitoring_status)
+    # Derive overall monitoring_status for backward compat with existing report field
+    monitoring_status: str | None = None
+    for res in ns_resolution.values():
+        if res.source in ("cloud_monitoring_60m", "cloud_monitoring_24h"):
+            monitoring_status = "ok"
+            break
+    if monitoring_status is None and ns_resolution:
+        sources = {res.source for res in ns_resolution.values()}
+        if "none" in sources and len(sources) == 1:
+            monitoring_status = "no_data: all layers returned empty"
 
     workloads: list[GKEWorkloadCost] = []
     total_request = 0.0
-    total_usage: float | None = None  # accumulates usage from workloads that have any data
+    total_usage: float | None = None
     workloads_with_full_metrics = 0
     workloads_with_partial_metrics = 0
     workloads_without_metrics = 0
-    any_estimated = False  # True when at least one workload uses fallback estimates
+    any_estimated = False
+
+    # For cross-check: store L1 + L2 data if both are available
+    # ns → {wl_name → (l1_cpu, l2_cpu, l1_mem, l2_mem)}
+    # (only populated when we have two independent sources in same ns)
+    cross_check_data: dict[str, dict[str, tuple[float | None, float | None, float | None, float | None]]] = {}
 
     for (ns, wl_name), pods in sorted(workload_pods.items()):
         cpu_req, mem_req, eph_req = _aggregate_container_requests(pods)
         c_requests = _aggregate_container_requests_per_container(pods)
 
-        # Look up usage metrics for this workload (may be absent)
-        wl_usage_metrics = ns_usage_metrics.get(ns, {}).get(wl_name)
+        # Get resolved metrics for this workload
+        res = ns_resolution.get(ns, UsageResolutionResult())
+        wl_usage_metrics = res.usage.get(wl_name)
         c_usage = wl_usage_metrics.containers if wl_usage_metrics is not None else None
 
-        # Aggregate workload-level usage from per-container data when available.
-        # With partial metrics, individual container dimensions may be None.
         wl_cpu_usage: float | None = None
         wl_mem_usage: float | None = None
         wl_estimated = False
+        wl_source: str | None = None
+        wl_freshness: str | None = None
+
         if c_usage:
             cpu_vals = [c.avg_cpu_cores for c in c_usage.values() if c.avg_cpu_cores is not None]
             mem_vals = [c.avg_memory_gib for c in c_usage.values() if c.avg_memory_gib is not None]
             wl_cpu_usage = sum(cpu_vals) if cpu_vals else None
             wl_mem_usage = sum(mem_vals) if mem_vals else None
+            wl_source = res.source if res.source != "none" else None
+            wl_freshness = res.freshness if res.freshness != "none" else None
         else:
-            # ── Fallback: no usable monitoring data for this workload.
-            # Covers both wl_usage_metrics=None (for example, no workload
-            # metrics entry was found) and wl_usage_metrics with empty
-            # containers={} (monitoring returned no usable data points).
-            # Estimate usage as equal to requests (worst case — 100%
-            # utilization).  This gives a cost estimate rather than
-            # "N/A" in the report.
+            # ── Layer 4 fallback: no real data from any source.
+            # Estimate usage as equal to requests (100% utilization).
+            # ⚠️  This means waste=$0 — figures are UNRELIABLE.
             wl_cpu_usage = cpu_req
             wl_mem_usage = mem_req
             wl_estimated = True
             any_estimated = True
+            wl_source = "requests_fallback"
+            wl_freshness = None
 
-            # Build synthetic per-container usage from requests so that
-            # calculate_workload_cost() can produce per-container cost
-            # breakdowns instead of leaving them as N/A.
             if c_requests:
                 from vaig.tools.gke.monitoring import ContainerUsageMetrics  # noqa: WPS433
-
                 c_usage = {}
                 for c_name, (c_cpu, c_mem, _c_eph) in c_requests.items():
                     c_usage[c_name] = ContainerUsageMetrics(
@@ -1108,12 +1266,12 @@ def fetch_workload_costs(
                 containers=cost_data["containers"],
                 partial_metrics=wl_partial,
                 metrics_estimated=wl_estimated,
+                metrics_source=wl_source,
+                metrics_freshness=wl_freshness,
             )
         )
 
         total_request += cost_data["total_request_cost_usd"] or 0.0
-        # Partial-data policy: add whatever usage IS available to the report total.
-        # Track coverage stats for transparency.
         wl_usage_cost = cost_data["total_usage_cost_usd"]
         if wl_usage_cost is not None:
             total_usage = (total_usage or 0.0) + wl_usage_cost
@@ -1128,7 +1286,10 @@ def fetch_workload_costs(
 
     total_savings = (total_request - total_usage) if total_usage is not None else None
 
-    # ── 6. Namespace aggregation ───────────────────────────────
+    # ── 6. Compute CostDataQuality ──────────────────────────────
+    cost_data_quality = _compute_cost_data_quality(workloads, cross_check_data)
+
+    # ── 7. Namespace aggregation ───────────────────────────────
     namespace_summaries = _compute_namespace_summaries(workloads)
 
     return GKECostReport(
@@ -1146,6 +1307,7 @@ def fetch_workload_costs(
         workloads_without_metrics=workloads_without_metrics,
         pricing_source=pricing_source,
         metrics_estimated=any_estimated,
+        cost_data_quality=cost_data_quality,
     )
 
 
