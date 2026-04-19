@@ -401,6 +401,19 @@ class ToolLoopMixin:
                         usage=dict(total_usage),
                     ) from _api_exc
 
+                # Vertex AI server-side cancellation (400 CANCELLED) — transient, re-raise
+                # so the client-level retry logic (_retry_with_backoff) can handle it.
+                if (
+                    isinstance(_api_exc, genai_errors.ClientError)
+                    and _api_exc.code == 400
+                    and "cancelled" in _msg_lower
+                ):
+                    logger.warning(
+                        "ToolLoopMixin received 400 CANCELLED on iteration %d — transient server cancellation, re-raising for retry",
+                        iteration,
+                    )
+                    raise
+
                 logger.exception(
                     "ToolLoopMixin API call failed on iteration %d",
                     iteration,
@@ -1370,6 +1383,19 @@ class ToolLoopMixin:
                         context_pct=peak_context_pct,
                         usage=dict(total_usage),
                     ) from _api_exc
+
+                # Vertex AI server-side cancellation (400 CANCELLED) — transient, re-raise
+                # so the client-level retry logic (_retry_with_backoff) can handle it.
+                if (
+                    isinstance(_api_exc, genai_errors.ClientError)
+                    and _api_exc.code == 400
+                    and "cancelled" in _msg_lower
+                ):
+                    logger.warning(
+                        "ToolLoopMixin received 400 CANCELLED on iteration %d — transient server cancellation, re-raising for retry",
+                        iteration,
+                    )
+                    raise
 
                 logger.exception(
                     "ToolLoopMixin async API call failed on iteration %d",

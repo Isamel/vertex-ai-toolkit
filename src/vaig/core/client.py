@@ -55,6 +55,7 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
     google_exceptions.InternalServerError,  # 500
     google_exceptions.DeadlineExceeded,  # 504
     google_exceptions.Aborted,  # transient
+    google_exceptions.Cancelled,  # 400 CANCELLED — Vertex AI server-side cancellation under load
 )
 
 # HTTP status codes that the SDK already retries via HttpRetryOptions.
