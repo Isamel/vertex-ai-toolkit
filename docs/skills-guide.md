@@ -79,7 +79,7 @@ vaig ask "Analyze these logs" -f error.log -s log-analysis --auto-skill
 | `api-design` | API Design Review | Review API design for REST/GraphQL/gRPC best practices, consistency, security, and developer experience | ANALYZE, PLAN, REPORT |
 | `db-review` | Database Review | Review database schemas, queries, and execution plans for performance issues, design problems, and operational risks | ANALYZE, PLAN, REPORT |
 | `migration` | ETL Migration | Migrate ETL pipelines between platforms (Pentaho KTR/KJB to AWS Glue PySpark, etc.) | ANALYZE, PLAN, EXECUTE, VALIDATE, REPORT |
-| `code-migration` | Code Migration | Migrate source code between programming languages (e.g., Python → Go) using a 6-phase state machine (Inventory → Semantic Map → Spec → Implement → Verify → Report) with YAML-driven idiom and dependency mappings. **Note:** This skill handles language-to-language code conversion. For ETL pipeline migration (Pentaho → AWS Glue), use the `migration` skill instead. | ANALYZE, PLAN, EXECUTE, VALIDATE, REPORT |
+| `code-migration` | Code Migration | Migrate source code between programming languages (e.g., Python → Go) using a 6-phase state machine with YAML-driven idiom and dependency mappings; LLM fallback fills gaps automatically. **Note:** For ETL pipeline migration (Pentaho → AWS Glue), use the `migration` skill instead. | ANALYZE, PLAN, EXECUTE, VALIDATE, REPORT |
 | `greenfield` | Greenfield Project | Scaffold new projects from scratch using a 6-stage pipeline: Requirements, Architecture Decision, Project Spec, Scaffold, Implement, and Verify | ANALYZE, PLAN, EXECUTE, VALIDATE, REPORT |
 | `perf-analysis` | Performance Analysis | Analyze distributed traces, CPU/memory profiles, and performance metrics to identify bottlenecks and optimization opportunities | ANALYZE, PLAN, REPORT |
 
@@ -132,6 +132,7 @@ The `HealthReport` root model (`src/vaig/skills/service_health/schema.py`) conta
 | `service_statuses` | `list[ServiceStatus]` | Per-service health with pod/CPU/memory data |
 | `findings` | `list[Finding]` | Issues grouped by severity (CRITICAL to INFO) |
 | `root_cause_hypotheses` | `list[RootCauseHypothesis]` | Causal mechanism and evidence per finding |
+| `causal_graph` | `CausalGraph` | Structured cause-effect relationships for evidence tracing (v0.17+) |
 | `recommendations` | `list[RecommendedAction]` | Prioritized remediation with urgency and effort |
 | `timeline` | `list[TimelineEvent]` | Chronological event sequence |
 | `metadata` | `ReportMetadata` | Generation timestamp, cluster, model used |
@@ -175,7 +176,39 @@ composite = CompositeSkill(
 
 ## Custom Skills
 
-Create your own skills using the scaffold command:
+### YAML-Based Skill Definitions (v0.16+, Skill Plugin System)
+
+The easiest way to create a skill is with a YAML definition file — no Python required:
+
+```yaml
+# ~/.vaig/skills/my-skill/skill.yaml
+name: my-skill
+display_name: My Custom Skill
+description: Does something cool
+version: 1.0.0
+tags: [custom, analysis]
+phases: [ANALYZE, REPORT]
+
+system_instruction: |
+  You are a specialized assistant for analyzing X.
+  Always provide structured output with findings and recommendations.
+
+agents:
+  - role: analyzer
+    model: gemini-2.5-flash
+    instruction: Analyze the input for issues.
+  - role: reporter
+    model: gemini-2.5-pro
+    instruction: Produce a structured report based on the analysis.
+
+phase_prompts:
+  ANALYZE: "Analyze the following input:\n\n{context}\n\nUser request: {user_input}"
+  REPORT: "Generate a final structured report from the analysis."
+```
+
+### Python-Based Skill Definitions
+
+For advanced control, subclass `BaseSkill` directly:
 
 ```bash
 vaig skills create my-skill -d "My custom analysis" -t "custom,analysis"
@@ -186,15 +219,40 @@ This generates a skill directory with:
 - `prompts.py` — Phase-specific prompt templates
 - `__init__.py` — Package init
 
-Place custom skills in `~/.vaig/skills/` or configure a custom directory:
+```python
+from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase, SkillResult
 
-```yaml
-# vaig.yaml
-skills:
-  custom_dir: ./my-skills
+
+class MySkill(BaseSkill):
+    def get_metadata(self) -> SkillMetadata:
+        return SkillMetadata(
+            name="my-skill",
+            display_name="My Custom Skill",
+            description="Does something cool",
+            tags=["custom"],
+        )
+
+    def get_system_instruction(self) -> str:
+        return "You are a specialized assistant for..."
+
+    def get_phase_prompt(self, phase: SkillPhase, context: str, user_input: str) -> str:
+        return f"Context:\n{context}\n\nTask: {user_input}"
 ```
 
-> **Note:** Custom skills are auto-discovered at startup. They must follow the same `BaseSkill` interface as built-in skills.
+### Installing Custom Skills
+
+Place skills in one or more directories and configure:
+
+```yaml
+# ~/.vaig/config.yaml
+skills:
+  external_dirs:           # Preferred (v0.16+) — list of directories
+    - ~/.vaig/skills
+    - ./team-skills
+  # custom_dir: ...        # Deprecated — use external_dirs instead
+```
+
+> **Note:** Custom skills are auto-discovered at startup. YAML-based skills can be hot-reloaded without restarting VAIG.
 
 ## Skill Details
 

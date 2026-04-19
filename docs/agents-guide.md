@@ -8,12 +8,15 @@ VAIG uses a multi-agent architecture where specialized agents collaborate to sol
 BaseAgent (ABC)
 ├── SpecialistAgent          — Direct model calls (no tools)
 ├── ToolAwareAgent           — Generic agent with configurable tools
-│   ├── CodingAgent          — File I/O + shell commands
-│   └── InfraAgent           — GKE + GCloud tools for SRE
+│   ├── CodingAgent          — File I/O + shell commands (single-agent mode)
+│   ├── InfraAgent           — GKE + GCloud tools for SRE
+│   └── InvestigationAgent   — Deterministic step-runner with budget + memory
 ├── Orchestrator             — Coordinates multi-agent execution
-├── CodingSkillOrchestrator  — 3-agent coding orchestrator (Planner→Implementer→Verifier)
+├── CodingSkillOrchestrator  — 3-agent coding pipeline (Planner→Implementer→Verifier)
 └── ChunkedProcessor         — Map-Reduce for large files
 ```
+
+---
 
 ## Agent Types
 
@@ -22,114 +25,186 @@ BaseAgent (ABC)
 The simplest agent type. Wraps a `GeminiClient` for direct model calls without any tool access. Used for analysis, planning, and report generation where tool access is not needed.
 
 ```python
-# Skills define specialist agents for phases like analysis and reporting
 {
-    "name": "evidence_collector",
-    "role": "Evidence Collector",
-    "system_instruction": "You are an evidence analysis specialist...",
+    "name": "health_analyzer",
+    "role": "Health Pattern Analyzer",
+    "requires_tools": False,   # → instantiated as SpecialistAgent
+    "system_instruction": "You are an SRE analysis specialist...",
     "model": "gemini-2.5-flash",
+    "temperature": 0.2,
 }
 ```
 
 ### ToolAwareAgent
 
-A generic agent with a configurable tool registry and an autonomous tool-use loop. It can call tools, observe results, and continue reasoning until the task is complete.
+A generic agent with a configurable tool registry and an autonomous tool-use loop. It calls tools, observes results, and continues reasoning until the task is complete or `max_iterations` is reached.
 
 Skills mark agents that need tools with `requires_tools: True`:
 
 ```python
 {
-    "name": "health_gatherer",
-    "role": "Health Data Gatherer",
-    "requires_tools": True,  # Gets instantiated as ToolAwareAgent
-    "system_instruction": "You gather live health data from Kubernetes...",
+    "name": "health_verifier",
+    "role": "Health Finding Verifier",
+    "requires_tools": True,    # → instantiated as ToolAwareAgent
+    "tool_categories": ["kubernetes", "scaling", "mesh"],
+    "max_iterations": 15,
+    "temperature": 0.2,
 }
 ```
 
 ### CodingAgent
 
-Specialized agent for software engineering tasks. Has access to:
+Single-agent mode for software engineering tasks. Uses `ToolLoopMixin` with `temperature=0.2`, `frequency_penalty=0.15`, and `max_iterations` from `coding.max_tool_iterations` (default: 25).
+
+**Available tools:**
 - **File tools**: `read_file`, `write_file`, `edit_file`, `list_files`, `search_files`, `verify_completeness`
-- **Shell tools**: `run_command` (with allowlist)
+- **Shell tools**: `run_command` (with allowlist/denylist from config)
+- **Plugin tools**: MCP and Python module plugins (when configured)
+
+Destructive tools (`write_file`, `edit_file`, `run_command`) can require explicit confirmation via an injectable `confirm_fn` callback when `coding.confirm_actions: true`.
 
 Activated via `vaig ask --code` or `/code` in the REPL.
 
-The CodingAgent uses `ToolLoopMixin` for its tool-use loop, with a configurable maximum of iterations (`coding.max_tool_iterations`, default: 25).
-
 ```bash
-# Enable coding agent mode
-vaig ask "Refactor this to use async/await" -f server.py --code
+# Single-agent coding mode
+vaig ask "Refactor auth module to use dependency injection" -f auth.py --code
 
-# In REPL
+# In the REPL
 /code
-> Refactor the auth module to use dependency injection
+> Add type hints to all functions in utils.py
 ```
 
 ### CodingSkillOrchestrator
 
-A 3-agent orchestrator for complex coding tasks that require a structured planning phase before writing code. Activate with `--pipeline` on `vaig ask --code` or by setting `coding.pipeline_mode: true` in config.
+A 3-agent pipeline for complex coding tasks that benefit from a planning phase. Activated with `--pipeline` on `vaig ask --code`, or by setting `coding.pipeline_mode: true` in config.
 
-**Agent flow:**
+**Pipeline flow:**
 
 ```
-[User Input]
-    └─→ Planner
-          └─→ Implementer (has full file tools access)
-                └─→ Verifier
-                      └─→ [Final Result]
+[User Request]
+      │
+      ▼
+ ┌──────────┐  temperature=0.4    Reads codebase, writes PLAN.md
+ │  Planner │  orchestrator_model Produces architecture decisions, file
+ └──────────┘  (gemini-2.5-pro)   breakdown, edge cases
+      │
+      │  PLAN.md as context
+      ▼
+ ┌─────────────┐  temperature=0.1  Full file tool access (read/write/edit/
+ │ Implementer │  implementer_model shell/verify_completeness). Prefers
+ └─────────────┘  (gemini-2.5-pro) patch_file for existing files,
+      │                             write_file for new files.
+      │  Implementation as context
+      ▼
+ ┌──────────┐  temperature=0.1    Runs verify_completeness + syntax checks.
+ │ Verifier │  verifier_model     Produces structured VerificationReport
+ └──────────┘  (gemini-2.5-flash) (JSON) or regex-matched PASS/FAIL.
+      │
+      ├─ PASS → [Final Result]
+      │
+      └─ FAIL → structured XML feedback (top 5 issues)
+                     │
+                     └─→ re-runs Implementer (up to max_fix_iterations)
+                               └─→ Verifier again
+                                     ├─ PASS → [Final Result]
+                                     └─ FAIL → [Error with verifier findings]
 ```
 
-- **Planner** — Generates a specification document: architecture decisions, file breakdown, edge cases
-- **Implementer** — Executes the plan using the full `CodingAgent` tool set (read, write, edit, shell, `verify_completeness`)
-- **Verifier** — Reviews the implementation against the plan and reports pass/fail. On failure, the pipeline short-circuits and returns the verifier's findings
+**Model assignments:**
 
-The Verifier uses a `_parse_success` function that is robust to freeform model output — it checks for explicit failure indicators before assuming success, which prevents false positives from ambiguous responses.
+| Agent | Config key | Default |
+|-------|-----------|---------|
+| Planner | `coding.orchestrator_model` | client's current model (`gemini-2.5-pro`) |
+| Implementer | `coding.implementer_model` | client's current model (`gemini-2.5-pro`) |
+| Verifier | `coding.verifier_model` | `settings.models.fallback` (`gemini-2.5-flash`) |
+
+**Configuration:**
+
+```yaml
+coding:
+  pipeline_mode: true           # Enable 3-agent pipeline (default: false)
+  max_fix_iterations: 1         # Verifier→Implementer retry loops (default: 1)
+  workspace_isolation: false    # Copy workspace to temp dir; sync back on success
+  confirm_actions: false        # Pipeline mode: must be false (non-interactive)
+  max_tool_iterations: 25       # Tool loop cap per agent
+```
 
 ```bash
-# Pipeline mode — structured Planner → Implementer → Verifier
+# Pipeline mode via flag
 vaig ask "Implement a rate limiter with Redis" --code --pipeline
 
-# Also configurable in vaig.yaml
+# Pipeline mode always-on
 # coding:
 #   pipeline_mode: true
+vaig ask "Implement a rate limiter with Redis" --code
 ```
 
-> **Note:** Pipeline mode does not support interactive `confirm_actions`. Use in non-interactive contexts or set `coding.confirm_actions: false` when using `--pipeline`.
+> **Note:** `confirm_actions` is not supported in pipeline mode. Set to `false` when using `--pipeline`.
 
 ### InfraAgent
 
-SRE-focused agent with live infrastructure tools:
-- **GKE read tools**: `kubectl_get`, `kubectl_describe`, `kubectl_logs`, `kubectl_top`, `get_events`, `get_rollout_status`, `get_rollout_history`, `get_node_conditions`, `get_container_status`, `check_rbac`
-- **GKE write tools**: `kubectl_scale`, `kubectl_restart`, `kubectl_label`, `kubectl_annotate`
-- **GKE exec tools**: `exec_command` (disabled by default — requires `gke.exec_enabled: true`)
-- **GCloud tools**: `gcloud_logging_query`, `gcloud_monitoring_query`
+SRE-focused agent for live Kubernetes investigation. Uses `ToolLoopMixin` with `temperature=0.2`, `frequency_penalty=0.15`, and `max_tool_iterations=25`.
 
-Total: **15 GKE tools + 2 GCloud tools = 17 tools**.
+**Available tools (17 total):**
+
+| Category | Tools |
+|----------|-------|
+| GKE read (13) | `kubectl_get`, `kubectl_describe`, `kubectl_logs`, `kubectl_top`, `get_events`, `get_rollout_status`, `get_rollout_history`, `get_node_conditions`, `get_container_status`, `check_rbac`, `helm_*`, `argocd_*` |
+| GKE write (4) | `kubectl_scale`, `kubectl_restart`, `kubectl_label`, `kubectl_annotate` |
+| GCloud (2) | `gcloud_logging_query`, `gcloud_monitoring_query` |
+| GKE exec (1) | `exec_command` — **disabled by default**, requires `gke.exec_enabled: true` |
 
 Activated via `vaig live` or `vaig ask --live`.
 
-The InfraAgent also uses `ToolLoopMixin` and can autonomously chain multiple tool calls to investigate infrastructure issues.
-
 ```bash
-# Live infrastructure investigation
 vaig live "Why is payment-service returning 503s?" \
-  --cluster prod --namespace default
+  --cluster prod --namespace payments
+
+vaig ask --live "Show me nodes with memory pressure"
 ```
 
-### Orchestrator
+### InvestigationAgent
+
+Extends `ToolAwareAgent` with a **deterministic step execution** model. Instead of a free-form tool-use loop, it drives `InvestigationPlan` steps one by one.
+
+**Per-step execution order:**
+
+```
+For each step in InvestigationPlan:
+  1. Cache check      — skip if identical tool call was already made
+  2. Budget check     — abort if GlobalBudgetManager.is_exhausted()
+  3. MEM-05 hook      — check PatternMemoryStore for known patterns
+  4. SH-06 hook       — SelfCorrectionController check (CONTINUE / FORCE_DIFFERENT / ESCALATE)
+  5. Tool call        — execute the planned tool
+  6. Evidence ledger  — append result to evidence list
+```
+
+**Termination conditions:**
+- All steps complete or skipped
+- `BudgetExhaustedError` raised
+- `max_iterations` reached (default: 10)
+- `SelfCorrectionController` returns `ESCALATE`
+
+Activated via `investigation.enabled: true` in config (see [Investigation Pipeline](#investigation-pipeline) below).
+
+---
+
+## Orchestrator
 
 Coordinates multi-agent execution. Takes a list of agents defined by a skill and runs them according to a strategy.
 
-**Orchestration Strategies:**
+**Execution strategies:**
 
-| Strategy | Description |
-|----------|-------------|
-| `sequential` | Run agents one after another, passing output as context |
-| `fan-out` | Run all agents in parallel, then merge results |
-| `lead-delegate` | Lead agent decides which specialists to invoke |
+| Strategy | Description | How triggered |
+|----------|-------------|---------------|
+| `sequential` | Agent N's output becomes context for Agent N+1 | Default |
+| `fanout` | All agents run in parallel (ThreadPoolExecutor), results merged | Skill declares no `parallel_group` but sets strategy |
+| `parallel_sequential` | Parallel group runs concurrently, then sequential tail follows | Any agent config has a `parallel_group` key |
+| `lead-delegate` | Lead agent invokes sub-agents as tools via `injectable_agents` | Skill configures `injectable_agents` key |
+
+The Orchestrator auto-detects `parallel_group` keys in the returned configs and upgrades from `"sequential"` to `"parallel_sequential"` automatically.
 
 ```python
-# The Orchestrator returns structured results
 @dataclass
 class OrchestratorResult:
     final_response: str
@@ -138,17 +213,15 @@ class OrchestratorResult:
     total_tokens: int
 ```
 
-The default strategy is `sequential` — Agent 1's output becomes context for Agent 2, and so on.
+---
 
-### ChunkedProcessor
+## ChunkedProcessor
 
 Handles files that exceed the model's context window using a Map-Reduce approach:
 
 1. **Chunk** — Split the input into overlapping chunks
 2. **Map** — Process each chunk independently with a specialist agent
 3. **Reduce** — Merge all chunk results into a final analysis
-
-Configuration:
 
 ```yaml
 chunking:
@@ -158,13 +231,132 @@ chunking:
   inter_chunk_delay: 2.0        # Seconds between chunk API calls
 ```
 
-### ToolLoopMixin
+---
 
-Shared mixin used by `CodingAgent` and `InfraAgent`. Provides:
-- Autonomous tool-use loop with configurable max iterations
-- Tool call parsing and execution
-- Result injection back into the conversation
-- Error handling and retry logic
+## Skill Pipelines
+
+### Service Health Pipeline
+
+**Default (parallel-then-sequential):**
+
+```
+[vaig check / vaig ask --live "health of X"]
+            │
+            ▼
+    ┌───────────────────────────────────────────────────┐
+    │              Parallel Group: "gather"             │
+    │                                                   │
+    │  node_gatherer    ── GKE node/cluster health      │
+    │  workload_gatherer── pods, deployments, HPA       │
+    │  event_gatherer   ── events, networking, storage  │
+    │  logging_gatherer ── Cloud Logging errors/warns   │
+    │  datadog_gatherer*── APM/metrics correlation      │
+    └───────────────────────────────────────────────────┘
+            │  merged output
+            ▼
+     health_analyzer   (gemini-2.5-flash, temp=0.2)
+            │  pattern analysis + Verification Gaps
+            ▼
+    [optional: investigation phase — see below]
+            │
+            ▼
+     health_verifier   (gemini-2.5-flash, temp=0.2, max_iter=15)
+            │  confirmed/upgraded findings
+            ▼
+     health_reporter   (gemini-2.5-flash, temp=0.3, structured JSON)
+            │
+            ▼
+      HealthReport → Markdown
+```
+
+`* datadog_gatherer` only appears when `datadog.enabled: true`.
+
+**Sub-gatherer model assignments:**
+
+| Agent | Model | max_iterations | Scope |
+|-------|-------|---------------|-------|
+| `node_gatherer` | `gemini-2.5-pro` | 15 (4 on Autopilot) | Step 1: cluster & nodes |
+| `workload_gatherer` | `gemini-2.5-pro` | 20 | Steps 2,4,5,6: pods/deployments/HPA |
+| `event_gatherer` | `gemini-2.5-pro` | 10 | Steps 3,8,9,10: events/networking/storage/GitOps |
+| `logging_gatherer` | `gemini-2.5-pro` | 8 | Steps 7a,7b: Cloud Logging |
+| `datadog_gatherer` | `gemini-2.5-flash` | 8 | Datadog APM/metrics |
+| `health_analyzer` | `gemini-2.5-flash` | — | Text-only pattern analysis |
+| `health_verifier` | `gemini-2.5-flash` | 15 | Targeted verification calls |
+| `health_reporter` | `gemini-2.5-flash` | — | Structured JSON report |
+
+**Legacy sequential pipeline** (single monolithic gatherer — available for backward compat):
+
+```
+health_gatherer (gemini-2.5-pro, temp=0.0, max_iter=25)
+      │
+      ▼
+health_analyzer → health_verifier → health_reporter
+```
+
+Use `ServiceHealthSkill.get_sequential_agents_config()` to access this path.
+
+---
+
+### Investigation Pipeline
+
+Activated by setting `investigation.enabled: true`. Inserts two agents between `health_analyzer` and `health_verifier`:
+
+```
+health_analyzer
+      │  analysis + hypotheses
+      ▼
+health_planner      (SpecialistAgent, gemini-2.5-flash, temp=0.1)
+      │  InvestigationPlan (structured step list)
+      ▼
+health_investigator (InvestigationAgent, gemini-2.5-flash, temp=0.1)
+      │  executed evidence per step
+      ▼
+health_verifier
+```
+
+**health_planner** converts the analyzer's hypotheses into a concrete `InvestigationPlan` — a deterministic list of tool calls and expected evidence.
+
+**health_investigator** drives each step of the plan using the deterministic execution model described in [InvestigationAgent](#investigationagent).
+
+#### Autonomous mode
+
+When `investigation.autonomous_mode: true`, the investigator gets three additional controllers:
+
+| Controller | Purpose |
+|-----------|---------|
+| `SelfCorrectionController` | Detects tool call circles and stale iteration loops; can issue `FORCE_DIFFERENT` or `ESCALATE` |
+| `GlobalBudgetManager` | Enforces `budget_per_run_usd` — aborts when cost limit is reached |
+| `PatternMemoryStore` | MEM-05 memory: checks `.vaig/memory/patterns/` for known patterns before making a tool call |
+
+```yaml
+investigation:
+  enabled: true
+  autonomous_mode: true         # Activates budget + memory + self-correction
+  budget_per_run_usd: 0.50      # 0.0 = no cap
+  max_iterations: 10            # Steps before force-stop
+  max_steps_per_plan: 15
+  circle_threshold: 2           # Same (tool, args) calls before flagging a circle
+  memory_correction: true       # MEM-05 pre-action hook
+```
+
+**`SelfCorrectionConfig`** (applies globally when not overridden by `investigation.circle_threshold`):
+
+```yaml
+self_correction:
+  enabled: false                # Auto-enables when non-default values set
+  max_repeated_calls: 3         # Same (tool, args_hash) before flagging circle
+  max_stale_iterations: 5       # Consecutive no-progress iterations → FORCE_DIFFERENT
+  contradiction_sensitivity: 0.8
+  max_budget_per_step_usd: 0.10
+```
+
+```bash
+# Run investigation with budget cap
+vaig check "Is payment-service healthy?" --namespace payments
+# (investigation.enabled: true in vaig.yaml)
+```
+
+---
 
 ## Agent Roles
 
@@ -173,35 +365,56 @@ Agents are tagged with a role via `AgentRole`:
 | Role | Description |
 |------|-------------|
 | `orchestrator` | Coordinates other agents |
-| `specialist` | Domain expert (analysis, planning) |
+| `specialist` | Domain expert (analysis, planning, reporting) |
 | `assistant` | General-purpose helper |
 | `coder` | File and code operations |
 | `sre` | Infrastructure and operations |
 
-## How Skills Use Agents
+---
 
-Each skill defines a list of 2-3 agents in `get_agents_config()`. For example, the **RCA** skill defines:
+## Configuration Reference
 
-```
-1. evidence_collector → Gathers and correlates evidence
-2. hypothesis_builder → Generates hypotheses using 5 Whys
-3. rca_synthesizer    → Produces the final RCA report
-```
-
-These are run sequentially by the Orchestrator:
-
-```
-[User Input] → evidence_collector → hypothesis_builder → rca_synthesizer → [Final Report]
-```
-
-## Configuration
+### `agents:` block
 
 ```yaml
 agents:
-  max_concurrent: 3              # Max parallel agents (for fan-out)
-  orchestrator_model: gemini-2.5-pro
-  specialist_model: gemini-2.5-flash
+  orchestrator_model: gemini-2.5-pro    # Planning / orchestration roles
+  specialist_model: gemini-2.5-flash    # Analysis / reporting specialists
+  max_concurrent: 3                     # Fan-out parallelism cap
+  max_iterations_retry: 15
+  parallel_tool_calls: true             # Async path; semaphore = max_concurrent_tool_calls
+  max_failures_before_fallback: 2       # Rate-limit errors → switch to models.fallback
+  min_inter_call_delay: 0.0             # RPM throttle; set >0 to avoid 429s
 ```
+
+### `coding:` block
+
+```yaml
+coding:
+  pipeline_mode: false          # 3-agent pipeline (Planner→Implementer→Verifier)
+  workspace_root: "."
+  workspace_isolation: false    # Copy workspace to temp dir; sync back on success
+  max_tool_iterations: 25       # Tool loop cap per agent
+  max_fix_iterations: 1         # Verifier→Implementer retry loops
+  confirm_actions: false        # Require confirmation for destructive tools
+  allowed_commands: []          # Shell allowlist (empty = all allowed)
+  denied_commands: []           # Shell denylist
+```
+
+### `investigation:` block
+
+```yaml
+investigation:
+  enabled: false                # Gates health_planner + health_investigator
+  autonomous_mode: false        # Adds budget + memory + self-correction
+  budget_per_run_usd: 0.0       # 0.0 = no cap
+  max_iterations: 10
+  max_steps_per_plan: 15
+  circle_threshold: 2           # Overrides SelfCorrectionConfig when set
+  memory_correction: true       # MEM-05 pre-action hook
+```
+
+---
 
 ## AgentConfig Reference
 
@@ -216,10 +429,18 @@ Every agent is instantiated from an `AgentConfig` dataclass (`src/vaig/agents/ba
 | `temperature` | `float` | `0.7` | Sampling temperature |
 | `max_output_tokens` | `int` | `16384` | Maximum response length |
 | `frequency_penalty` | `float \| None` | `None` | Penalty for repeated tokens |
-| `response_schema` | `type[BaseModel] \| None` | `None` | Pydantic model for JSON schema output |
+| `response_schema` | `type[BaseModel] \| None` | `None` | Pydantic model for structured JSON output |
 | `response_mime_type` | `str \| None` | `None` | Set to `"application/json"` with `response_schema` |
+| `requires_tools` | `bool` | `False` | `True` → ToolAwareAgent; `False` → SpecialistAgent |
+| `tool_categories` | `list[str]` | `[]` | Tool categories to register (kubernetes, scaling, logging, …) |
+| `max_iterations` | `int` | `10` | Tool-use loop cap |
+| `parallel_group` | `str \| None` | `None` | Group key that triggers `parallel_sequential` strategy |
+| `agent_class` | `str \| None` | `None` | Override agent class (e.g. `"InvestigationAgent"`) |
+| `injectable_agents` | `list[str]` | `[]` | Sub-agents available as tools (lead-delegate strategy) |
 
 When `response_schema` is set, `SpecialistAgent` passes it to `GeminiClient.generate()` via `types.GenerateContentConfig`. Gemini constrains its output to match the schema and returns a JSON string. The skill's `post_process_report()` method is responsible for converting the JSON to a display format.
+
+---
 
 ## Viewing Agent Config
 
@@ -228,10 +449,16 @@ In the REPL, use `/agents` to see the current skill's agent pipeline:
 ```
 /agents
 
-Agents for skill: rca (sequential)
-  1. evidence_collector (specialist) — Evidence Collector
-  2. hypothesis_builder (specialist) — Hypothesis Builder
-  3. rca_synthesizer (specialist) — RCA Synthesizer
+Agents for skill: service-health (parallel_sequential)
+  Parallel group: gather
+    1. node_gatherer      (tool_aware) — Cluster & Node Health Gatherer
+    2. workload_gatherer  (tool_aware) — Workload Health Gatherer
+    3. event_gatherer     (tool_aware) — Events & Infrastructure Gatherer
+    4. logging_gatherer   (tool_aware) — Cloud Logging Gatherer
+  Sequential:
+    5. health_analyzer    (specialist) — Health Pattern Analyzer
+    6. health_verifier    (tool_aware) — Health Finding Verifier
+    7. health_reporter    (specialist) — Health Report Generator
 ```
 
 ---

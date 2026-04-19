@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-04-18
+
+**Autonomous Live Mode + Code Migration Rearchitecture (8 Phases, 20 PRs)**
+
+### Added
+
+#### Phase 1 — Foundation & Config (#248–#252)
+- Causal graph added to `HealthReport` and structured verification output for evidence-based reasoning ([#250](https://github.com/Isamel/vertex-ai-toolkit/pull/250))
+- Prompt injection hardening via `wrap_untrusted_content()`, context budget manager, and auto-activation policy engine ([#251](https://github.com/Isamel/vertex-ai-toolkit/pull/251))
+- Migration tracker persistence, GitHub integration tools (`GitHubRepoNavigator`), and repo cache layer ([#252](https://github.com/Isamel/vertex-ai-toolkit/pull/252))
+- `addon detection` helpers extracted and lazy-init enrichment pool for service health ([#249](https://github.com/Isamel/vertex-ai-toolkit/pull/249))
+
+#### Phase 2 — Live Mode Skeleton (#253)
+- Knowledge tools, evidence ledger, and loop telemetry for the autonomous live mode backbone ([#253](https://github.com/Isamel/vertex-ai-toolkit/pull/253))
+
+#### Phase 3 — Autonomous Live (#254–#255)
+- Workspace jail, fix-forward loop, and integrated test runner for coding pipeline (CM-04, CM-01, CM-03) ([#254](https://github.com/Isamel/vertex-ai-toolkit/pull/254))
+- Global budget manager and circuit breaker with per-session spend enforcement and auto-stop (X-02) ([#255](https://github.com/Isamel/vertex-ai-toolkit/pull/255))
+
+#### Phase 4 — Memory & Investigation (#256–#257)
+- Pattern memory store and recurrence detection — `PatternMemoryStore` identifies recurring incident patterns across sessions (MEM-01, MEM-02) ([#256](https://github.com/Isamel/vertex-ai-toolkit/pull/256))
+- Outcome tracking and semantic memory index — `SemanticMemoryIndex` for vector-based past-finding retrieval (MEM-03, MEM-04) ([#257](https://github.com/Isamel/vertex-ai-toolkit/pull/257))
+
+#### Phase 5 — Advanced Autonomy (#258)
+- Autonomous investigation planner with hypothesis library — `HypothesisLibrary` templates + `AutonomousInvestigationPlanner` for self-directed multi-step investigation ([#258](https://github.com/Isamel/vertex-ai-toolkit/pull/258))
+
+#### Phase 6 — Code Migration Core (#259–#262)
+- GitHub repo navigator tools and batch processing (GH-01, GH-05) — `list_repo_files`, `get_file_content`, `search_code`, `get_directory_tree`, `get_commit_history`, `batch_get_files` ([#259](https://github.com/Isamel/vertex-ai-toolkit/pull/259))
+- Live mode repo correlation with commit-aware hypotheses (GH-02) — correlates GKE anomalies with recent git commits ([#260](https://github.com/Isamel/vertex-ai-toolkit/pull/260))
+- Remote code migration with shallow clone and provenance tracking (GH-03) — clone → migrate → push workflow with full audit trail ([#261](https://github.com/Isamel/vertex-ai-toolkit/pull/261))
+- Repo knowledge indexing with on-demand RAG corpus (GH-04) — indexes any GitHub repo into a Vertex AI RAG corpus for semantic search ([#262](https://github.com/Isamel/vertex-ai-toolkit/pull/262))
+
+#### Phase 7 — Migration Pipeline (#263–#264)
+- Autonomous investigation pipeline with budget enforcement and memory awareness (SH-09) — full end-to-end autonomous pipeline: detect → hypothesize → investigate → correlate → report ([#263](https://github.com/Isamel/vertex-ai-toolkit/pull/263))
+- `--interactive` drill-in REPL for follow-up questions (X-05) — after any `vaig live` run, enter an interactive session with full context and tool access ([#264](https://github.com/Isamel/vertex-ai-toolkit/pull/264))
+
+#### Phase 8 — Code Enhancement (#265–#267)
+- `patch_file` tool and git integration (CM-09, CM-05) — apply unified diffs to files and commit changes via `GitManager` with branch, stage, commit, and diff support ([#265](https://github.com/Isamel/vertex-ai-toolkit/pull/265))
+- Idiom map expansion with LLM fallback (CM-07) — `IdiomGenerator` expands YAML idiom definitions using Gemini when no mapping exists, cached to disk ([#266](https://github.com/Isamel/vertex-ai-toolkit/pull/266))
+- Workspace RAG search tool (CM-08) — `WorkspaceRAG` indexes local files into a Vertex AI RAG corpus for in-context code search during migration ([#267](https://github.com/Isamel/vertex-ai-toolkit/pull/267))
+
+### Fixed
+- Datadog hybrid APM operation detection with overrides, discovery flag, and cache invalidation ([#248](https://github.com/Isamel/vertex-ai-toolkit/pull/248))
+
 ## [0.16.0] - 2026-04-15
 
 **Phase F — Platform Integration & Extensibility (7 SPECs)**
