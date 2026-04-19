@@ -3,7 +3,7 @@
 These functions are intentionally free of side effects:
 - No I/O, no network calls, no GCP dependencies.
 - Each function accepts a raw record dict and returns a BQ-compatible row dict.
-- All timestamp fields are normalised to ``datetime`` objects in UTC.
+- All timestamp fields are normalised to ISO-8601 strings in UTC.
 - Nested dicts / lists that map to JSON-typed BQ columns are serialised with
   ``json.dumps``.
 - Large text fields are truncated to stay within BigQuery row-size limits.
