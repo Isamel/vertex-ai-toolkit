@@ -1978,6 +1978,8 @@ def get_datadog_workload_usage(
             api = MetricsApi(client)  # type: ignore[no-untyped-call]
             cpu_resp = api.query_metrics(_from=start, to=now, query=cpu_query)
             mem_resp = api.query_metrics(_from=start, to=now, query=mem_query)
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.debug("get_datadog_workload_usage: query failed: %s", exc)
         return {}

@@ -251,6 +251,8 @@ def detect_contradictions(report: HealthReport) -> list[Finding]:
     for checker in checkers:
         try:
             result = checker(report)
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception:  # noqa: BLE001
             logger.warning("Contradiction checker %s failed (non-fatal)", checker.__name__, exc_info=True)
             continue

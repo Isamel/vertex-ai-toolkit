@@ -855,6 +855,8 @@ def _resolve_workload_usage(
             workload_pod_names,
             gke_config=gke_config,
         )
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.warning("_resolve_workload_usage: L1 (monitoring) failed for ns=%s: %s", namespace, exc)
         usage_l1, window = {}, "none"
@@ -1197,7 +1199,7 @@ def fetch_workload_costs(
     # For cross-check: store L1 + L2 data if both are available
     # ns → {wl_name → (l1_cpu, l2_cpu, l1_mem, l2_mem)}
     # (only populated when we have two independent sources in same ns)
-    cross_check_data: dict[str, dict[str, tuple[float | None, float | None, float | None, float | None]]] = {}
+    cross_check_data: dict[str, Any] = {}
 
     for (ns, wl_name), pods in sorted(workload_pods.items()):
         cpu_req, mem_req, eph_req = _aggregate_container_requests(pods)

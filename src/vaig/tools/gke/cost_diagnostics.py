@@ -135,6 +135,8 @@ def _check_iam_monitoring_viewer(gke_config: GKEConfig) -> dict[str, Any]:
         return {"name": "iam_monitoring_viewer", "status": "ok", "detail": "Permission check passed."}
     except PermissionDenied as exc:
         return {"name": "iam_monitoring_viewer", "status": "error", "detail": str(exc)}
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception as exc:  # noqa: BLE001
         return {"name": "iam_monitoring_viewer", "status": "warning", "detail": f"Could not verify: {exc}"}
 

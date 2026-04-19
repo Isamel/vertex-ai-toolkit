@@ -92,6 +92,8 @@ def _dedup_findings(findings: list[Finding]) -> list[Finding]:
                 seen[fp] = True
                 result.append(f)
         return result
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception:  # noqa: BLE001
         logger.error("_dedup_findings failed — returning original list", exc_info=True)
         return findings
