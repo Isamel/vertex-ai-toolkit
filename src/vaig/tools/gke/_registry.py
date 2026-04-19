@@ -40,6 +40,7 @@ from .argocd import (
     argocd_list_applications,
     detect_argocd,
 )
+from .cost_diagnostics import diagnose_gke_cost_metrics
 from .datadog import get_datadog_config
 from .datadog_api import (
     diagnose_datadog_metrics,
@@ -1251,6 +1252,21 @@ def create_gke_tools(gke_config: GKEConfig) -> list[ToolDef]:
                 window_minutes=window_minutes,
                 metric_type=metric_type,
             ),
+        ),
+        ToolDef(
+            name="diagnose_gke_cost_metrics",
+            description=(
+                "Run diagnostic checks on the GKE cost metrics pipeline.  "
+                "Verifies IAM permissions, cluster name match, Metrics Server "
+                "availability, Cloud Monitoring system metrics, and pod age "
+                "vs. monitoring window coverage.  "
+                "Use this when cost data shows '$0 waste' or all workloads "
+                "appear to be using the requests-fallback (L4) source.  "
+                "Read-only — does not modify any resources."
+            ),
+            parameters=[],
+            categories=frozenset({MONITORING, KUBERNETES}),
+            execute=lambda _cfg=gke_config: diagnose_gke_cost_metrics(gke_config=_cfg),
         ),
     ]
 

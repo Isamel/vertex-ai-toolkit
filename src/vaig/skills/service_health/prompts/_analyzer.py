@@ -302,7 +302,65 @@ When gathered data includes deployments managed by Argo Rollouts:
   (phase, replica counts, strategy status), NOT the stub Deployment.
 """
 
+_CONTRADICTION_RULES_PROMPT = """
+## Contradiction Detection Rules
+
+When analyzing findings, actively look for the following logical contradictions
+between data signals.  When a contradiction is detected, surface it as an
+additional finding with ``category: contradiction``.
+
+| Contradiction | Signal A | Signal B | Action |
+|---------------|----------|----------|--------|
+| APM–Catalog Gap | APM/tracing detected | Service not registered in catalog | Emit MEDIUM finding: registration gap |
+| Pods-Ready / APM-Error | All pods show Ready state | APM reports high error rate | Promote severity to HIGH; describe app-level fault |
+| Helm-Labels / No-Release | Workload has Helm labels/annotations | No Helm release found | Emit LOW finding: template-apply drift |
+| ArgoCD-Managed / No-Status | Workload references ArgoCD/GitOps | ArgoCD sync status absent | Emit MEDIUM finding: force re-gather with ArgoCD tools |
+
+Contradiction findings must include:
+- ``category: "contradiction"``
+- A concise title that names the two conflicting signals
+- A ``root_cause`` explaining WHY the signals conflict
+- ``remediation`` that resolves the conflict
+"""
+
+HEALTH_ANALYZER_PROMPT = HEALTH_ANALYZER_PROMPT + _CONTRADICTION_RULES_PROMPT
+
+_CHANGE_CORRELATION_PROMPT = """
+## Change Correlation Analysis
+
+After reviewing all findings, perform temporal correlation between deployment events and anomaly windows:
+
+### Step 1 — Identify change events
+Scan the Events Timeline for events whose description contains any of these keywords (case-insensitive):
+  deploy, sync, rollout, update, image, revision
+
+### Step 2 — Match to anomaly window
+If fetch_anomaly_trends output is available in the gathered data, use its reported anomaly_start as T0.
+Otherwise, use the timestamp of the first finding with severity HIGH or CRITICAL as T0.
+
+If a change event timestamp falls within ±2 minutes of T0, it is a CORRELATED CHANGE EVENT.
+
+### Step 3 — Request verification
+When a correlated change event is found, add a Verification Gap using the appropriate tool:
+- ArgoCD-managed: argocd_app_history(app_name=<app>)
+- Helm-managed:   helm_release_history(release_name=<release>)
+- Other:          kubectl_get(resource="replicasets", namespace=<ns>)  # sort by .metadata.creationTimestamp
+
+### Step 4 — Create Change Trigger finding
+When verification confirms correlation:
+  category:    "change-trigger"
+  severity:    (same as correlated error finding)
+  confidence:  HIGH
+  evidence:    [event description, event timestamp, tool output summary]
+  caused_by:   [id of correlated error finding]
+
+### Important
+If NO change event matches within ±2 minutes → do NOT create a change-trigger finding.
+"""
+
+HEALTH_ANALYZER_PROMPT = HEALTH_ANALYZER_PROMPT + _CHANGE_CORRELATION_PROMPT
+
 # Suppress F401: ANTI_HALLUCINATION_RULES is referenced in the prompt text
 # (inside the f-string body) as a documentation reference only.
-__all__ = ["HEALTH_ANALYZER_PROMPT"]
+__all__ = ["HEALTH_ANALYZER_PROMPT", "_CONTRADICTION_RULES_PROMPT", "_CHANGE_CORRELATION_PROMPT"]
 _ = ANTI_HALLUCINATION_RULES  # referenced in the prompt text above

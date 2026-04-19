@@ -7,6 +7,7 @@ prompt) and its builder function.
 from vaig.skills.service_health.prompts._shared import (
     _PRIORITY_HIERARCHY,
     _build_datadog_api_step,
+    _build_mandatory_tools_section,
     _build_tool_reference_table,
 )
 
@@ -269,7 +270,7 @@ If you produce output without making calls 1-6, the output will be REJECTED and 
 6. Record ONLY data that tools actually returned. If a tool call fails or returns no data, report that explicitly: "Tool returned no data" or "Tool call failed: [error]".
 7. FOLLOW THE EVIDENCE CHAIN: When Step 2 reveals a deployment with unavailable replicas, Step 4 is MANDATORY for that deployment — you MUST call get_rollout_status, kubectl_get replicasets, and kubectl_describe on the ReplicaSet. When Step 3 reveals FailedCreate events, you MUST retrieve the deployment YAML (output="yaml") to find the spec error. NEVER stop at "missing resource requests" when FailedCreate events exist — FailedCreate always has a specific cause in the spec.
 
-## MANDATORY OUTPUT FORMAT
+{mandatory_tools_section}## MANDATORY OUTPUT FORMAT
 
 After completing all diagnostic steps, you MUST structure your output with these sections:
 
@@ -336,6 +337,8 @@ def build_gatherer_prompt(
     helm_enabled: bool = True,
     argocd_enabled: bool = True,
     datadog_api_enabled: bool = False,
+    user_query: str = "",
+    namespace: str = "",
 ) -> str:
     """Build the gatherer prompt with only the enabled tool sections.
 
@@ -345,6 +348,8 @@ def build_gatherer_prompt(
         datadog_api_enabled: Include Datadog API tool rows in the reference table
             and inject Step 12 (Datadog API Correlation) into the investigation
             procedure so the LLM treats the three Datadog API tools as mandatory.
+        user_query: Optional user query to detect mandatory tools (SPEC-SH-10).
+        namespace: Optional namespace to filter mandatory tools (SPEC-SH-10).
 
     Returns:
         The fully assembled gatherer prompt string.
@@ -355,10 +360,12 @@ def build_gatherer_prompt(
         datadog_api_enabled=datadog_api_enabled,
     )
     datadog_step = _build_datadog_api_step(datadog_api_enabled)
+    mandatory_tools_section = _build_mandatory_tools_section(query=user_query, namespace=namespace)
     return _GATHERER_PROMPT_TEMPLATE.format(
         tool_reference_table=table,
         datadog_api_step=datadog_step,
         priority_hierarchy=_PRIORITY_HIERARCHY,
+        mandatory_tools_section=mandatory_tools_section,
     )
 
 

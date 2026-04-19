@@ -470,9 +470,15 @@ class TestFetchWorkloadCosts:
 
         mock_clients.return_value = (core_v1, MagicMock(), MagicMock(), MagicMock())
 
-        # Patch monitoring so it doesn't attempt a real GCP connection
+        # Patch all usage-resolution layers so no real GCP/k8s connections are made
         with patch(
             "vaig.tools.gke.monitoring.get_workload_usage_metrics",
+            return_value={},
+        ), patch(
+            "vaig.tools.gke.monitoring._get_monitoring_usage_with_retry",
+            return_value=({}, "none"),
+        ), patch(
+            "vaig.tools.gke.metrics_server.get_metrics_server_usage",
             return_value={},
         ):
             report = fetch_workload_costs(self._make_gke_config())
@@ -1152,6 +1158,12 @@ class TestFetchWorkloadCostsV2BackwardCompat:
         with patch(
             "vaig.tools.gke.monitoring.get_workload_usage_metrics",
             return_value={},
+        ), patch(
+            "vaig.tools.gke.monitoring._get_monitoring_usage_with_retry",
+            return_value=({}, "none"),
+        ), patch(
+            "vaig.tools.gke.metrics_server.get_metrics_server_usage",
+            return_value={},
         ):
             report = fetch_workload_costs(self._make_gke_config())
 
@@ -1184,6 +1196,12 @@ class TestFetchWorkloadCostsV2BackwardCompat:
 
         with patch(
             "vaig.tools.gke.monitoring.get_workload_usage_metrics",
+            return_value={},
+        ), patch(
+            "vaig.tools.gke.monitoring._get_monitoring_usage_with_retry",
+            return_value=({}, "none"),
+        ), patch(
+            "vaig.tools.gke.metrics_server.get_metrics_server_usage",
             return_value={},
         ):
             report = fetch_workload_costs(self._make_gke_config())
