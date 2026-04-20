@@ -375,6 +375,66 @@ class TestRootCauseHypothesisProbabilityValidator:
         total = sum(h.probability for h in report.root_cause_hypotheses)
         assert abs(total - 1.0) < 1e-4
 
+
+class TestRootCauseHypothesisLabelTruncation:
+    """label > 80 chars must be truncated, not rejected (Gemini ignores length hints)."""
+
+    def _hyp(self, label: str) -> RootCauseHypothesis:
+        return RootCauseHypothesis(
+            label=label,
+            probability=1.0,
+            confirms_if="Signal X is observed.",
+            refutes_if="Signal Y is absent.",
+        )
+
+    def test_label_within_limit_unchanged(self) -> None:
+        """Labels <= 80 chars must not be modified."""
+        hyp = self._hyp("Short label")
+        assert hyp.label == "Short label"
+
+    def test_label_exactly_80_unchanged(self) -> None:
+        """Label of exactly 80 chars must not be modified."""
+        label = "x" * 80
+        hyp = self._hyp(label)
+        assert hyp.label == label
+
+    def test_label_over_limit_truncated_to_80(self) -> None:
+        """Labels > 80 chars must be truncated to 80 chars (with ellipsis)."""
+        long_label = "Los servicios backend están rechazando conexiones debido a problemas de configuración en el proxy."
+        assert len(long_label) > 80
+        hyp = self._hyp(long_label)
+        assert len(hyp.label) <= 80
+        assert hyp.label.endswith("…")
+
+    def test_label_truncation_does_not_raise(self) -> None:
+        """A report with oversized labels must not raise ValidationError."""
+        long_label = "A" * 120
+        hyp = self._hyp(long_label)  # must not raise
+        assert len(hyp.label) <= 80
+
+
+class TestRootCauseHypothesisOther:
+    """Misc RootCauseHypothesis constraints."""
+
+    def _make_report(self, hypotheses: list) -> HealthReport:
+        return HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.HEALTHY,
+                scope="test",
+                summary_text="test",
+            ),
+            root_cause_hypotheses=hypotheses,
+        )
+
+    def _hyp(self, probability: float, status: str = "open") -> RootCauseHypothesis:
+        return RootCauseHypothesis(
+            label="Test hypothesis",
+            probability=probability,
+            confirms_if="Signal X is observed.",
+            refutes_if="Signal Y is absent.",
+            status=status,  # type: ignore[arg-type]
+        )
+
     def test_max_four_hypotheses_enforced(self) -> None:
         """max_length=4 must reject a list of 5."""
         import pytest

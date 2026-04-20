@@ -562,6 +562,23 @@ class RootCauseHypothesis(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     label: str = Field(..., max_length=80, description="Short human title (<=80 chars)")
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def _truncate_label(cls, v: object) -> object:
+        """Truncate label to 80 chars before validation.
+
+        Gemini sometimes returns labels longer than 80 characters.
+        Rather than rejecting the report, we truncate with an ellipsis.
+        """
+        if isinstance(v, str) and len(v) > 80:
+            logger.warning(
+                "RootCauseHypothesis.label truncated from %d to 80 chars: %r…",
+                len(v),
+                v[:40],
+            )
+            return v[:79] + "…"
+        return v
     probability: float = Field(
         ...,
         ge=0.0,
