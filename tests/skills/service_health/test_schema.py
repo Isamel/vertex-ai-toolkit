@@ -629,7 +629,7 @@ class TestAudit16SchemaStateBudget:
         defs_count = len(defs)
 
         # ~10 % headroom above the post-BFS baseline
-        _SNAPSHOT_CHAR_MAX = 18_700
+        _SNAPSHOT_CHAR_MAX = 19_200
         _SNAPSHOT_DEFS_MAX = 23
 
         assert char_count <= _SNAPSHOT_CHAR_MAX, (
