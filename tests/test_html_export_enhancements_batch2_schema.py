@@ -105,7 +105,6 @@ class TestToolUsageSummary:
             "tool_calls": 4,
             "successful_calls": None,
             "failed_calls": None,
-            "tool_call_timeline": None,
         }
 
     def test_serialisation_none_fields(self) -> None:

@@ -858,13 +858,6 @@ class ToolUsageSummary(BaseModel):
         default=None,
         description="Number of tool calls that returned an error or empty result",
     )
-    tool_call_timeline: list[dict[str, object]] | None = Field(
-        default=None,
-        description=(
-            "Ordered list of tool call events for timeline/waterfall rendering. "
-            "Each entry: {name, start_ms, duration_ms, status: 'success'|'error'|'timeout'}"
-        ),
-    )
 
 
 class ReportMetadata(BaseModel):
