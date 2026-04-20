@@ -15,6 +15,17 @@ from vaig.skills.service_health.schema import Confidence, Finding, Severity
 if TYPE_CHECKING:
     from vaig.skills.service_health.schema import HealthReport
 
+# ── SPEC-V2-AUDIT-10: Infra → workload causal correlation ────────────────────
+
+_INFRA_KEYWORDS: tuple[str, ...] = (
+    "istio-cni-node", "cni plugin", "networknotready", "networkpluginnotready",
+    "kube-proxy", "anetd", "gke-metadata-server", "calico", "cilium",
+)
+_WORKLOAD_KEYWORDS: tuple[str, ...] = (
+    "istiod", "connection to istiod", "upstream request timeout",
+    "xds-grpc", "envoy", "istio-proxy",
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -222,7 +233,120 @@ def _check_argocd_managed_no_status(report: HealthReport) -> Finding | None:
     )
 
 
+def _check_infra_degrades_workload(report: HealthReport) -> Finding | None:
+    """Detect cluster-infra failure causing workload degradation (SPEC-V2-AUDIT-10).
+
+    When a HIGH/CRITICAL infra finding (CNI, kube-proxy, etc.) exists alongside
+    a HIGH/CRITICAL workload finding (istiod, envoy, etc.) that has no causal
+    link yet, this rule:
+
+    1. Sets ``caused_by`` on the workload finding to point to the infra finding.
+    2. Emits a MEDIUM contradiction finding to surface the correlation.
+    """
+    findings = report.findings
+
+    infra_finding: Finding | None = None
+    for f in findings:
+        if f.severity in (Severity.HIGH, Severity.CRITICAL):
+            haystack = f"{f.title} {f.description}".lower()
+            if any(kw in haystack for kw in _INFRA_KEYWORDS):
+                infra_finding = f
+                break
+
+    workload_finding: Finding | None = None
+    for f in findings:
+        if f.severity in (Severity.HIGH, Severity.CRITICAL):
+            haystack = f"{f.title} {f.description}".lower()
+            if any(kw in haystack for kw in _WORKLOAD_KEYWORDS):
+                workload_finding = f
+                break
+
+    if infra_finding is None or workload_finding is None:
+        return None
+    if infra_finding is workload_finding:
+        return None
+    if workload_finding.caused_by:
+        return None
+
+    # Mutate workload finding: set caused_by (frozen model → model_copy)
+    mutated = workload_finding.model_copy(update={"caused_by": [infra_finding.id]})
+    # Replace workload finding in report.findings in-place
+    idx = report.findings.index(workload_finding)
+    report.findings[idx] = mutated
+
+    logger.debug(
+        "Infra→workload causal link: %r caused_by %r",
+        workload_finding.id,
+        infra_finding.id,
+    )
+    return Finding(
+        id="contradiction-infra-degrades-workload",
+        title="Workload degradation correlated with cluster-infra failure",
+        severity=Severity.MEDIUM,
+        category="contradiction",
+        description=(
+            f"Finding '{infra_finding.id}' (cluster-infra) may be the upstream cause of "
+            f"finding '{workload_finding.id}' (workload degradation). "
+            "Automatic correlation — verify before acting."
+        ),
+        root_cause=(
+            "Cluster-infra failure (CNI, network plugin, metadata server) disrupted "
+            "service-mesh or sidecar connectivity, causing workload-level symptoms."
+        ),
+        evidence=[
+            f"Infra finding id={infra_finding.id!r} severity={infra_finding.severity}",
+            f"Workload finding id={workload_finding.id!r} severity={workload_finding.severity}",
+        ],
+        confidence=Confidence.MEDIUM,
+        remediation=(
+            "Address the infra finding first — resolving it may clear the workload "
+            "degradation. Run `kubectl get pods -n istio-system` and inspect CNI node pods."
+        ),
+    )
+
+
 # ── public API ────────────────────────────────────────────────────────────────
+
+
+def apply_contradiction_rules(report: HealthReport) -> list[Finding]:
+    """Apply mutation-based contradiction rules to *report* and return new findings.
+
+    Unlike :func:`detect_contradictions`, rules registered here may mutate
+    findings in-place (e.g. setting ``caused_by``) in addition to emitting
+    new contradiction findings.
+
+    Args:
+        report: A fully-populated :class:`~vaig.skills.service_health.schema.HealthReport`.
+
+    Returns:
+        A (possibly empty) list of new :class:`~vaig.skills.service_health.schema.Finding`
+        objects describing detected correlations.  These should be *appended* to
+        ``report.findings`` by the caller.
+    """
+    rule_fns = [
+        _check_infra_degrades_workload,
+    ]
+    new_findings: list[Finding] = []
+    for rule_fn in rule_fns:
+        try:
+            result = rule_fn(report)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Contradiction rule %s failed (non-fatal)", rule_fn.__name__, exc_info=True
+            )
+            continue
+        if result is not None:
+            new_findings.append(result)
+
+    if new_findings:
+        logger.info(
+            "apply_contradiction_rules emitted %d finding(s): %s",
+            len(new_findings),
+            [f.id for f in new_findings],
+        )
+    return new_findings
 
 
 def detect_contradictions(report: HealthReport) -> list[Finding]:

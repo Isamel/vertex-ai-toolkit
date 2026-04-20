@@ -165,6 +165,14 @@
   .filter-pill[data-sev="LOW"]      { color: var(--low);      border-color: color-mix(in srgb, var(--low) 40%, transparent);      background: color-mix(in srgb, var(--low) 15%, transparent); }
   .filter-pill[data-sev="INFO"]     { color: var(--info);     border-color: color-mix(in srgb, var(--info) 40%, transparent);     background: color-mix(in srgb, var(--info) 15%, transparent); }
   .filter-pill.inactive { opacity: .35; }
+  .filter-preset-btn {
+    padding: 3px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;
+    cursor: pointer; border: 1px solid color-mix(in srgb, var(--text-dim) 40%, transparent);
+    background: color-mix(in srgb, var(--text-dim) 10%, transparent);
+    color: var(--text-dim); transition: all var(--transition); user-select: none;
+  }
+  .filter-preset-btn:hover { color: var(--text-main); border-color: color-mix(in srgb, var(--text-main) 50%, transparent); }
+  .filter-preset-btn.active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
 
   /* ── Main content ─────────────────────────────────────────── */
   .main { flex: 1; overflow-y: auto; padding: 24px; max-width: 1200px; }
@@ -507,7 +515,7 @@
   }
   .urgency-header:first-child { margin-top: 0; }
 
-  /* ── Cost & Usage ─────────────────────────────────────────── */
+  /* ── Investigation Cost ────────────────────────────────────────── */
   .cost-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
   .cost-card {
     background: var(--bg-surface); border: 1px solid var(--border);
@@ -519,7 +527,7 @@
   .cost-card-value { font-size: 26px; font-weight: 800; color: var(--info); line-height: 1.1; font-family: var(--font-mono); }
   .cost-card-sub { font-size: 12px; color: var(--text-dim); }
 
-  /* ── GKE Cost Estimation ───────────────────────────────────── */
+  /* ── Workload Cost ─────────────────────────────────────────── */
   .gke-workload-block { margin-bottom: 20px; }
   .gke-workload-header {
     font-size: 13px; font-weight: 700; font-family: var(--font-mono);
@@ -793,36 +801,36 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
 
   <!-- ── Sidebar ──────────────────────────────────────────────── -->
   <nav class="sidebar" id="sidebar">
-    <div class="sidebar-label">Navigation</div>
+    <div class="sidebar-label" data-i18n="nav_label">Navigation</div>
     <a class="nav-item active" href="#section-summary" onclick="setActiveNav(this)">
-      <span class="nav-icon">📊</span> Summary
+      <span class="nav-icon">📊</span> <span data-i18n="nav_summary">Summary</span>
     </a>
     <a class="nav-item" href="#section-cluster" onclick="setActiveNav(this)">
-      <span class="nav-icon">☸️</span> Cluster
+      <span class="nav-icon">☸️</span> <span data-i18n="nav_cluster">Cluster</span>
     </a>
     <a class="nav-item" href="#section-services" onclick="setActiveNav(this)">
-      <span class="nav-icon">🔲</span> Services
+      <span class="nav-icon">🔲</span> <span data-i18n="nav_services">Services</span>
       <span class="nav-count" id="nav-services-count"></span>
     </a>
     <a class="nav-item" href="#section-dependencies" onclick="setActiveNav(this)" id="nav-deps-item" style="display:none">
       <span class="nav-icon">🔗</span> Dependencies
     </a>
     <a class="nav-item" href="#section-findings" onclick="setActiveNav(this)">
-      <span class="nav-icon">🔍</span> Findings
+      <span class="nav-icon">🔍</span> <span data-i18n="nav_findings">Findings</span>
       <span class="nav-count critical" id="nav-findings-count"></span>
     </a>
     <a class="nav-item" href="#section-investigation" onclick="setActiveNav(this)" id="nav-investigation-item" style="display:none">
       <span class="nav-icon">🤖</span> Investigation
     </a>
     <a class="nav-item" href="#section-rootcause" onclick="setActiveNav(this)">
-      <span class="nav-icon">🧠</span> Root Cause
+      <span class="nav-icon">🧠</span> <span data-i18n="nav_root_cause">Root Cause</span>
     </a>
     <a class="nav-item" href="#section-timeline" onclick="setActiveNav(this)">
-      <span class="nav-icon">📅</span> Timeline
+      <span class="nav-icon">📅</span> <span data-i18n="nav_timeline">Timeline</span>
       <span class="nav-count" id="nav-timeline-count"></span>
     </a>
     <a class="nav-item" href="#section-recommendations" onclick="setActiveNav(this)">
-      <span class="nav-icon">✅</span> Actions
+      <span class="nav-icon">✅</span> <span data-i18n="nav_actions">Actions</span>
       <span class="nav-count" id="nav-recs-count"></span>
     </a>
     <a class="nav-item" href="#section-review" onclick="setActiveNav(this)" id="nav-review-item" style="display:none">
@@ -830,10 +838,10 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
       <span class="nav-count" id="nav-review-status"></span>
     </a>
     <a class="nav-item" href="#section-cost" onclick="setActiveNav(this)" id="nav-cost-item" style="display:none">
-      <span class="nav-icon">💰</span> Cost &amp; Usage
+      <span class="nav-icon">💰</span> <span data-i18n="h2_cost">Investigation Cost</span>
     </a>
     <a class="nav-item" href="#section-gke-cost" onclick="setActiveNav(this)" id="nav-gke-cost-item" style="display:none">
-      <span class="nav-icon">☸️</span> GKE Cost
+      <span class="nav-icon">☸️</span> Workload Cost
     </a>
     <a class="nav-item" href="#section-trends" onclick="setActiveNav(this)" id="nav-trends-item" style="display:none">
       <span class="nav-icon">📈</span> Trends
@@ -859,13 +867,18 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
 
     <div class="nav-divider"></div>
     <div class="filter-section">
-      <div class="filter-section-label">Filter Findings</div>
+      <div class="filter-section-label" data-i18n="nav_filter_label">Filter Findings</div>
       <div class="filter-pills" id="severity-filters">
-        <span class="filter-pill" data-sev="CRITICAL" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">CRIT</span>
-        <span class="filter-pill" data-sev="HIGH" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">HIGH</span>
-        <span class="filter-pill" data-sev="MEDIUM" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">MED</span>
-        <span class="filter-pill" data-sev="LOW" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">LOW</span>
-        <span class="filter-pill" data-sev="INFO" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">INFO</span>
+        <span class="filter-pill" data-sev="CRITICAL" data-i18n="pill_crit" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">CRIT</span>
+        <span class="filter-pill" data-sev="HIGH" data-i18n="pill_high" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">HIGH</span>
+        <span class="filter-pill" data-sev="MEDIUM" data-i18n="pill_med" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">MED</span>
+        <span class="filter-pill" data-sev="LOW" data-i18n="pill_low" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">LOW</span>
+        <span class="filter-pill" data-sev="INFO" data-i18n="pill_info" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">INFO</span>
+      </div>
+      <div class="filter-presets" id="severity-presets" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">
+        <button class="filter-preset-btn" data-preset="critical-only" onclick="applyPreset('critical-only')" title="Show CRITICAL only">🔴 <span data-i18n="preset_crit_only">Crit only</span></button>
+        <button class="filter-preset-btn" data-preset="high-and-above" onclick="applyPreset('high-and-above')" title="Show CRITICAL and HIGH">⬆ <span data-i18n="preset_high_plus">High+</span></button>
+        <button class="filter-preset-btn" data-preset="all" onclick="applyPreset('all')" title="Show all severities">✦ <span data-i18n="preset_all">All</span></button>
       </div>
     </div>
   </nav>
@@ -875,7 +888,7 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
 
     <!-- Executive Summary -->
     <section id="section-summary">
-      <h2><span class="section-icon">📊</span> Executive Summary</h2>
+      <h2><span class="section-icon">📊</span> <span data-i18n="h2_summary">Executive Summary</span></h2>
       <div class="stat-grid" id="stat-grid"></div>
       <div class="summary-text" id="summary-text"></div>
       <div id="investigation-coverage-badge" style="display:none;margin-top:0.75rem"></div>
@@ -885,7 +898,7 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
     <section id="section-cluster">
       <h2>
         <span class="section-icon">☸️</span>
-        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Cluster Overview</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}"><span data-i18n="h2_cluster">Cluster Overview</span></span>
       </h2>
       <div class="section-content">
         <div class="card">
@@ -896,7 +909,7 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
 
     <!-- Service Status -->
     <section id="section-services">
-      <h2><span class="section-icon">🔲</span> Service Status</h2>
+      <h2><span class="section-icon">🔲</span> <span data-i18n="h2_services">Service Status</span></h2>
       <div class="service-grid" id="service-grid"></div>
     </section>
 
@@ -904,7 +917,7 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
     <section id="section-dependencies" style="display:none">
       <h2>
         <span class="section-icon">🔗</span>
-        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Service Dependencies</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}"><span data-i18n="h2_deps">Service Dependencies</span></span>
       </h2>
       <div class="section-content">
         <div class="dep-meta" id="dep-meta"></div>
@@ -917,13 +930,13 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
 
     <!-- What Changed Recently -->
     <section id="section-recent-changes" style="display:none">
-      <h2><span class="section-icon">🔄</span> What Changed Recently</h2>
+      <h2><span class="section-icon">🔄</span> <span data-i18n="h2_recent">What Changed Recently</span></h2>
       <div class="change-timeline" id="recent-changes-list"></div>
     </section>
 
     <!-- Findings -->
     <section id="section-findings">
-      <h2><span class="section-icon">🔍</span> Findings</h2>
+      <h2><span class="section-icon">🔍</span> <span data-i18n="h2_findings">Findings</span></h2>
       <div id="findings-list"></div>
     </section>
 
@@ -931,7 +944,7 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
     <section id="section-investigation" style="display:none">
       <h2>
         <span class="section-icon">🤖</span>
-        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Autonomous Investigation Plan</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}"><span data-i18n="h2_investigation">Autonomous Investigation Plan</span></span>
       </h2>
       <div class="section-content">
         <div id="investigation-summary" style="font-size:13px;color:var(--text-dim);margin-bottom:1rem"></div>
@@ -955,26 +968,26 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
     <section id="section-rootcause">
       <h2>
         <span class="section-icon">🧠</span>
-        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Root Cause Hypotheses</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}"><span data-i18n="h2_rootcause">Root Cause Hypotheses</span></span>
       </h2>
       <div class="section-content" id="rootcause-list"></div>
     </section>
 
     <!-- Timeline -->
     <section id="section-timeline">
-      <h2><span class="section-icon">📅</span> Timeline</h2>
+      <h2><span class="section-icon">📅</span> <span data-i18n="h2_timeline">Timeline</span></h2>
       <div class="timeline" id="timeline-list"></div>
     </section>
 
     <!-- Recommendations -->
     <section id="section-recommendations">
-      <h2><span class="section-icon">✅</span> Recommended Actions</h2>
+      <h2><span class="section-icon">✅</span> <span data-i18n="h2_recommendations">Recommended Actions</span></h2>
       <div id="recs-list"></div>
     </section>
 
     <!-- Review -->
     <section id="section-review" style="display:none">
-      <h2><span class="section-icon">📋</span> Report Review <span id="review-header-badge"></span></h2>
+      <h2><span class="section-icon">📋</span> <span data-i18n="h2_review">Report Review</span> <span id="review-header-badge"></span></h2>
       <div id="review-content"></div>
     </section>
 
@@ -985,17 +998,17 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
       <div id="evidence-gaps-list"></div>
     </section>
 
-    <!-- Cost & Usage -->
+    <!-- Investigation Cost -->
     <section id="section-cost" style="display:none">
-      <h2><span class="section-icon">💰</span> Cost &amp; Usage</h2>
+      <h2><span class="section-icon">💰</span> <span data-i18n="h2_cost">Investigation Cost</span></h2>
       <div class="cost-grid" id="cost-grid"></div>
     </section>
 
-    <!-- GKE Workload Cost Estimation -->
+    <!-- Workload Cost -->
     <section id="section-gke-cost" style="display:none">
       <h2>
         <span class="section-icon">☸️</span>
-        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">GKE Workload Cost Estimation</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Workload Cost</span>
       </h2>
       <div class="section-content">
         <div id="gke-cost-unsupported" style="display:none" class="card">
@@ -1091,6 +1104,110 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
 </div>
 
 <script>
+// ── i18n chrome localisation ────────────────────────────────────
+const I18N = {
+  en: {
+    // Sidebar
+    nav_label:           'Navigation',
+    nav_summary:         'Summary',
+    nav_cluster:         'Cluster',
+    nav_services:        'Services',
+    nav_findings:        'Findings',
+    nav_root_cause:      'Root Cause',
+    nav_timeline:        'Timeline',
+    nav_actions:         'Actions',
+    nav_filter_label:    'Filter Findings',
+    // H2 headings
+    h2_summary:          'Executive Summary',
+    h2_cluster:          'Cluster Overview',
+    h2_services:         'Service Status',
+    h2_deps:             'Service Dependencies',
+    h2_recent:           'What Changed Recently',
+    h2_findings:         'Findings',
+    h2_investigation:    'Autonomous Investigation Plan',
+    h2_rootcause:        'Root Cause Hypotheses',
+    h2_timeline:         'Timeline',
+    h2_recommendations:  'Recommended Actions',
+    h2_review:           'Report Review',
+    h2_cost:             'Investigation Cost',
+    // Filter pills & presets
+    pill_crit:           'CRIT',
+    pill_high:           'HIGH',
+    pill_med:            'MED',
+    pill_low:            'LOW',
+    pill_info:           'INFO',
+    preset_crit_only:    'Crit only',
+    preset_high_plus:    'High+',
+    preset_all:          'All',
+    // Footer / misc chrome
+    report_prefix:       'Report:',
+    stat_overall:        'Overall Status',
+    stat_services:       'Services Checked',
+    stat_issues:         'Issues Found',
+    stat_warnings:       'Warnings',
+  },
+  es: {
+    // Sidebar
+    nav_label:           'Navegación',
+    nav_summary:         'Resumen',
+    nav_cluster:         'Clúster',
+    nav_services:        'Servicios',
+    nav_findings:        'Hallazgos',
+    nav_root_cause:      'Causa Raíz',
+    nav_timeline:        'Cronología',
+    nav_actions:         'Acciones',
+    nav_filter_label:    'Filtrar Hallazgos',
+    // H2 headings
+    h2_summary:          'Resumen Ejecutivo',
+    h2_cluster:          'Vista del Clúster',
+    h2_services:         'Estado de Servicios',
+    h2_deps:             'Dependencias de Servicios',
+    h2_recent:           'Cambios Recientes',
+    h2_findings:         'Hallazgos',
+    h2_investigation:    'Plan de Investigación Autónoma',
+    h2_rootcause:        'Hipótesis de Causa Raíz',
+    h2_timeline:         'Cronología',
+    h2_recommendations:  'Acciones Recomendadas',
+    h2_review:           'Revisión del Reporte',
+    h2_cost:             'Costo de Investigación',
+    // Filter pills & presets
+    pill_crit:           'CRIT',
+    pill_high:           'ALTO',
+    pill_med:            'MED',
+    pill_low:            'BAJO',
+    pill_info:           'INFO',
+    preset_crit_only:    'Solo crit',
+    preset_high_plus:    'Alto+',
+    preset_all:          'Todo',
+    // Footer / misc chrome
+    report_prefix:       'Reporte:',
+    stat_overall:        'Estado General',
+    stat_services:       'Servicios Revisados',
+    stat_issues:         'Problemas Encontrados',
+    stat_warnings:       'Advertencias',
+  },
+};
+
+/**
+ * Return the localised string for `key`.
+ * Falls back to the `en` locale when the detected language is unsupported.
+ */
+function t(key) {
+  const lang = (REPORT_DATA && REPORT_DATA.metadata && REPORT_DATA.metadata.detected_language) || 'en';
+  const locale = I18N[lang] || I18N.en;
+  return locale[key] !== undefined ? locale[key] : (I18N.en[key] !== undefined ? I18N.en[key] : key);
+}
+
+/**
+ * Apply i18n to all static HTML elements that carry a `data-i18n` attribute.
+ * Called once after all render functions have run.
+ */
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    el.textContent = t(el.dataset.i18n);
+  });
+}
+
 // ── Render helpers ──────────────────────────────────────────────
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
 // safeUrl: allow only http/https scheme to prevent javascript: XSS via href
@@ -1126,7 +1243,7 @@ function renderHeader() {
   const badge = document.getElementById('status-badge');
   badge.className = 'status-badge ' + es.overall_status;
   document.getElementById('status-text').textContent = es.overall_status;
-  document.getElementById('generated-at').textContent = 'Report: ' + m.generated_at.replace('T',' ').replace('Z',' UTC');
+  document.getElementById('generated-at').textContent = t('report_prefix') + ' ' + m.generated_at.replace('T',' ').replace('Z',' UTC');
   // AUDIT-11: autonomous badge
   const autoBadge = document.getElementById('autonomous-badge');
   if (m.autonomous_enabled) {
@@ -1141,12 +1258,12 @@ function renderHeader() {
 function renderStats() {
   const es = REPORT_DATA.executive_summary;
   const data = [
-    { label: 'Overall Status', value: es.overall_status, cls: sevColor(es.overall_status), sub: es.scope },
-    { label: 'Services Checked', value: es.services_checked, cls: 'info', sub: 'in namespace' },
-    { label: 'Issues Found', value: es.issues_found, cls: 'warning', sub: 'findings' },
-    { label: 'Critical', value: es.critical_count, cls: 'critical', sub: 'severity' },
-    { label: 'Warnings', value: es.warning_count, cls: 'warning', sub: 'high/medium' },
-    { label: 'Healthy', value: REPORT_DATA.service_statuses.filter(s=>s.status==='HEALTHY').length, cls: 'healthy', sub: 'services ok' },
+    { label: t('stat_overall'),   value: es.overall_status, cls: sevColor(es.overall_status), sub: es.scope },
+    { label: t('stat_services'),  value: es.services_checked, cls: 'info', sub: 'in namespace' },
+    { label: t('stat_issues'),    value: es.issues_found, cls: 'warning', sub: 'findings' },
+    { label: 'Critical',          value: es.critical_count, cls: 'critical', sub: 'severity' },
+    { label: t('stat_warnings'),  value: es.warning_count, cls: 'warning', sub: 'high/medium' },
+    { label: 'Healthy',           value: REPORT_DATA.service_statuses.filter(s=>s.status==='HEALTHY').length, cls: 'healthy', sub: 'services ok' },
   ];
   document.getElementById('stat-grid').innerHTML = data.map(d=>
     `<div class="stat-card">
@@ -1340,6 +1457,31 @@ function toggleSeverityFilter(sev) {
   });
 }
 
+const PRESET_MAP = {
+  'critical-only':   new Set(['CRITICAL']),
+  'high-and-above':  new Set(['CRITICAL', 'HIGH']),
+  'all':             new Set(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']),
+};
+
+function applyPreset(name) {
+  const next = PRESET_MAP[name];
+  if (!next) return;
+  activeSeverities.clear();
+  next.forEach(s => activeSeverities.add(s));
+  // Sync pills
+  document.querySelectorAll('.filter-pill').forEach(p => {
+    p.classList.toggle('inactive', !activeSeverities.has(p.dataset.sev));
+  });
+  // Sync preset buttons
+  document.querySelectorAll('.filter-preset-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.preset === name);
+  });
+  // Show/hide finding cards
+  document.querySelectorAll('.finding-card').forEach(card => {
+    card.classList.toggle('hidden', !activeSeverities.has(card.dataset.sev));
+  });
+}
+
 // ── Root Cause ────────────────────────────────────────────────────
 function renderRootCause() {
   const hyps = REPORT_DATA.root_cause_hypotheses;
@@ -1418,7 +1560,7 @@ function renderRecs() {
   document.getElementById('recs-list').innerHTML = html;
 }
 
-// ── Cost & Usage ──────────────────────────────────────────────────
+// ── Investigation Cost ────────────────────────────────────────────
 function renderCostUsage() {
   const cost = REPORT_DATA.metadata && REPORT_DATA.metadata.cost_metrics;
   if (!cost || (cost.run_cost_usd == null && cost.total_tokens == null)) return;
@@ -1701,7 +1843,7 @@ function renderDataCompleteness() {
   document.getElementById('completeness-grid').innerHTML = coverageLine + htmlRows;
 }
 
-// ── GKE Workload Cost Estimation ─────────────────────────────────
+// ── Workload Cost ─────────────────────────────────────────────────
 function renderGKECost() {
   const gkeCost = REPORT_DATA.metadata && REPORT_DATA.metadata.gke_cost;
   if (!gkeCost) return;
@@ -2566,6 +2708,7 @@ function renderInvestigation() {
   renderQuickLinks();
   renderEvidenceGaps();
   renderInvestigation();
+  applyI18n();
   const _titleCluster = REPORT_DATA.metadata.cluster_name;
   const _titleStatus  = REPORT_DATA.executive_summary.overall_status;
   document.title = ['Health Report', _titleCluster, _titleStatus].filter(Boolean).join(' — ');

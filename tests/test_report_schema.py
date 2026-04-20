@@ -160,18 +160,16 @@ def _full_report() -> HealthReport:
         ],
         root_cause_hypotheses=[
             RootCauseHypothesis(
-                finding_title="CrashLoopBackOff on payment-svc",
-                mechanism=(
-                    "Payment service v2.1.0 introduced an in-memory cache that grows "
-                    "unbounded. Under production load, the cache exceeds the 256Mi container "
-                    "limit within 15 minutes, triggering OOMKill."
-                ),
-                confidence=Confidence.CONFIRMED,
+                label="CrashLoopBackOff on payment-svc",
+                probability=0.75,
                 supporting_evidence=[
                     "Memory usage graph shows linear growth from pod start",
                     "Previous version v2.0.9 ran stable at ~180Mi",
                 ],
-                what_would_confirm="N/A",
+                refuting_evidence=[],
+                confirms_if="Memory usage exceeds 256Mi consistently within 15 minutes of pod start.",
+                refutes_if="Memory usage stays below 200Mi under full production load.",
+                status="open",
             ),
         ],
         evidence_details=[
@@ -666,8 +664,8 @@ class TestToMarkdown:
         md = report.to_markdown()
         assert "## Root Cause Hypotheses" in md
         assert "#### CrashLoopBackOff on payment-svc" in md
-        assert "- **Mechanism**:" in md
-        assert "in-memory cache" in md
+        assert "75%" in md
+        assert "Confirms if" in md
 
     def test_root_cause_empty_fallback(self) -> None:
         report = _minimal_report()

@@ -546,21 +546,37 @@ class DowngradedFinding(BaseModel):
 
 
 class RootCauseHypothesis(BaseModel):
-    """A root-cause hypothesis for a critical/high/medium finding."""
+    """A candidate explanation for the overall service degradation."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(frozen=True)
 
-    finding_title: str
-    mechanism: str = Field(description="Chain of events that produced the issue")
-    confidence: Confidence = Confidence.MEDIUM
-
-    @field_validator("confidence", mode="before")
-    @classmethod
-    def coerce_confidence(cls, v: object) -> object:
-        return _make_enum_coercer(Confidence, Confidence.MEDIUM)(v)
-
-    supporting_evidence: list[str] = Field(default_factory=list)
-    what_would_confirm: str = Field(default="N/A")
+    label: str = Field(..., max_length=80, description="Short human title (<=80 chars)")
+    probability: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Estimated probability this is the actual root cause.",
+    )
+    supporting_evidence: list[str] = Field(
+        default_factory=list,
+        description="Bullet points referencing findings or tool outputs that support this hypothesis.",
+    )
+    refuting_evidence: list[str] = Field(
+        default_factory=list,
+        description="Bullet points that contradict this hypothesis.",
+    )
+    confirms_if: str = Field(
+        ...,
+        description=(
+            "A single sentence describing what observation would promote this "
+            "hypothesis to CONFIRMED. Must be an observable signal, not an action."
+        ),
+    )
+    refutes_if: str = Field(
+        ...,
+        description="A single sentence describing what observation would refute this hypothesis.",
+    )
+    status: Literal["open", "confirmed", "refuted", "inconclusive"] = "open"
 
 
 class EvidenceDetail(BaseModel):
@@ -1003,6 +1019,15 @@ class ReportMetadata(BaseModel):
             "populated=False entries indicate fields that were expected but left empty."
         ),
     )
+    # ── AUDIT-09: Chrome localisation ─────────────────────────
+    detected_language: str = Field(
+        default="en",
+        description=(
+            "BCP-47 language code detected from the user query (e.g. 'en', 'es'). "
+            "Used by the SPA i18n layer to localise chrome strings. "
+            "Populated post-hoc by the pipeline; defaults to 'en'."
+        ),
+    )
 
 
 # ── Dependency graph models ───────────────────────────────────
@@ -1109,7 +1134,11 @@ class HealthReport(BaseModel):
     service_statuses: list[ServiceStatus] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
     downgraded_findings: list[DowngradedFinding] = Field(default_factory=list)
-    root_cause_hypotheses: list[RootCauseHypothesis] = Field(default_factory=list)
+    root_cause_hypotheses: list[RootCauseHypothesis] = Field(
+        default_factory=list,
+        max_length=4,
+        description="Up to four candidate root causes ranked by probability (desc).",
+    )
     evidence_details: list[EvidenceDetail] = Field(default_factory=list)
     recommendations: list[RecommendedAction] = Field(default_factory=list)
     manual_investigations: list[ManualInvestigation] = Field(default_factory=list)
@@ -1179,6 +1208,19 @@ class HealthReport(BaseModel):
         and does not interfere with Gemini's ``response_schema`` generation.
         """
         return [f for f in self.findings if not f.caused_by]
+
+    @model_validator(mode="after")
+    def _validate_hypothesis_probability_sum(self) -> HealthReport:
+        """Probabilities must sum to [0.7, 1.0] when hypotheses are present."""
+        if not self.root_cause_hypotheses:
+            return self
+        total = sum(h.probability for h in self.root_cause_hypotheses)
+        if not (0.7 <= total <= 1.0):
+            raise ValueError(
+                f"Sum of root_cause_hypotheses probabilities must be in [0.7, 1.0], "
+                f"got {total:.3f}."
+            )
+        return self
 
     # ── Serialisation helpers ────────────────────────────────
 
@@ -1407,12 +1449,18 @@ class HealthReport(BaseModel):
             return
 
         for hyp in self.root_cause_hypotheses:
-            parts.append(f"#### {hyp.finding_title}")
-            parts.append(f"- **Mechanism**: {hyp.mechanism}")
-            parts.append(f"- **Confidence**: {hyp.confidence.value}")
+            prob_pct = f"{hyp.probability * 100:.0f}%"
+            parts.append(f"#### {hyp.label} ({prob_pct}) — {hyp.status}")
             if hyp.supporting_evidence:
-                parts.append(f"- **Supporting Evidence**: {'; '.join(hyp.supporting_evidence)}")
-            parts.append(f"- **What Would Confirm This**: {hyp.what_would_confirm}")
+                parts.append("- **Supporting Evidence**:")
+                for e in hyp.supporting_evidence:
+                    parts.append(f"  - {e}")
+            if hyp.refuting_evidence:
+                parts.append("- **Refuting Evidence**:")
+                for e in hyp.refuting_evidence:
+                    parts.append(f"  - {e}")
+            parts.append(f"- **Confirms if**: _{hyp.confirms_if}_")
+            parts.append(f"- **Refutes if**: _{hyp.refutes_if}_")
             parts.append("")
 
     def _render_evidence_details(self, parts: list[str]) -> None:

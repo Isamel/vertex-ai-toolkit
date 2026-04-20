@@ -13,7 +13,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from vaig.agents.base import AgentConfig, AgentResult, AgentRole, BaseAgent
-from vaig.agents.mixins import OnToolCall, ToolLoopMixin
+from vaig.agents.mixins import MemoryRecallMixin, OnToolCall, ToolLoopMixin
 from vaig.core.config import DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, get_settings
 from vaig.core.evidence_ledger import new_ledger
 from vaig.core.exceptions import ContextWindowExceededError, MaxIterationsError
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ToolAwareAgent(BaseAgent, ToolLoopMixin):
+class ToolAwareAgent(BaseAgent, ToolLoopMixin, MemoryRecallMixin):
     """A generic, reusable agent that wraps Gemini function-calling.
 
     This is the configurable counterpart to domain-specific agents like
@@ -285,7 +285,9 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 client=self._client,
                 prompt=full_prompt,
                 tool_registry=self._tool_registry,
-                system_instruction=self._config.system_instruction,
+                system_instruction=self._augment_system_instruction(
+                    self._config.system_instruction, prompt
+                ),
                 history=history,
                 max_iterations=self._max_iterations,
                 model=self._config.model,
@@ -432,7 +434,9 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin):
                 client=self._client,
                 prompt=full_prompt,
                 tool_registry=self._tool_registry,
-                system_instruction=self._config.system_instruction,
+                system_instruction=self._augment_system_instruction(
+                    self._config.system_instruction, prompt
+                ),
                 history=history,
                 max_iterations=self._max_iterations,
                 model=self._config.model,

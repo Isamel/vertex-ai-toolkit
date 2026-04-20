@@ -8,6 +8,7 @@ from vaig.skills.service_health.schema import (
     EvidenceDetail,
     ExecutiveSummary,
     Finding,
+    HealthReport,
     OverallStatus,
     RecommendedAction,
     RootCauseHypothesis,
@@ -110,13 +111,16 @@ class TestEnumCoercion:
         df = DowngradedFinding(title="T", original_confidence="NOPE")  # type: ignore[arg-type]
         assert df.original_confidence == Confidence.MEDIUM
 
-    def test_invalid_root_cause_hypothesis_confidence_coerced(self) -> None:
+    def test_invalid_root_cause_hypothesis_is_immutable(self) -> None:
         hyp = RootCauseHypothesis(
-            finding_title="T",
-            mechanism="some mechanism",
-            confidence="NOPE",  # type: ignore[arg-type]
+            label="Cache overflow",
+            probability=0.8,
+            confirms_if="Memory exceeds 256Mi within 15 min.",
+            refutes_if="Memory stays below 200Mi under full load.",
         )
-        assert hyp.confidence == Confidence.MEDIUM
+        import pytest
+        with pytest.raises(Exception):
+            hyp.label = "mutated"  # type: ignore[misc]
 
     def test_invalid_timeline_event_severity_coerced(self) -> None:
         ev = TimelineEvent(time="5m ago", event="something happened", severity="NOPE")  # type: ignore[arg-type]
@@ -295,3 +299,99 @@ class TestRolloutDetailsTableRendering:
         assert "### Rollout Details" not in md, (
             "Rollout Details table must NOT appear when no service has rollout data."
         )
+
+
+class TestRootCauseHypothesisProbabilityValidator:
+    """SPEC-V2-AUDIT-02 acceptance criteria."""
+
+    def _make_report(self, hypotheses: list) -> HealthReport:
+        return HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.HEALTHY,
+                scope="test",
+                summary_text="test",
+            ),
+            root_cause_hypotheses=hypotheses,
+        )
+
+    def _hyp(self, probability: float, status: str = "open") -> RootCauseHypothesis:
+        return RootCauseHypothesis(
+            label="Test hypothesis",
+            probability=probability,
+            confirms_if="Signal X is observed.",
+            refutes_if="Signal Y is absent.",
+            status=status,  # type: ignore[arg-type]
+        )
+
+    def test_empty_hypotheses_always_valid(self) -> None:
+        """Empty list must not trigger the validator."""
+        report = self._make_report([])
+        assert report.root_cause_hypotheses == []
+
+    def test_single_hypothesis_valid_probability(self) -> None:
+        """Single hypothesis with probability 0.8 must pass."""
+        report = self._make_report([self._hyp(0.8)])
+        assert len(report.root_cause_hypotheses) == 1
+
+    def test_two_hypotheses_sum_exactly_on_boundary(self) -> None:
+        """Sum == 0.7 is valid (lower bound)."""
+        report = self._make_report([self._hyp(0.4), self._hyp(0.3)])
+        assert len(report.root_cause_hypotheses) == 2
+
+    def test_two_hypotheses_sum_at_upper_bound(self) -> None:
+        """Sum == 1.0 is valid (upper bound)."""
+        report = self._make_report([self._hyp(0.6), self._hyp(0.4)])
+        assert len(report.root_cause_hypotheses) == 2
+
+    def test_probability_sum_too_low_raises(self) -> None:
+        """Sum < 0.7 must raise ValidationError."""
+        import pytest
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError, match="0.7"):
+            self._make_report([self._hyp(0.2), self._hyp(0.3)])
+
+    def test_probability_sum_too_high_raises(self) -> None:
+        """Sum > 1.0 must raise ValidationError."""
+        import pytest
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError, match="1.0"):
+            self._make_report([self._hyp(0.6), self._hyp(0.7)])
+
+    def test_max_four_hypotheses_enforced(self) -> None:
+        """max_length=4 must reject a list of 5."""
+        import pytest
+        from pydantic import ValidationError
+        hyps = [self._hyp(0.2)] * 4 + [self._hyp(0.05)]
+        with pytest.raises(ValidationError):
+            self._make_report(hyps)
+
+    def test_frozen_model_immutable(self) -> None:
+        """RootCauseHypothesis must be frozen (immutable)."""
+        import pytest
+        hyp = self._hyp(0.8)
+        with pytest.raises(Exception):
+            hyp.label = "mutated"  # type: ignore[misc]
+
+    def test_markdown_render_contains_probability_and_confirms_if(self) -> None:
+        """Markdown render must show probability % and confirms_if."""
+        report = self._make_report([
+            RootCauseHypothesis(
+                label="Cache overflow",
+                probability=0.75,
+                supporting_evidence=["Memory grows linearly"],
+                refuting_evidence=["CPU usage normal"],
+                confirms_if="Memory exceeds 256Mi within 15 min.",
+                refutes_if="Memory stays below 200Mi under full load.",
+            )
+        ])
+        md = report.to_markdown()
+        assert "Cache overflow" in md
+        assert "75%" in md
+        assert "Confirms if" in md
+        assert "Memory exceeds 256Mi" in md
+
+    def test_backwards_compat_empty_list_renders_unchanged(self) -> None:
+        """Reports with empty root_cause_hypotheses must render the fallback text."""
+        report = self._make_report([])
+        md = report.to_markdown()
+        assert "No root cause hypotheses to report." in md

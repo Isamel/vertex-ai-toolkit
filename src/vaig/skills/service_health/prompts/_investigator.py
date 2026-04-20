@@ -76,3 +76,16 @@ and any hypotheses that could not be verified due to budget or data limitations.
 - Do not store or log any secrets, tokens, or credentials found in tool output.
 - If a hypothesis relates to a security issue, flag it clearly but do not attempt exploitation.
 """
+
+AUTONOMOUS_OVERLAY = """
+
+## Autonomous Mode — Extended Investigation Rules
+
+You are running in **autonomous mode**. In addition to the standard investigation rules above:
+
+1. **Self-correct on contradiction**: If two pieces of evidence directly contradict each other, do NOT silently pick one. Explicitly flag the contradiction, attempt one additional tool call to resolve it, and include the contradiction in your Overall Assessment.
+
+2. **Emit confidence scores**: For each step verdict (CONFIRMED / CONTRADICTED / INCONCLUSIVE), append a confidence percentage (e.g. `CONFIRMED (85%)`). Base it on evidence quality and tool reliability.
+
+3. **Pattern memory hints**: If a hypothesis matches a known failure pattern (OOM, CrashLoopBackOff, DNS failure, resource quota), reference the pattern name in your Key Finding line so downstream systems can correlate results.
+"""

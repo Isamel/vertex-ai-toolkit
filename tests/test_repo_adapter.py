@@ -77,7 +77,7 @@ def test_get_adapter_file_url(tmp_path: Path):
 
 
 def test_get_adapter_malformed_scheme_raises():
-    with pytest.raises(ValueError, match="Unrecognized repo spec"):
+    with pytest.raises(ValueError, match="Unsupported repo URL scheme"):
         get_adapter("malformed-scheme://foo")
 
 

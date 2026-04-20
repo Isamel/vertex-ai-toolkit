@@ -20,7 +20,11 @@ from ._analyzer import (
     _RECENT_CHANGES_PROMPT,
     HEALTH_ANALYZER_PROMPT,
 )
+from ._analyzer import (
+    AUTONOMOUS_OVERLAY as ANALYZER_AUTONOMOUS_OVERLAY,
+)
 from ._gatherer import _GATHERER_PROMPT_TEMPLATE, HEALTH_GATHERER_PROMPT, build_gatherer_prompt
+from ._investigator import AUTONOMOUS_OVERLAY as INVESTIGATOR_AUTONOMOUS_OVERLAY
 from ._investigator import HEALTH_INVESTIGATOR_PROMPT
 from ._phases import PHASE_PROMPTS
 from ._planner import HEALTH_PLANNER_PROMPT
@@ -59,6 +63,7 @@ __all__ = [
     "build_gatherer_prompt",
     # analyzer
     "HEALTH_ANALYZER_PROMPT",
+    "ANALYZER_AUTONOMOUS_OVERLAY",
     "_CONTRADICTION_RULES_PROMPT",
     "_CHANGE_CORRELATION_PROMPT",
     "_RECENT_CHANGES_PROMPT",
@@ -68,6 +73,7 @@ __all__ = [
     "HEALTH_PLANNER_PROMPT",
     # investigator
     "HEALTH_INVESTIGATOR_PROMPT",
+    "INVESTIGATOR_AUTONOMOUS_OVERLAY",
     # reporter
     "HEALTH_REPORTER_PROMPT",
     "build_reporter_prompt",
