@@ -161,6 +161,12 @@ If the tool IS available:
 - For each relevant release (whether found via annotation or list):
   - Use `helm_release_history(release_name=<release>, namespace=<ns>)` to identify recent changes that may correlate with issues
   - Use `helm_release_values(release_name=<release>, namespace=<ns>)` to check for misconfiguration in overrides
+  - Use `helm_get_manifest(release_name=<release>, namespace=<ns>)` to retrieve the rendered Kubernetes manifests for the release
+    - **Manifest drift check**: Compare key fields in the rendered manifest against the live cluster state gathered in Steps 2-5:
+      - **Image tag**: Compare `spec.template.spec.containers[].image` in the manifest vs the running pod image from `kubectl_get pods` output
+      - **Replica count**: Compare `spec.replicas` in the manifest vs the current desired/ready replica count from `kubectl_get deployments`
+      - **Resource limits/requests**: Compare `spec.template.spec.containers[].resources` in the manifest vs what `kubectl_describe` or `kubectl_get deployment --output=yaml` showed
+    - If ANY field differs between the Helm manifest and the live cluster state, flag this as a **Helm manifest drift** finding in your Raw Findings. Include: which field drifted, the manifest value, and the live cluster value. Drift indicates a resource was modified outside Helm (e.g., kubectl patch, admission webhook, operator mutation) and is a high-value diagnostic signal.
 - This data enriches the report but is NOT required — the report is complete without it
 
 ### Step 10: ArgoCD Application Assessment (ONLY if `argocd_list_applications` tool exists)
