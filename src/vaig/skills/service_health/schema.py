@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
@@ -1563,35 +1563,53 @@ class HealthReportGeminiSchema(HealthReport):
     * ``recent_changes`` — populated by the analyzer
     * ``external_links`` — populated by the link-builder post-hoc
     * ``investigation_coverage`` — populated by the analyzer
+
+    **Important — do NOT use ``exclude=True`` on these field re-declarations.**
+    Pydantic v2's ``exclude=True`` strips fields from ``.model_dump()`` (and
+    ``model_dump_json()``), which would break the HTML report template that
+    reads ``REPORT_DATA.metadata.project_id`` and friends.  Instead, the
+    fields to omit from the Gemini JSON schema are listed in
+    ``_GEMINI_EXCLUDED_FIELDS`` and the ``model_json_schema()`` classmethod
+    override removes them from the schema at call time.
     """
+
+    # Fields to strip from the Gemini JSON schema (but NOT from model_dump).
+    # Do NOT use Pydantic's ``exclude=True`` — that also strips from model_dump,
+    # which breaks the HTML report template.
+    _GEMINI_EXCLUDED_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "metadata",
+            "evidence_gaps",
+            "recent_changes",
+            "external_links",
+            "investigation_coverage",
+        }
+    )
 
     model_config = ConfigDict(extra="ignore")
 
     # Post-hoc fields — kept as defaulted attributes for HealthReport
-    # compatibility but stripped from the JSON schema via model_json_schema()
-    # override below.  NOTE: Pydantic v2 ``exclude=True`` only affects
-    # serialisation (.model_dump), NOT .model_json_schema().  We therefore
-    # need the classmethod override to actually reduce Gemini schema states.
+    # compatibility but stripped from the Gemini JSON schema via
+    # model_json_schema() override below.
+    # NOTE: ``exclude=True`` is intentionally NOT set here.  Using it would
+    # cause model_dump() to omit these fields, breaking the HTML report
+    # template (JS crash at ``REPORT_DATA.metadata.project_id``).
     metadata: ReportMetadata = Field(
         default_factory=ReportMetadata,
-        exclude=True,
     )
     evidence_gaps: list[EvidenceGap] = Field(
         default_factory=list,
-        exclude=True,
     )
     recent_changes: list[ChangeEvent] = Field(
         default_factory=list,
-        exclude=True,
     )
     external_links: ExternalLinks | None = Field(
         default=None,
-        exclude=True,
     )
     investigation_coverage: str | None = Field(
         default=None,
-        exclude=True,
     )
+
     @classmethod
     def model_json_schema(
         cls,
@@ -1602,13 +1620,17 @@ class HealthReportGeminiSchema(HealthReport):
         *,
         union_format: Literal["any_of", "primitive_type_array"] = "any_of",
     ) -> dict[str, Any]:
-        """Return a pruned JSON schema that omits ``exclude=True`` fields.
+        """Return a pruned JSON schema that omits post-hoc fields.
 
-        Pydantic v2's ``exclude=True`` only affects ``.model_dump()`` — it does
-        **not** strip fields from ``.model_json_schema()``.  Since the
-        google-genai SDK sends the full JSON schema to Gemini for structured
-        output, we must remove post-hoc fields here to stay under the
-        "too many states" constraint.
+        The google-genai SDK sends the full JSON schema to Gemini for
+        structured output.  Post-hoc fields must be removed here to stay
+        under the "too many states" constraint.
+
+        The fields to prune are listed in ``_GEMINI_EXCLUDED_FIELDS``.
+        We do NOT use Pydantic's ``exclude=True`` for this purpose because
+        ``exclude=True`` also strips fields from ``.model_dump()`` /
+        ``.model_dump_json()``, which would break the HTML report template
+        that reads ``REPORT_DATA.metadata.project_id`` and friends.
 
         Post-hoc fields excluded from the Gemini schema:
 
@@ -1618,7 +1640,7 @@ class HealthReportGeminiSchema(HealthReport):
         * ``external_links`` — populated by the link-builder post-hoc
         * ``investigation_coverage`` — populated by the analyzer
 
-        Note: nested ``exclude=True`` fields (e.g. within non-excluded sub-models)
+        Note: nested excluded fields (e.g. within non-excluded sub-models)
         are not yet pruned. This is a known limitation for a future enhancement.
         """
         schema: dict[str, Any] = super().model_json_schema(
@@ -1629,12 +1651,8 @@ class HealthReportGeminiSchema(HealthReport):
             union_format=union_format,
         )
 
-        # Identify fields to drop
-        excluded_names = {
-            name
-            for name, field_info in cls.model_fields.items()
-            if field_info.exclude
-        }
+        # Identify fields to drop via the class-level constant
+        excluded_names = cls._GEMINI_EXCLUDED_FIELDS
 
         # Strip from properties & required
         props = schema.get("properties")
@@ -1648,7 +1666,7 @@ class HealthReportGeminiSchema(HealthReport):
         # Remove orphaned $defs (types only referenced by excluded fields)
         defs = schema.get("$defs")
         if isinstance(defs, dict):
-            reachable = _collect_reachable_defs(schema, excluded_names)
+            reachable = _collect_reachable_defs(schema, set(excluded_names))
             orphans = [key for key in list(defs) if key not in reachable]
             for key in orphans:
                 del defs[key]
