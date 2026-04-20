@@ -640,6 +640,22 @@ def register(app: typer.Typer) -> None:
                 help="After the report, open an interactive drill-in REPL for follow-up questions",
             ),
         ] = False,
+        show_pipeline: Annotated[
+            bool,
+            typer.Option(
+                "--show-pipeline",
+                help=(
+                    "Print the pipeline stages and exit without making any LLM calls."
+                ),
+            ),
+        ] = False,
+        show_pipeline_format: Annotated[
+            str,
+            typer.Option(
+                "--show-pipeline-format",
+                help="Output format for --show-pipeline: 'text' (default) or 'json'.",
+            ),
+        ] = "text",
     ) -> None:
         """Investigate live GKE/GCP infrastructure using AI with infrastructure tools.
 
@@ -707,10 +723,6 @@ def register(app: typer.Typer) -> None:
             if model:
                 settings.models.default = model
 
-            from vaig.core.container import build_container
-
-            container = build_container(settings)
-            client = container.gemini_client
             # Do NOT pass project_id/location here — gke_project/gke_location are
             # already written to settings.gke.* above, and _build_gke_config reads
             # them via its fallback chain (gke.project_id or gcp.project_id).
@@ -765,6 +777,24 @@ def register(app: typer.Typer) -> None:
                         f"Apply the {skill_meta.name} analysis methodology to the investigation below."
                     )
                     active_skill = None  # Not orchestrated
+
+            # ── Show-pipeline: print pipeline stages and exit (no LLM/API calls) ──
+            if show_pipeline:
+                _display_show_pipeline(
+                    gke_config=gke_config,
+                    question=question,
+                    settings=settings,
+                    skill=active_skill,
+                    skill_name=skill,
+                    model_id=model or settings.models.default,
+                    output_format=show_pipeline_format,
+                )
+                return
+
+            from vaig.core.container import build_container
+
+            container = build_container(settings)
+            client = container.gemini_client
 
             # ── Dry-run: show execution plan without running ──────
             if dry_run:
@@ -1103,6 +1133,168 @@ def _display_dry_run_plan(
 
 # _register_live_tools — delegated to vaig.core.gke.register_live_tools
 from vaig.core.gke import register_live_tools as _register_live_tools
+
+
+def _build_pipeline_phases(
+    agents_config: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Group an agents config list into pipeline phases for display.
+
+    Groups agents by ``parallel_group`` key:
+    - Agents sharing the same ``parallel_group`` value form one phase (parallel).
+    - Agents without ``parallel_group`` each become their own sequential phase.
+
+    Returns a list of phase dicts::
+
+        [
+            {"name": "Gather", "parallel": True, "agents": [...]},
+            {"name": "Analyze", "parallel": False, "agents": [...]},
+        ]
+    """
+    phases: list[dict[str, Any]] = []
+    parallel_phases: dict[str, dict[str, Any]] = {}
+
+    for agent_cfg in agents_config:
+        group = agent_cfg.get("parallel_group")
+        if group:
+            if group not in parallel_phases:
+                phase = {
+                    "name": group.capitalize(),
+                    "parallel": True,
+                    "agents": [agent_cfg],
+                }
+                parallel_phases[group] = phase
+                phases.append(phase)
+            else:
+                parallel_phases[group]["agents"].append(agent_cfg)
+        else:
+            phases.append({
+                "name": (agent_cfg.get("name") or "unknown").replace("_", " ").capitalize(),
+                "parallel": False,
+                "agents": [agent_cfg],
+            })
+
+    return phases
+
+
+def _display_show_pipeline(
+    *,
+    gke_config: GKEConfig,
+    question: str,
+    settings: Settings,
+    skill: BaseSkill | None = None,
+    skill_name: str | None = None,
+    model_id: str = "",
+    output_format: str = "text",
+) -> None:
+    """Render the pipeline stage summary and exit without making any LLM calls.
+
+    When *output_format* is ``"json"``, emits a machine-readable JSON object.
+    Otherwise renders a Rich tree-style summary to the console.
+
+    Args:
+        gke_config: Resolved GKE configuration.
+        question: The user's infrastructure question.
+        settings: Application settings.
+        skill: Resolved orchestrated skill instance (``None`` for InfraAgent path).
+        skill_name: Skill name string (for display and metadata).
+        model_id: Model identifier to display.
+        output_format: ``"text"`` (default) or ``"json"``.
+    """
+    import json as _json
+
+    if output_format == "json":
+        # ── Machine-readable JSON output ───────────────────────
+        payload: dict[str, Any] = {
+            "skill": None,
+            "pipeline_mode": "INFRA_AGENT",
+            "phases": [],
+            "config": {
+                "cluster": gke_config.cluster_name or "(kubeconfig default)",
+                "namespace": gke_config.default_namespace or "default",
+                "project": gke_config.project_id or "(auto-detect)",
+                "model": model_id or settings.models.default,
+            },
+        }
+        if skill is not None:
+            meta = skill.get_metadata()
+            agents_config = skill.get_agents_config()
+            phases = _build_pipeline_phases(agents_config)
+            payload["skill"] = meta.display_name
+            payload["pipeline_mode"] = "ORCHESTRATED"
+            for idx, phase in enumerate(phases, 1):
+                payload["phases"].append({
+                    "phase": idx,
+                    "name": phase["name"],
+                    "parallel": phase["parallel"],
+                    "agents": [
+                        {
+                            "name": a.get("name"),
+                            "model": a.get("model", model_id or settings.models.default),
+                            "max_iterations": a.get("max_iterations"),
+                            "requires_tools": a.get("requires_tools", False),
+                            "tool_categories": a.get("tool_categories", []),
+                        }
+                        for a in phase["agents"]
+                    ],
+                })
+        else:
+            payload["phases"].append({
+                "phase": 1,
+                "name": "InfraAgent",
+                "parallel": False,
+                "agents": [{"name": "infra_agent", "model": model_id or settings.models.default}],
+            })
+        console.print(_json.dumps(payload, indent=2))
+        return
+
+    # ── Rich text tree output ──────────────────────────────────
+    console.print(
+        Panel.fit(
+            f'[bold cyan]Pipeline Preview — vaig live[/bold cyan] [dim]"{question}"[/dim]',
+            border_style="cyan",
+        )
+    )
+
+    if skill is not None:
+        meta = skill.get_metadata()
+        console.print(f"[bold]Skill:[/bold] {meta.display_name}")
+        console.print("[bold]Pipeline mode:[/bold] ORCHESTRATED\n")
+
+        agents_config = skill.get_agents_config()
+        phases = _build_pipeline_phases(agents_config)
+
+        for idx, phase in enumerate(phases, 1):
+            mode_label = "[dim](parallel)[/dim]" if phase["parallel"] else "[dim](sequential)[/dim]"
+            console.print(f"[bold yellow]Phase {idx} — {phase['name']}[/bold yellow] {mode_label}")
+            agents = phase["agents"]
+            for a_idx, agent_cfg in enumerate(agents):
+                is_last = a_idx == len(agents) - 1
+                connector = "└──" if is_last else "├──"
+                name = agent_cfg.get("name", "unknown")
+                agent_model = agent_cfg.get("model", model_id or settings.models.default or "—")
+                max_iter = agent_cfg.get("max_iterations")
+                iter_str = f"{max_iter} iter" if max_iter is not None else "no limit"
+                tool_cats = agent_cfg.get("tool_categories", [])
+                tools_str = "+".join(tool_cats) if tool_cats else "none"
+                console.print(
+                    f"  {connector} [cyan]{name:<25}[/cyan]"
+                    f"[dim][{agent_model}, {iter_str}][/dim]"
+                    f"  tools: [green]{tools_str}[/green]"
+                )
+            console.print()
+    else:
+        console.print("[bold]Pipeline mode:[/bold] INFRA_AGENT (single autonomous agent)\n")
+        console.print(f"  └── [cyan]infra_agent[/cyan]  [dim][{model_id or settings.models.default or '—'}][/dim]  tools: all\n")
+
+    # ── Config sources summary ────────────────────────────────
+    console.print("[bold]Configuration:[/bold]")
+    console.print(f"  Cluster:    [dim]{gke_config.cluster_name or '(kubeconfig default)'}[/dim]")
+    console.print(f"  Namespace:  [dim]{gke_config.default_namespace or 'default'}[/dim]")
+    console.print(f"  Project:    [dim]{gke_config.project_id or '(auto-detect)'}[/dim]")
+    console.print(f"  Model:      [dim]{model_id or settings.models.default or '—'}[/dim]")
+    console.print()
+    console.print("[dim]Run without --show-pipeline to execute.[/dim]")
 
 
 def _export_html_report(

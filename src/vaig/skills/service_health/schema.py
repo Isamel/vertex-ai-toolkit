@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
 
 from vaig.core.memory.models import RecurrenceSignal
@@ -34,6 +34,17 @@ logger = logging.getLogger(__name__)
 # ── Text-normalisation regexes (for smart timeline collapse) ──
 
 _POD_HASH_RE = re.compile(r'-[a-z0-9]{5,10}-[a-z0-9]{4,7}\b')   # strip -59967f9ccc-4zdx6
+
+# ── quick_remediation placeholder guard ──────────────────────
+# Patterns that match vague "investigate" TODO text — rejected by field_validator.
+
+_BANNED_QUICK_REMEDIATION_PATTERNS: tuple[str, ...] = (
+    r"^\s*investig(a|a\w*|ate|ating)\b",          # ES "investigar" / EN "investigate"
+    r"^\s*look\s+into\b",
+    r"^\s*check\s+the\s+(cause|root|issue)\b",
+    r"^\s*revisa(r)?\s+la\s+causa\b",
+    r"^\s*analyze\s+the\s+issue\b",
+)
 _COUNTER_RE = re.compile(r'\s*\(\d+(?:st|nd|rd|th)\s+time\)')    # strip "(3rd time)"
 _TIMESTAMP_RE = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')  # strip ISO timestamps
 _IP_RE = re.compile(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?\b')  # strip IPs / IP:port
@@ -406,6 +417,26 @@ class ServiceStatus(BaseModel):
         default_factory=list,
         description="HPA status.conditions messages when HPA scaleTargetRef points to a Rollout",
     )
+    degraded_reason: str | None = Field(
+        default=None,
+        max_length=160,
+        description=(
+            "One-line summary of why this specific service is DEGRADED or FAILED. "
+            "Always populated when status != HEALTHY. "
+            "Example: '15.79% APM error rate over last 15 min.'"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _warn_missing_degraded_reason(self) -> ServiceStatus:
+        """Warn when a non-healthy service has no degraded_reason."""
+        if self.status != ServiceHealthStatus.HEALTHY and not self.degraded_reason:
+            logger.warning(
+                "ServiceStatus %r has status=%s but degraded_reason is empty",
+                self.service,
+                self.status.value,
+            )
+        return self
 
 
 class Finding(BaseModel):
@@ -437,6 +468,29 @@ class Finding(BaseModel):
     impact: str = Field(default="")
     affected_resources: list[str] = Field(default_factory=list)
     remediation: str | None = None
+    quick_remediation: str | None = Field(
+        default=None,
+        description=(
+            "One-line actionable command or '(see Recommended Actions section)'. "
+            "NEVER use placeholder text such as 'Investigate' or 'Look into'."
+        ),
+    )
+
+    @field_validator("remediation", "quick_remediation")
+    @classmethod
+    def _reject_placeholder_remediations(cls, v: str | None) -> str | None:
+        """Reject vague placeholder remediation text in remediation fields."""
+        if v is None or v == "":
+            return v
+        for pattern in _BANNED_QUICK_REMEDIATION_PATTERNS:
+            if re.search(pattern, v, flags=re.IGNORECASE):
+                raise ValueError(
+                    "remediation fields must be actionable and must not contain "
+                    "placeholder text such as 'Investigate' or 'Look into'. "
+                    f"Received placeholder text: {v!r}"
+                )
+        return v
+
     caused_by: list[str] = Field(
         default_factory=list,
         description="Finding.id slugs of upstream causes (findings that caused this one)",
@@ -861,6 +915,20 @@ class ToolUsageSummary(BaseModel):
     )
 
 
+# ── AUDIT-15: Post-hoc field population telemetry ────────────
+
+
+class PostHocFieldStatus(BaseModel):
+    """Status record for a single post-hoc populated field."""
+
+    field_name: str = Field(description="Name of the post-hoc field being tracked")
+    populated: bool = Field(description="True when the field was successfully populated")
+    reason: str | None = Field(
+        default=None,
+        description="Status detail: 'populated', 'skipped', or 'error:<details truncated to 160 chars>'",
+    )
+
+
 class ReportMetadata(BaseModel):
     """Metadata about how and when the report was generated."""
 
@@ -875,6 +943,47 @@ class ReportMetadata(BaseModel):
     tool_usage: ToolUsageSummary | None = Field(default=None, description="Tool call statistics for this run")
     gke_cost: GKECostReport | None = Field(default=None, description="GKE workload cost estimation (Autopilot only)")
     trends: TrendAnalysis | None = Field(default=None, description="Anomaly trend detection results")
+    # ── AUDIT-07: Run determinism metadata ────────────────────
+    run_seed: int | None = Field(
+        default=None,
+        description="Deterministic seed used for any sampling; None when unused.",
+    )
+    model_versions: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Map of agent-name → model-id-version actually used, resolved at "
+            "runtime (not the config default). Example: "
+            '\'{"health_analyzer": "gemini-2.5-pro-002"}\'.'
+        ),
+    )
+    pipeline_version: str = Field(
+        default="unknown",
+        description=(
+            "Version identifier of the vaig package that produced this "
+            "report: git commit short SHA when available, otherwise the "
+            'installed package version, else "unknown".'
+        ),
+    )
+    autonomous_enabled: bool = Field(
+        default=False,
+        description="True when investigation.enabled was True for this run.",
+    )
+    autonomous_steps_executed: int | None = Field(
+        default=None,
+        description="Number of InvestigationAgent steps completed (None when autonomous disabled).",
+    )
+    autonomous_replan_iterations: int | None = Field(
+        default=None,
+        description="Number of re-plan iterations executed by the InvestigationAgent (None when autonomous disabled).",
+    )
+    # ── AUDIT-15: Post-hoc field population telemetry ─────────
+    post_hoc_field_status: list[PostHocFieldStatus] = Field(
+        default_factory=list,
+        description=(
+            "Telemetry entries for each post-hoc populated field. "
+            "populated=False entries indicate fields that were expected but left empty."
+        ),
+    )
 
 
 # ── Dependency graph models ───────────────────────────────────
@@ -1023,6 +1132,23 @@ class HealthReport(BaseModel):
         default=None,
         description="Human-readable coverage summary, e.g. '9/12 signal sources checked'.",
     )
+    overall_severity_reason: str | None = Field(
+        default=None,
+        max_length=240,
+        description=(
+            "Human-readable one-line justification for overall_severity. "
+            "Populated by the analyzer. Example: "
+            "'DEGRADED because 1 HIGH finding with confidence=CONFIRMED "
+            "and 2 MEDIUM findings in distinct namespaces.'"
+        ),
+    )
+    investigation_evidence: list[InvestigationEvidenceSnapshot] = Field(
+        default_factory=list,
+        description=(
+            "Per-step evidence records rendered in the Autonomous Investigation section. "
+            "Populated post-hoc from the EvidenceLedger; excluded from the Gemini schema."
+        ),
+    )
 
     @property
     def root_causes(self) -> list[Finding]:
@@ -1098,6 +1224,8 @@ class HealthReport(BaseModel):
         es = self.executive_summary
         parts.append("## Executive Summary")
         parts.append(f"- **Status**: {es.overall_status.value}")
+        if self.overall_severity_reason:
+            parts.append(f"  *{self.overall_severity_reason}*")
         parts.append(f"- **Scope**: {es.scope}")
         parts.append(f"- **Summary**: {es.summary_text}")
         parts.append("")
@@ -1134,8 +1262,11 @@ class HealthReport(BaseModel):
         )
         for svc in self.service_statuses:
             emoji = _STATUS_EMOJI.get(svc.status, "⚪")
+            status_cell = f"{emoji}"
+            if svc.status != ServiceHealthStatus.HEALTHY and svc.degraded_reason:
+                status_cell = f"{emoji} *{svc.degraded_reason}*"
             parts.append(
-                f"| {svc.service} | {svc.namespace} | {emoji} | {svc.pods_ready} "
+                f"| {svc.service} | {svc.namespace} | {status_cell} | {svc.pods_ready} "
                 f"| {svc.restarts_1h} | {svc.cpu_usage} | {svc.memory_usage} | {svc.issues} |"
             )
         parts.append("")
@@ -1583,6 +1714,7 @@ class HealthReportGeminiSchema(HealthReport):
             "recent_changes",
             "external_links",
             "investigation_coverage",
+            "investigation_evidence",
         }
     )
 
@@ -1748,6 +1880,36 @@ class InvestigationPlan(BaseModel):
 
 
 # ── GH-02: Config Drift Finding ──────────────────────────────
+
+
+# ── AUDIT-11: Autonomous investigation evidence snapshot ─────────────────────
+
+
+class InvestigationEvidenceSnapshot(BaseModel):
+    """Compact per-step evidence record rendered in the HTML report.
+
+    Populated post-hoc from the EvidenceLedger by the pipeline skill after
+    the InvestigationAgent completes.  Excluded from the Gemini schema.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    step_id: str
+    """Unique identifier for this step within the plan (e.g. ``step-0``)."""
+    target: str
+    """Kubernetes resource being investigated."""
+    tool_name: str
+    """Name of the tool that was called."""
+    hypothesis: str
+    """Human-readable hypothesis text."""
+    verdict: Literal["CONFIRMED", "CONTRADICTED", "INCONCLUSIVE", "SKIPPED"]
+    """Outcome classification for the step."""
+    answer_preview: str = Field(default="", max_length=320)
+    """Truncated summary of the tool output (max 320 chars)."""
+    iteration: int = 0
+    """Re-plan iteration index: 0 = initial plan, 1+ = re-plans."""
+    memory_recall_hit: bool = False
+    """True when the answer was served from the PatternMemoryStore cache."""
 
 
 class ConfigDriftFinding(BaseModel):

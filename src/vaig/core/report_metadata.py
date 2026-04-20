@@ -20,6 +20,64 @@ __all__ = ["inject_report_metadata", "format_models_used"]
 
 logger = logging.getLogger(__name__)
 
+# ── AUDIT-15: Post-hoc field status tracking ─────────────────
+
+_POST_HOC_FIELDS = (
+    "metadata",
+    "evidence_gaps",
+    "recent_changes",
+    "external_links",
+    "investigation_coverage",
+)
+
+
+def _append_post_hoc_status(
+    metadata: Any,
+    field_name: str,
+    *,
+    populated: bool,
+    reason: str | None = None,
+) -> None:
+    """Append a PostHocFieldStatus entry to metadata.post_hoc_field_status.
+
+    Fire-and-forget — never raises.
+    """
+    try:
+        status_list = getattr(metadata, "post_hoc_field_status", None)
+        if status_list is None:
+            return
+        from vaig.skills.service_health.schema import PostHocFieldStatus  # noqa: PLC0415
+
+        status_list.append(
+            PostHocFieldStatus(
+                field_name=field_name,
+                populated=populated,
+                reason=reason,
+            )
+        )
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to record post-hoc field status for %r", field_name, exc_info=True)
+
+
+def _extract_target_from_question(question: str) -> str:
+    """Extract a Kubernetes resource target from a question string.
+
+    Looks for patterns like ``pod/name``, ``deployment/name``, or just
+    returns the first 60 chars of the question as a fallback.
+    """
+    import re  # noqa: PLC0415
+
+    match = re.search(
+        r"\b(pod|deployment|statefulset|daemonset|service|node)/[\w.-]+",
+        question,
+        re.IGNORECASE,
+    )
+    if match:
+        return match.group(0)
+    return question[:60] if question else ""
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -205,6 +263,104 @@ def inject_report_metadata(
 
         metadata.skill_version = f"vaig {__version__}"
 
+    # ── AUDIT-07: Pipeline version (git short SHA or package version) ─────────
+    if _is_empty(getattr(metadata, "pipeline_version", None)) or getattr(metadata, "pipeline_version", None) == "unknown":
+        version = "unknown"
+        try:
+            import subprocess  # noqa: PLC0415
+
+            result = subprocess.run(  # noqa: S603
+                ["git", "rev-parse", "--short", "HEAD"],  # noqa: S607
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                version = result.stdout.strip()
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:  # noqa: BLE001
+            pass
+
+        if version == "unknown":
+            try:
+                from vaig import __version__ as _vaig_version  # noqa: PLC0415
+
+                version = _vaig_version
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception:  # noqa: BLE001
+                pass
+
+        metadata.pipeline_version = version
+
+    # ── AUDIT-07: model_versions map (agent-name → resolved model-id) ─────────
+    if orch_result is not None and not getattr(metadata, "model_versions", None):
+        models_by_agent: dict[str, str] = getattr(orch_result, "models_by_agent", {})
+        if isinstance(models_by_agent, dict) and models_by_agent:
+            metadata.model_versions = dict(models_by_agent)
+        elif model_id:
+            metadata.model_versions = {"health_analyzer": model_id}
+    elif not getattr(metadata, "model_versions", None) and model_id:
+        metadata.model_versions = {"health_analyzer": model_id}
+
+    # ── AUDIT-11: Autonomous mode visibility ──────────────────────────────────
+    if orch_result is not None:
+        agent_results: list[Any] = getattr(orch_result, "agent_results", []) or []
+        investig_result: Any = None
+        for ar in agent_results:
+            if getattr(ar, "agent_name", "") == "health_investigator":
+                investig_result = ar
+                break
+        if investig_result is not None:
+            investig_meta: dict[str, Any] = getattr(investig_result, "metadata", {}) or {}
+            metadata.autonomous_enabled = True
+            metadata.autonomous_steps_executed = investig_meta.get("steps_completed")
+            metadata.autonomous_replan_iterations = investig_meta.get("replan_count")
+
+            # Populate investigation_evidence from the EvidenceLedger (final_state)
+            final_state = getattr(orch_result, "final_state", None)
+            ledger = getattr(final_state, "evidence_ledger", None) if final_state is not None else None
+            if ledger is not None and hasattr(report, "investigation_evidence"):
+                try:
+                    from vaig.skills.service_health.schema import (  # noqa: PLC0415
+                        InvestigationEvidenceSnapshot,
+                    )
+
+                    snapshots = []
+                    for entry in ledger.entries:
+                        supports = getattr(entry, "supports", ())
+                        contradicts = getattr(entry, "contradicts", ())
+                        if supports:
+                            verdict: str = "CONFIRMED"
+                        elif contradicts:
+                            verdict = "CONTRADICTED"
+                        else:
+                            verdict = "INCONCLUSIVE"
+                        step_id = getattr(entry, "id", "")
+                        question = getattr(entry, "question", "")
+                        answer = getattr(entry, "answer_summary", "")
+                        tool = getattr(entry, "tool_name", "")
+                        # Extract target from question heuristically (first k8s resource pattern)
+                        target = _extract_target_from_question(question)
+                        snapshots.append(
+                            InvestigationEvidenceSnapshot(
+                                step_id=step_id,
+                                target=target,
+                                tool_name=tool,
+                                hypothesis=question[:320],
+                                verdict=verdict,  # type: ignore[arg-type]
+                                answer_preview=answer[:320],
+                                iteration=0,
+                            )
+                        )
+                    report.investigation_evidence = snapshots
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception as _inv_exc:  # noqa: BLE001
+                    logger.debug("Failed to build investigation_evidence: %s", _inv_exc)
+
     # ── Cluster overview: inject Namespace row when missing ───
     if gke_config is not None:
         ns = getattr(gke_config, "default_namespace", None)
@@ -219,3 +375,39 @@ def inject_report_metadata(
                 report.cluster_overview.insert(
                     0, ClusterMetric(metric="Namespace", value=ns)
                 )
+
+    # ── AUDIT-15: Record post-hoc field population status ─────
+    # Track the five fields excluded from the Gemini schema:
+    # metadata, evidence_gaps, recent_changes, external_links, investigation_coverage
+    _append_post_hoc_status(
+        metadata,
+        "metadata",
+        populated=True,
+        reason="populated",
+    )
+
+    for _phf in (f for f in _POST_HOC_FIELDS if f != "metadata"):
+        try:
+            _value = getattr(report, _phf, None)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as _phf_exc:  # noqa: BLE001
+            _err_detail = str(_phf_exc)[:160]
+            _append_post_hoc_status(metadata, _phf, populated=False, reason=f"error:{_err_detail}")
+            continue
+        if _phf in ("evidence_gaps", "recent_changes"):
+            # list fields: populated when non-empty list, skipped when empty list
+            if isinstance(_value, list) and _value:
+                _append_post_hoc_status(metadata, _phf, populated=True, reason="populated")
+            else:
+                _append_post_hoc_status(metadata, _phf, populated=False, reason="skipped")
+        elif _phf == "external_links":
+            if _value is not None:
+                _append_post_hoc_status(metadata, _phf, populated=True, reason="populated")
+            else:
+                _append_post_hoc_status(metadata, _phf, populated=False, reason="skipped")
+        elif _phf == "investigation_coverage":
+            if _value:
+                _append_post_hoc_status(metadata, _phf, populated=True, reason="populated")
+            else:
+                _append_post_hoc_status(metadata, _phf, populated=False, reason="skipped")

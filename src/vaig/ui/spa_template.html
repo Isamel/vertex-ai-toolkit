@@ -93,6 +93,24 @@
   }
   .generated-at { font-size: 11px; color: var(--text-dim); flex-shrink: 0; }
 
+  /* ── Autonomous badge ───────────────────────────────────── */
+  .autonomous-badge {
+    display: none; align-items: center; gap: 6px;
+    padding: 4px 12px; border-radius: 20px;
+    font-size: 12px; font-weight: 700;
+    background: color-mix(in srgb, #7aa2f7 20%, transparent);
+    color: #7aa2f7;
+    border: 1px solid color-mix(in srgb, #7aa2f7 40%, transparent);
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .autonomous-badge.visible { display: inline-flex; }
+
+  /* ── Investigation verdict colours ─────────────────────── */
+  .verdict-CONFIRMED    { color: var(--healthy); }
+  .verdict-CONTRADICTED { color: var(--medium); }
+  .verdict-INCONCLUSIVE { color: var(--text-dim); }
+  .verdict-SKIPPED      { color: var(--bg-muted); }
+
   /* ── Layout ─────────────────────────────────────────────── */
   .layout {
     display: flex; flex: 1;
@@ -228,6 +246,15 @@
     transition: opacity var(--transition);
   }
   .finding-card.hidden { display: none; }
+  /* AUDIT-08 — collapsed LOW/INFO findings hide body; header stays visible */
+  .finding-card.collapsed .finding-body { display: none !important; }
+  .finding-card.collapsed .finding-chevron { transform: rotate(0deg) !important; }
+  /* "Expand observations" link */
+  .expand-observations-link {
+    display: block; text-align: center; margin-top: 8px; font-size: 12px;
+    color: var(--accent); cursor: pointer; text-decoration: underline dotted;
+  }
+  .expand-observations-link:hover { color: var(--text-bright); }
   .finding-card[data-sev="CRITICAL"] { border-left: 3px solid var(--critical); }
   .finding-card[data-sev="HIGH"]     { border-left: 3px solid var(--high); }
   .finding-card[data-sev="MEDIUM"]   { border-left: 3px solid var(--medium); }
@@ -758,6 +785,7 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
     <span class="status-dot"></span>
     <span id="status-text">LOADING</span>
   </div>
+  <span class="autonomous-badge" id="autonomous-badge" title="Autonomous investigation pipeline">🤖 Autonomous</span>
   <div class="generated-at" id="generated-at"></div>
 </header>
 
@@ -782,6 +810,9 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
     <a class="nav-item" href="#section-findings" onclick="setActiveNav(this)">
       <span class="nav-icon">🔍</span> Findings
       <span class="nav-count critical" id="nav-findings-count"></span>
+    </a>
+    <a class="nav-item" href="#section-investigation" onclick="setActiveNav(this)" id="nav-investigation-item" style="display:none">
+      <span class="nav-icon">🤖</span> Investigation
     </a>
     <a class="nav-item" href="#section-rootcause" onclick="setActiveNav(this)">
       <span class="nav-icon">🧠</span> Root Cause
@@ -894,6 +925,30 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
     <section id="section-findings">
       <h2><span class="section-icon">🔍</span> Findings</h2>
       <div id="findings-list"></div>
+    </section>
+
+    <!-- Autonomous Investigation -->
+    <section id="section-investigation" style="display:none">
+      <h2>
+        <span class="section-icon">🤖</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Autonomous Investigation Plan</span>
+      </h2>
+      <div class="section-content">
+        <div id="investigation-summary" style="font-size:13px;color:var(--text-dim);margin-bottom:1rem"></div>
+        <table id="investigation-steps-table" style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr>
+              <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border)">Step</th>
+              <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border)">Target</th>
+              <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border)">Tool</th>
+              <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border)">Hypothesis</th>
+              <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border)">Verdict</th>
+              <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border)">Iter</th>
+            </tr>
+          </thead>
+          <tbody id="investigation-steps-tbody"></tbody>
+        </table>
+      </div>
     </section>
 
     <!-- Root Cause -->
@@ -1072,6 +1127,14 @@ function renderHeader() {
   badge.className = 'status-badge ' + es.overall_status;
   document.getElementById('status-text').textContent = es.overall_status;
   document.getElementById('generated-at').textContent = 'Report: ' + m.generated_at.replace('T',' ').replace('Z',' UTC');
+  // AUDIT-11: autonomous badge
+  const autoBadge = document.getElementById('autonomous-badge');
+  if (m.autonomous_enabled) {
+    const steps = m.autonomous_steps_executed != null ? m.autonomous_steps_executed : '?';
+    const iters = m.autonomous_replan_iterations != null ? ` • ${m.autonomous_replan_iterations} replan(s)` : '';
+    autoBadge.title = `Autonomous investigation: ${steps} step(s) executed${iters}`;
+    autoBadge.classList.add('visible');
+  }
 }
 
 // ── Stat grid ────────────────────────────────────────────────────
@@ -1187,7 +1250,7 @@ function renderFindings() {
       `<span class="affected-tag">${esc(r)}</span>`
     ).join('');
 
-    return `<div class="finding-card" data-sev="${esc(f.severity)}" data-id="${esc(f.id)}" id="finding-${esc(f.id)}">
+    return `<div class="finding-card" data-sev="${esc(f.severity)}" data-finding-severity="${esc(f.severity)}" data-id="${esc(f.id)}" id="finding-${esc(f.id)}">
       <div class="finding-header" onclick="toggleFinding(this.parentElement)" role="button" tabindex="0" aria-expanded="false" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleFinding(this.parentElement);this.setAttribute('aria-expanded',this.parentElement.classList.contains('open'))}">
         <span class="sev-pill ${esc(f.severity)}">${esc(f.severity)}</span>
         <span class="finding-title">${esc(f.title)}</span>
@@ -1214,6 +1277,24 @@ function renderFindings() {
     c.classList.add('open');
   });
 
+  // AUDIT-08 — collapse LOW/INFO findings by default
+  applyDefaultCollapse();
+
+  // inject "Expand observations" link if any collapsed findings exist
+  const collapsedCount = document.querySelectorAll(
+    '[data-finding-severity="LOW"], [data-finding-severity="INFO"]'
+  ).length;
+  if (collapsedCount > 0) {
+    const link = document.createElement('a');
+    link.className = 'expand-observations-link';
+    link.textContent = `Expand observations (${collapsedCount} collapsed)`;
+    link.setAttribute('role', 'button');
+    link.setAttribute('tabindex', '0');
+    link.onclick = expandAllObservations;
+    link.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); expandAllObservations(); } };
+    container.appendChild(link);
+  }
+
   // init filter pills
   document.querySelectorAll('.filter-pill').forEach(p => {
     p.addEventListener('click', () => toggleSeverityFilter(p.dataset.sev));
@@ -1222,8 +1303,25 @@ function renderFindings() {
 
 function toggleFinding(card) {
   card.classList.toggle('open');
+  if (card.classList.contains('open')) {
+    card.classList.remove('collapsed');
+  }
   const header = card.querySelector('.finding-header');
   if (header) header.setAttribute('aria-expanded', card.classList.contains('open') ? 'true' : 'false');
+}
+
+// AUDIT-08 — collapse LOW/INFO findings on initial load
+function applyDefaultCollapse() {
+  document.querySelectorAll('[data-finding-severity="LOW"], [data-finding-severity="INFO"]')
+    .forEach(el => el.classList.add('collapsed'));
+}
+
+// AUDIT-08 — remove collapsed from all LOW/INFO findings
+function expandAllObservations() {
+  document.querySelectorAll('[data-finding-severity="LOW"], [data-finding-severity="INFO"]')
+    .forEach(el => el.classList.remove('collapsed'));
+  const link = document.querySelector('.expand-observations-link');
+  if (link) link.remove();
 }
 
 function toggleSeverityFilter(sev) {
@@ -2404,6 +2502,47 @@ function renderEvidenceGaps() {
   `).join('');
 }
 
+// ── Autonomous Investigation ──────────────────────────────────────
+function renderInvestigation() {
+  const evidence = REPORT_DATA.investigation_evidence || [];
+  const section = document.getElementById('section-investigation');
+  const navItem = document.getElementById('nav-investigation-item');
+  if (!evidence.length) {
+    section.style.display = 'none';
+    if (navItem) navItem.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  if (navItem) navItem.style.display = '';
+  // Summary strip
+  const m = REPORT_DATA.metadata;
+  const steps = m.autonomous_steps_executed != null ? m.autonomous_steps_executed : evidence.length;
+  const iters = m.autonomous_replan_iterations != null ? `, ${m.autonomous_replan_iterations} replan(s)` : '';
+  document.getElementById('investigation-summary').textContent =
+    `${steps} investigation step(s) executed${iters}.`;
+  // Verdict colour helper (reuses sevColor if available, else inline map)
+  const verdictClass = v => {
+    if (!v) return '';
+    const vl = v.toLowerCase();
+    if (vl === 'confirmed' || vl === 'supports') return 'critical';
+    if (vl === 'partial' || vl === 'inconclusive') return 'warning';
+    if (vl === 'refuted' || vl === 'contradicts') return 'healthy';
+    return 'info';
+  };
+  const tbody = document.getElementById('investigation-steps-tbody');
+  tbody.innerHTML = evidence.map((e, i) => {
+    const verdict = e.verdict || 'INCONCLUSIVE';
+    return '<tr style="border-bottom:1px solid var(--border)">' +
+      '<td style="padding:6px 10px;color:var(--text-dim)">' + (i + 1) + '</td>' +
+      '<td style="padding:6px 10px">' + esc(e.target || '—') + '</td>' +
+      '<td style="padding:6px 10px;font-family:monospace;font-size:12px">' + esc(e.tool_name || '—') + '</td>' +
+      '<td style="padding:6px 10px">' + esc(e.hypothesis || '—') + '</td>' +
+      '<td style="padding:6px 10px" class="verdict-' + esc(verdict) + '">' + esc(verdict) + '</td>' +
+      '<td style="padding:6px 10px;color:var(--text-dim)">' + esc(e.iteration != null ? String(e.iteration) : '0') + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
 (function init() {
   renderHeader();
   renderStats();
@@ -2426,6 +2565,7 @@ function renderEvidenceGaps() {
   renderDependencies();
   renderQuickLinks();
   renderEvidenceGaps();
+  renderInvestigation();
   const _titleCluster = REPORT_DATA.metadata.cluster_name;
   const _titleStatus  = REPORT_DATA.executive_summary.overall_status;
   document.title = ['Health Report', _titleCluster, _titleStatus].filter(Boolean).join(' — ');
