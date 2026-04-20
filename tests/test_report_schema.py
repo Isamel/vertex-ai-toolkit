@@ -664,7 +664,7 @@ class TestToMarkdown:
         md = report.to_markdown()
         assert "## Root Cause Hypotheses" in md
         assert "#### CrashLoopBackOff on payment-svc" in md
-        assert "75%" in md
+        assert "100%" in md  # single hypothesis normalized to 1.0
         assert "Confirms if" in md
 
     def test_root_cause_empty_fallback(self) -> None:

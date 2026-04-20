@@ -343,19 +343,37 @@ class TestRootCauseHypothesisProbabilityValidator:
         report = self._make_report([self._hyp(0.6), self._hyp(0.4)])
         assert len(report.root_cause_hypotheses) == 2
 
-    def test_probability_sum_too_low_raises(self) -> None:
-        """Sum < 0.7 must raise ValidationError."""
-        import pytest
-        from pydantic import ValidationError
-        with pytest.raises(ValidationError, match="0.7"):
-            self._make_report([self._hyp(0.2), self._hyp(0.3)])
+    def test_probability_sum_too_low_normalizes(self) -> None:
+        """Sum < 1.0 is normalized proportionally; no error raised."""
+        report = self._make_report([self._hyp(0.2), self._hyp(0.3)])
+        total = sum(h.probability for h in report.root_cause_hypotheses)
+        assert abs(total - 1.0) < 1e-3
 
-    def test_probability_sum_too_high_raises(self) -> None:
-        """Sum > 1.0 must raise ValidationError."""
-        import pytest
-        from pydantic import ValidationError
-        with pytest.raises(ValidationError, match="1.0"):
-            self._make_report([self._hyp(0.6), self._hyp(0.7)])
+    def test_probability_sum_too_high_normalizes(self) -> None:
+        """Sum > 1.0 (e.g. Gemini returning 0.6+0.7=1.5) is normalized; no error raised."""
+        report = self._make_report([self._hyp(0.6), self._hyp(0.7)])
+        total = sum(h.probability for h in report.root_cause_hypotheses)
+        assert abs(total - 1.0) < 1e-3
+        # Relative ranking must be preserved: first hyp was lower, must stay lower
+        assert report.root_cause_hypotheses[0].probability < report.root_cause_hypotheses[1].probability
+
+    def test_all_zero_probabilities_assigns_uniform(self) -> None:
+        """All-zero probabilities (degenerate case) must produce uniform-ish distribution summing to 1.0."""
+        report = self._make_report([self._hyp(0.0), self._hyp(0.0), self._hyp(0.0)])
+        total = sum(h.probability for h in report.root_cause_hypotheses)
+        assert abs(total - 1.0) < 1e-3
+        # All probabilities must be close to uniform (within rounding residual)
+        probs = [h.probability for h in report.root_cause_hypotheses]
+        expected = 1.0 / 3
+        for p in probs:
+            assert abs(p - expected) < 0.01
+
+    def test_normalization_last_element_absorbs_rounding(self) -> None:
+        """With 3+ hypotheses, rounding residual must be absorbed so sum is exactly 1.0."""
+        # 3 equal hypotheses: 0.5 each → total 1.5; normalized each would be 0.3333...
+        report = self._make_report([self._hyp(0.5), self._hyp(0.5), self._hyp(0.5)])
+        total = sum(h.probability for h in report.root_cause_hypotheses)
+        assert abs(total - 1.0) < 1e-4
 
     def test_max_four_hypotheses_enforced(self) -> None:
         """max_length=4 must reject a list of 5."""
@@ -374,10 +392,11 @@ class TestRootCauseHypothesisProbabilityValidator:
 
     def test_markdown_render_contains_probability_and_confirms_if(self) -> None:
         """Markdown render must show probability % and confirms_if."""
+        # Use probability=1.0 so normalization leaves the value unchanged (single hypothesis).
         report = self._make_report([
             RootCauseHypothesis(
                 label="Cache overflow",
-                probability=0.75,
+                probability=1.0,
                 supporting_evidence=["Memory grows linearly"],
                 refuting_evidence=["CPU usage normal"],
                 confirms_if="Memory exceeds 256Mi within 15 min.",
@@ -386,7 +405,7 @@ class TestRootCauseHypothesisProbabilityValidator:
         ])
         md = report.to_markdown()
         assert "Cache overflow" in md
-        assert "75%" in md
+        assert "100%" in md
         assert "Confirms if" in md
         assert "Memory exceeds 256Mi" in md
 
