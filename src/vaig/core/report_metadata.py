@@ -21,6 +21,24 @@ __all__ = ["inject_report_metadata", "format_models_used"]
 logger = logging.getLogger(__name__)
 
 
+def _extract_target_from_question(question: str) -> str:
+    """Extract a Kubernetes resource target from a question string.
+
+    Looks for patterns like ``pod/name``, ``deployment/name``, or just
+    returns the first 60 chars of the question as a fallback.
+    """
+    import re  # noqa: PLC0415
+
+    match = re.search(
+        r"\b(pod|deployment|statefulset|daemonset|service|node)/[\w.-]+",
+        question,
+        re.IGNORECASE,
+    )
+    if match:
+        return match.group(0)
+    return question[:60] if question else ""
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -243,6 +261,62 @@ def inject_report_metadata(
             metadata.model_versions = {"health_analyzer": model_id}
     elif not getattr(metadata, "model_versions", None) and model_id:
         metadata.model_versions = {"health_analyzer": model_id}
+
+    # ── AUDIT-11: Autonomous mode visibility ──────────────────────────────────
+    if orch_result is not None:
+        agent_results: list[Any] = getattr(orch_result, "agent_results", []) or []
+        investig_result: Any = None
+        for ar in agent_results:
+            if getattr(ar, "agent_name", "") == "health_investigator":
+                investig_result = ar
+                break
+        if investig_result is not None:
+            investig_meta: dict[str, Any] = getattr(investig_result, "metadata", {}) or {}
+            metadata.autonomous_enabled = True
+            metadata.autonomous_steps_executed = investig_meta.get("steps_completed")
+            metadata.autonomous_replan_iterations = investig_meta.get("replan_count")
+
+            # Populate investigation_evidence from the EvidenceLedger (final_state)
+            final_state = getattr(orch_result, "final_state", None)
+            ledger = getattr(final_state, "evidence_ledger", None) if final_state is not None else None
+            if ledger is not None and hasattr(report, "investigation_evidence"):
+                try:
+                    from vaig.skills.service_health.schema import (  # noqa: PLC0415
+                        InvestigationEvidenceSnapshot,
+                    )
+
+                    snapshots = []
+                    for entry in ledger.entries:
+                        supports = getattr(entry, "supports", ())
+                        contradicts = getattr(entry, "contradicts", ())
+                        if supports:
+                            verdict: str = "CONFIRMED"
+                        elif contradicts:
+                            verdict = "CONTRADICTED"
+                        else:
+                            verdict = "INCONCLUSIVE"
+                        step_id = getattr(entry, "id", "")
+                        question = getattr(entry, "question", "")
+                        answer = getattr(entry, "answer_summary", "")
+                        tool = getattr(entry, "tool_name", "")
+                        # Extract target from question heuristically (first k8s resource pattern)
+                        target = _extract_target_from_question(question)
+                        snapshots.append(
+                            InvestigationEvidenceSnapshot(
+                                step_id=step_id,
+                                target=target,
+                                tool_name=tool,
+                                hypothesis=question[:320],
+                                verdict=verdict,  # type: ignore[arg-type]
+                                answer_preview=answer[:320],
+                                iteration=0,
+                            )
+                        )
+                    report.investigation_evidence = snapshots
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception as _inv_exc:  # noqa: BLE001
+                    logger.debug("Failed to build investigation_evidence: %s", _inv_exc)
 
     # ── Cluster overview: inject Namespace row when missing ───
     if gke_config is not None:

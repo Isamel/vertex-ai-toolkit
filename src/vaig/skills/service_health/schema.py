@@ -957,6 +957,10 @@ class ReportMetadata(BaseModel):
         default=None,
         description="Number of InvestigationAgent steps completed (None when autonomous disabled).",
     )
+    autonomous_replan_iterations: int | None = Field(
+        default=None,
+        description="Number of re-plan iterations executed by the InvestigationAgent (None when autonomous disabled).",
+    )
 
 
 # ── Dependency graph models ───────────────────────────────────
@@ -1113,6 +1117,13 @@ class HealthReport(BaseModel):
             "Populated by the analyzer. Example: "
             "'DEGRADED because 1 HIGH finding with confidence=CONFIRMED "
             "and 2 MEDIUM findings in distinct namespaces.'"
+        ),
+    )
+    investigation_evidence: list[InvestigationEvidenceSnapshot] = Field(
+        default_factory=list,
+        description=(
+            "Per-step evidence records rendered in the Autonomous Investigation section. "
+            "Populated post-hoc from the EvidenceLedger; excluded from the Gemini schema."
         ),
     )
 
@@ -1680,6 +1691,7 @@ class HealthReportGeminiSchema(HealthReport):
             "recent_changes",
             "external_links",
             "investigation_coverage",
+            "investigation_evidence",
         }
     )
 
@@ -1845,6 +1857,36 @@ class InvestigationPlan(BaseModel):
 
 
 # ── GH-02: Config Drift Finding ──────────────────────────────
+
+
+# ── AUDIT-11: Autonomous investigation evidence snapshot ─────────────────────
+
+
+class InvestigationEvidenceSnapshot(BaseModel):
+    """Compact per-step evidence record rendered in the HTML report.
+
+    Populated post-hoc from the EvidenceLedger by the pipeline skill after
+    the InvestigationAgent completes.  Excluded from the Gemini schema.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    step_id: str
+    """Unique identifier for this step within the plan (e.g. ``step-0``)."""
+    target: str
+    """Kubernetes resource being investigated."""
+    tool_name: str
+    """Name of the tool that was called."""
+    hypothesis: str
+    """Human-readable hypothesis text."""
+    verdict: Literal["CONFIRMED", "CONTRADICTED", "INCONCLUSIVE", "SKIPPED"]
+    """Outcome classification for the step."""
+    answer_preview: str = Field(default="", max_length=320)
+    """Truncated summary of the tool output (max 320 chars)."""
+    iteration: int = 0
+    """Re-plan iteration index: 0 = initial plan, 1+ = re-plans."""
+    memory_recall_hit: bool = False
+    """True when the answer was served from the PatternMemoryStore cache."""
 
 
 class ConfigDriftFinding(BaseModel):
