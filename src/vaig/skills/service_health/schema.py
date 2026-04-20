@@ -439,6 +439,17 @@ class ServiceStatus(BaseModel):
         return self
 
 
+class RepoSnippet(BaseModel):
+    """A code/config snippet retrieved from a repo that supports or contradicts a finding."""
+
+    kind: Literal["repo_snippet"] = "repo_snippet"
+    file_path: str
+    line_range: tuple[int, int]
+    excerpt: str
+    relevance_score: float = Field(ge=0.0, le=1.0)
+    retrieval_query: str
+
+
 class Finding(BaseModel):
     """An individual health finding (issue or observation)."""
 
@@ -504,6 +515,14 @@ class Finding(BaseModel):
         description=(
             "Populated post-Gemini by the RecurrenceAnalyzer.  None during the "
             "Gemini call — excluded from response_schema to avoid confusing the model."
+        ),
+        exclude=True,
+    )
+    repo_evidence: list[RepoSnippet] = Field(
+        default_factory=list,
+        description=(
+            "Repo snippets that support or contradict this finding. "
+            "Populated by RepoCorrelator when --repo is provided."
         ),
         exclude=True,
     )
