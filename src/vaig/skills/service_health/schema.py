@@ -1054,7 +1054,8 @@ class HealthReport(BaseModel):
         ``HEALTH_REPORTER_PROMPT``: Executive Summary → Cluster Overview →
         Service Status → Findings (by severity) → Downgraded Findings →
         Root Cause Hypotheses → Evidence Details → Recommended Actions →
-        Manual Investigation Required → Timeline → Causal Graph.
+        Manual Investigation Required → Timeline → Causal Graph →
+        Recent Changes → Quick Links → Evidence Gaps → Investigation Coverage.
         """
         parts: list[str] = []
         parts.append("# Service Health Report")
@@ -1070,6 +1071,10 @@ class HealthReport(BaseModel):
         self._render_manual_investigations(parts)
         self._render_timeline(parts)
         self._render_causal_graph(parts)
+        self._render_recent_changes(parts)
+        self._render_external_links(parts)
+        self._render_evidence_gaps(parts)
+        self._render_investigation_coverage(parts)
         return "\n".join(parts)
 
     # ── Private rendering helpers ────────────────────────────
@@ -1393,6 +1398,68 @@ class HealthReport(BaseModel):
             parts.append("|------|-------|----------|")
             for ce in collapsed:
                 parts.append(f"| {ce.display_time} | {ce.display_event} | {ce.severity.value} |")
+        parts.append("")
+
+    def _render_recent_changes(self, parts: list[str]) -> None:
+        """Render the What Changed Recently section."""
+        if not self.recent_changes:
+            return
+        parts.append("## What Changed Recently")
+        parts.append("")
+        for change in self.recent_changes:
+            parts.append(f"- **[{change.timestamp}]** `{change.type}`: {change.description}")
+            if change.correlation_to_issue:
+                parts.append(f"  - *Correlation*: {change.correlation_to_issue}")
+        parts.append("")
+
+    def _render_external_links(self, parts: list[str]) -> None:
+        """Render the Quick Links section grouped by system (GCP/Datadog/ArgoCD)."""
+        if self.external_links is None:
+            return
+        system_groups: list[tuple[str, list[ExternalLink]]] = [
+            ("GCP", self.external_links.gcp),
+            ("Datadog", self.external_links.datadog),
+            ("ArgoCD", self.external_links.argocd),
+        ]
+        has_any = any(links for _, links in system_groups)
+        if not has_any:
+            return
+        parts.append("## Quick Links")
+        parts.append("")
+        for system_name, links in system_groups:
+            if not links:
+                continue
+            parts.append(f"### {system_name}")
+            for link in links:
+                parts.append(f"- [{link.label}]({link.url})")
+            parts.append("")
+
+    def _render_evidence_gaps(self, parts: list[str]) -> None:
+        """Render the Evidence Gaps section."""
+        _REASON_LABELS: dict[str, str] = {
+            "not_called": "Not Called",
+            "error": "Error",
+            "empty_result": "Empty Result",
+        }
+        if not self.evidence_gaps:
+            return
+        parts.append("## Evidence Gaps")
+        parts.append("")
+        for gap in self.evidence_gaps:
+            human_reason = _REASON_LABELS.get(gap.reason, gap.reason.replace("_", " ").title())
+            line = f"- **{gap.source}** ({human_reason})"
+            if gap.details:
+                line += f": {gap.details}"
+            parts.append(line)
+        parts.append("")
+
+    def _render_investigation_coverage(self, parts: list[str]) -> None:
+        """Render the Investigation Coverage percentage."""
+        if not self.investigation_coverage:
+            return
+        parts.append("## Investigation Coverage")
+        parts.append("")
+        parts.append(f"{self.investigation_coverage}")
         parts.append("")
 
     def _render_causal_graph(self, parts: list[str]) -> None:
