@@ -228,6 +228,15 @@
     transition: opacity var(--transition);
   }
   .finding-card.hidden { display: none; }
+  /* AUDIT-08 — collapsed LOW/INFO findings hide body; header stays visible */
+  .finding-card.collapsed .finding-body { display: none !important; }
+  .finding-card.collapsed .finding-chevron { transform: rotate(0deg) !important; }
+  /* "Expand observations" link */
+  .expand-observations-link {
+    display: block; text-align: center; margin-top: 8px; font-size: 12px;
+    color: var(--accent); cursor: pointer; text-decoration: underline dotted;
+  }
+  .expand-observations-link:hover { color: var(--text-bright); }
   .finding-card[data-sev="CRITICAL"] { border-left: 3px solid var(--critical); }
   .finding-card[data-sev="HIGH"]     { border-left: 3px solid var(--high); }
   .finding-card[data-sev="MEDIUM"]   { border-left: 3px solid var(--medium); }
@@ -1187,7 +1196,7 @@ function renderFindings() {
       `<span class="affected-tag">${esc(r)}</span>`
     ).join('');
 
-    return `<div class="finding-card" data-sev="${esc(f.severity)}" data-id="${esc(f.id)}" id="finding-${esc(f.id)}">
+    return `<div class="finding-card" data-sev="${esc(f.severity)}" data-finding-severity="${esc(f.severity)}" data-id="${esc(f.id)}" id="finding-${esc(f.id)}">
       <div class="finding-header" onclick="toggleFinding(this.parentElement)" role="button" tabindex="0" aria-expanded="false" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleFinding(this.parentElement);this.setAttribute('aria-expanded',this.parentElement.classList.contains('open'))}">
         <span class="sev-pill ${esc(f.severity)}">${esc(f.severity)}</span>
         <span class="finding-title">${esc(f.title)}</span>
@@ -1214,6 +1223,24 @@ function renderFindings() {
     c.classList.add('open');
   });
 
+  // AUDIT-08 — collapse LOW/INFO findings by default
+  applyDefaultCollapse();
+
+  // inject "Expand observations" link if any collapsed findings exist
+  const collapsedCount = document.querySelectorAll(
+    '[data-finding-severity="LOW"], [data-finding-severity="INFO"]'
+  ).length;
+  if (collapsedCount > 0) {
+    const link = document.createElement('a');
+    link.className = 'expand-observations-link';
+    link.textContent = `Expand observations (${collapsedCount} collapsed)`;
+    link.setAttribute('role', 'button');
+    link.setAttribute('tabindex', '0');
+    link.onclick = expandAllObservations;
+    link.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); expandAllObservations(); } };
+    container.appendChild(link);
+  }
+
   // init filter pills
   document.querySelectorAll('.filter-pill').forEach(p => {
     p.addEventListener('click', () => toggleSeverityFilter(p.dataset.sev));
@@ -1224,6 +1251,20 @@ function toggleFinding(card) {
   card.classList.toggle('open');
   const header = card.querySelector('.finding-header');
   if (header) header.setAttribute('aria-expanded', card.classList.contains('open') ? 'true' : 'false');
+}
+
+// AUDIT-08 — collapse LOW/INFO findings on initial load
+function applyDefaultCollapse() {
+  document.querySelectorAll('[data-finding-severity="LOW"], [data-finding-severity="INFO"]')
+    .forEach(el => el.classList.add('collapsed'));
+}
+
+// AUDIT-08 — remove collapsed from all LOW/INFO findings
+function expandAllObservations() {
+  document.querySelectorAll('[data-finding-severity="LOW"], [data-finding-severity="INFO"]')
+    .forEach(el => el.classList.remove('collapsed'));
+  const link = document.querySelector('.expand-observations-link');
+  if (link) link.remove();
 }
 
 function toggleSeverityFilter(sev) {
