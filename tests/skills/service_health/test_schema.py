@@ -494,3 +494,149 @@ class TestAudit07RunDeterminismMetadata:
             f"Gemini schema grew unexpectedly: {len(schema_str)} chars "
             "(AUDIT-07 fields must be post-hoc only)"
         )
+
+
+# ── AUDIT-16: Schema state budget CI guard ───────────────────────────────────
+
+
+def _count_gemini_states(schema: dict) -> int:
+    """Approximate the Gemini state count using the same heuristic as the runtime.
+
+    Heuristic (verified empirically):
+      - Each scalar property in an object contributes 1 state.
+      - Each array property contributes ``array_depth * element_states`` states,
+        where ``array_depth`` is the nesting depth and ``element_states`` is the
+        count for the element type.
+      - $defs are shared; we count their states once and substitute inline.
+
+    This is intentionally conservative — Gemini's exact count is undisclosed —
+    so we stay safely below the observed 32 768 hard limit.
+    """
+    defs: dict[str, dict] = schema.get("$defs", {})
+
+    def _states_for(node: dict, depth: int = 0) -> int:
+        if depth > 10:  # guard against infinite recursion
+            return 1
+        ref = node.get("$ref", "")
+        if ref.startswith("#/$defs/"):
+            def_name = ref.split("/")[-1]
+            return _states_for(defs.get(def_name, {}), depth + 1)
+        node_type = node.get("type", "")
+        if node_type == "object":
+            props = node.get("properties", {})
+            return max(sum(_states_for(v, depth + 1) for v in props.values()), 1)
+        if node_type == "array":
+            items = node.get("items", {})
+            return (depth + 1) * _states_for(items, depth + 1)
+        # anyOf / oneOf / allOf
+        for combiner in ("anyOf", "oneOf", "allOf"):
+            branches = node.get(combiner)
+            if branches:
+                return sum(_states_for(b, depth + 1) for b in branches)
+        return 1  # scalar / enum / string / number / boolean / null
+
+    return _states_for(schema)
+
+
+_STATE_BUDGET_MAX = 25_000
+_STATE_BUDGET_WARN = int(_STATE_BUDGET_MAX * 0.80)  # 20 000
+
+_CHAR_BUDGET_MAX = 20_000
+_DEFS_BUDGET_MAX = 25
+
+
+class TestAudit16SchemaStateBudget:
+    """AUDIT-16 — Schema state budget CI guard.
+
+    Ensures the Gemini schema does not grow beyond thresholds that would
+    trigger Gemini's "too many states" error (observed hard limit ~32 768).
+    """
+
+    def _get_schema(self) -> dict:
+        return HealthReportGeminiSchema.model_json_schema()
+
+    # ── hard budgets ──────────────────────────────────────────────────────────
+
+    def test_char_count_within_budget(self) -> None:
+        """Schema serialised to JSON must stay below the char budget."""
+        schema_str = json.dumps(self._get_schema())
+        char_count = len(schema_str)
+        assert char_count <= _CHAR_BUDGET_MAX, (
+            f"Gemini schema exceeds char budget: {char_count} chars "
+            f"(max {_CHAR_BUDGET_MAX}). "
+            "Remove or simplify fields to restore budget."
+        )
+
+    def test_defs_count_within_budget(self) -> None:
+        """Number of $defs must stay at or below the $defs budget."""
+        schema = self._get_schema()
+        defs = schema.get("$defs", {})
+        defs_count = len(defs)
+        assert defs_count <= _DEFS_BUDGET_MAX, (
+            f"Gemini schema has {defs_count} $defs (max {_DEFS_BUDGET_MAX}). "
+            f"Excess defs: {sorted(set(defs) - set(list(defs)[:_DEFS_BUDGET_MAX]))}. "
+            "Prune or inline types to restore budget."
+        )
+
+    def test_state_count_within_budget(self) -> None:
+        """Approximate Gemini state count must stay below the hard budget."""
+        schema = self._get_schema()
+        state_count = _count_gemini_states(schema)
+        assert state_count <= _STATE_BUDGET_MAX, (
+            f"Gemini schema state count {state_count} exceeds budget {_STATE_BUDGET_MAX}. "
+            "This will likely trigger Gemini's 'too many states' error. "
+            "Simplify nested models or remove fields."
+        )
+
+    # ── soft warning at 80 % ──────────────────────────────────────────────────
+
+    def test_state_count_below_warning_threshold(self) -> None:
+        """Emit a UserWarning when state count exceeds 80 % of the budget."""
+        import warnings
+
+        schema = self._get_schema()
+        state_count = _count_gemini_states(schema)
+        if state_count > _STATE_BUDGET_WARN:
+            warnings.warn(
+                f"Gemini schema state count {state_count} exceeds 80 % of the "
+                f"budget ({_STATE_BUDGET_WARN}/{_STATE_BUDGET_MAX}). "
+                "Consider simplifying the schema before it hits the hard limit.",
+                UserWarning,
+                stacklevel=2,
+            )
+        # The test itself never fails here — the warning is the signal.
+        # Hard failure is handled by test_state_count_within_budget above.
+        assert state_count <= _STATE_BUDGET_MAX, (
+            f"State count {state_count} is beyond hard budget {_STATE_BUDGET_MAX}."
+        )
+
+    # ── snapshot / regression guard ───────────────────────────────────────────
+
+    def test_schema_metrics_snapshot(self) -> None:
+        """Snapshot test: flag unexpected growth in any metric.
+
+        Thresholds are set ~10 % above the current measured values so that
+        a single new field is caught before it blows the hard budget.
+
+        Current baseline (post PR #276 BFS optimisation):
+          chars ~16 975 · $defs 21 · states (heuristic, varies by impl)
+        """
+        schema = self._get_schema()
+        schema_str = json.dumps(schema)
+        defs = schema.get("$defs", {})
+
+        char_count = len(schema_str)
+        defs_count = len(defs)
+
+        # ~10 % headroom above the post-BFS baseline
+        _SNAPSHOT_CHAR_MAX = 18_700
+        _SNAPSHOT_DEFS_MAX = 23
+
+        assert char_count <= _SNAPSHOT_CHAR_MAX, (
+            f"Schema char count grew to {char_count} (snapshot ceiling {_SNAPSHOT_CHAR_MAX}). "
+            "If this is intentional, update _SNAPSHOT_CHAR_MAX in AUDIT-16 tests."
+        )
+        assert defs_count <= _SNAPSHOT_DEFS_MAX, (
+            f"Schema $defs count grew to {defs_count} (snapshot ceiling {_SNAPSHOT_DEFS_MAX}). "
+            "If this is intentional, update _SNAPSHOT_DEFS_MAX in AUDIT-16 tests."
+        )
