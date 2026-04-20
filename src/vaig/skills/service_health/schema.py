@@ -34,6 +34,17 @@ logger = logging.getLogger(__name__)
 # ── Text-normalisation regexes (for smart timeline collapse) ──
 
 _POD_HASH_RE = re.compile(r'-[a-z0-9]{5,10}-[a-z0-9]{4,7}\b')   # strip -59967f9ccc-4zdx6
+
+# ── quick_remediation placeholder guard ──────────────────────
+# Patterns that match vague "investigate" TODO text — rejected by field_validator.
+
+_BANNED_QUICK_REMEDIATION_PATTERNS: tuple[str, ...] = (
+    r"^\s*investig(a|a\w*|ate|ating)\b",          # ES "investigar" / EN "investigate"
+    r"^\s*look\s+into\b",
+    r"^\s*check\s+the\s+(cause|root|issue)\b",
+    r"^\s*revisa(r)?\s+la\s+causa\b",
+    r"^\s*analyze\s+the\s+issue\b",
+)
 _COUNTER_RE = re.compile(r'\s*\(\d+(?:st|nd|rd|th)\s+time\)')    # strip "(3rd time)"
 _TIMESTAMP_RE = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')  # strip ISO timestamps
 _IP_RE = re.compile(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?\b')  # strip IPs / IP:port
@@ -437,6 +448,29 @@ class Finding(BaseModel):
     impact: str = Field(default="")
     affected_resources: list[str] = Field(default_factory=list)
     remediation: str | None = None
+    quick_remediation: str | None = Field(
+        default=None,
+        description=(
+            "One-line actionable command or '(see Recommended Actions section)'. "
+            "NEVER use placeholder text such as 'Investigate' or 'Look into'."
+        ),
+    )
+
+    @field_validator("quick_remediation")
+    @classmethod
+    def _reject_placeholder_remediations(cls, v: str | None) -> str | None:
+        """Reject vague 'investigate' placeholders in quick_remediation."""
+        if v is None or v == "":
+            return v
+        for pattern in _BANNED_QUICK_REMEDIATION_PATTERNS:
+            if re.search(pattern, v, flags=re.IGNORECASE):
+                raise ValueError(
+                    f"quick_remediation must be an actionable command or the "
+                    f"literal string '(see Recommended Actions section)'. "
+                    f"Received placeholder text: {v!r}"
+                )
+        return v
+
     caused_by: list[str] = Field(
         default_factory=list,
         description="Finding.id slugs of upstream causes (findings that caused this one)",
