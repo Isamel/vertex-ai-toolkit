@@ -515,7 +515,7 @@
   }
   .urgency-header:first-child { margin-top: 0; }
 
-  /* ── Cost & Usage ─────────────────────────────────────────── */
+  /* ── Investigation Cost ────────────────────────────────────────── */
   .cost-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
   .cost-card {
     background: var(--bg-surface); border: 1px solid var(--border);
@@ -527,7 +527,7 @@
   .cost-card-value { font-size: 26px; font-weight: 800; color: var(--info); line-height: 1.1; font-family: var(--font-mono); }
   .cost-card-sub { font-size: 12px; color: var(--text-dim); }
 
-  /* ── GKE Cost Estimation ───────────────────────────────────── */
+  /* ── Workload Cost ─────────────────────────────────────────── */
   .gke-workload-block { margin-bottom: 20px; }
   .gke-workload-header {
     font-size: 13px; font-weight: 700; font-family: var(--font-mono);
@@ -838,10 +838,10 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
       <span class="nav-count" id="nav-review-status"></span>
     </a>
     <a class="nav-item" href="#section-cost" onclick="setActiveNav(this)" id="nav-cost-item" style="display:none">
-      <span class="nav-icon">💰</span> Cost &amp; Usage
+      <span class="nav-icon">💰</span> Investigation Cost
     </a>
     <a class="nav-item" href="#section-gke-cost" onclick="setActiveNav(this)" id="nav-gke-cost-item" style="display:none">
-      <span class="nav-icon">☸️</span> GKE Cost
+      <span class="nav-icon">☸️</span> Workload Cost
     </a>
     <a class="nav-item" href="#section-trends" onclick="setActiveNav(this)" id="nav-trends-item" style="display:none">
       <span class="nav-icon">📈</span> Trends
@@ -998,17 +998,17 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
       <div id="evidence-gaps-list"></div>
     </section>
 
-    <!-- Cost & Usage -->
+    <!-- Investigation Cost -->
     <section id="section-cost" style="display:none">
-      <h2><span class="section-icon">💰</span> Cost &amp; Usage</h2>
+      <h2><span class="section-icon">💰</span> Investigation Cost</h2>
       <div class="cost-grid" id="cost-grid"></div>
     </section>
 
-    <!-- GKE Workload Cost Estimation -->
+    <!-- Workload Cost -->
     <section id="section-gke-cost" style="display:none">
       <h2>
         <span class="section-icon">☸️</span>
-        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">GKE Workload Cost Estimation</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Workload Cost</span>
       </h2>
       <div class="section-content">
         <div id="gke-cost-unsupported" style="display:none" class="card">
@@ -1456,7 +1456,7 @@ function renderRecs() {
   document.getElementById('recs-list').innerHTML = html;
 }
 
-// ── Cost & Usage ──────────────────────────────────────────────────
+// ── Investigation Cost ────────────────────────────────────────────
 function renderCostUsage() {
   const cost = REPORT_DATA.metadata && REPORT_DATA.metadata.cost_metrics;
   if (!cost || (cost.run_cost_usd == null && cost.total_tokens == null)) return;
@@ -1739,7 +1739,7 @@ function renderDataCompleteness() {
   document.getElementById('completeness-grid').innerHTML = coverageLine + htmlRows;
 }
 
-// ── GKE Workload Cost Estimation ─────────────────────────────────
+// ── Workload Cost ─────────────────────────────────────────────────
 function renderGKECost() {
   const gkeCost = REPORT_DATA.metadata && REPORT_DATA.metadata.gke_cost;
   if (!gkeCost) return;
