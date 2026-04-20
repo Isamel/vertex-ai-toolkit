@@ -186,7 +186,8 @@ def test_repo_snippet_model_validation() -> None:
     with pytest.raises(ValidationError):
         RepoSnippet(
             file_path="foo.yaml",
-            line_range=(1, 5),
+            line_start=1,
+            line_end=5,
             excerpt="content",
             relevance_score=1.5,  # invalid — > 1.0
             retrieval_query="query",
@@ -195,7 +196,8 @@ def test_repo_snippet_model_validation() -> None:
     with pytest.raises(ValidationError):
         RepoSnippet(
             file_path="foo.yaml",
-            line_range=(1, 5),
+            line_start=1,
+            line_end=5,
             excerpt="content",
             relevance_score=-0.1,  # invalid — < 0.0
             retrieval_query="query",

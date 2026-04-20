@@ -444,7 +444,8 @@ class RepoSnippet(BaseModel):
 
     kind: Literal["repo_snippet"] = "repo_snippet"
     file_path: str
-    line_range: tuple[int, int]
+    line_start: int
+    line_end: int
     excerpt: str
     relevance_score: float = Field(ge=0.0, le=1.0)
     retrieval_query: str
