@@ -6,6 +6,7 @@ Covers:
 - ExternalLinks partial groups default to empty lists
 - HealthReport backward-compat deserialization without external_links
 - HealthReportGeminiSchema pruning of excluded fields and orphaned $defs
+- HealthReportGeminiSchema model_dump() retains post-hoc fields (HTML regression)
 """
 
 from __future__ import annotations
@@ -162,3 +163,29 @@ class TestHealthReportGeminiSchemaPruning:
         assert "executive_summary" in props
         assert "findings" in props
         assert "recommendations" in props
+
+    def test_model_dump_retains_post_hoc_fields(self) -> None:
+        """Regression: model_dump() must NOT strip post-hoc fields.
+
+        PR #276 added ``exclude=True`` to the field re-declarations in
+        ``HealthReportGeminiSchema``, which caused ``model_dump()`` to omit
+        ``metadata``, ``evidence_gaps``, ``recent_changes``, ``external_links``,
+        and ``investigation_coverage``.  The HTML report template reads
+        ``REPORT_DATA.metadata.project_id`` (and friends) — their absence
+        caused a silent JS crash and a blank page.
+        """
+        minimal_payload = {
+            "executive_summary": {
+                "overall_status": "HEALTHY",
+                "scope": "Cluster-wide",
+                "summary_text": "All good",
+            }
+        }
+        instance = HealthReportGeminiSchema.model_validate(minimal_payload)
+        dumped = instance.model_dump()
+        post_hoc = {"metadata", "evidence_gaps", "recent_changes", "external_links", "investigation_coverage"}
+        for field in post_hoc:
+            assert field in dumped, (
+                f"model_dump() must retain post-hoc field '{field}' "
+                f"(HTML report template depends on it)"
+            )
