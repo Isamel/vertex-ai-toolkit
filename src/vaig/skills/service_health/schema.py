@@ -1019,6 +1019,15 @@ class ReportMetadata(BaseModel):
             "populated=False entries indicate fields that were expected but left empty."
         ),
     )
+    # ── AUDIT-09: Chrome localisation ─────────────────────────
+    detected_language: str = Field(
+        default="en",
+        description=(
+            "BCP-47 language code detected from the user query (e.g. 'en', 'es'). "
+            "Used by the SPA i18n layer to localise chrome strings. "
+            "Populated post-hoc by the pipeline; defaults to 'en'."
+        ),
+    )
 
 
 # ── Dependency graph models ───────────────────────────────────
