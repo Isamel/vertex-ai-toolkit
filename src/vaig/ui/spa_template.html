@@ -628,6 +628,53 @@
   .tool-steps-note { margin-top: 10px; font-size: 12px; color: var(--text-dim); }
   .tool-steps-note strong { color: var(--text-main); }
 
+  /* ── Signal Quality ───────────────────────────────────────── */
+  .signal-quality-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px; margin-bottom: 16px;
+  }
+  .signal-quality-card {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px; text-align: center;
+  }
+  .signal-quality-card .sq-value { font-size: 28px; font-weight: 700; font-family: var(--font-mono); color: var(--text-bright); }
+  .signal-quality-card .sq-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .6px; margin-top: 4px; }
+  .signal-ratio-bar-wrap { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  .signal-ratio-label { font-size: 12px; color: var(--text-dim); min-width: 90px; }
+  .signal-ratio-track { flex: 1; height: 14px; background: var(--bg-muted); border-radius: 7px; overflow: hidden; }
+  .signal-ratio-fill { height: 100%; border-radius: 7px; transition: width 0.5s ease; }
+  .signal-ratio-pct { font-size: 12px; font-family: var(--font-mono); color: var(--text-bright); min-width: 38px; text-align: right; }
+
+  /* ── Tool Timeline / Waterfall ────────────────────────────── */
+  .waterfall-wrap { overflow-x: auto; }
+  .waterfall-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .waterfall-table th { text-align: left; padding: 6px 8px; color: var(--text-dim); font-weight: 600; border-bottom: 1px solid var(--border); }
+  .waterfall-table td { padding: 5px 8px; border-bottom: 1px solid var(--bg-muted); vertical-align: middle; }
+  .waterfall-track-cell { width: 60%; min-width: 200px; }
+  .waterfall-bar-track { position: relative; height: 18px; background: var(--bg-muted); border-radius: 3px; overflow: hidden; }
+  .waterfall-bar { position: absolute; top: 0; height: 100%; border-radius: 3px; opacity: 0.88; transition: width 0.4s; }
+  .waterfall-bar.success { background: var(--healthy); }
+  .waterfall-bar.error   { background: var(--failed); }
+  .waterfall-bar.timeout { background: var(--medium); }
+  .waterfall-name { font-family: var(--font-mono); color: var(--text-bright); white-space: nowrap; }
+  .waterfall-status-badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+  .waterfall-status-badge.success { background: #9ece6a22; color: var(--healthy); }
+  .waterfall-status-badge.error   { background: #f7768e22; color: var(--failed); }
+  .waterfall-status-badge.timeout { background: #e0af6822; color: var(--medium); }
+  .waterfall-duration { font-family: var(--font-mono); color: var(--text-dim); }
+
+  /* ── Data Completeness ─────────────────────────────────────── */
+  .completeness-grid { display: flex; flex-direction: column; gap: 10px; }
+  .completeness-row { display: flex; align-items: center; gap: 10px; }
+  .completeness-source { font-size: 13px; color: var(--text-main); min-width: 150px; flex-shrink: 0; }
+  .completeness-track { flex: 1; height: 12px; background: var(--bg-muted); border-radius: 6px; overflow: hidden; }
+  .completeness-fill { height: 100%; border-radius: 6px; transition: width 0.5s ease; }
+  .completeness-fill.full   { background: var(--healthy); }
+  .completeness-fill.partial { background: var(--medium); }
+  .completeness-fill.empty  { background: var(--failed); }
+  .completeness-pct { font-size: 12px; font-family: var(--font-mono); color: var(--text-bright); min-width: 38px; text-align: right; }
+  .completeness-status { font-size: 11px; color: var(--text-dim); min-width: 60px; }
+
   /* ── Watch Session History ─────────────────────────────────── */
   .watch-summary-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -762,6 +809,15 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
     </a>
     <a class="nav-item" href="#section-tools" onclick="setActiveNav(this)" id="nav-tools-item" style="display:none">
       <span class="nav-icon">🛠</span> Tool Usage
+    </a>
+    <a class="nav-item" href="#section-signal-quality" onclick="setActiveNav(this)" id="nav-signal-quality-item" style="display:none">
+      <span class="nav-icon">📊</span> Signal Quality
+    </a>
+    <a class="nav-item" href="#section-tool-timeline" onclick="setActiveNav(this)" id="nav-tool-timeline-item" style="display:none">
+      <span class="nav-icon">⏱</span> Tool Timeline
+    </a>
+    <a class="nav-item" href="#section-data-completeness" onclick="setActiveNav(this)" id="nav-data-completeness-item" style="display:none">
+      <span class="nav-icon">✅</span> Data Completeness
     </a>
     <a class="nav-item" href="#section-watch-history" onclick="setActiveNav(this)" id="nav-watch-item" style="display:none">
       <span class="nav-icon">👁</span> Watch History
@@ -923,6 +979,37 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
           <div class="tool-bar-container" id="tool-bar-container"></div>
           <div class="tool-steps-note" id="tool-steps-note"></div>
         </div>
+      </div>
+    </section>
+
+    <section id="section-signal-quality" style="display:none">
+      <h2>
+        <span class="section-icon">📊</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Signal Quality</span>
+      </h2>
+      <div class="section-content">
+        <div class="signal-quality-grid" id="signal-quality-cards"></div>
+        <div id="signal-ratio-bars"></div>
+      </div>
+    </section>
+
+    <section id="section-tool-timeline" style="display:none">
+      <h2>
+        <span class="section-icon">⏱</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Tool Call Timeline</span>
+      </h2>
+      <div class="section-content">
+        <div class="waterfall-wrap" id="waterfall-container"></div>
+      </div>
+    </section>
+
+    <section id="section-data-completeness" style="display:none">
+      <h2>
+        <span class="section-icon">✅</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Data Completeness</span>
+      </h2>
+      <div class="section-content">
+        <div class="completeness-grid" id="completeness-grid"></div>
       </div>
     </section>
 
@@ -1370,6 +1457,150 @@ function renderToolUsage() {
     document.getElementById('tool-steps-note').innerHTML =
       `<strong>Total tool calls:</strong> ${esc(tools.tool_calls)}`;
   }
+}
+
+// ── Signal Quality ────────────────────────────────────────────────
+function renderSignalQuality() {
+  const tools = REPORT_DATA.metadata && REPORT_DATA.metadata.tool_usage;
+  if (!tools) return;
+  const total = tools.tool_calls != null ? tools.tool_calls : null;
+  const success = tools.successful_calls != null ? tools.successful_calls : null;
+  const failed = tools.failed_calls != null ? tools.failed_calls : null;
+  if (total == null && success == null && failed == null) return;
+
+  const section = document.getElementById('section-signal-quality');
+  const navItem = document.getElementById('nav-signal-quality-item');
+  if (section) section.style.display = '';
+  if (navItem) navItem.style.display = '';
+
+  const effectiveTotal = total != null ? total : (success || 0) + (failed || 0);
+  const effectiveSuccess = success != null ? success : (effectiveTotal - (failed || 0));
+  const effectiveFailed = failed != null ? failed : (effectiveTotal - effectiveSuccess);
+  const hasExplicitBreakdown = success != null && failed != null;
+  const ratio = hasExplicitBreakdown && effectiveTotal > 0
+    ? Math.round((effectiveSuccess / effectiveTotal) * 100)
+    : null;
+  const ratioColor = ratio != null ? (ratio >= 80 ? 'var(--healthy)' : ratio >= 50 ? 'var(--medium)' : 'var(--failed)') : 'var(--text-dim)';
+  const ratioDisplay = ratio != null ? ratio + '%' : 'N/A';
+
+  document.getElementById('signal-quality-cards').innerHTML = [
+    { label: 'Total Tool Calls', value: effectiveTotal },
+    { label: 'Successful Calls', value: effectiveSuccess },
+    { label: 'Failed / Empty', value: effectiveFailed },
+    { label: 'Signal Ratio', value: ratioDisplay },
+  ].map(c => `<div class="signal-quality-card">
+    <div class="sq-value">${esc(c.value)}</div>
+    <div class="sq-label">${esc(c.label)}</div>
+  </div>`).join('');
+
+  document.getElementById('signal-ratio-bars').innerHTML = `
+    <div class="signal-ratio-bar-wrap">
+      <div class="signal-ratio-label">Signal / Noise</div>
+      <div class="signal-ratio-track">
+        <div class="signal-ratio-fill" style="width:${ratio != null ? ratio : 0}%;background:${ratioColor}"></div>
+      </div>
+      <div class="signal-ratio-pct">${ratioDisplay}</div>
+    </div>`;
+}
+
+// ── Tool Call Timeline / Waterfall ────────────────────────────────
+function renderToolTimeline() {
+  const tools = REPORT_DATA.metadata && REPORT_DATA.metadata.tool_usage;
+  const timeline = tools && tools.tool_call_timeline;
+  if (!timeline || !timeline.length) return;
+
+  const section = document.getElementById('section-tool-timeline');
+  const navItem = document.getElementById('nav-tool-timeline-item');
+  if (section) section.style.display = '';
+  if (navItem) navItem.style.display = '';
+
+  const totalMs = Math.max(...timeline.map(e => (e.start_ms || 0) + (e.duration_ms || 0)));
+  const maxMs = totalMs > 0 ? totalMs : 1;
+
+  const rows = timeline.map(e => {
+    const st = e.status || 'success';
+    const startPct = Math.round(((e.start_ms || 0) / maxMs) * 100);
+    const widthPct = Math.max(1, Math.round(((e.duration_ms || 0) / maxMs) * 100));
+    const durLabel = e.duration_ms != null ? `${e.duration_ms}ms` : '—';
+    return `<tr>
+      <td class="waterfall-name">${esc(e.name || '?')}</td>
+      <td class="waterfall-track-cell">
+        <div class="waterfall-bar-track">
+          <div class="waterfall-bar ${esc(st)}" style="left:${startPct}%;width:${widthPct}%"></div>
+        </div>
+      </td>
+      <td class="waterfall-duration">${esc(durLabel)}</td>
+      <td><span class="waterfall-status-badge ${esc(st)}">${esc(st)}</span></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('waterfall-container').innerHTML = `
+    <table class="waterfall-table">
+      <thead><tr><th>Tool</th><th>Timeline</th><th>Duration</th><th>Status</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── Data Completeness Dashboard ──────────────────────────────────
+function renderDataCompleteness() {
+  const gaps = REPORT_DATA.evidence_gaps || [];
+  const coverage = REPORT_DATA.investigation_coverage || null;
+
+  // Define known signal sources
+  const SOURCES = [
+    { key: 'metrics',          label: 'Metrics',          keywords: ['metric', 'cpu', 'memory', 'ram', 'utilization'] },
+    { key: 'logs',             label: 'Logs',             keywords: ['log', 'stdout', 'stderr', 'journal'] },
+    { key: 'error_reporting',  label: 'Error Reporting',  keywords: ['error_report', 'crash', 'exception', 'stackdriver'] },
+    { key: 'uptime',           label: 'Uptime Checks',    keywords: ['uptime', 'probe', 'liveness', 'readiness', 'ping'] },
+    { key: 'config',           label: 'Config / Drift',   keywords: ['config', 'deploy', 'manifest', 'git', 'helm'] },
+    { key: 'cost',             label: 'Cost Data',        keywords: ['cost', 'billing', 'spend', 'budget'] },
+  ];
+
+  // Determine which sources have gaps (failed / empty / not_called)
+  const gapSources = new Set(gaps.map(g => (g.source || '').toLowerCase()));
+
+  // Compute per-source completeness: 100 = present, 0 = gap, 50 = partial
+  const rows = SOURCES.map(src => {
+    const isGap = src.keywords.some(kw => [...gapSources].some(gs => gs.includes(kw)));
+    const pct = isGap ? 0 : 100;
+    let cls = pct === 100 ? 'full' : pct >= 50 ? 'partial' : 'empty';
+    let statusLabel = pct === 100 ? 'Present' : 'Missing';
+
+    // Check metadata for explicit cost presence
+    if (src.key === 'cost') {
+      const hasCost = REPORT_DATA.metadata && REPORT_DATA.metadata.cost_metrics
+        && REPORT_DATA.metadata.cost_metrics.run_cost_usd != null;
+      const finalPct = hasCost ? 100 : (isGap ? 0 : 50);
+      cls = finalPct === 100 ? 'full' : finalPct >= 50 ? 'partial' : 'empty';
+      statusLabel = hasCost ? 'Present' : (isGap ? 'Missing' : 'Partial');
+      return { label: src.label, pct: finalPct, cls, statusLabel };
+    }
+
+    return { label: src.label, pct, cls, statusLabel };
+  });
+
+  const hasAnyData = rows.some(r => r.pct > 0 || gapSources.size > 0);
+  if (!hasAnyData && !coverage) return;
+
+  const section = document.getElementById('section-data-completeness');
+  const navItem = document.getElementById('nav-data-completeness-item');
+  if (section) section.style.display = '';
+  if (navItem) navItem.style.display = '';
+
+  const htmlRows = rows.map(r => `<div class="completeness-row">
+    <div class="completeness-source">${esc(r.label)}</div>
+    <div class="completeness-track">
+      <div class="completeness-fill ${esc(r.cls)}" style="width:${r.pct}%"></div>
+    </div>
+    <div class="completeness-pct">${r.pct}%</div>
+    <div class="completeness-status">${esc(r.statusLabel)}</div>
+  </div>`).join('');
+
+  const coverageLine = coverage
+    ? `<div style="margin-bottom:12px;font-size:12px;color:var(--text-dim)">${esc(coverage)}</div>`
+    : '';
+
+  document.getElementById('completeness-grid').innerHTML = coverageLine + htmlRows;
 }
 
 // ── GKE Workload Cost Estimation ─────────────────────────────────
@@ -2185,6 +2416,9 @@ function renderEvidenceGaps() {
   renderRecs();
   renderCostUsage();
   renderToolUsage();
+  renderSignalQuality();
+  renderToolTimeline();
+  renderDataCompleteness();
   renderGKECost();
   renderTrendSection();
   renderReviewPanel();

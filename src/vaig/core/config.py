@@ -1865,6 +1865,15 @@ class InvestigationConfig(BaseModel):
         default=True,
         description="Enable MEM-05 memory-aware pre-action hook inside InvestigationAgent.",
     )
+    max_replan_iterations: int = Field(
+        default=2,
+        ge=0,
+        description=(
+            "How many re-planning rounds are allowed after the initial investigation loop. "
+            "Each round targets thin-evidence steps (errors or very short answers). "
+            "0 disables re-planning entirely."
+        ),
+    )
 
     @model_validator(mode="after")
     def _autonomous_requires_enabled(self) -> InvestigationConfig:
