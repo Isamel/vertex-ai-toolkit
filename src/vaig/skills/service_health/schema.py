@@ -1210,7 +1210,7 @@ class HealthReport(BaseModel):
         return [f for f in self.findings if not f.caused_by]
 
     @model_validator(mode="after")
-    def _validate_hypothesis_probability_sum(self) -> "HealthReport":
+    def _validate_hypothesis_probability_sum(self) -> HealthReport:
         """Probabilities must sum to [0.7, 1.0] when hypotheses are present."""
         if not self.root_cause_hypotheses:
             return self
