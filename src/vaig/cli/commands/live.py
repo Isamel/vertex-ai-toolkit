@@ -632,6 +632,41 @@ def register(app: typer.Typer) -> None:
                 help="Git ref to use for repo correlation (default: HEAD)",
             ),
         ] = "HEAD",
+        repo_path: Annotated[
+            list[str] | None,
+            typer.Option(
+                "--repo-path",
+                help="Subdirectory path within the repo to investigate (multi-valued).",
+            ),
+        ] = None,
+        repo_include_glob: Annotated[
+            list[str] | None,
+            typer.Option(
+                "--repo-include-glob",
+                help="Glob pattern to include from the repo (multi-valued).",
+            ),
+        ] = None,
+        repo_exclude_glob: Annotated[
+            list[str] | None,
+            typer.Option(
+                "--repo-exclude-glob",
+                help="Glob pattern to exclude from the repo (multi-valued).",
+            ),
+        ] = None,
+        repo_max_files: Annotated[
+            int | None,
+            typer.Option(
+                "--repo-max-files",
+                help="Maximum number of files to process per repo path.",
+            ),
+        ] = None,
+        repo_max_bytes_per_file: Annotated[
+            int | None,
+            typer.Option(
+                "--repo-max-bytes-per-file",
+                help="Files larger than this (bytes) are processed via streaming chunker.",
+            ),
+        ] = None,
         interactive: Annotated[
             bool,
             typer.Option(
@@ -731,6 +766,19 @@ def register(app: typer.Typer) -> None:
                 settings,
                 cluster=cluster,
                 namespace=namespace,
+            )
+
+            # ── Repo investigation config (SPEC-V2-REPO-01) ───────
+            # Build and validate early so malformed globs are caught before
+            # any LLM call.  The config object is passed to tools in REPO-02.
+            _build_repo_investigation_config(
+                repo=repo,
+                repo_ref=repo_ref,
+                repo_paths=repo_path or [],
+                include_globs=repo_include_glob or [],
+                exclude_globs=repo_exclude_glob,
+                max_files=repo_max_files,
+                streaming_threshold_bytes=repo_max_bytes_per_file,
             )
 
             # Auto-detect skill if requested (or enabled in config) and no explicit skill specified
@@ -1026,6 +1074,76 @@ def _run_watch_loop(
 
 # _build_gke_config — delegated to vaig.core.gke.build_gke_config
 from vaig.core.gke import build_gke_config as _build_gke_config
+
+
+def _build_repo_investigation_config(
+    *,
+    repo: str | None,
+    repo_ref: str,
+    repo_paths: list[str],
+    include_globs: list[str],
+    exclude_globs: list[str] | None,
+    max_files: int | None,
+    streaming_threshold_bytes: int | None,
+) -> Any:
+    """Build a :class:`~vaig.core.config.RepoInvestigationConfig` from CLI flags.
+
+    Validates glob patterns early (before any LLM call) and raises
+    :exc:`typer.BadParameter` with a clear message on malformed patterns.
+
+    Returns:
+        A ``RepoInvestigationConfig`` instance (or ``None`` when no repo is given
+        and all lists are empty — back-compat with pre-REPO-01 behaviour).
+    """
+    import fnmatch
+    import re
+
+    from vaig.core.config import RepoInvestigationConfig
+
+    # Validate globs early — give the user a clear error before any network call.
+    # Python's fnmatch.translate() and glob.glob() silently accept malformed
+    # patterns, so we explicitly check for unclosed bracket expressions which
+    # are the most common user mistake (e.g. "[invalid").
+    def _validate_glob(pattern: str) -> None:
+        try:
+            # Attempt to compile the translated regex — catches some bad patterns.
+            re.compile(fnmatch.translate(pattern))
+        except re.error as exc:
+            raise typer.BadParameter(
+                f"glob pattern {pattern!r} is malformed: {exc}",
+                param_hint="--repo-include-glob/--repo-exclude-glob",
+            ) from exc
+        # Check for unclosed bracket expressions which fnmatch accepts silently.
+        depth = 0
+        for ch in pattern:
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth = max(0, depth - 1)
+        if depth > 0:
+            raise typer.BadParameter(
+                f"glob pattern {pattern!r} is malformed: unclosed '[' bracket",
+                param_hint="--repo-include-glob/--repo-exclude-glob",
+            )
+
+    all_globs = include_globs + (exclude_globs or [])
+    for pattern in all_globs:
+        _validate_glob(pattern)
+
+    kwargs: dict[str, Any] = {
+        "repo": repo,
+        "ref": repo_ref,
+        "paths": repo_paths,
+        "include_globs": include_globs,
+    }
+    if exclude_globs is not None:
+        kwargs["exclude_globs"] = exclude_globs
+    if max_files is not None:
+        kwargs["max_files"] = max_files
+    if streaming_threshold_bytes is not None:
+        kwargs["streaming_threshold_bytes"] = streaming_threshold_bytes
+
+    return RepoInvestigationConfig(**kwargs)
 
 
 def _display_dry_run_plan(
