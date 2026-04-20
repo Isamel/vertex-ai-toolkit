@@ -1237,16 +1237,10 @@ class HealthReport(BaseModel):
             logger.warning(
                 "root_cause_hypotheses probabilities all zero — assigning uniform probabilities.",
             )
-            count = len(self.root_cause_hypotheses)
-            if count == 1:
-                probabilities = [1.0]
-            else:
-                uniform = round(1.0 / count, 4)
-                probabilities = [uniform] * (count - 1)
-                probabilities.append(round(1.0 - sum(probabilities), 4))
+            uniform = 1.0 / len(self.root_cause_hypotheses)
             self.root_cause_hypotheses = [
-                h.model_copy(update={"probability": p})
-                for h, p in zip(self.root_cause_hypotheses, probabilities, strict=False)
+                h.model_copy(update={"probability": uniform})
+                for h in self.root_cause_hypotheses
             ]
             return self
         if abs(total - 1.0) > 1e-6:
@@ -1254,16 +1248,9 @@ class HealthReport(BaseModel):
                 "root_cause_hypotheses probabilities sum to %.3f — normalizing to 1.0.",
                 total,
             )
-            count = len(self.root_cause_hypotheses)
-            if count == 1:
-                probabilities = [1.0]
-            else:
-                scaled = [round(h.probability / total, 4) for h in self.root_cause_hypotheses]
-                scaled[-1] = round(1.0 - sum(scaled[:-1]), 4)
-                probabilities = scaled
             self.root_cause_hypotheses = [
-                h.model_copy(update={"probability": p})
-                for h, p in zip(self.root_cause_hypotheses, probabilities, strict=False)
+                h.model_copy(update={"probability": h.probability / total})
+                for h in self.root_cause_hypotheses
             ]
         return self
 
