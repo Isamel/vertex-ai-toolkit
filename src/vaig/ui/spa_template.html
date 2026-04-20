@@ -951,6 +951,15 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
 <script>
 // ── Render helpers ──────────────────────────────────────────────
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+// safeUrl: allow only http/https scheme to prevent javascript: XSS via href
+const safeUrl = u => { try { const p = new URL(String(u)); return (p.protocol === 'https:' || p.protocol === 'http:') ? esc(u) : '#'; } catch { return '#'; } };
+// SAFE_SYSTEM_ICONS: pre-defined static SVG icons keyed by the schema Literal system value.
+// link.icon from report data is NOT used directly — avoids XSS via LLM-injected SVG.
+const SAFE_SYSTEM_ICONS = {
+  gcp: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.372 0 0 5.373 0 12s5.372 12 12 12 12-5.373 12-12S18.628 0 12 0zm-.48 4.8h.96L16.8 12l-4.32 7.2h-.96L7.2 12l4.32-7.2z"/></svg>',
+  datadog: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect width="24" height="24" rx="4"/><path fill="#fff" d="M6 12l4-4 4 4-4 4z"/></svg>',
+  argocd: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><path fill="#fff" d="M8 12l4-6 4 6-4 3z"/></svg>',
+};
 
 function sevColor(s) {
   const m = {CRITICAL:'critical',HIGH:'high',MEDIUM:'medium',LOW:'low',INFO:'info',HEALTHY:'healthy',DEGRADED:'degraded',FAILED:'failed',UNKNOWN:'unknown'};
@@ -1015,7 +1024,7 @@ function renderRecentChanges() {
       <div class="change-ts">${esc(c.timestamp)}</div>
       <span class="change-badge ${badgeClass(c.type)}">${esc(c.type)}</span>
       <div class="change-desc">${esc(c.description)}</div>
-      <div class="change-corr">${esc(c.correlation_to_issue)}</div>
+      <div class="change-corr">${c.correlation_to_issue ? esc(c.correlation_to_issue) : ''}</div>
     </div>`
   ).join('');
 }
@@ -2100,7 +2109,7 @@ function renderQuickLinks() {
       <h4 style="margin:0 0 10px 0;color:var(--text-dim);font-size:.85rem;text-transform:uppercase;letter-spacing:.05em">${esc(g.label)}</h4>
       <div style="display:flex;flex-wrap:wrap;gap:8px">
         ${g.links.map(link => `
-          <a href="${esc(link.url)}"
+          <a href="${safeUrl(link.url)}"
              target="_blank"
              rel="noopener"
              style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;
@@ -2109,7 +2118,7 @@ function renderQuickLinks() {
                     font-size:.85rem;transition:border-color .15s"
              onmouseover="this.style.borderColor='var(--primary,#7aa2f7)'"
              onmouseout="this.style.borderColor='var(--border,#3b3f5c)'">
-            ${link.icon ? `<span style="flex-shrink:0">${link.icon}</span>` : ''}
+            ${SAFE_SYSTEM_ICONS[link.system] ? `<span style="flex-shrink:0">${SAFE_SYSTEM_ICONS[link.system]}</span>` : ''}
             ${esc(link.label)}
             <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           </a>

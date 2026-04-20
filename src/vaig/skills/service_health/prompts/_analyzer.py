@@ -390,7 +390,7 @@ When investigation context contains any of the following identifiers, populate t
 
 Rules:
 - Populate only the link categories for which ALL required context keys are present.
-- Omit any link category when its required keys are absent — use ``null`` for that system's list.
+- Omit any link category when its required keys are absent — use ``[]`` for that system's list.
 - If NONE of the above context fields are available, set ``external_links`` to ``null``.
 - NEVER fabricate URLs; only emit ``external_links`` when real values are present in gathered data.
 
@@ -420,7 +420,7 @@ For each correlated change event identified in Step 1–3 above, add one entry:
 ```json
 {
   "timestamp": "<ISO-8601 event timestamp>",
-  "type": "<deploy | rollout | config | other>",
+  "type": "<deployment | config_change | hpa_scaling | other>",
   "description": "<human-readable one-liner>",
   "correlation_to_issue": "<brief explanation of how this change relates to the anomaly, or null>"
 }

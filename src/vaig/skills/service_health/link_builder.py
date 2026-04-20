@@ -145,7 +145,7 @@ def build_datadog_links(ctx: LinkContext) -> list[ExternalLink]:
         # Caller passed a FQDN / full host
         base = f"https://{datadog_org}"
     else:
-        base = "https://app.datadoghq.com"
+        base = f"https://{datadog_org}.datadoghq.com"
 
     # APM Service — needs service name
     service = ctx.get("service", "")
