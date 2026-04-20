@@ -2,7 +2,7 @@
 
 Covers:
 - Valid ExternalLink instantiation
-- Invalid system literal raises ValidationError
+- Invalid system literal is accepted (system is a plain str, not a Literal)
 - ExternalLinks partial groups default to empty lists
 - HealthReport backward-compat deserialization without external_links
 - HealthReportGeminiSchema pruning of excluded fields and orphaned $defs
@@ -40,13 +40,13 @@ class TestExternalLink:
         link = ExternalLink(label="ArgoCD", url="https://argocd.example.com/applications/myapp", system="argocd")
         assert link.system == "argocd"
 
-    def test_invalid_system_literal_raises(self) -> None:
+    def test_invalid_system_literal_accepted(self) -> None:
         # system is now a plain str to reduce Gemini schema complexity;
         # any string value is accepted at instantiation time.
         link = ExternalLink(label="Bad", url="https://example.com", system="splunk")
         assert link.system == "splunk"
 
-    def test_empty_system_raises(self) -> None:
+    def test_empty_system_accepted(self) -> None:
         # Empty string is accepted since system is a plain str (no Literal constraint).
         link = ExternalLink(label="Bad", url="https://example.com", system="")
         assert link.system == ""

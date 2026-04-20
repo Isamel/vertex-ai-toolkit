@@ -1564,13 +1564,13 @@ class HealthReportGeminiSchema(HealthReport):
     * ``external_links`` — populated by the link-builder post-hoc
     * ``investigation_coverage`` — populated by the analyzer
 
-    **Important — do NOT use ``exclude=True`` on these field re-declarations.**
-    Pydantic v2's ``exclude=True`` strips fields from ``.model_dump()`` (and
-    ``model_dump_json()``), which would break the HTML report template that
-    reads ``REPORT_DATA.metadata.project_id`` and friends.  Instead, the
-    fields to omit from the Gemini JSON schema are listed in
-    ``_GEMINI_EXCLUDED_FIELDS`` and the ``model_json_schema()`` classmethod
-    override removes them from the schema at call time.
+    **Exclusion mechanism** — post-hoc fields are listed in the
+    ``_GEMINI_EXCLUDED_FIELDS`` frozenset.  The ``model_json_schema()``
+    classmethod override reads that set and strips the matching properties
+    (and any orphaned ``$defs``) at call time, without touching
+    ``.model_dump()`` or ``.model_dump_json()``.  This keeps the HTML report
+    template working (it reads ``REPORT_DATA.metadata.project_id`` and
+    friends from the full serialised output).
     """
 
     # Fields to strip from the Gemini JSON schema (but NOT from model_dump).
@@ -1587,28 +1587,6 @@ class HealthReportGeminiSchema(HealthReport):
     )
 
     model_config = ConfigDict(extra="ignore")
-
-    # Post-hoc fields — kept as defaulted attributes for HealthReport
-    # compatibility but stripped from the Gemini JSON schema via
-    # model_json_schema() override below.
-    # NOTE: ``exclude=True`` is intentionally NOT set here.  Using it would
-    # cause model_dump() to omit these fields, breaking the HTML report
-    # template (JS crash at ``REPORT_DATA.metadata.project_id``).
-    metadata: ReportMetadata = Field(
-        default_factory=ReportMetadata,
-    )
-    evidence_gaps: list[EvidenceGap] = Field(
-        default_factory=list,
-    )
-    recent_changes: list[ChangeEvent] = Field(
-        default_factory=list,
-    )
-    external_links: ExternalLinks | None = Field(
-        default=None,
-    )
-    investigation_coverage: str | None = Field(
-        default=None,
-    )
 
     @classmethod
     def model_json_schema(
