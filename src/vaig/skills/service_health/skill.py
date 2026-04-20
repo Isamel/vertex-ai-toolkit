@@ -18,7 +18,7 @@ from pydantic import ValidationError
 
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
-from vaig.skills.service_health.contradiction_validator import detect_contradictions
+from vaig.skills.service_health.contradiction_validator import apply_contradiction_rules, detect_contradictions
 from vaig.skills.service_health.prompts import (
     ANALYZER_AUTONOMOUS_OVERLAY,
     HEALTH_ANALYZER_PROMPT,
@@ -1102,6 +1102,13 @@ class ServiceHealthSkill(BaseSkill):
             if contradiction_findings:
                 report = report.model_copy(
                     update={"findings": report.findings + contradiction_findings}
+                )
+
+            # ── SPEC-V2-AUDIT-10: Causal correlation rules ─────────────────
+            causal_findings = apply_contradiction_rules(report)
+            if causal_findings:
+                report = report.model_copy(
+                    update={"findings": report.findings + causal_findings}
                 )
 
             # Warn if report has no meaningful data

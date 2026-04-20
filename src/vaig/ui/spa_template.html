@@ -876,9 +876,9 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
         <span class="filter-pill" data-sev="INFO" data-i18n="pill_info" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSeverityFilter(this.dataset.sev)}">INFO</span>
       </div>
       <div class="filter-presets" id="severity-presets" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">
-        <button class="filter-preset-btn" data-preset="critical-only" data-i18n="preset_crit_only" onclick="applyPreset('critical-only')" title="Show CRITICAL only">🔴 Crit only</button>
-        <button class="filter-preset-btn" data-preset="high-and-above" data-i18n="preset_high_plus" onclick="applyPreset('high-and-above')" title="Show CRITICAL and HIGH">⬆ High+</button>
-        <button class="filter-preset-btn" data-preset="all" data-i18n="preset_all" onclick="applyPreset('all')" title="Show all severities">✦ All</button>
+        <button class="filter-preset-btn" data-preset="critical-only" onclick="applyPreset('critical-only')" title="Show CRITICAL only">🔴 <span data-i18n="preset_crit_only">Crit only</span></button>
+        <button class="filter-preset-btn" data-preset="high-and-above" onclick="applyPreset('high-and-above')" title="Show CRITICAL and HIGH">⬆ <span data-i18n="preset_high_plus">High+</span></button>
+        <button class="filter-preset-btn" data-preset="all" onclick="applyPreset('all')" title="Show all severities">✦ <span data-i18n="preset_all">All</span></button>
       </div>
     </div>
   </nav>

@@ -2133,8 +2133,9 @@ class MemoryRecallMixin:
                 return []
 
             # Rank by keyword overlap with *query* (case-insensitive)
+            # Filter out short stop-words (len <= 2) to reduce noise.
             query_lower = query.lower()
-            query_words = set(query_lower.split())
+            query_words = {w for w in query_lower.split() if len(w) > 2}
 
             def _score(entry: Any) -> int:
                 text = (entry.title + " " + entry.service + " " + entry.category).lower()
@@ -2191,6 +2192,9 @@ class MemoryRecallMixin:
         guaranteeing byte-for-byte prompt equality with the pre-memory state.
         """
         from vaig.core.config import get_settings
+
+        if not self._recall_enabled():
+            return base
 
         try:
             cfg = get_settings()

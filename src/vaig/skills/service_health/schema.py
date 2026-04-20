@@ -550,7 +550,7 @@ class RootCauseHypothesis(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    label: str = Field(..., description="Short human title (<=80 chars)")
+    label: str = Field(..., max_length=80, description="Short human title (<=80 chars)")
     probability: float = Field(
         ...,
         ge=0.0,

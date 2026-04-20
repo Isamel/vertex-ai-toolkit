@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 # ── SPEC-V2-AUDIT-10: Infra → workload causal correlation ────────────────────
 
 _INFRA_KEYWORDS: tuple[str, ...] = (
-    "istio-cni-node", "cni plugin", "NetworkNotReady", "NetworkPluginNotReady",
+    "istio-cni-node", "cni plugin", "networknotready", "networkpluginnotready",
     "kube-proxy", "anetd", "gke-metadata-server", "calico", "cilium",
 )
 _WORKLOAD_KEYWORDS: tuple[str, ...] = (
@@ -249,7 +249,7 @@ def _check_infra_degrades_workload(report: HealthReport) -> Finding | None:
     for f in findings:
         if f.severity in (Severity.HIGH, Severity.CRITICAL):
             haystack = f"{f.title} {f.description}".lower()
-            if any(kw.lower() in haystack for kw in _INFRA_KEYWORDS):
+            if any(kw in haystack for kw in _INFRA_KEYWORDS):
                 infra_finding = f
                 break
 
@@ -257,7 +257,7 @@ def _check_infra_degrades_workload(report: HealthReport) -> Finding | None:
     for f in findings:
         if f.severity in (Severity.HIGH, Severity.CRITICAL):
             haystack = f"{f.title} {f.description}".lower()
-            if any(kw.lower() in haystack for kw in _WORKLOAD_KEYWORDS):
+            if any(kw in haystack for kw in _WORKLOAD_KEYWORDS):
                 workload_finding = f
                 break
 
