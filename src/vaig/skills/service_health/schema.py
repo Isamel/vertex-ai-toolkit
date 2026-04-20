@@ -1564,13 +1564,13 @@ class HealthReportGeminiSchema(HealthReport):
     * ``external_links`` — populated by the link-builder post-hoc
     * ``investigation_coverage`` — populated by the analyzer
 
-    **Important — do NOT use ``exclude=True`` on these field re-declarations.**
-    Pydantic v2's ``exclude=True`` strips fields from ``.model_dump()`` (and
-    ``model_dump_json()``), which would break the HTML report template that
-    reads ``REPORT_DATA.metadata.project_id`` and friends.  Instead, the
-    fields to omit from the Gemini JSON schema are listed in
-    ``_GEMINI_EXCLUDED_FIELDS`` and the ``model_json_schema()`` classmethod
-    override removes them from the schema at call time.
+    **Exclusion mechanism** — post-hoc fields are listed in the
+    ``_GEMINI_EXCLUDED_FIELDS`` frozenset.  The ``model_json_schema()``
+    classmethod override reads that set and strips the matching properties
+    (and any orphaned ``$defs``) at call time, without touching
+    ``.model_dump()`` or ``.model_dump_json()``.  This keeps the HTML report
+    template working (it reads ``REPORT_DATA.metadata.project_id`` and
+    friends from the full serialised output).
     """
 
     # Fields to strip from the Gemini JSON schema (but NOT from model_dump).
