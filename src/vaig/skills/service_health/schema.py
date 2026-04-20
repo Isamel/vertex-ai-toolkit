@@ -1226,17 +1226,27 @@ class HealthReport(BaseModel):
 
         Gemini sometimes assigns probabilities independently (e.g. 0.6 + 0.5 + 0.4 = 1.5).
         Rather than rejecting the entire report, we normalize proportionally so the
-        relative ranking is preserved and the sum becomes exactly 1.0.
-        If total is 0 (degenerate case) we assign uniform probabilities.
+        relative ranking is preserved. The last element absorbs any rounding residual
+        so the post-normalization sum is exactly 1.0 (to 4 decimal places).
+        If total is 0 (degenerate case) uniform probabilities are assigned instead.
         """
         if not self.root_cause_hypotheses:
             return self
         total = sum(h.probability for h in self.root_cause_hypotheses)
         if total <= 0.0:
-            uniform = round(1.0 / len(self.root_cause_hypotheses), 4)
+            logger.warning(
+                "root_cause_hypotheses probabilities all zero — assigning uniform probabilities.",
+            )
+            count = len(self.root_cause_hypotheses)
+            if count == 1:
+                probabilities = [1.0]
+            else:
+                uniform = round(1.0 / count, 4)
+                probabilities = [uniform] * (count - 1)
+                probabilities.append(round(1.0 - sum(probabilities), 4))
             self.root_cause_hypotheses = [
-                h.model_copy(update={"probability": uniform})
-                for h in self.root_cause_hypotheses
+                h.model_copy(update={"probability": p})
+                for h, p in zip(self.root_cause_hypotheses, probabilities, strict=False)
             ]
             return self
         if abs(total - 1.0) > 1e-6:
@@ -1244,9 +1254,16 @@ class HealthReport(BaseModel):
                 "root_cause_hypotheses probabilities sum to %.3f — normalizing to 1.0.",
                 total,
             )
+            count = len(self.root_cause_hypotheses)
+            if count == 1:
+                probabilities = [1.0]
+            else:
+                scaled = [round(h.probability / total, 4) for h in self.root_cause_hypotheses]
+                scaled[-1] = round(1.0 - sum(scaled[:-1]), 4)
+                probabilities = scaled
             self.root_cause_hypotheses = [
-                h.model_copy(update={"probability": round(h.probability / total, 4)})
-                for h in self.root_cause_hypotheses
+                h.model_copy(update={"probability": p})
+                for h, p in zip(self.root_cause_hypotheses, probabilities, strict=False)
             ]
         return self
 

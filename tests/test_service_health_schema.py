@@ -357,6 +357,24 @@ class TestRootCauseHypothesisProbabilityValidator:
         # Relative ranking must be preserved: first hyp was lower, must stay lower
         assert report.root_cause_hypotheses[0].probability < report.root_cause_hypotheses[1].probability
 
+    def test_all_zero_probabilities_assigns_uniform(self) -> None:
+        """All-zero probabilities (degenerate case) must produce uniform-ish distribution summing to 1.0."""
+        report = self._make_report([self._hyp(0.0), self._hyp(0.0), self._hyp(0.0)])
+        total = sum(h.probability for h in report.root_cause_hypotheses)
+        assert abs(total - 1.0) < 1e-3
+        # All probabilities must be close to uniform (within rounding residual)
+        probs = [h.probability for h in report.root_cause_hypotheses]
+        expected = 1.0 / 3
+        for p in probs:
+            assert abs(p - expected) < 0.01
+
+    def test_normalization_last_element_absorbs_rounding(self) -> None:
+        """With 3+ hypotheses, rounding residual must be absorbed so sum is exactly 1.0."""
+        # 3 equal hypotheses: 0.5 each → total 1.5; normalized each would be 0.3333...
+        report = self._make_report([self._hyp(0.5), self._hyp(0.5), self._hyp(0.5)])
+        total = sum(h.probability for h in report.root_cause_hypotheses)
+        assert abs(total - 1.0) < 1e-4
+
     def test_max_four_hypotheses_enforced(self) -> None:
         """max_length=4 must reject a list of 5."""
         import pytest
