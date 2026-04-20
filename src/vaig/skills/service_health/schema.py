@@ -850,6 +850,21 @@ class ToolUsageSummary(BaseModel):
         description="Per-tool call counts, e.g. {'kubectl_get': 4, 'get_events': 2}",
     )
     tool_calls: int | None = Field(default=None, description="Total number of tool calls executed")
+    successful_calls: int | None = Field(
+        default=None,
+        description="Number of tool calls that returned useful (non-error, non-empty) data",
+    )
+    failed_calls: int | None = Field(
+        default=None,
+        description="Number of tool calls that returned an error or empty result",
+    )
+    tool_call_timeline: list[dict[str, object]] | None = Field(
+        default=None,
+        description=(
+            "Ordered list of tool call events for timeline/waterfall rendering. "
+            "Each entry: {name, start_ms, duration_ms, status: 'success'|'error'|'timeout'}"
+        ),
+    )
 
 
 class ReportMetadata(BaseModel):

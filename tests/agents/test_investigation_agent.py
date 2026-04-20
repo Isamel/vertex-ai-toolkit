@@ -45,7 +45,7 @@ def _make_agent(max_iterations: int = 10) -> InvestigationAgent:
     )
 
 
-def _make_tool(name: str, output: str = "ok") -> ToolDef:
+def _make_tool(name: str, output: str = "pod is running normally with all containers healthy and no restarts detected") -> ToolDef:
     return ToolDef(
         name=name,
         description="test tool",
@@ -62,7 +62,7 @@ class TestInvestigationAgentExecute:
     def test_all_steps_complete_with_registered_tools(self) -> None:
         """Three steps, all tools registered → all steps complete."""
         agent = _make_agent()
-        agent._tool_registry.register(_make_tool("kubectl_describe", "pod info here"))
+        agent._tool_registry.register(_make_tool("kubectl_describe", "pod is running normally with sufficient memory and cpu limits configured"))
 
         plan = _make_plan("step-0", "step-1", "step-2")
         result = agent.execute(plan)
@@ -87,7 +87,7 @@ class TestInvestigationAgentExecute:
     def test_evidence_ledger_appended_to_state_patch(self) -> None:
         """After execution, state_patch contains the updated evidence_ledger."""
         agent = _make_agent()
-        agent._tool_registry.register(_make_tool("kubectl_describe", "some output"))
+        agent._tool_registry.register(_make_tool("kubectl_describe", "pod is running normally with all containers healthy and no restarts detected"))
         plan = _make_plan("step-0")
 
         result = agent.execute(plan)
@@ -151,7 +151,7 @@ class TestInvestigationAgentExecute:
             tool_name="kubectl_describe",
             tool_args_hash="aabbccddaabbccdd",
             question=step.hypothesis,
-            answer_summary="pre-cached answer",
+            answer_summary="pre-cached answer: pod is running normally with all containers healthy and no restarts recorded",
         )
         pre_ledger = new_ledger().append(pre_entry)
 
@@ -262,3 +262,143 @@ class TestInvestigationAgentNoPlanGuard:
         assert result.success is True
         # Explicit plan has 1 step; state plan has 2 — explicit wins
         assert result.metadata["steps_completed"] == 1
+
+
+# ── Re-planning tests ─────────────────────────────────────────────────────
+
+
+class TestInvestigationAgentReplan:
+    """Tests for the iterative re-planning logic in InvestigationAgent."""
+
+    __test__ = True
+
+    def test_replan_count_zero_when_all_evidence_good(self) -> None:
+        """When all tool calls return rich answers, no re-plan round is triggered."""
+        agent = _make_agent()
+        agent._tool_registry.register(_make_tool("kubectl_describe", output="Normal running pod with 512MB memory limit and all containers in Ready state"))
+
+        plan = _make_plan("step-1", "step-2")
+        result = agent.execute(plan=plan)
+
+        assert result.metadata["replan_count"] == 0
+        assert result.metadata["followup_steps_executed"] == 0
+
+    def test_replan_triggered_for_thin_error_evidence(self) -> None:
+        """Re-plan round fires when a tool call returns an error string."""
+        agent = _make_agent(max_iterations=20)
+        # First call returns an error (thin evidence); re-plan tool returns rich data
+        call_count = {"n": 0}
+
+        def _flaky_execute(**_: object) -> ToolResult:
+            call_count["n"] += 1
+            if call_count["n"] <= 1:
+                return ToolResult(output="[tool error] connection refused")
+            return ToolResult(output="Pod is OOMKilled — memory limit 256Mi exceeded")
+
+        from vaig.tools.base import ToolDef
+        tool = ToolDef(name="kubectl_describe", description="test", execute=_flaky_execute)
+        agent._tool_registry.register(tool)
+
+        plan = _make_plan("step-1")
+        result = agent.execute(plan=plan)
+
+        assert result.success is True
+        # At least one re-plan round was attempted
+        assert result.metadata["replan_count"] >= 1
+
+    def test_replan_triggered_for_short_evidence(self) -> None:
+        """Re-plan fires when answer_summary is shorter than 50 chars."""
+        agent = _make_agent(max_iterations=20)
+        agent._tool_registry.register(_make_tool("kubectl_describe", output="ok"))  # < 50 chars
+
+        plan = _make_plan("step-short")
+        result = agent.execute(plan=plan)
+
+        assert result.success is True
+        assert result.metadata["replan_count"] >= 1
+
+    def test_replan_respects_max_iterations(self) -> None:
+        """Re-plan loop stops when max_iterations is hit even with thin evidence."""
+        agent = _make_agent(max_iterations=2)  # Very tight limit
+        agent._tool_registry.register(_make_tool("kubectl_describe", output="ok"))  # always thin
+
+        plan = _make_plan("step-1", "step-2", "step-3")
+        result = agent.execute(plan=plan)
+
+        assert result.success is True
+        # Max iterations was hit — no infinite loop
+        assert result.metadata["iterations"] <= 2
+
+    def test_find_thin_evidence_identifies_errors(self) -> None:
+        """_find_thin_evidence correctly flags entries starting with [tool error]."""
+        from vaig.core.evidence_ledger import EvidenceEntry, new_ledger
+
+        ledger = new_ledger()
+        good = EvidenceEntry(
+            source_agent="test",
+            tool_name="kubectl_describe",
+            tool_args_hash="abc123",
+            question="Is the pod healthy?",
+            answer_summary="Pod is running normally with all containers ready and sufficient resources allocated",
+        )
+        thin_error = EvidenceEntry(
+            source_agent="test",
+            tool_name="kubectl_describe",
+            tool_args_hash="def456",
+            question="What are the resource limits?",
+            answer_summary="[tool error] connection timed out",
+        )
+        thin_short = EvidenceEntry(
+            source_agent="test",
+            tool_name="kubectl_logs",
+            tool_args_hash="ghi789",
+            question="Are there OOM errors?",
+            answer_summary="no data",
+        )
+        ledger = ledger.append(good).append(thin_error).append(thin_short)
+
+        thin = InvestigationAgent._find_thin_evidence(ledger)
+        assert len(thin) == 2
+        assert thin_error in thin
+        assert thin_short in thin
+        assert good not in thin
+
+    def test_generate_followup_steps_capped_at_3(self) -> None:
+        """_generate_followup_steps generates at most 3 follow-up steps."""
+        from vaig.core.evidence_ledger import EvidenceEntry
+
+        thin_entries = [
+            EvidenceEntry(
+                source_agent="test",
+                tool_name=f"tool_{i}",
+                tool_args_hash=f"hash_{i}",
+                question=f"Question {i}?",
+                answer_summary="[tool error] fail",
+            )
+            for i in range(10)  # 10 thin entries
+        ]
+
+        steps = InvestigationAgent._generate_followup_steps(thin_entries, iteration=1)
+        assert len(steps) == 3
+        for step in steps:
+            assert step.step_id.startswith("replan-1-")
+
+    def test_replan_metadata_in_result(self) -> None:
+        """AgentResult.metadata includes replan_count and followup_steps_executed keys."""
+        agent = _make_agent()
+        agent._tool_registry.register(_make_tool("kubectl_describe", output="Normal running pod with memory ok"))
+
+        plan = _make_plan("step-meta")
+        result = agent.execute(plan=plan)
+
+        assert "replan_count" in result.metadata
+        assert "followup_steps_executed" in result.metadata
+
+    def test_empty_plan_returns_replan_metadata(self) -> None:
+        """Even the empty-plan early-exit path returns replan_count=0 metadata."""
+        agent = _make_agent()
+        result = agent.execute(plan=None, state=None)
+
+        assert result.success is False
+        assert result.metadata.get("replan_count") == 0
+        assert result.metadata.get("followup_steps_executed") == 0

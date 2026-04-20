@@ -100,7 +100,13 @@ class TestToolUsageSummary:
         """model_dump produces expected JSON-serialisable dict."""
         t = ToolUsageSummary(tool_counts={"kubectl_get": 4}, tool_calls=4)
         d = t.model_dump(mode="json")
-        assert d == {"tool_counts": {"kubectl_get": 4}, "tool_calls": 4}
+        assert d == {
+            "tool_counts": {"kubectl_get": 4},
+            "tool_calls": 4,
+            "successful_calls": None,
+            "failed_calls": None,
+            "tool_call_timeline": None,
+        }
 
     def test_serialisation_none_fields(self) -> None:
         """None fields appear as None in model_dump output."""

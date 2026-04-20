@@ -128,6 +128,154 @@ class InvestigationAgent(ToolAwareAgent):
             supports=(step.hypothesis,) if confirmed else (),
         )
 
+    # ── Re-plan helpers ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _find_thin_evidence(ledger: EvidenceLedger) -> list[EvidenceEntry]:
+        """Return ledger entries whose answers are thin (errors or very short)."""
+        thin: list[EvidenceEntry] = []
+        for entry in ledger.entries:
+            # "[tool not available" means the tool isn't registered — retrying won't help
+            if entry.answer_summary.startswith("[tool not available"):
+                continue
+            is_error = (
+                entry.answer_summary.startswith("[tool error]")
+                or entry.answer_summary.startswith("[tool exception]")
+                or len(entry.answer_summary.strip()) < 50
+            )
+            if is_error:
+                thin.append(entry)
+        return thin
+
+    @staticmethod
+    def _generate_followup_steps(
+        thin_entries: list[EvidenceEntry],
+        iteration: int,
+    ) -> list[InvestigationStep]:
+        """Create 1–3 follow-up InvestigationStep objects for thin evidence entries."""
+        followup: list[InvestigationStep] = []
+        # Cap at 3 follow-up steps per iteration
+        for idx, entry in enumerate(thin_entries[:3]):
+            followup.append(
+                InvestigationStep(
+                    step_id=f"replan-{iteration}-{idx}",
+                    target=entry.tool_args_hash,  # re-use original target via hash reference
+                    tool_hint=entry.tool_name,
+                    hypothesis=f"[replan] Retry thin evidence for: {entry.question[:200]}",
+                    priority=1,
+                )
+            )
+        return followup
+
+    # ── Step execution (shared by main loop + re-plan loop) ───────────────
+
+    def _execute_step(
+        self,
+        step: InvestigationStep,
+        ledger: EvidenceLedger,
+        step_statuses: dict[str, StepStatus],
+        summary_lines: list[str],
+        controller: Any,
+        budget: Any,
+        pattern_store: Any,
+        fix_store: Any,
+        iterations: int,
+        iterations_without_progress: int,
+    ) -> tuple[EvidenceLedger, dict[str, StepStatus], list[str], int, bool, bool]:
+        """Execute a single investigation step.
+
+        Returns:
+            (ledger, step_statuses, summary_lines, iterations_without_progress,
+             budget_exhausted, escalated)
+        """
+        from vaig.core.memory.memory_correction import (  # noqa: PLC0415
+            check_memory_before_action,
+            compute_action_fingerprint,
+        )
+
+        budget_exhausted = False
+        escalated = False
+
+        # ── Cache check ───────────────────────────────────────
+        cached_entries = ledger.already_answered(step.hypothesis)
+        if cached_entries:
+            step_statuses[step.step_id] = StepStatus.complete
+            summary_lines.append(
+                f"**{step.step_id}** ({step.target}): CACHED — {cached_entries[0].answer_summary[:200]}"
+            )
+            return ledger, step_statuses, summary_lines, 0, budget_exhausted, escalated
+
+        # ── Budget check ──────────────────────────────────────
+        if budget is not None:
+            try:
+                import asyncio  # noqa: PLC0415
+                asyncio.run(budget.check())
+            except BudgetExhaustedError:
+                logger.info(
+                    "InvestigationAgent: budget exhausted before step %s",
+                    step.step_id,
+                )
+                budget_exhausted = True
+                return ledger, step_statuses, summary_lines, iterations_without_progress, budget_exhausted, escalated
+
+        # ── MEM-05: memory check ──────────────────────────────
+        if pattern_store is not None and fix_store is not None:
+            fingerprint = compute_action_fingerprint(
+                tool_name=step.tool_hint,
+                target=step.target,
+                hypothesis_slug=_hypothesis_slug(step.hypothesis),
+            )
+            warning = check_memory_before_action(
+                fingerprint=fingerprint,
+                proposed_tool=step.tool_hint,
+                proposed_args={"target": step.target},
+                pattern_store=pattern_store,
+                fix_store=fix_store,
+            )
+            if warning is not None:
+                logger.info(
+                    "InvestigationAgent: MEM-05 warning for step %s — %s",
+                    step.step_id,
+                    warning.suggestion,
+                )
+                step_statuses[step.step_id] = StepStatus.skipped
+                summary_lines.append(
+                    f"**{step.step_id}** ({step.target}): SKIPPED (memory warning) — {warning.suggestion}"
+                )
+                return ledger, step_statuses, summary_lines, iterations_without_progress + 1, budget_exhausted, escalated
+
+        # ── SH-06: self-correction check ──────────────────────
+        action = controller.decide(ledger, iterations_without_progress)
+        if action == SelfCorrectionAction.escalate:
+            logger.info(
+                "InvestigationAgent: SelfCorrectionController returned ESCALATE — stopping"
+            )
+            escalated = True
+            return ledger, step_statuses, summary_lines, iterations_without_progress, budget_exhausted, escalated
+        if action == SelfCorrectionAction.backtrack:
+            logger.info(
+                "InvestigationAgent: SelfCorrectionController returned BACKTRACK — skipping step %s",
+                step.step_id,
+            )
+            step_statuses[step.step_id] = StepStatus.skipped
+            summary_lines.append(
+                f"**{step.step_id}** ({step.target}): SKIPPED (backtrack — repeated tool call detected)"
+            )
+            return ledger, step_statuses, summary_lines, iterations_without_progress + 1, budget_exhausted, escalated
+
+        # ── Tool call ─────────────────────────────────────────
+        step_statuses[step.step_id] = StepStatus.running
+        answer = self._call_step_tool(step)
+
+        entry = self._build_evidence_entry(step, answer, self.name)
+        ledger = ledger.append(entry)
+
+        step_statuses[step.step_id] = StepStatus.complete
+        summary_lines.append(
+            f"**{step.step_id}** ({step.target}): {answer[:300]}"
+        )
+        return ledger, step_statuses, summary_lines, 0, budget_exhausted, escalated
+
     # ── Execute ───────────────────────────────────────────────────────────
 
     def execute(  # type: ignore[override]
@@ -165,10 +313,6 @@ class InvestigationAgent(ToolAwareAgent):
             and updated ``evidence_ledger`` in ``state_patch``.
         """
         from vaig.core.config import SelfCorrectionConfig
-        from vaig.core.memory.memory_correction import (  # noqa: PLC0415
-            check_memory_before_action,
-            compute_action_fingerprint,
-        )
 
         # ── Resolve plan ──────────────────────────────────────────────────
         if plan is None:
@@ -184,7 +328,7 @@ class InvestigationAgent(ToolAwareAgent):
                     content="## Investigation Summary\n\nNo plan available.",
                     success=False,
                     usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-                    metadata={"plan_id": None, "steps_completed": 0, "steps_skipped": 0, "iterations": 0, "budget_exhausted": False, "escalated": False},
+                    metadata={"plan_id": None, "steps_completed": 0, "steps_skipped": 0, "iterations": 0, "budget_exhausted": False, "escalated": False, "replan_count": 0, "followup_steps_executed": 0},
                     state_patch=None,
                 )
 
@@ -222,99 +366,113 @@ class InvestigationAgent(ToolAwareAgent):
 
             iterations += 1
 
-            # ── Cache check ───────────────────────────────────────────────
-            cached_entries = ledger.already_answered(step.hypothesis)
-            if cached_entries:
-                step_statuses[step.step_id] = StepStatus.complete
-                summary_lines.append(
-                    f"**{step.step_id}** ({step.target}): CACHED — {cached_entries[0].answer_summary[:200]}"
-                )
-                iterations_without_progress = 0
-                continue
+            (
+                ledger,
+                step_statuses,
+                summary_lines,
+                iterations_without_progress,
+                step_budget_exhausted,
+                step_escalated,
+            ) = self._execute_step(
+                step=step,
+                ledger=ledger,
+                step_statuses=step_statuses,
+                summary_lines=summary_lines,
+                controller=controller,
+                budget=budget,
+                pattern_store=pattern_store,
+                fix_store=fix_store,
+                iterations=iterations,
+                iterations_without_progress=iterations_without_progress,
+            )
 
-            # ── Budget check ──────────────────────────────────────────────
-            if budget is not None:
-                try:
-                    import asyncio  # noqa: PLC0415
-                    asyncio.run(budget.check())
-                except BudgetExhaustedError:
-                    logger.info(
-                        "InvestigationAgent: budget exhausted before step %s",
-                        step.step_id,
-                    )
-                    budget_exhausted = True
-                    for s in plan.steps:
-                        if step_statuses[s.step_id] == StepStatus.pending:
-                            step_statuses[s.step_id] = StepStatus.skipped
-                    break
-
-            # ── MEM-05: memory check ──────────────────────────────────────
-            if pattern_store is not None and fix_store is not None:
-                fingerprint = compute_action_fingerprint(
-                    tool_name=step.tool_hint,
-                    target=step.target,
-                    hypothesis_slug=_hypothesis_slug(step.hypothesis),
-                )
-                warning = check_memory_before_action(
-                    fingerprint=fingerprint,
-                    proposed_tool=step.tool_hint,
-                    proposed_args={"target": step.target},
-                    pattern_store=pattern_store,
-                    fix_store=fix_store,
-                )
-                if warning is not None:
-                    logger.info(
-                        "InvestigationAgent: MEM-05 warning for step %s — %s",
-                        step.step_id,
-                        warning.suggestion,
-                    )
-                    step_statuses[step.step_id] = StepStatus.skipped
-                    summary_lines.append(
-                        f"**{step.step_id}** ({step.target}): SKIPPED (memory warning) — {warning.suggestion}"
-                    )
-                    iterations_without_progress += 1
-                    continue
-
-            # ── SH-06: self-correction check ──────────────────────────────
-            action = controller.decide(ledger, iterations_without_progress)
-            if action == SelfCorrectionAction.escalate:
-                logger.info(
-                    "InvestigationAgent: SelfCorrectionController returned ESCALATE — stopping"
-                )
-                escalated = True
+            if step_budget_exhausted:
+                budget_exhausted = True
                 for s in plan.steps:
-                    if step_statuses[s.step_id] == StepStatus.pending:
+                    if step_statuses.get(s.step_id) == StepStatus.pending:
                         step_statuses[s.step_id] = StepStatus.skipped
                 break
-            if action == SelfCorrectionAction.backtrack:
-                logger.info(
-                    "InvestigationAgent: SelfCorrectionController returned BACKTRACK — skipping step %s",
-                    step.step_id,
-                )
-                step_statuses[step.step_id] = StepStatus.skipped
-                summary_lines.append(
-                    f"**{step.step_id}** ({step.target}): SKIPPED (backtrack — repeated tool call detected)"
-                )
-                iterations_without_progress += 1
-                continue
 
-            # ── Tool call ─────────────────────────────────────────────────
-            step_statuses[step.step_id] = StepStatus.running
-            answer = self._call_step_tool(step)
+            if step_escalated:
+                escalated = True
+                for s in plan.steps:
+                    if step_statuses.get(s.step_id) == StepStatus.pending:
+                        step_statuses[s.step_id] = StepStatus.skipped
+                break
 
-            entry = self._build_evidence_entry(step, answer, self.name)
-            ledger = ledger.append(entry)
+        # ── Re-plan loop ──────────────────────────────────────────────────
+        # Resolve max_replan_iterations from config (default 2)
+        try:
+            from vaig.core.config import get_settings  # noqa: PLC0415
+            max_replan = get_settings().investigation.max_replan_iterations
+        except Exception:  # noqa: BLE001
+            max_replan = 2
 
-            step_statuses[step.step_id] = StepStatus.complete
-            summary_lines.append(
-                f"**{step.step_id}** ({step.target}): {answer[:300]}"
+        replan_count = 0
+        followup_steps_executed = 0
+
+        while (
+            not budget_exhausted
+            and not escalated
+            and replan_count < max_replan
+            and iterations < self._max_iterations
+        ):
+            thin_entries = self._find_thin_evidence(ledger)
+            if not thin_entries:
+                break
+
+            replan_count += 1
+            followup_steps = self._generate_followup_steps(thin_entries, replan_count)
+            if not followup_steps:
+                break
+
+            logger.info(
+                "InvestigationAgent: re-plan iteration %d — %d follow-up steps generated",
+                replan_count,
+                len(followup_steps),
             )
-            iterations_without_progress = 0
+            summary_lines.append(f"\n### Re-plan Iteration {replan_count}")
+
+            for fstep in followup_steps:
+                if iterations >= self._max_iterations:
+                    break
+
+                iterations += 1
+                step_statuses[fstep.step_id] = StepStatus.pending
+
+                (
+                    ledger,
+                    step_statuses,
+                    summary_lines,
+                    iterations_without_progress,
+                    step_budget_exhausted,
+                    step_escalated,
+                ) = self._execute_step(
+                    step=fstep,
+                    ledger=ledger,
+                    step_statuses=step_statuses,
+                    summary_lines=summary_lines,
+                    controller=controller,
+                    budget=budget,
+                    pattern_store=pattern_store,
+                    fix_store=fix_store,
+                    iterations=iterations,
+                    iterations_without_progress=iterations_without_progress,
+                )
+
+                followup_steps_executed += 1
+
+                if step_budget_exhausted:
+                    budget_exhausted = True
+                    break
+                if step_escalated:
+                    escalated = True
+                    break
 
         # ── Build summary ─────────────────────────────────────────────────
         completed = sum(1 for s in step_statuses.values() if s == StepStatus.complete)
         skipped = sum(1 for s in step_statuses.values() if s == StepStatus.skipped)
-        total = len(plan.steps)
+        total = len(step_statuses)
 
         header_lines = [
             "## Investigation Summary",
@@ -328,15 +486,18 @@ class InvestigationAgent(ToolAwareAgent):
             header_lines.append("**Termination reason**: Self-correction escalation")
         elif iterations >= self._max_iterations:
             header_lines.append(f"**Termination reason**: max_iterations={self._max_iterations} reached")
+        if replan_count > 0:
+            header_lines.append(f"**Re-plan rounds**: {replan_count} ({followup_steps_executed} follow-up steps)")
 
         content = "\n".join(header_lines + ["", "### Evidence per Step", ""] + summary_lines)
 
         logger.info(
-            "InvestigationAgent '%s' completed — %d/%d steps, iterations=%d",
+            "InvestigationAgent '%s' completed — %d/%d steps, iterations=%d, replan_count=%d",
             self.name,
             completed,
             total,
             iterations,
+            replan_count,
         )
 
         return AgentResult(
@@ -351,6 +512,8 @@ class InvestigationAgent(ToolAwareAgent):
                 "iterations": iterations,
                 "budget_exhausted": budget_exhausted,
                 "escalated": escalated,
+                "replan_count": replan_count,
+                "followup_steps_executed": followup_steps_executed,
             },
             state_patch={"evidence_ledger": ledger},
         )
