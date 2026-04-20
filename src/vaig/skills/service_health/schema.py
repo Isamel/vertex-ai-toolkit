@@ -25,6 +25,7 @@ from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
 
 from vaig.core.memory.models import RecurrenceSignal
 
@@ -1591,13 +1592,16 @@ class HealthReportGeminiSchema(HealthReport):
         default=None,
         exclude=True,
     )
-    tool_usage: ToolUsageSummary | None = Field(
-        default=None,
-        exclude=True,
-    )
-
     @classmethod
-    def model_json_schema(cls, *args: object, **kwargs: object) -> dict[str, object]:
+    def model_json_schema(
+        cls,
+        by_alias: bool = True,
+        ref_template: str = DEFAULT_REF_TEMPLATE,
+        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
+        mode: JsonSchemaMode = "validation",
+        *,
+        union_format: Literal["any_of", "primitive_type_array"] = "any_of",
+    ) -> dict[str, Any]:
         """Return a pruned JSON schema that omits ``exclude=True`` fields.
 
         Pydantic v2's ``exclude=True`` only affects ``.model_dump()`` — it does
@@ -1605,8 +1609,25 @@ class HealthReportGeminiSchema(HealthReport):
         google-genai SDK sends the full JSON schema to Gemini for structured
         output, we must remove post-hoc fields here to stay under the
         "too many states" constraint.
+
+        Post-hoc fields excluded from the Gemini schema:
+
+        * ``metadata`` — populated by the pipeline after generation
+        * ``evidence_gaps`` — populated by sub-gatherers / analyzer
+        * ``recent_changes`` — populated by the analyzer
+        * ``external_links`` — populated by the link-builder post-hoc
+        * ``investigation_coverage`` — populated by the analyzer
+
+        Note: nested ``exclude=True`` fields (e.g. within non-excluded sub-models)
+        are not yet pruned. This is a known limitation for a future enhancement.
         """
-        schema: dict[str, object] = super().model_json_schema(*args, **kwargs)  # type: ignore[safe-super]
+        schema: dict[str, Any] = super().model_json_schema(
+            by_alias=by_alias,
+            ref_template=ref_template,
+            schema_generator=schema_generator,
+            mode=mode,
+            union_format=union_format,
+        )
 
         # Identify fields to drop
         excluded_names = {

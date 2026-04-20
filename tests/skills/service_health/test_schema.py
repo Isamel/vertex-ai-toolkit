@@ -5,6 +5,7 @@ Covers:
 - Invalid system literal raises ValidationError
 - ExternalLinks partial groups default to empty lists
 - HealthReport backward-compat deserialization without external_links
+- HealthReportGeminiSchema pruning of excluded fields and orphaned $defs
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from vaig.skills.service_health.schema import (
     ExternalLink,
     ExternalLinks,
     HealthReport,
+    HealthReportGeminiSchema,
 )
 
 # ── ExternalLink ──────────────────────────────────────────────
@@ -123,3 +125,40 @@ class TestHealthReportBackwardCompat:
         report = HealthReport.model_validate(payload)
         dumped = json.loads(report.model_dump_json())
         assert dumped["external_links"]["gcp"][0]["label"] == "GCP"
+
+
+# ── HealthReportGeminiSchema pruning ──────────────────────────
+
+
+class TestHealthReportGeminiSchemaPruning:
+    """Verify that model_json_schema() removes excluded fields and orphaned $defs."""
+
+    def _get_schema(self) -> dict:
+        return HealthReportGeminiSchema.model_json_schema()
+
+    def test_schema_is_json_serializable(self) -> None:
+        schema = self._get_schema()
+        # Should not raise
+        json.dumps(schema)
+
+    def test_excluded_fields_not_in_properties(self) -> None:
+        schema = self._get_schema()
+        props = schema.get("properties", {})
+        excluded = {"metadata", "evidence_gaps", "recent_changes", "external_links", "investigation_coverage"}
+        for field in excluded:
+            assert field not in props, f"Excluded field '{field}' should not appear in schema properties"
+
+    def test_orphaned_defs_removed(self) -> None:
+        schema = self._get_schema()
+        defs = schema.get("$defs", {})
+        # These types are only reachable via excluded fields
+        orphans = {"ReportMetadata", "ToolUsageSummary", "ExternalLink", "ExternalLinks", "EvidenceGap", "ChangeEvent"}
+        for orphan in orphans:
+            assert orphan not in defs, f"Orphaned $def '{orphan}' should have been pruned from schema"
+
+    def test_non_excluded_fields_present(self) -> None:
+        schema = self._get_schema()
+        props = schema.get("properties", {})
+        assert "executive_summary" in props
+        assert "findings" in props
+        assert "recommendations" in props
