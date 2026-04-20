@@ -5,10 +5,13 @@ from __future__ import annotations
 import logging
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from typing import Self
 
 import yaml
-from pydantic import AliasChoices, BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -1386,6 +1389,71 @@ class TrainingConfig(BaseModel):
         else:
             self.gcs_staging_prefix = ""
 
+        return self
+
+
+# ── Repo investigation defaults ───────────────────────────────────────────────
+
+_DEFAULT_EXCLUDE_GLOBS: list[str] = [
+    "**/.git/**",
+    "**/vendor/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/*.lock",
+    "**/*.min.js",
+    "**/*.map",
+    "**/__pycache__/**",
+    "**/.terraform/**",
+    "**/sealed-secrets/**",
+    "**/generated/**",
+    "**/*.tfstate",
+    "**/*.tfstate.backup",
+]
+"""Default glob patterns to exclude during repo investigation."""
+
+
+class RepoInvestigationConfig(BaseModel):
+    """Configuration for multi-path repository investigation (SPEC-V2-REPO-01).
+
+    Controls which parts of a repository are ingested, how large files are
+    handled, and what content is redacted before sending to the LLM.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    repo: str | None = None
+    """GitHub owner/repo or https:// URL. ``None`` disables repo investigation."""
+    ref: str = "HEAD"
+    """Branch, tag, or SHA to investigate."""
+    paths: list[str] = Field(default_factory=list)
+    """Subdirectory paths within the repo to include (empty = full-scan)."""
+    include_globs: list[str] = Field(default_factory=list)
+    """Glob patterns to include. Empty means include all non-excluded files."""
+    exclude_globs: list[str] = Field(
+        default_factory=lambda: _DEFAULT_EXCLUDE_GLOBS.copy()
+    )
+    """Glob patterns to exclude from investigation."""
+    max_files: int = 500
+    """Maximum number of files to process per path."""
+    streaming_threshold_bytes: int = 2_000_000
+    """Files larger than this are processed via streaming chunker to avoid RAM spikes."""
+    max_file_bytes_absolute: int = 500_000_000
+    """Catastrophic cap — text files larger than this are always skipped."""
+    chunk_embed_batch_size: int = 64
+    """Embedding batch size for memory control."""
+    max_total_tokens_per_path: int = 15_000
+    """Post-retrieval token budget per path (does NOT limit ingestion)."""
+    redaction_enabled: bool = True
+    """When True, apply secret/PII redaction before sending content to the LLM."""
+
+    @model_validator(mode="after")
+    def _sanity(self) -> Self:
+        """Warn when a repo is given without any path localisation."""
+        if self.repo and not (self.paths or self.include_globs):
+            logger.warning(
+                "Repo specified without paths or globs — will full-scan with cap"
+            )
         return self
 
 
