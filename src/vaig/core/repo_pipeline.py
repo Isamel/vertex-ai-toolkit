@@ -443,7 +443,7 @@ def classify_file_with_evidence(
                         f"{meta.path} is {size_mb:.0f} MB, exceeds "
                         f"max_file_bytes_absolute ({cap_mb:.0f} MB). "
                         f"File was not indexed. To process: re-run with "
-                        f"--repo-max-file-bytes-absolute={meta.size * 2}"
+                        f"--repo-max-bytes-per-file={meta.size * 2}"
                         f" (note: expect higher disk use and run time)."
                     ),
                 )

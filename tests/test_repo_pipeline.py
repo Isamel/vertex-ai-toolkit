@@ -12,7 +12,6 @@ Acceptance criteria:
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -457,40 +456,38 @@ class TestDetectFileKind:
 class TestIsBinaryFile:
     """is_binary_file() correctly identifies binary vs text files."""
 
-    def _write_tmp(self, content: bytes) -> Path:
-        import os
-        fd, name = tempfile.mkstemp(suffix=".dat")
-        os.write(fd, content)
-        os.close(fd)
-        return Path(name)
+    def _write_tmp(self, content: bytes, tmp_path: Path) -> Path:
+        p = tmp_path / "test.dat"
+        p.write_bytes(content)
+        return p
 
-    def test_text_file_not_binary(self) -> None:
-        path = self._write_tmp(b"hello world\nthis is text\n")
+    def test_text_file_not_binary(self, tmp_path: Path) -> None:
+        path = self._write_tmp(b"hello world\nthis is text\n", tmp_path)
         assert is_binary_file(path) is False
 
-    def test_null_byte_is_binary(self) -> None:
-        path = self._write_tmp(b"hello\x00world")
+    def test_null_byte_is_binary(self, tmp_path: Path) -> None:
+        path = self._write_tmp(b"hello\x00world", tmp_path)
         assert is_binary_file(path) is True
 
-    def test_png_header_is_binary(self) -> None:
+    def test_png_header_is_binary(self, tmp_path: Path) -> None:
         # PNG magic bytes
-        path = self._write_tmp(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        path = self._write_tmp(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100, tmp_path)
         assert is_binary_file(path) is True
 
-    def test_yaml_text_file_not_binary(self) -> None:
-        path = self._write_tmp(b"apiVersion: v1\nkind: Service\nmetadata:\n  name: foo\n")
+    def test_yaml_text_file_not_binary(self, tmp_path: Path) -> None:
+        path = self._write_tmp(b"apiVersion: v1\nkind: Service\nmetadata:\n  name: foo\n", tmp_path)
         assert is_binary_file(path) is False
 
-    def test_empty_file_not_binary(self) -> None:
-        path = self._write_tmp(b"")
+    def test_empty_file_not_binary(self, tmp_path: Path) -> None:
+        path = self._write_tmp(b"", tmp_path)
         assert is_binary_file(path) is False
 
-    def test_high_non_text_ratio_is_binary(self) -> None:
+    def test_high_non_text_ratio_is_binary(self, tmp_path: Path) -> None:
         # Build content with >30% non-printable bytes (but no null byte)
         non_text = bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08] * 50)
         text = b"hello world " * 10  # 120 bytes text
         content = non_text + text  # 520 bytes, ~77% non-text
-        path = self._write_tmp(content)
+        path = self._write_tmp(content, tmp_path)
         assert is_binary_file(path) is True
 
     def test_nonexistent_file_returns_false(self) -> None:
@@ -594,7 +591,7 @@ class TestClassifyFileWithEvidence:
         gap = gaps[0]
         assert gap.kind == "catastrophic_size"
         assert gap.level == "WARN"
-        assert "--repo-max-file-bytes-absolute" in gap.details
+        assert "--repo-max-bytes-per-file" in gap.details
 
     def test_binary_file_info_gap(self) -> None:
         """Binary file skip → INFO evidence gap."""

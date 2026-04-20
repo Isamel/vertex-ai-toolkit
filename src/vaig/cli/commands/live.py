@@ -769,9 +769,9 @@ def register(app: typer.Typer) -> None:
             )
 
             # ── Repo investigation config (SPEC-V2-REPO-01) ───────
-            # Build and validate early so malformed globs are caught before
-            # any LLM call.  The config object is passed to tools in REPO-02.
-            _build_repo_investigation_config(
+            # Validate repo config early so malformed globs are caught before
+            # any LLM call.  Wired into tools in Sprint 3.
+            _repo_cfg = _build_repo_investigation_config(
                 repo=repo,
                 repo_ref=repo_ref,
                 repo_paths=repo_path or [],
@@ -1085,15 +1085,14 @@ def _build_repo_investigation_config(
     exclude_globs: list[str] | None,
     max_files: int | None,
     streaming_threshold_bytes: int | None,
-) -> Any:
+) -> Any:  # RepoInvestigationConfig — imported inside function body
     """Build a :class:`~vaig.core.config.RepoInvestigationConfig` from CLI flags.
 
     Validates glob patterns early (before any LLM call) and raises
     :exc:`typer.BadParameter` with a clear message on malformed patterns.
 
-    Returns:
-        A ``RepoInvestigationConfig`` instance (or ``None`` when no repo is given
-        and all lists are empty — back-compat with pre-REPO-01 behaviour).
+    Always returns a ``RepoInvestigationConfig`` (even when ``repo=None``,
+    for future wiring).
     """
     import fnmatch
     import re

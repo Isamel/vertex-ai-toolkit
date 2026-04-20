@@ -174,7 +174,10 @@ class GitLabAdapter:
         results: list[FileMeta] = []
 
         while url:
-            resp = httpx.get(url, headers=self._headers(), params=params)
+            try:
+                resp = httpx.get(url, headers=self._headers(), params=params, timeout=10.0)
+            except (httpx.RequestError, httpx.TimeoutException) as exc:
+                raise RuntimeError(f"GitLab API request failed: {exc}") from exc
             resp.raise_for_status()
             for item in resp.json():
                 if item.get("type") == "blob":
@@ -204,7 +207,10 @@ class GitLabAdapter:
 
         encoded_path = path.replace("/", "%2F")
         url = self._api(f"repository/files/{encoded_path}/raw")
-        resp = httpx.get(url, headers=self._headers(), params={"ref": ref})
+        try:
+            resp = httpx.get(url, headers=self._headers(), params={"ref": ref}, timeout=10.0)
+        except (httpx.RequestError, httpx.TimeoutException) as exc:
+            raise RuntimeError(f"GitLab API request failed: {exc}") from exc
         resp.raise_for_status()
         return resp.text
 
@@ -233,7 +239,10 @@ class GitLabAdapter:
 
         url = self._api("repository/commits")
         params: dict[str, str | int] = {"ref_name": ref, "path": path, "per_page": limit}
-        resp = httpx.get(url, headers=self._headers(), params=params)
+        try:
+            resp = httpx.get(url, headers=self._headers(), params=params, timeout=10.0)
+        except (httpx.RequestError, httpx.TimeoutException) as exc:
+            raise RuntimeError(f"GitLab API request failed: {exc}") from exc
         resp.raise_for_status()
         commits = []
         for c in resp.json():
@@ -294,8 +303,8 @@ class LocalFilesystemAdapter:
     # ------------------------------------------------------------------
 
     def list_tree(self, ref: str, path: str = "") -> list[FileMeta]:
-        """List files via ``git ls-tree``."""
-        cmd = ["ls-tree", "-r", "--name-only", ref]
+        """List files via ``git ls-tree -r -l`` (includes blob sizes)."""
+        cmd = ["ls-tree", "-r", "-l", ref]
         if path:
             cmd.append(path)
         output = self._git(*cmd)
@@ -304,9 +313,19 @@ class LocalFilesystemAdapter:
             line = line.strip()
             if not line:
                 continue
-            full = self.root / line
-            size = full.stat().st_size if full.exists() else 0
-            results.append(FileMeta(path=line, size=size))
+            # Format: <mode> <type> <hash> <size>\t<path>
+            # e.g.: 100644 blob abc123 1024\tsrc/foo.py
+            try:
+                meta_part, file_path = line.split("\t", 1)
+                parts = meta_part.split()
+                # parts: [mode, type, hash, size]
+                size = int(parts[3]) if len(parts) >= 4 and parts[3].isdigit() else 0
+                sha = parts[2] if len(parts) >= 3 else None
+            except (ValueError, IndexError):
+                file_path = line
+                size = 0
+                sha = None
+            results.append(FileMeta(path=file_path, size=size, sha=sha))
         return results
 
     def fetch_file(self, ref: str, path: str) -> str:

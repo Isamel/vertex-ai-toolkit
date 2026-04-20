@@ -1,7 +1,7 @@
 """Secret redaction pipeline for repo content before chunking/embedding.
 
 Runs **before** chunking so no original secrets reach the vector index or LLM
-context window.  Preserves byte offsets (length-preserving replacement) so
+context window.  Preserves character offsets (length-preserving replacement) so
 line-range traceability is maintained.
 
 Usage::
@@ -14,6 +14,7 @@ Usage::
 
 from __future__ import annotations
 
+import collections
 import math
 import re
 from pathlib import Path
@@ -105,7 +106,6 @@ _YAML_SENSITIVE_KEYS = re.compile(
 # Known-safe patterns that should NOT be flagged by high-entropy detector
 _KNOWN_SAFE_PATTERNS = [
     re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE),  # UUID
-    re.compile(r"^[A-Za-z0-9+/]+=*$"),  # pure base64 (may be non-secret)
 ]
 
 
@@ -118,14 +118,15 @@ def shannon_entropy(s: str) -> float:
     """Calculate Shannon entropy of a string."""
     if not s:
         return 0.0
-    prob = [s.count(c) / len(s) for c in set(s)]
+    counts = collections.Counter(s)
+    length = len(s)
+    prob = [c / length for c in counts.values()]
     return -sum(p * math.log2(p) for p in prob if p > 0)
 
 
 def _is_known_safe(s: str) -> bool:
     """Return True if *s* is a recognised non-secret value."""
-    # UUIDs are safe
-    if _KNOWN_SAFE_PATTERNS[0].match(s):
+    if any(p.fullmatch(s) for p in _KNOWN_SAFE_PATTERNS):
         return True
     # Very short tokens are unlikely secrets
     if len(s) < 24:
@@ -256,6 +257,12 @@ class SecretRedactor:
             sep = m.group(5)
             value = m.group(6)
 
+            # Only redact values that are long enough to be real secrets;
+            # short values (< 20 chars) are left unchanged to avoid
+            # corrupting the <redacted:...> placeholder in LLM context.
+            if len(value) < 20:
+                return m.group(0)
+
             # Record the redaction (line computed from current state)
             line_no = _offset_to_line(redacted, m.start())
             redactions.append(
@@ -337,7 +344,7 @@ def write_redaction_log(
 ) -> Path:
     """Write redaction audit log.
 
-    Entries are appended as JSONL to
+    Entries are written (overwriting any previous file) as JSONL to
     ``.vaig/repo-redactions/{run_id}.jsonl``.
 
     Parameters
@@ -361,4 +368,4 @@ def write_redaction_log(
     with log_file.open("w", encoding="utf-8") as fh:
         for entry in entries:
             fh.write(entry.model_dump_json() + "\n")
-    return log_file
+    return log_file.resolve()

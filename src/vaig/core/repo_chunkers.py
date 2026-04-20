@@ -14,6 +14,7 @@ Per-kind chunker interface and implementations:
 
 from __future__ import annotations
 
+import io
 import logging
 import re
 from collections.abc import Iterator
@@ -183,10 +184,10 @@ class YamlDocChunker:
         self.max_chunk_tokens = max_chunk_tokens
 
     def chunk(self, content: str, path: str) -> list[Chunk]:
-        return list(self.chunk_stream(None, path, _content=content))
+        return list(self.chunk_stream(io.StringIO(content), path))
 
-    def chunk_stream(self, fh: IO[str] | None, path: str, *, _content: str | None = None) -> Iterator[Chunk]:
-        content = _content if _content is not None else fh.read()  # type: ignore[union-attr]
+    def chunk_stream(self, fh: IO[str], path: str) -> Iterator[Chunk]:
+        content = fh.read()
 
         # Split on YAML document separators; keep content between them
         # We split on lines that are exactly '---' (with optional trailing space)
@@ -194,7 +195,14 @@ class YamlDocChunker:
 
         # Track line numbers across documents
         line_offset = 1
-        for raw in raw_docs:
+        for i, raw in enumerate(raw_docs):
+            # Strip a single leading newline from docs after the first separator;
+            # _DOC_SEP_RE.split() leaves a leading \n at the start of subsequent
+            # parts which would cause off-by-one errors in start_line/end_line.
+            if i > 0 and raw.startswith("\n"):
+                raw = raw[1:]
+                line_offset += 1
+
             # Skip empty docs (e.g. leading ---)
             stripped = raw.strip()
             if not stripped:
@@ -250,10 +258,10 @@ class TerraformChunker:
         self.max_chunk_tokens = max_chunk_tokens
 
     def chunk(self, content: str, path: str) -> list[Chunk]:
-        return list(self.chunk_stream(None, path, _content=content))
+        return list(self.chunk_stream(io.StringIO(content), path))
 
-    def chunk_stream(self, fh: IO[str] | None, path: str, *, _content: str | None = None) -> Iterator[Chunk]:
-        content = _content if _content is not None else fh.read()  # type: ignore[union-attr]
+    def chunk_stream(self, fh: IO[str], path: str) -> Iterator[Chunk]:
+        content = fh.read()
         lines = content.splitlines(keepends=True)
 
         # Find all top-level block start positions
@@ -290,10 +298,10 @@ class MarkdownChunker:
         self.max_chunk_tokens = max_chunk_tokens
 
     def chunk(self, content: str, path: str) -> list[Chunk]:
-        return list(self.chunk_stream(None, path, _content=content))
+        return list(self.chunk_stream(io.StringIO(content), path))
 
-    def chunk_stream(self, fh: IO[str] | None, path: str, *, _content: str | None = None) -> Iterator[Chunk]:
-        content = _content if _content is not None else fh.read()  # type: ignore[union-attr]
+    def chunk_stream(self, fh: IO[str], path: str) -> Iterator[Chunk]:
+        content = fh.read()
         lines = content.splitlines(keepends=True)
 
         # Find H1 context (first H1 in file)
@@ -341,10 +349,10 @@ class FallbackLineChunker:
         self.overlap = overlap
 
     def chunk(self, content: str, path: str) -> list[Chunk]:
-        return list(self.chunk_stream(None, path, _content=content))
+        return list(self.chunk_stream(io.StringIO(content), path))
 
-    def chunk_stream(self, fh: IO[str] | None, path: str, *, _content: str | None = None) -> Iterator[Chunk]:
-        content = _content if _content is not None else fh.read()  # type: ignore[union-attr]
+    def chunk_stream(self, fh: IO[str], path: str) -> Iterator[Chunk]:
+        content = fh.read()
         lines = content.splitlines(keepends=True)
 
         if not lines:
