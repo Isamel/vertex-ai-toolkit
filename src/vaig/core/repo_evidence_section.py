@@ -1,6 +1,8 @@
 """SPEC-V2-REPO-08 — Repo Evidence section data model and renderer."""
 from __future__ import annotations
 
+import html
+
 from pydantic import BaseModel, Field
 
 
@@ -106,12 +108,7 @@ _SEVERITY_ICON = {
 
 def _esc(text: str) -> str:
     """HTML-escape a string for safe embedding in attributes and text nodes."""
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
+    return html.escape(str(text), quote=True)
 
 
 def render_repo_evidence_html(section: RepoEvidenceSection) -> str:

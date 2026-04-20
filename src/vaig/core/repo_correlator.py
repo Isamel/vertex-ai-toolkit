@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from pydantic import BaseModel
 
 from vaig.core.repo_pipeline import EvidenceGap
+from vaig.skills.service_health.schema import Finding as FindingCls
 from vaig.skills.service_health.schema import RepoSnippet, Severity
 
 if TYPE_CHECKING:
@@ -63,6 +64,9 @@ class RepoCorrelator:
 
         enriched_count = 0
         contradiction_findings: list[Finding] = []
+        # NOTE: orphan_resources, undeployed_manifests, and evidence_gaps are
+        # intentionally unpopulated here — they will be wired in Sprint 4
+        # (SPEC-V2-REPO-09 / SPEC-V2-AUDIT-13).
         orphan_resources: list[str] = []
         undeployed_manifests: list[str] = []
         evidence_gaps: list[EvidenceGap] = []
@@ -83,7 +87,7 @@ class RepoCorrelator:
 
             snippets: list[RepoSnippet] = []
             for chunk in raw_chunks:
-                file_path = str(getattr(chunk, "path", ""))
+                file_path = str(getattr(chunk, "file_path", ""))
                 start_line = int(getattr(chunk, "start_line", 0))
                 end_line = int(getattr(chunk, "end_line", 0))
                 excerpt = str(getattr(chunk, "content", getattr(chunk, "outline", "")))
@@ -114,8 +118,6 @@ class RepoCorrelator:
                                 if finding.affected_resources
                                 else finding.id
                             )
-                            from vaig.skills.service_health.schema import Finding as FindingCls
-
                             contradiction = FindingCls(
                                 id=f"repo-drift-{resource_name}-replicas",
                                 title=(

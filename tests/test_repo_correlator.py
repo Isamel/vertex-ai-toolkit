@@ -24,7 +24,7 @@ from vaig.skills.service_health.schema import (
 class _FakeChunk:
     """Minimal duck-typed chunk returned by a fake index."""
 
-    path: str = "charts/values.yaml"
+    file_path: str = "charts/values.yaml"
     start_line: int = 1
     end_line: int = 5
     content: str = "replicas: 2"
@@ -114,7 +114,7 @@ def test_correlate_no_repo_returns_unchanged() -> None:
 def test_correlate_contradiction_finding_emitted() -> None:
     """Snippet has 'replicas: 3', finding mentions 2 pods → contradiction finding added."""
     chunk = _FakeChunk(
-        path="helm/values.yaml",
+        file_path="helm/values.yaml",
         start_line=10,
         end_line=10,
         content="replicas: 3",
