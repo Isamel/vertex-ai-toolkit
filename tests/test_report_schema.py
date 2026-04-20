@@ -26,6 +26,7 @@ from vaig.skills.service_health.schema import (
     ExecutiveSummary,
     Finding,
     HealthReport,
+    HealthReportGeminiSchema,
     ManualInvestigation,
     OverallStatus,
     RecommendedAction,
@@ -937,13 +938,13 @@ class TestServiceHealthSkillSchemaIntegration:
     """Integration tests: get_agents_config schema fields + post_process_report."""
 
     def test_reporter_config_has_response_schema(self) -> None:
-        """The health_reporter agent config must include response_schema=HealthReport."""
+        """The health_reporter agent config must include response_schema=HealthReportGeminiSchema."""
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         skill = ServiceHealthSkill()
         configs = skill.get_agents_config()
         reporter = next(c for c in configs if c["name"] == "health_reporter")
-        assert reporter["response_schema"] is HealthReport
+        assert reporter["response_schema"] is HealthReportGeminiSchema
 
     def test_reporter_config_has_response_mime_type(self) -> None:
         """The health_reporter agent config must include response_mime_type."""

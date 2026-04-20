@@ -34,7 +34,7 @@ from vaig.skills.service_health.prompts import (
     build_reporter_prompt,
     build_workload_gatherer_prompt,
 )
-from vaig.skills.service_health.schema import Finding, HealthReport
+from vaig.skills.service_health.schema import Finding, HealthReport, HealthReportGeminiSchema
 from vaig.tools.base import ToolResult
 from vaig.tools.gke._clients import ensure_client_initialized
 from vaig.utils.json_cleaner import clean_llm_json
@@ -750,7 +750,7 @@ class ServiceHealthSkill(BaseSkill):
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,  # Slightly higher for natural writing
                 "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
-                "response_schema": HealthReport,
+                "response_schema": HealthReportGeminiSchema,
                 "response_mime_type": "application/json",
             },
         ]
@@ -1042,7 +1042,7 @@ class ServiceHealthSkill(BaseSkill):
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,
                 "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
-                "response_schema": HealthReport,
+                "response_schema": HealthReportGeminiSchema,
                 "response_mime_type": "application/json",
             },
         ]
