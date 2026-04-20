@@ -1828,6 +1828,25 @@ class MemoryConfig(BaseModel):
         description="Max narratives to ingest; oldest dropped first.",
     )
 
+    # ── SPEC-V2-AUDIT-13: Memory recall in gatherers / analyzer ───────────────
+    recall_in_gatherers: bool = Field(
+        default=True,
+        description=(
+            "Inject prior-run memory recalls into gatherer system prompts. "
+            "Set to false to disable recall in gatherers only (useful when "
+            "debugging prompt regressions)."
+        ),
+    )
+    recall_budget_tokens: int = Field(
+        default=800,
+        ge=0,
+        description=(
+            "Maximum tokens consumed by memory recall blocks per agent. "
+            "Recalls exceeding this budget are truncated (tail dropped). "
+            "Set to 0 to disable recall entirely."
+        ),
+    )
+
 
 # ── K-01: Hypothesis Library, Self-Correction, Investigation config ──────────
 

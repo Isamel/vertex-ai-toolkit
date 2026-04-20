@@ -118,3 +118,30 @@ class FixOutcome(BaseModel):
         default=None,
         description="UTC timestamp of correlation (None if uncorrelated)",
     )
+
+
+class RecalledPattern(BaseModel):
+    """A prior-run memory recall formatted for injection into agent prompts.
+
+    Constructed from a :class:`PatternEntry` plus optional fix outcome
+    by :class:`~vaig.agents.mixins.MemoryRecallMixin`.
+    """
+
+    timestamp: datetime = Field(description="UTC timestamp of the most recent observation")
+    title: str = Field(description="Human-readable title of the finding")
+    cluster: str = Field(default="", description="Cluster or service this pattern was observed on")
+    resolution: str = Field(default="", description="Known fix strategy or resolution, if any")
+    fix_outcome: str = Field(default="", description="Fix outcome label (CONFIRMED, unknown, etc.)")
+    occurrences: int = Field(default=1, ge=1, description="Total historical occurrences")
+
+    @classmethod
+    def from_entry(cls, entry: "PatternEntry", resolution: str = "", fix_outcome: str = "") -> "RecalledPattern":
+        """Build a :class:`RecalledPattern` from a :class:`PatternEntry`."""
+        return cls(
+            timestamp=entry.last_seen,
+            title=entry.title or entry.fingerprint,
+            cluster=entry.service,
+            resolution=resolution,
+            fix_outcome=fix_outcome,
+            occurrences=entry.occurrences,
+        )

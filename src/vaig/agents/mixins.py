@@ -2087,3 +2087,122 @@ class ToolLoopResult:
         self.finish_reason = finish_reason
         self.peak_context_pct = peak_context_pct
         self.ledger = ledger
+
+
+# ── SPEC-V2-AUDIT-13: Memory Recall Mixin ─────────────────────────────────────
+
+class MemoryRecallMixin:
+    """Mixin that injects prior-run memory recalls into agent system prompts.
+
+    When mixed into a :class:`~vaig.agents.tool_aware.ToolAwareAgent` the mixin
+    reads the :class:`~vaig.core.memory.pattern_store.PatternMemoryStore` and
+    formats up to ``top_k`` semantically-similar entries into a structured
+    ``## Prior-run memory`` block that is appended to the base system instruction
+    before the first LLM call.
+
+    Opt-out per agent class (or globally via ``memory.recall_in_gatherers=false``)
+    by overriding :meth:`_recall_enabled`.
+    """
+
+    def _recall_enabled(self) -> bool:  # noqa: D401
+        """Return ``True`` when memory recall is active for this agent."""
+        return True
+
+    def _recall_patterns(self, query: str, top_k: int = 3) -> list[Any]:
+        """Return up to *top_k* :class:`~vaig.core.memory.models.RecalledPattern` objects.
+
+        Falls back to an empty list on any error so that a broken or empty
+        memory store never disrupts the live pipeline.
+
+        The current implementation uses a simple keyword-overlap heuristic
+        rather than full semantic embeddings (fast, no extra dependencies).
+        Future work: replace with a vector-based approach once MEM-04 is active.
+        """
+        from vaig.core.config import get_settings
+        from vaig.core.memory.models import RecalledPattern
+        from vaig.core.memory.pattern_store import PatternMemoryStore
+
+        try:
+            cfg = get_settings()
+            if not cfg.memory.enabled or cfg.memory.recall_budget_tokens == 0:
+                return []
+
+            store = PatternMemoryStore(cfg.memory.store_path)
+            entries = store.all_entries()
+            if not entries:
+                return []
+
+            # Rank by keyword overlap with *query* (case-insensitive)
+            query_lower = query.lower()
+            query_words = set(query_lower.split())
+
+            def _score(entry: Any) -> int:
+                text = (entry.title + " " + entry.service + " " + entry.category).lower()
+                return sum(1 for w in query_words if w in text)
+
+            ranked = sorted(entries, key=_score, reverse=True)[:top_k]
+            return [RecalledPattern.from_entry(e) for e in ranked]
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:  # noqa: BLE001
+            return []
+
+    @staticmethod
+    def _format_recall_block(recalls: list[Any], budget_tokens: int = 800) -> str:
+        """Format *recalls* into a markdown block, truncating to *budget_tokens*.
+
+        Tokens are estimated at ``DEFAULT_CHARS_PER_TOKEN`` characters per token.
+        Entries are dropped from the tail when the budget is exceeded.
+        """
+        from vaig.core.config import DEFAULT_CHARS_PER_TOKEN
+
+        lines: list[str] = ["## Prior-run memory (top similar cases)", ""]
+        chars_used = 0
+        chars_budget = budget_tokens * DEFAULT_CHARS_PER_TOKEN
+
+        for i, recall in enumerate(recalls, start=1):
+            ts = recall.timestamp.strftime("%Y-%m-%d %H:%M UTC")
+            cluster_part = f" (cluster={recall.cluster})" if recall.cluster else ""
+            header = f"{i}. {ts} — \"{recall.title}\"{cluster_part}"
+            resolution = f"   Resolution: {recall.resolution}" if recall.resolution else ""
+            outcome = f"   Fix outcome: {recall.fix_outcome}" if recall.fix_outcome else ""
+
+            entry_lines = [header]
+            if resolution:
+                entry_lines.append(resolution)
+            if outcome:
+                entry_lines.append(outcome)
+            entry_lines.append("")
+
+            entry_text = "\n".join(entry_lines)
+            # Always include the first entry even if it exceeds the budget.
+            if i > 1 and chars_used + len(entry_text) > chars_budget:
+                break
+            lines.extend(entry_lines)
+            chars_used += len(entry_text)
+
+        return "\n".join(lines).rstrip()
+
+    def _augment_system_instruction(self, base: str, query: str) -> str:
+        """Return *base* extended with a prior-run memory recall block.
+
+        When the :class:`~vaig.core.memory.pattern_store.PatternMemoryStore`
+        is empty or memory is disabled, *base* is returned unchanged —
+        guaranteeing byte-for-byte prompt equality with the pre-memory state.
+        """
+        from vaig.core.config import get_settings
+
+        try:
+            cfg = get_settings()
+            budget = cfg.memory.recall_budget_tokens
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:  # noqa: BLE001
+            budget = 800
+
+        recalls = self._recall_patterns(query)
+        if not recalls:
+            return base
+
+        recall_block = self._format_recall_block(recalls, budget_tokens=budget)
+        return base + "\n\n" + recall_block
