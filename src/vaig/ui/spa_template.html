@@ -307,6 +307,31 @@
   .tl-sev-badge.LOW      { background: color-mix(in srgb, var(--low) 20%, transparent);       color: var(--low); }
   .tl-sev-badge.INFO     { background: color-mix(in srgb, var(--info) 20%, transparent);      color: var(--info); }
 
+  /* ── Change Correlation Timeline ──────────────────────────── */
+  .change-timeline { position: relative; padding-left: 28px; }
+  .change-timeline::before {
+    content: ""; position: absolute; left: 10px; top: 4px; bottom: 0;
+    width: 2px; background: var(--border);
+  }
+  .change-item { position: relative; margin-bottom: 18px; }
+  .change-dot {
+    position: absolute; left: -24px; top: 3px;
+    width: 10px; height: 10px; border-radius: 50%;
+    border: 2px solid var(--bg-surface); z-index: 1;
+    background: var(--info);
+  }
+  .change-ts { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); margin-bottom: 2px; }
+  .change-badge {
+    display: inline-block; font-size: 10px; font-weight: 700;
+    padding: 1px 6px; border-radius: 3px; vertical-align: middle; margin-right: 6px;
+  }
+  .change-badge.deployment    { background: color-mix(in srgb, var(--info) 20%, transparent);     color: var(--info); }
+  .change-badge.config_change { background: color-mix(in srgb, var(--medium) 20%, transparent);   color: var(--medium); }
+  .change-badge.hpa_scaling   { background: color-mix(in srgb, #9b59b6 30%, transparent);         color: #c39bd3; }
+  .change-badge.unknown       { background: color-mix(in srgb, var(--text-dim) 15%, transparent); color: var(--text-dim); }
+  .change-desc { font-size: 13px; color: var(--text-main); margin-top: 2px; }
+  .change-corr { font-size: 12px; color: var(--text-dim); font-style: italic; margin-top: 3px; }
+
   /* ── Cluster Overview table ──────────────────────────────── */
   .metrics-table { width: 100%; border-collapse: collapse; }
   .metrics-table td { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--border); }
@@ -741,6 +766,9 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
     <a class="nav-item" href="#section-watch-history" onclick="setActiveNav(this)" id="nav-watch-item" style="display:none">
       <span class="nav-icon">👁</span> Watch History
     </a>
+    <a class="nav-item" href="#section-quick-links" onclick="setActiveNav(this)" id="nav-quick-links-item" style="display:none">
+      <span class="nav-icon">🔗</span> Quick Links
+    </a>
 
     <div class="nav-divider"></div>
     <div class="filter-section">
@@ -763,6 +791,7 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
       <h2><span class="section-icon">📊</span> Executive Summary</h2>
       <div class="stat-grid" id="stat-grid"></div>
       <div class="summary-text" id="summary-text"></div>
+      <div id="investigation-coverage-badge" style="display:none;margin-top:0.75rem"></div>
     </section>
 
     <!-- Cluster Overview -->
@@ -799,6 +828,12 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
       </div>
     </section>
 
+    <!-- What Changed Recently -->
+    <section id="section-recent-changes" style="display:none">
+      <h2><span class="section-icon">🔄</span> What Changed Recently</h2>
+      <div class="change-timeline" id="recent-changes-list"></div>
+    </section>
+
     <!-- Findings -->
     <section id="section-findings">
       <h2><span class="section-icon">🔍</span> Findings</h2>
@@ -830,6 +865,13 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
     <section id="section-review" style="display:none">
       <h2><span class="section-icon">📋</span> Report Review <span id="review-header-badge"></span></h2>
       <div id="review-content"></div>
+    </section>
+
+    <!-- Evidence Gaps -->
+    <section id="section-evidence-gaps" style="display:none">
+      <h2><span class="section-icon">🔎</span> Evidence Gaps</h2>
+      <div id="evidence-gaps-coverage" style="margin-bottom:0.75rem"></div>
+      <div id="evidence-gaps-list"></div>
     </section>
 
     <!-- Cost & Usage -->
@@ -895,6 +937,14 @@ const WATCH_SESSION = /*{{WATCH_SESSION_JSON}}*/null;
       </div>
     </section>
 
+    <section id="section-quick-links" style="display:none">
+      <h2>
+        <span class="section-icon">🔗</span>
+        <span class="section-toggle" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="true" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSection(this)}">Quick Links</span>
+      </h2>
+      <div class="section-content" id="quick-links-content"></div>
+    </section>
+
   </main>
 </div>
 
@@ -947,6 +997,27 @@ function renderStats() {
     </div>`
   ).join('');
   document.getElementById('summary-text').textContent = es.summary_text;
+}
+
+// ── Recent Changes ────────────────────────────────────────────────
+function renderRecentChanges() {
+  const changes = REPORT_DATA.recent_changes || [];
+  const section = document.getElementById('section-recent-changes');
+  if (!changes.length) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  const badgeClass = t => ['deployment','config_change','hpa_scaling'].includes(t) ? t : 'unknown';
+  document.getElementById('recent-changes-list').innerHTML = changes.map(c =>
+    `<div class="change-item">
+      <div class="change-dot"></div>
+      <div class="change-ts">${esc(c.timestamp)}</div>
+      <span class="change-badge ${badgeClass(c.type)}">${esc(c.type)}</span>
+      <div class="change-desc">${esc(c.description)}</div>
+      <div class="change-corr">${esc(c.correlation_to_issue)}</div>
+    </div>`
+  ).join('');
 }
 
 // ── Cluster overview ──────────────────────────────────────────────
@@ -2001,10 +2072,102 @@ function renderReviewPanel() {
   };
 }
 
+// ── Quick Links ───────────────────────────────────────────────────
+function renderQuickLinks() {
+  const el = REPORT_DATA.external_links;
+  if (!el) return;
+
+  // Collect all link groups that have at least one link
+  const groups = [
+    { key: 'gcp',      label: 'GCP Console', links: el.gcp      || [] },
+    { key: 'datadog',  label: 'Datadog',     links: el.datadog  || [] },
+    { key: 'argocd',   label: 'ArgoCD',      links: el.argocd   || [] },
+  ].filter(g => g.links.length > 0);
+
+  if (groups.length === 0) return;
+
+  // Show section + nav item
+  const section = document.getElementById('section-quick-links');
+  const navItem = document.getElementById('nav-quick-links-item');
+  if (section) section.style.display = '';
+  if (navItem) navItem.style.display = '';
+
+  const container = document.getElementById('quick-links-content');
+  if (!container) return;
+
+  container.innerHTML = groups.map(g => `
+    <div class="card" style="margin-bottom:12px">
+      <h4 style="margin:0 0 10px 0;color:var(--text-dim);font-size:.85rem;text-transform:uppercase;letter-spacing:.05em">${esc(g.label)}</h4>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">
+        ${g.links.map(link => `
+          <a href="${esc(link.url)}"
+             target="_blank"
+             rel="noopener"
+             style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;
+                    background:var(--surface2,#1e2030);border:1px solid var(--border,#3b3f5c);
+                    border-radius:6px;color:var(--text,#c0caf5);text-decoration:none;
+                    font-size:.85rem;transition:border-color .15s"
+             onmouseover="this.style.borderColor='var(--primary,#7aa2f7)'"
+             onmouseout="this.style.borderColor='var(--border,#3b3f5c)'">
+            ${link.icon ? `<span style="flex-shrink:0">${link.icon}</span>` : ''}
+            ${esc(link.label)}
+            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </a>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
 // ── Init ──────────────────────────────────────────────────────────
+function renderEvidenceGaps() {
+  const gaps = REPORT_DATA.evidence_gaps;
+  const coverage = REPORT_DATA.investigation_coverage;
+  if ((!gaps || gaps.length === 0) && !coverage) return;
+
+  // Coverage badge in summary section
+  const badgeEl = document.getElementById('investigation-coverage-badge');
+  if (badgeEl && coverage) {
+    badgeEl.style.display = '';
+    badgeEl.innerHTML = `<span style="font-size:.85rem;color:var(--text-dim)">🔎 <em>${esc(coverage)}</em></span>`;
+  }
+
+  if (!gaps || gaps.length === 0) return;
+
+  // Show evidence gaps section
+  const section = document.getElementById('section-evidence-gaps');
+  if (section) section.style.display = '';
+
+  // Coverage text in section
+  const coverageEl = document.getElementById('evidence-gaps-coverage');
+  if (coverageEl && coverage) {
+    coverageEl.innerHTML = `<p style="color:var(--text-dim);font-style:italic">${esc(coverage)}</p>`;
+  }
+
+  const REASON_LABEL = { not_called: 'Not Called', error: 'Error', empty_result: 'Empty Result' };
+  const REASON_COLOR = { not_called: 'var(--text-dim)', error: 'var(--critical)', empty_result: 'var(--medium)' };
+
+  const listEl = document.getElementById('evidence-gaps-list');
+  if (!listEl) return;
+  listEl.innerHTML = gaps.map(g => `
+    <div class="card" style="margin-bottom:8px;display:flex;align-items:flex-start;gap:12px">
+      <span style="font-size:.75rem;font-weight:700;padding:2px 7px;border-radius:4px;
+                   background:color-mix(in srgb,${REASON_COLOR[g.reason]||'var(--text-dim)'} 20%,transparent);
+                   color:${REASON_COLOR[g.reason]||'var(--text-dim)'};white-space:nowrap;margin-top:2px">
+        ${esc(REASON_LABEL[g.reason] || g.reason)}
+      </span>
+      <div>
+        <span style="font-weight:600">${esc(g.source)}</span>
+        ${g.details ? `<span style="color:var(--text-dim);margin-left:8px;font-size:.9rem">${esc(g.details)}</span>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
 (function init() {
   renderHeader();
   renderStats();
+  renderRecentChanges();
   renderCluster();
   renderServices();
   renderFindings();
@@ -2018,6 +2181,8 @@ function renderReviewPanel() {
   renderReviewPanel();
   renderWatchHistory();
   renderDependencies();
+  renderQuickLinks();
+  renderEvidenceGaps();
   const _titleCluster = REPORT_DATA.metadata.cluster_name;
   const _titleStatus  = REPORT_DATA.executive_summary.overall_status;
   document.title = ['Health Report', _titleCluster, _titleStatus].filter(Boolean).join(' — ');

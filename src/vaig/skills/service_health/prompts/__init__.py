@@ -14,7 +14,12 @@ from vaig.core.prompt_defense import (
     wrap_untrusted_content,
 )
 
-from ._analyzer import _CHANGE_CORRELATION_PROMPT, _CONTRADICTION_RULES_PROMPT, HEALTH_ANALYZER_PROMPT
+from ._analyzer import (
+    _CHANGE_CORRELATION_PROMPT,
+    _CONTRADICTION_RULES_PROMPT,
+    _RECENT_CHANGES_PROMPT,
+    HEALTH_ANALYZER_PROMPT,
+)
 from ._gatherer import _GATHERER_PROMPT_TEMPLATE, HEALTH_GATHERER_PROMPT, build_gatherer_prompt
 from ._investigator import HEALTH_INVESTIGATOR_PROMPT
 from ._phases import PHASE_PROMPTS
@@ -56,6 +61,7 @@ __all__ = [
     "HEALTH_ANALYZER_PROMPT",
     "_CONTRADICTION_RULES_PROMPT",
     "_CHANGE_CORRELATION_PROMPT",
+    "_RECENT_CHANGES_PROMPT",
     # verifier
     "HEALTH_VERIFIER_PROMPT",
     # planner

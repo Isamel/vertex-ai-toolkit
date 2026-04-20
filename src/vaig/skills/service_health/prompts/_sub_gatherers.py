@@ -25,6 +25,33 @@ from ._shared import (
     _build_mandatory_tools_section,
 )
 
+# ── Evidence gap tracking instructions ───────────────────────
+# Appended to every sub-gatherer system prompt so the LLM knows to
+# populate an ``evidence_gaps`` list in its structured output for any
+# tool that was not called, errored, or returned empty data.
+
+TOOL_TRACKING_INSTRUCTIONS = """
+## Evidence Gap Tracking
+
+At the end of your response, you MUST report which signal sources produced
+data and which did not.  Use the following structured output field:
+
+```
+evidence_gaps: list of objects with fields:
+  - source  (str)  — tool or signal name, e.g. "deployment_metrics"
+  - reason  (str)  — one of: "not_called", "error", "empty_result"
+  - details (str, optional) — error message or skip reason
+```
+
+### Rules
+- For every tool you were instructed to call but SKIPPED: add an entry with reason="not_called".
+- For every tool call that raised an error or returned an API failure: add an entry with reason="error"
+  and include the error message in `details`.
+- For every tool call that succeeded but returned zero / empty results: add an entry with reason="empty_result".
+- If a tool returned useful data, do NOT add an entry for it.
+- An empty evidence_gaps list means all expected signal sources were checked and produced data.
+"""
+
 
 def _node_step3_instruction(prefetched_node_metrics: str) -> str:
     """Return the Step 3 instruction text for the node gatherer.
@@ -140,7 +167,7 @@ do deep per-node investigation. Your job is to establish CONTEXT only.
 
 IMPORTANT: Replace all angle-bracket instructions above with actual values from
 your tool call results. Do NOT output literal placeholders or brackets.
-"""
+""" + TOOL_TRACKING_INSTRUCTIONS
 
     prompt = f"""{ANTI_INJECTION_RULE}
 
@@ -218,6 +245,7 @@ again — the data is already here.
 {wrapped_metrics}
 """
 
+    prompt += TOOL_TRACKING_INSTRUCTIONS
     return prompt
 
 
@@ -484,6 +512,24 @@ pipe-separated metric names typically indicate external metrics from Cloud Monit
     - If ``query_custom_metrics`` or ``query_external_metrics`` are not in your available
       tools list, SKIP this sub-step and mark it as SKIPPED in the Investigation Checklist.
 
+### Step 6e — Adapter Pod Health (when HPA external metrics are unknown or stale)
+22. If external metrics show ``?/?`` or stale values, call ``get_pods`` filtering for adapter
+    pods named ``prometheus-adapter``, ``datadog-cluster-agent``, or ``custom-metrics-apiserver``
+    in the ``kube-system`` and ``monitoring`` namespaces.
+    Report: pod status, restart count, and any OOM-kill events.
+
+### Envoy / Istio Sidecar Diagnostics
+If the pod has a container named `istio-proxy` or `envoy`, or the annotation
+`sidecar.istio.io/inject: "true"`, treat it as mesh-enrolled and run:
+
+1. exec_command: curl -s http://localhost:15000/clusters
+   → captures upstream cluster health and endpoint status
+2. exec_command: curl -s "http://localhost:15000/stats?filter=upstream"
+   → captures upstream retry/error counters
+
+If localhost:15000 is unreachable, note the failure and continue — do not abort.
+Include Envoy findings in the returned findings dict under key "envoy_admin".
+
 ### Data collection rules:
 - For kubectl_logs: use ``pod="<name>"`` — NOT ``pod_name``. No ``previous`` parameter.
 - For get_container_status: use ``name="<name>"`` — NOT ``pod_name``.
@@ -625,11 +671,12 @@ The following ``kubectl_top(resource_type="pods")`` output was gathered
 programmatically BEFORE your execution started.  Use this data directly
 for the Service Status CPU/Memory columns.  Do NOT call ``kubectl_top``
 again — the data is already here.  You still need ``get_pod_metrics``
-for historical trends if required.
+    for historical trends if required.
 
 {wrapped_metrics}
 """
 
+    prompt += TOOL_TRACKING_INSTRUCTIONS
     return prompt
 
 
@@ -918,6 +965,16 @@ When ``service_name`` IS resolved:
 
 **Tier 3 rule**: if no service identity was found, call the tool anyway without ``service_name`` and record the guidance.
 
+### Low-Throughput Override (MANDATORY — check BEFORE applying Call 6 threshold)
+
+If APM throughput from Call 5 is **< 0.1 req/s** (low-throughput service):
+
+- Apply **count-based evaluation**: ANY non-zero error count MUST trigger ``query_datadog_error_spans``
+- Do **NOT** use the percentage threshold below — at < 0.1 req/s, a 1% error rate could mean
+  just 1 error in 100 requests over several hours, which IS significant
+- Record: ``"Low-throughput mode active (< 0.1 req/s) — count-based error evaluation applied"``
+- If error count = 0: record ``"No errors — low-throughput service, no span investigation needed"``
+
 ### Call 6 — Error Span Drill-Down (conditional)
 
 If APM data from Call 5 shows **error_rate > 1% AND throughput > 0.001 req/s**, you
@@ -990,6 +1047,7 @@ If no issues: "No active Datadog monitors or APM anomalies detected.")
 - Empty Datadog results mean "monitoring not configured" — NEVER conclude a service
   is unhealthy or non-existent based on missing Datadog data.
 """
+    prompt += TOOL_TRACKING_INSTRUCTIONS
     return prompt
 
 
@@ -1146,6 +1204,7 @@ Produce exactly these sections at the end of your response:
 - Preserve event messages verbatim — do not paraphrase them.
 - If the target namespace is unclear, query all non-system namespaces.
 """
+    prompt += TOOL_TRACKING_INSTRUCTIONS
     return prompt
 
 
@@ -1333,4 +1392,5 @@ If queries failed: "Cloud Logging queries failed — see error details above.")
 """
     # The logging gatherer prompt is an f-string that embeds safe_ns directly
     # (via {safe_ns}), so no placeholder substitution is needed.
+    prompt += TOOL_TRACKING_INSTRUCTIONS
     return prompt

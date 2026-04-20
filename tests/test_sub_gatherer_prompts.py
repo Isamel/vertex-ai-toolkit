@@ -1,4 +1,4 @@
-"""Prompt content tests for sub-gatherer builders — SPEC-DD-01, SPEC-SH-14, SPEC-SH-11."""
+"""Prompt content tests for sub-gatherer builders — SPEC-DD-01, SPEC-SH-14, SPEC-SH-11, SPEC-LT-01, SPEC-LT-03."""
 
 from __future__ import annotations
 
@@ -79,3 +79,62 @@ class TestLoggingGathererPromptSH11:
     def test_contains_istiod_caveat(self) -> None:
         prompt = self._get_prompt()
         assert "certificate rotation" in prompt or "xDS" in prompt
+
+
+class TestWorkloadGathererPromptHPAAdapterHealth:
+    """hpa-adapter-health spec — build_workload_gatherer_prompt() contains Step 6e adapter pod health."""
+
+    def _get_prompt(self) -> str:
+        from vaig.skills.service_health.prompts._sub_gatherers import build_workload_gatherer_prompt
+
+        return build_workload_gatherer_prompt(namespace="test-ns")
+
+    def test_contains_get_pods(self) -> None:
+        assert "get_pods" in self._get_prompt()
+
+    def test_contains_adapter_name(self) -> None:
+        prompt = self._get_prompt()
+        assert "prometheus-adapter" in prompt or "datadog-cluster-agent" in prompt or "custom-metrics-apiserver" in prompt
+
+    def test_contains_adapter_health_reference(self) -> None:
+        prompt = self._get_prompt()
+        assert "adapter" in prompt.lower()
+
+
+class TestLowThroughputHeuristicDD:
+    """SPEC-LT-01 — build_datadog_gatherer_prompt() contains low-throughput heuristic block."""
+
+    def _get_prompt(self) -> str:
+        from vaig.skills.service_health.prompts._sub_gatherers import build_datadog_gatherer_prompt
+
+        return build_datadog_gatherer_prompt(datadog_api_enabled=True)
+
+    def test_contains_low_throughput_threshold(self) -> None:
+        assert "0.1 req" in self._get_prompt()
+
+    def test_contains_low_throughput_label(self) -> None:
+        assert "low-throughput" in self._get_prompt().lower() or "low throughput" in self._get_prompt().lower()
+
+    def test_low_throughput_triggers_span_investigation(self) -> None:
+        assert "query_datadog_error_spans" in self._get_prompt()
+
+
+class TestLowThroughputAnalyzerEscalation:
+    """SPEC-LT-03 — HEALTH_ANALYZER_PROMPT contains low-throughput severity escalation."""
+
+    def _get_prompt(self) -> str:
+        from vaig.skills.service_health.prompts._analyzer import HEALTH_ANALYZER_PROMPT
+
+        return HEALTH_ANALYZER_PROMPT
+
+    def test_analyzer_contains_low_throughput_escalation(self) -> None:
+        prompt = self._get_prompt()
+        assert "low-throughput" in prompt.lower() or "low throughput" in prompt.lower()
+
+    def test_analyzer_escalation_assigns_high_severity(self) -> None:
+        prompt = self._get_prompt()
+        # Find the low-throughput section and verify HIGH severity is present
+        low_tp_idx = prompt.lower().find("low-throughput severity escalation")
+        assert low_tp_idx != -1, "Low-Throughput Severity Escalation section not found"
+        section = prompt[low_tp_idx : low_tp_idx + 600]
+        assert "HIGH" in section

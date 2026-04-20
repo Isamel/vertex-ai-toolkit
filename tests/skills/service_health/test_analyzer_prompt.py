@@ -65,3 +65,30 @@ class TestChangeCorrelationIntegration:
         from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
 
         assert "do NOT create" in HEALTH_ANALYZER_PROMPT or "NOT create" in HEALTH_ANALYZER_PROMPT
+
+
+class TestRecentChangesPromptIncluded:
+    """T6 — _RECENT_CHANGES_PROMPT is present in HEALTH_ANALYZER_PROMPT."""
+
+    def test_recent_changes_instruction_in_prompt(self) -> None:
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        assert "recent_changes" in HEALTH_ANALYZER_PROMPT
+
+    def test_recent_changes_separate_from_findings_instruction(self) -> None:
+        """Prompt must explicitly instruct LLM to keep recent_changes separate from findings."""
+        from vaig.skills.service_health.prompts import HEALTH_ANALYZER_PROMPT
+
+        prompt_lower = HEALTH_ANALYZER_PROMPT.lower()
+        assert "separate" in prompt_lower or "do not duplicate" in prompt_lower or "not duplicate" in prompt_lower
+
+    def test_recent_changes_prompt_block_exported(self) -> None:
+        from vaig.skills.service_health.prompts import _RECENT_CHANGES_PROMPT
+
+        assert _RECENT_CHANGES_PROMPT
+        assert "recent_changes" in _RECENT_CHANGES_PROMPT
+
+    def test_recent_changes_prompt_block_in_health_analyzer_prompt(self) -> None:
+        from vaig.skills.service_health.prompts import _RECENT_CHANGES_PROMPT, HEALTH_ANALYZER_PROMPT
+
+        assert _RECENT_CHANGES_PROMPT in HEALTH_ANALYZER_PROMPT

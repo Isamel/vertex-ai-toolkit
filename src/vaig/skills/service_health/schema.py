@@ -299,6 +299,27 @@ def _collapse_repeated_events(events: list[TimelineEvent]) -> list[_CollapsedEve
 # ── Sub-models ───────────────────────────────────────────────
 
 
+class EvidenceGap(BaseModel):
+    """A signal source that was not checked, errored, or returned empty.
+
+    Populated by sub-gatherers via structured output and merged by the
+    analyzer into the root ``HealthReport``.  The ``reason`` field uses a
+    controlled vocabulary so downstream rendering can apply visual treatment
+    without string parsing.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    source: str = Field(description="Name of the tool or signal source (e.g. 'deployment_metrics')")
+    reason: Literal["not_called", "error", "empty_result"] = Field(
+        description="Why this source did not produce evidence"
+    )
+    details: str | None = Field(
+        default=None,
+        description="Optional human-readable detail (e.g. error message or skip reason)",
+    )
+
+
 class ExecutiveSummary(BaseModel):
     """Executive summary section of the health report."""
 
@@ -883,6 +904,56 @@ class DependencyGraph(BaseModel):
     generated_at: str = Field(default="", description="ISO 8601 timestamp")
 
 
+# ── External deep-link models ────────────────────────────────
+
+
+class ExternalLink(BaseModel):
+    """A single external deep-link associated with the report.
+
+    Each link targets a specific system (GCP Console, Datadog, or ArgoCD)
+    and carries a human-readable label, a fully-formed URL, and an optional
+    SVG icon string.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    label: str = Field(description="Human-readable link label")
+    url: str = Field(description="Fully-formed target URL")
+    system: Literal["gcp", "datadog", "argocd"] = Field(
+        description="Originating system — one of 'gcp', 'datadog', or 'argocd'"
+    )
+    icon: str = Field(default="", description="Inline SVG icon string (optional)")
+
+
+class ExternalLinks(BaseModel):
+    """Grouped external deep-links for a health report.
+
+    Each attribute is a list of :class:`ExternalLink` objects for the
+    corresponding system.  All groups default to empty so the model is
+    safe to instantiate without any links present.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    gcp: list[ExternalLink] = Field(default_factory=list, description="GCP Console links")
+    datadog: list[ExternalLink] = Field(default_factory=list, description="Datadog links")
+    argocd: list[ExternalLink] = Field(default_factory=list, description="ArgoCD links")
+
+
+# ── Change correlation model ─────────────────────────────────
+
+
+class ChangeEvent(BaseModel):
+    """A deployment or configuration change event correlated to an issue."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    timestamp: str = Field(description="ISO 8601 timestamp of the change event")
+    type: str = Field(description="Event type: 'deployment', 'config_change', or 'hpa_scaling'")
+    description: str = Field(description="Human-readable description of the change")
+    correlation_to_issue: str = Field(description="Analyst note on how this change correlates to the reported issue")
+
+
 # ── Root model ───────────────────────────────────────────────
 
 
@@ -906,11 +977,36 @@ class HealthReport(BaseModel):
     recommendations: list[RecommendedAction] = Field(default_factory=list)
     manual_investigations: list[ManualInvestigation] = Field(default_factory=list)
     timeline: list[TimelineEvent] = Field(default_factory=list)
+    recent_changes: list[ChangeEvent] = Field(
+        default_factory=list,
+        description=(
+            "Deployment, config change, or HPA scaling events that may correlate with the "
+            "reported issue. Populated by the analyzer separately from findings."
+        ),
+    )
     dependencies: DependencyGraph | None = Field(default=None, description="Structured dependency graph for the service ecosystem")
+    external_links: ExternalLinks | None = Field(
+        default=None,
+        description=(
+            "External deep-links populated from investigation context "
+            "(GCP Console, Datadog, ArgoCD).  None when no context keys were available."
+        ),
+    )
     metadata: ReportMetadata = Field(default_factory=ReportMetadata)
     causal_graph_mermaid: str | None = Field(
         default=None,
         description="Mermaid graph TD diagram string describing causal relationships between findings",
+    )
+    evidence_gaps: list[EvidenceGap] = Field(
+        default_factory=list,
+        description=(
+            "Signal sources that were not checked, errored, or returned empty data. "
+            "Populated by sub-gatherers and merged by the analyzer."
+        ),
+    )
+    investigation_coverage: str | None = Field(
+        default=None,
+        description="Human-readable coverage summary, e.g. '9/12 signal sources checked'.",
     )
 
     @property
