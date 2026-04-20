@@ -416,8 +416,8 @@ def get_adapter(repo_spec: str) -> RepoAdapter:
 
     # ── Nothing matched ──────────────────────────────────────────────────
     raise ValueError(
-        f"Unrecognized repo spec {spec!r}. "
-        "Supported schemes: GitHub (owner/repo or https://github.com/...), "
-        "GitLab (https://gitlab.*/...), "
-        "local filesystem (/absolute/path or file:///path)."
+        f"Unsupported repo URL scheme: {spec!r}. "
+        "Expected a GitHub URL (https://github.com/owner/repo or owner/repo shorthand), "
+        "a GitLab URL (https://gitlab.example.com/owner/repo), "
+        "or a local filesystem path (/path/to/clone or file:///path)."
     )
