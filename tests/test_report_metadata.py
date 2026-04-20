@@ -417,3 +417,63 @@ class TestFullIntegration:
         assert any(
             r.metric == "Namespace" for r in report.cluster_overview
         )
+
+
+# ── AUDIT-07: pipeline_version and model_versions injection ──────────────────
+
+
+class TestAudit07MetadataInjection:
+    """Tests for AUDIT-07 — pipeline_version and model_versions population."""
+
+    def test_pipeline_version_set_to_non_empty(self) -> None:
+        """inject_report_metadata must resolve a non-empty pipeline_version."""
+        report = _make_report()
+        inject_report_metadata(report)
+        assert report.metadata.pipeline_version
+        assert report.metadata.pipeline_version != "unknown"
+
+    def test_pipeline_version_stable_across_two_calls(self) -> None:
+        """Two calls on the same machine yield the same pipeline_version."""
+        r1 = _make_report()
+        r2 = _make_report()
+        inject_report_metadata(r1)
+        inject_report_metadata(r2)
+        assert r1.metadata.pipeline_version == r2.metadata.pipeline_version
+
+    def test_model_versions_populated_from_orch_result_models_by_agent(self) -> None:
+        """model_versions is built from orch_result.models_by_agent when available."""
+        report = _make_report()
+        orch = _make_orch_result(models_used=["gemini-2.5-pro-002"])
+        orch.models_by_agent = {"health_analyzer": "gemini-2.5-pro-002"}
+        inject_report_metadata(report, orch_result=orch, model_id="gemini-2.5-pro-002")
+        assert report.metadata.model_versions == {"health_analyzer": "gemini-2.5-pro-002"}
+
+    def test_model_versions_fallback_to_model_id_when_no_models_by_agent(self) -> None:
+        """model_versions falls back to {'health_analyzer': model_id} when orch lacks models_by_agent."""
+        report = _make_report()
+        orch = _make_orch_result(models_used=["gemini-2.5-flash"])
+        # models_by_agent NOT present on the SimpleNamespace
+        inject_report_metadata(report, orch_result=orch, model_id="gemini-2.5-flash")
+        assert report.metadata.model_versions == {"health_analyzer": "gemini-2.5-flash"}
+
+    def test_model_versions_populated_without_orch_result(self) -> None:
+        """model_versions set to {'health_analyzer': model_id} even without orch_result."""
+        report = _make_report()
+        inject_report_metadata(report, model_id="gemini-2.5-flash-002")
+        assert report.metadata.model_versions == {"health_analyzer": "gemini-2.5-flash-002"}
+
+    def test_model_versions_empty_when_no_model_id(self) -> None:
+        """model_versions stays empty when neither orch_result nor model_id are supplied."""
+        report = _make_report()
+        inject_report_metadata(report)
+        assert report.metadata.model_versions == {}
+
+    def test_pipeline_version_fallback_when_git_unavailable(self) -> None:
+        """pipeline_version falls back to vaig.__version__ when git is not available."""
+        import subprocess  # noqa: PLC0415
+
+        report = _make_report()
+        with patch.object(subprocess, "run", side_effect=FileNotFoundError("git not found")):
+            inject_report_metadata(report)
+        assert report.metadata.pipeline_version
+        assert report.metadata.pipeline_version != "unknown"

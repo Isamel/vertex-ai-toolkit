@@ -21,6 +21,7 @@ from vaig.skills.service_health.schema import (
     ExternalLinks,
     HealthReport,
     HealthReportGeminiSchema,
+    ReportMetadata,
     ServiceHealthStatus,
     ServiceStatus,
 )
@@ -413,4 +414,83 @@ class TestServiceStatusDegradedReason:
         service_status_def = schema.get("$defs", {}).get("ServiceStatus", {})
         assert "degraded_reason" in service_status_def.get("properties", {}), (
             "degraded_reason must be present in the Gemini schema for ServiceStatus"
+        )
+
+
+# ── AUDIT-07: Run determinism metadata ───────────────────────────────────────
+
+
+class TestAudit07RunDeterminismMetadata:
+    """Tests for AUDIT-07 — run_seed, model_versions, pipeline_version."""
+
+    def test_report_metadata_defaults(self) -> None:
+        """ReportMetadata default values are sane and non-breaking."""
+        meta = ReportMetadata()
+        assert meta.run_seed is None
+        assert meta.model_versions == {}
+        assert meta.pipeline_version == "unknown"
+        assert meta.autonomous_enabled is False
+        assert meta.autonomous_steps_executed is None
+
+    def test_report_metadata_round_trip(self) -> None:
+        """ReportMetadata serialises and deserialises AUDIT-07 fields correctly."""
+        meta = ReportMetadata(
+            run_seed=42,
+            model_versions={"health_analyzer": "gemini-2.5-pro-002"},
+            pipeline_version="a1b2c3d",
+            autonomous_enabled=True,
+            autonomous_steps_executed=5,
+        )
+        dumped = meta.model_dump()
+        restored = ReportMetadata.model_validate(dumped)
+        assert restored.run_seed == 42
+        assert restored.model_versions == {"health_analyzer": "gemini-2.5-pro-002"}
+        assert restored.pipeline_version == "a1b2c3d"
+        assert restored.autonomous_enabled is True
+        assert restored.autonomous_steps_executed == 5
+
+    def test_health_report_carries_audit07_fields(self) -> None:
+        """HealthReport propagates AUDIT-07 metadata fields through model_dump."""
+        payload = {
+            "executive_summary": _MINIMAL_EXEC,
+            "metadata": {
+                "pipeline_version": "deadbeef",
+                "model_versions": {"health_analyzer": "gemini-2.5-pro-001"},
+                "run_seed": 7,
+                "autonomous_enabled": True,
+                "autonomous_steps_executed": 3,
+            },
+        }
+        report = HealthReport.model_validate(payload)
+        assert report.metadata.pipeline_version == "deadbeef"
+        assert report.metadata.model_versions == {"health_analyzer": "gemini-2.5-pro-001"}
+        assert report.metadata.run_seed == 7
+        assert report.metadata.autonomous_enabled is True
+        assert report.metadata.autonomous_steps_executed == 3
+
+    def test_gemini_schema_excludes_metadata(self) -> None:
+        """metadata (containing AUDIT-07 fields) is excluded from the Gemini schema."""
+        schema = HealthReportGeminiSchema.model_json_schema()
+        props = schema.get("properties", {})
+        assert "metadata" not in props, (
+            "metadata (with AUDIT-07 fields) must be excluded from Gemini schema"
+        )
+
+    def test_model_dump_retains_audit07_fields(self) -> None:
+        """model_dump() must retain AUDIT-07 fields — HTML renderer reads them."""
+        report = HealthReport.model_validate({"executive_summary": _MINIMAL_EXEC})
+        report.metadata.pipeline_version = "abc1234"
+        report.metadata.model_versions = {"health_analyzer": "gemini-2.5-flash"}
+        dumped = report.model_dump()
+        meta_dump = dumped.get("metadata", {})
+        assert meta_dump.get("pipeline_version") == "abc1234"
+        assert meta_dump.get("model_versions") == {"health_analyzer": "gemini-2.5-flash"}
+
+    def test_gemini_schema_size_unchanged_by_audit07(self) -> None:
+        """AUDIT-07 fields do not increase the Gemini schema size (post-hoc)."""
+        schema_str = json.dumps(HealthReportGeminiSchema.model_json_schema())
+        # Schema must remain under 20 KB — new post-hoc fields must NOT appear
+        assert len(schema_str) < 20_000, (
+            f"Gemini schema grew unexpectedly: {len(schema_str)} chars "
+            "(AUDIT-07 fields must be post-hoc only)"
         )

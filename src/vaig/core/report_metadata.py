@@ -205,6 +205,45 @@ def inject_report_metadata(
 
         metadata.skill_version = f"vaig {__version__}"
 
+    # ── AUDIT-07: Pipeline version (git short SHA or package version) ─────────
+    if _is_empty(getattr(metadata, "pipeline_version", None)) or getattr(metadata, "pipeline_version", None) == "unknown":
+        try:
+            import subprocess  # noqa: PLC0415
+
+            result = subprocess.run(  # noqa: S603
+                ["git", "rev-parse", "--short", "HEAD"],  # noqa: S607
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                metadata.pipeline_version = result.stdout.strip()
+            else:
+                from vaig import __version__ as _vaig_version  # noqa: PLC0415
+
+                metadata.pipeline_version = _vaig_version
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:  # noqa: BLE001
+            try:
+                from vaig import __version__ as _vaig_version  # noqa: PLC0415
+
+                metadata.pipeline_version = _vaig_version
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception:  # noqa: BLE001
+                metadata.pipeline_version = "unknown"
+
+    # ── AUDIT-07: model_versions map (agent-name → resolved model-id) ─────────
+    if orch_result is not None and not getattr(metadata, "model_versions", None):
+        models_by_agent: dict[str, str] = getattr(orch_result, "models_by_agent", {})
+        if isinstance(models_by_agent, dict) and models_by_agent:
+            metadata.model_versions = dict(models_by_agent)
+        elif model_id:
+            metadata.model_versions = {"health_analyzer": model_id}
+    elif not getattr(metadata, "model_versions", None) and model_id:
+        metadata.model_versions = {"health_analyzer": model_id}
+
     # ── Cluster overview: inject Namespace row when missing ───
     if gke_config is not None:
         ns = getattr(gke_config, "default_namespace", None)

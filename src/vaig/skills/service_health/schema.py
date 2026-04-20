@@ -929,6 +929,34 @@ class ReportMetadata(BaseModel):
     tool_usage: ToolUsageSummary | None = Field(default=None, description="Tool call statistics for this run")
     gke_cost: GKECostReport | None = Field(default=None, description="GKE workload cost estimation (Autopilot only)")
     trends: TrendAnalysis | None = Field(default=None, description="Anomaly trend detection results")
+    # ── AUDIT-07: Run determinism metadata ────────────────────
+    run_seed: int | None = Field(
+        default=None,
+        description="Deterministic seed used for any sampling; None when unused.",
+    )
+    model_versions: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Map of agent-name → model-id-version actually used, resolved at "
+            "runtime (not the config default). Example: "
+            '\'{"health_analyzer": "gemini-2.5-pro-002"}\'.'
+        ),
+    )
+    pipeline_version: str = Field(
+        default="unknown",
+        description=(
+            "Git commit short SHA of the vaig package that produced this "
+            "report. Populated from importlib metadata."
+        ),
+    )
+    autonomous_enabled: bool = Field(
+        default=False,
+        description="True when investigation.enabled was True for this run.",
+    )
+    autonomous_steps_executed: int | None = Field(
+        default=None,
+        description="Number of InvestigationAgent steps completed (None when autonomous disabled).",
+    )
 
 
 # ── Dependency graph models ───────────────────────────────────
