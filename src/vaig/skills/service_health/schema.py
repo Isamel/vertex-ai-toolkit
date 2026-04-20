@@ -311,8 +311,8 @@ class EvidenceGap(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     source: str = Field(description="Name of the tool or signal source (e.g. 'deployment_metrics')")
-    reason: Literal["not_called", "error", "empty_result"] = Field(
-        description="Why this source did not produce evidence"
+    reason: str = Field(
+        description="Why this source did not produce evidence: 'not_called', 'error', or 'empty_result'"
     )
     details: str | None = Field(
         default=None,
@@ -919,7 +919,7 @@ class ExternalLink(BaseModel):
 
     label: str = Field(description="Human-readable link label")
     url: str = Field(description="Fully-formed target URL")
-    system: Literal["gcp", "datadog", "argocd"] = Field(
+    system: str = Field(
         description="Originating system — one of 'gcp', 'datadog', or 'argocd'"
     )
     icon: str = Field(default="", description="Inline SVG icon string (optional)")
@@ -992,7 +992,13 @@ class HealthReport(BaseModel):
             "(GCP Console, Datadog, ArgoCD).  None when no context keys were available."
         ),
     )
-    metadata: ReportMetadata = Field(default_factory=ReportMetadata)
+    metadata: ReportMetadata = Field(
+        default_factory=ReportMetadata,
+        description=(
+            "Post-hoc metadata: cost, tokens, GKE cost, trends.  "
+            "Populated by the pipeline after generation."
+        ),
+    )
     causal_graph_mermaid: str | None = Field(
         default=None,
         description="Mermaid graph TD diagram string describing causal relationships between findings",
@@ -1474,6 +1480,57 @@ class HealthReport(BaseModel):
         parts.append(self.causal_graph_mermaid)
         parts.append("```")
         parts.append("")
+
+
+# ── Slim Gemini schema (excludes post-hoc fields) ────────────
+
+
+class HealthReportGeminiSchema(HealthReport):
+    """Reduced schema passed as ``response_schema`` to Gemini structured output.
+
+    Excludes fields that are populated POST-HOC by the pipeline (not by the
+    reporter LLM) to avoid the ``400 INVALID_ARGUMENT: The specified schema
+    produces a constraint that has too many states for serving`` error.
+
+    The full :class:`HealthReport` class is still used for
+    serialisation / deserialisation — ``HealthReport.model_validate_json()``
+    accepts any JSON that validates against the full schema (extra fields from
+    the slim schema are ignored, missing post-hoc fields use their defaults).
+
+    Post-hoc fields excluded from the Gemini schema:
+
+    * ``metadata`` — populated by the pipeline after generation
+    * ``evidence_gaps`` — populated by sub-gatherers / analyzer
+    * ``recent_changes`` — populated by the analyzer
+    * ``external_links`` — populated by the link-builder post-hoc
+    * ``investigation_coverage`` — populated by the analyzer
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    # Override post-hoc fields — exclude=True removes them from the JSON schema
+    # sent to Gemini while keeping them as valid (defaulted) attributes so that
+    # HealthReport.model_validate_json() still works for the full model.
+    metadata: ReportMetadata = Field(
+        default_factory=ReportMetadata,
+        exclude=True,
+    )
+    evidence_gaps: list[EvidenceGap] = Field(
+        default_factory=list,
+        exclude=True,
+    )
+    recent_changes: list[ChangeEvent] = Field(
+        default_factory=list,
+        exclude=True,
+    )
+    external_links: ExternalLinks | None = Field(
+        default=None,
+        exclude=True,
+    )
+    investigation_coverage: str | None = Field(
+        default=None,
+        exclude=True,
+    )
 
 
 # ══════════════════════════════════════════════════════════════
