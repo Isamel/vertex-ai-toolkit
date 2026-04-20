@@ -245,6 +245,14 @@ Use the dependency map to:
 - Cross-reference with Step 2 (kubectl_get services) and Step 7 error patterns
 - Inform Steps 4-6 investigations by understanding which services are upstream/downstream
 
+### Envoy Upstream Verification
+If gathered findings reference upstream errors, 5xx responses, connection refused,
+or circuit breaker state, verify via:
+
+exec_command: curl -s http://localhost:15000/clusters
+
+Include the cluster health summary in the verification report.
+
 ## MINIMUM INVESTIGATION DEPTH
 You MUST make at least the following tool calls before producing your final output:
 1. `get_node_conditions()` — ALWAYS (Step 1)

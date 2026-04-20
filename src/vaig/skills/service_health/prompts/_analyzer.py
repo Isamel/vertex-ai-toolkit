@@ -74,6 +74,20 @@ Use the reported average latency values from Datadog APM for these thresholds:
 - **Drop > 50%**: HIGH — significant traffic loss, possible upstream failure
 - **Near zero when expected to have traffic**: CRITICAL — service may be down
 
+#### Low-Throughput Severity Escalation
+
+When APM throughput is **< 0.1 req/s**, percentage-based thresholds are statistically
+unreliable. Apply these rules INSTEAD of the standard error rate thresholds above:
+
+| Throughput Band | Error Count | Minimum Severity |
+|-----------------|-------------|------------------|
+| 0 req/s (no traffic) | any | No escalation — zero traffic is not an error |
+| 0 < t < 0.1 req/s | >= 1 | HIGH |
+| <= 0.01 req/s | error_rate >= 5% | CRITICAL |
+
+**RULE**: For low-throughput services, ANY non-zero error is meaningful. Do NOT downgrade
+to LOW/MEDIUM based on a low error rate percentage — use the table above.
+
 **RULE**: APM findings (error rate, latency, throughput) MUST generate findings with their
 OWN severity level — they are NOT subordinate to Kubernetes findings. A 43% error rate
 IS a CRITICAL finding regardless of what Kubernetes pod health shows. If Datadog APM
@@ -358,9 +372,107 @@ When verification confirms correlation:
 If NO change event matches within ±2 minutes → do NOT create a change-trigger finding.
 """
 
+_EXTERNAL_LINKS_PROMPT = """
+## External Deep-Link Population
+
+When investigation context contains any of the following identifiers, populate the
+``external_links`` field in the output JSON so the SPA can render quick-access links.
+
+| Field | Source |
+|-------|--------|
+| ``project_id`` | GCP project ID from gathered data |
+| ``cluster`` | GKE cluster name from gathered data |
+| ``namespace`` | Primary Kubernetes namespace under investigation |
+| ``service`` | Primary service name |
+| ``datadog_org`` | Datadog organisation slug or host (e.g. ``myorg``) |
+| ``argocd_server`` | ArgoCD server hostname (e.g. ``argocd.example.com``) |
+| ``argocd_app`` | ArgoCD application name |
+
+Rules:
+- Populate only the link categories for which ALL required context keys are present.
+- Omit any link category when its required keys are absent — use ``[]`` for that system's list.
+- If NONE of the above context fields are available, set ``external_links`` to ``null``.
+- NEVER fabricate URLs; only emit ``external_links`` when real values are present in gathered data.
+
+Output structure (when context is available):
+
+```json
+"external_links": {
+  "gcp": [...],
+  "datadog": [...],
+  "argocd": [...]
+}
+```
+"""
+
 HEALTH_ANALYZER_PROMPT = HEALTH_ANALYZER_PROMPT + _CHANGE_CORRELATION_PROMPT
+
+HEALTH_ANALYZER_PROMPT = HEALTH_ANALYZER_PROMPT + _EXTERNAL_LINKS_PROMPT
+
+_RECENT_CHANGES_PROMPT = """
+## Recent Changes Output
+
+Based on the Change Correlation Analysis above, populate the `recent_changes` field in the
+output JSON.  This field is separate from `findings` — do not duplicate events as findings.
+
+For each correlated change event identified in Step 1–3 above, add one entry:
+
+```json
+{
+  "timestamp": "<ISO-8601 event timestamp>",
+  "type": "<deployment | config_change | hpa_scaling | other>",
+  "description": "<human-readable one-liner>",
+  "correlation_to_issue": "<brief explanation of how this change relates to the anomaly, or null>"
+}
+```
+
+Rules:
+- Include ALL change events found in the Events Timeline (whether correlated or not).
+- Set `correlation_to_issue` to `null` when the event is unrelated to the anomaly window.
+- If NO change events were found, emit `recent_changes: []`.
+- Do NOT copy `recent_changes` items into the `findings` array — keep them separate.
+"""
+
+HEALTH_ANALYZER_PROMPT = HEALTH_ANALYZER_PROMPT + _RECENT_CHANGES_PROMPT
+
+_EVIDENCE_GAPS_PROMPT = """
+## Evidence Gaps and Investigation Coverage
+
+Some sub-gatherers may not have been able to collect data for all tool calls.  Each gatherer
+reports any gaps it encountered in the ``evidence_gaps`` field of its output section.
+
+### evidence_gaps
+
+Collect ALL ``evidence_gaps`` entries reported by sub-gatherers.  Each entry has:
+- ``source``: which sub-gatherer reported it (e.g. ``node_gatherer``, ``workload_gatherer``)
+- ``reason``: one of ``not_called`` | ``error`` | ``empty_result``
+- ``details``: optional human-readable explanation
+
+Emit the combined list in the output JSON under ``evidence_gaps``.
+If no gaps were reported, emit ``evidence_gaps: []``.
+
+### investigation_coverage
+
+Based on the gaps collected, produce a single plain-English sentence summarising the overall
+investigation coverage.  Examples:
+- ``"Full coverage — all data sources returned results."``
+- ``"Partial coverage — Datadog metrics unavailable (API disabled); node metrics collected successfully."``
+- ``"Limited coverage — logging and event data missing due to tool errors."``
+
+Emit the sentence under ``investigation_coverage`` in the output JSON.
+If there are no gaps, use the first example above.
+"""
+
+HEALTH_ANALYZER_PROMPT = HEALTH_ANALYZER_PROMPT + _EVIDENCE_GAPS_PROMPT
 
 # Suppress F401: ANTI_HALLUCINATION_RULES is referenced in the prompt text
 # (inside the f-string body) as a documentation reference only.
-__all__ = ["HEALTH_ANALYZER_PROMPT", "_CONTRADICTION_RULES_PROMPT", "_CHANGE_CORRELATION_PROMPT"]
+__all__ = [
+    "HEALTH_ANALYZER_PROMPT",
+    "_CONTRADICTION_RULES_PROMPT",
+    "_CHANGE_CORRELATION_PROMPT",
+    "_RECENT_CHANGES_PROMPT",
+    "_EXTERNAL_LINKS_PROMPT",
+    "_EVIDENCE_GAPS_PROMPT",
+]
 _ = ANTI_HALLUCINATION_RULES  # referenced in the prompt text above
