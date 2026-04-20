@@ -1222,15 +1222,32 @@ class HealthReport(BaseModel):
 
     @model_validator(mode="after")
     def _validate_hypothesis_probability_sum(self) -> HealthReport:
-        """Probabilities must sum to [0.7, 1.0] when hypotheses are present."""
+        """Normalize root_cause_hypotheses probabilities so they sum to 1.0.
+
+        Gemini sometimes assigns probabilities independently (e.g. 0.6 + 0.5 + 0.4 = 1.5).
+        Rather than rejecting the entire report, we normalize proportionally so the
+        relative ranking is preserved and the sum becomes exactly 1.0.
+        If total is 0 (degenerate case) we assign uniform probabilities.
+        """
         if not self.root_cause_hypotheses:
             return self
         total = sum(h.probability for h in self.root_cause_hypotheses)
-        if not (0.7 <= total <= 1.0):
-            raise ValueError(
-                f"Sum of root_cause_hypotheses probabilities must be in [0.7, 1.0], "
-                f"got {total:.3f}."
+        if total <= 0.0:
+            uniform = round(1.0 / len(self.root_cause_hypotheses), 4)
+            self.root_cause_hypotheses = [
+                h.model_copy(update={"probability": uniform})
+                for h in self.root_cause_hypotheses
+            ]
+            return self
+        if abs(total - 1.0) > 1e-6:
+            logger.warning(
+                "root_cause_hypotheses probabilities sum to %.3f — normalizing to 1.0.",
+                total,
             )
+            self.root_cause_hypotheses = [
+                h.model_copy(update={"probability": round(h.probability / total, 4)})
+                for h in self.root_cause_hypotheses
+            ]
         return self
 
     # ── Serialisation helpers ────────────────────────────────
