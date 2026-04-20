@@ -2,7 +2,7 @@
 
 Covers:
 - Valid ExternalLink instantiation
-- Invalid system literal raises ValidationError
+- Invalid system literal is accepted (system is a plain str, not a Literal)
 - ExternalLinks partial groups default to empty lists
 - HealthReport backward-compat deserialization without external_links
 - HealthReportGeminiSchema pruning of excluded fields and orphaned $defs

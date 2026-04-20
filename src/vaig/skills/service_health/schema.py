@@ -1588,28 +1588,6 @@ class HealthReportGeminiSchema(HealthReport):
 
     model_config = ConfigDict(extra="ignore")
 
-    # Post-hoc fields — kept as defaulted attributes for HealthReport
-    # compatibility but stripped from the Gemini JSON schema via
-    # model_json_schema() override below.
-    # NOTE: ``exclude=True`` is intentionally NOT set here.  Using it would
-    # cause model_dump() to omit these fields, breaking the HTML report
-    # template (JS crash at ``REPORT_DATA.metadata.project_id``).
-    metadata: ReportMetadata = Field(
-        default_factory=ReportMetadata,
-    )
-    evidence_gaps: list[EvidenceGap] = Field(
-        default_factory=list,
-    )
-    recent_changes: list[ChangeEvent] = Field(
-        default_factory=list,
-    )
-    external_links: ExternalLinks | None = Field(
-        default=None,
-    )
-    investigation_coverage: str | None = Field(
-        default=None,
-    )
-
     @classmethod
     def model_json_schema(
         cls,
