@@ -103,7 +103,8 @@ class RepoCorrelator:
 
                 snippet = RepoSnippet(
                     file_path=file_path,
-                    line_range=(start_line, end_line),
+                    line_start=start_line,
+                    line_end=end_line,
                     excerpt=excerpt,
                     relevance_score=relevance_score,
                     retrieval_query=retrieval_query,
@@ -140,7 +141,7 @@ class RepoCorrelator:
                                 ),
                                 evidence=[
                                     f"repo:{snippet.file_path}:"
-                                    f"{snippet.line_range[0]}-{snippet.line_range[1]}"
+                                    f"{snippet.line_start}-{snippet.line_end}"
                                 ],
                                 quick_remediation=(
                                     "kubectl get deployment <name> -o yaml | grep replicas"

@@ -442,12 +442,23 @@ class ServiceStatus(BaseModel):
 class RepoSnippet(BaseModel):
     """A code/config snippet retrieved from a repo that supports or contradicts a finding."""
 
+    model_config = ConfigDict(extra="ignore")
+
     kind: Literal["repo_snippet"] = "repo_snippet"
     file_path: str
-    line_range: tuple[int, int]
+    line_start: int = Field(description="1-based inclusive start line")
+    line_end: int = Field(description="1-based inclusive end line")
     excerpt: str
     relevance_score: float = Field(ge=0.0, le=1.0)
     retrieval_query: str
+
+    @model_validator(mode="after")
+    def _line_range_ordered(self) -> RepoSnippet:
+        if self.line_start > self.line_end:
+            raise ValueError(
+                f"line_start ({self.line_start}) must be <= line_end ({self.line_end})"
+            )
+        return self
 
 
 class Finding(BaseModel):
