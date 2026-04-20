@@ -1493,6 +1493,56 @@ class HealthReport(BaseModel):
 # ── Slim Gemini schema (excludes post-hoc fields) ────────────
 
 
+def _collect_reachable_defs(
+    schema: dict[str, object],
+    excluded_names: set[str],
+) -> set[str]:
+    """Return the set of ``$defs`` keys reachable from the *retained* properties.
+
+    We perform a multi-pass reachability walk:
+
+    1. Start from the top-level ``properties`` that are **not** excluded and
+       from any other top-level schema keys (``allOf``, ``anyOf``, etc.)
+       — excluding the ``$defs`` block itself.
+    2. For each ``$def`` key found reachable, add its definition body to the
+       frontier so we transitively follow nested references.
+    3. Repeat until no new keys are discovered (fixed point).
+
+    This correctly handles defs that are only referenced *from* other defs
+    (e.g. ``Confidence`` referenced inside the ``Finding`` definition body).
+    """
+    import json
+
+    raw_defs = schema.get("$defs")
+    defs: dict[str, object] = raw_defs if isinstance(raw_defs, dict) else {}
+
+    # Seed: serialise the schema WITHOUT $defs and WITHOUT excluded properties
+    seed: dict[str, object] = {}
+    for k, v in schema.items():
+        if k == "$defs":
+            continue
+        if k == "properties" and isinstance(v, dict):
+            seed[k] = {pk: pv for pk, pv in v.items() if pk not in excluded_names}
+        else:
+            seed[k] = v
+
+    reachable: set[str] = set()
+    frontier_str = json.dumps(seed)
+
+    while True:
+        newly_found: set[str] = set()
+        for key in defs:
+            if key not in reachable and f'"#/$defs/{key}"' in frontier_str:
+                newly_found.add(key)
+        if not newly_found:
+            break
+        reachable |= newly_found
+        # Expand frontier: add serialised bodies of newly reachable defs
+        frontier_str += json.dumps({k: defs[k] for k in newly_found})
+
+    return reachable
+
+
 class HealthReportGeminiSchema(HealthReport):
     """Reduced schema passed as ``response_schema`` to Gemini structured output.
 
@@ -1516,9 +1566,11 @@ class HealthReportGeminiSchema(HealthReport):
 
     model_config = ConfigDict(extra="ignore")
 
-    # Override post-hoc fields — exclude=True removes them from the JSON schema
-    # sent to Gemini while keeping them as valid (defaulted) attributes so that
-    # HealthReport.model_validate_json() still works for the full model.
+    # Post-hoc fields — kept as defaulted attributes for HealthReport
+    # compatibility but stripped from the JSON schema via model_json_schema()
+    # override below.  NOTE: Pydantic v2 ``exclude=True`` only affects
+    # serialisation (.model_dump), NOT .model_json_schema().  We therefore
+    # need the classmethod override to actually reduce Gemini schema states.
     metadata: ReportMetadata = Field(
         default_factory=ReportMetadata,
         exclude=True,
@@ -1539,6 +1591,48 @@ class HealthReportGeminiSchema(HealthReport):
         default=None,
         exclude=True,
     )
+    tool_usage: ToolUsageSummary | None = Field(
+        default=None,
+        exclude=True,
+    )
+
+    @classmethod
+    def model_json_schema(cls, *args: object, **kwargs: object) -> dict[str, object]:
+        """Return a pruned JSON schema that omits ``exclude=True`` fields.
+
+        Pydantic v2's ``exclude=True`` only affects ``.model_dump()`` — it does
+        **not** strip fields from ``.model_json_schema()``.  Since the
+        google-genai SDK sends the full JSON schema to Gemini for structured
+        output, we must remove post-hoc fields here to stay under the
+        "too many states" constraint.
+        """
+        schema: dict[str, object] = super().model_json_schema(*args, **kwargs)  # type: ignore[safe-super]
+
+        # Identify fields to drop
+        excluded_names = {
+            name
+            for name, field_info in cls.model_fields.items()
+            if field_info.exclude
+        }
+
+        # Strip from properties & required
+        props = schema.get("properties")
+        if isinstance(props, dict):
+            for name in excluded_names:
+                props.pop(name, None)
+        req = schema.get("required")
+        if isinstance(req, list):
+            schema["required"] = [r for r in req if r not in excluded_names]
+
+        # Remove orphaned $defs (types only referenced by excluded fields)
+        defs = schema.get("$defs")
+        if isinstance(defs, dict):
+            reachable = _collect_reachable_defs(schema, excluded_names)
+            orphans = [key for key in list(defs) if key not in reachable]
+            for key in orphans:
+                del defs[key]
+
+        return schema
 
 
 # ══════════════════════════════════════════════════════════════
