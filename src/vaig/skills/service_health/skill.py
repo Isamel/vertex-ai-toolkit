@@ -20,8 +20,10 @@ from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.skills.service_health.contradiction_validator import detect_contradictions
 from vaig.skills.service_health.prompts import (
+    ANALYZER_AUTONOMOUS_OVERLAY,
     HEALTH_ANALYZER_PROMPT,
     HEALTH_INVESTIGATOR_PROMPT,
+    INVESTIGATOR_AUTONOMOUS_OVERLAY,
     HEALTH_PLANNER_PROMPT,
     HEALTH_VERIFIER_PROMPT,
     PHASE_PROMPTS,
@@ -725,7 +727,11 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_analyzer",
                 "role": "Health Pattern Analyzer",
                 "requires_tools": False,
-                "system_instruction": HEALTH_ANALYZER_PROMPT,
+                "system_instruction": (
+                    HEALTH_ANALYZER_PROMPT + ANALYZER_AUTONOMOUS_OVERLAY
+                    if settings.investigation.enabled is True
+                    else HEALTH_ANALYZER_PROMPT
+                ),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.2,  # Low temp for precise analysis
             },
@@ -976,7 +982,11 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_analyzer",
                 "role": "Health Pattern Analyzer",
                 "requires_tools": False,
-                "system_instruction": HEALTH_ANALYZER_PROMPT,
+                "system_instruction": (
+                    HEALTH_ANALYZER_PROMPT + ANALYZER_AUTONOMOUS_OVERLAY
+                    if settings.investigation.enabled is True
+                    else HEALTH_ANALYZER_PROMPT
+                ),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.2,
             },
@@ -989,7 +999,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Hypothesis Investigator",
                 "requires_tools": True,
                 "tool_categories": ["kubernetes", "scaling", "mesh", "logging", "datadog"],
-                "system_instruction": HEALTH_INVESTIGATOR_PROMPT,
+                "system_instruction": HEALTH_INVESTIGATOR_PROMPT + INVESTIGATOR_AUTONOMOUS_OVERLAY,
                 "max_iterations": settings.investigation.max_iterations,
                 "temperature": 0.1,
                 "agent_class": "InvestigationAgent",

@@ -465,10 +465,29 @@ If there are no gaps, use the first example above.
 
 HEALTH_ANALYZER_PROMPT = HEALTH_ANALYZER_PROMPT + _EVIDENCE_GAPS_PROMPT
 
+AUTONOMOUS_OVERLAY = """
+
+## Autonomous Mode — Extended Analysis
+
+You are running in **autonomous mode**. In addition to the standard analysis above, you MUST:
+
+1. **Produce an InvestigationPlan** — after emitting the findings JSON, append an `investigation_plan` block listing the top 3 hypotheses worth investigating further. Each hypothesis must include:
+   - `id`: short slug (e.g. `oom-memory-leak`)
+   - `finding_ref`: the finding title it relates to
+   - `hypothesis`: one sentence describing the suspected root cause
+   - `tool_hint`: the Kubernetes or observability tool most likely to confirm or refute it
+   - `priority`: integer 1–3 (1 = highest priority)
+
+2. **Flag data gaps** — if critical tools returned no data (e.g. no logs, no metrics), explicitly state which hypotheses CANNOT be tested without that data.
+
+3. **Causal chain reasoning** — where multiple findings exist, explicitly reason about causal relationships before emitting each finding's `causal_chain` field. Do not assume independence.
+"""
+
 # Suppress F401: ANTI_HALLUCINATION_RULES is referenced in the prompt text
 # (inside the f-string body) as a documentation reference only.
 __all__ = [
     "HEALTH_ANALYZER_PROMPT",
+    "AUTONOMOUS_OVERLAY",
     "_CONTRADICTION_RULES_PROMPT",
     "_CHANGE_CORRELATION_PROMPT",
     "_RECENT_CHANGES_PROMPT",
