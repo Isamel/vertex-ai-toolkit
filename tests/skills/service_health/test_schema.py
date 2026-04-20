@@ -495,6 +495,19 @@ class TestAudit07RunDeterminismMetadata:
             "(AUDIT-07 fields must be post-hoc only)"
         )
 
+    def test_gemini_schema_no_prefix_items(self) -> None:
+        """Gemini schema must not contain 'prefixItems' (JSON Schema draft 2020-12 keyword).
+
+        Regression guard for the RepoSnippet.line_range tuple[int,int] bug —
+        Gemini's validator uses draft-07 and rejects prefixItems with
+        'Extra inputs are not permitted'.
+        """
+        schema_str = json.dumps(HealthReportGeminiSchema.model_json_schema())
+        assert "prefixItems" not in schema_str, (
+            "Gemini schema contains 'prefixItems' — a draft-2020-12 keyword unsupported "
+            "by Gemini. Use flat scalar fields instead of tuple types."
+        )
+
 
 # ── AUDIT-16: Schema state budget CI guard ───────────────────────────────────
 
