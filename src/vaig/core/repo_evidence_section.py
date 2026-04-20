@@ -51,8 +51,8 @@ def build_repo_evidence_section(
     - total_retrieved_chunks = sum(p.chunks_retrieved for p in path_summaries)
     - finding_summaries = findings that have repo_evidence (getattr fallback to [])
     - top_cited_files = top-5 all_file_citations sorted by chunks_retrieved desc
-    - unretrieved_file_paths = [g.details for g in evidence_gaps
-        if 'dropped' in g.reason or 'excluded' in g.reason]
+    - unretrieved_file_paths = [g.path or g.details for g in evidence_gaps
+        if 'dropped' in g.kind or 'excluded' in g.kind]
     """
     total_candidate_files = sum(p.total_files for p in path_summaries)
     total_retrieved_chunks = sum(p.chunks_retrieved for p in path_summaries)
@@ -82,9 +82,11 @@ def build_repo_evidence_section(
         kind = getattr(g, "kind", "") or ""
         # Check both reason and kind for dropped/excluded markers
         if "dropped" in reason or "excluded" in reason or "dropped" in kind or "excluded" in kind:
+            path = getattr(g, "path", "") or ""
             details = getattr(g, "details", "") or ""
-            if details:
-                unretrieved_file_paths.append(details)
+            unretrieved_path = path or details
+            if unretrieved_path:
+                unretrieved_file_paths.append(unretrieved_path)
 
     return RepoEvidenceSection(
         repo_label=repo_label,
@@ -99,10 +101,10 @@ def build_repo_evidence_section(
 
 _SEVERITY_ICON = {
     "CRITICAL": "🔴",
-    "HIGH": "🟡",
-    "MEDIUM": "🟠",
-    "LOW": "⚪",
-    "INFO": "ℹ️",
+    "HIGH": "🟠",
+    "MEDIUM": "🟡",
+    "LOW": "🔵",
+    "INFO": "🟢",
 }
 
 

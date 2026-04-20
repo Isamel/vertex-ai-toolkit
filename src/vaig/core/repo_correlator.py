@@ -83,11 +83,17 @@ class RepoCorrelator:
             except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception:  # noqa: BLE001
+                import logging as _logging
+                _logging.getLogger(__name__).debug(
+                    "repo_correlator: index search failed for finding %r", finding.title, exc_info=True
+                )
                 raw_chunks = []
 
             snippets: list[RepoSnippet] = []
             for chunk in raw_chunks:
-                file_path = str(getattr(chunk, "file_path", ""))
+                file_path = str(getattr(chunk, "file_path", None) or getattr(chunk, "path", "") or "")
+                if not file_path:
+                    continue
                 start_line = int(getattr(chunk, "start_line", 0))
                 end_line = int(getattr(chunk, "end_line", 0))
                 excerpt = str(getattr(chunk, "content", getattr(chunk, "outline", "")))

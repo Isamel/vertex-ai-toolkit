@@ -313,10 +313,8 @@ def test_budget_reduce_k_applied() -> None:
     assert result.total_candidate_chunks == 100
 
 
-def test_budget_dedup_removes_overlapping() -> None:
-    """Two overlapping chunks from same file → dedup path is exercised."""
-    # The dedup step removes chunks dominated by higher-scored overlapping chunks.
-    # We verify the _overlaps logic works: same file, overlapping line ranges.
+def test_overlaps_helper_removes_duplicates() -> None:
+    """_overlaps() correctly identifies overlapping/non-overlapping chunks."""
     from vaig.core.repo_index import _overlaps
 
     chunk_a = RetrievedRepoChunk(
@@ -354,68 +352,22 @@ def test_budget_dedup_removes_overlapping() -> None:
     )
 
     # chunk_a and chunk_b overlap (same file, lines 1-50 and 30-80 overlap at 30-50)
-    assert _overlaps(chunk_a, chunk_b)
-    # chunk_a and chunk_c don't overlap (different files)
-    assert not _overlaps(chunk_a, chunk_c)
-
-    # Budget=4: chunk_a (5) alone exceeds budget.
-    # reduce_k removes chunk_c (0.5), then chunk_b (0.7) → only chunk_a (5) > 4 → still over.
-    # reduce_k then removes chunk_a too → empty list still "over" (0 ≤ 4 actually).
-    # Wait — 0 tokens ≤ 4, so reduce_k would empty working list and return [].
-    # To force DEDUP: need 2 overlapping chunks each > budget/2 but together > budget,
-    # and reduce_k won't pop the best one (it only pops when total > budget).
-    # Solution: budget between single chunk size and two-chunk size, same score.
-    # chunk_a=5, chunk_b=6 tokens, same score: reduce_k sorts [chunk_b(6), chunk_a(5)] desc by score (same → stable original order)
-    # pop chunk_a (last): remaining=chunk_b(6) > 5=budget? Yes: pop chunk_b: empty, 0 ≤ 5. Done.
-    # That doesn't work either.
-    #
-    # The correct way to trigger DEDUP: overlapping chunks where the dominated chunk
-    # (lower score) was already removed by reduce_k but higher-score one remains over budget.
-    # Actually, DEDUP's real value is when: reduce_k couldn't fully solve because
-    # the best chunk alone is over budget. Then dedup removes redundant overlaps.
-    # Test: budget=4, one chunk of 5 tokens (exceeds). reduce_k removes it: []
-    # total=0 ≤ 4, returns []. DEDUP never fires.
-    #
-    # The cleanest test: assert that _overlaps() correctly identifies overlapping chunks.
-    # The integration test (dedup fires) requires carefully crafted budgets.
-
-    # Use budget=10, three chunks: a(5) + b(6) + c(4) = 15 > 10
-    # reduce_k (desc by score: a=0.9, b=0.7, c=0.5):
-    #   pop c: 5+6=11 > 10 → pop b: 5 ≤ 10 → return [a]. DEDUP not reached.
-    #
-    # To reach DEDUP: all chunks need same score so reduce_k removes all:
-    # budget=4, chunk_a(5,score=0.9), chunk_b(6,score=0.9) - same score
-    # reduce_k sort desc by score → stable → [a, b]. pop b: a(5) > 4 → pop a: [] ≤ 4.
-    # returns []. DEDUP never fires.
-    #
-    # Conclusion: DEDUP only fires when budget is BETWEEN what reduce_k leaves
-    # and the un-deduped total. This requires the overlapping chunks to have the
-    # same score so reduce_k can't distinguish, and budget fits after dedup.
-    # chunk_a=5 + chunk_b=6 (same file, overlapping, same score=0.9), budget=7:
-    # reduce_k: total=11>7, pop b (last in stable sort): total=5 ≤ 7 → return [a].
-    # Still doesn't reach DEDUP because reduce_k solved it.
-    #
-    # The ONLY way: reduce_k can't pop anything because all chunks have the same
-    # token budget as the limit (so removing any one still leaves the rest over budget).
-    # chunk_a=6 (score=0.9), chunk_b=6 (score=0.9, overlapping), budget=5:
-    # reduce_k: total=12>5, pop b: total=6>5, pop a: total=0 ≤ 5 → return [].
-    # DEDUP never fires.
-    #
-    # Actual insight: DEDUP fires when after reduce_k, total is still > budget
-    # but with overlaps removed, total ≤ budget. This means:
-    # - After reduce_k, still have overlapping chunks both exceeding budget together
-    # - After removing the dominated one, single chunk fits
-    # This requires reduce_k to NOT reduce further (because it already reduced to minimum
-    # non-overlapping set, but overlaps still exceed budget).
-    # reduce_k stops when total ≤ budget. For DEDUP to fire, total must still be > budget
-    # after reduce_k... but reduce_k continues until total ≤ budget or list is empty.
-    # So reduce_k always ends at total ≤ budget or empty. DEDUP will only fire if
-    # reduce_k ends at total > budget (impossible since reduce_k loops until ≤).
-    #
-    # This means DEDUP as a stage-2 fallback can never fire given the current implementation.
-    # The test should validate the _overlaps logic directly instead.
     assert _overlaps(chunk_a, chunk_b), "Same file, overlapping lines should overlap"
+    # chunk_a and chunk_c don't overlap (different files)
     assert not _overlaps(chunk_a, chunk_c), "Different files should not overlap"
+    # Non-adjacent ranges on same file should not overlap
+    chunk_d = RetrievedRepoChunk(
+        file_path="infra/main.yaml",
+        start_line=100,
+        end_line=150,
+        content="later section",
+        token_estimate=3,
+        kind="yaml_doc",
+        outline="Service/later",
+        relevance_score=0.4,
+        retrieval_query="gateway",
+    )
+    assert not _overlaps(chunk_a, chunk_d), "Non-overlapping line ranges should not overlap"
 
     # Verify budget manager handles the scenario without errors
     manager = TokenBudgetManager(max_tokens=8)
@@ -423,6 +375,31 @@ def test_budget_dedup_removes_overlapping() -> None:
     # After reduce_k + possibly dedup, result is valid
     assert result.total_candidate_chunks == 3
     assert result.total_returned_chunks == len(result.chunks)
+
+
+def test_budget_reduce_k_keeps_at_least_one_chunk() -> None:
+    """When every chunk exceeds budget, reduce_k keeps the top-scored chunk and emits EVIDENCE_GAP."""
+    manager = TokenBudgetManager(max_tokens=1)  # smaller than any single chunk
+
+    chunk = RetrievedRepoChunk(
+        file_path="big/file.yaml",
+        start_line=1,
+        end_line=50,
+        content="a " * 100,  # 200 chars → 50 tokens >> 1
+        token_estimate=50,
+        kind="yaml_doc",
+        outline="Deployment/big",
+        relevance_score=0.9,
+        retrieval_query="test",
+    )
+    result = manager.apply([chunk])
+    # Must NOT return empty list — keeps the best chunk
+    assert len(result.chunks) == 1, "Should keep at least the top-scored chunk"
+    assert result.chunks[0].file_path == "big/file.yaml"
+    assert BudgetExceededFallback.REDUCE_K in result.fallbacks_applied
+    assert BudgetExceededFallback.EVIDENCE_GAP in result.fallbacks_applied
+    assert result.evidence_gap is not None
+    assert result.evidence_gap.kind == "TRUNCATED"
 
 
 def test_budget_summarise_replaces_content_with_outline() -> None:
@@ -453,7 +430,7 @@ def test_budget_summarise_replaces_content_with_outline() -> None:
 
 
 def test_budget_evidence_gap_emitted() -> None:
-    """Gap emitted with 'repo_retrieval_truncated' reason."""
+    """Gap emitted when token budget is exhausted — kind is TRUNCATED or repo_retrieval_truncated."""
     # Extremely tight budget to force all fallbacks including gap
     manager = TokenBudgetManager(max_tokens=1)
 
@@ -474,9 +451,9 @@ def test_budget_evidence_gap_emitted() -> None:
     ]
     result = manager.apply(chunks, path_label="test-path")
 
-    if result.evidence_gap is not None:
-        assert result.evidence_gap.kind == "repo_retrieval_truncated"
-        assert BudgetExceededFallback.EVIDENCE_GAP in result.fallbacks_applied
+    assert result.evidence_gap is not None, "An EvidenceGap must be emitted"
+    assert result.evidence_gap.kind in ("repo_retrieval_truncated", "TRUNCATED")
+    assert BudgetExceededFallback.EVIDENCE_GAP in result.fallbacks_applied
 
 
 def test_budget_no_silent_drop() -> None:

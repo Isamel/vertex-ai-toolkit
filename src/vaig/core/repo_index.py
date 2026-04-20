@@ -328,7 +328,7 @@ class BudgetResult(BaseModel):
 
 
 def _chunks_token_total(chunks: list[RetrievedRepoChunk]) -> int:
-    return sum(_token_estimate(c.content) for c in chunks)
+    return sum(c.token_estimate for c in chunks)
 
 
 def _overlaps(a: RetrievedRepoChunk, b: RetrievedRepoChunk) -> bool:
@@ -374,8 +374,32 @@ class TokenBudgetManager:
         fallbacks.append(BudgetExceededFallback.REDUCE_K)
         # Sort descending by score to preserve best chunks
         working.sort(key=lambda c: c.relevance_score, reverse=True)
-        while working and _chunks_token_total(working) > self.max_tokens:
+        while len(working) > 1 and _chunks_token_total(working) > self.max_tokens:
             working.pop()  # pop from tail (lowest score)
+
+        # If even the single top chunk exceeds budget, emit an EvidenceGap rather
+        # than silently returning empty — caller gets at least the best chunk.
+        if _chunks_token_total(working) > self.max_tokens and len(working) == 1:
+            # Keep the single best chunk and emit a TRUNCATED gap
+            fallbacks.append(BudgetExceededFallback.EVIDENCE_GAP)
+            gap = EvidenceGap(
+                source="repo_processing",
+                kind="TRUNCATED",
+                level="WARN",
+                path=path_label or None,
+                details=(
+                    f"Token budget ({self.max_tokens}) is smaller than the top-scored chunk "
+                    f"({_chunks_token_total(working)} tokens). Returning 1 chunk (best match) "
+                    f"to avoid empty result. {total_candidate - 1} candidate(s) dropped."
+                ),
+            )
+            return BudgetResult(
+                chunks=working,
+                fallbacks_applied=fallbacks,
+                evidence_gap=gap,
+                total_candidate_chunks=total_candidate,
+                total_returned_chunks=len(working),
+            )
 
         if _chunks_token_total(working) <= self.max_tokens:
             return BudgetResult(
