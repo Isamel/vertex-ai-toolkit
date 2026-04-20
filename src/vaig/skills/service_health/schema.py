@@ -1054,7 +1054,8 @@ class HealthReport(BaseModel):
         ``HEALTH_REPORTER_PROMPT``: Executive Summary → Cluster Overview →
         Service Status → Findings (by severity) → Downgraded Findings →
         Root Cause Hypotheses → Evidence Details → Recommended Actions →
-        Manual Investigation Required → Timeline → Causal Graph.
+        Manual Investigation Required → Timeline → Causal Graph →
+        Recent Changes → Quick Links → Evidence Gaps → Investigation Coverage.
         """
         parts: list[str] = []
         parts.append("# Service Health Report")
@@ -1412,30 +1413,41 @@ class HealthReport(BaseModel):
         parts.append("")
 
     def _render_external_links(self, parts: list[str]) -> None:
-        """Render the Quick Links section."""
+        """Render the Quick Links section grouped by system (GCP/Datadog/ArgoCD)."""
         if self.external_links is None:
             return
-        all_links: list[ExternalLink] = (
-            self.external_links.gcp
-            + self.external_links.datadog
-            + self.external_links.argocd
-        )
-        if not all_links:
+        system_groups: list[tuple[str, list[ExternalLink]]] = [
+            ("GCP", self.external_links.gcp),
+            ("Datadog", self.external_links.datadog),
+            ("ArgoCD", self.external_links.argocd),
+        ]
+        has_any = any(links for _, links in system_groups)
+        if not has_any:
             return
         parts.append("## Quick Links")
         parts.append("")
-        for link in all_links:
-            parts.append(f"- [{link.label}]({link.url})")
-        parts.append("")
+        for system_name, links in system_groups:
+            if not links:
+                continue
+            parts.append(f"### {system_name}")
+            for link in links:
+                parts.append(f"- [{link.label}]({link.url})")
+            parts.append("")
 
     def _render_evidence_gaps(self, parts: list[str]) -> None:
         """Render the Evidence Gaps section."""
+        _REASON_LABELS: dict[str, str] = {
+            "not_called": "Not Called",
+            "error": "Error",
+            "empty_result": "Empty Result",
+        }
         if not self.evidence_gaps:
             return
         parts.append("## Evidence Gaps")
         parts.append("")
         for gap in self.evidence_gaps:
-            line = f"- **{gap.source}** ({gap.reason})"
+            human_reason = _REASON_LABELS.get(gap.reason, gap.reason.replace("_", " ").title())
+            line = f"- **{gap.source}** ({human_reason})"
             if gap.details:
                 line += f": {gap.details}"
             parts.append(line)

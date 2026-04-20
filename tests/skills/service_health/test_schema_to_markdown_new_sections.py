@@ -45,7 +45,7 @@ class TestToMarkdownEvidenceGaps:
         )
         md = report.to_markdown()
         assert "deployment_metrics" in md
-        assert "error" in md
+        assert "Error" in md
 
     def test_evidence_gaps_details_rendered(self) -> None:
         report = _make_report(
@@ -67,7 +67,7 @@ class TestToMarkdownEvidenceGaps:
         )
         md = report.to_markdown()
         assert "events" in md
-        assert "empty_result" in md
+        assert "Empty Result" in md
 
 
 class TestToMarkdownRecentChanges:
