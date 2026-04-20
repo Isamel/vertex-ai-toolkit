@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from typing import Any
 
 from vaig.agents.base import AgentResult
@@ -130,20 +131,36 @@ class InvestigationAgent(ToolAwareAgent):
 
     # ── Re-plan helpers ────────────────────────────────────────────────────
 
+    # Patterns that indicate a concise but definitive (non-thin) response
+    _DEFINITIVE_SHORT_RE = re.compile(
+        r"(no\s+resources?\s+found|not\s+found|service\s+is\s+healthy|healthy|"
+        r"no\s+issues?\s+found|no[\s._-]+errors?|0\s+items?|nothing\s+found|"
+        r"no\s+.*\s+found|all\s+.*\s+healthy|no\s+data\s+available)",
+        re.IGNORECASE,
+    )
+
     @staticmethod
     def _find_thin_evidence(ledger: EvidenceLedger) -> list[EvidenceEntry]:
-        """Return ledger entries whose answers are thin (errors or very short)."""
+        """Return ledger entries whose answers are thin (errors or very short).
+
+        Short answers that match known-valid definitive patterns (e.g. "no resources found",
+        "service is healthy") are *not* flagged as thin to avoid spurious re-plan rounds.
+        """
         thin: list[EvidenceEntry] = []
         for entry in ledger.entries:
             # "[tool not available" means the tool isn't registered — retrying won't help
             if entry.answer_summary.startswith("[tool not available"):
                 continue
-            is_error = (
+            is_explicit_error = (
                 entry.answer_summary.startswith("[tool error]")
                 or entry.answer_summary.startswith("[tool exception]")
-                or len(entry.answer_summary.strip()) < 50
             )
-            if is_error:
+            is_short = len(entry.answer_summary.strip()) < 50
+            is_definitive_short = (
+                is_short
+                and InvestigationAgent._DEFINITIVE_SHORT_RE.search(entry.answer_summary) is not None
+            )
+            if is_explicit_error or (is_short and not is_definitive_short):
                 thin.append(entry)
         return thin
 
@@ -151,15 +168,30 @@ class InvestigationAgent(ToolAwareAgent):
     def _generate_followup_steps(
         thin_entries: list[EvidenceEntry],
         iteration: int,
+        step_targets: dict[str, str] | None = None,
     ) -> list[InvestigationStep]:
-        """Create 1–3 follow-up InvestigationStep objects for thin evidence entries."""
+        """Create 1–3 follow-up InvestigationStep objects for thin evidence entries.
+
+        Args:
+            thin_entries: Ledger entries with thin (error or very short) evidence.
+            iteration: Current re-plan iteration number (used to generate unique step IDs).
+            step_targets: Optional mapping of ``tool_args_hash → original_target`` so that
+                follow-up steps receive the real resource target instead of the hash string.
+        """
         followup: list[InvestigationStep] = []
         # Cap at 3 follow-up steps per iteration
         for idx, entry in enumerate(thin_entries[:3]):
+            # Resolve the original target from the mapping; fall back to the question
+            # excerpt if no mapping is available (graceful degradation).
+            if step_targets and entry.tool_args_hash in step_targets:
+                original_target = step_targets[entry.tool_args_hash]
+            else:
+                # Best-effort: use the question as a hint rather than an opaque hash
+                original_target = entry.tool_args_hash
             followup.append(
                 InvestigationStep(
                     step_id=f"replan-{iteration}-{idx}",
-                    target=entry.tool_args_hash,  # re-use original target via hash reference
+                    target=original_target,
                     tool_hint=entry.tool_name,
                     hypothesis=f"[replan] Retry thin evidence for: {entry.question[:200]}",
                     priority=1,
@@ -209,12 +241,25 @@ class InvestigationAgent(ToolAwareAgent):
         if budget is not None:
             try:
                 import asyncio  # noqa: PLC0415
-                asyncio.run(budget.check())
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None and loop.is_running():
+                    # We are inside an async context; schedule and await synchronously
+                    # via a new thread to avoid RuntimeError from nested asyncio.run().
+                    import concurrent.futures  # noqa: PLC0415
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        future = pool.submit(asyncio.run, budget.check())
+                        future.result()
+                else:
+                    asyncio.run(budget.check())
             except BudgetExhaustedError:
                 logger.info(
                     "InvestigationAgent: budget exhausted before step %s",
                     step.step_id,
                 )
+                step_statuses[step.step_id] = StepStatus.skipped
                 budget_exhausted = True
                 return ledger, step_statuses, summary_lines, iterations_without_progress, budget_exhausted, escalated
 
@@ -250,6 +295,7 @@ class InvestigationAgent(ToolAwareAgent):
             logger.info(
                 "InvestigationAgent: SelfCorrectionController returned ESCALATE — stopping"
             )
+            step_statuses[step.step_id] = StepStatus.skipped
             escalated = True
             return ledger, step_statuses, summary_lines, iterations_without_progress, budget_exhausted, escalated
         if action == SelfCorrectionAction.backtrack:
@@ -346,6 +392,9 @@ class InvestigationAgent(ToolAwareAgent):
             s.step_id: StepStatus.pending for s in plan.steps
         }
 
+        # Mapping of tool_args_hash → original target for follow-up step resolution (Fix #1)
+        step_targets: dict[str, str] = {}
+
         iterations = 0
         iterations_without_progress = 0
         summary_lines: list[str] = []
@@ -353,6 +402,11 @@ class InvestigationAgent(ToolAwareAgent):
         escalated = False
 
         for step in plan.steps:
+            # Pre-populate the hash→target mapping so re-plan steps can resolve the
+            # original resource target instead of passing an opaque hash.
+            args_hash = hashlib.sha256(step.target.encode()).hexdigest()[:16]
+            step_targets[args_hash] = step.target
+
             if iterations >= self._max_iterations:
                 logger.info(
                     "InvestigationAgent: max_iterations=%d reached — stopping",
@@ -422,7 +476,7 @@ class InvestigationAgent(ToolAwareAgent):
                 break
 
             replan_count += 1
-            followup_steps = self._generate_followup_steps(thin_entries, replan_count)
+            followup_steps = self._generate_followup_steps(thin_entries, replan_count, step_targets)
             if not followup_steps:
                 break
 
@@ -439,6 +493,9 @@ class InvestigationAgent(ToolAwareAgent):
 
                 iterations += 1
                 step_statuses[fstep.step_id] = StepStatus.pending
+                # Track the hash→target mapping for this follow-up step too
+                fstep_hash = hashlib.sha256(fstep.target.encode()).hexdigest()[:16]
+                step_targets[fstep_hash] = fstep.target
 
                 (
                     ledger,

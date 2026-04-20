@@ -288,9 +288,12 @@ class TestInvestigationAgentReplan:
         agent = _make_agent(max_iterations=20)
         # First call returns an error (thin evidence); re-plan tool returns rich data
         call_count = {"n": 0}
+        captured_targets: list[str] = []
 
-        def _flaky_execute(**_: object) -> ToolResult:
+        def _flaky_execute(**kwargs: object) -> ToolResult:
             call_count["n"] += 1
+            if "target" in kwargs:
+                captured_targets.append(str(kwargs["target"]))
             if call_count["n"] <= 1:
                 return ToolResult(output="[tool error] connection refused")
             return ToolResult(output="Pod is OOMKilled — memory limit 256Mi exceeded")
@@ -299,12 +302,25 @@ class TestInvestigationAgentReplan:
         tool = ToolDef(name="kubectl_describe", description="test", execute=_flaky_execute)
         agent._tool_registry.register(tool)
 
-        plan = _make_plan("step-1")
+        step_target = "pod/web"
+        step = InvestigationStep(
+            step_id="step-1",
+            target=step_target,
+            tool_hint="kubectl_describe",
+            hypothesis="Is the pod healthy?",
+        )
+        plan = InvestigationPlan(plan_id="test-plan", created_from="test-run", steps=[step])
         result = agent.execute(plan=plan)
 
         assert result.success is True
         # At least one re-plan round was attempted
         assert result.metadata["replan_count"] >= 1
+        # Follow-up steps must use the original resource target, NOT an opaque hash
+        for target in captured_targets:
+            assert target == step_target, (
+                f"Follow-up step received target={target!r} instead of original {step_target!r}. "
+                "This indicates the hash-as-target bug has re-appeared."
+            )
 
     def test_replan_triggered_for_short_evidence(self) -> None:
         """Re-plan fires when answer_summary is shorter than 50 chars."""

@@ -1476,14 +1476,18 @@ function renderSignalQuality() {
   const effectiveTotal = total != null ? total : (success || 0) + (failed || 0);
   const effectiveSuccess = success != null ? success : (effectiveTotal - (failed || 0));
   const effectiveFailed = failed != null ? failed : (effectiveTotal - effectiveSuccess);
-  const ratio = effectiveTotal > 0 ? Math.round((effectiveSuccess / effectiveTotal) * 100) : 0;
-  const ratioColor = ratio >= 80 ? 'var(--healthy)' : ratio >= 50 ? 'var(--medium)' : 'var(--failed)';
+  const hasExplicitBreakdown = success != null && failed != null;
+  const ratio = hasExplicitBreakdown && effectiveTotal > 0
+    ? Math.round((effectiveSuccess / effectiveTotal) * 100)
+    : null;
+  const ratioColor = ratio != null ? (ratio >= 80 ? 'var(--healthy)' : ratio >= 50 ? 'var(--medium)' : 'var(--failed)') : 'var(--text-dim)';
+  const ratioDisplay = ratio != null ? ratio + '%' : 'N/A';
 
   document.getElementById('signal-quality-cards').innerHTML = [
     { label: 'Total Tool Calls', value: effectiveTotal },
     { label: 'Successful Calls', value: effectiveSuccess },
     { label: 'Failed / Empty', value: effectiveFailed },
-    { label: 'Signal Ratio', value: ratio + '%' },
+    { label: 'Signal Ratio', value: ratioDisplay },
   ].map(c => `<div class="signal-quality-card">
     <div class="sq-value">${esc(c.value)}</div>
     <div class="sq-label">${esc(c.label)}</div>
@@ -1493,9 +1497,9 @@ function renderSignalQuality() {
     <div class="signal-ratio-bar-wrap">
       <div class="signal-ratio-label">Signal / Noise</div>
       <div class="signal-ratio-track">
-        <div class="signal-ratio-fill" style="width:${ratio}%;background:${ratioColor}"></div>
+        <div class="signal-ratio-fill" style="width:${ratio != null ? ratio : 0}%;background:${ratioColor}"></div>
       </div>
-      <div class="signal-ratio-pct">${ratio}%</div>
+      <div class="signal-ratio-pct">${ratioDisplay}</div>
     </div>`;
 }
 
@@ -1565,7 +1569,7 @@ function renderDataCompleteness() {
     // Check metadata for explicit cost presence
     if (src.key === 'cost') {
       const hasCost = REPORT_DATA.metadata && REPORT_DATA.metadata.cost_metrics
-        && REPORT_DATA.metadata.cost_metrics.llm_cost_usd != null;
+        && REPORT_DATA.metadata.cost_metrics.run_cost_usd != null;
       const finalPct = hasCost ? 100 : (isGap ? 0 : 50);
       cls = finalPct === 100 ? 'full' : finalPct >= 50 ? 'partial' : 'empty';
       statusLabel = hasCost ? 'Present' : (isGap ? 'Missing' : 'Partial');
