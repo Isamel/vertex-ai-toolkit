@@ -9,6 +9,7 @@ from unittest.mock import patch
 from vaig.core.report_metadata import format_models_used, inject_report_metadata
 from vaig.skills.service_health.schema import (
     CostMetrics,
+    PostHocFieldStatus,
     ReportMetadata,
     ToolUsageSummary,
 )
@@ -477,3 +478,109 @@ class TestAudit07MetadataInjection:
             inject_report_metadata(report)
         assert report.metadata.pipeline_version
         assert report.metadata.pipeline_version != "unknown"
+
+
+# ── AUDIT-15: Post-hoc field population telemetry ─────────────────────────────
+
+
+class TestAudit15PostHocTelemetry:
+    """Tests for AUDIT-15 — post-hoc field population telemetry."""
+
+    def _make_full_report(self) -> SimpleNamespace:
+        """Return a report-like object with ALL five post-hoc fields populated."""
+        from vaig.skills.service_health.schema import (  # noqa: PLC0415
+            ChangeEvent,
+            EvidenceGap,
+            ExternalLinks,
+        )
+
+        return SimpleNamespace(
+            metadata=ReportMetadata(),
+            cluster_overview=None,
+            evidence_gaps=[EvidenceGap(source="kubectl_get", reason="empty_result")],
+            recent_changes=[
+                ChangeEvent(
+                    timestamp="2026-04-20T00:00:00Z",
+                    type="deployment",
+                    description="deploy v1.2",
+                    correlation_to_issue="may have caused the latency spike",
+                )
+            ],
+            external_links=ExternalLinks(),
+            investigation_coverage="Covered 5 of 5 hypotheses.",
+        )
+
+    def test_golden_path_all_populated(self) -> None:
+        """Golden-path: all five post-hoc fields populated → all populated=True."""
+        report = self._make_full_report()
+        inject_report_metadata(report)
+        statuses = report.metadata.post_hoc_field_status
+        assert len(statuses) == 5  # noqa: PLR2004
+        field_map = {s.field_name: s for s in statuses}
+        for field_name in ("metadata", "evidence_gaps", "recent_changes", "external_links", "investigation_coverage"):
+            assert field_name in field_map, f"Missing status for {field_name!r}"
+            assert field_map[field_name].populated is True, f"{field_name!r} should be populated=True"
+
+    def test_skipped_fields_recorded_as_not_populated(self) -> None:
+        """When post-hoc fields are absent/empty, status has populated=False."""
+        report = _make_report()
+        # No evidence_gaps, recent_changes, external_links, investigation_coverage on report
+        inject_report_metadata(report)
+        statuses = report.metadata.post_hoc_field_status
+        field_map = {s.field_name: s for s in statuses}
+        # metadata is always populated
+        assert field_map["metadata"].populated is True
+        # The rest should be skipped (not present on SimpleNamespace-based report)
+        for field_name in ("evidence_gaps", "recent_changes", "external_links", "investigation_coverage"):
+            assert field_name in field_map, f"Missing status for {field_name!r}"
+            assert field_map[field_name].populated is False
+
+    def test_empty_list_fields_recorded_as_not_populated(self) -> None:
+        """evidence_gaps=[] and recent_changes=[] are treated as not populated."""
+        report = SimpleNamespace(
+            metadata=ReportMetadata(),
+            cluster_overview=None,
+            evidence_gaps=[],
+            recent_changes=[],
+            external_links=None,
+            investigation_coverage=None,
+        )
+        inject_report_metadata(report)
+        field_map = {s.field_name: s for s in report.metadata.post_hoc_field_status}
+        assert field_map["evidence_gaps"].populated is False
+        assert field_map["recent_changes"].populated is False
+
+    def test_exception_captured_in_status(self) -> None:
+        """When recording post-hoc status for external_links raises, it is captured gracefully."""
+        # Simulate a report where accessing external_links raises RuntimeError
+        class _ErrReport:
+            metadata = ReportMetadata()
+            cluster_overview = None
+            evidence_gaps: list[Any] = []
+            recent_changes: list[Any] = []
+            investigation_coverage = None
+
+            @property
+            def external_links(self) -> None:  # type: ignore[return]
+                raise RuntimeError("link builder failed: permission denied")
+
+        report = _ErrReport()
+        # Should not raise; the error must be swallowed gracefully
+        inject_report_metadata(report)
+        # external_links access raised → the status entry should reflect that
+        field_map = {s.field_name: s for s in report.metadata.post_hoc_field_status}
+        assert "external_links" in field_map
+        entry = field_map["external_links"]
+        assert entry.populated is False
+        assert entry.reason is not None
+        assert "error:" in entry.reason
+        assert len(entry.reason) <= 166  # noqa: PLR2004  # "error:" + 160 chars
+
+    def test_post_hoc_field_status_is_list_of_correct_type(self) -> None:
+        """post_hoc_field_status entries are PostHocFieldStatus instances."""
+        report = _make_report()
+        inject_report_metadata(report)
+        for entry in report.metadata.post_hoc_field_status:
+            assert isinstance(entry, PostHocFieldStatus)
+            assert isinstance(entry.field_name, str)
+            assert isinstance(entry.populated, bool)

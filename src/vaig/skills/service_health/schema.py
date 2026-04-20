@@ -915,6 +915,20 @@ class ToolUsageSummary(BaseModel):
     )
 
 
+# ── AUDIT-15: Post-hoc field population telemetry ────────────
+
+
+class PostHocFieldStatus(BaseModel):
+    """Status record for a single post-hoc populated field."""
+
+    field_name: str = Field(description="Name of the post-hoc field being tracked")
+    populated: bool = Field(description="True when the field was successfully populated")
+    reason: str | None = Field(
+        default=None,
+        description="Status detail: 'populated', 'skipped', or 'error:<details truncated to 160 chars>'",
+    )
+
+
 class ReportMetadata(BaseModel):
     """Metadata about how and when the report was generated."""
 
@@ -960,6 +974,14 @@ class ReportMetadata(BaseModel):
     autonomous_replan_iterations: int | None = Field(
         default=None,
         description="Number of re-plan iterations executed by the InvestigationAgent (None when autonomous disabled).",
+    )
+    # ── AUDIT-15: Post-hoc field population telemetry ─────────
+    post_hoc_field_status: list[PostHocFieldStatus] = Field(
+        default_factory=list,
+        description=(
+            "Telemetry entries for each post-hoc populated field. "
+            "populated=False entries indicate fields that were expected but left empty."
+        ),
     )
 
 

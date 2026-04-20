@@ -20,6 +20,46 @@ __all__ = ["inject_report_metadata", "format_models_used"]
 
 logger = logging.getLogger(__name__)
 
+# ── AUDIT-15: Post-hoc field status tracking ─────────────────
+
+_POST_HOC_FIELDS = (
+    "metadata",
+    "evidence_gaps",
+    "recent_changes",
+    "external_links",
+    "investigation_coverage",
+)
+
+
+def _append_post_hoc_status(
+    metadata: Any,
+    field_name: str,
+    *,
+    populated: bool,
+    reason: str | None = None,
+) -> None:
+    """Append a PostHocFieldStatus entry to metadata.post_hoc_field_status.
+
+    Fire-and-forget — never raises.
+    """
+    try:
+        status_list = getattr(metadata, "post_hoc_field_status", None)
+        if status_list is None:
+            return
+        from vaig.skills.service_health.schema import PostHocFieldStatus  # noqa: PLC0415
+
+        status_list.append(
+            PostHocFieldStatus(
+                field_name=field_name,
+                populated=populated,
+                reason=reason,
+            )
+        )
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to record post-hoc field status for %r", field_name, exc_info=True)
+
 
 def _extract_target_from_question(question: str) -> str:
     """Extract a Kubernetes resource target from a question string.
@@ -332,3 +372,39 @@ def inject_report_metadata(
                 report.cluster_overview.insert(
                     0, ClusterMetric(metric="Namespace", value=ns)
                 )
+
+    # ── AUDIT-15: Record post-hoc field population status ─────
+    # Track the five fields excluded from the Gemini schema:
+    # metadata, evidence_gaps, recent_changes, external_links, investigation_coverage
+    _append_post_hoc_status(
+        metadata,
+        "metadata",
+        populated=True,
+        reason="populated",
+    )
+
+    for _phf in ("evidence_gaps", "recent_changes", "external_links", "investigation_coverage"):
+        try:
+            _value = getattr(report, _phf, None)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as _phf_exc:  # noqa: BLE001
+            _err_detail = str(_phf_exc)[:160]
+            _append_post_hoc_status(metadata, _phf, populated=False, reason=f"error:{_err_detail}")
+            continue
+        if _phf in ("evidence_gaps", "recent_changes"):
+            # list fields: populated when non-empty list, skipped when empty list
+            if isinstance(_value, list) and _value:
+                _append_post_hoc_status(metadata, _phf, populated=True, reason="populated")
+            else:
+                _append_post_hoc_status(metadata, _phf, populated=False, reason="skipped")
+        elif _phf == "external_links":
+            if _value is not None:
+                _append_post_hoc_status(metadata, _phf, populated=True, reason="populated")
+            else:
+                _append_post_hoc_status(metadata, _phf, populated=False, reason="skipped")
+        elif _phf == "investigation_coverage":
+            if _value:
+                _append_post_hoc_status(metadata, _phf, populated=True, reason="populated")
+            else:
+                _append_post_hoc_status(metadata, _phf, populated=False, reason="skipped")
