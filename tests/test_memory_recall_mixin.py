@@ -12,11 +12,8 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from vaig.agents.mixins import MemoryRecallMixin
 from vaig.core.memory.models import PatternEntry, RecalledPattern
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

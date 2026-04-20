@@ -1,8 +1,6 @@
 """Tests for SPEC-V2-AUDIT-10 — Infra → workload causal contradiction rule."""
 from __future__ import annotations
 
-import pytest
-
 from vaig.skills.service_health.contradiction_validator import (
     _check_infra_degrades_workload,
     apply_contradiction_rules,
@@ -14,7 +12,6 @@ from vaig.skills.service_health.schema import (
     OverallStatus,
     Severity,
 )
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 

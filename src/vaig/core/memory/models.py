@@ -135,7 +135,7 @@ class RecalledPattern(BaseModel):
     occurrences: int = Field(default=1, ge=1, description="Total historical occurrences")
 
     @classmethod
-    def from_entry(cls, entry: "PatternEntry", resolution: str = "", fix_outcome: str = "") -> "RecalledPattern":
+    def from_entry(cls, entry: PatternEntry, resolution: str = "", fix_outcome: str = "") -> RecalledPattern:
         """Build a :class:`RecalledPattern` from a :class:`PatternEntry`."""
         return cls(
             timestamp=entry.last_seen,

@@ -8,6 +8,7 @@ from vaig.skills.service_health.schema import (
     EvidenceDetail,
     ExecutiveSummary,
     Finding,
+    HealthReport,
     OverallStatus,
     RecommendedAction,
     RootCauseHypothesis,
@@ -303,12 +304,7 @@ class TestRolloutDetailsTableRendering:
 class TestRootCauseHypothesisProbabilityValidator:
     """SPEC-V2-AUDIT-02 acceptance criteria."""
 
-    def _make_report(self, hypotheses: list) -> "HealthReport":
-        from vaig.skills.service_health.schema import (
-            ExecutiveSummary,
-            HealthReport,
-            OverallStatus,
-        )
+    def _make_report(self, hypotheses: list) -> HealthReport:
         return HealthReport(
             executive_summary=ExecutiveSummary(
                 overall_status=OverallStatus.HEALTHY,
@@ -318,7 +314,7 @@ class TestRootCauseHypothesisProbabilityValidator:
             root_cause_hypotheses=hypotheses,
         )
 
-    def _hyp(self, probability: float, status: str = "open") -> "RootCauseHypothesis":
+    def _hyp(self, probability: float, status: str = "open") -> RootCauseHypothesis:
         return RootCauseHypothesis(
             label="Test hypothesis",
             probability=probability,

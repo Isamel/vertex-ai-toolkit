@@ -10,9 +10,6 @@ Verifies:
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # 1. Module-level constants
 # ---------------------------------------------------------------------------
