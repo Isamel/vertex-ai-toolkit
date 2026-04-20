@@ -189,3 +189,73 @@ class TestHealthReportGeminiSchemaPruning:
                 f"model_dump() must retain post-hoc field '{field}' "
                 f"(HTML report template depends on it)"
             )
+
+
+# ── AUDIT-04: overall_severity_reason ────────────────────────
+
+
+class TestOverallSeverityReason:
+    """AUDIT-04 — overall_severity_reason field in HealthReport."""
+
+    _MINIMAL_PAYLOAD: dict = {
+        "executive_summary": {
+            "overall_status": "DEGRADED",
+            "scope": "Cluster-wide",
+            "summary_text": "Issues detected",
+        }
+    }
+
+    def test_field_defaults_to_none(self) -> None:
+        report = HealthReport.model_validate(self._MINIMAL_PAYLOAD)
+        assert report.overall_severity_reason is None
+
+    def test_field_accepts_string(self) -> None:
+        payload = {
+            **self._MINIMAL_PAYLOAD,
+            "overall_severity_reason": (
+                "DEGRADED because 1 HIGH finding with confidence=CONFIRMED "
+                "and 2 MEDIUM findings in distinct namespaces."
+            ),
+        }
+        report = HealthReport.model_validate(payload)
+        assert report.overall_severity_reason is not None
+        assert "1 HIGH" in report.overall_severity_reason
+        assert "CONFIRMED" in report.overall_severity_reason
+
+    def test_field_present_in_gemini_schema(self) -> None:
+        """overall_severity_reason is reporter-populated, must be in Gemini schema."""
+        schema = HealthReportGeminiSchema.model_json_schema()
+        props = schema.get("properties", {})
+        assert "overall_severity_reason" in props, (
+            "overall_severity_reason must be present in the Gemini schema "
+            "(it is filled by the reporter LLM, not post-hoc)"
+        )
+
+    def test_markdown_renders_reason_when_present(self) -> None:
+        payload = {
+            **self._MINIMAL_PAYLOAD,
+            "overall_severity_reason": "DEGRADED because 1 HIGH finding with confidence=CONFIRMED.",
+        }
+        report = HealthReport.model_validate(payload)
+        md = report.to_markdown()
+        assert "DEGRADED because 1 HIGH finding with confidence=CONFIRMED." in md
+
+    def test_markdown_omits_reason_when_none(self) -> None:
+        report = HealthReport.model_validate(self._MINIMAL_PAYLOAD)
+        md = report.to_markdown()
+        # No stray italic line under Status line
+        lines = md.splitlines()
+        status_idx = next(i for i, l in enumerate(lines) if "**Status**" in l)
+        next_line = lines[status_idx + 1] if status_idx + 1 < len(lines) else ""
+        assert not (next_line.strip().startswith("*") and next_line.strip().endswith("*")), (
+            "No italic reason line should appear when overall_severity_reason is None"
+        )
+
+    def test_roundtrip_preserves_reason(self) -> None:
+        payload = {
+            **self._MINIMAL_PAYLOAD,
+            "overall_severity_reason": "HEALTHY because no findings above LOW severity.",
+        }
+        report = HealthReport.model_validate(payload)
+        dumped = report.model_dump()
+        assert dumped["overall_severity_reason"] == "HEALTHY because no findings above LOW severity."

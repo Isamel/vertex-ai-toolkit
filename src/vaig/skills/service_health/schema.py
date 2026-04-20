@@ -1057,6 +1057,16 @@ class HealthReport(BaseModel):
         default=None,
         description="Human-readable coverage summary, e.g. '9/12 signal sources checked'.",
     )
+    overall_severity_reason: str | None = Field(
+        default=None,
+        max_length=240,
+        description=(
+            "Human-readable one-line justification for overall_severity. "
+            "Populated by the analyzer. Example: "
+            "'DEGRADED because 1 HIGH finding with confidence=CONFIRMED "
+            "and 2 MEDIUM findings in distinct namespaces.'"
+        ),
+    )
 
     @property
     def root_causes(self) -> list[Finding]:
@@ -1132,6 +1142,8 @@ class HealthReport(BaseModel):
         es = self.executive_summary
         parts.append("## Executive Summary")
         parts.append(f"- **Status**: {es.overall_status.value}")
+        if self.overall_severity_reason:
+            parts.append(f"  *{self.overall_severity_reason}*")
         parts.append(f"- **Scope**: {es.scope}")
         parts.append(f"- **Summary**: {es.summary_text}")
         parts.append("")
