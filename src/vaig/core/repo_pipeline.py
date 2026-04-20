@@ -1,4 +1,4 @@
-"""Tiered file-processing pipeline (SPEC-V2-REPO-02).
+"""Tiered file-processing pipeline (SPEC-V2-REPO-02, SPEC-V2-REPO-06).
 
 Implements the T-0 → T-1 classifier layer:
 
@@ -6,7 +6,11 @@ Implements the T-0 → T-1 classifier layer:
 - ``TierOutcome``         – processing tier for a file
 - ``Relevance``           – relevance level for classification
 - ``ClassificationResult``– output of the classifier
+- ``EvidenceGap``         – records what was NOT processed and why (REPO-06)
 - ``classify_file()``     – apply classifier rules to a FileMeta
+- ``classify_file_with_evidence()`` – classify and emit evidence gaps
+- ``apply_file_cap()``    – enforce max_files cap with evidence gaps
+- ``generate_repo_guidance()`` – full-scan safety-net finding (REPO-06)
 - ``detect_file_kind()``  – sniff first 4 KB to determine YAML subkind
 - ``is_binary_file()``    – detect binary content by null-byte check
 """
@@ -18,6 +22,7 @@ import re
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -119,6 +124,22 @@ class ClassificationResult(BaseModel):
     outcome: TierOutcome
     relevance: Relevance = Relevance.LOW
     reason: str
+
+
+class EvidenceGap(BaseModel):
+    """Records what was NOT processed and why (SPEC-V2-REPO-06).
+
+    Emitted when a file is skipped, capped, or handled non-standardly.
+    Collected by callers to surface to users without hard-failing the run.
+    """
+
+    source: str  # "repo_processing"
+    kind: str
+    """One of: streaming_used, catastrophic_size, path_file_cap, dropped_over_cap,
+    binary_skipped, excluded_glob, chunker_fallback."""
+    level: Literal["INFO", "WARN"] = "INFO"
+    path: str | None = None
+    details: str
 
 
 # ── Classifier rule infrastructure ────────────────────────────────────────────
@@ -366,3 +387,174 @@ def classify_file(
         relevance=Relevance.LOW,
         reason="default",
     )
+
+
+def classify_file_with_evidence(
+    meta: FileMeta,
+    config: RepoInvestigationConfig,
+) -> tuple[ClassificationResult, list[EvidenceGap]]:
+    """Classify *meta* and emit :class:`EvidenceGap` records for notable outcomes.
+
+    Wraps :func:`classify_file` and adds evidence gap emission for each
+    SPEC-V2-REPO-06 situation that warrants it.
+
+    Args:
+        meta:   File metadata (path, size, kind, is_binary).
+        config: Repository investigation configuration.
+
+    Returns:
+        A tuple of (ClassificationResult, list[EvidenceGap]).  The gap list
+        is empty for ordinary files processed via the in-memory chunker.
+    """
+    result = classify_file(meta, config)
+    gaps: list[EvidenceGap] = []
+
+    if result.outcome == TierOutcome.SKIP:
+        if result.reason == "binary":
+            gaps.append(
+                EvidenceGap(
+                    source="repo_processing",
+                    kind="binary_skipped",
+                    level="INFO",
+                    path=meta.path,
+                    details=f"Binary file skipped: {meta.path}",
+                )
+            )
+        elif result.reason == "exclude_glob":
+            gaps.append(
+                EvidenceGap(
+                    source="repo_processing",
+                    kind="excluded_glob",
+                    level="INFO",
+                    path=meta.path,
+                    details=f"File excluded by glob pattern: {meta.path}",
+                )
+            )
+        elif result.reason == "catastrophic_size":
+            size_mb = meta.size / (1024 * 1024)
+            cap_mb = config.max_file_bytes_absolute / (1024 * 1024)
+            gaps.append(
+                EvidenceGap(
+                    source="repo_processing",
+                    kind="catastrophic_size",
+                    level="WARN",
+                    path=meta.path,
+                    details=(
+                        f"{meta.path} is {size_mb:.0f} MB, exceeds "
+                        f"max_file_bytes_absolute ({cap_mb:.0f} MB). "
+                        f"File was not indexed. To process: re-run with "
+                        f"--repo-max-file-bytes-absolute={meta.size * 2}"
+                        f" (note: expect higher disk use and run time)."
+                    ),
+                )
+            )
+    elif result.outcome == TierOutcome.CHUNKED_STREAMING:
+        gaps.append(
+            EvidenceGap(
+                source="repo_processing",
+                kind="streaming_used",
+                level="INFO",
+                path=meta.path,
+                details=(
+                    f"File {meta.path} ({meta.size} bytes) exceeds "
+                    f"streaming_threshold_bytes ({config.streaming_threshold_bytes}). "
+                    f"Processed via streaming chunker."
+                ),
+            )
+        )
+
+    return result, gaps
+
+
+def apply_file_cap(
+    files: list[FileMeta],
+    max_files: int,
+) -> tuple[list[FileMeta], list[EvidenceGap]]:
+    """Keep first N files by priority (shallow path depth then path lexicographic).
+
+    When the number of files in a path exceeds *max_files*, keeps the
+    N shallowest files and emits one summary gap plus one per-file gap for
+    each dropped file.
+
+    Args:
+        files:     All discovered files in the path.
+        max_files: Maximum number of files to retain.
+
+    Returns:
+        Tuple of (kept_files, evidence_gaps_for_dropped).  Gaps list is
+        empty when ``len(files) <= max_files``.
+    """
+    if len(files) <= max_files:
+        return files, []
+
+    # Sort by depth (shallow first), then by path lexicographically for stability
+    sorted_files = sorted(files, key=lambda f: (f.path.count("/"), f.path))
+    kept = sorted_files[:max_files]
+    dropped = sorted_files[max_files:]
+
+    gaps: list[EvidenceGap] = [
+        EvidenceGap(
+            source="repo_processing",
+            kind="path_file_cap",
+            level="WARN",
+            details=(
+                f"Path has {len(files)} files, kept {max_files}. "
+                f"{len(dropped)} files dropped."
+            ),
+        )
+    ]
+    gaps.extend(
+        EvidenceGap(
+            source="repo_processing",
+            kind="dropped_over_cap",
+            level="WARN",
+            path=f.path,
+            details=(
+                f"File dropped due to cap ({len(files)} total, {max_files} max)"
+            ),
+        )
+        for f in dropped
+    )
+
+    return kept, gaps
+
+
+def generate_repo_guidance(
+    tree_outline: list[tuple[str, int]],
+) -> dict[str, object]:
+    """Generate a repo_guidance INFO finding when no paths/globs specified.
+
+    Builds a lightweight finding that surfaces top directories by YAML file
+    count.  Returned as a plain dict (matches the Finding model shape used
+    elsewhere in the codebase) so callers don't need to import the heavy
+    service_health schema.
+
+    Args:
+        tree_outline: List of ``(dir_path, yaml_file_count)`` tuples,
+                      typically built from a T-0 directory walk.
+
+    Returns:
+        A dict with ``category="repo_guidance"`` and ``severity="INFO"``.
+    """
+    # Sort descending by file count, take top 5
+    top = sorted(tree_outline, key=lambda t: t[1], reverse=True)[:5]
+
+    top_lines = "\n".join(
+        f"  - `{dir_path}/` ({count} files)" for dir_path, count in top
+    )
+
+    description = (
+        "No paths or globs specified. Emitting directory outline only. "
+        "To deepen analysis, re-run with `--repo-path <dir>` specifying "
+        "the 1–5 directories most likely to contain the relevant config.\n"
+        f"Top directories by YAML file count:\n{top_lines}"
+    )
+
+    return {
+        "id": "repo-guidance-no-paths",
+        "title": "No paths or globs specified — full-scan outline only",
+        "severity": "INFO",
+        "category": "repo_guidance",
+        "description": description,
+        "recommendations": [dir_path for dir_path, _count in top],
+    }

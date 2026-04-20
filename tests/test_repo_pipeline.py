@@ -20,11 +20,15 @@ import pytest
 from vaig.core.config import RepoInvestigationConfig
 from vaig.core.repo_pipeline import (
     ClassificationResult,
+    EvidenceGap,
     FileMeta,
     Relevance,
     TierOutcome,
+    apply_file_cap,
     classify_file,
+    classify_file_with_evidence,
     detect_file_kind,
+    generate_repo_guidance,
     is_binary_file,
 )
 
@@ -531,3 +535,225 @@ def test_every_file_gets_exactly_one_outcome() -> None:
         assert result is not None
         assert result.outcome in list(TierOutcome)
         assert result.reason != ""
+
+
+# ── SPEC-V2-REPO-06 tests ─────────────────────────────────────────────────────
+
+
+class TestEvidenceGapModel:
+    """EvidenceGap model validation."""
+
+    def test_evidence_gap_defaults(self) -> None:
+        gap = EvidenceGap(
+            source="repo_processing",
+            kind="binary_skipped",
+            path="image.png",
+            details="Binary file skipped",
+        )
+        assert gap.level == "INFO"
+        assert gap.source == "repo_processing"
+
+    def test_evidence_gap_warn_level(self) -> None:
+        gap = EvidenceGap(
+            source="repo_processing",
+            kind="catastrophic_size",
+            level="WARN",
+            path="huge.yaml",
+            details="File too large",
+        )
+        assert gap.level == "WARN"
+
+
+class TestClassifyFileWithEvidence:
+    """classify_file_with_evidence() emits gaps for REPO-06 situations."""
+
+    def test_5mb_file_streaming_info_gap(self) -> None:
+        """AC-1: 5 MB file above threshold → streaming outcome + INFO gap."""
+        cfg = RepoInvestigationConfig(streaming_threshold_bytes=2_000_000)
+        meta = _meta("big.yaml", size=5 * 1024 * 1024)
+        result, gaps = classify_file_with_evidence(meta, cfg)
+
+        assert result.outcome == TierOutcome.CHUNKED_STREAMING
+        assert len(gaps) == 1
+        gap = gaps[0]
+        assert gap.kind == "streaming_used"
+        assert gap.level == "INFO"
+        assert gap.path == "big.yaml"
+        assert str(meta.size) in gap.details
+
+    def test_501mb_file_catastrophic_warn_gap(self) -> None:
+        """AC-2: 501 MB file → skipped with WARN gap including override flag."""
+        cfg = RepoInvestigationConfig(max_file_bytes_absolute=500_000_000)
+        size = 501 * 1024 * 1024
+        meta = _meta("cluster/combined.yaml", size=size)
+        result, gaps = classify_file_with_evidence(meta, cfg)
+
+        assert result.outcome == TierOutcome.SKIP
+        assert result.reason == "catastrophic_size"
+        assert len(gaps) == 1
+        gap = gaps[0]
+        assert gap.kind == "catastrophic_size"
+        assert gap.level == "WARN"
+        assert "--repo-max-file-bytes-absolute" in gap.details
+
+    def test_binary_file_info_gap(self) -> None:
+        """Binary file skip → INFO evidence gap."""
+        meta = _meta("image.png", is_binary=True)
+        result, gaps = classify_file_with_evidence(meta, DEFAULT_CFG)
+
+        assert result.outcome == TierOutcome.SKIP
+        assert any(g.kind == "binary_skipped" for g in gaps)
+        assert all(g.level == "INFO" for g in gaps)
+
+    def test_excluded_glob_info_gap(self) -> None:
+        """Excluded glob skip → INFO evidence gap."""
+        cfg = RepoInvestigationConfig(exclude_globs=["**/vendor/**"])
+        meta = _meta("project/vendor/pkg/main.go")
+        result, gaps = classify_file_with_evidence(meta, cfg)
+
+        assert result.outcome == TierOutcome.SKIP
+        assert any(g.kind == "excluded_glob" for g in gaps)
+        assert all(g.level == "INFO" for g in gaps)
+
+    def test_normal_file_no_gaps(self) -> None:
+        """Normal in-memory chunker path → no evidence gaps."""
+        meta = _meta("helm/Chart.yaml", size=1024)
+        _result, gaps = classify_file_with_evidence(meta, DEFAULT_CFG)
+
+        assert gaps == []
+
+    def test_catastrophic_gap_includes_path(self) -> None:
+        """Catastrophic size gap references the file path."""
+        cfg = RepoInvestigationConfig(max_file_bytes_absolute=500_000_000)
+        meta = _meta("cluster/generated/combined.yaml", size=742 * 1024 * 1024)
+        _result, gaps = classify_file_with_evidence(meta, cfg)
+
+        assert gaps[0].path == "cluster/generated/combined.yaml"
+        assert "combined.yaml" in gaps[0].details
+
+
+class TestApplyFileCap:
+    """apply_file_cap() keeps first N files and emits evidence gaps."""
+
+    def _make_files(self, paths: list[str], size: int = 1024) -> list[FileMeta]:
+        return [FileMeta(path=p, size=size) for p in paths]
+
+    def test_under_cap_returns_unchanged(self) -> None:
+        files = self._make_files(["a/b.yaml", "c/d.yaml"])
+        kept, gaps = apply_file_cap(files, max_files=500)
+        assert kept == files
+        assert gaps == []
+
+    def test_exactly_at_cap_returns_unchanged(self) -> None:
+        files = self._make_files([f"file{i}.yaml" for i in range(500)])
+        kept, gaps = apply_file_cap(files, max_files=500)
+        assert len(kept) == 500
+        assert gaps == []
+
+    def test_501_files_keeps_500_drops_1(self) -> None:
+        """AC-3: 501 YAML files → 500 kept, 1 dropped with per-file gap."""
+        # Create 501 files with varying depths for sort stability check
+        files = self._make_files([f"dir{i}/file.yaml" for i in range(501)])
+        kept, gaps = apply_file_cap(files, max_files=500)
+
+        assert len(kept) == 500
+        # Summary gap + 1 per-file gap
+        assert len(gaps) == 2
+        summary = gaps[0]
+        assert summary.kind == "path_file_cap"
+        assert summary.level == "WARN"
+        assert "501" in summary.details
+        assert "500" in summary.details
+
+        per_file_gap = gaps[1]
+        assert per_file_gap.kind == "dropped_over_cap"
+        assert per_file_gap.level == "WARN"
+        assert per_file_gap.path is not None  # explicit path, not just count
+
+    def test_dropped_files_have_explicit_paths(self) -> None:
+        """Each dropped file gap must carry the file path (not just a count)."""
+        files = self._make_files(["a.yaml", "b.yaml", "c.yaml"])
+        _kept, gaps = apply_file_cap(files, max_files=1)
+
+        dropped_gaps = [g for g in gaps if g.kind == "dropped_over_cap"]
+        assert len(dropped_gaps) == 2
+        paths = {g.path for g in dropped_gaps}
+        # Two of the three files should appear
+        assert len(paths) == 2
+        assert all(p is not None for p in paths)
+
+    def test_shallow_files_preferred(self) -> None:
+        """Files at lower depth are kept over deeper ones."""
+        files = self._make_files([
+            "deep/a/b/c/file.yaml",   # depth 4
+            "shallow/file.yaml",       # depth 1
+            "mid/dir/file.yaml",       # depth 2
+        ])
+        kept, _gaps = apply_file_cap(files, max_files=2)
+        kept_paths = {f.path for f in kept}
+        assert "shallow/file.yaml" in kept_paths
+        assert "mid/dir/file.yaml" in kept_paths
+        assert "deep/a/b/c/file.yaml" not in kept_paths
+
+    def test_summary_gap_has_no_path(self) -> None:
+        """Summary gap is not about a specific file."""
+        files = self._make_files([f"f{i}.yaml" for i in range(10)])
+        _kept, gaps = apply_file_cap(files, max_files=5)
+        summary = gaps[0]
+        assert summary.kind == "path_file_cap"
+        assert summary.path is None
+
+
+class TestGenerateRepoGuidance:
+    """generate_repo_guidance() emits a repo_guidance INFO finding."""
+
+    def test_returns_repo_guidance_category(self) -> None:
+        """AC-4: Full-scan safety net emits exactly one repo_guidance finding."""
+        tree = [
+            ("apps/istio-ingressgateway", 42),
+            ("cluster/istio-system", 18),
+            ("env/prd", 56),
+        ]
+        finding = generate_repo_guidance(tree)
+
+        assert finding["category"] == "repo_guidance"
+        assert finding["severity"] == "INFO"
+
+    def test_top_dirs_appear_in_description(self) -> None:
+        """Top directories by YAML count appear in the finding description."""
+        tree = [
+            ("apps/istio", 42),
+            ("cluster/system", 18),
+            ("env/prd", 56),
+        ]
+        finding = generate_repo_guidance(tree)
+        description = finding["description"]
+
+        assert "env/prd" in description
+        assert "apps/istio" in description
+
+    def test_sorted_by_file_count_descending(self) -> None:
+        """Recommendations list dirs highest-count first."""
+        tree = [
+            ("low", 5),
+            ("high", 100),
+            ("mid", 50),
+        ]
+        finding = generate_repo_guidance(tree)
+        recs = finding["recommendations"]
+
+        assert recs[0] == "high"
+        assert recs[1] == "mid"
+        assert recs[2] == "low"
+
+    def test_caps_at_5_directories(self) -> None:
+        """Only the top 5 directories are recommended."""
+        tree = [(f"dir{i}", i * 10) for i in range(10)]
+        finding = generate_repo_guidance(tree)
+        assert len(finding["recommendations"]) <= 5
+
+    def test_empty_tree_handled(self) -> None:
+        """Empty tree returns a valid finding without crashing."""
+        finding = generate_repo_guidance([])
+        assert finding["category"] == "repo_guidance"
+        assert finding["recommendations"] == []
