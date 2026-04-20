@@ -102,13 +102,6 @@ class FakePipelineSkill(BaseSkill):
 # ── Helper patches shared by most tests ────────────────────────────────────
 
 
-def _patch_no_skill_registry() -> Any:
-    """Patch SkillRegistry so skill lookups always fail."""
-    return patch(
-        "vaig.cli.commands.live._helpers._get_settings",  # already done via fixture
-    )
-
-
 def _patch_skill_registry(skill: BaseSkill) -> Any:
     """Patch SkillRegistry.get() to return *skill*."""
     registry_mock = MagicMock()

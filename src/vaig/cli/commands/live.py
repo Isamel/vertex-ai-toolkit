@@ -1152,27 +1152,24 @@ def _build_pipeline_phases(
         ]
     """
     phases: list[dict[str, Any]] = []
-    seen_groups: set[str] = set()
+    parallel_phases: dict[str, dict[str, Any]] = {}
 
     for agent_cfg in agents_config:
         group = agent_cfg.get("parallel_group")
         if group:
-            if group not in seen_groups:
-                seen_groups.add(group)
-                phases.append({
+            if group not in parallel_phases:
+                phase = {
                     "name": group.capitalize(),
                     "parallel": True,
                     "agents": [agent_cfg],
-                })
+                }
+                parallel_phases[group] = phase
+                phases.append(phase)
             else:
-                # Append to the existing phase with this group name
-                for phase in phases:
-                    if phase["parallel"] and phase["name"] == group.capitalize():
-                        phase["agents"].append(agent_cfg)
-                        break
+                parallel_phases[group]["agents"].append(agent_cfg)
         else:
             phases.append({
-                "name": agent_cfg.get("name", "unknown").replace("_", " ").capitalize(),
+                "name": (agent_cfg.get("name") or "unknown").replace("_", " ").capitalize(),
                 "parallel": False,
                 "agents": [agent_cfg],
             })

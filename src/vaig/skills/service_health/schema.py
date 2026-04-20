@@ -476,17 +476,17 @@ class Finding(BaseModel):
         ),
     )
 
-    @field_validator("quick_remediation")
+    @field_validator("remediation", "quick_remediation")
     @classmethod
     def _reject_placeholder_remediations(cls, v: str | None) -> str | None:
-        """Reject vague 'investigate' placeholders in quick_remediation."""
+        """Reject vague placeholder remediation text in remediation fields."""
         if v is None or v == "":
             return v
         for pattern in _BANNED_QUICK_REMEDIATION_PATTERNS:
             if re.search(pattern, v, flags=re.IGNORECASE):
                 raise ValueError(
-                    f"quick_remediation must be an actionable command or the "
-                    f"literal string '(see Recommended Actions section)'. "
+                    "remediation fields must be actionable and must not contain "
+                    "placeholder text such as 'Investigate' or 'Look into'. "
                     f"Received placeholder text: {v!r}"
                 )
         return v
@@ -959,8 +959,9 @@ class ReportMetadata(BaseModel):
     pipeline_version: str = Field(
         default="unknown",
         description=(
-            "Git commit short SHA of the vaig package that produced this "
-            "report. Populated from importlib metadata."
+            "Version identifier of the vaig package that produced this "
+            "report: git commit short SHA when available, otherwise the "
+            'installed package version, else "unknown".'
         ),
     )
     autonomous_enabled: bool = Field(

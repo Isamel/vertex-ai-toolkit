@@ -64,7 +64,7 @@ class TestSpanishPlaceholders:
     def test_spanish_placeholder_raises(self, placeholder: str) -> None:
         with pytest.raises(ValidationError) as exc_info:
             _make_finding(placeholder)
-        assert "quick_remediation must be an actionable command" in str(exc_info.value)
+        assert "remediation fields must be actionable" in str(exc_info.value)
 
 
 class TestEnglishPlaceholders:
@@ -72,7 +72,7 @@ class TestEnglishPlaceholders:
     def test_english_placeholder_raises(self, placeholder: str) -> None:
         with pytest.raises(ValidationError) as exc_info:
             _make_finding(placeholder)
-        assert "quick_remediation must be an actionable command" in str(exc_info.value)
+        assert "remediation fields must be actionable" in str(exc_info.value)
 
 
 class TestValidRemediations:

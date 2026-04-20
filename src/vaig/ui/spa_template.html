@@ -1303,6 +1303,9 @@ function renderFindings() {
 
 function toggleFinding(card) {
   card.classList.toggle('open');
+  if (card.classList.contains('open')) {
+    card.classList.remove('collapsed');
+  }
   const header = card.querySelector('.finding-header');
   if (header) header.setAttribute('aria-expanded', card.classList.contains('open') ? 'true' : 'false');
 }
@@ -2528,20 +2531,15 @@ function renderInvestigation() {
   };
   const tbody = document.getElementById('investigation-steps-tbody');
   tbody.innerHTML = evidence.map((e, i) => {
-    const supportsArr = Array.isArray(e.supports) ? e.supports : [];
-    const contradictsArr = Array.isArray(e.contradicts) ? e.contradicts : [];
-    const verdict = supportsArr.length > 0 && contradictsArr.length === 0 ? 'Supports'
-      : contradictsArr.length > 0 && supportsArr.length === 0 ? 'Contradicts'
-      : supportsArr.length > 0 && contradictsArr.length > 0 ? 'Partial'
-      : 'Inconclusive';
-    return `<tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:6px 10px;color:var(--text-dim)">${i + 1}</td>
-      <td style="padding:6px 10px">${esc(e.target || '—')}</td>
-      <td style="padding:6px 10px;font-family:monospace;font-size:12px">${esc(e.tool_name || '—')}</td>
-      <td style="padding:6px 10px">${esc(e.question || '—')}</td>
-      <td style="padding:6px 10px"><span class="sev-badge ${verdictClass(verdict)}">${esc(verdict)}</span></td>
-      <td style="padding:6px 10px;color:var(--text-dim)">${esc(e.replan_iteration != null ? String(e.replan_iteration) : '0')}</td>
-    </tr>`;
+    const verdict = e.verdict || 'INCONCLUSIVE';
+    return '<tr style="border-bottom:1px solid var(--border)">' +
+      '<td style="padding:6px 10px;color:var(--text-dim)">' + (i + 1) + '</td>' +
+      '<td style="padding:6px 10px">' + esc(e.target || '—') + '</td>' +
+      '<td style="padding:6px 10px;font-family:monospace;font-size:12px">' + esc(e.tool_name || '—') + '</td>' +
+      '<td style="padding:6px 10px">' + esc(e.hypothesis || '—') + '</td>' +
+      '<td style="padding:6px 10px" class="verdict-' + esc(verdict) + '">' + esc(verdict) + '</td>' +
+      '<td style="padding:6px 10px;color:var(--text-dim)">' + esc(e.iteration != null ? String(e.iteration) : '0') + '</td>' +
+    '</tr>';
   }).join('');
 }
 

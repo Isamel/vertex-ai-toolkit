@@ -265,6 +265,7 @@ def inject_report_metadata(
 
     # ── AUDIT-07: Pipeline version (git short SHA or package version) ─────────
     if _is_empty(getattr(metadata, "pipeline_version", None)) or getattr(metadata, "pipeline_version", None) == "unknown":
+        version = "unknown"
         try:
             import subprocess  # noqa: PLC0415
 
@@ -273,24 +274,26 @@ def inject_report_metadata(
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=5,
             )
             if result.returncode == 0 and result.stdout.strip():
-                metadata.pipeline_version = result.stdout.strip()
-            else:
-                from vaig import __version__ as _vaig_version  # noqa: PLC0415
-
-                metadata.pipeline_version = _vaig_version
+                version = result.stdout.strip()
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception:  # noqa: BLE001
+            pass
+
+        if version == "unknown":
             try:
                 from vaig import __version__ as _vaig_version  # noqa: PLC0415
 
-                metadata.pipeline_version = _vaig_version
+                version = _vaig_version
             except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception:  # noqa: BLE001
-                metadata.pipeline_version = "unknown"
+                pass
+
+        metadata.pipeline_version = version
 
     # ── AUDIT-07: model_versions map (agent-name → resolved model-id) ─────────
     if orch_result is not None and not getattr(metadata, "model_versions", None):
@@ -383,7 +386,7 @@ def inject_report_metadata(
         reason="populated",
     )
 
-    for _phf in ("evidence_gaps", "recent_changes", "external_links", "investigation_coverage"):
+    for _phf in (f for f in _POST_HOC_FIELDS if f != "metadata"):
         try:
             _value = getattr(report, _phf, None)
         except (KeyboardInterrupt, SystemExit):
