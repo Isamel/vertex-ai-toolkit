@@ -311,8 +311,8 @@ class EvidenceGap(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     source: str = Field(description="Name of the tool or signal source (e.g. 'deployment_metrics')")
-    reason: Literal["not_called", "error", "empty_result"] = Field(
-        description="Why this source did not produce evidence"
+    reason: str = Field(
+        description="Why this source did not produce evidence: 'not_called', 'error', or 'empty_result'"
     )
     details: str | None = Field(
         default=None,
@@ -919,7 +919,7 @@ class ExternalLink(BaseModel):
 
     label: str = Field(description="Human-readable link label")
     url: str = Field(description="Fully-formed target URL")
-    system: Literal["gcp", "datadog", "argocd"] = Field(
+    system: str = Field(
         description="Originating system — one of 'gcp', 'datadog', or 'argocd'"
     )
     icon: str = Field(default="", description="Inline SVG icon string (optional)")
@@ -992,7 +992,15 @@ class HealthReport(BaseModel):
             "(GCP Console, Datadog, ArgoCD).  None when no context keys were available."
         ),
     )
-    metadata: ReportMetadata = Field(default_factory=ReportMetadata)
+    metadata: ReportMetadata = Field(
+        default_factory=ReportMetadata,
+        exclude=True,
+        description=(
+            "Post-hoc metadata: cost, tokens, GKE cost, trends.  Excluded from "
+            "response_schema because it contains dict types unsupported by Gemini "
+            "structured output.  Populated by the pipeline after generation."
+        ),
+    )
     causal_graph_mermaid: str | None = Field(
         default=None,
         description="Mermaid graph TD diagram string describing causal relationships between findings",

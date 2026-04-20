@@ -41,16 +41,19 @@ class TestExternalLink:
         assert link.system == "argocd"
 
     def test_invalid_system_literal_raises(self) -> None:
-        with pytest.raises(ValidationError):
-            ExternalLink(label="Bad", url="https://example.com", system="splunk")  # type: ignore[arg-type]
+        # system is now a plain str to reduce Gemini schema complexity;
+        # any string value is accepted at instantiation time.
+        link = ExternalLink(label="Bad", url="https://example.com", system="splunk")
+        assert link.system == "splunk"
 
     def test_empty_system_raises(self) -> None:
-        with pytest.raises(ValidationError):
-            ExternalLink(label="Bad", url="https://example.com", system="")  # type: ignore[arg-type]
+        # Empty string is accepted since system is a plain str (no Literal constraint).
+        link = ExternalLink(label="Bad", url="https://example.com", system="")
+        assert link.system == ""
 
     def test_all_system_literals_accepted(self) -> None:
         for system in ("gcp", "datadog", "argocd"):
-            link = ExternalLink(label="x", url="https://example.com", system=system)  # type: ignore[arg-type]
+            link = ExternalLink(label="x", url="https://example.com", system=system)
             assert link.system == system
 
 

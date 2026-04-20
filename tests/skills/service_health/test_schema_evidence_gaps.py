@@ -32,12 +32,15 @@ class TestEvidenceGapModel:
             assert gap.reason == reason
 
     def test_invalid_reason_raises_validation_error(self) -> None:
-        with pytest.raises(ValidationError):
-            EvidenceGap(source="some_tool", reason="skipped")
+        # reason is now a plain str to reduce Gemini schema complexity;
+        # any string value is accepted at instantiation time.
+        gap = EvidenceGap(source="some_tool", reason="skipped")
+        assert gap.reason == "skipped"
 
     def test_invalid_reason_unknown_raises(self) -> None:
-        with pytest.raises(ValidationError):
-            EvidenceGap(source="some_tool", reason="partial")
+        # reason is now a plain str — no constraint enforced.
+        gap = EvidenceGap(source="some_tool", reason="partial")
+        assert gap.reason == "partial"
 
     def test_details_optional_none_by_default(self) -> None:
         gap = EvidenceGap(source="s", reason="not_called")
@@ -101,8 +104,9 @@ class TestHealthReportCoverageFields:
         assert "12/12" in (report.investigation_coverage or "")
 
     def test_invalid_gap_reason_raises(self) -> None:
-        with pytest.raises(ValidationError):
-            HealthReport(
-                executive_summary=self._MINIMAL_EXEC_SUMMARY,
-                evidence_gaps=[{"source": "x", "reason": "bad_value"}],
-            )
+        # reason is now a plain str — any value is accepted.
+        report = HealthReport(
+            executive_summary=self._MINIMAL_EXEC_SUMMARY,
+            evidence_gaps=[{"source": "x", "reason": "bad_value"}],
+        )
+        assert report.evidence_gaps[0].reason == "bad_value"
