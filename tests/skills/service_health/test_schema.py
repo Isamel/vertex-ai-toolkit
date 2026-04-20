@@ -12,12 +12,17 @@ Covers:
 from __future__ import annotations
 
 import json
+import logging
+
+import pytest
 
 from vaig.skills.service_health.schema import (
     ExternalLink,
     ExternalLinks,
     HealthReport,
     HealthReportGeminiSchema,
+    ServiceHealthStatus,
+    ServiceStatus,
 )
 
 # ── ExternalLink ──────────────────────────────────────────────
@@ -259,3 +264,153 @@ class TestOverallSeverityReason:
         report = HealthReport.model_validate(payload)
         dumped = report.model_dump()
         assert dumped["overall_severity_reason"] == "HEALTHY because no findings above LOW severity."
+
+
+# ── AUDIT-05: ServiceStatus.degraded_reason ───────────────────
+
+
+_MINIMAL_EXEC = {
+    "overall_status": "HEALTHY",
+    "scope": "Cluster-wide",
+    "summary_text": "All good",
+}
+
+
+class TestServiceStatusDegradedReason:
+    """AUDIT-05 — degraded_reason field on ServiceStatus."""
+
+    def test_field_defaults_to_none(self) -> None:
+        svc = ServiceStatus(service="payment-svc", namespace="prod", status="HEALTHY")
+        assert svc.degraded_reason is None
+
+    def test_field_accepts_string_for_degraded(self) -> None:
+        svc = ServiceStatus(
+            service="payment-svc",
+            namespace="prod",
+            status="DEGRADED",
+            degraded_reason="15.79% APM error rate over last 15 min.",
+        )
+        assert svc.degraded_reason == "15.79% APM error rate over last 15 min."
+        assert svc.status == ServiceHealthStatus.DEGRADED
+
+    def test_field_accepts_string_for_failed(self) -> None:
+        svc = ServiceStatus(
+            service="payment-svc",
+            namespace="prod",
+            status="FAILED",
+            degraded_reason="All pods in CrashLoopBackOff.",
+        )
+        assert svc.degraded_reason == "All pods in CrashLoopBackOff."
+
+    def test_max_length_enforced(self) -> None:
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            ServiceStatus(
+                service="svc",
+                namespace="ns",
+                status="DEGRADED",
+                degraded_reason="x" * 161,
+            )
+
+    def test_validator_warns_when_non_healthy_reason_missing(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="vaig.skills.service_health.schema"):
+            ServiceStatus(service="broken-svc", namespace="prod", status="DEGRADED")
+        assert "broken-svc" in caplog.text
+        assert "degraded_reason" in caplog.text
+
+    def test_no_warning_when_healthy_without_reason(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="vaig.skills.service_health.schema"):
+            ServiceStatus(service="ok-svc", namespace="prod", status="HEALTHY")
+        assert "ok-svc" not in caplog.text
+
+    def test_no_warning_when_degraded_with_reason(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="vaig.skills.service_health.schema"):
+            ServiceStatus(
+                service="svc",
+                namespace="prod",
+                status="DEGRADED",
+                degraded_reason="High error rate",
+            )
+        assert "degraded_reason" not in caplog.text
+
+    def test_roundtrip_preserves_degraded_reason(self) -> None:
+        svc = ServiceStatus(
+            service="svc",
+            namespace="prod",
+            status="DEGRADED",
+            degraded_reason="Latency spike detected.",
+        )
+        dumped = svc.model_dump()
+        restored = ServiceStatus.model_validate(dumped)
+        assert restored.degraded_reason == "Latency spike detected."
+
+    def test_markdown_renders_reason_inline_for_degraded(self) -> None:
+        payload = {
+            "executive_summary": _MINIMAL_EXEC,
+            "service_statuses": [
+                {
+                    "service": "payment-svc",
+                    "namespace": "prod",
+                    "status": "DEGRADED",
+                    "degraded_reason": "15.79% APM error rate over last 15 min.",
+                }
+            ],
+        }
+        report = HealthReport.model_validate(payload)
+        md = report.to_markdown()
+        assert "🟡 *15.79% APM error rate over last 15 min.*" in md
+
+    def test_markdown_renders_reason_inline_for_failed(self) -> None:
+        payload = {
+            "executive_summary": _MINIMAL_EXEC,
+            "service_statuses": [
+                {
+                    "service": "broken-svc",
+                    "namespace": "prod",
+                    "status": "FAILED",
+                    "degraded_reason": "All pods in CrashLoopBackOff.",
+                }
+            ],
+        }
+        report = HealthReport.model_validate(payload)
+        md = report.to_markdown()
+        assert "🔴 *All pods in CrashLoopBackOff.*" in md
+
+    def test_markdown_no_inline_reason_for_healthy(self) -> None:
+        payload = {
+            "executive_summary": _MINIMAL_EXEC,
+            "service_statuses": [
+                {
+                    "service": "ok-svc",
+                    "namespace": "prod",
+                    "status": "HEALTHY",
+                }
+            ],
+        }
+        report = HealthReport.model_validate(payload)
+        md = report.to_markdown()
+        # Healthy status shows emoji only, no italic subline
+        assert "🟢 *" not in md
+
+    def test_markdown_no_inline_reason_when_degraded_reason_empty(self) -> None:
+        """DEGRADED with no reason → no italic injected (just emoji)."""
+        payload = {
+            "executive_summary": _MINIMAL_EXEC,
+            "service_statuses": [
+                {
+                    "service": "svc",
+                    "namespace": "prod",
+                    "status": "DEGRADED",
+                }
+            ],
+        }
+        report = HealthReport.model_validate(payload)
+        md = report.to_markdown()
+        assert "🟡 *" not in md
+
+    def test_field_present_in_gemini_schema(self) -> None:
+        schema = HealthReportGeminiSchema.model_json_schema()
+        service_status_def = schema.get("$defs", {}).get("ServiceStatus", {})
+        assert "degraded_reason" in service_status_def.get("properties", {}), (
+            "degraded_reason must be present in the Gemini schema for ServiceStatus"
+        )

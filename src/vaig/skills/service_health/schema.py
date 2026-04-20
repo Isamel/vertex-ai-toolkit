@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
 
 from vaig.core.memory.models import RecurrenceSignal
@@ -417,6 +417,26 @@ class ServiceStatus(BaseModel):
         default_factory=list,
         description="HPA status.conditions messages when HPA scaleTargetRef points to a Rollout",
     )
+    degraded_reason: str | None = Field(
+        default=None,
+        max_length=160,
+        description=(
+            "One-line summary of why this specific service is DEGRADED or FAILED. "
+            "Always populated when status != HEALTHY. "
+            "Example: '15.79% APM error rate over last 15 min.'"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _warn_missing_degraded_reason(self) -> ServiceStatus:
+        """Warn when a non-healthy service has no degraded_reason."""
+        if self.status != ServiceHealthStatus.HEALTHY and not self.degraded_reason:
+            logger.warning(
+                "ServiceStatus %r has status=%s but degraded_reason is empty",
+                self.service,
+                self.status.value,
+            )
+        return self
 
 
 class Finding(BaseModel):
@@ -1180,8 +1200,11 @@ class HealthReport(BaseModel):
         )
         for svc in self.service_statuses:
             emoji = _STATUS_EMOJI.get(svc.status, "⚪")
+            status_cell = f"{emoji}"
+            if svc.status != ServiceHealthStatus.HEALTHY and svc.degraded_reason:
+                status_cell = f"{emoji} *{svc.degraded_reason}*"
             parts.append(
-                f"| {svc.service} | {svc.namespace} | {emoji} | {svc.pods_ready} "
+                f"| {svc.service} | {svc.namespace} | {status_cell} | {svc.pods_ready} "
                 f"| {svc.restarts_1h} | {svc.cpu_usage} | {svc.memory_usage} | {svc.issues} |"
             )
         parts.append("")
