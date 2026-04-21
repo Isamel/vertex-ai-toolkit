@@ -407,10 +407,17 @@ class TestRootCauseHypothesisLabelTruncation:
         assert hyp.label.endswith("…")
 
     def test_label_truncation_does_not_raise(self) -> None:
-        """A report with oversized labels must not raise ValidationError."""
+        """A report containing a hypothesis with an oversized label must not raise ValidationError."""
         long_label = "A" * 120
-        hyp = self._hyp(long_label)  # must not raise
-        assert len(hyp.label) <= 80
+        report = HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.HEALTHY,
+                scope="test",
+                summary_text="test",
+            ),
+            root_cause_hypotheses=[self._hyp(long_label)],
+        )  # must not raise
+        assert len(report.root_cause_hypotheses[0].label) <= 80
 
 
 class TestRootCauseHypothesisOther:
@@ -474,3 +481,78 @@ class TestRootCauseHypothesisOther:
         report = self._make_report([])
         md = report.to_markdown()
         assert "No root cause hypotheses to report." in md
+
+
+class TestServiceStatusDegradedReasonTruncation:
+    """ServiceStatus.degraded_reason is truncated instead of rejected when > 160 chars."""
+
+    def _make_status(self, degraded_reason: str) -> ServiceStatus:
+        return ServiceStatus(
+            service="svc",
+            health_status=ServiceHealthStatus.DEGRADED,
+            degraded_reason=degraded_reason,
+        )
+
+    def test_short_reason_unchanged(self) -> None:
+        """degraded_reason within 160 chars must not be modified."""
+        reason = "Memory pressure on node pool."
+        status = self._make_status(reason)
+        assert status.degraded_reason == reason
+
+    def test_reason_exactly_160_unchanged(self) -> None:
+        """degraded_reason of exactly 160 chars must not be modified."""
+        reason = "x" * 160
+        status = self._make_status(reason)
+        assert status.degraded_reason == reason
+
+    def test_reason_over_limit_truncated(self) -> None:
+        """degraded_reason > 160 chars must be truncated to 160 chars with ellipsis."""
+        long_reason = "x" * 200
+        status = self._make_status(long_reason)
+        assert len(status.degraded_reason) <= 160  # type: ignore[arg-type]
+        assert status.degraded_reason.endswith("…")  # type: ignore[union-attr]
+
+    def test_reason_over_limit_does_not_raise(self) -> None:
+        """An oversized degraded_reason must not raise ValidationError."""
+        long_reason = "A" * 250
+        status = self._make_status(long_reason)  # must not raise
+        assert status.degraded_reason is not None
+
+
+class TestHealthReportOverallSeverityReasonTruncation:
+    """HealthReport.overall_severity_reason is truncated instead of rejected when > 240 chars."""
+
+    def _make_report(self, overall_severity_reason: str) -> HealthReport:
+        return HealthReport(
+            executive_summary=ExecutiveSummary(
+                overall_status=OverallStatus.DEGRADED,
+                scope="test",
+                summary_text="test",
+            ),
+            overall_severity_reason=overall_severity_reason,
+        )
+
+    def test_short_reason_unchanged(self) -> None:
+        """overall_severity_reason within 240 chars must not be modified."""
+        reason = "Two HIGH findings in distinct namespaces."
+        report = self._make_report(reason)
+        assert report.overall_severity_reason == reason
+
+    def test_reason_exactly_240_unchanged(self) -> None:
+        """overall_severity_reason of exactly 240 chars must not be modified."""
+        reason = "x" * 240
+        report = self._make_report(reason)
+        assert report.overall_severity_reason == reason
+
+    def test_reason_over_limit_truncated(self) -> None:
+        """overall_severity_reason > 240 chars must be truncated with ellipsis."""
+        long_reason = "x" * 300
+        report = self._make_report(long_reason)
+        assert len(report.overall_severity_reason) <= 240  # type: ignore[arg-type]
+        assert report.overall_severity_reason.endswith("…")  # type: ignore[union-attr]
+
+    def test_reason_over_limit_does_not_raise(self) -> None:
+        """An oversized overall_severity_reason must not raise ValidationError."""
+        long_reason = "A" * 350
+        report = self._make_report(long_reason)  # must not raise
+        assert report.overall_severity_reason is not None

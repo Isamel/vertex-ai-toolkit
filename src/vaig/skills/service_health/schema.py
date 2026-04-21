@@ -427,6 +427,19 @@ class ServiceStatus(BaseModel):
         ),
     )
 
+    @field_validator("degraded_reason", mode="before")
+    @classmethod
+    def _truncate_degraded_reason(cls, v: object) -> object:
+        """Truncate degraded_reason to 160 chars; Gemini may exceed the hint."""
+        if isinstance(v, str) and len(v) > 160:
+            logger.warning(
+                "ServiceStatus.degraded_reason truncated from %d to 160 chars: %r",
+                len(v),
+                v,
+            )
+            return v[:159].rstrip() + "…"
+        return v
+
     @model_validator(mode="after")
     def _warn_missing_degraded_reason(self) -> ServiceStatus:
         """Warn when a non-healthy service has no degraded_reason."""
@@ -561,24 +574,28 @@ class RootCauseHypothesis(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    _LABEL_MAX_LEN: ClassVar[int] = 80
+
     label: str = Field(..., max_length=80, description="Short human title (<=80 chars)")
 
     @field_validator("label", mode="before")
     @classmethod
     def _truncate_label(cls, v: object) -> object:
-        """Truncate label to 80 chars before validation.
+        """Truncate label to _LABEL_MAX_LEN chars before validation.
 
         Gemini sometimes returns labels longer than 80 characters.
         Rather than rejecting the report, we truncate with an ellipsis.
         """
-        if isinstance(v, str) and len(v) > 80:
+        if isinstance(v, str) and len(v) > cls._LABEL_MAX_LEN:
             logger.warning(
-                "RootCauseHypothesis.label truncated from %d to 80 chars: %r…",
+                "RootCauseHypothesis.label truncated from %d to %d chars: %r",
                 len(v),
-                v[:40],
+                cls._LABEL_MAX_LEN,
+                v,
             )
-            return v[:79] + "…"
+            return v[: cls._LABEL_MAX_LEN - 1].rstrip() + "…"
         return v
+
     probability: float = Field(
         ...,
         ge=0.0,
@@ -1218,6 +1235,19 @@ class HealthReport(BaseModel):
             "and 2 MEDIUM findings in distinct namespaces.'"
         ),
     )
+
+    @field_validator("overall_severity_reason", mode="before")
+    @classmethod
+    def _truncate_overall_severity_reason(cls, v: object) -> object:
+        """Truncate overall_severity_reason to 240 chars; Gemini may exceed the hint."""
+        if isinstance(v, str) and len(v) > 240:
+            logger.warning(
+                "HealthReport.overall_severity_reason truncated from %d to 240 chars: %r",
+                len(v),
+                v,
+            )
+            return v[:239].rstrip() + "…"
+        return v
     investigation_evidence: list[InvestigationEvidenceSnapshot] = Field(
         default_factory=list,
         description=(
