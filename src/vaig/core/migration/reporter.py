@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime
+import html as _html
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -73,28 +74,33 @@ class MigrationReporter:
         )
 
     def to_html(self, report: MigrationReport) -> str:
-        """Generate a minimal but readable HTML report string."""
+        """Generate a minimal but readable HTML report string.
+
+        All dynamic content is escaped via html.escape() to prevent XSS.
+        Note: gate_summary keys reflect the 'gate' field stored in gate_results dicts;
+        callers must include a 'gate' key when serializing GateResult into state.
+        """
 
         def _row(label: str, value: object) -> str:
-            return f"<tr><td><strong>{label}</strong></td><td>{value}</td></tr>"
+            return f"<tr><td><strong>{_html.escape(str(label))}</strong></td><td>{_html.escape(str(value))}</td></tr>"
 
         gate_rows = "".join(
-            f"<tr><td>{name}</td><td>{count}</td></tr>"
+            f"<tr><td>{_html.escape(str(name))}</td><td>{_html.escape(str(count))}</td></tr>"
             for name, count in report.gate_summary.items()
         ) or "<tr><td colspan='2'>No gate failures</td></tr>"
 
         budget_rows = "".join(
-            f"<tr><td>{k}</td><td>{v}</td></tr>"
+            f"<tr><td>{_html.escape(str(k))}</td><td>{_html.escape(str(v))}</td></tr>"
             for k, v in report.budget_summary.items()
         ) or "<tr><td colspan='2'>No budget data</td></tr>"
 
-        error_items = "".join(f"<li>{e}</li>" for e in report.errors) or "<li>None</li>"
+        error_items = "".join(f"<li>{_html.escape(e)}</li>" for e in report.errors) or "<li>None</li>"
 
-        html = f"""<!DOCTYPE html>
+        doc = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Migration Report — {report.change_id}</title>
+  <title>Migration Report — {_html.escape(report.change_id)}</title>
   <style>
     body {{ font-family: sans-serif; margin: 2em; }}
     table {{ border-collapse: collapse; width: 100%; margin-bottom: 1.5em; }}
@@ -106,8 +112,8 @@ class MigrationReporter:
 </head>
 <body>
   <h1>Migration Report</h1>
-  <p><strong>Change ID:</strong> {report.change_id}</p>
-  <p><strong>Generated at:</strong> {report.generated_at}</p>
+  <p><strong>Change ID:</strong> {_html.escape(report.change_id)}</p>
+  <p><strong>Generated at:</strong> {_html.escape(report.generated_at)}</p>
 
   <h2>Summary</h2>
   <table>
@@ -138,7 +144,7 @@ class MigrationReporter:
   </ul>
 </body>
 </html>"""
-        return html
+        return doc
 
     def save_html(self, report: MigrationReport, path: Path) -> None:
         """Write HTML to path."""

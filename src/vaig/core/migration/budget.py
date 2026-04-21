@@ -1,4 +1,4 @@
-"""Budget tracker: enforces migration_budget_usd and per-iteration cost limits."""
+"""Budget tracker: records migration events and provides budget-tracking helpers."""
 from __future__ import annotations
 
 import datetime
@@ -19,8 +19,8 @@ class BudgetEventKind(StrEnum):
 
 class BudgetEvent(BaseModel):
     kind: BudgetEventKind
-    tokens_used: int = 0
-    cost_usd: float = 0.0
+    tokens_used: int = Field(default=0, ge=0)
+    cost_usd: float = Field(default=0.0, ge=0.0)
     timestamp: str = Field(
         default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat()
     )
@@ -30,8 +30,8 @@ class BudgetEvent(BaseModel):
 class MigrationBudgetManager(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    max_tokens: int = 100_000
-    max_cost_usd: float = 10.0
+    max_tokens: int = Field(default=100_000, ge=0)
+    max_cost_usd: float = Field(default=10.0, ge=0.0)
     events: list[BudgetEvent] = Field(default_factory=list)
 
     def record(self, event: BudgetEvent) -> None:
@@ -45,8 +45,13 @@ class MigrationBudgetManager(BaseModel):
         return sum(e.cost_usd for e in self.events)
 
     def is_over_budget(self) -> bool:
-        """True if total_tokens > max_tokens OR total_cost > max_cost_usd."""
-        return self.total_tokens() > self.max_tokens or self.total_cost() > self.max_cost_usd
+        """True if total_tokens > max_tokens OR total_cost > max_cost_usd (single pass)."""
+        total_tok = 0
+        total_cost = 0.0
+        for e in self.events:
+            total_tok += e.tokens_used
+            total_cost += e.cost_usd
+        return total_tok > self.max_tokens or total_cost > self.max_cost_usd
 
     def remaining_tokens(self) -> int:
         return self.max_tokens - self.total_tokens()
@@ -56,6 +61,8 @@ class MigrationBudgetManager(BaseModel):
 
     def compact_history(self, keep_last: int = 10) -> MigrationBudgetManager:
         """Return new manager with only last `keep_last` events, same limits, totals preserved via a synthetic summary event."""
+        if keep_last < 0:
+            raise ValueError(f"keep_last must be >= 0, got {keep_last}")
         total_tok = self.total_tokens()
         total_cost = self.total_cost()
         tail = self.events[-keep_last:] if len(self.events) > keep_last else list(self.events)

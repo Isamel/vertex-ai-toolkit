@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -11,6 +12,8 @@ from vaig.core.migration.gates.base import GateResult, QualityGate
 
 __all__ = ["LintGate"]
 
+_LINT_TIMEOUT = 30  # seconds
+
 
 class LintGate(QualityGate):
     """Runs ruff (if available) on generated Python code and returns violations."""
@@ -18,7 +21,7 @@ class LintGate(QualityGate):
     def check(self, chunk: Chunk, generated_code: str, strict: bool = False) -> GateResult:
         """
         Write generated_code to a temp file, run:
-          python -m ruff check <tempfile> --output-format=json
+          <sys.executable> -m ruff check <tempfile> --output-format=json
         Parse JSON output → list of violation messages.
         If ruff not available → PASS with note "ruff not available".
         If strict=False → return PASS even with violations, but list them in notes.
@@ -37,16 +40,22 @@ class LintGate(QualityGate):
                 tmp_path = Path(f.name)
 
             result = subprocess.run(
-                ["python", "-m", "ruff", "check", str(tmp_path), "--output-format=json"],
+                [sys.executable, "-m", "ruff", "check", str(tmp_path), "--output-format=json"],
                 capture_output=True,
                 text=True,
+                timeout=_LINT_TIMEOUT,
             )
+            # Detect "ruff not installed" — non-zero exit with no stdout output
+            if result.returncode != 0 and not result.stdout.strip():
+                return GateResult(passed=True, notes=f"ruff not available: {result.stderr.strip()}")
         except (KeyboardInterrupt, SystemExit):
             raise
+        except subprocess.TimeoutExpired:
+            return GateResult(passed=False, notes=f"ruff timed out after {_LINT_TIMEOUT}s")
         except FileNotFoundError:
             return GateResult(passed=True, notes="ruff not available")
         except Exception as exc:
-            return GateResult(passed=True, notes=f"ruff check skipped: {exc}")
+            return GateResult(passed=False, notes=f"ruff check error: {exc}")
         finally:
             if tmp_path is not None and tmp_path.exists():
                 tmp_path.unlink(missing_ok=True)
