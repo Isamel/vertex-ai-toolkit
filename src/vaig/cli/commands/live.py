@@ -1487,6 +1487,7 @@ def _inject_report_metadata(
     orch_result: Any = None,
     tool_logger: Any = None,
     cost_namespaces: list[str] | None = None,
+    tool_call_store: ToolCallStore | None = None,
 ) -> None:
     """Fill metadata fields in *report* from runtime context.
 
@@ -1503,6 +1504,7 @@ def _inject_report_metadata(
         orch_result=orch_result,
         tool_logger=tool_logger,
         cost_namespaces=cost_namespaces,
+        tool_call_store=tool_call_store,
     )
 
 
@@ -1520,6 +1522,7 @@ def _dispatch_format_output(
     open_browser: bool = False,
     tool_logger: Any = None,
     all_namespaces: bool = False,
+    tool_call_store: ToolCallStore | None = None,
 ) -> None:
     """Dispatch output based on *format_* for an orchestrated skill result.
 
@@ -1568,6 +1571,7 @@ def _dispatch_format_output(
                 orch_result=orch_result,
                 tool_logger=tool_logger,
                 cost_namespaces=[] if all_namespaces else None,
+                tool_call_store=tool_call_store,
             )
             _export_html_report(
                 orch_result.structured_report,
@@ -1858,6 +1862,7 @@ def _execute_orchestrated_skill(
             open_browser=open_browser,
             tool_logger=tool_logger,
             all_namespaces=all_namespaces,
+            tool_call_store=tool_call_store,
         )
 
         # Show agent pipeline summary (includes cost line)
@@ -2592,6 +2597,7 @@ async def _async_execute_orchestrated_skill(
             open_browser=open_browser,
             tool_logger=tool_logger,
             all_namespaces=all_namespaces,
+            tool_call_store=tool_call_store,
         )
 
         _show_orchestrated_summary(

@@ -14,7 +14,10 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from vaig.core.tool_call_store import ToolCallStore
 
 __all__ = ["inject_report_metadata", "format_models_used"]
 
@@ -103,6 +106,48 @@ def format_models_used(models_used: list[str]) -> str:
 # ── Main injection function ──────────────────────────────────────────────────
 
 
+def _record_synthetic_call(
+    store: ToolCallStore,
+    tool_name: str,
+    tool_args: dict[str, Any],
+    result: Any,
+) -> None:
+    """Write a synthetic ToolCallRecord to *store* for an out-of-loop call.
+
+    Fire-and-forget — never raises so callers don't need extra try/except.
+    """
+    try:
+        from datetime import UTC, datetime  # noqa: PLC0415 (re-import ok inside fn)
+
+        from vaig.tools.base import ToolCallRecord  # noqa: PLC0415
+
+        try:
+            output: str = result.model_dump_json()
+        except AttributeError:
+            output = str(result)
+
+        encoded_bytes = len(output.encode("utf-8"))
+        record = ToolCallRecord(
+            tool_name=tool_name,
+            tool_args=tool_args,
+            output=output,
+            output_size_bytes=encoded_bytes,
+            error=False,
+            error_type="",
+            error_message="",
+            duration_s=0.0,
+            timestamp=datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            agent_name="report_metadata",
+            run_id=store.run_id,
+            iteration=0,
+        )
+        store.record(record)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to record synthetic tool call for %r", tool_name, exc_info=True)
+
+
 def inject_report_metadata(
     report: Any,
     *,
@@ -111,6 +156,7 @@ def inject_report_metadata(
     orch_result: Any = None,
     tool_logger: Any = None,
     cost_namespaces: list[str] | None = None,
+    tool_call_store: ToolCallStore | None = None,
 ) -> None:
     """Fill metadata fields in *report* from runtime context.
 
@@ -137,6 +183,11 @@ def inject_report_metadata(
         cost_namespaces: Optional explicit namespace list for cost estimation.
             ``None`` means "use the default_namespace from gke_config (if set)".
             Pass an empty list to analyse all non-system namespaces.
+        tool_call_store: Optional :class:`~vaig.core.tool_call_store.ToolCallStore`.
+            When provided, synthetic :class:`~vaig.tools.base.ToolCallRecord`
+            entries are written for ``fetch_workload_costs`` and
+            ``fetch_anomaly_trends`` after each successful call, making
+            their executions visible to downstream analysis pipelines.
     """
     metadata = getattr(report, "metadata", None)
     if metadata is None:
@@ -225,6 +276,13 @@ def inject_report_metadata(
             from vaig.tools.gke.cost_estimation import fetch_workload_costs  # noqa: PLC0415
 
             metadata.gke_cost = fetch_workload_costs(gke_config, namespaces=effective_namespaces)
+            if tool_call_store is not None:
+                _record_synthetic_call(
+                    tool_call_store,
+                    tool_name="fetch_workload_costs",
+                    tool_args={"namespaces": effective_namespaces},
+                    result=metadata.gke_cost,
+                )
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as _gke_cost_exc:  # noqa: BLE001
@@ -249,6 +307,13 @@ def inject_report_metadata(
             from vaig.tools.gke.trend_analysis import fetch_anomaly_trends  # noqa: PLC0415
 
             metadata.trends = fetch_anomaly_trends(gke_config, namespaces=effective_namespaces)
+            if tool_call_store is not None:
+                _record_synthetic_call(
+                    tool_call_store,
+                    tool_name="fetch_anomaly_trends",
+                    tool_args={"namespaces": effective_namespaces},
+                    result=metadata.trends,
+                )
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as _trend_exc:  # noqa: BLE001
