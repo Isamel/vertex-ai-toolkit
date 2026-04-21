@@ -2,7 +2,7 @@
 import re
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from vaig.core.migration.domain import Chunk
 from vaig.core.migration.gates.base import GateResult, QualityGate
@@ -15,9 +15,9 @@ class MigrationSpec(BaseModel):
 
     source_path: Path
     target_path: Path
-    required_transformations: list[str] = []
-    forbidden_patterns: list[str] = []
-    required_patterns: list[str] = []
+    required_transformations: list[str] = Field(default_factory=list)
+    forbidden_patterns: list[str] = Field(default_factory=list)
+    required_patterns: list[str] = Field(default_factory=list)
     notes: str = ""
 
 

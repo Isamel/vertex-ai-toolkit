@@ -123,7 +123,7 @@ class TestTestPassGate:
     gate = TestPassGate()
 
     def test_test_pass_gate_pytest_not_available(self, tmp_path: Path):
-        with patch("subprocess.run", side_effect=FileNotFoundError("pytest not found")):
+        with patch("importlib.util.find_spec", return_value=None):
             result = self.gate.check(_make_chunk(), "x = 1", working_dir=tmp_path)
         assert result.passed
         assert "pytest not available" in result.notes

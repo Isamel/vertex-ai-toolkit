@@ -11,6 +11,7 @@ from vaig.core.migration.domain import DomainModel, DomainNode
 from vaig.core.migration.gates.base import QualityGate
 from vaig.core.migration.gates.sdd_gate import MigrationSpec, SddGate
 from vaig.core.migration.gates.tdd_gate import TddGate
+from vaig.core.migration.gates.test_pass import TestPassGate
 from vaig.core.migration.jail import ReadOnlyFilesystemJail
 
 __all__ = ["MigrationOrchestrator", "MigrationResult", "RetrievalContext"]
@@ -106,7 +107,7 @@ class MigrationOrchestrator:
             ]
         else:
             self._example_jails = []
-        self.gates: list[QualityGate] = [SddGate(), TddGate()]
+        self.gates: list[QualityGate] = [SddGate(), TddGate(), TestPassGate()]
 
     def run(self, task: str) -> MigrationResult:
         """Run all 5 phases. Phases 2-5 are stubs (raise NotImplementedError)."""

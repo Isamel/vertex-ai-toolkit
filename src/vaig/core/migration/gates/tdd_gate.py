@@ -95,7 +95,7 @@ class TddGate(QualityGate):
         elif phase == TddPhase.GREEN:
             return self._check_green(test_funcs)
         else:  # REFACTOR
-            return self._check_refactor(test_funcs, funcs)
+            return self._check_refactor(test_funcs, funcs, generated_code)
 
     def _check_red(
         self, test_funcs: list[ast.FunctionDef | ast.AsyncFunctionDef]
@@ -133,24 +133,44 @@ class TddGate(QualityGate):
         self,
         test_funcs: list[ast.FunctionDef | ast.AsyncFunctionDef],
         all_funcs: list[ast.FunctionDef | ast.AsyncFunctionDef],
+        generated_code: str,
     ) -> GateResult:
         # First run GREEN checks
         result = self._check_green(test_funcs)
         violations = list(result.violations)
 
-        # Check duplicate function names
-        names = [f.name for f in all_funcs]
-        seen: set[str] = set()
-        for name in names:
-            if name in seen:
-                violations.append(f"REFACTOR phase: duplicate function name '{name}'")
-            seen.add(name)
+        # Check duplicate function names (scope-aware: qualify by parent class/function)
+        try:
+            tree = ast.parse(generated_code)
+        except SyntaxError:
+            tree = None
+
+        if tree is not None:
+            seen: set[str] = set()
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for child in ast.iter_child_nodes(node):
+                        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            scoped_name = f"{node.name}.{child.name}"
+                            if scoped_name in seen:
+                                violations.append(
+                                    f"REFACTOR phase: duplicate function name '{child.name}' in '{node.name}'"
+                                )
+                            seen.add(scoped_name)
+            # Also check top-level function duplicates
+            top_names: set[str] = set()
+            for node in ast.iter_child_nodes(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if node.name in top_names:
+                        violations.append(f"REFACTOR phase: duplicate function name '{node.name}'")
+                    top_names.add(node.name)
 
         # Check functions > 50 lines
         for f in all_funcs:
-            if _count_lines(f) > 50:
+            line_count = _count_lines(f)
+            if line_count > 50:
                 violations.append(
-                    f"REFACTOR phase: function '{f.name}' is {_count_lines(f)} lines (> 50)"
+                    f"REFACTOR phase: function '{f.name}' is {line_count} lines (> 50)"
                 )
 
         return GateResult(passed=len(violations) == 0, violations=violations)
