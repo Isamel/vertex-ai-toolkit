@@ -300,6 +300,10 @@
   .confidence-badge.HIGH      { background: color-mix(in srgb, var(--high) 25%, transparent);    color: var(--high); }
   .confidence-badge.MEDIUM    { background: color-mix(in srgb, var(--medium) 25%, transparent);  color: var(--medium); }
   .confidence-badge.LOW       { background: color-mix(in srgb, var(--low) 25%, transparent);     color: var(--low); }
+  .confidence-badge.warning      { background: color-mix(in srgb, var(--medium) 25%, transparent);  color: var(--medium); }
+  .confidence-badge.healthy      { background: color-mix(in srgb, var(--healthy) 25%, transparent); color: var(--healthy); }
+  .confidence-badge.critical     { background: color-mix(in srgb, var(--critical) 25%, transparent); color: var(--critical); }
+  .confidence-badge.unknown      { background: color-mix(in srgb, var(--text-dim) 25%, transparent); color: var(--text-dim); }
   .evidence-list { list-style: none; }
   .evidence-list li { position: relative; padding-left: 14px; margin-bottom: 4px; font-size: 13px; color: var(--text-main); }
   .evidence-list li::before { content: "›"; position: absolute; left: 0; color: var(--text-dim); }
@@ -1486,15 +1490,20 @@ function applyPreset(name) {
 function renderRootCause() {
   const hyps = REPORT_DATA.root_cause_hypotheses;
   document.getElementById('rootcause-list').innerHTML = hyps.map(h => {
-    const evList = h.supporting_evidence.map(e => `<li>${esc(e)}</li>`).join('');
+    const probPct = `${Math.round((h.probability || 0) * 100)}%`;
+    const status = h.status || 'open';
+    const supList = (h.supporting_evidence || []).map(e => `<li>${esc(e)}</li>`).join('');
+    const refList = (h.refuting_evidence || []).map(e => `<li>${esc(e)}</li>`).join('');
+    const statusCls = { open: 'warning', confirmed: 'healthy', refuted: 'critical', inconclusive: 'unknown' }[status] || 'unknown';
     return `<div class="hyp-card">
       <div class="hyp-title">
-        <span>🔬</span> ${esc(h.finding_title)}
-        <span class="confidence-badge ${esc(h.confidence)}" style="margin-left:auto">${esc(h.confidence)}</span>
+        <span>🔬</span> ${esc(h.label)}
+        <span class="confidence-badge ${statusCls}" style="margin-left:auto">${esc(status.toUpperCase())} · ${probPct}</span>
       </div>
-      <div class="hyp-row"><div class="label">Mechanism</div><div style="font-size:13px;color:var(--text-main)">${esc(h.mechanism)}</div></div>
-      ${evList ? `<div class="hyp-row"><div class="label">Supporting Evidence</div><ul class="evidence-list">${evList}</ul></div>` : ''}
-      <div class="hyp-row"><div class="label">What Would Confirm</div><div style="font-size:13px;color:var(--info)">${esc(h.what_would_confirm)}</div></div>
+      ${supList ? `<div class="hyp-row"><div class="label">Supporting Evidence</div><ul class="evidence-list">${supList}</ul></div>` : ''}
+      ${refList ? `<div class="hyp-row"><div class="label">Refuting Evidence</div><ul class="evidence-list">${refList}</ul></div>` : ''}
+      ${h.confirms_if ? `<div class="hyp-row"><div class="label">What Would Confirm</div><div style="font-size:13px;color:var(--info)">${esc(h.confirms_if)}</div></div>` : ''}
+      ${h.refutes_if ? `<div class="hyp-row"><div class="label">What Would Refute</div><div style="font-size:13px;color:var(--text-dim)">${esc(h.refutes_if)}</div></div>` : ''}
     </div>`;
   }).join('');
 }
