@@ -10,7 +10,7 @@ TEMPLATE_PATH = Path(__file__).parent.parent.parent / "src" / "vaig" / "ui" / "s
 
 
 def _template() -> str:
-    return TEMPLATE_PATH.read_text()
+    return TEMPLATE_PATH.read_text(encoding="utf-8")
 
 
 class TestRootCauseHypothesesDOMIDs:
@@ -41,6 +41,10 @@ class TestRenderRootCauseFunction:
     def test_uses_supporting_evidence_field(self) -> None:
         """Must read h.supporting_evidence."""
         assert "h.supporting_evidence" in _template()
+
+    def test_uses_refuting_evidence_field(self) -> None:
+        """Must read h.refuting_evidence."""
+        assert "h.refuting_evidence" in _template()
 
     def test_uses_confirms_if_field(self) -> None:
         """Must read h.confirms_if (not h.what_would_confirm)."""
