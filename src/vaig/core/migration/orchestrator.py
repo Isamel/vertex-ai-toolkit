@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from vaig.core.migration.adapters.base import SourceAdapterRegistry
+from vaig.core.migration.budget import MigrationBudgetManager
 from vaig.core.migration.config import MigrationConfig
 from vaig.core.migration.domain import DomainModel, DomainNode
 from vaig.core.migration.gates.base import QualityGate
@@ -100,9 +101,11 @@ class MigrationOrchestrator:
         sdd_specs: dict[str, MigrationSpec] | None = None,
         state_path: Path | None = None,
         resume: bool = False,
+        budget: MigrationBudgetManager | None = None,
     ) -> None:
         self._config = migration_config
         self.sdd_specs: dict[str, MigrationSpec] = sdd_specs or {}
+        self.budget = budget
         self._state_path = state_path
         self._jails = [ReadOnlyFilesystemJail(d) for d in migration_config.from_dirs]
         if migration_config.examples_dirs:
