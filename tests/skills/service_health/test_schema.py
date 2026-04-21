@@ -303,15 +303,20 @@ class TestServiceStatusDegradedReason:
         )
         assert svc.degraded_reason == "All pods in CrashLoopBackOff."
 
-    def test_max_length_enforced(self) -> None:
-        from pydantic import ValidationError
-        with pytest.raises(ValidationError):
-            ServiceStatus(
+    def test_max_length_truncated_not_rejected(self, caplog: pytest.LogCaptureFixture) -> None:
+        """degraded_reason > 160 chars must be truncated with ellipsis, not rejected."""
+        long_reason = "x" * 161
+        with caplog.at_level(logging.WARNING, logger="vaig.skills.service_health.schema"):
+            svc = ServiceStatus(
                 service="svc",
                 namespace="ns",
                 status="DEGRADED",
-                degraded_reason="x" * 161,
+                degraded_reason=long_reason,
             )
+        assert svc.degraded_reason is not None
+        assert len(svc.degraded_reason) <= 160
+        assert svc.degraded_reason.endswith("…")
+        assert "truncated" in caplog.text
 
     def test_validator_warns_when_non_healthy_reason_missing(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level(logging.WARNING, logger="vaig.skills.service_health.schema"):
