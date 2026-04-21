@@ -176,17 +176,17 @@ def register(app: typer.Typer) -> None:
                 help="Enable the new code-migration agent pipeline (Sprint 1+ feature).",
             ),
         ] = False,
-        migration_from_dir: Annotated[
-            str,
-            typer.Option("--from-dir", help="Source directory for migration (default: '.')"),
-        ] = ".",
-        migration_to_dir: Annotated[
-            str,
+        from_dir: Annotated[
+            list[Path] | None,
+            typer.Option("--from-dir", help="Source directory for migration (repeatable)"),
+        ] = None,
+        to_dir: Annotated[
+            Path,
             typer.Option("--to-dir", help="Output directory for migrated code (default: './migrated')"),
-        ] = "./migrated",
-        migration_examples_dir: Annotated[
-            str | None,
-            typer.Option("--examples-dir", help="Directory containing migration reference examples"),
+        ] = Path("./migrated"),
+        examples_dir: Annotated[
+            list[Path] | None,
+            typer.Option("--examples-dir", help="Directory containing migration reference examples (repeatable)"),
         ] = None,
         migration_source_kind: Annotated[
             str | None,
@@ -197,9 +197,9 @@ def register(app: typer.Typer) -> None:
             typer.Option("--target-kind", help="Target technology kind (default: 'aws-glue-pyspark')"),
         ] = "aws-glue-pyspark",
         migration_design_principles: Annotated[
-            list[str] | None,
-            typer.Option("--design-principles", help="Design principles to apply during migration"),
-        ] = None,
+            str,
+            typer.Option("--design-principles", help="CSV of design principles to apply during migration"),
+        ] = "",
         migration_max_iterations: Annotated[
             int,
             typer.Option("--max-migration-iterations", help="Maximum migration iterations (default: 20)"),
@@ -231,13 +231,14 @@ def register(app: typer.Typer) -> None:
         if migration:
             from vaig.core.migration.config import MigrationConfig  # noqa: PLC0415
 
+            _dp = [p.strip() for p in migration_design_principles.split(",") if p.strip()]
             migration_cfg = MigrationConfig(
-                from_dir=migration_from_dir,
-                to_dir=migration_to_dir,
-                examples_dir=migration_examples_dir,
+                from_dirs=list(from_dir) if from_dir else [],
+                to_dir=to_dir,
+                examples_dirs=list(examples_dir) if examples_dir else [],
                 source_kind=migration_source_kind,
                 target_kind=migration_target_kind,
-                design_principles=migration_design_principles or [],
+                design_principles=_dp if _dp else ["tdd", "sdd"],  # type: ignore[arg-type]
                 max_migration_iterations=migration_max_iterations,
                 migration_budget_usd=migration_budget_usd,
             )

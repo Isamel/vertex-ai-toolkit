@@ -1,65 +1,129 @@
-"""MigrationConfig and auto-detection of source kind."""
-
+"""Migration configuration model and source-kind auto-detection."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
+from typing import Literal, Self
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+__all__ = ["MigrationConfig", "detect_source_kind"]
 
 
-def detect_source_kind(from_dir: str) -> str:
-    """Auto-detect the source kind from files in *from_dir*.
+DesignPrinciple = Literal["ddd", "tdd", "sdd", "hex-arch", "clean-arch", "srp"]
+
+
+def detect_source_kind(from_dirs: list[Path]) -> str:
+    """Auto-detect source kind from file extensions and content (first match wins).
 
     Priority order:
-    1. Any ``.ktr`` or ``.kjb`` file  → ``"pentaho"``
-    2. Any ``.py`` file containing ``from airflow``  → ``"airflow-v1"``
-    3. Any ``.sql`` file  → ``"generic-sql"``
-    4. Default  → ``"unknown"``
+      pentaho → ssis → informatica → talend → airflow-v1 → generic-sql → cobol → legacy-java → generic
     """
-    root = Path(from_dir)
-    if not root.is_dir():
-        return "unknown"
+    all_files: list[Path] = []
+    for d in from_dirs:
+        if d.is_dir():
+            all_files.extend(d.rglob("*"))
 
-    has_sql = False
-    for dirpath, _dirnames, filenames in os.walk(root):
-        for fname in filenames:
-            ext = Path(fname).suffix.lower()
-            if ext in {".ktr", ".kjb"}:
-                return "pentaho"
-            if ext == ".sql":
-                has_sql = True
-            if ext == ".py":
+    exts = {f.suffix.lower() for f in all_files if f.is_file()}
+    names = {f.name.lower() for f in all_files if f.is_file()}
+
+    # pentaho
+    if ".ktr" in exts or ".kjb" in exts:
+        return "pentaho"
+
+    # ssis
+    if ".dtsx" in exts:
+        return "ssis"
+
+    # informatica (xml with <workflow and Informatica in root)
+    if ".xml" in exts:
+        for f in all_files:
+            if f.suffix.lower() == ".xml":
                 try:
-                    content = (Path(dirpath) / fname).read_text(encoding="utf-8", errors="replace")
-                    if "from airflow" in content:
-                        return "airflow-v1"
+                    text = f.read_text(encoding="utf-8", errors="ignore")[:2000]
+                    if "<workflow" in text and "Informatica" in text:
+                        return "informatica"
                 except (KeyboardInterrupt, SystemExit):
                     raise
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
 
-    if has_sql:
+    # talend
+    if any(n.startswith("talend-") and n.endswith(".jar") for n in names):
+        return "talend"
+
+    # airflow-v1
+    for f in all_files:
+        if f.suffix.lower() == ".py":
+            try:
+                text = f.read_text(encoding="utf-8", errors="ignore")
+                if "from airflow import DAG" in text or "from airflow.models import DAG" in text:
+                    return "airflow-v1"
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception:
+                pass
+
+    # generic-sql (sql without py siblings)
+    py_files = [f for f in all_files if f.suffix.lower() == ".py"]
+    sql_files = [f for f in all_files if f.suffix.lower() == ".sql"]
+    if sql_files and not py_files:
         return "generic-sql"
 
-    return "unknown"
+    # cobol
+    if ".cbl" in exts or ".cob" in exts or ".COB" in {f.suffix for f in all_files if f.is_file()}:
+        return "cobol"
+
+    # legacy-java
+    if any(n in names for n in ("pom.xml", "build.gradle", "build.gradle.kts")):
+        return "legacy-java"
+
+    return "generic"
 
 
 class MigrationConfig(BaseModel):
-    """Configuration for a code migration run."""
+    """Configuration for a migration run."""
 
-    from_dir: str = "."
-    to_dir: str = "./migrated"
-    examples_dir: str | None = None
-    source_kind: str | None = None  # None → auto-detected on init
+    model_config = ConfigDict(extra="forbid")
+
+    from_dirs: list[Path] = Field(default_factory=list)
+    to_dir: Path = Field(default=Path("./migrated"))
+    examples_dirs: list[Path] = Field(default_factory=list)
+    source_kind: str | None = None  # None → auto-detected
     target_kind: str = "aws-glue-pyspark"
-    design_principles: list[str] = []
+    design_principles: list[DesignPrinciple] = Field(
+        default_factory=lambda: ["tdd", "sdd"]  # type: ignore[arg-type]
+    )
     max_migration_iterations: int = 20
     migration_budget_usd: float = 10.0
+    budget_warn_fraction: float = 0.8
+    resume_from_state: bool = True
 
     @model_validator(mode="after")
-    def _auto_detect_source_kind(self) -> MigrationConfig:
-        """If source_kind was not provided, detect it from from_dir."""
-        if self.source_kind is None:
-            self.source_kind = detect_source_kind(self.from_dir)
+    def _validate_and_autodetect(self) -> Self:
+        # Validate from_dirs exist
+        for d in self.from_dirs:
+            if not d.is_dir():
+                raise ValueError(f"--from-dir does not exist or is not a directory: {d}")
+        # Validate to_dir does not overlap from_dirs
+        for d in self.from_dirs:
+            try:
+                d.resolve().relative_to(self.to_dir.resolve())
+                raise ValueError(f"--to-dir must NOT overlap --from-dir: {d}")
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except ValueError as e:
+                if "--to-dir must NOT overlap" in str(e):
+                    raise
+                # relative_to raises ValueError when paths don't overlap — that's fine
+            try:
+                self.to_dir.resolve().relative_to(d.resolve())
+                raise ValueError(f"--to-dir must NOT overlap --from-dir: {d}")
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except ValueError as e:
+                if "--to-dir must NOT overlap" in str(e):
+                    raise
+        # Auto-detect source kind
+        if self.source_kind is None and self.from_dirs:
+            self.source_kind = detect_source_kind(self.from_dirs)
         return self

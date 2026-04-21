@@ -1,2 +1,5 @@
-"""Source-kind adapters package — one adapter per supported migration source."""
-__all__: list[str] = []
+"""Migration source adapters package."""
+from vaig.core.migration.adapters.base import SourceAdapter, SourceAdapterRegistry, UnknownSourceError
+from vaig.core.migration.adapters.pentaho import PentahoAdapter
+
+__all__ = ["SourceAdapter", "SourceAdapterRegistry", "UnknownSourceError", "PentahoAdapter"]
