@@ -1486,15 +1486,19 @@ function applyPreset(name) {
 function renderRootCause() {
   const hyps = REPORT_DATA.root_cause_hypotheses;
   document.getElementById('rootcause-list').innerHTML = hyps.map(h => {
-    const evList = h.supporting_evidence.map(e => `<li>${esc(e)}</li>`).join('');
+    const probPct = `${Math.round((h.probability || 0) * 100)}%`;
+    const supList = (h.supporting_evidence || []).map(e => `<li>${esc(e)}</li>`).join('');
+    const refList = (h.refuting_evidence || []).map(e => `<li>${esc(e)}</li>`).join('');
+    const statusCls = { open: 'warning', confirmed: 'healthy', refuted: 'critical', inconclusive: 'unknown' }[h.status] || 'unknown';
     return `<div class="hyp-card">
       <div class="hyp-title">
-        <span>🔬</span> ${esc(h.finding_title)}
-        <span class="confidence-badge ${esc(h.confidence)}" style="margin-left:auto">${esc(h.confidence)}</span>
+        <span>🔬</span> ${esc(h.label)}
+        <span class="confidence-badge ${statusCls}" style="margin-left:auto">${esc(h.status || 'open')} · ${probPct}</span>
       </div>
-      <div class="hyp-row"><div class="label">Mechanism</div><div style="font-size:13px;color:var(--text-main)">${esc(h.mechanism)}</div></div>
-      ${evList ? `<div class="hyp-row"><div class="label">Supporting Evidence</div><ul class="evidence-list">${evList}</ul></div>` : ''}
-      <div class="hyp-row"><div class="label">What Would Confirm</div><div style="font-size:13px;color:var(--info)">${esc(h.what_would_confirm)}</div></div>
+      ${supList ? `<div class="hyp-row"><div class="label">Supporting Evidence</div><ul class="evidence-list">${supList}</ul></div>` : ''}
+      ${refList ? `<div class="hyp-row"><div class="label">Refuting Evidence</div><ul class="evidence-list">${refList}</ul></div>` : ''}
+      ${h.confirms_if ? `<div class="hyp-row"><div class="label">What Would Confirm</div><div style="font-size:13px;color:var(--info)">${esc(h.confirms_if)}</div></div>` : ''}
+      ${h.refutes_if ? `<div class="hyp-row"><div class="label">What Would Refute</div><div style="font-size:13px;color:var(--text-dim)">${esc(h.refutes_if)}</div></div>` : ''}
     </div>`;
   }).join('');
 }
