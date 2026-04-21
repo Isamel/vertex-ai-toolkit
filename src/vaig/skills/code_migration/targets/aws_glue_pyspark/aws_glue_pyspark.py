@@ -11,8 +11,12 @@ AWS_GLUE_PYSPARK_PACK = TargetPack(
         "Converts ETL pipelines to Glue DynamicFrames with GlueContext."
     ),
     imports=[
+        "import sys",
+        "from awsglue.utils import getResolvedOptions",
         "from awsglue.context import GlueContext",
+        "from awsglue.job import Job",
         "from awsglue.dynamicframe import DynamicFrame",
+        "from awsglue.transforms import ApplyMapping, Filter",
         "from pyspark.context import SparkContext",
         "import boto3",
     ],
@@ -68,6 +72,7 @@ AWS_GLUE_PYSPARK_PACK = TargetPack(
         "local_path",
     ],
     required_boilerplate=(
+        "args = getResolvedOptions(sys.argv, ['JOB_NAME'])\n"
         "sc = SparkContext()\n"
         "glueContext = GlueContext(sc)\n"
         "spark = glueContext.spark_session\n"

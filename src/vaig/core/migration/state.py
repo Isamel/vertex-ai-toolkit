@@ -1,11 +1,10 @@
 """Migration state: tracks per-file progress across orchestrator iterations."""
-import json
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = ["FileStatus", "FileRecord", "MigrationState"]
 
@@ -22,7 +21,7 @@ class FileRecord(BaseModel):
     source_path: str
     target_path: str | None = None
     status: FileStatus = FileStatus.PENDING
-    gate_results: list[dict[str, object]] = []  # serialized GateResult dicts
+    gate_results: list[dict[str, object]] = Field(default_factory=list)  # serialized GateResult dicts
     error: str | None = None
     completed_at: str | None = None  # ISO datetime string
 
@@ -35,7 +34,7 @@ class MigrationState(BaseModel):
     updated_at: str  # ISO datetime
     source_kind: str
     target_kind: str
-    files: dict[str, FileRecord] = {}  # keyed by source_path str
+    files: dict[str, FileRecord] = Field(default_factory=dict)  # keyed by source_path str
 
     def mark_completed(
         self, source_path: str, target_path: str, gate_results: list[object]
@@ -84,8 +83,7 @@ class MigrationState(BaseModel):
     @classmethod
     def load(cls, path: Path) -> "MigrationState":
         """Load state from JSON file."""
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return cls.model_validate(data)
+        return cls.model_validate_json(path.read_text(encoding="utf-8"))
 
     @classmethod
     def new(cls, source_kind: str, target_kind: str) -> "MigrationState":

@@ -1,5 +1,5 @@
 """DDD overlay: BoundedContext and AggregateRoot models for domain-driven migration hints."""
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from vaig.core.migration.domain import Chunk
 
@@ -18,14 +18,14 @@ _KIND_CONTEXT_MAP: dict[str, str] = {
 class AggregateRoot(BaseModel):
     name: str
     entities: list[str]
-    value_objects: list[str] = []
-    domain_events: list[str] = []
+    value_objects: list[str] = Field(default_factory=list)
+    domain_events: list[str] = Field(default_factory=list)
 
 
 class BoundedContext(BaseModel):
     name: str
     aggregates: list[AggregateRoot]
-    ubiquitous_language: dict[str, str] = {}  # term → definition
+    ubiquitous_language: dict[str, str] = Field(default_factory=dict)  # term → definition
 
 
 class DddOverlay(BaseModel):
@@ -56,7 +56,7 @@ class DddOverlay(BaseModel):
         # Try to find a context whose name matches the kind role
         matched_ctx: BoundedContext | None = None
         for ctx in self.contexts:
-            if kind_role in ctx.name.lower() or ctx.name.lower() in kind_role:
+            if kind_role in ctx.name.lower():
                 matched_ctx = ctx
                 break
 
