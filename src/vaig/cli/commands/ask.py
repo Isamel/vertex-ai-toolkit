@@ -169,6 +169,45 @@ def register(app: typer.Typer) -> None:
                 ),
             ),
         ] = False,
+        migration: Annotated[
+            bool,
+            typer.Option(
+                "--migration/--no-migration",
+                help="Enable the new code-migration agent pipeline (Sprint 1+ feature).",
+            ),
+        ] = False,
+        migration_from_dir: Annotated[
+            str,
+            typer.Option("--from-dir", help="Source directory for migration (default: '.')"),
+        ] = ".",
+        migration_to_dir: Annotated[
+            str,
+            typer.Option("--to-dir", help="Output directory for migrated code (default: './migrated')"),
+        ] = "./migrated",
+        migration_examples_dir: Annotated[
+            str | None,
+            typer.Option("--examples-dir", help="Directory containing migration reference examples"),
+        ] = None,
+        migration_source_kind: Annotated[
+            str | None,
+            typer.Option("--source-kind", help="Source technology kind (auto-detected if omitted)"),
+        ] = None,
+        migration_target_kind: Annotated[
+            str,
+            typer.Option("--target-kind", help="Target technology kind (default: 'aws-glue-pyspark')"),
+        ] = "aws-glue-pyspark",
+        migration_design_principles: Annotated[
+            list[str] | None,
+            typer.Option("--design-principles", help="Design principles to apply during migration"),
+        ] = None,
+        migration_max_iterations: Annotated[
+            int,
+            typer.Option("--max-migration-iterations", help="Maximum migration iterations (default: 20)"),
+        ] = 20,
+        migration_budget_usd: Annotated[
+            float,
+            typer.Option("--migration-budget-usd", help="Maximum spend budget in USD (default: 10.0)"),
+        ] = 10.0,
     ) -> None:
         """Ask a single question and get a response.
 
@@ -187,6 +226,23 @@ def register(app: typer.Typer) -> None:
             vaig ask "Migrate this code" -f src.py -e example_output.py -s code-migration
         """
         _apply_subcommand_log_flags(verbose=verbose, debug=debug)
+
+        # ── Migration stub (CM-01) ──────────────────────────────────────────
+        if migration:
+            from vaig.core.migration.config import MigrationConfig  # noqa: PLC0415
+
+            migration_cfg = MigrationConfig(
+                from_dir=migration_from_dir,
+                to_dir=migration_to_dir,
+                examples_dir=migration_examples_dir,
+                source_kind=migration_source_kind,
+                target_kind=migration_target_kind,
+                design_principles=migration_design_principles or [],
+                max_migration_iterations=migration_max_iterations,
+                migration_budget_usd=migration_budget_usd,
+            )
+            console.print(migration_cfg.model_dump_json(indent=2))
+            raise typer.Exit()
 
         try:  # ── CLI error boundary ──
             settings = _helpers._get_settings(config)
