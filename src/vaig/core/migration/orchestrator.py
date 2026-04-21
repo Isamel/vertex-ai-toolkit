@@ -13,6 +13,7 @@ from vaig.core.migration.gates.sdd_gate import MigrationSpec, SddGate
 from vaig.core.migration.gates.tdd_gate import TddGate
 from vaig.core.migration.gates.test_pass import TestPassGate
 from vaig.core.migration.jail import ReadOnlyFilesystemJail
+from vaig.core.migration.state import MigrationState
 
 __all__ = ["MigrationOrchestrator", "MigrationResult", "RetrievalContext"]
 
@@ -97,9 +98,12 @@ class MigrationOrchestrator:
         self,
         migration_config: MigrationConfig,
         sdd_specs: dict[str, MigrationSpec] | None = None,
+        state_path: Path | None = None,
+        resume: bool = False,
     ) -> None:
         self._config = migration_config
         self.sdd_specs: dict[str, MigrationSpec] = sdd_specs or {}
+        self._state_path = state_path
         self._jails = [ReadOnlyFilesystemJail(d) for d in migration_config.from_dirs]
         if migration_config.examples_dirs:
             self._example_jails = [
@@ -108,6 +112,13 @@ class MigrationOrchestrator:
         else:
             self._example_jails = []
         self.gates: list[QualityGate] = [SddGate(), TddGate(), TestPassGate()]
+
+        source_kind = migration_config.source_kind or "generic"
+        target_kind = migration_config.target_kind
+        if resume and state_path is not None and state_path.exists():
+            self._state: MigrationState = MigrationState.load(state_path)
+        else:
+            self._state = MigrationState.new(source_kind, target_kind)
 
     def run(self, task: str) -> MigrationResult:
         """Run all 5 phases. Phases 2-5 are stubs (raise NotImplementedError)."""
