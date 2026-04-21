@@ -1,48 +1,55 @@
-"""Read-only filesystem jail — path validation and safe file reading."""
-
+"""ReadOnlyFilesystemJail: path-validation jail for read-only source directories."""
 from __future__ import annotations
 
 from pathlib import Path
 
+__all__ = ["ReadOnlyFilesystemJail", "ReadOnlySourceError"]
+
+
+class ReadOnlySourceError(PermissionError):
+    """Raised when an agent attempts to write to a read-only source directory."""
+
 
 class ReadOnlyFilesystemJail:
-    """Context manager that constrains file access to a single directory tree.
+    """A read-only view of a directory.
 
-    Only provides read access; write operations are intentionally absent.
-
-    Usage::
-
-        with ReadOnlyFilesystemJail("/some/path") as jail:
-            content = jail.safe_read("subdir/file.py")
+    Does NOT mount anything — pure path validation + read helpers.
+    Raises ReadOnlySourceError on any path that escapes the root.
     """
 
     def __init__(self, path: str | Path) -> None:
-        self._path = Path(path)
-        self.root: Path  # set on __enter__
+        self.root = Path(path).resolve()
 
     def __enter__(self) -> ReadOnlyFilesystemJail:
-        self.root = self._path.resolve()
         return self
 
-    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
-        pass  # nothing to tear down — we never mount anything
+    def __exit__(self, *_: object) -> None:
+        pass
 
-    def safe_read(self, relative_path: str) -> str:
-        """Read a file relative to the jail root.
-
-        Raises
-        ------
-        PermissionError
-            If the resolved path escapes the jail root (path traversal).
-        FileNotFoundError
-            If the file does not exist inside the jail.
-        """
+    def _resolve_safe(self, relative_path: str) -> Path:
         target = (self.root / relative_path).resolve()
-        # Path traversal check: target must be equal to or inside self.root
         try:
             target.relative_to(self.root)
         except ValueError:
-            raise PermissionError(
-                f"Path traversal detected: '{relative_path}' resolves outside jail root '{self.root}'"
+            raise ReadOnlySourceError(
+                f"Path '{relative_path}' escapes read-only jail '{self.root}'"
             ) from None
+        return target
+
+    def safe_read(self, relative_path: str) -> str:
+        """Read a file within the jail root. Raises ReadOnlySourceError on traversal."""
+        target = self._resolve_safe(relative_path)
         return target.read_text(encoding="utf-8")
+
+    def check_write_blocked(self, absolute_path: str | Path) -> None:
+        """Raise ReadOnlySourceError if absolute_path falls inside this jail."""
+        target = Path(absolute_path).resolve()
+        try:
+            target.relative_to(self.root)
+            raise ReadOnlySourceError(
+                f"Write to '{absolute_path}' is blocked — path is inside read-only source jail '{self.root}'"
+            )
+        except ReadOnlySourceError:
+            raise
+        except ValueError:
+            pass  # outside jail — fine
