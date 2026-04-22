@@ -517,6 +517,9 @@ class Finding(BaseModel):
         """Reject vague placeholder remediation text in remediation fields."""
         if v is None or v == "":
             return v
+        # Explicit safe fallback — always accepted, skip pattern check
+        if v.strip() == "(see Recommended Actions section)":
+            return v
         for pattern in _BANNED_QUICK_REMEDIATION_PATTERNS:
             if re.search(pattern, v, flags=re.IGNORECASE):
                 raise ValueError(
