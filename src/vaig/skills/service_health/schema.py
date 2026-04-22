@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
 
 from vaig.core.memory.models import RecurrenceSignal
@@ -513,10 +513,13 @@ class Finding(BaseModel):
 
     @field_validator("remediation", "quick_remediation")
     @classmethod
-    def _reject_placeholder_remediations(cls, v: str | None) -> str | None:
+    def _reject_placeholder_remediations(cls, v: str | None, info: ValidationInfo) -> str | None:
         """Reject vague placeholder remediation text in remediation fields."""
         if v is None or v == "":
             return v
+        # Safe fallback bypass — only for quick_remediation (not remediation)
+        if info.field_name == "quick_remediation" and v.strip() == "(see Recommended Actions section)":
+            return "(see Recommended Actions section)"
         for pattern in _BANNED_QUICK_REMEDIATION_PATTERNS:
             if re.search(pattern, v, flags=re.IGNORECASE):
                 raise ValueError(

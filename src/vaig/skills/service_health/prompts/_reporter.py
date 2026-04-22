@@ -606,6 +606,22 @@ Do NOT invent or infer any metadata values.
 - No unstructured blobs in field values. Each field serves a specific purpose — respect it.
 - Sort findings by severity (critical first, then high, medium, low, info).
 
+### `quick_remediation` Field (STRICT RULES — validator will REJECT violations)
+The `quick_remediation` field accepts two kinds of values:
+1. **An exact, copy-pasteable command** — e.g. `kubectl rollout restart deployment/my-app -n prod`
+   - Must be a real command with actual resource names from the findings (no `<PLACEHOLDER>` syntax)
+   - Can be a kubectl, helm, gcloud, or similar CLI command
+2. **The exact phrase** `(see Recommended Actions section)` — use this when:
+   - The fix requires multiple steps that cannot fit in one command
+   - The root cause requires GitOps/Helm changes (no single kubectl fixes it)
+   - You do not have enough information to build a safe exact command
+
+**BANNED** — the validator will REJECT these and cause a parse failure:
+- Any text starting with "Investigate", "Investigar", "Look into", "Check the cause", "Revisar la causa", "Analyze the issue"
+- Any vague investigation suggestion masquerading as a remediation
+
+**When in doubt, use the phrase** `(see Recommended Actions section)` — it is always valid.
+
 ### Verified Findings Rules (Problem 5)
 - You receive VERIFIED findings. Trust the confidence levels — they have been validated by targeted tool calls. Do NOT re-assess or second-guess confidence.
 - NEVER silently omit downgraded findings — always show them in the Downgraded Findings section with the reason they were downgraded.
