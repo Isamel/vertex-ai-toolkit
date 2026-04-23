@@ -50,6 +50,7 @@ from vaig.skills.service_health.diff import compute_report_diff
 
 if TYPE_CHECKING:
     from vaig.agents.orchestrator import OrchestratorResult
+    from vaig.core.attachment_adapter import AttachmentAdapter
     from vaig.core.config import GKEConfig, Settings
     from vaig.core.protocols import GeminiClientProtocol
     from vaig.skills.base import BaseSkill, SkillMetadata
@@ -667,6 +668,80 @@ def register(app: typer.Typer) -> None:
                 help="Files larger than this (bytes) are processed via streaming chunker.",
             ),
         ] = None,
+        # ── Attachment flags (SPEC-ATT-01..04) ────────────────────────────────
+        attach: Annotated[
+            list[str] | None,
+            typer.Option(
+                "--attach",
+                help=(
+                    "Local path or URL to attach as context (multi-valued). "
+                    "Directories (non-git), individual files, and — in future "
+                    "sprints — archives and URLs are supported."
+                ),
+            ),
+        ] = None,
+        attach_name: Annotated[
+            list[str] | None,
+            typer.Option(
+                "--attach-name",
+                help=(
+                    "Optional label for each --attach source, positional-matched. "
+                    "If count mismatches, remaining sources get no label (None)."
+                ),
+            ),
+        ] = None,
+        attach_max_files: Annotated[
+            int,
+            typer.Option(
+                "--attach-max-files",
+                help="Maximum number of files to ingest per attachment source (default 10 000).",
+            ),
+        ] = 10_000,
+        attach_unlimited: Annotated[
+            bool,
+            typer.Option(
+                "--attach-unlimited/--no-attach-unlimited",
+                help="When set, ignore --attach-max-files limit.",
+            ),
+        ] = False,
+        attach_max_depth: Annotated[
+            int,
+            typer.Option(
+                "--attach-max-depth",
+                help="Max directory recursion depth for attachments (-1 = unlimited, default).",
+            ),
+        ] = -1,
+        attach_follow_symlinks: Annotated[
+            bool,
+            typer.Option(
+                "--attach-follow-symlinks/--no-attach-follow-symlinks",
+                help="Follow symlinks when walking attachment directories (default: off).",
+            ),
+        ] = False,
+        attach_no_default_excludes: Annotated[
+            bool,
+            typer.Option(
+                "--attach-no-default-excludes",
+                help="Disable the built-in exclude globs (node_modules, .git, etc.) for attachments.",
+            ),
+        ] = False,
+        attach_include_everything: Annotated[
+            bool,
+            typer.Option(
+                "--attach-include-everything",
+                help=(
+                    "Include all files: disables exclude globs, unlimited depth/files, "
+                    "and binary-skip.  Does NOT bypass max_bytes_absolute."
+                ),
+            ),
+        ] = False,
+        attach_max_bytes_absolute: Annotated[
+            int,
+            typer.Option(
+                "--attach-max-bytes-absolute",
+                help="Reject attachment files larger than this many bytes (default 500 MB).",
+            ),
+        ] = 500_000_000,
         interactive: Annotated[
             bool,
             typer.Option(
@@ -779,6 +854,19 @@ def register(app: typer.Typer) -> None:
                 exclude_globs=repo_exclude_glob,
                 max_files=repo_max_files,
                 streaming_threshold_bytes=repo_max_bytes_per_file,
+            )
+
+            # ── Attachment config + early resolution (SPEC-ATT-01..04) ───────
+            _attachment_adapters = _build_and_resolve_attachments(
+                attach_sources=attach or [],
+                attach_names=attach_name or [],
+                max_files=attach_max_files,
+                unlimited_files=attach_unlimited,
+                max_depth=attach_max_depth,
+                follow_symlinks=attach_follow_symlinks,
+                use_default_excludes=not attach_no_default_excludes,
+                include_everything=attach_include_everything,
+                max_bytes_absolute=attach_max_bytes_absolute,
             )
 
             # Auto-detect skill if requested (or enabled in config) and no explicit skill specified
@@ -1074,6 +1162,91 @@ def _run_watch_loop(
 
 # _build_gke_config — delegated to vaig.core.gke.build_gke_config
 from vaig.core.gke import build_gke_config as _build_gke_config
+
+
+def _build_and_resolve_attachments(
+    *,
+    attach_sources: list[str],
+    attach_names: list[str],
+    max_files: int,
+    unlimited_files: bool,
+    max_depth: int,
+    follow_symlinks: bool,
+    use_default_excludes: bool,
+    include_everything: bool,
+    max_bytes_absolute: int,
+) -> list[AttachmentAdapter]:
+    """Build :class:`~vaig.core.config.AttachmentsConfig`, resolve adapters, and
+    eagerly call ``list_files()`` to surface errors before any LLM call.
+
+    Returns the list of resolved adapters (may be empty).
+    """
+    import sys
+
+    from vaig.core.attachment_adapter import LocalPathAdapter, SingleFileAdapter, resolve_attachment
+    from vaig.core.config import AttachmentsConfig
+
+    # --attach-include-everything cascades
+    if include_everything:
+        unlimited_files = True
+        max_depth = -1
+        use_default_excludes = False
+        binary_skip = False
+    else:
+        binary_skip = True
+
+    cfg = AttachmentsConfig(
+        max_files_per_attachment=max_files,
+        unlimited_files=unlimited_files,
+        max_depth=max_depth,
+        follow_symlinks=follow_symlinks,
+        use_default_excludes=use_default_excludes,
+        include_everything=include_everything,
+        max_bytes_absolute=max_bytes_absolute,
+        binary_skip=binary_skip,
+    )
+
+    if not attach_sources:
+        return []
+
+    # Pad names list to match sources length
+    names: list[str | None] = list(attach_names)
+    while len(names) < len(attach_sources):
+        names.append(None)
+
+    adapters: list[LocalPathAdapter | SingleFileAdapter] = []
+    for raw, name in zip(attach_sources, names, strict=False):
+        try:
+            adapter = resolve_attachment(raw, name=name, cfg=cfg)
+        except NotImplementedError as exc:
+            print(f"[attachments] {exc}", file=sys.stderr)
+            raise typer.Exit(1) from exc
+        except ValueError as exc:
+            print(f"[attachments] {exc}", file=sys.stderr)
+            raise typer.Exit(1) from exc
+
+        # Eagerly list files to surface errors (e.g. permission denied, path escapes)
+        try:
+            list(adapter.list_files(cfg))
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[attachments] failed to list files for {raw!r}: {exc}", file=sys.stderr)
+            raise typer.Exit(1) from exc
+
+        adapters.append(adapter)
+
+    label_parts = []
+    for adapter in adapters:
+        label = adapter.spec.name or adapter.spec.source
+        label_parts.append(label)
+    print(
+        f"[attachments] resolved {len(adapters)} attachment(s): {', '.join(label_parts)}",
+        file=sys.stderr,
+    )
+
+    return cast("list[AttachmentAdapter]", adapters)
+
 
 
 def _build_repo_investigation_config(
