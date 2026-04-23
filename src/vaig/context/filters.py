@@ -53,7 +53,7 @@ def is_binary_file(filepath: Path, *, sample_size: int = 8192) -> bool:
         return True
 
 
-def build_file_filter(settings: Settings, root_dir: Path) -> pathspec.PathSpec:
+def build_file_filter(settings: Settings, root_dir: Path) -> pathspec.PathSpec[pathspec.patterns.GitWildMatchPattern]:  # type: ignore[type-arg,name-defined]
     """Build a PathSpec from .gitignore + configured ignore patterns.
 
     Merges:
@@ -79,7 +79,7 @@ def should_include_file(
     filepath: Path,
     *,
     settings: Settings,
-    spec: pathspec.PathSpec,
+    spec: pathspec.PathSpec[pathspec.patterns.GitWildMatchPattern],  # type: ignore[type-arg,name-defined]
     root_dir: Path,
 ) -> bool:
     """Determine if a file should be included in the context.
