@@ -1501,6 +1501,27 @@ class AttachmentsConfig(BaseModel):
     cache_enabled: bool = True
     cache_dir: str = ".vaig/attachment-cache"
 
+    @model_validator(mode="after")
+    def _validate_attachment_thresholds(self) -> AttachmentsConfig:
+        """Validate that numeric thresholds are within acceptable ranges."""
+        if self.max_files_per_attachment <= 0:
+            raise ValueError(
+                f"max_files_per_attachment must be > 0, got {self.max_files_per_attachment}"
+            )
+        if self.max_bytes_absolute <= 0:
+            raise ValueError(
+                f"max_bytes_absolute must be > 0, got {self.max_bytes_absolute}"
+            )
+        if self.streaming_threshold_bytes < 0:
+            raise ValueError(
+                f"streaming_threshold_bytes must be >= 0, got {self.streaming_threshold_bytes}"
+            )
+        if self.max_depth < -1:
+            raise ValueError(
+                f"max_depth must be >= -1, got {self.max_depth}"
+            )
+        return self
+
 
 def _strip_empty_strings(data: dict[str, Any]) -> dict[str, Any]:
     """Recursively remove keys whose value is an empty string.

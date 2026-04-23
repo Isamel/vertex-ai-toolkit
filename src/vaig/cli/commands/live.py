@@ -50,6 +50,7 @@ from vaig.skills.service_health.diff import compute_report_diff
 
 if TYPE_CHECKING:
     from vaig.agents.orchestrator import OrchestratorResult
+    from vaig.core.attachment_adapter import AttachmentAdapter
     from vaig.core.config import GKEConfig, Settings
     from vaig.core.protocols import GeminiClientProtocol
     from vaig.skills.base import BaseSkill, SkillMetadata
@@ -1174,7 +1175,7 @@ def _build_and_resolve_attachments(
     use_default_excludes: bool,
     include_everything: bool,
     max_bytes_absolute: int,
-) -> list[Any]:
+) -> list[AttachmentAdapter]:
     """Build :class:`~vaig.core.config.AttachmentsConfig`, resolve adapters, and
     eagerly call ``list_files()`` to surface errors before any LLM call.
 
@@ -1182,7 +1183,7 @@ def _build_and_resolve_attachments(
     """
     import sys
 
-    from vaig.core.attachment_adapter import resolve_attachment
+    from vaig.core.attachment_adapter import LocalPathAdapter, SingleFileAdapter, resolve_attachment
     from vaig.core.config import AttachmentsConfig
 
     # --attach-include-everything cascades
@@ -1213,7 +1214,7 @@ def _build_and_resolve_attachments(
     while len(names) < len(attach_sources):
         names.append(None)
 
-    adapters: list[Any] = []
+    adapters: list[LocalPathAdapter | SingleFileAdapter] = []
     for raw, name in zip(attach_sources, names, strict=False):
         try:
             adapter = resolve_attachment(raw, name=name, cfg=cfg)
@@ -1244,7 +1245,7 @@ def _build_and_resolve_attachments(
         file=sys.stderr,
     )
 
-    return adapters
+    return cast("list[AttachmentAdapter]", adapters)
 
 
 
