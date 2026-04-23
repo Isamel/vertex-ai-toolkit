@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
@@ -14,11 +14,16 @@ from vaig.core.repo_adapter import RepoAdapter
 from vaig.core.repo_chunkers import Chunk, _token_estimate, chunk_file
 from vaig.core.repo_pipeline import (
     EvidenceGap,
+    FileMeta,
     TierOutcome,
     classify_file_with_evidence,
     detect_file_kind,
 )
 from vaig.core.repo_redactor import SecretRedactor
+
+if TYPE_CHECKING:
+    from vaig.core.attachment_adapter import AttachmentAdapter
+    from vaig.core.config import AttachmentsConfig
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +42,7 @@ class RetrievedRepoChunk(BaseModel):
     outline: str
     relevance_score: float
     retrieval_query: str
+    source: str = "repo"
 
     @classmethod
     def from_chunk(
@@ -55,6 +61,7 @@ class RetrievedRepoChunk(BaseModel):
             outline=chunk.outline,
             relevance_score=relevance_score,
             retrieval_query=retrieval_query,
+            source=chunk.source,
         )
 
     def to_chunk(self) -> Chunk:
@@ -66,6 +73,7 @@ class RetrievedRepoChunk(BaseModel):
             token_estimate=self.token_estimate,
             kind=self.kind,
             outline=self.outline,
+            source=self.source,
         )
 
 
@@ -140,6 +148,29 @@ def _keyword_score(query_tokens: set[str], chunk: Chunk) -> float:
     chunk_tokens = _tokenise(chunk.content) | _tokenise(chunk.outline)
     overlap = len(query_tokens & chunk_tokens)
     return overlap / (len(query_tokens) + 1e-9)
+
+
+# ── Binary sniff for attachment bytes (no disk read) ─────────────────────────
+
+_NULL_BYTE = b"\x00"
+_MAX_NON_TEXT_RATIO = 0.30
+
+
+def _is_binary_bytes(peek: bytes) -> bool:
+    """Return True if *peek* looks like binary content.
+
+    Mirrors :func:`vaig.core.repo_pipeline.is_binary_file` but operates on an
+    in-memory byte buffer (AttachmentAdapter.fetch_bytes yields bytes, not a
+    disk path).
+    """
+    if not peek:
+        return False
+    if _NULL_BYTE in peek:
+        return True
+    non_text = sum(
+        1 for b in peek if b < 0x09 or (0x0E <= b <= 0x1F) or b == 0x7F
+    )
+    return (non_text / len(peek)) > _MAX_NON_TEXT_RATIO
 
 
 class RepoIndex:
@@ -259,6 +290,177 @@ class RepoIndex:
 
                 # Chunk
                 chunks = chunk_file(content, meta.path, kind)
+                all_chunks.extend(chunks)
+
+        # Apply relevance gate if keywords provided
+        if keywords:
+            all_chunks = relevance_gate(all_chunks, keywords)
+
+        return cls(all_chunks), all_gaps
+
+    @classmethod
+    def build_from_attachments(
+        cls,
+        attachments: list[AttachmentAdapter],
+        attachments_config: AttachmentsConfig,
+        repo_config: RepoInvestigationConfig,
+        *,
+        keywords: frozenset[str] | None = None,
+        redactor: SecretRedactor | None = None,
+    ) -> tuple[RepoIndex, list[EvidenceGap]]:
+        """Build a RepoIndex from a list of AttachmentAdapters (SPEC-ATT-07).
+
+        Parallel to :meth:`build` but operates over the attachment pipeline:
+        ``adapter.list_files(cfg)`` → ``fetch_bytes`` → decode → classify →
+        redact → chunk → relevance_gate → index.
+
+        Each chunk carries ``source="attachment:<name>"`` so downstream
+        consumers can distinguish attachment-sourced evidence from git repo
+        evidence.
+
+        Error isolation: a failure in one adapter (or one file within an
+        adapter) is logged and skipped — it does NOT abort the full build.
+
+        Args:
+            attachments: List of resolved :class:`AttachmentAdapter` instances.
+            attachments_config: Controls ``list_files`` behaviour (exclude
+                globs, max_files_per_attachment, streaming threshold).
+            repo_config: Used by :func:`classify_file_with_evidence` for
+                tier decisions (paths, redaction, size caps).
+            keywords: Optional relevance-gate keyword set. When provided,
+                the final chunk list is filtered before indexing.
+            redactor: Optional :class:`SecretRedactor`. When provided and
+                ``repo_config.redaction_enabled`` is true, every file body
+                is redacted before chunking.
+
+        Returns:
+            Tuple of (RepoIndex, list[EvidenceGap]). Gaps collect binary
+            skips, oversize files, secret leaks, and per-adapter failures.
+        """
+        all_gaps: list[EvidenceGap] = []
+        all_chunks: list[Chunk] = []
+
+        for adapter in attachments:
+            spec = adapter.spec
+            attachment_label = spec.name or spec.source
+            chunk_source = f"attachment:{attachment_label}"
+
+            try:
+                file_entries = list(adapter.list_files(attachments_config))
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Failed to list files for attachment %r: %s",
+                    attachment_label,
+                    exc,
+                )
+                all_gaps.append(
+                    EvidenceGap(
+                        source="repo_processing",
+                        kind="chunker_fallback",
+                        level="WARN",
+                        path=None,
+                        details=(
+                            f"Attachment {attachment_label!r} could not be enumerated: "
+                            f"{exc}. Skipped."
+                        ),
+                    )
+                )
+                continue
+
+            for entry in file_entries:
+                rel_path = entry.relative_path
+
+                # Fetch bytes (may be bytes or streaming iterator)
+                try:
+                    raw = adapter.fetch_bytes(rel_path)
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to fetch %r from attachment %r: %s",
+                        rel_path,
+                        attachment_label,
+                        exc,
+                    )
+                    continue
+
+                if isinstance(raw, bytes):
+                    data = raw
+                else:
+                    # Streaming iterator → consolidate for chunk_file (v1)
+                    try:
+                        data = b"".join(raw)
+                    except (KeyboardInterrupt, SystemExit):
+                        raise
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to stream %r from attachment %r: %s",
+                            rel_path,
+                            attachment_label,
+                            exc,
+                        )
+                        continue
+
+                # Inline binary detection (AttachmentFileEntry has no is_binary)
+                is_binary = _is_binary_bytes(data[:8192])
+
+                meta = FileMeta(
+                    path=rel_path,
+                    size=entry.size_bytes,
+                    sha=None,
+                    kind="unknown",
+                    is_binary=is_binary,
+                )
+
+                result, gaps = classify_file_with_evidence(meta, repo_config)
+                all_gaps.extend(gaps)
+
+                if result.outcome == TierOutcome.SKIP:
+                    continue
+
+                # Decode to text (UTF-8 with replacement fallback)
+                try:
+                    content = data.decode("utf-8")
+                except UnicodeDecodeError:
+                    content = data.decode("utf-8", errors="replace")
+
+                # Detect kind if unknown
+                kind = meta.kind
+                if kind in ("unknown", "text", ""):
+                    kind = detect_file_kind(content[:4096])
+
+                # Apply redaction
+                if redactor is not None and repo_config.redaction_enabled:
+                    redaction_result = redactor.redact(content, file_path=rel_path)
+                    content = redaction_result.redacted_content
+
+                # Chunk and tag source
+                try:
+                    chunks = chunk_file(content, rel_path, kind)
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception as exc:
+                    logger.warning(
+                        "Chunker failed for %r in attachment %r: %s",
+                        rel_path,
+                        attachment_label,
+                        exc,
+                    )
+                    all_gaps.append(
+                        EvidenceGap(
+                            source="repo_processing",
+                            kind="chunker_fallback",
+                            level="WARN",
+                            path=rel_path,
+                            details=f"Chunker raised for {rel_path!r}: {exc}",
+                        )
+                    )
+                    continue
+
+                for chunk in chunks:
+                    chunk.source = chunk_source
                 all_chunks.extend(chunks)
 
         # Apply relevance gate if keywords provided

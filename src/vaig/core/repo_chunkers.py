@@ -38,6 +38,13 @@ class Chunk(BaseModel):
     token_estimate: int  # chars / 4 rough estimate
     kind: str  # "yaml_doc" | "tf_resource" | "helm_block" | ...
     outline: str  # Short header, e.g. "Deployment/istio-ingressgateway"
+    source: str = "repo"
+    """Origin of the chunk: ``"repo"`` (default) or ``"attachment:<name>"``.
+
+    SPEC-ATT-07: distinguishes chunks produced from the primary repo adapter
+    from chunks produced by attachment adapters so retrieval/UI can label
+    provenance without parsing ``file_path``.
+    """
 
 
 class ChunkingError(Exception):
