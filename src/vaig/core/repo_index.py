@@ -418,11 +418,25 @@ class RepoIndex:
                 # Inline binary detection (AttachmentFileEntry has no is_binary)
                 is_binary = _is_binary_bytes(data[:8192])
 
+                # Pre-classify: set actual size (streaming may differ from entry)
+                # and detect kind before classify_file_with_evidence so tier logic
+                # sees the real file type instead of "unknown".
+                actual_size = len(data)
+                pre_kind = "unknown"
+                if not is_binary:
+                    try:
+                        sniff = data[:4096].decode("utf-8", errors="replace")
+                        pre_kind = detect_file_kind(sniff)
+                    except (KeyboardInterrupt, SystemExit):
+                        raise
+                    except Exception:  # pragma: no cover — defensive
+                        pre_kind = "unknown"
+
                 meta = FileMeta(
                     path=rel_path,
-                    size=entry.size_bytes,
+                    size=actual_size,
                     sha=None,
-                    kind="unknown",
+                    kind=pre_kind,
                     is_binary=is_binary,
                 )
 
@@ -438,7 +452,7 @@ class RepoIndex:
                 except UnicodeDecodeError:
                     content = data.decode("utf-8", errors="replace")
 
-                # Detect kind if unknown
+                # Re-detect kind on full decoded content if still unknown/text
                 kind = meta.kind
                 if kind in ("unknown", "text", ""):
                     kind = detect_file_kind(content[:4096])

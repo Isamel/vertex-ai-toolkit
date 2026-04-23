@@ -142,6 +142,77 @@ def _path_matches_globs(rel_path: str, patterns: list[str]) -> bool:
     return False
 
 
+def _apply_cfg_filters(
+    raw_entries: list[AttachmentFileEntry],
+    cfg: "AttachmentsConfig",
+    *,
+    extra_exclude_globs: list[str] | None = None,
+    adapter_label: str = "attachment",
+) -> list[AttachmentFileEntry]:
+    """Apply AttachmentsConfig filters shared by archive and git adapters.
+
+    Enforces (in order):
+    - ``extra_exclude_globs`` (adapter-specific, e.g. ``.git/**`` for clones)
+    - ``cfg.use_default_excludes`` — adds ``_DEFAULT_EXCLUDE_GLOBS``
+    - ``cfg.extra_excludes`` — user-supplied glob list
+    - ``cfg.max_depth`` (``-1`` = unlimited) — based on path-part count
+    - ``cfg.max_files_per_attachment`` (+ ``cfg.unlimited_files`` bypass)
+    - ``cfg.include_everything`` bypasses excludes and depth, never file count
+      bypass (that's ``unlimited_files``)
+
+    This keeps ``ArchiveAttachmentAdapter`` and ``GitCloneAttachmentAdapter``
+    aligned with ``LocalPathAdapter`` semantics (SPEC-ATT-03/05).
+    """
+    include_everything: bool = bool(getattr(cfg, "include_everything", False))
+    use_default_excludes: bool = (
+        bool(getattr(cfg, "use_default_excludes", True)) and not include_everything
+    )
+    user_extra_excludes: list[str] = list(getattr(cfg, "extra_excludes", []))
+    max_depth: int = -1 if include_everything else int(getattr(cfg, "max_depth", -1))
+    max_files: int = int(getattr(cfg, "max_files_per_attachment", 10_000))
+    unlimited_files: bool = (
+        bool(getattr(cfg, "unlimited_files", False)) or include_everything
+    )
+
+    exclude_globs: list[str] = list(extra_exclude_globs or [])
+    if use_default_excludes:
+        exclude_globs.extend(_get_default_excludes())
+    exclude_globs.extend(user_extra_excludes)
+
+    filtered: list[AttachmentFileEntry] = []
+    file_count = 0
+    limit_logged = False
+
+    for entry in raw_entries:
+        rel = entry.relative_path.replace(os.sep, "/")
+
+        # Depth check — count path parts (a file at root has depth 1)
+        if max_depth >= 0:
+            depth = len([p for p in rel.split("/") if p])
+            if depth > max_depth:
+                continue
+
+        # Exclude glob check
+        if exclude_globs and _path_matches_globs(rel, exclude_globs):
+            continue
+
+        # File count cap
+        if not unlimited_files and file_count >= max_files:
+            if not limit_logged:
+                logger.warning(
+                    "%s: max_files_per_attachment=%d reached — remaining files skipped",
+                    adapter_label,
+                    max_files,
+                )
+                limit_logged = True
+            continue
+
+        filtered.append(entry)
+        file_count += 1
+
+    return filtered
+
+
 # ── LocalPathAdapter ──────────────────────────────────────────────────────────
 
 
@@ -481,14 +552,14 @@ class ArchiveAttachmentAdapter:
             self._extract(cfg)
         assert self._root is not None  # extraction succeeded or raised
 
-        entries: list[AttachmentFileEntry] = []
+        raw_entries: list[AttachmentFileEntry] = []
         for dirpath, _dirnames, filenames in os.walk(self._root):
             for fname in filenames:
                 fp = Path(dirpath) / fname
                 try:
                     rel = str(fp.relative_to(self._root))
                     stat = fp.stat(follow_symlinks=False)
-                    entries.append(
+                    raw_entries.append(
                         AttachmentFileEntry(
                             relative_path=rel,
                             size_bytes=stat.st_size,
@@ -499,6 +570,11 @@ class ArchiveAttachmentAdapter:
                 except (OSError, ValueError):
                     continue
 
+        entries = _apply_cfg_filters(
+            raw_entries,
+            cfg,
+            adapter_label=f"archive:{self.archive_path.name}",
+        )
         self._listed = entries
         return entries
 
@@ -546,7 +622,11 @@ class ArchiveAttachmentAdapter:
     # ------------------------------------------------------------------
 
     def _extract(self, cfg: "AttachmentsConfig") -> None:
-        """Validate members and extract to a fresh tempdir."""
+        """Validate members and extract to a fresh tempdir.
+
+        On any failure, removes the partial tempdir before re-raising so we
+        never leak state on the filesystem.
+        """
         max_bytes: int = int(getattr(cfg, "max_bytes_absolute", 500_000_000))
         max_files: int = int(getattr(cfg, "max_files_per_attachment", 10_000))
 
@@ -554,11 +634,21 @@ class ArchiveAttachmentAdapter:
         self._tempdir = tempdir
         tempdir_path = Path(tempdir).resolve()
 
-        name_lower = self.archive_path.name.lower()
-        if name_lower.endswith(".zip"):
-            self._extract_zip(tempdir_path, max_bytes, max_files)
-        else:
-            self._extract_tar(tempdir_path, max_bytes, max_files)
+        try:
+            name_lower = self.archive_path.name.lower()
+            if name_lower.endswith(".zip"):
+                self._extract_zip(tempdir_path, max_bytes, max_files)
+            else:
+                self._extract_tar(tempdir_path, max_bytes, max_files)
+        except (KeyboardInterrupt, SystemExit):
+            shutil.rmtree(tempdir, ignore_errors=True)
+            self._tempdir = None
+            raise
+        except Exception:
+            # Cleanup partial extraction before propagating the error.
+            shutil.rmtree(tempdir, ignore_errors=True)
+            self._tempdir = None
+            raise
 
         self._root = tempdir_path
 
@@ -573,6 +663,15 @@ class ArchiveAttachmentAdapter:
                     raise ValueError(
                         f"Archive has {len(members)} members, exceeds max_files={max_files}"
                     )
+
+                # Per-file size cap (prevents any single member from being a
+                # decompression bomb). Total-size cap kept as secondary defence.
+                for m in members:
+                    if m.file_size > max_bytes:
+                        raise ValueError(
+                            f"Archive member {m.filename!r} uncompressed size "
+                            f"{m.file_size} exceeds max_bytes_absolute={max_bytes}"
+                        )
 
                 total_size = sum(m.file_size for m in members)
                 if total_size > max_bytes:
@@ -601,6 +700,14 @@ class ArchiveAttachmentAdapter:
                     raise ValueError(
                         f"Archive has {len(members)} members, exceeds max_files={max_files}"
                     )
+
+                # Per-file size cap (decompression-bomb guard)
+                for m in members:
+                    if m.isfile() and m.size > max_bytes:
+                        raise ValueError(
+                            f"Archive member {m.name!r} size {m.size} "
+                            f"exceeds max_bytes_absolute={max_bytes}"
+                        )
 
                 total_size = sum(m.size for m in members if m.isfile())
                 if total_size > max_bytes:
@@ -714,14 +821,14 @@ class GitCloneAttachmentAdapter:
             self._clone()
         assert self._root is not None
 
-        entries: list[AttachmentFileEntry] = []
+        raw_entries: list[AttachmentFileEntry] = []
         for dirpath, _dirnames, filenames in os.walk(self._root):
             for fname in filenames:
                 fp = Path(dirpath) / fname
                 try:
                     rel = str(fp.relative_to(self._root))
                     stat = fp.stat(follow_symlinks=False)
-                    entries.append(
+                    raw_entries.append(
                         AttachmentFileEntry(
                             relative_path=rel,
                             size_bytes=stat.st_size,
@@ -732,6 +839,14 @@ class GitCloneAttachmentAdapter:
                 except (OSError, ValueError):
                     continue
 
+        # Always exclude the .git metadata directory from indexed content —
+        # the clone is read-only and .git contents leak refs, packs, hooks, etc.
+        entries = _apply_cfg_filters(
+            raw_entries,
+            cfg,
+            extra_exclude_globs=[".git/**", ".git"],
+            adapter_label=f"git_clone:{self.url}",
+        )
         self._listed = entries
         return entries
 
@@ -764,9 +879,31 @@ class GitCloneAttachmentAdapter:
         return target.read_bytes()
 
     def fingerprint(self) -> str:
-        """Stable hash seed from URL (no mtime — remote is immutable from our POV)."""
+        """Stable hash seed from URL + cloned HEAD revision.
+
+        Falls back to URL-only if ``git rev-parse`` is unavailable or the
+        clone has not yet materialised. Including HEAD lets downstream
+        caches invalidate when the remote advances even though the URL is
+        unchanged.
+        """
         h = hashlib.sha256()
         h.update(f"git_clone:{self.url}".encode())
+
+        rev: str | None = None
+        if self._root is not None and self._root.exists():
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(self._root), "rev-parse", "HEAD"],
+                    check=True,
+                    timeout=10,
+                    capture_output=True,
+                )
+                rev = result.stdout.decode(errors="replace").strip()
+            except (subprocess.SubprocessError, FileNotFoundError, OSError):
+                rev = None
+
+        if rev:
+            h.update(f"@{rev}".encode())
         return h.hexdigest()
 
     # ------------------------------------------------------------------
@@ -774,7 +911,10 @@ class GitCloneAttachmentAdapter:
     # ------------------------------------------------------------------
 
     def _clone(self) -> None:
-        """Perform a shallow clone of *self.url* into a fresh tempdir."""
+        """Perform a shallow clone of *self.url* into a fresh tempdir.
+
+        On ANY failure we remove the partial tempdir so we never leak state.
+        """
         tempdir = tempfile.mkdtemp(prefix="vaig-gitclone-")
         self._tempdir = tempdir
         dest = tempdir  # clone into the tempdir itself as the target
@@ -787,21 +927,31 @@ class GitCloneAttachmentAdapter:
                 capture_output=True,
             )
         except (KeyboardInterrupt, SystemExit):
+            shutil.rmtree(tempdir, ignore_errors=True)
+            self._tempdir = None
             raise
         except subprocess.CalledProcessError as exc:
+            shutil.rmtree(tempdir, ignore_errors=True)
+            self._tempdir = None
             stderr = exc.stderr.decode(errors="replace") if exc.stderr else ""
             raise RuntimeError(
                 f"git clone failed for {self.url!r}: {stderr.strip()}"
             ) from exc
         except subprocess.TimeoutExpired as exc:
+            shutil.rmtree(tempdir, ignore_errors=True)
+            self._tempdir = None
             raise RuntimeError(
                 f"git clone timed out after 60 s for {self.url!r}"
             ) from exc
         except FileNotFoundError as exc:
+            shutil.rmtree(tempdir, ignore_errors=True)
+            self._tempdir = None
             raise RuntimeError(
                 "git is not installed or not on PATH — cannot clone attachment"
             ) from exc
         except Exception as exc:
+            shutil.rmtree(tempdir, ignore_errors=True)
+            self._tempdir = None
             raise RuntimeError(
                 f"Unexpected error during git clone of {self.url!r}: {exc}"
             ) from exc
@@ -858,11 +1008,15 @@ def resolve_attachment(
     # 2. Archive suffix check
     if _is_archive(stripped):
         p = Path(stripped)
+        if not p.exists() or not p.is_file():
+            raise ValueError(
+                f"Archive attachment not found or not a file: {raw!r}"
+            )
         spec = AttachmentSpec(
             name=name,
             source=raw,
             kind=AttachmentKind.archive,
-            resolved_path=p.resolve() if p.exists() else None,
+            resolved_path=p.resolve(),
         )
         return ArchiveAttachmentAdapter(p, spec, cfg)
 
