@@ -90,24 +90,28 @@ class TestResolveAttachmentDispatcher:
         with pytest.raises(NotImplementedError, match="Sprint 3"):
             resolve_attachment("https://example.com/foo", cfg=cfg)
 
-    def test_zip_file_raises_not_implemented(self, tmp_path: Path) -> None:
+    def test_zip_file_dispatches_to_archive_adapter(self, tmp_path: Path) -> None:
+        """Sprint 2: zip files now resolve to ArchiveAttachmentAdapter (was NotImplementedError)."""
+        from vaig.core.attachment_adapter import ArchiveAttachmentAdapter
+
         bundle = tmp_path / "bundle.zip"
         bundle.write_bytes(b"")
         cfg = _default_cfg()
-        with pytest.raises(NotImplementedError, match="Sprint 2"):
-            resolve_attachment(str(bundle), cfg=cfg)
+        adapter = resolve_attachment(str(bundle), cfg=cfg)
+        assert isinstance(adapter, ArchiveAttachmentAdapter)
 
     def test_nonexistent_path_raises_value_error(self) -> None:
         cfg = _default_cfg()
         with pytest.raises(ValueError, match="Cannot resolve attachment"):
             resolve_attachment("/does/not/exist/ever", cfg=cfg)
 
-    def test_dir_with_git_raises_not_implemented(self, tmp_path: Path) -> None:
+    def test_dir_with_git_returns_local_path_adapter(self, tmp_path: Path) -> None:
+        """Sprint 2: local dirs with .git now resolve to LocalPathAdapter (was NotImplementedError)."""
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
         cfg = _default_cfg()
-        with pytest.raises(NotImplementedError, match="Sprint 2"):
-            resolve_attachment(str(tmp_path), cfg=cfg)
+        adapter = resolve_attachment(str(tmp_path), cfg=cfg)
+        assert isinstance(adapter, LocalPathAdapter)
 
     def test_plain_file_returns_single_file_adapter(self, tmp_path: Path) -> None:
         f = tmp_path / "hello.txt"
