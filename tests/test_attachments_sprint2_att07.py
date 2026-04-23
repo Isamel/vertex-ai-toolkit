@@ -174,7 +174,7 @@ def test_fetch_bytes_failure_is_logged_and_skipped(
     paths = {c.file_path for c in idx._chunks}  # noqa: SLF001
     assert "a.py" in paths
     assert "b.py" not in paths
-    assert any("b.py" in rec.message for rec in caplog.records)
+    assert any("b.py" in rec.getMessage() for rec in caplog.records)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
