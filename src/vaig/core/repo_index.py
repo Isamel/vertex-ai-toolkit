@@ -384,6 +384,18 @@ class RepoIndex:
                         attachment_label,
                         exc,
                     )
+                    all_gaps.append(
+                        EvidenceGap(
+                            source="repo_processing",
+                            kind="chunker_fallback",
+                            level="WARN",
+                            path=rel_path,
+                            details=(
+                                f"Failed to fetch {rel_path!r} from attachment "
+                                f"{attachment_label!r}: {exc}. Skipped."
+                            ),
+                        )
+                    )
                     continue
 
                 if isinstance(raw, bytes):

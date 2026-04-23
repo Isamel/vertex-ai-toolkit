@@ -167,14 +167,19 @@ def test_fetch_bytes_failure_is_logged_and_skipped(
         name="mixed",
         fetch_raises={"b.py": OSError("read failed")},
     )
-    caplog.set_level("WARNING")
-    idx, _ = RepoIndex.build_from_attachments(
+    caplog.set_level("WARNING", logger="vaig.core.repo_index")
+    idx, gaps = RepoIndex.build_from_attachments(
         [adapter], _attach_cfg(), _repo_cfg()
     )
     paths = {c.file_path for c in idx._chunks}  # noqa: SLF001
     assert "a.py" in paths
     assert "b.py" not in paths
-    assert any("b.py" in rec.getMessage() for rec in caplog.records)
+    # Robust assertion: an EvidenceGap must be emitted for the failed file.
+    # Do not rely on caplog (logger propagation differs between pytest
+    # configurations — e.g. local vs CI).
+    assert any(
+        g.path == "b.py" and "read failed" in (g.details or "") for g in gaps
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
