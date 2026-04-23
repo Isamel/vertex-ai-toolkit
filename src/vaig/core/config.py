@@ -1457,6 +1457,51 @@ class RepoInvestigationConfig(BaseModel):
         return self
 
 
+# ── Attachments config ────────────────────────────────────────────────────────
+
+
+class AttachmentsConfig(BaseModel):
+    """Configuration for live attachment ingestion (SPEC-ATT-01).
+
+    Controls which files are read from each attachment source, how large
+    files are handled, and what content is excluded before the LLM sees it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_files_per_attachment: int = 10_000
+    """Maximum number of files to ingest from a single attachment source."""
+    unlimited_files: bool = False
+    """When True, ignores *max_files_per_attachment*."""
+    max_depth: int = -1
+    """Maximum directory recursion depth. ``-1`` = unlimited."""
+    follow_symlinks: bool = False
+    """When True, symlinks are followed during directory traversal."""
+    use_default_excludes: bool = True
+    """When True, applies ``_DEFAULT_EXCLUDE_GLOBS`` exclusions."""
+    extra_excludes: list[str] = Field(default_factory=list)
+    """Additional glob patterns to exclude (appended to default excludes)."""
+    include_everything: bool = False
+    """Bypass all exclude globs, unlimited depth/files, and binary-skip.
+
+    Does NOT bypass ``max_bytes_absolute``, SecretRedactor, or URL allowlists.
+    The CLI layer applies the cascade (sets unlimited_files, max_depth=-1,
+    use_default_excludes=False, binary_skip=False) when this flag is raised.
+    """
+    streaming_threshold_bytes: int = 2_000_000
+    """Files larger than this are processed via streaming iterator to avoid RAM spikes."""
+    max_bytes_absolute: int = 500_000_000
+    """Catastrophic cap — files larger than this are always rejected."""
+    binary_skip: bool = True
+    """Skip binary files by content sniff; ``include_everything`` sets this False."""
+    session_id: str | None = None
+    """Populated by Sprint 3 session management."""
+
+    # Sprint 3 placeholders (kept here to avoid config churn later):
+    cache_enabled: bool = True
+    cache_dir: str = ".vaig/attachment-cache"
+
+
 def _strip_empty_strings(data: dict[str, Any]) -> dict[str, Any]:
     """Recursively remove keys whose value is an empty string.
 
@@ -2065,6 +2110,7 @@ class Settings(BaseSettings):
     self_correction: SelfCorrectionConfig = Field(default_factory=SelfCorrectionConfig)
     investigation: InvestigationConfig = Field(default_factory=InvestigationConfig)
     idiom: IdiomConfig = Field(default_factory=IdiomConfig)
+    attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)
 
     @model_validator(mode="after")
     def _bridge_platform_org_id(self) -> Settings:
