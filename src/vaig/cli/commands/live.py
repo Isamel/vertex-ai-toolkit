@@ -1183,7 +1183,13 @@ def _build_and_resolve_attachments(
     """
     import sys
 
-    from vaig.core.attachment_adapter import LocalPathAdapter, SingleFileAdapter, resolve_attachment
+    from vaig.core.attachment_adapter import (
+        ArchiveAttachmentAdapter,
+        GitCloneAttachmentAdapter,
+        LocalPathAdapter,
+        SingleFileAdapter,
+        resolve_attachment,
+    )
     from vaig.core.config import AttachmentsConfig
 
     # --attach-include-everything cascades
@@ -1214,7 +1220,7 @@ def _build_and_resolve_attachments(
     while len(names) < len(attach_sources):
         names.append(None)
 
-    adapters: list[LocalPathAdapter | SingleFileAdapter] = []
+    adapters: list[LocalPathAdapter | SingleFileAdapter | ArchiveAttachmentAdapter | GitCloneAttachmentAdapter] = []
     for raw, name in zip(attach_sources, names, strict=False):
         try:
             adapter = resolve_attachment(raw, name=name, cfg=cfg)
