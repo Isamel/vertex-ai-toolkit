@@ -355,6 +355,7 @@ class AgentProgressDisplay:
                 renders as ``[start+1-end+1/total]`` (e.g. ``[1-4/7]``)
                 instead of the default ``[index+1/total]``.
         """
+
         # Build step label: "[1-4/7]" for a range, "[3/7]" for a single agent.
         def _step_label() -> str:
             start = agent_index + 1
@@ -376,10 +377,7 @@ class AgentProgressDisplay:
                 self._agent_start_times[agent_name] = time.perf_counter()
                 self._current_agent_name = agent_name
                 self._active_agents += 1
-                label = (
-                    f"[bold cyan]\\[{_step_label()}][/bold cyan] "
-                    f"[green]{agent_name}[/green] — running..."
-                )
+                label = f"[bold cyan]\\[{_step_label()}][/bold cyan] [green]{agent_name}[/green] — running..."
                 # Stop any existing Live display before creating a new one.
                 # Rich only allows one live display active at a time; without
                 # this the second parallel gatherer raises:
@@ -484,7 +482,6 @@ class AgentProgressDisplay:
             self._stop_current()
 
 
-
 def _emit_bell(*, no_bell: bool) -> None:
     """Print the terminal bell character unless suppressed by ``--no-bell``."""
     if not no_bell:
@@ -569,7 +566,9 @@ def register(app: typer.Typer) -> None:
         location: Annotated[str | None, typer.Option("--location", help="GCP location (overrides config)")] = None,
         gke_project: Annotated[
             str | None,
-            typer.Option("--gke-project", help="GKE project ID (overrides gke.project_id; defaults to --project if unset)"),
+            typer.Option(
+                "--gke-project", help="GKE project ID (overrides gke.project_id; defaults to --project if unset)"
+            ),
         ] = None,
         gke_location: Annotated[
             str | None,
@@ -742,6 +741,46 @@ def register(app: typer.Typer) -> None:
                 help="Reject attachment files larger than this many bytes (default 500 MB).",
             ),
         ] = 500_000_000,
+        attach_allow_http: Annotated[
+            bool,
+            typer.Option(
+                "--attach-allow-http/--no-attach-allow-http",
+                help="Allow plain HTTP URLs for --attach (default: HTTPS-only).",
+            ),
+        ] = False,
+        attach_allow_domain: Annotated[
+            list[str] | None,
+            typer.Option(
+                "--attach-allow-domain",
+                help=(
+                    "Hostname or domain suffix allowed for URL attachments. "
+                    "May be repeated. Empty = allow all (HTTPS only)."
+                ),
+            ),
+        ] = None,
+        attach_session: Annotated[
+            str | None,
+            typer.Option(
+                "--attach-session",
+                help=(
+                    "Session ID for persistent attachment list. Re-running with the same ID merges prior attachments."
+                ),
+            ),
+        ] = None,
+        attach_cache: Annotated[
+            bool,
+            typer.Option(
+                "--attach-cache/--no-attach-cache",
+                help="Enable/disable attachment processing cache (default: enabled).",
+            ),
+        ] = True,
+        show_attachments: Annotated[
+            bool,
+            typer.Option(
+                "--show-attachments",
+                help="Print a table of resolved attachments with cache status and fingerprints, then continue.",
+            ),
+        ] = False,
         interactive: Annotated[
             bool,
             typer.Option(
@@ -754,9 +793,7 @@ def register(app: typer.Typer) -> None:
             bool,
             typer.Option(
                 "--show-pipeline",
-                help=(
-                    "Print the pipeline stages and exit without making any LLM calls."
-                ),
+                help=("Print the pipeline stages and exit without making any LLM calls."),
             ),
         ] = False,
         show_pipeline_format: Annotated[
@@ -796,9 +833,7 @@ def register(app: typer.Typer) -> None:
         # Warn if --open is used without --format html
         normalised_format_flag = format_.strip().lower() if format_ else None
         if open_browser and normalised_format_flag != "html":
-            err_console.print(
-                "[yellow]⚠ --open requires --format html — ignoring --open flag.[/yellow]"
-            )
+            err_console.print("[yellow]⚠ --open requires --format html — ignoring --open flag.[/yellow]")
             open_browser = False
 
         try:  # ── CLI error boundary ──
@@ -856,7 +891,7 @@ def register(app: typer.Typer) -> None:
                 streaming_threshold_bytes=repo_max_bytes_per_file,
             )
 
-            # ── Attachment config + early resolution (SPEC-ATT-01..04) ───────
+            # ── Attachment config + early resolution (SPEC-ATT-01..06) ───────
             _attachment_adapters = _build_and_resolve_attachments(
                 attach_sources=attach or [],
                 attach_names=attach_name or [],
@@ -867,7 +902,22 @@ def register(app: typer.Typer) -> None:
                 use_default_excludes=not attach_no_default_excludes,
                 include_everything=attach_include_everything,
                 max_bytes_absolute=attach_max_bytes_absolute,
+                allow_http=attach_allow_http,
+                url_allowlist=attach_allow_domain or [],
+                session_id=attach_session,
+                cache_enabled=attach_cache,
             )
+
+            # ── Session persistence (SPEC-ATT-08) ─────────────────────────────
+            if attach_session and _attachment_adapters:
+                _persist_session(
+                    session_id=attach_session,
+                    adapters=_attachment_adapters,
+                )
+
+            # ── Show-attachments table ─────────────────────────────────────────
+            if show_attachments and _attachment_adapters:
+                _display_attachments_table(_attachment_adapters)
 
             # Auto-detect skill if requested (or enabled in config) and no explicit skill specified
             effective_auto_skill = auto_skill or settings.skills.auto_routing
@@ -1148,13 +1198,10 @@ def _run_watch_loop(
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 out_path.write_text(html_content, encoding="utf-8")
                 console.print(
-                    f"[bold green]✓ Watch session HTML report written:[/bold green] "
-                    f"[cyan]{out_path.resolve()}[/cyan]"
+                    f"[bold green]✓ Watch session HTML report written:[/bold green] [cyan]{out_path.resolve()}[/cyan]"
                 )
             except Exception as exc:  # noqa: BLE001
-                console.print(
-                    f"[bold red]⚠ Failed to write watch session HTML report:[/bold red] {exc}"
-                )
+                console.print(f"[bold red]⚠ Failed to write watch session HTML report:[/bold red] {exc}")
 
 
 # ── Live mode helpers ─────────────────────────────────────────
@@ -1175,6 +1222,10 @@ def _build_and_resolve_attachments(
     use_default_excludes: bool,
     include_everything: bool,
     max_bytes_absolute: int,
+    allow_http: bool = False,
+    url_allowlist: list[str] | None = None,
+    session_id: str | None = None,
+    cache_enabled: bool = True,
 ) -> list[AttachmentAdapter]:
     """Build :class:`~vaig.core.config.AttachmentsConfig`, resolve adapters, and
     eagerly call ``list_files()`` to surface errors before any LLM call.
@@ -1188,6 +1239,7 @@ def _build_and_resolve_attachments(
         GitCloneAttachmentAdapter,
         LocalPathAdapter,
         SingleFileAdapter,
+        URLAdapter,
         resolve_attachment,
     )
     from vaig.core.config import AttachmentsConfig
@@ -1210,6 +1262,10 @@ def _build_and_resolve_attachments(
         include_everything=include_everything,
         max_bytes_absolute=max_bytes_absolute,
         binary_skip=binary_skip,
+        allow_http=allow_http,
+        url_allowlist=url_allowlist or [],
+        session_id=session_id,
+        cache_enabled=cache_enabled,
     )
 
     if not attach_sources:
@@ -1220,13 +1276,12 @@ def _build_and_resolve_attachments(
     while len(names) < len(attach_sources):
         names.append(None)
 
-    adapters: list[LocalPathAdapter | SingleFileAdapter | ArchiveAttachmentAdapter | GitCloneAttachmentAdapter] = []
+    adapters: list[
+        LocalPathAdapter | SingleFileAdapter | ArchiveAttachmentAdapter | GitCloneAttachmentAdapter | URLAdapter
+    ] = []
     for raw, name in zip(attach_sources, names, strict=False):
         try:
             adapter = resolve_attachment(raw, name=name, cfg=cfg)
-        except NotImplementedError as exc:
-            print(f"[attachments] {exc}", file=sys.stderr)
-            raise typer.Exit(1) from exc
         except ValueError as exc:
             print(f"[attachments] {exc}", file=sys.stderr)
             raise typer.Exit(1) from exc
@@ -1253,6 +1308,61 @@ def _build_and_resolve_attachments(
 
     return cast("list[AttachmentAdapter]", adapters)
 
+
+def _persist_session(
+    *,
+    session_id: str,
+    adapters: list[Any],
+) -> None:
+    """Save resolved adapters to the session file (SPEC-ATT-08)."""
+    try:
+        from vaig.core.attachment_cache import AttachmentSession
+
+        session_dir = Path(".vaig/sessions")
+        session = AttachmentSession(session_dir, session_id)
+        session.load()
+        for adapter in adapters:
+            spec = adapter.spec
+            try:
+                fp = adapter.fingerprint()
+            except Exception:  # noqa: BLE001
+                fp = ""
+            session.add(
+                source=spec.source,
+                name=spec.name,
+                fingerprint=fp,
+                kind=str(spec.kind),
+            )
+        session.save()
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("attachment_session: failed to persist session %s: %s", session_id, exc)
+
+
+def _display_attachments_table(adapters: list[Any]) -> None:
+    """Print a Rich table of resolved attachments with fingerprints (SPEC-ATT-08)."""
+    table = Table(title="Resolved Attachments", show_lines=True)
+    table.add_column("Source", style="cyan")
+    table.add_column("Name")
+    table.add_column("Kind", style="green")
+    table.add_column("Fingerprint", style="dim")
+
+    for adapter in adapters:
+        spec = adapter.spec
+        try:
+            fp = adapter.fingerprint()
+            fp_short = fp[:16] + "…" if len(fp) > 16 else fp
+        except Exception:  # noqa: BLE001
+            fp_short = "(unavailable)"
+        table.add_row(
+            spec.source,
+            spec.name or "",
+            str(spec.kind),
+            fp_short,
+        )
+
+    console.print(table)
 
 
 def _build_repo_investigation_config(
@@ -1464,11 +1574,13 @@ def _build_pipeline_phases(
             else:
                 parallel_phases[group]["agents"].append(agent_cfg)
         else:
-            phases.append({
-                "name": (agent_cfg.get("name") or "unknown").replace("_", " ").capitalize(),
-                "parallel": False,
-                "agents": [agent_cfg],
-            })
+            phases.append(
+                {
+                    "name": (agent_cfg.get("name") or "unknown").replace("_", " ").capitalize(),
+                    "parallel": False,
+                    "agents": [agent_cfg],
+                }
+            )
 
     return phases
 
@@ -1519,28 +1631,32 @@ def _display_show_pipeline(
             payload["skill"] = meta.display_name
             payload["pipeline_mode"] = "ORCHESTRATED"
             for idx, phase in enumerate(phases, 1):
-                payload["phases"].append({
-                    "phase": idx,
-                    "name": phase["name"],
-                    "parallel": phase["parallel"],
-                    "agents": [
-                        {
-                            "name": a.get("name"),
-                            "model": a.get("model", model_id or settings.models.default),
-                            "max_iterations": a.get("max_iterations"),
-                            "requires_tools": a.get("requires_tools", False),
-                            "tool_categories": a.get("tool_categories", []),
-                        }
-                        for a in phase["agents"]
-                    ],
-                })
+                payload["phases"].append(
+                    {
+                        "phase": idx,
+                        "name": phase["name"],
+                        "parallel": phase["parallel"],
+                        "agents": [
+                            {
+                                "name": a.get("name"),
+                                "model": a.get("model", model_id or settings.models.default),
+                                "max_iterations": a.get("max_iterations"),
+                                "requires_tools": a.get("requires_tools", False),
+                                "tool_categories": a.get("tool_categories", []),
+                            }
+                            for a in phase["agents"]
+                        ],
+                    }
+                )
         else:
-            payload["phases"].append({
-                "phase": 1,
-                "name": "InfraAgent",
-                "parallel": False,
-                "agents": [{"name": "infra_agent", "model": model_id or settings.models.default}],
-            })
+            payload["phases"].append(
+                {
+                    "phase": 1,
+                    "name": "InfraAgent",
+                    "parallel": False,
+                    "agents": [{"name": "infra_agent", "model": model_id or settings.models.default}],
+                }
+            )
         console.print(_json.dumps(payload, indent=2))
         return
 
@@ -1581,7 +1697,9 @@ def _display_show_pipeline(
             console.print()
     else:
         console.print("[bold]Pipeline mode:[/bold] INFRA_AGENT (single autonomous agent)\n")
-        console.print(f"  └── [cyan]infra_agent[/cyan]  [dim][{model_id or settings.models.default or '—'}][/dim]  tools: all\n")
+        console.print(
+            f"  └── [cyan]infra_agent[/cyan]  [dim][{model_id or settings.models.default or '—'}][/dim]  tools: all\n"
+        )
 
     # ── Config sources summary ────────────────────────────────
     console.print("[bold]Configuration:[/bold]")
@@ -1633,9 +1751,7 @@ def _export_html_report(
             timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
             out_path = Path(f"vaig-report-{timestamp}.html")
         out_path.write_text(html_content, encoding="utf-8")
-        console.print(
-            f"[bold green]✓ HTML report written:[/bold green] [cyan]{out_path.resolve()}[/cyan]"
-        )
+        console.print(f"[bold green]✓ HTML report written:[/bold green] [cyan]{out_path.resolve()}[/cyan]")
         if open_browser:
             file_url = out_path.resolve().as_uri()
             try:
@@ -1647,14 +1763,11 @@ def _export_html_report(
                     )
             except Exception as browser_exc:  # noqa: BLE001
                 console.print(
-                    f"[yellow]⚠ Browser open failed ({browser_exc}). "
-                    f"Open manually:[/yellow] [cyan]{file_url}[/cyan]"
+                    f"[yellow]⚠ Browser open failed ({browser_exc}). Open manually:[/yellow] [cyan]{file_url}[/cyan]"
                 )
         return True
     except Exception as exc:  # pragma: no cover  # noqa: BLE001
-        err_console.print(
-            f"[bold red]⚠ Failed to write HTML report:[/bold red] {exc}"
-        )
+        err_console.print(f"[bold red]⚠ Failed to write HTML report:[/bold red] {exc}")
         return False
 
 
@@ -1908,7 +2021,6 @@ async def _run_drill_in_loop(
             qa_turns.append(f"User: {user_input}\nAssistant: {response_text}")
 
 
-
 def _execute_orchestrated_skill(
     client: GeminiClientProtocol,
     settings: Settings,
@@ -2011,7 +2123,8 @@ def _execute_orchestrated_skill(
             # Rich Panel for executive summary (before the full report)
             if orch_result.structured_report is not None:
                 print_executive_summary_panel(
-                    orch_result.structured_report, console=console,
+                    orch_result.structured_report,
+                    console=console,
                 )
             if orch_result.structured_report is not None:
                 print_service_status_table(orch_result.structured_report, console=console)
@@ -2023,7 +2136,8 @@ def _execute_orchestrated_skill(
             # Rich Table for recommendations (after the full report)
             if orch_result.structured_report is not None:
                 print_recommendations_table(
-                    orch_result.structured_report, console=console,
+                    orch_result.structured_report,
+                    console=console,
                 )
         console.print()
 
@@ -2119,9 +2233,7 @@ def _prompt_feedback(settings: Settings, *, run_id: str | None = None) -> None:
         return
 
     try:
-        raw = console.input(
-            "\n[dim]\U0001f4ca Was this analysis helpful? Rate 1-5 (Enter to skip):[/dim] "
-        )
+        raw = console.input("\n[dim]\U0001f4ca Was this analysis helpful? Rate 1-5 (Enter to skip):[/dim] ")
     except (EOFError, KeyboardInterrupt):
         return
 
@@ -2153,7 +2265,9 @@ def _prompt_feedback(settings: Settings, *, run_id: str | None = None) -> None:
         try:
             exporter = DataExporter(settings.export)
             exporter.export_feedback_to_bigquery(
-                rating=rating, comment=comment, run_id=effective_run_id,
+                rating=rating,
+                comment=comment,
+                run_id=effective_run_id,
             )
         except Exception:  # noqa: BLE001
             logger.debug("Post-run feedback export failed", exc_info=True)
@@ -2215,9 +2329,7 @@ def _emit_health_report_completed(
 
         effective_run_id = run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         report_path = str(Path(_DEFAULT_DIR) / f"{effective_run_id}.jsonl")
-        EventBus.get().emit(
-            HealthReportCompleted(run_id=effective_run_id, report_path=report_path)
-        )
+        EventBus.get().emit(HealthReportCompleted(run_id=effective_run_id, report_path=report_path))
         logger.debug("Emitted HealthReportCompleted for run %s", effective_run_id)
     except Exception:  # noqa: BLE001
         logger.debug("Failed to emit HealthReportCompleted", exc_info=True)
@@ -2243,7 +2355,9 @@ def _auto_export_report(
         run_id: Pipeline run identifier.  When provided it is used as-is;
             when ``None`` a fallback timestamp is generated.
     """
-    if not (settings.export.enabled and settings.export.auto_export_reports and orch_result.structured_report is not None):
+    if not (
+        settings.export.enabled and settings.export.auto_export_reports and orch_result.structured_report is not None
+    ):
         return
     from vaig.core.export import auto_export_report
 
@@ -2367,8 +2481,7 @@ def _show_orchestrated_summary(
             cost_str = format_cost(run_cost)
             model_label = f" ({effective_model})" if effective_model else ""
             console.print(
-                f"[dim]📊 Tokens: {' / '.join(parts)} "
-                f"({total_tokens:,} total) │ Cost: {cost_str}{model_label}[/dim]"
+                f"[dim]📊 Tokens: {' / '.join(parts)} ({total_tokens:,} total) │ Cost: {cost_str}{model_label}[/dim]"
             )
         else:
             cost_str = format_cost(run_cost)
@@ -2395,21 +2508,15 @@ def _open_html_in_browser(html_path: Path, console: Any) -> None:
         console: Rich ``Console`` instance for user-facing messages.
     """
     file_url = html_path.resolve().as_uri()
-    console.print(
-        f"[bold green]✓ Report written:[/bold green] [cyan]{html_path.resolve()}[/cyan]"
-    )
+    console.print(f"[bold green]✓ Report written:[/bold green] [cyan]{html_path.resolve()}[/cyan]")
     try:
         opened = webbrowser.open(file_url)
         if not opened:
             console.print(
-                f"[yellow]⚠ Could not open browser automatically. "
-                f"Open manually:[/yellow] [cyan]{file_url}[/cyan]"
+                f"[yellow]⚠ Could not open browser automatically. Open manually:[/yellow] [cyan]{file_url}[/cyan]"
             )
     except Exception as browser_exc:  # noqa: BLE001
-        console.print(
-            f"[yellow]⚠ Browser open failed ({browser_exc}). "
-            f"Open manually:[/yellow] [cyan]{file_url}[/cyan]"
-        )
+        console.print(f"[yellow]⚠ Browser open failed ({browser_exc}). Open manually:[/yellow] [cyan]{file_url}[/cyan]")
 
 
 def _execute_live_mode(
@@ -2746,7 +2853,8 @@ async def _async_execute_orchestrated_skill(
             # Rich Panel for executive summary (before the full report)
             if orch_result.structured_report is not None:
                 print_executive_summary_panel(
-                    orch_result.structured_report, console=console,
+                    orch_result.structured_report,
+                    console=console,
                 )
             if orch_result.structured_report is not None:
                 print_service_status_table(orch_result.structured_report, console=console)
@@ -2758,7 +2866,8 @@ async def _async_execute_orchestrated_skill(
             # Rich Table for recommendations (after the full report)
             if orch_result.structured_report is not None:
                 print_recommendations_table(
-                    orch_result.structured_report, console=console,
+                    orch_result.structured_report,
+                    console=console,
                 )
         console.print()
 

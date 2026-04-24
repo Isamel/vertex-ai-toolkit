@@ -596,16 +596,12 @@ class DatadogAPIConfig(BaseModel):
     cluster_name_override: str = Field(
         default="",
         description=(
-            "Override the cluster_name tag value used in Datadog queries. "
-            "When empty, uses the GKE cluster name."
+            "Override the cluster_name tag value used in Datadog queries. When empty, uses the GKE cluster name."
         ),
     )
     default_lookback_hours: float = Field(
         default=4.0,
-        description=(
-            "Default lookback window (hours) for APM trace queries. "
-            "Increase for low-traffic services."
-        ),
+        description=("Default lookback window (hours) for APM trace queries. Increase for low-traffic services."),
     )
     apm_operation: str = Field(
         default="auto",
@@ -640,9 +636,7 @@ class DatadogAPIConfig(BaseModel):
     @classmethod
     def _validate_ssl_verify(cls, v: Any) -> Any:
         if isinstance(v, str) and v.strip() == "":
-            raise ValueError(
-                "ssl_verify must be True, False, or a non-empty path to a CA bundle"
-            )
+            raise ValueError("ssl_verify must be True, False, or a non-empty path to a CA bundle")
         return v
 
     @field_validator("default_lookback_hours")
@@ -689,21 +683,11 @@ class TrendConfig(BaseModel):
         default_factory=lambda: [7],
         description="Baseline window sizes in days. Max 42 (Cloud Monitoring retention limit).",
     )
-    memory_warning_pct: float = Field(
-        default=10.0, description="Memory % increase over baseline to trigger warning"
-    )
-    memory_critical_pct: float = Field(
-        default=25.0, description="Memory % increase over baseline to trigger critical"
-    )
-    cpu_warning_pct: float = Field(
-        default=20.0, description="CPU % increase over baseline to trigger warning"
-    )
-    cpu_critical_pct: float = Field(
-        default=50.0, description="CPU % increase over baseline to trigger critical"
-    )
-    restart_warning_count: int = Field(
-        default=5, description="Absolute restart delta over baseline to trigger warning"
-    )
+    memory_warning_pct: float = Field(default=10.0, description="Memory % increase over baseline to trigger warning")
+    memory_critical_pct: float = Field(default=25.0, description="Memory % increase over baseline to trigger critical")
+    cpu_warning_pct: float = Field(default=20.0, description="CPU % increase over baseline to trigger warning")
+    cpu_critical_pct: float = Field(default=50.0, description="CPU % increase over baseline to trigger critical")
+    restart_warning_count: int = Field(default=5, description="Absolute restart delta over baseline to trigger warning")
     restart_critical_count: int = Field(
         default=15, description="Absolute restart delta over baseline to trigger critical"
     )
@@ -895,9 +879,7 @@ class PlatformConfig(BaseModel):
     def _validate_backend_url_when_enabled(self) -> PlatformConfig:
         """Require ``backend_url`` when platform mode is enabled."""
         if self.enabled and not self.backend_url:
-            raise ValueError(
-                "platform.backend_url is required when platform.enabled is True"
-            )
+            raise ValueError("platform.backend_url is required when platform.enabled is True")
         return self
 
 
@@ -1054,10 +1036,7 @@ class JiraConfig(BaseModel):
         if not self.enabled and has_url and "enabled" not in self.model_fields_set:
             self.enabled = True
         elif self.enabled and not has_url:
-            logger.warning(
-                "Jira integration is enabled but base_url is empty; "
-                "disabling Jira integration."
-            )
+            logger.warning("Jira integration is enabled but base_url is empty; disabling Jira integration.")
             self.enabled = False
         return self
 
@@ -1094,8 +1073,7 @@ class PagerDutyConfig(BaseModel):
         """Auto-enable when routing_key is provided unless explicitly disabled."""
         if self.enabled and not self.routing_key:
             logger.warning(
-                "PagerDuty integration is enabled but no routing_key is configured; "
-                "disabling PagerDuty integration."
+                "PagerDuty integration is enabled but no routing_key is configured; disabling PagerDuty integration."
             )
             self.enabled = False
             return self
@@ -1122,10 +1100,7 @@ class GoogleChatConfig(BaseModel):
         if self.webhook_url and not self.enabled:
             self.enabled = True
         elif self.enabled and not self.webhook_url:
-            logger.warning(
-                "Google Chat integration is enabled but webhook_url is empty; "
-                "disabling integration."
-            )
+            logger.warning("Google Chat integration is enabled but webhook_url is empty; disabling integration.")
             self.enabled = False
         return self
 
@@ -1152,10 +1127,7 @@ class SlackConfig(BaseModel):
         if self.webhook_url and not self.enabled:
             self.enabled = True
         elif self.enabled and not self.webhook_url:
-            logger.warning(
-                "Slack integration is enabled but webhook_url is empty; "
-                "disabling integration."
-            )
+            logger.warning("Slack integration is enabled but webhook_url is empty; disabling integration.")
             self.enabled = False
         return self
 
@@ -1181,10 +1153,7 @@ class OpsGenieConfig(BaseModel):
         if not self.enabled and has_key:
             self.enabled = True
         elif self.enabled and not has_key:
-            logger.warning(
-                "OpsGenie integration is enabled but api_key is empty; "
-                "disabling integration."
-            )
+            logger.warning("OpsGenie integration is enabled but api_key is empty; disabling integration.")
             self.enabled = False
         return self
 
@@ -1309,8 +1278,7 @@ class ExportConfig(BaseModel):
             raise ValueError("rag_chunk_overlap must be non-negative")
         if self.rag_chunk_overlap >= self.rag_chunk_size:
             raise ValueError(
-                f"rag_chunk_overlap ({self.rag_chunk_overlap}) must be less "
-                f"than rag_chunk_size ({self.rag_chunk_size})"
+                f"rag_chunk_overlap ({self.rag_chunk_overlap}) must be less than rag_chunk_size ({self.rag_chunk_size})"
             )
 
         return self
@@ -1430,9 +1398,7 @@ class RepoInvestigationConfig(BaseModel):
     """Subdirectory paths within the repo to include (empty = full-scan)."""
     include_globs: list[str] = Field(default_factory=list)
     """Glob patterns to include. Empty means include all non-excluded files."""
-    exclude_globs: list[str] = Field(
-        default_factory=lambda: _DEFAULT_EXCLUDE_GLOBS.copy()
-    )
+    exclude_globs: list[str] = Field(default_factory=lambda: _DEFAULT_EXCLUDE_GLOBS.copy())
     """Glob patterns to exclude from investigation."""
     max_files: int = 500
     """Maximum number of files to process per path."""
@@ -1451,9 +1417,7 @@ class RepoInvestigationConfig(BaseModel):
     def _sanity(self) -> Self:
         """Warn when a repo is given without any path localisation."""
         if self.repo and not (self.paths or self.include_globs):
-            logger.warning(
-                "Repo specified without paths or globs — will full-scan with cap"
-            )
+            logger.warning("Repo specified without paths or globs — will full-scan with cap")
         return self
 
 
@@ -1497,29 +1461,30 @@ class AttachmentsConfig(BaseModel):
     session_id: str | None = None
     """Populated by Sprint 3 session management."""
 
-    # Sprint 3 placeholders (kept here to avoid config churn later):
+    # Sprint 3 fields:
     cache_enabled: bool = True
-    cache_dir: str = ".vaig/attachment-cache"
+    cache_dir: Path | None = None
+    """Cache directory. Defaults to ``.vaig/attachments-cache/`` under CWD when None."""
+    cache_ttl_seconds: int = 86400
+    """Cache TTL in seconds (default 24 h)."""
+    allow_http: bool = False
+    """Allow plain HTTP URLs in URLAdapter (default: HTTPS-only)."""
+    url_allowlist: list[str] = Field(default_factory=list)
+    """Hostnames / domain suffixes allowed for URL attachments. Empty = allow all (HTTPS only)."""
+    session_dir: Path | None = None
+    """Session directory. Defaults to ``.vaig/sessions/`` under CWD when None."""
 
     @model_validator(mode="after")
     def _validate_attachment_thresholds(self) -> AttachmentsConfig:
         """Validate that numeric thresholds are within acceptable ranges."""
         if self.max_files_per_attachment <= 0:
-            raise ValueError(
-                f"max_files_per_attachment must be > 0, got {self.max_files_per_attachment}"
-            )
+            raise ValueError(f"max_files_per_attachment must be > 0, got {self.max_files_per_attachment}")
         if self.max_bytes_absolute <= 0:
-            raise ValueError(
-                f"max_bytes_absolute must be > 0, got {self.max_bytes_absolute}"
-            )
+            raise ValueError(f"max_bytes_absolute must be > 0, got {self.max_bytes_absolute}")
         if self.streaming_threshold_bytes < 0:
-            raise ValueError(
-                f"streaming_threshold_bytes must be >= 0, got {self.streaming_threshold_bytes}"
-            )
+            raise ValueError(f"streaming_threshold_bytes must be >= 0, got {self.streaming_threshold_bytes}")
         if self.max_depth < -1:
-            raise ValueError(
-                f"max_depth must be >= -1, got {self.max_depth}"
-            )
+            raise ValueError(f"max_depth must be >= -1, got {self.max_depth}")
         return self
 
 
@@ -1727,10 +1692,7 @@ class GitHubConfig(BaseModel):
         if not self.enabled and has_token:
             self.enabled = True
         elif self.enabled and not has_token:
-            logger.warning(
-                "GitHub integration is enabled but token is empty; "
-                "disabling GitHub integration."
-            )
+            logger.warning("GitHub integration is enabled but token is empty; disabling GitHub integration.")
             self.enabled = False
         return self
 
@@ -2032,9 +1994,7 @@ class InvestigationConfig(BaseModel):
     def _autonomous_requires_enabled(self) -> InvestigationConfig:
         """Validate that autonomous_mode is only active when enabled=True."""
         if self.autonomous_mode and not self.enabled:
-            raise ValueError(
-                "autonomous_mode=True requires enabled=True in InvestigationConfig"
-            )
+            raise ValueError("autonomous_mode=True requires enabled=True in InvestigationConfig")
         return self
 
 
@@ -2160,9 +2120,9 @@ class Settings(BaseSettings):
         # Each file found is deep-merged over the accumulated result so that
         # higher-priority files override lower-priority ones.
         paths_by_priority: list[Path | None] = [
-            Path.cwd() / "config" / "default.yaml",   # project defaults (lowest)
-            Path.home() / ".vaig" / "config.yaml",     # user home config
-            Path.cwd() / "vaig.yaml",                  # project-specific override
+            Path.cwd() / "config" / "default.yaml",  # project defaults (lowest)
+            Path.home() / ".vaig" / "config.yaml",  # user home config
+            Path.cwd() / "vaig.yaml",  # project-specific override
             Path(config_path).expanduser() if config_path is not None else None,  # explicit (highest)
         ]
 
