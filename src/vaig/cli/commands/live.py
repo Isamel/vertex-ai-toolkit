@@ -906,6 +906,8 @@ def register(app: typer.Typer) -> None:
                 url_allowlist=attach_allow_domain or [],
                 session_id=attach_session,
                 cache_enabled=attach_cache,
+                cache_dir=settings.attachments.cache_dir,
+                session_dir=settings.attachments.session_dir,
             )
 
             # ── Session persistence (SPEC-ATT-08) ─────────────────────────────
@@ -913,7 +915,7 @@ def register(app: typer.Typer) -> None:
                 _persist_session(
                     session_id=attach_session,
                     adapters=_attachment_adapters,
-                    session_dir=None,  # uses AttachmentsConfig.session_dir default (.vaig/sessions)
+                    session_dir=settings.attachments.session_dir,
                 )
 
             # ── Show-attachments table ─────────────────────────────────────────
@@ -1227,6 +1229,8 @@ def _build_and_resolve_attachments(
     url_allowlist: list[str] | None = None,
     session_id: str | None = None,
     cache_enabled: bool = True,
+    cache_dir: Path | None = None,
+    session_dir: Path | None = None,
 ) -> list[AttachmentAdapter]:
     """Build :class:`~vaig.core.config.AttachmentsConfig`, resolve adapters, and
     eagerly call ``list_files()`` to surface errors before any LLM call.
@@ -1267,6 +1271,8 @@ def _build_and_resolve_attachments(
         url_allowlist=url_allowlist or [],
         session_id=session_id,
         cache_enabled=cache_enabled,
+        cache_dir=cache_dir,
+        session_dir=session_dir,
     )
 
     if not attach_sources:
@@ -1305,7 +1311,7 @@ def _build_and_resolve_attachments(
 
             from vaig.core.attachment_cache import AttachmentCache
 
-            cache_dir = Path(".vaig/attachments-cache")
+            cache_dir = cfg.cache_dir if cfg.cache_dir is not None else Path(".vaig/attachments-cache")
             config_hash = hashlib.sha256(cfg.model_dump_json().encode()).hexdigest()[:16]
             cache = AttachmentCache(cache_dir, config_hash=config_hash)
             for adapter in adapters:

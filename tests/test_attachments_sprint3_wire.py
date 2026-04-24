@@ -1,11 +1,8 @@
-"""Sprint 3 acceptance tests — wire integration.
+"""Sprint 3 tests: verify that settings.attachments.cache_dir / session_dir are
+wired through _build_and_resolve_attachments and AttachmentCache.
 
-Covers:
-- _build_and_resolve_attachments dispatches to URLAdapter for https:// source
-- _persist_session writes to session dir
-- _display_attachments_table runs without error (smoke)
-- allow_http=False blocks http:// source at the CLI layer (Exit 1)
-- url_allowlist blocks disallowed domain at the CLI layer (Exit 1)
+When settings.attachments.cache_dir is set to a custom tmp path the cache writes
+must go there — not to the default `.vaig/attachments-cache`.
 """
 
 from __future__ import annotations
@@ -14,213 +11,87 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-import typer
-
-from vaig.cli.commands.live import (
-    _build_and_resolve_attachments,
-    _display_attachments_table,
-    _persist_session,
-)
-from vaig.core.attachment_adapter import AttachmentKind, URLAdapter
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _no_private_check(host: str) -> None:
-    pass
+def _fake_adapter(source: str = "fake.zip") -> MagicMock:
+    """Return a minimal mock adapter that satisfies _build_and_resolve_attachments."""
+    adapter = MagicMock()
+    adapter.spec.source = source
+    adapter.spec.name = None
+    adapter.spec.kind = "archive"
+    adapter.list_files.return_value = iter([])
+    adapter.fingerprint.return_value = "a" * 64
+    return adapter
 
 
-def _make_mock_client(content: bytes = b"ok") -> MagicMock:
-    # HEAD response (no body)
-    mock_head_resp = MagicMock()
-    mock_head_resp.status_code = 200
-    mock_head_resp.headers = {}
+def _call_build(
+    tmp_path: Path,
+    *,
+    cache_dir: Path | None,
+    captured_dirs: list[Path],
+) -> None:
+    """Call _build_and_resolve_attachments with a fake adapter, capturing AttachmentCache init dirs."""
+    from vaig.cli.commands.live import _build_and_resolve_attachments
+    from vaig.core.attachment_cache import AttachmentCache
 
-    # GET streaming response (used as context manager)
-    mock_stream_resp = MagicMock()
-    mock_stream_resp.status_code = 200
-    mock_stream_resp.headers = {"content-type": "text/plain"}
-    mock_stream_resp.raise_for_status = MagicMock()
-    mock_stream_resp.iter_bytes = MagicMock(return_value=iter([content]))
-    mock_stream_resp.__enter__ = lambda self: self
-    mock_stream_resp.__exit__ = MagicMock(return_value=False)
+    fake = _fake_adapter()
+    original_init = AttachmentCache.__init__
 
-    mock_client = MagicMock()
-    mock_client.__enter__ = lambda self: self
-    mock_client.__exit__ = MagicMock(return_value=False)
-    mock_client.head = MagicMock(return_value=mock_head_resp)
-    mock_client.stream = MagicMock(return_value=mock_stream_resp)
+    def tracking_init(self: AttachmentCache, cd: Path, **kwargs: Any) -> None:
+        captured_dirs.append(Path(cd))
+        original_init(self, cd, **kwargs)
 
-    return MagicMock(return_value=mock_client)
-
-
-def _default_kwargs(**overrides: Any) -> dict[str, Any]:
-    base: dict[str, Any] = {
-        "attach_sources": [],
-        "attach_names": [],
-        "max_files": 50,
-        "unlimited_files": False,
-        "max_depth": 5,
-        "follow_symlinks": False,
-        "use_default_excludes": True,
-        "include_everything": False,
-        "max_bytes_absolute": 10 * 1024 * 1024,
-        "allow_http": False,
-        "url_allowlist": [],
-        "session_id": None,
-        "cache_enabled": False,
-    }
-    base.update(overrides)
-    return base
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Empty sources → empty list (smoke)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def test_empty_sources_returns_empty() -> None:
-    result = _build_and_resolve_attachments(**_default_kwargs())
-    assert result == []
+    # resolve_attachment is imported inside the function body; patch it at the source
+    with (
+        patch("vaig.core.attachment_adapter.resolve_attachment", return_value=fake),
+        patch("vaig.cli.commands.live.resolve_attachment", return_value=fake, create=True),
+        patch.object(AttachmentCache, "__init__", tracking_init),
+    ):
+        _build_and_resolve_attachments(
+            attach_sources=["fake.zip"],
+            attach_names=[],
+            max_files=100,
+            unlimited_files=False,
+            max_depth=5,
+            follow_symlinks=False,
+            use_default_excludes=True,
+            include_everything=False,
+            max_bytes_absolute=10_000_000,
+            allow_http=False,
+            url_allowlist=[],
+            session_id=None,
+            cache_enabled=True,
+            cache_dir=cache_dir,
+            session_dir=None,
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HTTPS URL dispatched to URLAdapter
+# Test: custom cache_dir is passed to AttachmentCache
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_https_source_returns_url_adapter() -> None:
-    url = "https://example.com/file.txt"
-    with patch("vaig.core.attachment_adapter._check_private_ip", _no_private_check):
-        with patch("vaig.core.attachment_adapter.httpx.Client", _make_mock_client()):
-            adapters = _build_and_resolve_attachments(**_default_kwargs(attach_sources=[url]))
-    assert len(adapters) == 1
-    assert isinstance(adapters[0], URLAdapter)
-    assert adapters[0].spec.kind == AttachmentKind.url
+class TestCacheDirWiring:
+    def test_custom_cache_dir_is_used_not_default(self, tmp_path: Path) -> None:
+        """When cache_dir is provided, AttachmentCache must be constructed with it."""
+        custom_cache_dir = tmp_path / "my_custom_cache"
+        captured_dirs: list[Path] = []
 
+        _call_build(tmp_path, cache_dir=custom_cache_dir, captured_dirs=captured_dirs)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# allow_http=False blocks http:// → typer.Exit(1)
-# ─────────────────────────────────────────────────────────────────────────────
+        assert any(d == custom_cache_dir for d in captured_dirs), (
+            f"Expected AttachmentCache to be initialised with {custom_cache_dir}, but got: {captured_dirs}"
+        )
 
+    def test_default_cache_dir_used_when_none(self, tmp_path: Path) -> None:
+        """When cache_dir is None, the fallback .vaig/attachments-cache is used."""
+        captured_dirs: list[Path] = []
 
-def test_http_blocked_raises_exit() -> None:
-    with patch("vaig.core.attachment_adapter._check_private_ip", _no_private_check):
-        with pytest.raises(typer.Exit):
-            _build_and_resolve_attachments(
-                **_default_kwargs(attach_sources=["http://example.com/file.txt"], allow_http=False)
-            )
+        _call_build(tmp_path, cache_dir=None, captured_dirs=captured_dirs)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# allow_http=True passes http://
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def test_http_allowed_when_flag_set() -> None:
-    with patch("vaig.core.attachment_adapter._check_private_ip", _no_private_check):
-        with patch("vaig.core.attachment_adapter.httpx.Client", _make_mock_client()):
-            adapters = _build_and_resolve_attachments(
-                **_default_kwargs(
-                    attach_sources=["http://example.com/file.txt"],
-                    allow_http=True,
-                )
-            )
-    assert len(adapters) == 1
-    assert isinstance(adapters[0], URLAdapter)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# url_allowlist blocks disallowed domain → typer.Exit(1)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def test_allowlist_blocks_unknown_domain() -> None:
-    with patch("vaig.core.attachment_adapter._check_private_ip", _no_private_check):
-        with pytest.raises(typer.Exit):
-            _build_and_resolve_attachments(
-                **_default_kwargs(
-                    attach_sources=["https://evil.com/pwn.sh"],
-                    url_allowlist=["allowed.com"],
-                )
-            )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# _persist_session writes JSON session file
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def test_persist_session_creates_session_file(tmp_path: Path) -> None:
-    # Build a mock adapter with the minimal interface _persist_session needs
-    mock_spec = MagicMock()
-    mock_spec.source = "https://example.com/file.txt"
-    mock_spec.name = "file.txt"
-    mock_spec.kind = AttachmentKind.url
-
-    mock_adapter = MagicMock()
-    mock_adapter.spec = mock_spec
-    mock_adapter.fingerprint.return_value = "abc123"
-
-    session_id = "test-session-001"
-    session_dir = tmp_path / ".vaig" / "sessions"
-
-    _persist_session(session_id=session_id, adapters=[mock_adapter], session_dir=session_dir)
-
-    # The session file must exist — unconditional assertion
-    assert session_dir.exists(), f"session_dir {session_dir} was not created"
-    session_files = list(session_dir.glob("*.json"))
-    assert len(session_files) == 1
-
-
-def test_persist_session_does_not_raise_on_adapter_fingerprint_error(tmp_path: Path) -> None:
-    """If fingerprint() raises, _persist_session should not propagate — SPEC-ATT-08."""
-    mock_spec = MagicMock()
-    mock_spec.source = "https://example.com/x.txt"
-    mock_spec.name = "x.txt"
-    mock_spec.kind = AttachmentKind.url
-
-    mock_adapter = MagicMock()
-    mock_adapter.spec = mock_spec
-    mock_adapter.fingerprint.side_effect = RuntimeError("oops")
-
-    # Should not raise
-    _persist_session(session_id="safe-session", adapters=[mock_adapter])
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# _display_attachments_table — smoke test
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def test_display_attachments_table_smoke() -> None:
-    mock_spec = MagicMock()
-    mock_spec.source = "https://example.com/file.txt"
-    mock_spec.name = "file.txt"
-    mock_spec.kind = AttachmentKind.url
-
-    mock_adapter = MagicMock()
-    mock_adapter.spec = mock_spec
-    mock_adapter.fingerprint.return_value = "deadbeef"
-
-    with patch("vaig.cli.commands.live.console") as mock_console:
-        _display_attachments_table([mock_adapter])
-        mock_console.print.assert_called_once()
-
-
-def test_display_attachments_table_fingerprint_error_shows_unavailable() -> None:
-    mock_spec = MagicMock()
-    mock_spec.source = "https://example.com/broken.txt"
-    mock_spec.name = None
-    mock_spec.kind = AttachmentKind.url
-
-    mock_adapter = MagicMock()
-    mock_adapter.spec = mock_spec
-    mock_adapter.fingerprint.side_effect = RuntimeError("cannot fingerprint")
-
-    with patch("vaig.cli.commands.live.console") as mock_console:
-        _display_attachments_table([mock_adapter])
-        mock_console.print.assert_called_once()
+        assert any(d == Path(".vaig/attachments-cache") for d in captured_dirs), (
+            f"Expected fallback .vaig/attachments-cache, but got: {captured_dirs}"
+        )

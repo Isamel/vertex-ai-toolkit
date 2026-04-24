@@ -103,12 +103,15 @@ def test_corrupted_manifest_graceful(tmp_path: Path, caplog: pytest.LogCaptureFi
     manifest_path, _, _ = cache._paths(key)
     manifest_path.write_text("NOT VALID JSON !!!", encoding="utf-8")
 
-    with caplog.at_level(logging.DEBUG, logger="vaig.core.attachment_cache"):
-        result = cache.get("fp4")
+    caplog.set_level(logging.DEBUG, logger="vaig.core.attachment_cache")
+    result = cache.get("fp4")
 
     assert result is None
-    # Should have logged a DEBUG message
-    assert any("miss" in r.message.lower() or "read" in r.message.lower() for r in caplog.records)
+    # Should have logged a DEBUG message about the read miss
+    assert any(
+        "miss" in r.getMessage().lower() or "read" in r.getMessage().lower()
+        for r in caplog.records
+    )
 
 
 def test_missing_chunks_file_graceful(tmp_path: Path) -> None:
@@ -163,3 +166,61 @@ def test_invalidate_nonexistent_returns_false(tmp_path: Path) -> None:
     cache = _cache(tmp_path)
     result = cache.invalidate("never-existed")
     assert result is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _write_atomic helper — security and atomicity guarantees
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestWriteAtomic:
+    """Verify the _write_atomic helper meets the three contract requirements."""
+
+    def test_file_ends_with_0600_mode(self, tmp_path: Path) -> None:
+        """Written file must have exactly 0o600 permissions (SA-7)."""
+        import os
+        import stat
+
+        from vaig.core.attachment_cache import _write_atomic
+
+        dest = tmp_path / "secret.json"
+        _write_atomic(dest, b'{"x": 1}')
+        mode = stat.S_IMODE(os.stat(dest).st_mode)
+        assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
+
+    def test_no_tempfile_left_behind_after_success(self, tmp_path: Path) -> None:
+        """After a successful write there must be no leftover temp files."""
+        from vaig.core.attachment_cache import _write_atomic
+
+        dest = tmp_path / "clean.json"
+        _write_atomic(dest, b"data")
+        files = list(tmp_path.iterdir())
+        assert files == [dest], f"unexpected files in tmp_path: {files}"
+
+    def test_original_not_modified_if_replace_fails(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """If os.replace raises, the original file must be untouched and no temp files remain."""
+        import os
+
+        from vaig.core.attachment_cache import _write_atomic
+
+        # Write original content
+        dest = tmp_path / "original.json"
+        original_content = b"original"
+        dest.write_bytes(original_content)
+
+        real_replace = os.replace
+
+        def failing_replace(src: str, dst: str) -> None:  # type: ignore[return]
+            raise OSError("simulated replace failure")
+
+        monkeypatch.setattr(os, "replace", failing_replace)
+
+        with pytest.raises(OSError, match="simulated replace failure"):
+            _write_atomic(dest, b"new content")
+
+        # Original must be intact
+        assert dest.read_bytes() == original_content
+
+        # No temp file remains
+        leftover = [f for f in tmp_path.iterdir() if f != dest]
+        assert not leftover, f"temp file(s) not cleaned up: {leftover}"

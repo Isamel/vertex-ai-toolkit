@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -162,14 +163,53 @@ class AttachmentCache:
             return True
 
 
-def _write_json_safe(path: Path, data: Any) -> None:
-    """Write *data* as JSON to *path* with mode 0600 (SA-7)."""
-    text = json.dumps(data, ensure_ascii=False, indent=None)
-    path.write_text(text, encoding="utf-8")
+def _write_atomic(path: Path, data: bytes | str, *, mode: int = 0o600) -> None:
+    """Write *data* to *path* atomically with the given file *mode*.
+
+    Steps:
+    1. Write to a temp file in the same directory (same filesystem → atomic rename).
+    2. ``chmod`` the temp file *before* rename so the final file has the correct
+       permissions from the first visible instant (no race window).
+    3. ``os.replace`` for an atomic overwrite.
+    4. On any error the temp file is cleaned up and the original is untouched.
+    """
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_str = tempfile.mkstemp(dir=parent)
+    tmp_path = Path(tmp_str)
     try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                if isinstance(data, str):
+                    fh.write(data.encode("utf-8"))
+                else:
+                    fh.write(data)
+        except BaseException:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+        os.chmod(tmp_path, mode)
+        os.replace(tmp_path, path)
+    except (KeyboardInterrupt, SystemExit):
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _write_json_safe(path: Path, data: Any) -> None:
+    """Write *data* as JSON to *path* atomically with mode 0600 (SA-7)."""
+    text = json.dumps(data, ensure_ascii=False, indent=None)
+    _write_atomic(path, text)
 
 
 # ── AttachmentSession ─────────────────────────────────────────────────────────
