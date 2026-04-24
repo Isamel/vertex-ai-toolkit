@@ -93,7 +93,7 @@ def compute_relevance_keywords(
     """Build keyword set from query + findings for the relevance gate."""
     keywords: set[str] = set()
     keywords.update(_tokenise(query))
-    for svc in (service_names or []):
+    for svc in service_names or []:
         keywords.update(_tokenise(svc))
     for finding in findings:
         title = getattr(finding, "title", None)
@@ -167,9 +167,7 @@ def _is_binary_bytes(peek: bytes) -> bool:
         return False
     if _NULL_BYTE in peek:
         return True
-    non_text = sum(
-        1 for b in peek if b < 0x09 or (0x0E <= b <= 0x1F) or b == 0x7F
-    )
+    non_text = sum(1 for b in peek if b < 0x09 or (0x0E <= b <= 0x1F) or b == 0x7F)
     return (non_text / len(peek)) > _MAX_NON_TEXT_RATIO
 
 
@@ -204,6 +202,14 @@ class RepoIndex:
         except ImportError:
             logger.debug("sklearn not available — falling back to keyword overlap scoring")
 
+    @property
+    def chunks(self) -> list[Chunk]:
+        """Public read-only view of the indexed chunks.
+
+        Returns a shallow copy so callers cannot mutate the internal list.
+        """
+        return list(self._chunks)
+
     def search(self, query: str, k: int = 8) -> list[RetrievedRepoChunk]:
         """Return top-k chunks by cosine similarity to query."""
         if not self._chunks:
@@ -217,21 +223,12 @@ class RepoIndex:
             # Pair with index, sort descending
             ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
             top = ranked[:k]
-            return [
-                RetrievedRepoChunk.from_chunk(self._chunks[i], float(s), query)
-                for i, s in top
-            ]
+            return [RetrievedRepoChunk.from_chunk(self._chunks[i], float(s), query) for i, s in top]
         else:
             query_tokens = _tokenise(query)
-            scored = [
-                (chunk, _keyword_score(query_tokens, chunk))
-                for chunk in self._chunks
-            ]
+            scored = [(chunk, _keyword_score(query_tokens, chunk)) for chunk in self._chunks]
             scored.sort(key=lambda x: x[1], reverse=True)
-            return [
-                RetrievedRepoChunk.from_chunk(chunk, score, query)
-                for chunk, score in scored[:k]
-            ]
+            return [RetrievedRepoChunk.from_chunk(chunk, score, query) for chunk, score in scored[:k]]
 
     @classmethod
     def build(
@@ -361,10 +358,7 @@ class RepoIndex:
                         kind="chunker_fallback",
                         level="WARN",
                         path=None,
-                        details=(
-                            f"Attachment {attachment_label!r} could not be enumerated: "
-                            f"{exc}. Skipped."
-                        ),
+                        details=(f"Attachment {attachment_label!r} could not be enumerated: {exc}. Skipped."),
                     )
                 )
                 continue
@@ -391,8 +385,7 @@ class RepoIndex:
                             level="WARN",
                             path=rel_path,
                             details=(
-                                f"Failed to fetch {rel_path!r} from attachment "
-                                f"{attachment_label!r}: {exc}. Skipped."
+                                f"Failed to fetch {rel_path!r} from attachment {attachment_label!r}: {exc}. Skipped."
                             ),
                         )
                     )
@@ -642,7 +635,9 @@ class TokenBudgetManager:
         fallbacks.append(BudgetExceededFallback.DEDUP)
         deduped: list[RetrievedRepoChunk] = []
         for chunk in working:
-            dominated = any(_overlaps(chunk, kept) and kept.relevance_score >= chunk.relevance_score for kept in deduped)
+            dominated = any(
+                _overlaps(chunk, kept) and kept.relevance_score >= chunk.relevance_score for kept in deduped
+            )
             if not dominated:
                 deduped.append(chunk)
         working = deduped

@@ -1,4 +1,5 @@
 """Tests for Envoy upstream verification instructions in the gatherer (verifier) prompt."""
+
 from __future__ import annotations
 
 from vaig.skills.service_health.prompts._gatherer import build_gatherer_prompt

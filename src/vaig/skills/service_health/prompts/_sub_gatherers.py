@@ -23,6 +23,7 @@ from ._shared import (
     _DATADOG_API_TOOLS_TABLE,
     _PRIORITY_HIERARCHY,
     _build_mandatory_tools_section,
+    _prefix_attachment_context,
 )
 
 # ── Evidence gap tracking instructions ───────────────────────
@@ -64,9 +65,9 @@ def _node_step3_instruction(prefetched_node_metrics: str) -> str:
         return (
             "kubectl_top data for nodes was pre-gathered — see the "
             "PRE-GATHERED METRICS DATA section below.  Do NOT call "
-            "``kubectl_top(resource_type=\"nodes\")`` again."
+            '``kubectl_top(resource_type="nodes")`` again.'
         )
-    return "``kubectl_top(resource_type=\"nodes\")`` — CPU/memory utilisation per node"
+    return '``kubectl_top(resource_type="nodes")`` — CPU/memory utilisation per node'
 
 
 def _workload_step2_instruction(prefetched_pod_metrics: str, ns: str) -> str:
@@ -84,15 +85,16 @@ def _workload_step2_instruction(prefetched_pod_metrics: str, ns: str) -> str:
             "Service Status CPU/Memory columns."
         )
     return (
-        f"``kubectl_top(resource_type=\"pods\", namespace=\"{ns}\")`` — real-time CPU/memory usage per pod\n"
+        f'``kubectl_top(resource_type="pods", namespace="{ns}")`` — real-time CPU/memory usage per pod\n'
         "    This is MANDATORY — the reporter needs real CPU and memory values for the Service Status table.\n"
-        "    If this call fails, record the error and note \"kubectl_top unavailable\" — do NOT fabricate values."
+        '    If this call fails, record the error and note "kubectl_top unavailable" — do NOT fabricate values.'
     )
 
 
 def build_node_gatherer_prompt(
     is_autopilot: bool = False,
     prefetched_node_metrics: str = "",
+    attachment_context: str | None = None,
 ) -> str:
     """Build the system instruction for the ``node_gatherer`` sub-agent.
 
@@ -135,7 +137,8 @@ def build_node_gatherer_prompt(
         and the appropriate node-gatherer task description.
     """
     if is_autopilot:
-        return f"""{ANTI_INJECTION_RULE}
+        return (
+            f"""{ANTI_INJECTION_RULE}
 
 ## Anti-Hallucination Rules
 {ANTI_HALLUCINATION_RULES}
@@ -167,7 +170,9 @@ do deep per-node investigation. Your job is to establish CONTEXT only.
 
 IMPORTANT: Replace all angle-bracket instructions above with actual values from
 your tool call results. Do NOT output literal placeholders or brackets.
-""" + TOOL_TRACKING_INSTRUCTIONS
+"""
+            + TOOL_TRACKING_INSTRUCTIONS
+        )
 
     prompt = f"""{ANTI_INJECTION_RULE}
 
@@ -246,7 +251,7 @@ again — the data is already here.
 """
 
     prompt += TOOL_TRACKING_INSTRUCTIONS
-    return prompt
+    return _prefix_attachment_context(prompt, attachment_context)
 
 
 def build_workload_gatherer_prompt(
@@ -255,6 +260,7 @@ def build_workload_gatherer_prompt(
     argo_rollouts_enabled: bool = False,
     prefetched_pod_metrics: str = "",
     user_query: str = "",
+    attachment_context: str | None = None,
 ) -> str:
     """Build the system instruction for the ``workload_gatherer`` sub-agent.
 
@@ -308,8 +314,7 @@ def build_workload_gatherer_prompt(
     # Derive ns_context from ns (not from raw namespace) so the context message
     # is consistent with the fallback value used in tool call examples.
     ns_context = (
-        f"Target namespace: {ns}.  "
-        "Also check any other non-system namespaces if relevant."
+        f"Target namespace: {ns}.  Also check any other non-system namespaces if relevant."
         if namespace and _sanitize_namespace(namespace)
         else (
             "If no explicit namespace is given in the query, investigate ALL non-system namespaces found in\n"
@@ -677,7 +682,7 @@ again — the data is already here.  You still need ``get_pod_metrics``
 """
 
     prompt += TOOL_TRACKING_INSTRUCTIONS
-    return prompt
+    return _prefix_attachment_context(prompt, attachment_context)
 
 
 def build_datadog_gatherer_prompt(
@@ -687,6 +692,7 @@ def build_datadog_gatherer_prompt(
     dd_service_name: str = "",
     dd_env: str = "",
     dd_resource_type: str = "",
+    attachment_context: str | None = None,
 ) -> str:
     """Build the system instruction for the ``datadog_gatherer`` sub-agent.
 
@@ -763,7 +769,7 @@ def build_datadog_gatherer_prompt(
     tool_reference_table = (
         "| Tool | Required Parameters | Optional Parameters |\n"
         "|------|---------------------|---------------------|\n"
-        '| `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |\n'
+        "| `kubectl_get_labels` | `resource_type` | `namespace`, `name`, `label_filter`, `annotation_filter` |\n"
         + _DATADOG_API_TOOLS_TABLE
     )
 
@@ -1048,10 +1054,12 @@ If no issues: "No active Datadog monitors or APM anomalies detected.")
   is unhealthy or non-existent based on missing Datadog data.
 """
     prompt += TOOL_TRACKING_INSTRUCTIONS
-    return prompt
+    return _prefix_attachment_context(prompt, attachment_context)
 
 
-def build_event_gatherer_prompt(namespace: str = "", user_query: str = "") -> str:
+def build_event_gatherer_prompt(
+    namespace: str = "", user_query: str = "", attachment_context: str | None = None
+) -> str:
     """Build the system instruction for the ``event_gatherer`` sub-agent.
 
     The ``event_gatherer`` is responsible for **Steps 3, 8, 9, 10** of the
@@ -1085,8 +1093,7 @@ def build_event_gatherer_prompt(namespace: str = "", user_query: str = "") -> st
     # Derive ns_context from ns (not from raw namespace) so the context message
     # is consistent with the fallback value used in tool call examples.
     ns_context = (
-        f"Target namespace: {ns}.  "
-        "Also check kube-system for system-level events."
+        f"Target namespace: {ns}.  Also check kube-system for system-level events."
         if namespace and _sanitize_namespace(namespace)
         else (
             "If no explicit namespace is given in the query, investigate ALL "
@@ -1205,10 +1212,10 @@ Produce exactly these sections at the end of your response:
 - If the target namespace is unclear, query all non-system namespaces.
 """
     prompt += TOOL_TRACKING_INSTRUCTIONS
-    return prompt
+    return _prefix_attachment_context(prompt, attachment_context)
 
 
-def build_logging_gatherer_prompt(namespace: str = "") -> str:
+def build_logging_gatherer_prompt(namespace: str = "", attachment_context: str | None = None) -> str:
     """Build the system instruction for the ``logging_gatherer`` sub-agent.
 
     The ``logging_gatherer`` is responsible for **Steps 7a and 7b** of the
@@ -1393,4 +1400,4 @@ If queries failed: "Cloud Logging queries failed — see error details above.")
     # The logging gatherer prompt is an f-string that embeds safe_ns directly
     # (via {safe_ns}), so no placeholder substitution is needed.
     prompt += TOOL_TRACKING_INSTRUCTIONS
-    return prompt
+    return _prefix_attachment_context(prompt, attachment_context)

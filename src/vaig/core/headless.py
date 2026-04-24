@@ -8,17 +8,57 @@ webhook server, and CLI all call this to execute a skill pipeline.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
     from vaig.agents.mixins import OnToolCall
     from vaig.agents.orchestrator import OnAgentProgress, OrchestratorResult
+    from vaig.core.attachment_adapter import AttachmentAdapter
     from vaig.core.config import GKEConfig, Settings
+    from vaig.core.repo_index import RepoIndex
     from vaig.core.tool_call_store import ToolCallStore
     from vaig.core.tool_registry import ToolRegistry
     from vaig.skills.base import BaseSkill
 
 logger = logging.getLogger(__name__)
+
+MAX_ATTACHMENT_CONTEXT_BYTES: Final[int] = 32_768
+_TRUNCATION_MARKER = "\n\n[... truncated at 32 KB ...]\n"
+
+
+def _render_attachment_context(index: RepoIndex) -> str:
+    """Render all chunks in *index* as a markdown string capped at 32 KB (UTF-8).
+
+    Each chunk gets a ``### <file_path>`` header followed by a fenced block.
+    Triple-backticks within chunk content are escaped by picking a fence
+    longer than any run of backticks that appears inside the chunk, so the
+    markdown remains well-formed regardless of the content.
+
+    When the accumulated output would exceed :data:`MAX_ATTACHMENT_CONTEXT_BYTES`,
+    rendering stops and a truncation marker is appended.
+    """
+    import re
+
+    parts: list[str] = []
+    cap = MAX_ATTACHMENT_CONTEXT_BYTES - len(_TRUNCATION_MARKER.encode("utf-8"))
+    accumulated = 0
+
+    for chunk in index.chunks:
+        # Choose a fence longer than any backtick run already in the content
+        longest_run = max(
+            (len(m.group(0)) for m in re.finditer(r"`+", chunk.content)),
+            default=0,
+        )
+        fence = "`" * max(3, longest_run + 1)
+        block = f"### {chunk.file_path}\n{fence}\n{chunk.content}\n{fence}\n"
+        block_bytes = len(block.encode("utf-8"))
+        if accumulated + block_bytes > cap:
+            parts.append(_TRUNCATION_MARKER)
+            break
+        parts.append(block)
+        accumulated += block_bytes
+
+    return "".join(parts)
 
 
 def execute_skill_headless(
@@ -31,6 +71,7 @@ def execute_skill_headless(
     tool_call_store: ToolCallStore | None = None,
     on_tool_call: OnToolCall | None = None,
     on_agent_progress: OnAgentProgress | None = None,
+    attachment_adapters: list[AttachmentAdapter] | None = None,
 ) -> OrchestratorResult:
     """Run a skill pipeline programmatically.  No Rich console, no prompts.
 
@@ -103,6 +144,25 @@ def execute_skill_headless(
     client = GeminiClient(settings)
     orchestrator = Orchestrator(client, settings)
 
+    # Build attachment context from adapters (if any)
+    attachment_context: str | None = None
+    if attachment_adapters:
+        from vaig.core.config import RepoInvestigationConfig
+        from vaig.core.repo_index import RepoIndex
+
+        try:
+            index, _ = RepoIndex.build_from_attachments(
+                attachment_adapters,
+                settings.attachments,
+                RepoInvestigationConfig(),
+            )
+            attachment_context = _render_attachment_context(index)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
+            logger.warning("Failed to build RepoIndex from attachments: %s", exc)
+            attachment_context = None
+
     result = orchestrator.execute_with_tools(
         query=query,
         skill=skill,
@@ -115,6 +175,7 @@ def execute_skill_headless(
         gke_namespace=gke_config.default_namespace,
         gke_location=gke_config.location,
         gke_cluster_name=gke_config.cluster_name,
+        attachment_context=attachment_context,
     )
 
     logger.info(

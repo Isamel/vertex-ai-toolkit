@@ -4,8 +4,57 @@ Contains tool reference tables, the priority hierarchy, the Datadog API step
 block, and the builder functions that assemble them into prompt fragments.
 """
 
+from __future__ import annotations
+
 import re
 from typing import Final
+
+from vaig.core.prompt_defense import wrap_untrusted_content
+
+# ── Attachment context prefix ─────────────────────────────────────────────────
+
+ATTACHMENT_HEADER: Final[str] = "## Attached Context\n"
+
+
+def _prefix_attachment_context(
+    system_instruction: str,
+    attachment_context: str | None,
+) -> str:
+    """Append attachment context to a system instruction string.
+
+    The attachment content originates from EXTERNAL, UNTRUSTED sources (user-
+    provided files, git repositories, URLs).  To defend against prompt injection
+    attacks, the content is:
+
+    1. Wrapped with :func:`vaig.core.prompt_defense.wrap_untrusted_content`
+       (which neutralizes any forged delimiter markers and encloses the text
+       between untrusted-data sentinels).
+    2. Placed AFTER the ``system_instruction`` — the trusted instructions
+       (including the ``ANTI_INJECTION_RULE``) are read first, so by the time
+       the model reaches the attachment it has already been told to treat its
+       contents as data, not instructions.
+
+    When *attachment_context* is falsy (``None`` or empty string) the original
+    *system_instruction* is returned unchanged — preserving byte-for-byte
+    compatibility with callers that omit attachments.
+
+    Args:
+        system_instruction: The base system prompt string (trusted content;
+            must include the anti-injection rule before invoking this helper).
+        attachment_context: Rendered attachment text from external sources,
+            or ``None``.
+
+    Returns:
+        ``system_instruction`` with the attachment appended under
+        :data:`ATTACHMENT_HEADER` and wrapped in untrusted-data delimiters
+        when *attachment_context* is truthy; otherwise *system_instruction*
+        as-is.
+    """
+    if not attachment_context:
+        return system_instruction
+    wrapped = wrap_untrusted_content(attachment_context)
+    return f"{system_instruction}\n\n{ATTACHMENT_HEADER}{wrapped}"
+
 
 _CORE_TOOLS_TABLE = """\
 | `kubectl_get` | `resource` | `name`, `namespace`, `output`, `label_selector`, `field_selector` |
@@ -58,12 +107,15 @@ _PRIORITY_HIERARCHY = """\
 4. Empty Datadog results mean "monitoring not configured" NOT "service not deployed".
 5. NEVER conclude a service is "not deployed" or "doesn't exist" based on Datadog tool results."""
 
-_DATADOG_API_STEP = """\
+_DATADOG_API_STEP = (
+    """\
 
 ### Step 12 — Datadog API Correlation (real-time metrics & monitors) — MANDATORY
 
 **PRIORITY HIERARCHY — READ THIS FIRST:**
-""" + _PRIORITY_HIERARCHY + """
+"""
+    + _PRIORITY_HIERARCHY
+    + """
 
 You MUST complete calls 19–21 below. They are NOT optional — skipping them means the
 investigation is incomplete and the report will be missing real-time observability data.
@@ -154,6 +206,7 @@ Report findings as a "## Raw Findings (Datadog API)" section with:
 - If the service is absent from the catalog: note that Datadog monitoring may not be configured
 - If no issues found: "No active Datadog monitors or APM anomalies detected."
 """
+)
 
 
 def _build_datadog_api_step(enabled: bool) -> str:

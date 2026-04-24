@@ -36,6 +36,7 @@ from vaig.skills.service_health.prompts import (
     build_reporter_prompt,
     build_workload_gatherer_prompt,
 )
+from vaig.skills.service_health.prompts._shared import _prefix_attachment_context
 from vaig.skills.service_health.schema import Finding, HealthReport, HealthReportGeminiSchema
 from vaig.tools.base import ToolResult
 from vaig.tools.gke._clients import ensure_client_initialized
@@ -63,12 +64,14 @@ def _finding_fingerprint(finding: Finding) -> str:
             kind, name = parts[0], parts[1]
         else:
             kind = parts[0]
-    raw = "|".join([
-        finding.title.lower().strip(),
-        finding.category.lower().strip(),
-        kind,
-        name,
-    ])
+    raw = "|".join(
+        [
+            finding.title.lower().strip(),
+            finding.category.lower().strip(),
+            kind,
+            name,
+        ]
+    )
     return hashlib.sha1(raw.encode()).hexdigest()  # noqa: S324
 
 
@@ -99,6 +102,7 @@ def _dedup_findings(findings: list[Finding]) -> list[Finding]:
     except Exception:  # noqa: BLE001
         logger.error("_dedup_findings failed — returning original list", exc_info=True)
         return findings
+
 
 # ── Label priority for Datadog service name resolution ───────────────────
 # Used by ``_resolve_dd_service_name`` to extract the DD service identity
@@ -648,11 +652,13 @@ class ServiceHealthSkill(BaseSkill):
         location: str = kwargs.get("location", "")
         cluster_name: str = kwargs.get("cluster_name", "")
         user_query: str = kwargs.get("user_query", "")
+        attachment_context: str | None = kwargs.get("attachment_context")
         return self.get_parallel_agents_config(
             namespace=namespace,
             location=location,
             cluster_name=cluster_name,
             user_query=user_query,
+            attachment_context=attachment_context,
         )
 
     def get_sequential_agents_config(
@@ -661,6 +667,7 @@ class ServiceHealthSkill(BaseSkill):
         namespace: str = "",
         location: str = "",  # noqa: ARG002 — reserved for future cluster routing
         cluster_name: str = "",  # noqa: ARG002 — reserved for future cluster routing
+        attachment_context: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return the legacy 4-agent sequential pipeline configuration.
 
@@ -706,6 +713,7 @@ class ServiceHealthSkill(BaseSkill):
             helm_enabled=settings.gke.helm_enabled,
             argocd_enabled=argocd_active,
             datadog_api_enabled=settings.datadog.enabled,
+            attachment_context=attachment_context,
         )
         gatherer_tool_categories = ["kubernetes", "helm", "scaling", "mesh", "datadog", "logging"]
         if argocd_active:
@@ -727,10 +735,13 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_analyzer",
                 "role": "Health Pattern Analyzer",
                 "requires_tools": False,
-                "system_instruction": (
-                    HEALTH_ANALYZER_PROMPT + ANALYZER_AUTONOMOUS_OVERLAY
-                    if settings.investigation.enabled is True
-                    else HEALTH_ANALYZER_PROMPT
+                "system_instruction": _prefix_attachment_context(
+                    (
+                        HEALTH_ANALYZER_PROMPT + ANALYZER_AUTONOMOUS_OVERLAY
+                        if settings.investigation.enabled is True
+                        else HEALTH_ANALYZER_PROMPT
+                    ),
+                    attachment_context,
                 ),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.2,  # Low temp for precise analysis
@@ -740,7 +751,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Health Finding Verifier",
                 "requires_tools": True,
                 "tool_categories": ["kubernetes", "scaling", "mesh", "datadog"],
-                "system_instruction": HEALTH_VERIFIER_PROMPT,
+                "system_instruction": _prefix_attachment_context(HEALTH_VERIFIER_PROMPT, attachment_context),
                 "model": "gemini-2.5-flash",
                 "max_iterations": 15,
                 "temperature": 0.2,  # Low temp for precise verification
@@ -752,6 +763,7 @@ class ServiceHealthSkill(BaseSkill):
                 "system_instruction": build_reporter_prompt(
                     namespace=namespace,
                     datadog_api_enabled=settings.datadog.enabled,
+                    attachment_context=attachment_context,
                 ),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,  # Slightly higher for natural writing
@@ -767,6 +779,7 @@ class ServiceHealthSkill(BaseSkill):
         namespace: str = "",
         location: str = "",
         cluster_name: str = "",
+        attachment_context: str | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Return the parallel-then-sequential pipeline configuration.
@@ -868,13 +881,24 @@ class ServiceHealthSkill(BaseSkill):
                 "parallel_group": "gather",
                 "tool_categories": ["kubernetes"],
                 "capabilities": [
-                    "node", "nodes", "cluster", "cpu", "memory", "disk",
-                    "capacity", "allocatable", "pressure", "resource",
-                    "taint", "cordon", "drain",
+                    "node",
+                    "nodes",
+                    "cluster",
+                    "cpu",
+                    "memory",
+                    "disk",
+                    "capacity",
+                    "allocatable",
+                    "pressure",
+                    "resource",
+                    "taint",
+                    "cordon",
+                    "drain",
                 ],
                 "system_instruction": build_node_gatherer_prompt(
                     is_autopilot=is_autopilot,
                     prefetched_node_metrics=prefetched["nodes"],
+                    attachment_context=attachment_context,
                 ),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
@@ -887,21 +911,34 @@ class ServiceHealthSkill(BaseSkill):
                 "parallel_group": "gather",
                 "injectable_agents": ["node_gatherer"],
                 "tool_categories": (
-                    ["kubernetes", "scaling", "argo_rollouts"]
-                    if argo_rollouts_active
-                    else ["kubernetes", "scaling"]
+                    ["kubernetes", "scaling", "argo_rollouts"] if argo_rollouts_active else ["kubernetes", "scaling"]
                 ),
                 "capabilities": [
-                    "pod", "pods", "deployment", "workload", "restart",
-                    "crash", "crashloop", "oom", "container", "replicas",
-                    "replicaset", "statefulset", "daemonset", "hpa",
-                    "scaling", "pending", "evicted", "oomkilled",
+                    "pod",
+                    "pods",
+                    "deployment",
+                    "workload",
+                    "restart",
+                    "crash",
+                    "crashloop",
+                    "oom",
+                    "container",
+                    "replicas",
+                    "replicaset",
+                    "statefulset",
+                    "daemonset",
+                    "hpa",
+                    "scaling",
+                    "pending",
+                    "evicted",
+                    "oomkilled",
                 ],
                 "system_instruction": build_workload_gatherer_prompt(
                     namespace=effective_namespace,
                     argo_rollouts_enabled=argo_rollouts_active,
                     prefetched_pod_metrics=prefetched["pods"],
                     user_query=kwargs.get("user_query", ""),
+                    attachment_context=attachment_context,
                 ),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
@@ -912,20 +949,31 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Events & Infrastructure Gatherer",
                 "requires_tools": True,
                 "parallel_group": "gather",
-                "tool_categories": (
-                    ["kubernetes", "helm", "argocd"]
-                    if argocd_active
-                    else ["kubernetes", "helm"]
-                ),
+                "tool_categories": (["kubernetes", "helm", "argocd"] if argocd_active else ["kubernetes", "helm"]),
                 "capabilities": [
-                    "event", "events", "network", "networking", "dns",
-                    "service", "endpoint", "ingress", "connectivity",
-                    "storage", "pvc", "volume", "argocd", "gitops",
-                    "helm", "configmap", "secret", "infrastructure",
+                    "event",
+                    "events",
+                    "network",
+                    "networking",
+                    "dns",
+                    "service",
+                    "endpoint",
+                    "ingress",
+                    "connectivity",
+                    "storage",
+                    "pvc",
+                    "volume",
+                    "argocd",
+                    "gitops",
+                    "helm",
+                    "configmap",
+                    "secret",
+                    "infrastructure",
                 ],
                 "system_instruction": build_event_gatherer_prompt(
                     namespace=effective_namespace,
                     user_query=kwargs.get("user_query", ""),
+                    attachment_context=attachment_context,
                 ),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
@@ -938,11 +986,25 @@ class ServiceHealthSkill(BaseSkill):
                 "parallel_group": "gather",
                 "tool_categories": ["logging"],
                 "capabilities": [
-                    "log", "logs", "logging", "error", "errors", "warning",
-                    "warnings", "stacktrace", "exception", "stderr",
-                    "stdout", "cloud", "gcp", "cloudlogging",
+                    "log",
+                    "logs",
+                    "logging",
+                    "error",
+                    "errors",
+                    "warning",
+                    "warnings",
+                    "stacktrace",
+                    "exception",
+                    "stderr",
+                    "stdout",
+                    "cloud",
+                    "gcp",
+                    "cloudlogging",
                 ],
-                "system_instruction": build_logging_gatherer_prompt(namespace=effective_namespace),
+                "system_instruction": build_logging_gatherer_prompt(
+                    namespace=effective_namespace,
+                    attachment_context=attachment_context,
+                ),
                 "model": "gemini-2.5-pro",
                 "temperature": 0.0,
                 "max_iterations": 8,
@@ -958,9 +1020,20 @@ class ServiceHealthSkill(BaseSkill):
                     "parallel_group": "gather",
                     "tool_categories": ["datadog", "kubernetes"],
                     "capabilities": [
-                        "datadog", "apm", "trace", "traces", "latency",
-                        "error-rate", "throughput", "monitoring", "metric",
-                        "metrics", "dashboard", "slo", "alert", "service-map",
+                        "datadog",
+                        "apm",
+                        "trace",
+                        "traces",
+                        "latency",
+                        "error-rate",
+                        "throughput",
+                        "monitoring",
+                        "metric",
+                        "metrics",
+                        "dashboard",
+                        "slo",
+                        "alert",
+                        "service-map",
                     ],
                     "system_instruction": build_datadog_gatherer_prompt(
                         namespace=effective_namespace,
@@ -969,6 +1042,7 @@ class ServiceHealthSkill(BaseSkill):
                         dd_service_name=dd_resolution.dd_service_name,
                         dd_env=dd_resolution.dd_env,
                         dd_resource_type=dd_resolution.dd_resource_type,
+                        attachment_context=attachment_context,
                     ),
                     "model": "gemini-2.5-flash",
                     "temperature": 0.0,
@@ -982,10 +1056,13 @@ class ServiceHealthSkill(BaseSkill):
                 "name": "health_analyzer",
                 "role": "Health Pattern Analyzer",
                 "requires_tools": False,
-                "system_instruction": (
-                    HEALTH_ANALYZER_PROMPT + ANALYZER_AUTONOMOUS_OVERLAY
-                    if settings.investigation.enabled is True
-                    else HEALTH_ANALYZER_PROMPT
+                "system_instruction": _prefix_attachment_context(
+                    (
+                        HEALTH_ANALYZER_PROMPT + ANALYZER_AUTONOMOUS_OVERLAY
+                        if settings.investigation.enabled is True
+                        else HEALTH_ANALYZER_PROMPT
+                    ),
+                    attachment_context,
                 ),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.2,
@@ -1012,6 +1089,7 @@ class ServiceHealthSkill(BaseSkill):
                 investigator_kwargs["self_correction"] = SelfCorrectionController
                 if settings.investigation.budget_per_run_usd > 0.0:
                     from vaig.core.config import GlobalBudgetConfig  # noqa: PLC0415
+
                     investigator_kwargs["budget_manager"] = GlobalBudgetManager(
                         config=GlobalBudgetConfig(max_cost_usd=settings.investigation.budget_per_run_usd)
                     )
@@ -1036,7 +1114,7 @@ class ServiceHealthSkill(BaseSkill):
                 "role": "Health Finding Verifier",
                 "requires_tools": True,
                 "tool_categories": ["kubernetes", "scaling", "mesh", "datadog", "logging", "monitoring"],
-                "system_instruction": HEALTH_VERIFIER_PROMPT,
+                "system_instruction": _prefix_attachment_context(HEALTH_VERIFIER_PROMPT, attachment_context),
                 "model": "gemini-2.5-flash",
                 "max_iterations": 15,
                 "temperature": 0.2,
@@ -1048,6 +1126,7 @@ class ServiceHealthSkill(BaseSkill):
                 "system_instruction": build_reporter_prompt(
                     namespace=effective_namespace,
                     datadog_api_enabled=settings.datadog.enabled,
+                    attachment_context=attachment_context,
                 ),
                 "model": "gemini-2.5-flash",
                 "temperature": 0.3,
@@ -1100,16 +1179,12 @@ class ServiceHealthSkill(BaseSkill):
             # ── SPEC-SH-13: Contradiction detection ───────────────────────
             contradiction_findings = detect_contradictions(report)
             if contradiction_findings:
-                report = report.model_copy(
-                    update={"findings": report.findings + contradiction_findings}
-                )
+                report = report.model_copy(update={"findings": report.findings + contradiction_findings})
 
             # ── SPEC-V2-AUDIT-10: Causal correlation rules ─────────────────
             causal_findings = apply_contradiction_rules(report)
             if causal_findings:
-                report = report.model_copy(
-                    update={"findings": report.findings + causal_findings}
-                )
+                report = report.model_copy(update={"findings": report.findings + causal_findings})
 
             # Warn if report has no meaningful data
             if not report.findings and not report.service_statuses:
@@ -1137,10 +1212,7 @@ class ServiceHealthSkill(BaseSkill):
                 content,
                 exc_info=True,
             )
-            return (
-                "⚠️ Report parsing failed — showing raw output\n\n"
-                + content
-            )
+            return "⚠️ Report parsing failed — showing raw output\n\n" + content
 
     def _enrich_report_recommendations(
         self,
@@ -1181,8 +1253,7 @@ class ServiceHealthSkill(BaseSkill):
         pool = self._enrichment_pool
 
         logger.info(
-            "Starting two-pass recommendation enrichment for %d recommendations "
-            "using %s (timeout=%ss)",
+            "Starting two-pass recommendation enrichment for %d recommendations using %s (timeout=%ss)",
             len(report.recommendations),
             settings.models.default,
             overall_timeout,
@@ -1210,8 +1281,7 @@ class ServiceHealthSkill(BaseSkill):
             return enriched_report
         except concurrent.futures.TimeoutError:
             logger.warning(
-                "Recommendation enrichment exceeded hard timeout of %ss; "
-                "returning original report without enrichment.",
+                "Recommendation enrichment exceeded hard timeout of %ss; returning original report without enrichment.",
                 overall_timeout,
             )
             future.cancel()
