@@ -49,6 +49,9 @@ service-account*.json
 # Sessions DB (user data)
 *.db
 
+# vaig runtime (cache, sessions, attachments)
+.vaig/
+
 # Tool results (generated output)
 tool_results/
 

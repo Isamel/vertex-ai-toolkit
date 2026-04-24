@@ -1,22 +1,27 @@
-"""Attachment adapter protocol and concrete implementations (SPEC-ATT-02/03/04/05).
+"""Attachment adapter protocol and concrete implementations (SPEC-ATT-02/03/04/05/06).
 
-Provides adapters to read local directories, single files, archives, and
-git repos as attachments for the ``vaig live`` command.
+Provides adapters to read local directories, single files, archives, git repos,
+and remote URLs as attachments for the ``vaig live`` command.
 
 Adapters:
 
-- ``LocalPathAdapter``      – non-git directory tree (SPEC-ATT-03)
-- ``SingleFileAdapter``     – individual file (SPEC-ATT-04)
+- ``LocalPathAdapter``          – non-git directory tree (SPEC-ATT-03)
+- ``SingleFileAdapter``         – individual file (SPEC-ATT-04)
 - ``ArchiveAttachmentAdapter``  – zip/tar archive (SPEC-ATT-05)
 - ``GitCloneAttachmentAdapter`` – shallow git clone (SPEC-ATT-05)
+- ``URLAdapter``                – single remote file via HTTP(S) (SPEC-ATT-06)
 
 Use ``resolve_attachment(raw, name=..., cfg=...)`` to select the right adapter.
 """
 
+from __future__ import annotations
+
 import hashlib
+import ipaddress
 import logging
 import os
 import shutil
+import socket
 import subprocess
 import tarfile
 import tempfile
@@ -26,7 +31,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from urllib.parse import urlparse
 
+import httpx
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -89,13 +96,11 @@ class AttachmentAdapter(Protocol):
 
     spec: AttachmentSpec
 
-    def list_files(self, cfg: "AttachmentsConfig") -> Iterable[AttachmentFileEntry]:
+    def list_files(self, cfg: AttachmentsConfig) -> Iterable[AttachmentFileEntry]:
         """Return an iterable of every file in this attachment."""
         ...
 
-    def fetch_bytes(
-        self, relative_path: str
-    ) -> bytes | Iterator[bytes]:
+    def fetch_bytes(self, relative_path: str) -> bytes | Iterator[bytes]:
         """Return file content as ``bytes`` or a streaming ``Iterator[bytes]``.
 
         For large files (``> cfg.streaming_threshold_bytes``) implementations
@@ -144,7 +149,7 @@ def _path_matches_globs(rel_path: str, patterns: list[str]) -> bool:
 
 def _apply_cfg_filters(
     raw_entries: list[AttachmentFileEntry],
-    cfg: "AttachmentsConfig",
+    cfg: AttachmentsConfig,
     *,
     extra_exclude_globs: list[str] | None = None,
     adapter_label: str = "attachment",
@@ -164,15 +169,11 @@ def _apply_cfg_filters(
     aligned with ``LocalPathAdapter`` semantics (SPEC-ATT-03/05).
     """
     include_everything: bool = bool(getattr(cfg, "include_everything", False))
-    use_default_excludes: bool = (
-        bool(getattr(cfg, "use_default_excludes", True)) and not include_everything
-    )
+    use_default_excludes: bool = bool(getattr(cfg, "use_default_excludes", True)) and not include_everything
     user_extra_excludes: list[str] = list(getattr(cfg, "extra_excludes", []))
     max_depth: int = -1 if include_everything else int(getattr(cfg, "max_depth", -1))
     max_files: int = int(getattr(cfg, "max_files_per_attachment", 10_000))
-    unlimited_files: bool = (
-        bool(getattr(cfg, "unlimited_files", False)) or include_everything
-    )
+    unlimited_files: bool = bool(getattr(cfg, "unlimited_files", False)) or include_everything
 
     exclude_globs: list[str] = list(extra_exclude_globs or [])
     if use_default_excludes:
@@ -234,7 +235,7 @@ class LocalPathAdapter:
     # AttachmentAdapter interface
     # ------------------------------------------------------------------
 
-    def list_files(self, cfg: "AttachmentsConfig") -> Iterable[AttachmentFileEntry]:
+    def list_files(self, cfg: AttachmentsConfig) -> Iterable[AttachmentFileEntry]:
         """Walk *self.root* and yield :class:`AttachmentFileEntry` objects.
 
         Respects:
@@ -340,8 +341,7 @@ class LocalPathAdapter:
                 if not unlimited_files and file_count >= max_files:
                     if not limit_logged:
                         logger.warning(
-                            "attachment: max_files_per_attachment=%d reached for %s — "
-                            "remaining files skipped",
+                            "attachment: max_files_per_attachment=%d reached for %s — remaining files skipped",
                             max_files,
                             self.root,
                         )
@@ -385,22 +385,16 @@ class LocalPathAdapter:
         try:
             target.relative_to(self.root)
         except ValueError:
-            raise ValueError(
-                f"Path traversal rejected: {relative_path!r} resolves outside {self.root}"
-            ) from None
+            raise ValueError(f"Path traversal rejected: {relative_path!r} resolves outside {self.root}") from None
 
         size = target.stat().st_size
         if size > max_bytes:
-            raise ValueError(
-                f"File {relative_path!r} is {size} bytes, exceeds max_bytes_absolute={max_bytes}"
-            )
+            raise ValueError(f"File {relative_path!r} is {size} bytes, exceeds max_bytes_absolute={max_bytes}")
 
         # Deferred binary sniff — only when actually fetching
         if binary_skip and not include_everything and not target.is_symlink():
             if is_binary_file(target):
-                raise ValueError(
-                    f"File {relative_path!r} is binary; set binary_skip=False to read it"
-                )
+                raise ValueError(f"File {relative_path!r} is binary; set binary_skip=False to read it")
 
         if size > streaming_threshold:
             return self._stream_file(target)
@@ -452,7 +446,7 @@ class SingleFileAdapter:
     # AttachmentAdapter interface
     # ------------------------------------------------------------------
 
-    def list_files(self, cfg: "AttachmentsConfig") -> Iterable[AttachmentFileEntry]:
+    def list_files(self, cfg: AttachmentsConfig) -> Iterable[AttachmentFileEntry]:
         """Yield exactly one :class:`AttachmentFileEntry`."""
         self._cfg_ref = cfg
         try:
@@ -484,9 +478,7 @@ class SingleFileAdapter:
 
         size = self.path.stat().st_size
         if size > max_bytes:
-            raise ValueError(
-                f"File {self.path} is {size} bytes, exceeds max_bytes_absolute={max_bytes}"
-            )
+            raise ValueError(f"File {self.path} is {size} bytes, exceeds max_bytes_absolute={max_bytes}")
 
         if size > streaming_threshold:
             return LocalPathAdapter._stream_file(self.path)
@@ -515,7 +507,7 @@ class ArchiveAttachmentAdapter:
     ``AttachmentsConfig``.
     """
 
-    def __init__(self, archive_path: Path, spec: AttachmentSpec, cfg: "AttachmentsConfig") -> None:
+    def __init__(self, archive_path: Path, spec: AttachmentSpec, cfg: AttachmentsConfig) -> None:
         self.archive_path = archive_path.resolve()
         self.spec = spec
         self._cfg = cfg
@@ -527,7 +519,7 @@ class ArchiveAttachmentAdapter:
     # Context-manager support and cleanup
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> "ArchiveAttachmentAdapter":
+    def __enter__(self) -> ArchiveAttachmentAdapter:
         return self
 
     def __exit__(self, *_: object) -> None:
@@ -545,7 +537,7 @@ class ArchiveAttachmentAdapter:
     # AttachmentAdapter interface
     # ------------------------------------------------------------------
 
-    def list_files(self, cfg: "AttachmentsConfig") -> Iterable[AttachmentFileEntry]:
+    def list_files(self, cfg: AttachmentsConfig) -> Iterable[AttachmentFileEntry]:
         """Extract archive (if not yet done) and list all files."""
         self._cfg = cfg
         if self._root is None:
@@ -588,9 +580,7 @@ class ArchiveAttachmentAdapter:
         try:
             target.relative_to(self._root)
         except ValueError:
-            raise ValueError(
-                f"Path traversal rejected: {relative_path!r} resolves outside extraction root"
-            ) from None
+            raise ValueError(f"Path traversal rejected: {relative_path!r} resolves outside extraction root") from None
 
         cfg = self._cfg
         streaming_threshold: int = int(getattr(cfg, "streaming_threshold_bytes", 2_000_000))
@@ -598,9 +588,7 @@ class ArchiveAttachmentAdapter:
 
         size = target.stat().st_size
         if size > max_bytes:
-            raise ValueError(
-                f"File {relative_path!r} is {size} bytes, exceeds max_bytes_absolute={max_bytes}"
-            )
+            raise ValueError(f"File {relative_path!r} is {size} bytes, exceeds max_bytes_absolute={max_bytes}")
 
         if size > streaming_threshold:
             return LocalPathAdapter._stream_file(target)
@@ -621,7 +609,7 @@ class ArchiveAttachmentAdapter:
     # Internal extraction logic
     # ------------------------------------------------------------------
 
-    def _extract(self, cfg: "AttachmentsConfig") -> None:
+    def _extract(self, cfg: AttachmentsConfig) -> None:
         """Validate members and extract to a fresh tempdir.
 
         On any failure, removes the partial tempdir before re-raising so we
@@ -660,9 +648,7 @@ class ArchiveAttachmentAdapter:
 
                 # Guards — validate BEFORE extraction
                 if len(members) > max_files:
-                    raise ValueError(
-                        f"Archive has {len(members)} members, exceeds max_files={max_files}"
-                    )
+                    raise ValueError(f"Archive has {len(members)} members, exceeds max_files={max_files}")
 
                 # Per-file size cap (prevents any single member from being a
                 # decompression bomb). Total-size cap kept as secondary defence.
@@ -675,9 +661,7 @@ class ArchiveAttachmentAdapter:
 
                 total_size = sum(m.file_size for m in members)
                 if total_size > max_bytes:
-                    raise ValueError(
-                        f"Archive uncompressed size {total_size} exceeds max_bytes_absolute={max_bytes}"
-                    )
+                    raise ValueError(f"Archive uncompressed size {total_size} exceeds max_bytes_absolute={max_bytes}")
 
                 for member in members:
                     self._validate_member_name(member.filename)
@@ -697,23 +681,18 @@ class ArchiveAttachmentAdapter:
                 members = tf.getmembers()
 
                 if len(members) > max_files:
-                    raise ValueError(
-                        f"Archive has {len(members)} members, exceeds max_files={max_files}"
-                    )
+                    raise ValueError(f"Archive has {len(members)} members, exceeds max_files={max_files}")
 
                 # Per-file size cap (decompression-bomb guard)
                 for m in members:
                     if m.isfile() and m.size > max_bytes:
                         raise ValueError(
-                            f"Archive member {m.name!r} size {m.size} "
-                            f"exceeds max_bytes_absolute={max_bytes}"
+                            f"Archive member {m.name!r} size {m.size} exceeds max_bytes_absolute={max_bytes}"
                         )
 
                 total_size = sum(m.size for m in members if m.isfile())
                 if total_size > max_bytes:
-                    raise ValueError(
-                        f"Archive uncompressed size {total_size} exceeds max_bytes_absolute={max_bytes}"
-                    )
+                    raise ValueError(f"Archive uncompressed size {total_size} exceeds max_bytes_absolute={max_bytes}")
 
                 for member in members:
                     self._validate_member_name(member.name)
@@ -751,13 +730,9 @@ class ArchiveAttachmentAdapter:
                     try:
                         fp.resolve().relative_to(dest)
                     except ValueError:
-                        logger.warning(
-                            "attachment: removing escaping symlink after extraction: %s", fp
-                        )
+                        logger.warning("attachment: removing escaping symlink after extraction: %s", fp)
                         fp.unlink(missing_ok=True)
-                        raise ValueError(
-                            f"Archive symlink {fp.name!r} resolves outside extraction directory"
-                        ) from None
+                        raise ValueError(f"Archive symlink {fp.name!r} resolves outside extraction directory") from None
 
 
 # ── GitCloneAttachmentAdapter ─────────────────────────────────────────────────
@@ -784,7 +759,7 @@ class GitCloneAttachmentAdapter:
     Read-only: never pushes or modifies the remote.
     """
 
-    def __init__(self, url: str, spec: AttachmentSpec, cfg: "AttachmentsConfig") -> None:
+    def __init__(self, url: str, spec: AttachmentSpec, cfg: AttachmentsConfig) -> None:
         self.url = url
         self.spec = spec
         self._cfg = cfg
@@ -796,7 +771,7 @@ class GitCloneAttachmentAdapter:
     # Context-manager support and cleanup
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> "GitCloneAttachmentAdapter":
+    def __enter__(self) -> GitCloneAttachmentAdapter:
         return self
 
     def __exit__(self, *_: object) -> None:
@@ -814,7 +789,7 @@ class GitCloneAttachmentAdapter:
     # AttachmentAdapter interface
     # ------------------------------------------------------------------
 
-    def list_files(self, cfg: "AttachmentsConfig") -> Iterable[AttachmentFileEntry]:
+    def list_files(self, cfg: AttachmentsConfig) -> Iterable[AttachmentFileEntry]:
         """Clone repo (if not yet done) and list all files."""
         self._cfg = cfg
         if self._root is None:
@@ -860,9 +835,7 @@ class GitCloneAttachmentAdapter:
         try:
             target.relative_to(self._root)
         except ValueError:
-            raise ValueError(
-                f"Path traversal rejected: {relative_path!r} resolves outside clone root"
-            ) from None
+            raise ValueError(f"Path traversal rejected: {relative_path!r} resolves outside clone root") from None
 
         cfg = self._cfg
         streaming_threshold: int = int(getattr(cfg, "streaming_threshold_bytes", 2_000_000))
@@ -870,9 +843,7 @@ class GitCloneAttachmentAdapter:
 
         size = target.stat().st_size
         if size > max_bytes:
-            raise ValueError(
-                f"File {relative_path!r} is {size} bytes, exceeds max_bytes_absolute={max_bytes}"
-            )
+            raise ValueError(f"File {relative_path!r} is {size} bytes, exceeds max_bytes_absolute={max_bytes}")
 
         if size > streaming_threshold:
             return LocalPathAdapter._stream_file(target)
@@ -934,29 +905,280 @@ class GitCloneAttachmentAdapter:
             shutil.rmtree(tempdir, ignore_errors=True)
             self._tempdir = None
             stderr = exc.stderr.decode(errors="replace") if exc.stderr else ""
-            raise RuntimeError(
-                f"git clone failed for {self.url!r}: {stderr.strip()}"
-            ) from exc
+            raise RuntimeError(f"git clone failed for {self.url!r}: {stderr.strip()}") from exc
         except subprocess.TimeoutExpired as exc:
             shutil.rmtree(tempdir, ignore_errors=True)
             self._tempdir = None
-            raise RuntimeError(
-                f"git clone timed out after 60 s for {self.url!r}"
-            ) from exc
+            raise RuntimeError(f"git clone timed out after 60 s for {self.url!r}") from exc
         except FileNotFoundError as exc:
             shutil.rmtree(tempdir, ignore_errors=True)
             self._tempdir = None
-            raise RuntimeError(
-                "git is not installed or not on PATH — cannot clone attachment"
-            ) from exc
+            raise RuntimeError("git is not installed or not on PATH — cannot clone attachment") from exc
         except Exception as exc:
             shutil.rmtree(tempdir, ignore_errors=True)
             self._tempdir = None
-            raise RuntimeError(
-                f"Unexpected error during git clone of {self.url!r}: {exc}"
-            ) from exc
+            raise RuntimeError(f"Unexpected error during git clone of {self.url!r}: {exc}") from exc
 
         self._root = Path(dest).resolve()
+
+
+# ── URLAdapter ────────────────────────────────────────────────────────────────
+
+
+def _hash_bytes(data: bytes) -> str:
+    """Return sha256 hex digest of *data*."""
+    return hashlib.sha256(data).hexdigest()
+
+
+def _check_private_ip(host: str) -> None:
+    """Raise ``ValueError`` if *host* resolves to a private / reserved address.
+
+    Uses ``socket.getaddrinfo`` to perform DNS resolution and then checks the
+    resulting addresses via the :mod:`ipaddress` module.
+
+    Raises:
+        ValueError: SSRF-blocked message if any resolved address is private.
+    """
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror as exc:
+        raise ValueError(f"--attach URL host could not be resolved: {host!r} — {exc}") from exc
+
+    for _, _, _, _, sockaddr in infos:
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            raise ValueError(
+                f"--attach URL resolves to a private/reserved IP: {host!r} → {ip_str}. Use a publicly-routable URL."
+            )
+
+
+def _enforce_url_allowlist(url: str, allowlist: list[str]) -> None:
+    """Raise ``ValueError`` if *url* is not on *allowlist* (when list is non-empty).
+
+    Matching rules:
+    - Exact hostname match: ``example.com`` matches ``example.com``
+    - Suffix match on dot boundary: ``example.com`` matches ``sub.example.com``
+    - Case-insensitive: ``Example.COM`` in allowlist matches ``example.com`` URL
+    - Trailing-dot normalized: ``example.com.`` treated as ``example.com``
+
+    Empty *allowlist* = allow all hosts (still subject to SSRF + HTTPS checks).
+    """
+    if not allowlist:
+        return
+    host = (urlparse(url).hostname or "").strip().rstrip(".").lower()
+    for allowed in allowlist:
+        normalized = allowed.strip().rstrip(".").lower()
+        # Exact or suffix match on dot-boundary
+        if host == normalized or host.endswith("." + normalized):
+            return
+    raise ValueError(
+        f"--attach URL not allowlisted: {url!r}. "
+        "Add the domain to attachments.url_allowlist in settings or pass --attach-allow-domain DOMAIN."
+    )
+
+
+class URLAdapter:
+    """Adapter for a single remote file via HTTP(S) (SPEC-ATT-06).
+
+    Fetches the URL once, caches the bytes in memory, and exposes a single
+    :class:`AttachmentFileEntry` for downstream pipeline stages.
+
+    Security controls (SA-3 + SA-4):
+    - HTTPS-only by default; plain HTTP requires ``cfg.allow_http=True``
+    - Domain allowlist via ``cfg.url_allowlist``
+    - Private / reserved IP SSRF block via ``socket.getaddrinfo``
+    - Response size cap via ``cfg.max_bytes_absolute``
+    """
+
+    kind = "url"
+
+    #: Maximum redirects before aborting
+    _MAX_REDIRECTS: int = 5
+
+    def __init__(self, url: str, *, spec: AttachmentSpec, cfg: AttachmentsConfig) -> None:
+        self._url = url
+        self._cfg = cfg
+        self.spec = spec
+        self._content_cache: bytes | None = None
+
+        parsed = urlparse(url)
+        scheme = (parsed.scheme or "").lower()
+
+        # SA-4 — HTTPS-only check
+        if scheme == "http" and not getattr(cfg, "allow_http", False):
+            raise ValueError(
+                f"--attach URL uses plain HTTP which is blocked by default: {url!r}. "
+                "Pass --attach-allow-http to enable it (not recommended)."
+            )
+
+        # SA-3 — domain allowlist
+        _enforce_url_allowlist(url, list(getattr(cfg, "url_allowlist", [])))
+
+        # SA-3 — private IP block (pre-flight DNS)
+        host = parsed.hostname or ""
+        if host:
+            _check_private_ip(host)
+
+    # ------------------------------------------------------------------
+    # Fetch helper
+    # ------------------------------------------------------------------
+
+    def _validate_url_security(self, url: str, *, hop: int, redirect_chain: list[str]) -> None:
+        """Re-run all security checks for a URL encountered during redirect following.
+
+        Raises ``ValueError`` mentioning the redirect chain on any violation.
+        """
+        parsed = urlparse(url)
+        scheme = (parsed.scheme or "").lower()
+        host = parsed.hostname or ""
+
+        # HTTPS-only check
+        if scheme == "http" and not getattr(self._cfg, "allow_http", False):
+            raise ValueError(
+                f"--attach URL redirect hop {hop} uses plain HTTP (blocked by default): {url!r}. "
+                f"Redirect chain: {redirect_chain}"
+            )
+
+        # Allowlist check
+        allowlist = list(getattr(self._cfg, "url_allowlist", []))
+        _enforce_url_allowlist(url, allowlist)
+
+        # Private IP check
+        if host:
+            try:
+                _check_private_ip(host)
+            except ValueError as exc:
+                raise ValueError(
+                    f"--attach URL redirect hop {hop} failed SSRF check: {exc}. Redirect chain: {redirect_chain}"
+                ) from exc
+
+    def _fetch(self) -> bytes:
+        """Fetch URL content (once), enforcing size caps.
+
+        Follows redirects manually (up to _MAX_REDIRECTS hops), re-running
+        SSRF, allowlist, and HTTPS checks on every hop.  Uses a HEAD preflight
+        to short-circuit on content-length violations, then streams the GET
+        body in chunks to enforce the per-chunk size cap.
+        """
+        if self._content_cache is not None:
+            return self._content_cache
+
+        max_bytes: int = int(getattr(self._cfg, "max_bytes_absolute", 500_000_000))
+
+        with httpx.Client(follow_redirects=False) as client:
+            # ── HEAD preflight ────────────────────────────────────────────
+            try:
+                head_resp = client.head(self._url, timeout=30)
+                cl_header = head_resp.headers.get("content-length", "") or ""
+                if cl_header.strip().isdigit():
+                    cl = int(cl_header.strip())
+                    if cl > max_bytes:
+                        raise ValueError(
+                            f"--attach URL content-length {cl} exceeds max_bytes_absolute={max_bytes}: {self._url!r}"
+                        )
+            except ValueError:
+                raise
+            except httpx.HTTPError:
+                # HEAD not supported or failed — swallow and proceed to GET
+                pass
+
+            # ── Manual redirect loop + streaming GET ──────────────────────
+            current_url = self._url
+            redirect_chain: list[str] = [current_url]
+            hop = 0
+
+            while True:
+                with client.stream("GET", current_url, timeout=30) as resp:
+                    # Check content-length from actual GET response
+                    cl_header = resp.headers.get("content-length", "") or ""
+                    if cl_header.strip().isdigit():
+                        cl = int(cl_header.strip())
+                        if cl > max_bytes:
+                            raise ValueError(
+                                f"--attach URL content-length {cl} exceeds max_bytes_absolute={max_bytes}: {current_url!r}"
+                            )
+
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        location = resp.headers.get("location", "")
+                        if not location:
+                            raise ValueError(
+                                f"--attach URL redirect hop {hop + 1} missing Location header: {current_url!r}"
+                            )
+                        hop += 1
+                        if hop > self._MAX_REDIRECTS:
+                            raise ValueError(
+                                f"--attach URL exceeded {self._MAX_REDIRECTS} redirects. "
+                                f"Redirect chain: {redirect_chain}"
+                            )
+                        redirect_chain.append(location)
+                        self._validate_url_security(location, hop=hop, redirect_chain=redirect_chain)
+                        current_url = location
+                        continue
+
+                    resp.raise_for_status()
+
+                    # Stream body with per-chunk accumulation
+                    data = bytearray()
+                    for chunk in resp.iter_bytes():
+                        data.extend(chunk)
+                        if len(data) > max_bytes:
+                            raise ValueError(
+                                f"--attach URL response body exceeded max_bytes_absolute={max_bytes} "
+                                f"during streaming: {current_url!r}"
+                            )
+                    break
+
+        # Final body size check (defensive)
+        if len(data) > max_bytes:
+            raise ValueError(
+                f"--attach URL response body {len(data)} bytes exceeds max_bytes_absolute={max_bytes}: {self._url!r}"
+            )
+
+        self._content_cache = bytes(data)
+        return self._content_cache
+
+    # ------------------------------------------------------------------
+    # AttachmentAdapter interface
+    # ------------------------------------------------------------------
+
+    @property
+    def name(self) -> str:
+        """Derive a file name from the URL path, falling back to netloc."""
+        parsed = urlparse(self._url)
+        return parsed.path.rsplit("/", 1)[-1] or parsed.netloc
+
+    def fingerprint(self) -> str:
+        """Stable sha256 content hash (fetched once, cached)."""
+        return _hash_bytes(self._fetch())
+
+    def list_files(self, cfg: AttachmentsConfig) -> Iterable[AttachmentFileEntry]:
+        """Yield a single :class:`AttachmentFileEntry` for the remote content."""
+        self._cfg = cfg
+        data = self._fetch()
+        return [
+            AttachmentFileEntry(
+                relative_path=self.name,
+                size_bytes=len(data),
+                mtime=None,
+                is_symlink=False,
+            )
+        ]
+
+    def fetch_bytes(self, relative_path: str) -> bytes:
+        """Return the downloaded content.
+
+        *relative_path* must match :attr:`name` (or empty string).
+
+        Raises:
+            KeyError: If *relative_path* does not match the adapter's single file.
+        """
+        if relative_path not in ("", self.name):
+            raise KeyError(relative_path)
+        return self._fetch()
 
 
 # ── Dispatcher ────────────────────────────────────────────────────────────────
@@ -972,15 +1194,15 @@ def resolve_attachment(
     raw: str,
     *,
     name: str | None = None,
-    cfg: "AttachmentsConfig",
-) -> "LocalPathAdapter | SingleFileAdapter | ArchiveAttachmentAdapter | GitCloneAttachmentAdapter":
+    cfg: AttachmentsConfig,
+) -> LocalPathAdapter | SingleFileAdapter | ArchiveAttachmentAdapter | GitCloneAttachmentAdapter | URLAdapter:
     """Select the right attachment adapter from a raw user-supplied string.
 
     Decision tree (order matters):
 
     1. Git URL (``git@…``, ``git+…``, ``https://….git``) → :class:`GitCloneAttachmentAdapter`
     2. Archive suffix                                     → :class:`ArchiveAttachmentAdapter`
-    3. ``http://`` / ``https://``                         → :exc:`NotImplementedError` (Sprint 3)
+    3. ``http://`` / ``https://``                         → :class:`URLAdapter`
     4. Existing file path                                 → :class:`SingleFileAdapter`
     5. Existing dir (non-git)                             → :class:`LocalPathAdapter`
     6. Otherwise                                          → :exc:`ValueError`
@@ -1009,9 +1231,7 @@ def resolve_attachment(
     if _is_archive(stripped):
         p = Path(stripped)
         if not p.exists() or not p.is_file():
-            raise ValueError(
-                f"Archive attachment not found or not a file: {raw!r}"
-            )
+            raise ValueError(f"Archive attachment not found or not a file: {raw!r}")
         spec = AttachmentSpec(
             name=name,
             source=raw,
@@ -1020,11 +1240,15 @@ def resolve_attachment(
         )
         return ArchiveAttachmentAdapter(p, spec, cfg)
 
-    # 3. Plain URL check
+    # 3. Plain URL check (SPEC-ATT-06)
     if stripped.startswith("http://") or stripped.startswith("https://"):
-        raise NotImplementedError(
-            "URL attachments land in Sprint 3 (SPEC-ATT-06)"
+        spec = AttachmentSpec(
+            name=name,
+            source=raw,
+            kind=AttachmentKind.url,
+            resolved_path=None,
         )
+        return URLAdapter(stripped, spec=spec, cfg=cfg)
 
     p = Path(stripped)
 

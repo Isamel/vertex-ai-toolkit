@@ -277,15 +277,11 @@ class TestGitCloneAdapter:
         assert saved is not None
         assert not os.path.isdir(saved)
 
-    def test_clone_called_process_error_raises_runtime_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_clone_called_process_error_raises_runtime_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         url = "git@github.com:org/repo.git"
 
         def fake_run(*_args: Any, **_kwargs: Any) -> None:
-            raise subprocess.CalledProcessError(
-                128, ["git", "clone"], stderr=b"fatal: repo not found"
-            )
+            raise subprocess.CalledProcessError(128, ["git", "clone"], stderr=b"fatal: repo not found")
 
         monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -293,9 +289,7 @@ class TestGitCloneAdapter:
         with pytest.raises(RuntimeError, match="git clone failed"):
             adapter.list_files(_cfg())
 
-    def test_clone_timeout_raises_runtime_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_clone_timeout_raises_runtime_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         url = "https://github.com/org/repo.git"
 
         def fake_run(*_args: Any, **_kwargs: Any) -> None:
@@ -307,9 +301,7 @@ class TestGitCloneAdapter:
         with pytest.raises(RuntimeError, match="timed out"):
             adapter.list_files(_cfg())
 
-    def test_git_not_installed_raises_runtime_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_git_not_installed_raises_runtime_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         url = "git+https://github.com/org/repo"
 
         def fake_run(*_args: Any, **_kwargs: Any) -> None:
@@ -321,9 +313,7 @@ class TestGitCloneAdapter:
         with pytest.raises(RuntimeError, match="git is not installed"):
             adapter.list_files(_cfg())
 
-    def test_context_manager_cleanup(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_context_manager_cleanup(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         url = "git@github.com:org/repo.git"
 
         def fake_run(cmd: list[str], **kwargs: Any) -> None:
@@ -388,9 +378,16 @@ class TestResolveAttachmentDispatch:
         adapter = resolve_attachment(url, cfg=_cfg())
         assert isinstance(adapter, GitCloneAttachmentAdapter)
 
-    def test_plain_https_url_raises_not_implemented(self) -> None:
-        with pytest.raises(NotImplementedError, match="Sprint 3"):
-            resolve_attachment("https://example.com/page", cfg=_cfg())
+    def test_plain_https_url_now_routes_to_url_adapter(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """After Sprint 3, a plain HTTPS URL is dispatched to URLAdapter (no NotImplementedError)."""
+        from vaig.core.attachment_adapter import URLAdapter
+
+        # Monkeypatch _fetch so no real network IO occurs
+        monkeypatch.setattr(URLAdapter, "_fetch", lambda self: b"fake content")
+
+        adapter = resolve_attachment("https://example.com/page", cfg=_cfg())
+        assert isinstance(adapter, URLAdapter)
+        assert adapter.spec.source == "https://example.com/page"
 
     def test_name_propagated_to_spec(self, tmp_path: Path) -> None:
         archive = _make_zip(tmp_path, {"x.txt": b"hi"})

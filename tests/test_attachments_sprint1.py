@@ -80,15 +80,10 @@ class TestAttachmentsConfig:
 
 
 class TestResolveAttachmentDispatcher:
-    def test_http_url_raises_not_implemented(self) -> None:
+    def test_http_url_blocked_by_default(self) -> None:
         cfg = _default_cfg()
-        with pytest.raises(NotImplementedError, match="Sprint 3"):
+        with pytest.raises(ValueError, match="plain HTTP|allow-http"):
             resolve_attachment("http://example.com", cfg=cfg)
-
-    def test_https_url_raises_not_implemented(self) -> None:
-        cfg = _default_cfg()
-        with pytest.raises(NotImplementedError, match="Sprint 3"):
-            resolve_attachment("https://example.com/foo", cfg=cfg)
 
     def test_zip_file_dispatches_to_archive_adapter(self, tmp_path: Path) -> None:
         """Sprint 2: zip files now resolve to ArchiveAttachmentAdapter (was NotImplementedError)."""
@@ -307,7 +302,7 @@ class TestLocalPathAdapter:
         outside = tmp_path / "outside"
         outside.mkdir()
         (outside / "secret.txt").write_text("sensitive")
-        link = tmp_path / "inner" 
+        link = tmp_path / "inner"
         link.mkdir()
         symlink_target = link / "linked"
         symlink_target.symlink_to(outside)
