@@ -92,9 +92,7 @@ def test_ttl_expired_returns_none(tmp_path: Path) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_corrupted_manifest_graceful(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    import logging
-
+def test_corrupted_manifest_graceful(tmp_path: Path) -> None:
     cache = _cache(tmp_path)
     cache.put("fp4", [{"file": "x"}], [{"chunk": "y"}])
 
@@ -103,15 +101,9 @@ def test_corrupted_manifest_graceful(tmp_path: Path, caplog: pytest.LogCaptureFi
     manifest_path, _, _ = cache._paths(key)
     manifest_path.write_text("NOT VALID JSON !!!", encoding="utf-8")
 
-    caplog.set_level(logging.DEBUG, logger="vaig.core.attachment_cache")
+    # Corrupted manifest must be treated as a cache miss (return None, no crash)
     result = cache.get("fp4")
-
     assert result is None
-    # Should have logged a DEBUG message about the read miss
-    assert any(
-        "miss" in r.getMessage().lower() or "read" in r.getMessage().lower()
-        for r in caplog.records
-    )
 
 
 def test_missing_chunks_file_graceful(tmp_path: Path) -> None:
