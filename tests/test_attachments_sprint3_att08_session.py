@@ -60,6 +60,7 @@ def test_add_same_source_updates_not_duplicates(tmp_path: Path) -> None:
     assert a.fingerprint == "v2"
     assert a.name == "renamed"
     # added_at should be updated (or at least not earlier than before)
+    assert a.added_at >= first_added_at
 
 
 def test_add_two_different_sources(tmp_path: Path) -> None:

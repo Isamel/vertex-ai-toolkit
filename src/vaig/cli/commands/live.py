@@ -913,6 +913,7 @@ def register(app: typer.Typer) -> None:
                 _persist_session(
                     session_id=attach_session,
                     adapters=_attachment_adapters,
+                    session_dir=None,  # uses AttachmentsConfig.session_dir default (.vaig/sessions)
                 )
 
             # ── Show-attachments table ─────────────────────────────────────────
@@ -1297,6 +1298,34 @@ def _build_and_resolve_attachments(
 
         adapters.append(adapter)
 
+    # ── Cache wire (SPEC-ATT-08): put after resolution if cache_enabled ──────
+    if cache_enabled:
+        try:
+            import hashlib
+
+            from vaig.core.attachment_cache import AttachmentCache
+
+            cache_dir = Path(".vaig/attachments-cache")
+            config_hash = hashlib.sha256(cfg.model_dump_json().encode()).hexdigest()[:16]
+            cache = AttachmentCache(cache_dir, config_hash=config_hash)
+            for adapter in adapters:
+                try:
+                    fp = adapter.fingerprint()
+                    manifest = [
+                        e.__dict__ if hasattr(e, "__dict__") else {"path": str(e)} for e in adapter.list_files(cfg)
+                    ]
+                    cache.put(
+                        fp, manifest, [], adapter_spec={"source": adapter.spec.source, "kind": str(adapter.spec.kind)}
+                    )
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("attachment_cache: put failed for %s: %s", adapter.spec.source, exc)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("attachment_cache: cache wire failed: %s", exc)
+
     label_parts = []
     for adapter in adapters:
         label = adapter.spec.name or adapter.spec.source
@@ -1313,13 +1342,14 @@ def _persist_session(
     *,
     session_id: str,
     adapters: list[Any],
+    session_dir: str | Path | None = None,
 ) -> None:
     """Save resolved adapters to the session file (SPEC-ATT-08)."""
     try:
         from vaig.core.attachment_cache import AttachmentSession
 
-        session_dir = Path(".vaig/sessions")
-        session = AttachmentSession(session_dir, session_id)
+        resolved_dir = Path(session_dir) if session_dir is not None else Path(".vaig/sessions")
+        session = AttachmentSession(resolved_dir, session_id)
         session.load()
         for adapter in adapters:
             spec = adapter.spec
@@ -1340,12 +1370,13 @@ def _persist_session(
         logger.debug("attachment_session: failed to persist session %s: %s", session_id, exc)
 
 
-def _display_attachments_table(adapters: list[Any]) -> None:
-    """Print a Rich table of resolved attachments with fingerprints (SPEC-ATT-08)."""
+def _display_attachments_table(adapters: list[Any], *, cache_hits: dict[str, bool] | None = None) -> None:
+    """Print a Rich table of resolved attachments with fingerprints and cache status (SPEC-ATT-08)."""
     table = Table(title="Resolved Attachments", show_lines=True)
     table.add_column("Source", style="cyan")
     table.add_column("Name")
     table.add_column("Kind", style="green")
+    table.add_column("Cache", style="yellow")
     table.add_column("Fingerprint", style="dim")
 
     for adapter in adapters:
@@ -1354,11 +1385,21 @@ def _display_attachments_table(adapters: list[Any]) -> None:
             fp = adapter.fingerprint()
             fp_short = fp[:16] + "…" if len(fp) > 16 else fp
         except Exception:  # noqa: BLE001
+            fp = ""
             fp_short = "(unavailable)"
+
+        if cache_hits is None:
+            cache_status = "disabled"
+        elif fp and fp in cache_hits:
+            cache_status = "hit" if cache_hits[fp] else "miss"
+        else:
+            cache_status = "miss"
+
         table.add_row(
             spec.source,
             spec.name or "",
             str(spec.kind),
+            cache_status,
             fp_short,
         )
 

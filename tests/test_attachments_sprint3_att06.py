@@ -51,20 +51,30 @@ def _make_mock_client(content: bytes, status_code: int = 200, headers: dict | No
     """Return a mock httpx.Client context manager that responds with *content*."""
     from unittest.mock import MagicMock
 
-    resp_headers = {"content-type": "text/plain"}
+    resp_headers: dict[str, str] = {"content-type": "text/plain"}
     if headers:
         resp_headers.update(headers)
 
-    mock_response = MagicMock()
-    mock_response.status_code = status_code
-    mock_response.content = content
-    mock_response.headers = resp_headers
-    mock_response.raise_for_status = MagicMock()  # no-op
+    # HEAD response (no body)
+    mock_head_resp = MagicMock()
+    mock_head_resp.status_code = 200
+    mock_head_resp.headers = {k: v for k, v in resp_headers.items() if k != "content-type"}
+    mock_head_resp.raise_for_status = MagicMock()
+
+    # GET streaming response (used as context manager)
+    mock_stream_resp = MagicMock()
+    mock_stream_resp.status_code = status_code
+    mock_stream_resp.headers = resp_headers
+    mock_stream_resp.raise_for_status = MagicMock()
+    mock_stream_resp.iter_bytes = MagicMock(return_value=iter([content]))
+    mock_stream_resp.__enter__ = lambda self: self
+    mock_stream_resp.__exit__ = MagicMock(return_value=False)
 
     mock_client = MagicMock()
     mock_client.__enter__ = lambda self: self
     mock_client.__exit__ = MagicMock(return_value=False)
-    mock_client.get = MagicMock(return_value=mock_response)
+    mock_client.head = MagicMock(return_value=mock_head_resp)
+    mock_client.stream = MagicMock(return_value=mock_stream_resp)
 
     mock_client_cls = MagicMock(return_value=mock_client)
     return mock_client_cls
@@ -262,20 +272,27 @@ def test_fingerprint_stability_and_caching() -> None:
 
     call_count = 0
 
-    def mock_get(*args: Any, **kwargs: Any) -> MagicMock:
+    def mock_stream(*args: Any, **kwargs: Any) -> MagicMock:
         nonlocal call_count
         call_count += 1
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.content = content
         mock_resp.headers = {"content-type": "text/plain"}
         mock_resp.raise_for_status = MagicMock()
+        mock_resp.iter_bytes = MagicMock(return_value=iter([content]))
+        mock_resp.__enter__ = lambda self: self
+        mock_resp.__exit__ = MagicMock(return_value=False)
         return mock_resp
+
+    mock_head_resp = MagicMock()
+    mock_head_resp.status_code = 200
+    mock_head_resp.headers = {}
 
     mock_client = MagicMock()
     mock_client.__enter__ = lambda self: self
     mock_client.__exit__ = MagicMock(return_value=False)
-    mock_client.get = mock_get
+    mock_client.head = MagicMock(return_value=mock_head_resp)
+    mock_client.stream = mock_stream
     mock_client_cls = MagicMock(return_value=mock_client)
 
     with patch("vaig.core.attachment_adapter.httpx.Client", mock_client_cls):
@@ -321,3 +338,13 @@ def test_enforce_url_allowlist_suffix_match() -> None:
 def test_enforce_url_allowlist_miss() -> None:
     with pytest.raises(ValueError, match="not allowlisted"):
         _enforce_url_allowlist("https://evil.net/pwn", ["allowed.com"])
+
+
+def test_enforce_url_allowlist_case_insensitive() -> None:
+    """Allowlist entry 'Example.COM' should match URL with host 'example.com'."""
+    _enforce_url_allowlist("https://example.com/foo", ["Example.COM"])  # ok — case-insensitive
+
+
+def test_enforce_url_allowlist_trailing_dot_normalized() -> None:
+    """Allowlist entry with trailing dot 'example.com.' should match 'example.com'."""
+    _enforce_url_allowlist("https://example.com/bar", ["example.com."])  # ok — trailing dot stripped

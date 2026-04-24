@@ -962,15 +962,18 @@ def _enforce_url_allowlist(url: str, allowlist: list[str]) -> None:
     Matching rules:
     - Exact hostname match: ``example.com`` matches ``example.com``
     - Suffix match on dot boundary: ``example.com`` matches ``sub.example.com``
+    - Case-insensitive: ``Example.COM`` in allowlist matches ``example.com`` URL
+    - Trailing-dot normalized: ``example.com.`` treated as ``example.com``
 
     Empty *allowlist* = allow all hosts (still subject to SSRF + HTTPS checks).
     """
     if not allowlist:
         return
-    host = urlparse(url).hostname or ""
+    host = (urlparse(url).hostname or "").strip().rstrip(".").lower()
     for allowed in allowlist:
+        normalized = allowed.strip().rstrip(".").lower()
         # Exact or suffix match on dot-boundary
-        if host == allowed or host.endswith("." + allowed):
+        if host == normalized or host.endswith("." + normalized):
             return
     raise ValueError(
         f"--attach URL not allowlisted: {url!r}. "
@@ -1024,36 +1027,119 @@ class URLAdapter:
     # Fetch helper
     # ------------------------------------------------------------------
 
+    def _validate_url_security(self, url: str, *, hop: int, redirect_chain: list[str]) -> None:
+        """Re-run all security checks for a URL encountered during redirect following.
+
+        Raises ``ValueError`` mentioning the redirect chain on any violation.
+        """
+        parsed = urlparse(url)
+        scheme = (parsed.scheme or "").lower()
+        host = parsed.hostname or ""
+
+        # HTTPS-only check
+        if scheme == "http" and not getattr(self._cfg, "allow_http", False):
+            raise ValueError(
+                f"--attach URL redirect hop {hop} uses plain HTTP (blocked by default): {url!r}. "
+                f"Redirect chain: {redirect_chain}"
+            )
+
+        # Allowlist check
+        allowlist = list(getattr(self._cfg, "url_allowlist", []))
+        _enforce_url_allowlist(url, allowlist)
+
+        # Private IP check
+        if host:
+            try:
+                _check_private_ip(host)
+            except ValueError as exc:
+                raise ValueError(
+                    f"--attach URL redirect hop {hop} failed SSRF check: {exc}. Redirect chain: {redirect_chain}"
+                ) from exc
+
     def _fetch(self) -> bytes:
-        """Fetch URL content (once), enforcing size caps."""
+        """Fetch URL content (once), enforcing size caps.
+
+        Follows redirects manually (up to _MAX_REDIRECTS hops), re-running
+        SSRF, allowlist, and HTTPS checks on every hop.  Uses a HEAD preflight
+        to short-circuit on content-length violations, then streams the GET
+        body in chunks to enforce the per-chunk size cap.
+        """
         if self._content_cache is not None:
             return self._content_cache
 
         max_bytes: int = int(getattr(self._cfg, "max_bytes_absolute", 500_000_000))
 
-        transport = httpx.HTTPTransport()
-        with httpx.Client(transport=transport, max_redirects=self._MAX_REDIRECTS) as client:
-            resp = client.get(self._url, timeout=30, follow_redirects=True)
-        resp.raise_for_status()
+        with httpx.Client(follow_redirects=False) as client:
+            # ── HEAD preflight ────────────────────────────────────────────
+            try:
+                head_resp = client.head(self._url, timeout=30)
+                cl_header = head_resp.headers.get("content-length", "") or ""
+                if cl_header.strip().isdigit():
+                    cl = int(cl_header.strip())
+                    if cl > max_bytes:
+                        raise ValueError(
+                            f"--attach URL content-length {cl} exceeds max_bytes_absolute={max_bytes}: {self._url!r}"
+                        )
+            except ValueError:
+                raise
+            except httpx.HTTPError:
+                # HEAD not supported or failed — swallow and proceed to GET
+                pass
 
-        # Content-length pre-check (server hint — may be absent or wrong)
-        cl_header = resp.headers.get("content-length", "") or ""
-        if cl_header.strip().isdigit():
-            cl = int(cl_header.strip())
-            if cl > max_bytes:
-                raise ValueError(
-                    f"--attach URL content-length {cl} exceeds max_bytes_absolute={max_bytes}: {self._url!r}"
-                )
+            # ── Manual redirect loop + streaming GET ──────────────────────
+            current_url = self._url
+            redirect_chain: list[str] = [current_url]
+            hop = 0
 
-        data = resp.content
-        # Actual body enforcement (server may lie)
+            while True:
+                with client.stream("GET", current_url, timeout=30) as resp:
+                    # Check content-length from actual GET response
+                    cl_header = resp.headers.get("content-length", "") or ""
+                    if cl_header.strip().isdigit():
+                        cl = int(cl_header.strip())
+                        if cl > max_bytes:
+                            raise ValueError(
+                                f"--attach URL content-length {cl} exceeds max_bytes_absolute={max_bytes}: {current_url!r}"
+                            )
+
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        location = resp.headers.get("location", "")
+                        if not location:
+                            raise ValueError(
+                                f"--attach URL redirect hop {hop + 1} missing Location header: {current_url!r}"
+                            )
+                        hop += 1
+                        if hop > self._MAX_REDIRECTS:
+                            raise ValueError(
+                                f"--attach URL exceeded {self._MAX_REDIRECTS} redirects. "
+                                f"Redirect chain: {redirect_chain}"
+                            )
+                        redirect_chain.append(location)
+                        self._validate_url_security(location, hop=hop, redirect_chain=redirect_chain)
+                        current_url = location
+                        continue
+
+                    resp.raise_for_status()
+
+                    # Stream body with per-chunk accumulation
+                    data = bytearray()
+                    for chunk in resp.iter_bytes():
+                        data.extend(chunk)
+                        if len(data) > max_bytes:
+                            raise ValueError(
+                                f"--attach URL response body exceeded max_bytes_absolute={max_bytes} "
+                                f"during streaming: {current_url!r}"
+                            )
+                    break
+
+        # Final body size check (defensive)
         if len(data) > max_bytes:
             raise ValueError(
                 f"--attach URL response body {len(data)} bytes exceeds max_bytes_absolute={max_bytes}: {self._url!r}"
             )
 
-        self._content_cache = data
-        return data
+        self._content_cache = bytes(data)
+        return self._content_cache
 
     # ------------------------------------------------------------------
     # AttachmentAdapter interface

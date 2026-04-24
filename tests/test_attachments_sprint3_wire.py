@@ -34,16 +34,25 @@ def _no_private_check(host: str) -> None:
 
 
 def _make_mock_client(content: bytes = b"ok") -> MagicMock:
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.content = content
-    mock_resp.headers = {"content-type": "text/plain"}
-    mock_resp.raise_for_status = MagicMock()
+    # HEAD response (no body)
+    mock_head_resp = MagicMock()
+    mock_head_resp.status_code = 200
+    mock_head_resp.headers = {}
+
+    # GET streaming response (used as context manager)
+    mock_stream_resp = MagicMock()
+    mock_stream_resp.status_code = 200
+    mock_stream_resp.headers = {"content-type": "text/plain"}
+    mock_stream_resp.raise_for_status = MagicMock()
+    mock_stream_resp.iter_bytes = MagicMock(return_value=iter([content]))
+    mock_stream_resp.__enter__ = lambda self: self
+    mock_stream_resp.__exit__ = MagicMock(return_value=False)
 
     mock_client = MagicMock()
     mock_client.__enter__ = lambda self: self
     mock_client.__exit__ = MagicMock(return_value=False)
-    mock_client.get = MagicMock(return_value=mock_resp)
+    mock_client.head = MagicMock(return_value=mock_head_resp)
+    mock_client.stream = MagicMock(return_value=mock_stream_resp)
 
     return MagicMock(return_value=mock_client)
 
@@ -157,26 +166,14 @@ def test_persist_session_creates_session_file(tmp_path: Path) -> None:
     mock_adapter.fingerprint.return_value = "abc123"
 
     session_id = "test-session-001"
-
-    with patch("vaig.core.attachment_cache.Path") as mock_path_cls:
-        # Let Path work normally but redirect session_dir construction
-        pass
-
-    # Call with real tmp_path patched into the session dir
-    with patch("vaig.cli.commands.live.Path") as mock_path_cls:
-        mock_path_cls.return_value = tmp_path / ".vaig/sessions"
-        # Allow Path to work for everything else
-        mock_path_cls.side_effect = lambda *args: (
-            Path(*args) if args != (".vaig/sessions",) else tmp_path / ".vaig/sessions"
-        )
-
-        _persist_session(session_id=session_id, adapters=[mock_adapter])
-
-    # The session file should exist
     session_dir = tmp_path / ".vaig" / "sessions"
-    if session_dir.exists():
-        session_files = list(session_dir.glob("*.json"))
-        assert len(session_files) == 1
+
+    _persist_session(session_id=session_id, adapters=[mock_adapter], session_dir=session_dir)
+
+    # The session file must exist — unconditional assertion
+    assert session_dir.exists(), f"session_dir {session_dir} was not created"
+    session_files = list(session_dir.glob("*.json"))
+    assert len(session_files) == 1
 
 
 def test_persist_session_does_not_raise_on_adapter_fingerprint_error(tmp_path: Path) -> None:

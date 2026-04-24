@@ -26,12 +26,12 @@ class AttachmentCache:
     Cache layout::
 
         {cache_dir}/
-            {fingerprint[:2]}/
+            {key[:2]}/
                 {key}.manifest.json
                 {key}.chunks.json
                 {key}.meta.json
 
-    where ``key = sha256(fingerprint + ":" + config_hash)[:64]``.
+    where ``key = sha256(fingerprint + ":" + config_hash).hexdigest()`` (full 64-char hex string).
 
     Files are written with mode 0600 (SA-7).  Any JSON corruption or missing
     file silently returns ``None`` (cache miss) — never a hard error.
@@ -120,8 +120,9 @@ class AttachmentCache:
         removed = False
         for path in self._paths(key):
             try:
-                path.unlink(missing_ok=True)
-                removed = True
+                if path.exists():
+                    path.unlink()
+                    removed = True
             except OSError:
                 pass
         return removed

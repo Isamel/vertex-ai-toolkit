@@ -156,3 +156,10 @@ def test_cache_files_have_mode_0600(tmp_path: Path) -> None:
     for path in (manifest_path, chunks_path, meta_path):
         mode = stat.S_IMODE(os.stat(path).st_mode)
         assert mode == 0o600, f"{path} has mode {oct(mode)}, expected 0o600"
+
+
+def test_invalidate_nonexistent_returns_false(tmp_path: Path) -> None:
+    """invalidate() on a fingerprint that was never cached should return False."""
+    cache = _cache(tmp_path)
+    result = cache.invalidate("never-existed")
+    assert result is False
