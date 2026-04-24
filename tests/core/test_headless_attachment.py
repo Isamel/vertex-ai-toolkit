@@ -190,7 +190,7 @@ class TestHeadlessPassesContextWhenAdaptersPresent:
 
         fake_adapter = MagicMock()
         fake_index = MagicMock()
-        fake_index._chunks = []  # no chunks needed for render test
+        fake_index.chunks = []  # no chunks needed for render test
 
         expected_context = "### fixture.md\n```\nATT10_FIXTURE_TOKEN_XYZ\n```\n"
 

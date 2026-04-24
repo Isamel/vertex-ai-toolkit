@@ -30,15 +30,27 @@ def _render_attachment_context(index: RepoIndex) -> str:
     """Render all chunks in *index* as a markdown string capped at 32 KB (UTF-8).
 
     Each chunk gets a ``### <file_path>`` header followed by a fenced block.
+    Triple-backticks within chunk content are escaped by picking a fence
+    longer than any run of backticks that appears inside the chunk, so the
+    markdown remains well-formed regardless of the content.
+
     When the accumulated output would exceed :data:`MAX_ATTACHMENT_CONTEXT_BYTES`,
     rendering stops and a truncation marker is appended.
     """
+    import re
+
     parts: list[str] = []
     cap = MAX_ATTACHMENT_CONTEXT_BYTES - len(_TRUNCATION_MARKER.encode("utf-8"))
     accumulated = 0
 
-    for chunk in index._chunks:
-        block = f"### {chunk.file_path}\n```\n{chunk.content}\n```\n"
+    for chunk in index.chunks:
+        # Choose a fence longer than any backtick run already in the content
+        longest_run = max(
+            (len(m.group(0)) for m in re.finditer(r"`+", chunk.content)),
+            default=0,
+        )
+        fence = "`" * max(3, longest_run + 1)
+        block = f"### {chunk.file_path}\n{fence}\n{chunk.content}\n{fence}\n"
         block_bytes = len(block.encode("utf-8"))
         if accumulated + block_bytes > cap:
             parts.append(_TRUNCATION_MARKER)
@@ -135,13 +147,13 @@ def execute_skill_headless(
     # Build attachment context from adapters (if any)
     attachment_context: str | None = None
     if attachment_adapters:
-        from vaig.core.config import AttachmentsConfig, RepoInvestigationConfig
+        from vaig.core.config import RepoInvestigationConfig
         from vaig.core.repo_index import RepoIndex
 
         try:
             index, _ = RepoIndex.build_from_attachments(
                 attachment_adapters,
-                AttachmentsConfig(),
+                settings.attachments,
                 RepoInvestigationConfig(),
             )
             attachment_context = _render_attachment_context(index)

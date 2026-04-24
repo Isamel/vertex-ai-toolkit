@@ -1,9 +1,10 @@
-"""T6.3 — CLI wire-through: verify that ``--attach*`` flags reach execute_skill_headless.
+"""T6.3 — CLI wire-through: verify that ``--attach`` flags reach execute_skill_headless.
 
 Tests:
-- test_live_without_attach_flags: no --attach* → attachment_adapters=None (or kwarg absent)
-- test_live_with_attach_local_path: --attach /tmp/foo.txt → non-empty list forwarded
-- test_live_with_multiple_attach: --attach a --attach-git b --attach-url c → all three adapters
+- test_live_without_attach_flags: no ``--attach`` → ``attachment_adapters=None`` (or kwarg absent)
+- test_live_with_attach_local_path: ``--attach /tmp/foo.txt`` → non-empty list forwarded
+- test_live_with_multiple_attach: multiple ``--attach`` values (local paths, git specs, URLs) →
+  one adapter per value, all forwarded
 """
 
 from __future__ import annotations
