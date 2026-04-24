@@ -550,6 +550,25 @@ class RetryConfig(BaseModel):
     """Upper bound (seconds) of the parallel-launch jitter. See
     :attr:`parallel_launch_jitter_min_s`."""
 
+    @model_validator(mode="after")
+    def _validate_parallel_cap_le_serial(self) -> RetryConfig:
+        if self.rate_limit_max_total_wait_s_parallel > self.rate_limit_max_total_wait_s:
+            raise ValueError(
+                "rate_limit_max_total_wait_s_parallel "
+                f"({self.rate_limit_max_total_wait_s_parallel}s) must be ≤ "
+                f"rate_limit_max_total_wait_s ({self.rate_limit_max_total_wait_s}s)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_jitter_bounds(self) -> RetryConfig:
+        if self.parallel_launch_jitter_min_s > self.parallel_launch_jitter_max_s:
+            raise ValueError(
+                f"parallel_launch_jitter_min_s ({self.parallel_launch_jitter_min_s}) "
+                f"must be ≤ parallel_launch_jitter_max_s ({self.parallel_launch_jitter_max_s})"
+            )
+        return self
+
 
 class ContextConfig(BaseModel):
     """Context and file handling configuration."""

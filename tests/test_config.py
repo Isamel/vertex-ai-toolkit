@@ -48,7 +48,7 @@ class TestGCPConfig:
     def test_defaults(self) -> None:
         cfg = GCPConfig()
         assert cfg.project_id == ""
-        assert cfg.location == "us-central1"
+        assert cfg.location == "global"
         assert cfg.available_projects == []
 
     def test_custom_values(self) -> None:
@@ -229,7 +229,7 @@ class TestContextConfig:
 class TestSettings:
     def test_default_construction(self) -> None:
         s = Settings()
-        assert s.gcp.location == "us-central1"
+        assert s.gcp.location == "global"
         assert s.models.default == "gemini-2.5-pro"
         assert s.auth.mode == AuthMode.ADC
         assert s.session.auto_save is True
@@ -245,11 +245,7 @@ class TestSettings:
         assert "~" not in str(path)  # Should be expanded
 
     def test_get_model_info_found(self) -> None:
-        s = Settings(
-            models=ModelsConfig(
-                available=[ModelInfo(id="gemini-2.5-pro", description="Pro model")]
-            )
-        )
+        s = Settings(models=ModelsConfig(available=[ModelInfo(id="gemini-2.5-pro", description="Pro model")]))
         info = s.get_model_info("gemini-2.5-pro")
         assert info is not None
         assert info.description == "Pro model"
@@ -261,9 +257,7 @@ class TestSettings:
 
     def test_load_from_yaml(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
-        config_file.write_text(
-            "gcp:\n  project_id: test-project\n  location: europe-west1\n"
-        )
+        config_file.write_text("gcp:\n  project_id: test-project\n  location: europe-west1\n")
         s = Settings.load(config_file)
         assert s.gcp.project_id == "test-project"
         assert s.gcp.location == "europe-west1"
@@ -285,9 +279,7 @@ class TestSettings:
 
     def test_logging_from_yaml(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
-        config_file.write_text(
-            "logging:\n  level: DEBUG\n  show_path: true\n"
-        )
+        config_file.write_text("logging:\n  level: DEBUG\n  show_path: true\n")
         s = Settings.load(config_file)
         assert s.logging.level == "DEBUG"
         assert s.logging.show_path is True
@@ -533,9 +525,7 @@ class TestDeepMerge:
 class TestSettingsLoadMerging:
     """Tests verifying that Settings.load() deep-merges all config files."""
 
-    def test_user_config_overrides_project_default(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_user_config_overrides_project_default(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """The core bug fix: user config (~/.vaig/config.yaml) must override the
         project's default config (config/default.yaml) rather than being ignored."""
         # Set up a project default config with file_enabled: false
@@ -543,18 +533,14 @@ class TestSettingsLoadMerging:
         project_dir.mkdir()
         config_dir = project_dir / "config"
         config_dir.mkdir()
-        (config_dir / "default.yaml").write_text(
-            "logging:\n  file_enabled: false\n  level: WARNING\n"
-        )
+        (config_dir / "default.yaml").write_text("logging:\n  file_enabled: false\n  level: WARNING\n")
 
         # Set up a user home config with file_enabled: true
         home_dir = tmp_path / "home"
         home_dir.mkdir()
         vaig_dir = home_dir / ".vaig"
         vaig_dir.mkdir()
-        (vaig_dir / "config.yaml").write_text(
-            "logging:\n  file_enabled: true\n"
-        )
+        (vaig_dir / "config.yaml").write_text("logging:\n  file_enabled: true\n")
 
         monkeypatch.chdir(project_dir)
         monkeypatch.setenv("HOME", str(home_dir))
@@ -567,9 +553,7 @@ class TestSettingsLoadMerging:
         # Other logging settings from the default should still be present
         assert s.logging.level == "WARNING"
 
-    def test_project_vaig_yaml_overrides_user_config(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_project_vaig_yaml_overrides_user_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """vaig.yaml in cwd should have higher priority than ~/.vaig/config.yaml."""
         project_dir = tmp_path / "project"
         project_dir.mkdir()
@@ -578,12 +562,8 @@ class TestSettingsLoadMerging:
         home_dir.mkdir()
         vaig_dir = home_dir / ".vaig"
         vaig_dir.mkdir()
-        (vaig_dir / "config.yaml").write_text(
-            "logging:\n  level: DEBUG\n"
-        )
-        (project_dir / "vaig.yaml").write_text(
-            "logging:\n  level: ERROR\n"
-        )
+        (vaig_dir / "config.yaml").write_text("logging:\n  level: DEBUG\n")
+        (project_dir / "vaig.yaml").write_text("logging:\n  level: ERROR\n")
 
         monkeypatch.chdir(project_dir)
         monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: home_dir))
@@ -591,9 +571,7 @@ class TestSettingsLoadMerging:
         s = Settings.load()
         assert s.logging.level == "ERROR"
 
-    def test_explicit_config_path_highest_priority(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_explicit_config_path_highest_priority(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """An explicit config_path should take priority over all other configs."""
         project_dir = tmp_path / "project"
         project_dir.mkdir()
@@ -602,9 +580,7 @@ class TestSettingsLoadMerging:
         home_dir.mkdir()
         vaig_dir = home_dir / ".vaig"
         vaig_dir.mkdir()
-        (vaig_dir / "config.yaml").write_text(
-            "logging:\n  level: INFO\n"
-        )
+        (vaig_dir / "config.yaml").write_text("logging:\n  level: INFO\n")
 
         explicit_config = tmp_path / "explicit.yaml"
         explicit_config.write_text("logging:\n  level: CRITICAL\n")
@@ -623,18 +599,14 @@ class TestSettingsLoadMerging:
         project_dir.mkdir()
         config_dir = project_dir / "config"
         config_dir.mkdir()
-        (config_dir / "default.yaml").write_text(
-            "logging:\n  level: WARNING\n  file_enabled: false\n"
-        )
+        (config_dir / "default.yaml").write_text("logging:\n  level: WARNING\n  file_enabled: false\n")
 
         home_dir = tmp_path / "home"
         home_dir.mkdir()
         vaig_dir = home_dir / ".vaig"
         vaig_dir.mkdir()
         # User only overrides file_enabled, leaves level untouched
-        (vaig_dir / "config.yaml").write_text(
-            "logging:\n  file_enabled: true\n"
-        )
+        (vaig_dir / "config.yaml").write_text("logging:\n  file_enabled: true\n")
 
         monkeypatch.chdir(project_dir)
         monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: home_dir))
@@ -930,12 +902,7 @@ class TestDatadogAPIConfigYaml:
 
     def test_cluster_name_override_absent_in_yaml_uses_default(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
-        config_file.write_text(
-            "datadog:\n"
-            "  enabled: true\n"
-            "  api_key: test-key\n"
-            "  app_key: test-app\n"
-        )
+        config_file.write_text("datadog:\n  enabled: true\n  api_key: test-key\n  app_key: test-app\n")
         s = Settings.load(config_file)
         assert s.datadog.cluster_name_override == ""
 
@@ -1012,12 +979,7 @@ class TestAuditConfig:
 
     def test_audit_from_yaml_file(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
-        config_file.write_text(
-            "audit:\n"
-            "  enabled: true\n"
-            "  bigquery_dataset: file_audit\n"
-            "  buffer_size: 100\n"
-        )
+        config_file.write_text("audit:\n  enabled: true\n  bigquery_dataset: file_audit\n  buffer_size: 100\n")
         s = Settings.load(config_file)
         assert s.audit.enabled is True
         assert s.audit.bigquery_dataset == "file_audit"
@@ -1110,10 +1072,7 @@ class TestRateLimitConfig:
     def test_rate_limit_from_yaml_file(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
         config_file.write_text(
-            "rate_limit:\n"
-            "  enabled: true\n"
-            "  policy_gcs_bucket: my-bucket\n"
-            "  cache_ttl_seconds: 120\n"
+            "rate_limit:\n  enabled: true\n  policy_gcs_bucket: my-bucket\n  cache_ttl_seconds: 120\n"
         )
         s = Settings.load(config_file)
         assert s.rate_limit.enabled is True
@@ -1156,9 +1115,7 @@ class TestOrgIdBridging:
     def test_platform_enabled_bridges_org_id(self) -> None:
         """When platform is enabled with org_id, it bridges to export."""
         s = Settings(
-            platform=PlatformConfig(
-                enabled=True, backend_url="https://api.example.com", org_id="acme"
-            ),
+            platform=PlatformConfig(enabled=True, backend_url="https://api.example.com", org_id="acme"),
         )
         assert s.export.org_id == "acme"
 
@@ -1172,9 +1129,7 @@ class TestOrgIdBridging:
     def test_explicit_export_org_id_not_overwritten(self) -> None:
         """Explicit export.org_id takes precedence over platform bridging."""
         s = Settings(
-            platform=PlatformConfig(
-                enabled=True, backend_url="https://api.example.com", org_id="acme"
-            ),
+            platform=PlatformConfig(enabled=True, backend_url="https://api.example.com", org_id="acme"),
             export=ExportConfig(org_id="beta"),
         )
         assert s.export.org_id == "beta"

@@ -694,11 +694,18 @@ class GeminiClient:
         elapsed: float,
         budget: float,
     ) -> bool:
-        """Return ``True`` if the next 429 sleep fits in the wall-clock budget.
+        """Return ``True`` if the next 429 sleep fits in the cumulative sleep budget.
 
-        Logs a warning and returns ``False`` when the cumulative 429 wait
-        plus the next sleep would exceed ``budget``. Callers should break
-        out of the retry loop on ``False``.
+        Enforces a cumulative 429 wall-clock budget across a single retry
+        loop: ``elapsed`` is the sum of all prior 429 backoff sleeps in
+        this call, and ``sleep_time`` is the next planned 429 sleep.
+
+        Logs a warning and returns ``False`` when the cumulative 429
+        wall-clock budget would be exceeded by the next sleep (i.e.
+        ``elapsed + sleep_time > budget``). Callers should break out of
+        the retry loop on ``False`` and set their local
+        ``budget_exceeded`` flag so the exhaustion handler can distinguish
+        a budget abort from plain retry exhaustion.
 
         See SPEC-RATE-01 (invariant RL-2) in
         ``docs/specs/rate-limit-resilience-v1.md``.
@@ -768,6 +775,7 @@ class GeminiClient:
         # cap (tighter when inside a parallel fan-out, see IN_PARALLEL_FANOUT).
         rate_limit_elapsed = 0.0
         rate_limit_budget = _rate_limit_budget_s(retry_cfg)
+        budget_exceeded = False
 
         for attempt in range(retry_cfg.max_retries + 1):
             # Check wall-clock timeout before each attempt (except the first).
@@ -806,6 +814,7 @@ class GeminiClient:
                         rate_limit_elapsed,
                         rate_limit_budget,
                     ):
+                        budget_exceeded = True
                         break
                     logger.warning(
                         "Retryable error on attempt %d/%d (%s: %s) — retrying in %.2fs",
@@ -854,6 +863,7 @@ class GeminiClient:
                                 rate_limit_elapsed,
                                 rate_limit_budget,
                             ):
+                                budget_exceeded = True
                                 break
                             logger.warning(
                                 "Rate-limited (genai 429) on attempt %d/%d — retrying in %.2fs",
@@ -904,7 +914,13 @@ class GeminiClient:
         # All retries exhausted — raise the appropriate custom exception.
         assert last_exception is not None  # noqa: S101
         retries = retry_cfg.max_retries
-        msg = f"All {retries} retries exhausted. Last error: {last_exception}"
+        if budget_exceeded:
+            msg = (
+                f"Rate-limit budget exceeded ({rate_limit_elapsed:.1f}s of "
+                f"cumulative 429 backoff). Last error: {last_exception}"
+            )
+        else:
+            msg = f"All {retries} retries exhausted. Last error: {last_exception}"
 
         if isinstance(last_exception, google_exceptions.ResourceExhausted):
             raise GeminiRateLimitError(
@@ -952,6 +968,7 @@ class GeminiClient:
         # cap (tighter when inside a parallel fan-out, see IN_PARALLEL_FANOUT).
         rate_limit_elapsed = 0.0
         rate_limit_budget = _rate_limit_budget_s(retry_cfg)
+        budget_exceeded = False
 
         for attempt in range(retry_cfg.max_retries + 1):
             if start_time is not None and attempt > 0:
@@ -989,6 +1006,7 @@ class GeminiClient:
                         rate_limit_elapsed,
                         rate_limit_budget,
                     ):
+                        budget_exceeded = True
                         break
                     logger.warning(
                         "Retryable error on attempt %d/%d (%s: %s) — retrying in %.2fs",
@@ -1037,6 +1055,7 @@ class GeminiClient:
                                 rate_limit_elapsed,
                                 rate_limit_budget,
                             ):
+                                budget_exceeded = True
                                 break
                             logger.warning(
                                 "Rate-limited (genai 429) on attempt %d/%d — retrying in %.2fs",
@@ -1086,7 +1105,13 @@ class GeminiClient:
 
         assert last_exception is not None  # noqa: S101
         retries = retry_cfg.max_retries
-        msg = f"All {retries} retries exhausted. Last error: {last_exception}"
+        if budget_exceeded:
+            msg = (
+                f"Rate-limit budget exceeded ({rate_limit_elapsed:.1f}s of "
+                f"cumulative 429 backoff). Last error: {last_exception}"
+            )
+        else:
+            msg = f"All {retries} retries exhausted. Last error: {last_exception}"
 
         if isinstance(last_exception, google_exceptions.ResourceExhausted):
             raise GeminiRateLimitError(

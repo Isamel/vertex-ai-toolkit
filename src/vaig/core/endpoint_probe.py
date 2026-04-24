@@ -54,8 +54,10 @@ def _credentials_fingerprint(credentials: Credentials | None) -> str:
     The cache key must change when the user switches credentials (different
     service account, impersonation, etc.) so a stale ``True`` result does
     not leak from one identity to another.  We hash whatever identifying
-    attribute the credentials object exposes; fall back to an empty string
-    when none of the expected attributes is present.
+    attribute the credentials object exposes; when none of the expected
+    attributes is present we fall back to hashing the credentials class
+    name so the fingerprint is still deterministic. Returns an empty
+    string only when *credentials* is ``None``.
     """
     if credentials is None:
         return ""
@@ -132,6 +134,8 @@ def _probe_global_endpoint(
     try:
         from google import genai
         from google.genai import types as _types
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception:  # noqa: BLE001
         logger.debug("google-genai SDK not importable — skipping global probe")
         return False
@@ -151,6 +155,8 @@ def _probe_global_endpoint(
         # do not download the full catalog.
         it = probe_client.models.list(config={"page_size": 1})
         next(iter(it), None)
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.info(
             "Global Vertex AI endpoint unavailable (%s: %s) — will use regional fallback",
@@ -177,7 +183,16 @@ def resolve_endpoint_location(
     ``~/.vaig/cache/endpoint-probe.json`` (SPEC-GEP-02).
 
     Returns:
-        Either ``"global"`` or ``gcp_cfg.fallback_location``.
+        One of:
+          * ``"global"`` — the Vertex AI global endpoint is reachable and
+            was selected (either explicitly via ``endpoint_mode='global'``
+            or auto-probed in ``'auto'`` mode).
+          * ``gcp_cfg.location`` — a user-pinned region (honoured in
+            ``'regional'`` mode or in ``'auto'`` mode when it's set to a
+            non-``"global"`` value).
+          * ``gcp_cfg.fallback_location`` (or ``"us-central1"`` when that
+            is unset) — the regional fallback used when no specific region
+            is pinned or the global probe fails.
 
     Raises:
         RuntimeError: when ``endpoint_mode="global"`` but the probe fails.
@@ -188,9 +203,12 @@ def resolve_endpoint_location(
 
     # Explicit modes bypass the probe entirely.
     if mode == "regional":
-        # User chose a region explicitly (or left the default of
-        # fallback_location). Skip any probe and any global access.
-        chosen = gcp_cfg.fallback_location or "us-central1"
+        # Prefer the user-specified location; only fall back when it's empty
+        # or the sentinel "global" (which is invalid for regional mode).
+        if gcp_cfg.location and gcp_cfg.location != "global":
+            chosen = gcp_cfg.location
+        else:
+            chosen = gcp_cfg.fallback_location or "us-central1"
         logger.debug("endpoint_mode='regional' — using %s", chosen)
         return chosen
 
