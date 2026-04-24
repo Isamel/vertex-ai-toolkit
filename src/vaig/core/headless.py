@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from vaig.agents.mixins import OnToolCall
     from vaig.agents.orchestrator import OnAgentProgress, OrchestratorResult
     from vaig.core.attachment_adapter import AttachmentAdapter
-    from vaig.core.config import GKEConfig, Settings
+    from vaig.core.config import GKEConfig, RepoInvestigationConfig, Settings
     from vaig.core.repo_index import RepoIndex
     from vaig.core.tool_call_store import ToolCallStore
     from vaig.core.tool_registry import ToolRegistry
@@ -22,26 +22,64 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_ATTACHMENT_CONTEXT_BYTES: Final[int] = 32_768
-_TRUNCATION_MARKER = "\n\n[... truncated at 32 KB ...]\n"
+MAX_ATTACHMENT_CONTEXT_BYTES: Final[int] = 131_072  # 128 KB (was 32 KB)
+_TRUNCATION_MARKER = (
+    "\n\n[!!! ATTACHMENT CONTEXT TRUNCATED !!!]\n"
+    "The attachment context above was cut off because it exceeded the "
+    "per-run byte budget. Additional file chunks exist in the source "
+    "attachments but were NOT included in this prompt.\n"
+    "INSTRUCTION: When emitting your structured HealthReport, you MUST "
+    "include an EvidenceGap entry with:\n"
+    '  source="attachment_context"\n'
+    '  reason="attachment context truncated at run-level byte budget; '
+    "investigation ran on a subset of available evidence\"\n"
+    "  details=\"see logs for byte counts and chunk counts\"\n"
+    "Do not silently omit this gap — it must appear in evidence_gaps so "
+    "operators know the analysis was based on partial input.\n"
+)
 
 
-def _render_attachment_context(index: RepoIndex) -> str:
-    """Render all chunks in *index* as a markdown string capped at 32 KB (UTF-8).
+def _stringify_gap(gap: object) -> str:
+    """Stringify a ``repo_pipeline.EvidenceGap`` into a single human-readable line.
+
+    Avoids importing ``repo_pipeline`` at module level to prevent circular imports.
+    ``gap`` is typed as ``object`` (not ``Any``) since we only read attributes.
+    """
+    return (
+        f"[{gap.level}] {gap.kind}: {gap.path or '<no-path>'} — {gap.details}"  # type: ignore[attr-defined]
+    )
+
+
+def _render_attachment_context(
+    index: RepoIndex,
+    budget_bytes: int | None = None,
+) -> tuple[str, bool]:
+    """Render all chunks in *index* as a markdown string capped at *budget_bytes* (UTF-8).
 
     Each chunk gets a ``### <file_path>`` header followed by a fenced block.
     Triple-backticks within chunk content are escaped by picking a fence
     longer than any run of backticks that appears inside the chunk, so the
     markdown remains well-formed regardless of the content.
 
-    When the accumulated output would exceed :data:`MAX_ATTACHMENT_CONTEXT_BYTES`,
-    rendering stops and a truncation marker is appended.
+    When the accumulated output would exceed the budget,
+    rendering stops and :data:`_TRUNCATION_MARKER` is appended.
+
+    Args:
+        index: The ``RepoIndex`` whose chunks to render.
+        budget_bytes: Maximum byte budget for the rendered output.  When
+            ``None``, defaults to :data:`MAX_ATTACHMENT_CONTEXT_BYTES`.
+
+    Returns:
+        A ``(rendered_text, truncated)`` tuple.  ``truncated`` is ``True`` if
+        and only if at least one chunk was dropped because the budget was hit.
     """
     import re
 
+    budget = budget_bytes if budget_bytes is not None else MAX_ATTACHMENT_CONTEXT_BYTES
     parts: list[str] = []
-    cap = MAX_ATTACHMENT_CONTEXT_BYTES - len(_TRUNCATION_MARKER.encode("utf-8"))
+    cap = budget - len(_TRUNCATION_MARKER.encode("utf-8"))
     accumulated = 0
+    truncated = False
 
     for chunk in index.chunks:
         # Choose a fence longer than any backtick run already in the content
@@ -54,11 +92,12 @@ def _render_attachment_context(index: RepoIndex) -> str:
         block_bytes = len(block.encode("utf-8"))
         if accumulated + block_bytes > cap:
             parts.append(_TRUNCATION_MARKER)
+            truncated = True
             break
         parts.append(block)
         accumulated += block_bytes
 
-    return "".join(parts)
+    return "".join(parts), truncated
 
 
 def execute_skill_headless(
@@ -72,6 +111,7 @@ def execute_skill_headless(
     on_tool_call: OnToolCall | None = None,
     on_agent_progress: OnAgentProgress | None = None,
     attachment_adapters: list[AttachmentAdapter] | None = None,
+    repo_config: RepoInvestigationConfig | None = None,
 ) -> OrchestratorResult:
     """Run a skill pipeline programmatically.  No Rich console, no prompts.
 
@@ -146,17 +186,39 @@ def execute_skill_headless(
 
     # Build attachment context from adapters (if any)
     attachment_context: str | None = None
+    attachment_truncated = False
+    attachment_gap_strings: list[str] = []
+
     if attachment_adapters:
         from vaig.core.config import RepoInvestigationConfig
         from vaig.core.repo_index import RepoIndex
 
+        cfg = repo_config if repo_config is not None else RepoInvestigationConfig()
+        budget = cfg.attachment_context_budget_bytes
+
         try:
-            index, _ = RepoIndex.build_from_attachments(
+            index, gaps = RepoIndex.build_from_attachments(
                 attachment_adapters,
                 settings.attachments,
-                RepoInvestigationConfig(),
+                cfg,
             )
-            attachment_context = _render_attachment_context(index)
+            attachment_gap_strings = [_stringify_gap(g) for g in gaps]
+            attachment_context, attachment_truncated = _render_attachment_context(index, budget)
+
+            if attachment_truncated:
+                effective_budget = budget if budget is not None else MAX_ATTACHMENT_CONTEXT_BYTES
+                bytes_rendered = len(attachment_context.encode("utf-8"))
+                chunks_rendered = attachment_context.count("\n### ") + (
+                    1 if attachment_context.startswith("### ") else 0
+                )
+                total_chunks = len(index.chunks)
+                logger.warning(
+                    "attachment context truncated: %d/%d bytes used, %d/%d chunks rendered",
+                    bytes_rendered,
+                    effective_budget,
+                    chunks_rendered,
+                    total_chunks,
+                )
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as exc:
@@ -177,6 +239,9 @@ def execute_skill_headless(
         gke_cluster_name=gke_config.cluster_name,
         attachment_context=attachment_context,
     )
+
+    result.attachment_truncated = attachment_truncated
+    result.attachment_gaps = attachment_gap_strings
 
     logger.info(
         "Headless execution complete: skill=%s, success=%s, cost=$%.4f",

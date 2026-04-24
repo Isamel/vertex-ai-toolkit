@@ -202,6 +202,17 @@ class OrchestratorResult:
     Equals the skill's initial state when no agents emit patches.
     ``None`` only when the skill does not define an initial state.
     """
+    attachment_truncated: bool = False
+    """``True`` when ``_render_attachment_context`` had to drop chunks because the
+    attachment context exceeded the per-run byte budget.  ``False`` when no
+    attachments were provided or all chunks fit.  Set only by ``execute_skill_headless``.
+    """
+    attachment_gaps: list[str] = field(default_factory=list)
+    """Human-readable summaries of ``repo_pipeline.EvidenceGap`` entries returned
+    by ``RepoIndex.build_from_attachments``.  Empty when no attachments or no gaps.
+    Stored as strings (not ``EvidenceGap`` objects) to keep this layer decoupled
+    from the repo pipeline schema.
+    """
 
     def to_skill_result(self) -> SkillResult:
         """Convert to a SkillResult for the skill system."""

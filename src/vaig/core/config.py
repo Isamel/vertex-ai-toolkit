@@ -1502,12 +1502,26 @@ class RepoInvestigationConfig(BaseModel):
     """Post-retrieval token budget per path (does NOT limit ingestion)."""
     redaction_enabled: bool = True
     """When True, apply secret/PII redaction before sending content to the LLM."""
+    attachment_context_budget_bytes: int | None = None
+    """Byte budget for the rendered attachment context block in headless runs.
+
+    When ``None`` (default), :data:`vaig.core.headless.MAX_ATTACHMENT_CONTEXT_BYTES`
+    (128 KB) is used. Set to a positive integer to override per environment.
+    Larger values increase per-agent input token cost; smaller values increase
+    truncation frequency. Reported via ``OrchestratorResult.attachment_truncated``
+    and a structured warning log when the budget is hit.
+    """
 
     @model_validator(mode="after")
     def _sanity(self) -> Self:
         """Warn when a repo is given without any path localisation."""
         if self.repo and not (self.paths or self.include_globs):
             logger.warning("Repo specified without paths or globs — will full-scan with cap")
+        if self.attachment_context_budget_bytes is not None and self.attachment_context_budget_bytes <= 0:
+            raise ValueError(
+                f"attachment_context_budget_bytes must be > 0 when set, "
+                f"got {self.attachment_context_budget_bytes}"
+            )
         return self
 
 
