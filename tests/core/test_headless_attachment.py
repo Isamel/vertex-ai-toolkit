@@ -28,6 +28,8 @@ class _FakeResult:
     run_cost_usd: float = 0.001
     structured_report: Any = None
     agent_results: list[Any] = field(default_factory=list)
+    attachment_truncated: bool = False
+    attachment_gaps: list[Any] = field(default_factory=list)
 
 
 class _FakeSkill:
@@ -196,7 +198,7 @@ class TestHeadlessPassesContextWhenAdaptersPresent:
 
         with patch(_P_REPO_INDEX) as mock_ri:
             mock_ri.build_from_attachments.return_value = (fake_index, [])
-            with patch(_P_RENDER, return_value=expected_context):
+            with patch(_P_RENDER, return_value=(expected_context, False)):
                 execute_skill_headless(
                     settings=_make_settings(),
                     skill=_FakeSkill(),
@@ -214,11 +216,11 @@ class TestHeadlessPassesContextWhenAdaptersPresent:
 
 
 class TestHeadlessCapEnforced:
-    """T5.4 test_headless_cap_enforced: rendered output > 32 KB is truncated."""
+    """T5.4 test_headless_cap_enforced: rendered output > 128 KB is truncated."""
 
-    def test_render_truncates_at_32kb(self):
+    def test_render_truncates_at_128kb(self):
         """_render_attachment_context truncates at MAX_ATTACHMENT_CONTEXT_BYTES."""
-        from vaig.core.headless import MAX_ATTACHMENT_CONTEXT_BYTES, _render_attachment_context
+        from vaig.core.headless import _TRUNCATION_MARKER, MAX_ATTACHMENT_CONTEXT_BYTES, _render_attachment_context
         from vaig.core.repo_chunkers import Chunk
 
         # Build a RepoIndex with a single large chunk
@@ -236,14 +238,15 @@ class TestHeadlessCapEnforced:
         from vaig.core.repo_index import RepoIndex
 
         index = RepoIndex([chunk])
-        result = _render_attachment_context(index)
+        result, truncated = _render_attachment_context(index)
 
+        assert truncated is True
         assert len(result.encode("utf-8")) <= MAX_ATTACHMENT_CONTEXT_BYTES
-        assert "[... truncated at 32 KB ...]" in result
+        assert _TRUNCATION_MARKER in result
 
     def test_render_no_truncation_small_content(self):
         """Small index renders without truncation marker."""
-        from vaig.core.headless import MAX_ATTACHMENT_CONTEXT_BYTES, _render_attachment_context
+        from vaig.core.headless import _TRUNCATION_MARKER, MAX_ATTACHMENT_CONTEXT_BYTES, _render_attachment_context
         from vaig.core.repo_chunkers import Chunk
         from vaig.core.repo_index import RepoIndex
 
@@ -257,10 +260,11 @@ class TestHeadlessCapEnforced:
             outline="small.txt",
         )
         index = RepoIndex([chunk])
-        result = _render_attachment_context(index)
+        result, truncated = _render_attachment_context(index)
 
+        assert truncated is False
         assert len(result.encode("utf-8")) <= MAX_ATTACHMENT_CONTEXT_BYTES
-        assert "[... truncated at 32 KB ...]" not in result
+        assert _TRUNCATION_MARKER not in result
         assert "hello world" in result
 
 
