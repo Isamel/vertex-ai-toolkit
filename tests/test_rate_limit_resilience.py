@@ -86,27 +86,69 @@ class TestCheckRateLimitBudget:
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        caplog.set_level(logging.WARNING, logger="vaig.core.client")
-        result = GeminiClient._check_rate_limit_budget(
-            sleep_time=30.0,
-            elapsed=45.0,
-            budget=60.0,
-        )
-        assert result is False
-        assert any("wall-clock budget exhausted" in rec.message for rec in caplog.records)
+        # Force propagation on the ``vaig`` parent logger: prior tests
+        # in the suite may invoke ``setup_logging()``, which sets
+        # ``vaig.propagate = False`` to prevent leaking to the root
+        # logger. That breaks pytest's caplog (which lives on root) for
+        # any descendant of ``vaig``. We restore the original state in a
+        # finally block so later tests are not affected.
+        vaig_logger = logging.getLogger("vaig")
+        original_propagate = vaig_logger.propagate
+        vaig_logger.propagate = True
+        try:
+            caplog.set_level(logging.WARNING, logger="vaig.core.client")
+            result = GeminiClient._check_rate_limit_budget(
+                sleep_time=30.0,
+                elapsed=45.0,
+                budget=60.0,
+            )
+            assert result is False
+            assert any(
+                "wall-clock budget exhausted" in rec.message
+                for rec in caplog.records
+            )
+        finally:
+            vaig_logger.propagate = original_propagate
 
     def test_no_log_when_within_budget(
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        caplog.set_level(logging.WARNING, logger="vaig.core.client")
-        GeminiClient._check_rate_limit_budget(
-            sleep_time=5.0,
-            elapsed=5.0,
-            budget=60.0,
-        )
-        # Nothing should have been logged at WARNING.
-        assert not any("wall-clock budget" in rec.message for rec in caplog.records)
+        vaig_logger = logging.getLogger("vaig")
+        original_propagate = vaig_logger.propagate
+        vaig_logger.propagate = True
+        try:
+            caplog.set_level(logging.WARNING, logger="vaig.core.client")
+            GeminiClient._check_rate_limit_budget(
+                sleep_time=5.0,
+                elapsed=5.0,
+                budget=60.0,
+            )
+            # Nothing should have been logged at WARNING.
+            assert not any(
+                "wall-clock budget" in rec.message for rec in caplog.records
+            )
+        finally:
+            vaig_logger.propagate = original_propagate
+
+    def test_no_log_when_within_budget(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        client_logger = logging.getLogger("vaig.core.client")
+        original_propagate = client_logger.propagate
+        client_logger.propagate = True
+        try:
+            caplog.set_level(logging.WARNING, logger="vaig.core.client")
+            GeminiClient._check_rate_limit_budget(
+                sleep_time=5.0,
+                elapsed=5.0,
+                budget=60.0,
+            )
+            # Nothing should have been logged at WARNING.
+            assert not any("wall-clock budget" in rec.message for rec in caplog.records)
+        finally:
+            client_logger.propagate = original_propagate
 
 
 class TestRetryConfigNewFields:
