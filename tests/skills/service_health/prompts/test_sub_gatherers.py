@@ -1,4 +1,5 @@
 """Tests for Envoy admin API instructions in sub-gatherer prompts."""
+
 from __future__ import annotations
 
 from vaig.skills.service_health.prompts._sub_gatherers import build_workload_gatherer_prompt

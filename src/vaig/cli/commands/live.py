@@ -1033,6 +1033,7 @@ def register(app: typer.Typer) -> None:
                         repo=repo,
                         repo_ref=repo_ref,
                         interactive=interactive,
+                        attachment_adapters=_attachment_adapters,
                     )
                 _execute_live_mode(
                     client,
@@ -2087,6 +2088,7 @@ def _execute_orchestrated_skill(
     repo: str | None = None,
     repo_ref: str = "HEAD",
     interactive: bool = False,
+    attachment_adapters: list[AttachmentAdapter] | None = None,
 ) -> HealthReport | None:
     """Execute a skill through the Orchestrator's tool-aware pipeline.
 
@@ -2153,6 +2155,7 @@ def _execute_orchestrated_skill(
                 tool_call_store=tool_call_store,
                 on_tool_call=tool_logger,
                 on_agent_progress=progress_display,
+                attachment_adapters=attachment_adapters,
             )
         finally:
             progress_display.stop()

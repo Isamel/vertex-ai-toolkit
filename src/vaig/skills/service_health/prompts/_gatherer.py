@@ -9,6 +9,7 @@ from vaig.skills.service_health.prompts._shared import (
     _build_datadog_api_step,
     _build_mandatory_tools_section,
     _build_tool_reference_table,
+    _prefix_attachment_context,
 )
 
 _GATHERER_PROMPT_TEMPLATE = """You are a Kubernetes data collection specialist. Your job is to systematically gather health data from a Kubernetes cluster using the available tools.
@@ -352,6 +353,7 @@ def build_gatherer_prompt(
     datadog_api_enabled: bool = False,
     user_query: str = "",
     namespace: str = "",
+    attachment_context: str | None = None,
 ) -> str:
     """Build the gatherer prompt with only the enabled tool sections.
 
@@ -374,12 +376,13 @@ def build_gatherer_prompt(
     )
     datadog_step = _build_datadog_api_step(datadog_api_enabled)
     mandatory_tools_section = _build_mandatory_tools_section(query=user_query, namespace=namespace)
-    return _GATHERER_PROMPT_TEMPLATE.format(
+    result = _GATHERER_PROMPT_TEMPLATE.format(
         tool_reference_table=table,
         datadog_api_step=datadog_step,
         priority_hierarchy=_PRIORITY_HIERARCHY,
         mandatory_tools_section=mandatory_tools_section,
     )
+    return _prefix_attachment_context(result, attachment_context)
 
 
 # Backward-compatible constant — Helm + ArgoCD enabled, Datadog API disabled.
@@ -387,6 +390,4 @@ def build_gatherer_prompt(
 # The live sequential pipeline (get_sequential_agents_config) calls
 # build_gatherer_prompt() directly with the runtime datadog_api_enabled flag —
 # do NOT use this constant in any execution path that may have Datadog enabled.
-HEALTH_GATHERER_PROMPT: str = build_gatherer_prompt(
-    helm_enabled=True, argocd_enabled=True, datadog_api_enabled=False
-)
+HEALTH_GATHERER_PROMPT: str = build_gatherer_prompt(helm_enabled=True, argocd_enabled=True, datadog_api_enabled=False)

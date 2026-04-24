@@ -141,6 +141,7 @@ def _fire_agent_progress(
 # ── Gatherer output validation constants ────────────────────────────────
 DEFAULT_MIN_CONTENT_CHARS = 200
 
+
 async def _post_process_report_async(skill: BaseSkill, content: str) -> str:
     """Run blocking post_process_report in a separate thread to avoid blocking the event loop."""
     return await asyncio.to_thread(skill.post_process_report, content)
@@ -419,12 +420,9 @@ class Orchestrator:
                     if not all(isinstance(c, str) for c in raw_categories):
                         bad = [c for c in raw_categories if not isinstance(c, str)]
                         raise VAIGError(
-                            f"Agent '{agent_name_for_err}' has non-string elements in "
-                            f"tool_categories: {bad!r}"
+                            f"Agent '{agent_name_for_err}' has non-string elements in tool_categories: {bad!r}"
                         )
-                    effective_registry = tool_registry.filter_by_categories(
-                        frozenset(raw_categories)
-                    )
+                    effective_registry = tool_registry.filter_by_categories(frozenset(raw_categories))
                     logger.debug(
                         "Filtered tool registry for %s: %d/%d tools (categories=%s)",
                         config_dict.get("name", "unknown"),
@@ -517,6 +515,7 @@ class Orchestrator:
             max_depth: Maximum recursion depth allowed.  Forwarded to
                 :func:`agent_as_tool` so the guard is enforced consistently.
         """
+
         # Build a state_getter that always reads the orchestrator's current
         # pipeline state.  This closure is captured by each ToolDef's execute
         # function, ensuring late/dynamic binding rather than the creation-time
@@ -582,6 +581,7 @@ class Orchestrator:
                                 max_output_tokens=t.config.max_output_tokens,
                                 frequency_penalty=t.config.frequency_penalty,
                             )
+
                         return _factory
 
                     tool_def = agent_as_tool(
@@ -920,6 +920,7 @@ class Orchestrator:
         gke_namespace: str = "",
         gke_location: str = "",
         gke_cluster_name: str = "",
+        attachment_context: str | None = None,
     ) -> OrchestratorResult:
         """Execute a skill with tool-aware agents.
 
@@ -972,6 +973,7 @@ class Orchestrator:
                 gke_namespace=gke_namespace,
                 gke_location=gke_location,
                 gke_cluster_name=gke_cluster_name,
+                attachment_context=attachment_context,
             )
         except (VaigAuthError, VAIGError):
             raise  # Let known errors propagate with their actionable messages
@@ -1011,6 +1013,7 @@ class Orchestrator:
         gke_namespace: str = "",
         gke_location: str = "",
         gke_cluster_name: str = "",
+        attachment_context: str | None = None,
     ) -> OrchestratorResult:
         """Inner implementation of execute_with_tools (no error boundary)."""
         logger.info(
@@ -1036,6 +1039,7 @@ class Orchestrator:
             namespace=gke_namespace,
             location=gke_location,
             cluster_name=gke_cluster_name,
+            attachment_context=attachment_context,
         )
         if lang != "en":
             inject_language_into_config(agent_configs, lang)
@@ -1104,9 +1108,7 @@ class Orchestrator:
             """Populate result.models_used from executed agent results only."""
             result.models_used = list(
                 dict.fromkeys(
-                    _agent_model_map[r.agent_name]
-                    for r in result.agent_results
-                    if r.agent_name in _agent_model_map
+                    _agent_model_map[r.agent_name] for r in result.agent_results if r.agent_name in _agent_model_map
                 )
             )
 
@@ -1677,20 +1679,12 @@ class Orchestrator:
                         )
                         # Re-run post-processing on retry result so callers
                         # always receive the processed (e.g. Markdown) form.
-                        if hasattr(skill, "post_process_report") and callable(
-                            skill.post_process_report
-                        ):
-                            reporter_retry.content = skill.post_process_report(
-                                reporter_retry.content
-                            )
+                        if hasattr(skill, "post_process_report") and callable(skill.post_process_report):
+                            reporter_retry.content = skill.post_process_report(reporter_retry.content)
                             result.agent_results[-1] = reporter_retry
-                        if schema_cls is not None and hasattr(
-                            schema_cls, "model_validate_json"
-                        ):
+                        if schema_cls is not None and hasattr(schema_cls, "model_validate_json"):
                             try:
-                                result.structured_report = (
-                                    schema_cls.model_validate_json(reporter_retry.content)
-                                )
+                                result.structured_report = schema_cls.model_validate_json(reporter_retry.content)
                             except Exception:  # noqa: BLE001
                                 logger.warning(
                                     "Failed to parse structured report from reporter retry",
@@ -2033,6 +2027,7 @@ class Orchestrator:
         gke_namespace: str = "",
         gke_location: str = "",
         gke_cluster_name: str = "",
+        attachment_context: str | None = None,
     ) -> OrchestratorResult:
         """Async version of :meth:`execute_with_tools`.
 
@@ -2078,6 +2073,7 @@ class Orchestrator:
                 gke_namespace=gke_namespace,
                 gke_location=gke_location,
                 gke_cluster_name=gke_cluster_name,
+                attachment_context=attachment_context,
             )
         except (VaigAuthError, VAIGError):
             raise  # Let known errors propagate with their actionable messages
@@ -2099,6 +2095,7 @@ class Orchestrator:
         gke_namespace: str = "",
         gke_location: str = "",
         gke_cluster_name: str = "",
+        attachment_context: str | None = None,
     ) -> OrchestratorResult:
         """Inner implementation of async_execute_with_tools (no error boundary)."""
         logger.info(
@@ -2124,6 +2121,7 @@ class Orchestrator:
             namespace=gke_namespace,
             location=gke_location,
             cluster_name=gke_cluster_name,
+            attachment_context=attachment_context,
         )
         if lang != "en":
             inject_language_into_config(agent_configs, lang)
@@ -2189,9 +2187,7 @@ class Orchestrator:
             """Populate result.models_used from executed agent results only."""
             result.models_used = list(
                 dict.fromkeys(
-                    _agent_model_map[r.agent_name]
-                    for r in result.agent_results
-                    if r.agent_name in _agent_model_map
+                    _agent_model_map[r.agent_name] for r in result.agent_results if r.agent_name in _agent_model_map
                 )
             )
 
@@ -2640,7 +2636,8 @@ class Orchestrator:
                     # Offloaded to a thread to avoid blocking the event loop
                     # during recommendation enrichment (up to 120 s of LLM calls).
                     agent_result.content = await _post_process_report_async(
-                        skill, agent_result.content,
+                        skill,
+                        agent_result.content,
                     )
 
                     finish_reason = agent_result.metadata.get("finish_reason", "")
@@ -2726,16 +2723,13 @@ class Orchestrator:
                         # Re-run post-processing on retry result so callers
                         # always receive the processed (e.g. Markdown) form.
                         reporter_retry.content = await _post_process_report_async(
-                            skill, reporter_retry.content,
+                            skill,
+                            reporter_retry.content,
                         )
                         result.agent_results[-1] = reporter_retry
-                        if schema_cls is not None and hasattr(
-                            schema_cls, "model_validate_json"
-                        ):
+                        if schema_cls is not None and hasattr(schema_cls, "model_validate_json"):
                             try:
-                                result.structured_report = (
-                                    schema_cls.model_validate_json(reporter_retry.content)
-                                )
+                                result.structured_report = schema_cls.model_validate_json(reporter_retry.content)
                             except Exception:  # noqa: BLE001
                                 logger.warning(
                                     "Failed to parse structured report from reporter retry",
@@ -3480,7 +3474,8 @@ class Orchestrator:
                     # Offloaded to a thread to avoid blocking the event loop
                     # during recommendation enrichment (up to 120 s of LLM calls).
                     last_agent_result.content = await _post_process_report_async(
-                        skill, last_agent_result.content,
+                        skill,
+                        last_agent_result.content,
                     )
 
             result.synthesized_output = result.agent_results[-1].content
@@ -3564,9 +3559,7 @@ class Orchestrator:
         truncated_sections: list[str] = []
         for section in sections:
             if len(section) > per_section:
-                truncated_sections.append(
-                    section[:per_section] + marker
-                )
+                truncated_sections.append(section[:per_section] + marker)
             else:
                 truncated_sections.append(section)
         result = separator.join(truncated_sections)
