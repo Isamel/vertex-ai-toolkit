@@ -55,11 +55,47 @@ class ProjectEntry(BaseModel):
 
 
 class GCPConfig(BaseModel):
-    """GCP project configuration."""
+    """GCP project and endpoint configuration.
+
+    See ``docs/specs/global-endpoint-v1.md`` (SPEC-GEP-01) for the design
+    rationale of the ``endpoint_mode`` / probe fields.
+    """
 
     project_id: str = ""
-    location: str = "us-central1"
+
+    location: str = "global"
+    """Preferred Vertex AI endpoint/location. Default ``"global"`` uses the
+    cross-region global endpoint (``aiplatform.googleapis.com``) which has
+    higher aggregate quota than any single region. Set to a region name
+    (e.g. ``"us-central1"``) to pin to a regional endpoint explicitly."""
+
     fallback_location: str = "us-central1"
+    """Regional endpoint used when the global endpoint is unavailable
+    (``endpoint_mode="auto"``) or when an SSL/429 fallback fires at
+    runtime (see SPEC-GEP-03)."""
+
+    endpoint_mode: Literal["auto", "global", "regional"] = "auto"
+    """How to pick between ``location`` and ``fallback_location`` at init:
+
+    * ``"auto"`` — when ``location == "global"`` run a short probe and
+      fall back to ``fallback_location`` if the global endpoint is
+      unreachable. When ``location`` is an explicit region, skip the
+      probe (user chose a region, respect it).
+    * ``"global"`` — always use ``"global"``; fail hard if unreachable.
+    * ``"regional"`` — never touch the global endpoint; always use
+      ``fallback_location`` (or ``location`` if set to a region name).
+    """
+
+    global_probe_timeout_s: float = Field(default=2.0, ge=0.1)
+    """Timeout (seconds) for the startup probe call against the global
+    endpoint. A short value keeps ``vaig`` startup snappy for users
+    whose project does not have the global endpoint enabled."""
+
+    global_probe_cache_ttl_s: int = Field(default=3600, ge=0)
+    """How long (seconds) to remember the probe result in
+    ``~/.vaig/cache/endpoint-probe.json`` before re-probing. Default
+    1 h. Set to 0 to disable caching (always probe)."""
+
     available_projects: list[ProjectEntry] = Field(default_factory=list)
 
     def model_post_init(self, _context: Any) -> None:
@@ -465,19 +501,54 @@ class LoggingConfig(BaseModel):
 
 
 class RetryConfig(BaseModel):
-    """Retry and backoff configuration for API calls."""
+    """Retry and backoff configuration for API calls.
 
-    max_retries: int = 3
+    See ``docs/specs/rate-limit-resilience-v1.md`` for the design rationale
+    (SPEC-RATE-01 and SPEC-RATE-02).
+    """
+
+    max_retries: int = 5
+    """Maximum per-call retry attempts. Raised from 3 → 5 (SPEC-RATE-01)
+    so a single call can ride out a 1–2 min Vertex AI quota window."""
+
     initial_delay: float = 1.0
-    max_delay: float = 60.0
+    max_delay: float = 120.0
+    """Per-attempt sleep cap (seconds). Raised from 60 → 120 so the
+    exponential back-off schedule of 15s/30s/60s/120s can fully run."""
+
     backoff_multiplier: float = 2.0
-    rate_limit_initial_delay: float = Field(default=8.0, ge=0.0)
+
+    rate_limit_initial_delay: float = Field(default=15.0, ge=0.0)
     """Longer initial backoff (seconds) used when a 429 rate-limit error is
     detected.  Applied instead of ``initial_delay`` so the client waits
-    longer before retrying quota-exhausted requests."""
+    longer before retrying quota-exhausted requests. Raised from 8 → 15
+    (SPEC-RATE-01)."""
+
+    rate_limit_max_total_wait_s: float = Field(default=300.0, ge=0.0)
+    """Wall-clock cap on the total time a single call will spend waiting
+    for 429 retries. Once elapsed time exceeds this value the call
+    fails with ``GeminiRateLimitError`` regardless of remaining retries.
+    Prevents a single quota-exhausted call from stalling the whole run
+    (SPEC-RATE-01 invariant RL-2)."""
+
+    rate_limit_max_total_wait_s_parallel: float = Field(default=180.0, ge=0.0)
+    """Tighter wall-clock cap when the call runs inside a parallel
+    fan-out (sub-gatherers). A saturated agent should not block its
+    peers for the full 5 minutes. Default 3 min (SPEC-RATE-01)."""
+
     retryable_status_codes: list[int] = Field(
         default_factory=lambda: [429, 500, 502, 503, 504],
     )
+
+    parallel_launch_jitter_min_s: float = Field(default=0.5, ge=0.0)
+    """Lower bound (seconds) of the random sleep inserted between
+    consecutive parallel agent launches. Spreads the burst that
+    otherwise hits the same quota window (SPEC-RATE-02). Set both
+    jitter bounds to 0.0 to disable."""
+
+    parallel_launch_jitter_max_s: float = Field(default=2.0, ge=0.0)
+    """Upper bound (seconds) of the parallel-launch jitter. See
+    :attr:`parallel_launch_jitter_min_s`."""
 
 
 class ContextConfig(BaseModel):
