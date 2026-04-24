@@ -2894,8 +2894,17 @@ class Orchestrator:
             # Also tag each worker thread with ``IN_PARALLEL_FANOUT=True`` so
             # the GeminiClient retry loop applies the tighter 429 wall-clock cap.
             retry_cfg = self._settings.retry
-            jitter_min = retry_cfg.parallel_launch_jitter_min_s
-            jitter_max = retry_cfg.parallel_launch_jitter_max_s
+            # Coerce to float defensively: when ``self._settings`` is a test
+            # MagicMock, ``retry_cfg.parallel_launch_jitter_*_s`` are Mocks
+            # rather than numbers. A failed coercion disables jitter (0.0),
+            # which is identical to the production behaviour when both bounds
+            # are zero — no behavioural change for real callers.
+            try:
+                jitter_min = float(retry_cfg.parallel_launch_jitter_min_s)
+                jitter_max = float(retry_cfg.parallel_launch_jitter_max_s)
+            except (TypeError, ValueError):
+                jitter_min = 0.0
+                jitter_max = 0.0
 
             def _run_agent_in_fanout(
                 agent_local: BaseAgent,
@@ -3247,8 +3256,17 @@ class Orchestrator:
         # IN_PARALLEL_FANOUT=True so the GeminiClient applies the tighter
         # 429 wall-clock cap.
         retry_cfg = self._settings.retry
-        jitter_min = retry_cfg.parallel_launch_jitter_min_s
-        jitter_max = retry_cfg.parallel_launch_jitter_max_s
+        # Coerce to float defensively: when ``self._settings`` is a test
+        # MagicMock, ``retry_cfg.parallel_launch_jitter_*_s`` are Mocks
+        # rather than numbers. A failed coercion disables jitter (0.0),
+        # which is identical to the production behaviour when both bounds
+        # are zero — no behavioural change for real callers.
+        try:
+            jitter_min = float(retry_cfg.parallel_launch_jitter_min_s)
+            jitter_max = float(retry_cfg.parallel_launch_jitter_max_s)
+        except (TypeError, ValueError):
+            jitter_min = 0.0
+            jitter_max = 0.0
 
         def _execute_with_fanout_flag(
             agent_local: BaseAgent,
