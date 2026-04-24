@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -17,7 +18,7 @@ from vaig.agents.mixins import OnToolCall
 from vaig.agents.specialist import SpecialistAgent
 from vaig.agents.tool_aware import ToolAwareAgent
 from vaig.core.async_utils import gather_with_errors
-from vaig.core.client import StreamResult
+from vaig.core.client import IN_PARALLEL_FANOUT, StreamResult
 from vaig.core.event_bus import EventBus
 from vaig.core.events import OrchestratorPhaseCompleted, OrchestratorToolsCompleted
 from vaig.core.exceptions import MaxIterationsError, VaigAuthError, VAIGError
@@ -2889,6 +2890,38 @@ class Orchestrator:
                     "start",
                     end_agent_index=total_parallel - 1,
                 )
+            # SPEC-RATE-02: stagger parallel launches to avoid a quota burst.
+            # Also tag each worker thread with ``IN_PARALLEL_FANOUT=True`` so
+            # the GeminiClient retry loop applies the tighter 429 wall-clock cap.
+            retry_cfg = self._settings.retry
+            # Coerce to float defensively: when ``self._settings`` is a test
+            # MagicMock, ``retry_cfg.parallel_launch_jitter_*_s`` are Mocks
+            # rather than numbers. A failed coercion disables jitter (0.0),
+            # which is identical to the production behaviour when both bounds
+            # are zero — no behavioural change for real callers.
+            try:
+                jitter_min = float(retry_cfg.parallel_launch_jitter_min_s)
+                jitter_max = float(retry_cfg.parallel_launch_jitter_max_s)
+            except (TypeError, ValueError):
+                jitter_min = 0.0
+                jitter_max = 0.0
+
+            def _run_agent_in_fanout(
+                agent_local: BaseAgent,
+                kw_local: dict[str, Any],
+            ) -> AgentResult:
+                """Execute *agent_local* with IN_PARALLEL_FANOUT=True in the worker thread.
+
+                ``ContextVar`` values are not automatically propagated across
+                thread boundaries, so we set it explicitly inside the worker.
+                The token-based reset keeps the change thread-local.
+                """
+                token = IN_PARALLEL_FANOUT.set(True)
+                try:
+                    return agent_local.execute(query, **kw_local)
+                finally:
+                    IN_PARALLEL_FANOUT.reset(token)
+
             for _idx, agent in enumerate(parallel_agents):
                 logger.info("parallel_sequential: submitting gatherer agent=%s", agent.name)
                 kw: dict[str, Any] = {"context": query, "state": current_state}
@@ -2898,7 +2931,22 @@ class Orchestrator:
                     if tool_call_store is not None:
                         kw["tool_call_store"] = tool_call_store
                     kw["tool_result_cache"] = tool_result_cache
-                futures_map.append((agent, executor.submit(agent.execute, query, **kw)))
+                # Stagger: sleep a small random amount between submissions
+                # (except before the first).  Skip entirely when both jitter
+                # bounds are 0.
+                if _idx > 0 and jitter_max > 0:
+                    delay = random.uniform(  # noqa: S311 (non-crypto)
+                        min(jitter_min, jitter_max),
+                        jitter_max,
+                    )
+                    if delay > 0:
+                        logger.debug(
+                            "parallel_sequential: jitter sleep %.2fs before submitting %s",
+                            delay,
+                            agent.name,
+                        )
+                        time.sleep(delay)
+                futures_map.append((agent, executor.submit(_run_agent_in_fanout, agent, kw)))
 
             for _idx, (agent, future) in enumerate(futures_map):
                 try:
@@ -3204,7 +3252,48 @@ class Orchestrator:
         # accounting after gather returns.
         parallel_agent_models: dict[str, str] = {a.name: a.model for a in parallel_agents}
 
+        # SPEC-RATE-02: stagger parallel launches and tag the worker with
+        # IN_PARALLEL_FANOUT=True so the GeminiClient applies the tighter
+        # 429 wall-clock cap.
+        retry_cfg = self._settings.retry
+        # Coerce to float defensively: when ``self._settings`` is a test
+        # MagicMock, ``retry_cfg.parallel_launch_jitter_*_s`` are Mocks
+        # rather than numbers. A failed coercion disables jitter (0.0),
+        # which is identical to the production behaviour when both bounds
+        # are zero — no behavioural change for real callers.
+        try:
+            jitter_min = float(retry_cfg.parallel_launch_jitter_min_s)
+            jitter_max = float(retry_cfg.parallel_launch_jitter_max_s)
+        except (TypeError, ValueError):
+            jitter_min = 0.0
+            jitter_max = 0.0
+
+        def _execute_with_fanout_flag(
+            agent_local: BaseAgent,
+            kw_local: dict[str, Any],
+        ) -> AgentResult:
+            """Run ``agent_local.execute`` with IN_PARALLEL_FANOUT set in the worker thread."""
+            token = IN_PARALLEL_FANOUT.set(True)
+            try:
+                return agent_local.execute(query, **kw_local)
+            finally:
+                IN_PARALLEL_FANOUT.reset(token)
+
         async def _run_gatherer(agent: BaseAgent, idx: int) -> AgentResult:
+            # Stagger: except for the first agent, sleep a small jitter
+            # to spread API calls across a window.
+            if idx > 0 and jitter_max > 0:
+                delay = random.uniform(  # noqa: S311 (non-crypto)
+                    min(jitter_min, jitter_max),
+                    jitter_max,
+                )
+                if delay > 0:
+                    logger.debug(
+                        "async parallel_sequential: jitter sleep %.2fs before launching %s",
+                        delay,
+                        agent.name,
+                    )
+                    await asyncio.sleep(delay)
             logger.info("async parallel_sequential: launching gatherer=%s", agent.name)
             try:
                 kw: dict[str, Any] = {"context": query, "state": current_state}
@@ -3214,7 +3303,11 @@ class Orchestrator:
                     if tool_call_store is not None:
                         kw["tool_call_store"] = tool_call_store
                     kw["tool_result_cache"] = tool_result_cache
-                agent_result = await asyncio.to_thread(agent.execute, query, **kw)
+                agent_result = await asyncio.to_thread(
+                    _execute_with_fanout_flag,
+                    agent,
+                    kw,
+                )
             except MaxIterationsError as exc:
                 agent_result = self._handle_max_iterations_error(agent.name, exc)
             except Exception:

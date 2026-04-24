@@ -564,6 +564,18 @@ def register(app: typer.Typer) -> None:
             str | None, typer.Option("--project-id", help="GCP project ID (overrides config, alias for --project)")
         ] = None,
         location: Annotated[str | None, typer.Option("--location", help="GCP location (overrides config)")] = None,
+        endpoint: Annotated[
+            str | None,
+            typer.Option(
+                "--endpoint",
+                envvar="VAIG_ENDPOINT",
+                help=(
+                    "Vertex AI endpoint mode: 'auto' (default, probe global then "
+                    "fall back to regional), 'global' (force global), or 'regional' "
+                    "(force regional fallback_location). See SPEC-GEP-04."
+                ),
+            ),
+        ] = None,
         gke_project: Annotated[
             str | None,
             typer.Option(
@@ -864,6 +876,16 @@ def register(app: typer.Typer) -> None:
             # Apply --location: mutate gcp.location before component creation
             if location:
                 settings.gcp.location = location
+
+            # Apply --endpoint / VAIG_ENDPOINT: SPEC-GEP-04
+            if endpoint:
+                endpoint_lower = endpoint.strip().lower()
+                if endpoint_lower not in ("auto", "global", "regional"):
+                    raise typer.BadParameter(
+                        f"--endpoint must be one of auto, global, regional (got {endpoint!r})",
+                        param_hint="--endpoint",
+                    )
+                settings.gcp.endpoint_mode = endpoint_lower  # type: ignore[assignment]
 
             if model:
                 settings.models.default = model

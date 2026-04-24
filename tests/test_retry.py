@@ -120,12 +120,18 @@ class TestRetryConfig:
     """Tests for RetryConfig model."""
 
     def test_default_values(self) -> None:
+        # SPEC-RATE-01: new defaults ride out Vertex AI quota windows up to ~5 min.
         cfg = RetryConfig()
-        assert cfg.max_retries == 3
+        assert cfg.max_retries == 5
         assert cfg.initial_delay == 1.0
-        assert cfg.max_delay == 60.0
+        assert cfg.max_delay == 120.0
         assert cfg.backoff_multiplier == 2.0
+        assert cfg.rate_limit_initial_delay == 15.0
+        assert cfg.rate_limit_max_total_wait_s == 300.0
+        assert cfg.rate_limit_max_total_wait_s_parallel == 180.0
         assert cfg.retryable_status_codes == [429, 500, 502, 503, 504]
+        assert cfg.parallel_launch_jitter_min_s == 0.5
+        assert cfg.parallel_launch_jitter_max_s == 2.0
 
     def test_custom_values(self) -> None:
         cfg = RetryConfig(
@@ -750,12 +756,14 @@ class TestGCPConfigFallbackLocation:
 class TestReinitializeWithFallback:
     """Tests for GeminiClient._reinitialize_with_fallback()."""
 
+    @patch("vaig.core.endpoint_probe._probe_global_endpoint", return_value=True)
     @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_switches_to_fallback_location(
         self,
         mock_get_creds: MagicMock,
         mock_genai_client_cls: MagicMock,
+        mock_probe: MagicMock,
     ) -> None:
         """After calling _reinitialize_with_fallback, _active_location should change."""
         mock_get_creds.return_value = MagicMock()
@@ -776,12 +784,14 @@ class TestReinitializeWithFallback:
         # genai.Client should have been called twice: primary + fallback
         assert mock_genai_client_cls.call_count == 2
 
+    @patch("vaig.core.endpoint_probe._probe_global_endpoint", return_value=True)
     @patch("vaig.core.client.genai.Client")
     @patch("vaig.core.client.get_credentials")
     def test_clears_client_on_fallback(
         self,
         mock_get_creds: MagicMock,
         mock_genai_client_cls: MagicMock,
+        mock_probe: MagicMock,
     ) -> None:
         """After fallback, _client should be reset and recreated via genai.Client."""
         mock_get_creds.return_value = MagicMock()
@@ -971,7 +981,9 @@ class TestLocationFallbackInRetry:
         mock_response = MagicMock()
         mock_response.text = "OK"
         mock_response.usage_metadata = MagicMock(
-            prompt_token_count=5, candidates_token_count=10, total_token_count=15,
+            prompt_token_count=5,
+            candidates_token_count=10,
+            total_token_count=15,
         )
         mock_response.candidates = [MagicMock()]
         mock_response.candidates[0].finish_reason = MagicMock()
@@ -1206,9 +1218,7 @@ class TestProxyResponseParseError:
         """If both primary (proxy error) and fallback fail, raises GeminiConnectionError."""
         mock_get_creds.return_value = MagicMock()
         mock_genai = mock_genai_client_cls.return_value
-        mock_genai.models.generate_content.side_effect = AttributeError(
-            "'list' object has no attribute 'get'"
-        )
+        mock_genai.models.generate_content.side_effect = AttributeError("'list' object has no attribute 'get'")
 
         with pytest.raises(GeminiConnectionError):
             fallback_client.generate("Hello")

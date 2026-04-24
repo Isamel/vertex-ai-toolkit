@@ -15,6 +15,7 @@ import ssl
 import threading
 import time
 from collections.abc import Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -47,6 +48,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+# ── Parallel fan-out context (SPEC-RATE-01 invariant RL-3) ────────────────────
+#
+# Orchestrator sub-agent runners set this ContextVar to True for the duration
+# of a fan-out so that :meth:`GeminiClient._retry_with_backoff` can apply the
+# tighter ``rate_limit_max_total_wait_s_parallel`` cap.  Outside of a fan-out
+# the default (False) keeps the longer serial cap in effect.
+IN_PARALLEL_FANOUT: ContextVar[bool] = ContextVar(
+    "IN_PARALLEL_FANOUT",
+    default=False,
+)
+
+
+def _rate_limit_budget_s(retry_cfg: RetryConfig) -> float:
+    """Return the wall-clock cap (seconds) for cumulative 429 waits.
+
+    Uses the tighter parallel cap when called from inside a parallel
+    fan-out (see :data:`IN_PARALLEL_FANOUT`), otherwise the longer
+    serial cap.  Configured in :class:`~vaig.core.config.RetryConfig`.
+    """
+    if IN_PARALLEL_FANOUT.get():
+        return retry_cfg.rate_limit_max_total_wait_s_parallel
+    return retry_cfg.rate_limit_max_total_wait_s
+
 
 # Exceptions that are safe to retry — all transient / server-side.
 _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
@@ -318,6 +343,31 @@ class GeminiClient:
             ),
         )
 
+    def _resolve_initial_location(self, credentials: Credentials | None) -> str:
+        """Pick the endpoint location at startup (SPEC-GEP-02).
+
+        Delegates to :func:`vaig.core.endpoint_probe.resolve_endpoint_location`
+        which honours ``gcp.endpoint_mode`` and a persistent probe cache.
+        On any unexpected failure this method falls back to the value
+        currently in ``self._active_location`` so initialisation never
+        blocks on the probe.
+        """
+        from vaig.core.endpoint_probe import resolve_endpoint_location
+
+        try:
+            return resolve_endpoint_location(self._settings.gcp, credentials)
+        except RuntimeError:
+            # endpoint_mode="global" with unreachable endpoint — propagate.
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Endpoint probe failed (%s: %s) — using %s",
+                type(exc).__name__,
+                exc,
+                self._active_location,
+            )
+            return self._active_location
+
     def initialize(self) -> None:
         """Initialize the google-genai Client with Vertex AI credentials (sync)."""
         if self._initialized:
@@ -326,6 +376,13 @@ class GeminiClient:
         try:
             credentials = get_credentials(self._settings)
             self._credentials = credentials
+            # SPEC-GEP-02: resolve global vs regional before building the Client.
+            # Runs a short probe when endpoint_mode="auto" and location="global".
+            # Skip the probe when we are re-initialising to honour an explicit
+            # fallback — ``_reinitialize_with_fallback`` has already set
+            # ``_active_location`` to the fallback value.
+            if not self._using_fallback:
+                self._active_location = self._resolve_initial_location(credentials)
             self._client = genai.Client(
                 vertexai=True,
                 project=self._settings.gcp.project_id,
@@ -378,6 +435,17 @@ class GeminiClient:
         try:
             credentials = await asyncio.to_thread(get_credentials, self._settings)
             self._credentials = credentials
+
+            # SPEC-GEP-02: resolve global vs regional before building the Client.
+            # The probe performs a short blocking SDK call, so wrap in to_thread
+            # to keep the event loop unblocked.
+            # Skip the probe when we are re-initialising to honour an explicit
+            # fallback (see sync counterpart for rationale).
+            if not self._using_fallback:
+                self._active_location = await asyncio.to_thread(
+                    self._resolve_initial_location,
+                    credentials,
+                )
 
             self._client = genai.Client(
                 vertexai=True,
@@ -621,6 +689,38 @@ class GeminiClient:
     # ── Retry logic ───────────────────────────────────────────
 
     @staticmethod
+    def _check_rate_limit_budget(
+        sleep_time: float,
+        elapsed: float,
+        budget: float,
+    ) -> bool:
+        """Return ``True`` if the next 429 sleep fits in the cumulative sleep budget.
+
+        Enforces a cumulative 429 wall-clock budget across a single retry
+        loop: ``elapsed`` is the sum of all prior 429 backoff sleeps in
+        this call, and ``sleep_time`` is the next planned 429 sleep.
+
+        Logs a warning and returns ``False`` when the cumulative 429
+        wall-clock budget would be exceeded by the next sleep (i.e.
+        ``elapsed + sleep_time > budget``). Callers should break out of
+        the retry loop on ``False`` and set their local
+        ``budget_exceeded`` flag so the exhaustion handler can distinguish
+        a budget abort from plain retry exhaustion.
+
+        See SPEC-RATE-01 (invariant RL-2) in
+        ``docs/specs/rate-limit-resilience-v1.md``.
+        """
+        if sleep_time + elapsed > budget:
+            logger.warning(
+                "Rate-limit wall-clock budget exhausted — elapsed=%.1fs, next=%.1fs, cap=%.1fs (aborting retries)",
+                elapsed,
+                sleep_time,
+                budget,
+            )
+            return False
+        return True
+
+    @staticmethod
     def _compute_backoff_delay(
         delay: float,
         retry_cfg: RetryConfig,
@@ -671,6 +771,12 @@ class GeminiClient:
         last_exception: Exception | None = None
         start_time = time.monotonic() if timeout is not None else None
 
+        # SPEC-RATE-01: track cumulative 429 sleep time against a wall-clock
+        # cap (tighter when inside a parallel fan-out, see IN_PARALLEL_FANOUT).
+        rate_limit_elapsed = 0.0
+        rate_limit_budget = _rate_limit_budget_s(retry_cfg)
+        budget_exceeded = False
+
         for attempt in range(retry_cfg.max_retries + 1):
             # Check wall-clock timeout before each attempt (except the first).
             if start_time is not None and attempt > 0:
@@ -696,11 +802,20 @@ class GeminiClient:
                         last_exception = fallback_exc
                         break
                 if attempt < retry_cfg.max_retries:
+                    is_rate_limit = isinstance(exc, google_exceptions.ResourceExhausted)
                     sleep_time, delay = self._compute_backoff_delay(
                         delay,
                         retry_cfg,
-                        is_rate_limit=isinstance(exc, google_exceptions.ResourceExhausted),
+                        is_rate_limit=is_rate_limit,
                     )
+                    # SPEC-RATE-01: enforce cumulative 429 wall-clock cap.
+                    if is_rate_limit and not self._check_rate_limit_budget(
+                        sleep_time,
+                        rate_limit_elapsed,
+                        rate_limit_budget,
+                    ):
+                        budget_exceeded = True
+                        break
                     logger.warning(
                         "Retryable error on attempt %d/%d (%s: %s) — retrying in %.2fs",
                         attempt + 1,
@@ -710,6 +825,8 @@ class GeminiClient:
                         sleep_time,
                     )
                     time.sleep(sleep_time)
+                    if is_rate_limit:
+                        rate_limit_elapsed += sleep_time
             except genai_errors.APIError as exc:
                 # google-genai SDK errors (ClientError / ServerError).
                 # The SDK already retried with backoff via HttpRetryOptions.
@@ -722,8 +839,7 @@ class GeminiClient:
                     # Check for SSL/connection errors that need location fallback.
                     if _is_ssl_or_connection_error(exc) and not self._using_fallback:
                         logger.warning(
-                            "Retryable genai error wraps SSL/proxy error (%s: %s) "
-                            "— attempting location fallback",
+                            "Retryable genai error wraps SSL/proxy error (%s: %s) — attempting location fallback",
                             type(exc).__name__,
                             exc,
                         )
@@ -741,6 +857,14 @@ class GeminiClient:
                                 retry_cfg,
                                 is_rate_limit=True,
                             )
+                            # SPEC-RATE-01: enforce cumulative 429 wall-clock cap.
+                            if not self._check_rate_limit_budget(
+                                sleep_time,
+                                rate_limit_elapsed,
+                                rate_limit_budget,
+                            ):
+                                budget_exceeded = True
+                                break
                             logger.warning(
                                 "Rate-limited (genai 429) on attempt %d/%d — retrying in %.2fs",
                                 attempt + 1,
@@ -748,6 +872,7 @@ class GeminiClient:
                                 sleep_time,
                             )
                             time.sleep(sleep_time)
+                            rate_limit_elapsed += sleep_time
                             continue
                     break  # non-429 retryable — fall through to exhaustion handler
                 # Convert context-window 400 errors to ContextWindowExceededError.
@@ -789,7 +914,13 @@ class GeminiClient:
         # All retries exhausted — raise the appropriate custom exception.
         assert last_exception is not None  # noqa: S101
         retries = retry_cfg.max_retries
-        msg = f"All {retries} retries exhausted. Last error: {last_exception}"
+        if budget_exceeded:
+            msg = (
+                f"Rate-limit budget exceeded ({rate_limit_elapsed:.1f}s of "
+                f"cumulative 429 backoff). Last error: {last_exception}"
+            )
+        else:
+            msg = f"All {retries} retries exhausted. Last error: {last_exception}"
 
         if isinstance(last_exception, google_exceptions.ResourceExhausted):
             raise GeminiRateLimitError(
@@ -833,6 +964,12 @@ class GeminiClient:
         last_exception: Exception | None = None
         start_time = time.monotonic() if timeout is not None else None
 
+        # SPEC-RATE-01: track cumulative 429 sleep time against a wall-clock
+        # cap (tighter when inside a parallel fan-out, see IN_PARALLEL_FANOUT).
+        rate_limit_elapsed = 0.0
+        rate_limit_budget = _rate_limit_budget_s(retry_cfg)
+        budget_exceeded = False
+
         for attempt in range(retry_cfg.max_retries + 1):
             if start_time is not None and attempt > 0:
                 elapsed = time.monotonic() - start_time
@@ -857,11 +994,20 @@ class GeminiClient:
                         last_exception = fallback_exc
                         break
                 if attempt < retry_cfg.max_retries:
+                    is_rate_limit = isinstance(exc, google_exceptions.ResourceExhausted)
                     sleep_time, delay = self._compute_backoff_delay(
                         delay,
                         retry_cfg,
-                        is_rate_limit=isinstance(exc, google_exceptions.ResourceExhausted),
+                        is_rate_limit=is_rate_limit,
                     )
+                    # SPEC-RATE-01: enforce cumulative 429 wall-clock cap.
+                    if is_rate_limit and not self._check_rate_limit_budget(
+                        sleep_time,
+                        rate_limit_elapsed,
+                        rate_limit_budget,
+                    ):
+                        budget_exceeded = True
+                        break
                     logger.warning(
                         "Retryable error on attempt %d/%d (%s: %s) — retrying in %.2fs",
                         attempt + 1,
@@ -871,6 +1017,8 @@ class GeminiClient:
                         sleep_time,
                     )
                     await asyncio.sleep(sleep_time)
+                    if is_rate_limit:
+                        rate_limit_elapsed += sleep_time
             except genai_errors.APIError as exc:
                 # google-genai SDK errors (ClientError / ServerError).
                 # The SDK already retried with backoff via HttpRetryOptions.
@@ -883,8 +1031,7 @@ class GeminiClient:
                     # Check for SSL/connection errors that need location fallback.
                     if _is_ssl_or_connection_error(exc) and not self._using_fallback:
                         logger.warning(
-                            "Retryable genai error wraps SSL/proxy error (%s: %s) "
-                            "— attempting location fallback",
+                            "Retryable genai error wraps SSL/proxy error (%s: %s) — attempting location fallback",
                             type(exc).__name__,
                             exc,
                         )
@@ -902,6 +1049,14 @@ class GeminiClient:
                                 retry_cfg,
                                 is_rate_limit=True,
                             )
+                            # SPEC-RATE-01: enforce cumulative 429 wall-clock cap.
+                            if not self._check_rate_limit_budget(
+                                sleep_time,
+                                rate_limit_elapsed,
+                                rate_limit_budget,
+                            ):
+                                budget_exceeded = True
+                                break
                             logger.warning(
                                 "Rate-limited (genai 429) on attempt %d/%d — retrying in %.2fs",
                                 attempt + 1,
@@ -909,6 +1064,7 @@ class GeminiClient:
                                 sleep_time,
                             )
                             await asyncio.sleep(sleep_time)
+                            rate_limit_elapsed += sleep_time
                             continue
                     break  # non-429 retryable — fall through to exhaustion handler
                 # Convert context-window 400 errors to ContextWindowExceededError.
@@ -949,7 +1105,13 @@ class GeminiClient:
 
         assert last_exception is not None  # noqa: S101
         retries = retry_cfg.max_retries
-        msg = f"All {retries} retries exhausted. Last error: {last_exception}"
+        if budget_exceeded:
+            msg = (
+                f"Rate-limit budget exceeded ({rate_limit_elapsed:.1f}s of "
+                f"cumulative 429 backoff). Last error: {last_exception}"
+            )
+        else:
+            msg = f"All {retries} retries exhausted. Last error: {last_exception}"
 
         if isinstance(last_exception, google_exceptions.ResourceExhausted):
             raise GeminiRateLimitError(
