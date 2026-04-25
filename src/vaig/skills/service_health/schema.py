@@ -109,6 +109,24 @@ class ServiceHealthStatus(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class OperatingMode(StrEnum):
+    """Pipeline operating mode detected at run time (SPEC-ATT-10 §6.5.5).
+
+    Determines which data sources are available to the agent pipeline and
+    controls the banner displayed before execution:
+
+    - ``LIVE_ONLY``: Live GKE/GCloud tools are available; no attachments.
+    - ``ATTACHMENT_ONLY``: No live cluster connectivity (``--offline-mode``
+      flag set, or zero live tools registered); attachments may or may not
+      be present.  All findings are tagged ``source_support="attachment_only"``.
+    - ``HYBRID``: Both live tools AND attachment context are available.
+    """
+
+    LIVE_ONLY = "LIVE_ONLY"
+    ATTACHMENT_ONLY = "ATTACHMENT_ONLY"
+    HYBRID = "HYBRID"
+
+
 # ── Severity → emoji mapping (matches reporter prompt) ───────
 
 
@@ -1798,6 +1816,15 @@ class HealthReport(BaseModel):
             "and 2 MEDIUM findings in distinct namespaces.'"
         ),
     )
+    operating_mode: OperatingMode = Field(
+        default=OperatingMode.LIVE_ONLY,
+        description=(
+            "Pipeline operating mode (SPEC-ATT-10 §6.5.5). "
+            "Populated post-hoc by skill.py via _detect_operating_mode(). "
+            "Excluded from the Gemini response_schema."
+        ),
+        exclude=True,
+    )
 
     @field_validator("overall_severity_reason", mode="before")
     @classmethod
@@ -2468,6 +2495,7 @@ class HealthReportGeminiSchema(HealthReport):
             "attachment_evidence",
             "attachment_priors",  # ATT-10: post-hoc, not for Reporter LLM
             "attachment_sections_md",  # ATT-10 §6.5.4: post-LLM rendered sections
+            "operating_mode",  # ATT-10 §6.5.5: set post-hoc by skill.py
         }
     )
 

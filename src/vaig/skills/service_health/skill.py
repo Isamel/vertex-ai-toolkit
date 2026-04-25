@@ -39,7 +39,7 @@ from vaig.skills.service_health.prompts import (
     build_workload_gatherer_prompt,
 )
 from vaig.skills.service_health.prompts._shared import _prefix_attachment_context
-from vaig.skills.service_health.schema import Finding, HealthReport, HealthReportGeminiSchema
+from vaig.skills.service_health.schema import Finding, HealthReport, HealthReportGeminiSchema, OperatingMode
 from vaig.skills.service_health.schema import apply_ratification as _apply_ratification
 from vaig.skills.service_health.schema import render_attachment_sections as _render_attachment_sections
 from vaig.tools.base import ToolResult
@@ -263,6 +263,11 @@ class ServiceHealthSkill(BaseSkill):
         # concurrently.  Call ``close()`` to release resources explicitly.
         self._enrichment_pool: concurrent.futures.ThreadPoolExecutor | None = None
         self._gemini_client: Any | None = None  # GeminiClient, lazy-imported
+        # SPEC-ATT-10 §6.5.5 — operating mode signals.  Set by the CLI before
+        # the pipeline runs so that post_process_report can detect the mode
+        # without receiving extra kwargs through the entire call chain.
+        self._offline_mode: bool = False
+        self._attachments_present: bool = False
 
     def close(self) -> None:
         """Shut down lazy-initialized resources. Idempotent.
@@ -317,6 +322,32 @@ class ServiceHealthSkill(BaseSkill):
         from vaig.tools.gke.argo_rollouts import detect_argo_rollouts  # noqa: PLC0415
 
         return detect_argo_rollouts(namespace=namespace, api_client=self._get_api_client(gke_config))
+
+    # ── SPEC-ATT-10 §6.5.5 ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _detect_operating_mode(
+        *,
+        offline_mode: bool,
+        attachments_present: bool,
+    ) -> OperatingMode:
+        """Determine the pipeline operating mode from run-time signals.
+
+        Args:
+            offline_mode: ``True`` when the caller passed ``--offline-mode``
+                (or equivalent) to suppress live GKE tool calls.
+            attachments_present: ``True`` when at least one attachment adapter
+                was resolved (i.e. ``bool(attachment_adapters)``).
+
+        Returns:
+            The :class:`~vaig.skills.service_health.schema.OperatingMode` that
+            should govern this pipeline run.
+        """
+        if offline_mode:
+            return OperatingMode.ATTACHMENT_ONLY
+        if attachments_present:
+            return OperatingMode.HYBRID
+        return OperatingMode.LIVE_ONLY
 
     def get_metadata(self) -> SkillMetadata:
         return SkillMetadata(
@@ -1223,6 +1254,25 @@ class ServiceHealthSkill(BaseSkill):
                         "Attachment sections rendering failed — skipping",
                         exc_info=True,
                     )
+
+            # ── SPEC-ATT-10 §6.5.5: Operating mode detection ───────────────
+            operating_mode = self._detect_operating_mode(
+                offline_mode=self._offline_mode,
+                attachments_present=self._attachments_present,
+            )
+            report = report.model_copy(update={"operating_mode": operating_mode})
+            if operating_mode == OperatingMode.ATTACHMENT_ONLY and report.findings:
+                # All findings in attachment-only mode are sourced exclusively
+                # from attachment evidence; override source_support accordingly.
+                patched: list[Finding] = []
+                for f in report.findings:
+                    patched.append(f.model_copy(update={"source_support": "attachment_only"}))
+                report = report.model_copy(update={"findings": patched})
+                logger.info(
+                    "ATTACHMENT_ONLY mode: tagged %d findings with source_support='attachment_only'",
+                    len(patched),
+                )
+
 
             # Warn if report has no meaningful data
             if not report.findings and not report.service_statuses:
