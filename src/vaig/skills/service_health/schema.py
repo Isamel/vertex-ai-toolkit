@@ -1224,6 +1224,140 @@ class ExternalLinks(BaseModel):
     argocd: list[ExternalLink] = Field(default_factory=list, description="ArgoCD links")
 
 
+# ── ATT-10: AttachmentPriors sub-models ─────────────────────
+
+
+class ResourceSpec(BaseModel):
+    """Expected resource limits / requests for a single workload container.
+
+    Populated by the attachment_gatherer from values.yaml or Chart.yaml.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    cpu_request: str = Field(default="", description="e.g. '250m'")
+    cpu_limit: str = Field(default="", description="e.g. '500m'")
+    memory_request: str = Field(default="", description="e.g. '128Mi'")
+    memory_limit: str = Field(default="", description="e.g. '512Mi'")
+
+
+class ProbeSpec(BaseModel):
+    """Expected liveness / readiness probe configuration for a workload.
+
+    Populated by the attachment_gatherer from values.yaml.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    readiness_path: str = Field(default="", description="HTTP path for readiness probe, e.g. '/healthz'")
+    liveness_path: str = Field(default="", description="HTTP path for liveness probe, e.g. '/healthz'")
+    initial_delay_seconds: int | None = Field(default=None)
+    timeout_seconds: int | None = Field(default=None)
+    period_seconds: int | None = Field(default=None)
+    failure_threshold: int | None = Field(default=None)
+
+
+class Hotspot(BaseModel):
+    """A known operational weak point extracted from runbook or postmortem text.
+
+    Derived from language like "common issue:", "watch out for:", "known failure mode:".
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    entity: str = Field(description="Component or subsystem flagged, e.g. 'DB connection pool'")
+    concern: str = Field(description="Nature of the risk, e.g. 'oversaturation'")
+    source_ref: str = Field(default="", description="File path + line reference, e.g. 'runbook.md:L42'")
+    description: str = Field(default="", description="Verbatim or paraphrased runbook guidance")
+
+
+class HistoricalIncident(BaseModel):
+    """A past incident extracted from an attached postmortem document."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    symptom_pattern: str = Field(description="Observable symptoms, e.g. 'latency spike + OOM kills'")
+    root_cause: str = Field(default="", description="Root cause identified in postmortem")
+    fix_applied: str = Field(default="", description="Remediation that resolved the incident")
+    source_ref: str = Field(default="", description="Postmortem file + section, e.g. 'postmortem-2026-02.md:§3'")
+    date: str = Field(default="", description="Approximate incident date, ISO 8601 or free text")
+
+
+class ChangeSignal(BaseModel):
+    """A change detected from a diff, values-before/after pair, or Application.yaml."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    field_path: str = Field(description="Config key path that changed, e.g. 'resources.limits.memory'")
+    old_value: str = Field(default="", description="Previous value")
+    new_value: str = Field(default="", description="New value")
+    source_ref: str = Field(default="", description="Source file, e.g. 'values.after.yaml:L22'")
+
+
+class NarrativeHint(BaseModel):
+    """A free-text investigation hint surfaced from markdown runbooks.
+
+    Passed verbatim to the Analyzer so it can treat attachment wisdom as
+    explicit investigation directions rather than silent background.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    hint: str = Field(description="Free-text investigation suggestion from the runbook")
+    source_ref: str = Field(default="", description="Source file and line")
+
+
+class AttachmentPriors(BaseModel):
+    """Expected-state snapshot derived exclusively from attachments.
+
+    This is what the team *expects* the system to look like based on
+    runbooks, values.yaml, Chart.yaml, Application.yaml, postmortems,
+    and any structured snapshots the user attached.
+
+    Populated by the attachment_gatherer sub-agent (SPEC-ATT-10 §6.5.1).
+    Excluded from the Gemini response_schema (post-hoc field).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    expected_versions: dict[str, str] = Field(
+        default_factory=dict,
+        description="Workload name → expected image tag, e.g. {'checkout-service': '2.3.1'}",
+    )
+    expected_replica_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Workload name → expected replica count, e.g. {'checkout-deployment': 3}",
+    )
+    expected_env_vars: dict[str, dict[str, str]] = Field(
+        default_factory=dict,
+        description="Workload name → {env_var_name: expected_value}",
+    )
+    expected_resource_limits: dict[str, ResourceSpec] = Field(
+        default_factory=dict,
+        description="Workload name → expected resource spec",
+    )
+    expected_probes: dict[str, ProbeSpec] = Field(
+        default_factory=dict,
+        description="Workload name → expected probe configuration",
+    )
+    runbook_hotspots: list[Hotspot] = Field(
+        default_factory=list,
+        description="Known operational weak points extracted from runbook language",
+    )
+    historical_incidents: list[HistoricalIncident] = Field(
+        default_factory=list,
+        description="Past incidents from postmortems with symptom patterns and fixes",
+    )
+    change_signals: list[ChangeSignal] = Field(
+        default_factory=list,
+        description="Config changes detected from diffs or values-before/after pairs",
+    )
+    narrative_hints: list[NarrativeHint] = Field(
+        default_factory=list,
+        description="Free-text investigation hints surfaced from markdown runbooks",
+    )
+
+
 # ── Change correlation model ─────────────────────────────────
 
 
@@ -1300,6 +1434,14 @@ class HealthReport(BaseModel):
     attachment_evidence: list[AttachmentEvidenceSummary] = Field(
         default_factory=list,
         description=("Per-attachment usage summary. Populated post-hoc by headless.py when --attach was used."),
+    )
+    attachment_priors: AttachmentPriors | None = Field(
+        default=None,
+        description=(
+            "Expected-state snapshot derived from attachments (SPEC-ATT-10 §6.5.1). "
+            "Populated post-hoc by the attachment_gatherer pass before live sub-gatherers run. "
+            "Excluded from the Gemini response_schema."
+        ),
     )
     investigation_coverage: str | None = Field(
         default=None,
@@ -1971,6 +2113,7 @@ class HealthReportGeminiSchema(HealthReport):
             "investigation_coverage",
             "investigation_evidence",
             "attachment_evidence",
+            "attachment_priors",  # ATT-10: post-hoc, not for Reporter LLM
         }
     )
 

@@ -233,6 +233,16 @@ class OrchestratorResult:
     EvidenceGaps. Set only by ``execute_skill_headless``; other entry points
     leave the default (1).
     """
+    attachment_priors: Any = field(default=None)
+    """``AttachmentPriors`` object extracted by the attachment_gatherer pass
+    (SPEC-ATT-10 §6.5.1).
+
+    Populated by ``execute_skill_headless`` before live sub-gatherers run,
+    when ``--attach`` was provided and the attachment context is non-empty.
+    ``None`` when no attachments were provided or prior extraction failed.
+    Stored as ``Any`` to avoid a circular import between ``orchestrator``
+    and the service-health schema layer.
+    """
 
     def to_skill_result(self) -> SkillResult:
         """Convert to a SkillResult for the skill system."""

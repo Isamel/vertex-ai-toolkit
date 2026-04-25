@@ -404,6 +404,38 @@ def _reduce_window_results(
     return carrier
 
 
+def _run_attachment_gatherer_pass(
+    attachment_context: str,
+    client: Any,
+    *,
+    model_id: str | None = None,
+) -> Any:
+    """Run the ATT-10 §6.5.1 attachment_gatherer pass.
+
+    Extracts an ``AttachmentPriors`` object from *attachment_context* using a
+    single bounded LLM call (or returns a cached result if the fingerprint
+    matches a previous call).
+
+    Parameters
+    ----------
+    attachment_context:
+        Rendered attachment context string (already chunked/truncated).
+    client:
+        ``GeminiClient`` instance used for the extraction call.
+    model_id:
+        Optional model override.  ``None`` uses the client's current model.
+
+    Returns
+    -------
+    AttachmentPriors
+        The extracted (or cached) priors.  Never raises — returns an empty
+        ``AttachmentPriors()`` on any failure.
+    """
+    from vaig.core.attachment_priors_extractor import extract_priors
+
+    return extract_priors(attachment_context, client, model_id=model_id)
+
+
 def execute_skill_headless(
     settings: Settings,
     skill: BaseSkill,
@@ -581,6 +613,9 @@ def execute_skill_headless(
         # ATT-11: record context for post-run usage tracking
         if attachment_context:
             attachment_contexts_used.append(attachment_context)
+        # ATT-10 §6.5.1: extract attachment priors from single-window context
+        if attachment_context:
+            result.attachment_priors = _run_attachment_gatherer_pass(attachment_context, client)
 
     else:
         # ── MAP phase — sequential, one window at a time ──────────────────────
@@ -681,6 +716,16 @@ def execute_skill_headless(
                 raise
             except Exception:  # noqa: BLE001
                 logger.debug("ATT-11: could not set attachment_evidence on structured_report")
+
+    # ATT-10 §6.5.1: propagate attachment_priors onto structured_report
+    _priors = getattr(result, "attachment_priors", None)
+    if _priors is not None and result.structured_report is not None:
+        try:
+            result.structured_report.attachment_priors = _priors
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:  # noqa: BLE001
+            logger.debug("ATT-10: could not set attachment_priors on structured_report")
 
     logger.info(
         "Headless execution complete: skill=%s, success=%s, cost=$%.4f",
