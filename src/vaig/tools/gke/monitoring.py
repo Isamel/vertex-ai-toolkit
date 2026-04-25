@@ -97,6 +97,31 @@ _MEMORY_METRIC = "kubernetes.io/container/memory/used_bytes"
 # ── Core helpers ──────────────────────────────────────────────
 
 
+def _re2_escape(text: str) -> str:
+    """Escape RE2 metacharacters for use inside Cloud Monitoring filter strings.
+
+    Cloud Monitoring uses RE2 syntax, NOT Python's ``re`` module.  The key
+    difference: ``re.escape()`` escapes hyphens (``-`` → ``\\-``), which is
+    valid in Python regex but causes a parse error in RE2 outside of character
+    classes (``unsupported escape sequence``).
+
+    Only the true RE2 metacharacters are escaped here:
+    ``\\ . + * ? ( ) | [ ] { } ^ $``
+
+    Hyphens are intentionally NOT escaped — they are only special inside
+    ``[...]`` character classes in RE2 and are literal everywhere else.
+
+    Args:
+        text: Raw string to escape (e.g. a pod name prefix like
+            ``"istio-ingressgateway"``).
+
+    Returns:
+        RE2-safe escaped string suitable for embedding in a
+        ``monitoring.regex.full_match(...)`` filter expression.
+    """
+    return re.sub(r"([\\.\+\*\?\(\)\|\[\]\{\}\^\$])", r"\\\1", text)
+
+
 def _build_metric_filter(
     metric_type: str,
     cluster_name: str,
@@ -114,8 +139,9 @@ def _build_metric_filter(
     Returns:
         A Cloud Monitoring filter string suitable for ``list_time_series()``.
     """
-    # Escape any regex metacharacters in prefix so they match literally
-    escaped_prefix = re.escape(pod_name_prefix)
+    # Use RE2-safe escaping — re.escape() would produce \- for hyphens which
+    # is valid Python regex but an unsupported escape sequence in RE2/Cloud Monitoring.
+    escaped_prefix = _re2_escape(pod_name_prefix)
     return (
         f'metric.type = "{metric_type}"'
         f' AND resource.type = "k8s_container"'

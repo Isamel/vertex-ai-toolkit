@@ -105,8 +105,24 @@ class TestBuildMetricFilter:
 
         result = _build_metric_filter(_CPU_METRIC, "cluster", "ns", "frontend-")
 
-        # re.escape("frontend-") → "frontend\-" in the filter
-        assert 'monitoring.regex.full_match("^frontend\\-.*")' in result
+        # _re2_escape does NOT escape hyphens (only special outside [...] in Python re,
+        # but a literal in RE2 everywhere) — so "frontend-" stays "frontend-"
+        assert 'monitoring.regex.full_match("^frontend-.*")' in result
+
+    def test_filter_hyphenated_prefix_no_backslash(self) -> None:
+        """Hyphens in pod prefixes must NOT be backslash-escaped in the filter.
+
+        ``re.escape("istio-ingressgateway")`` produces ``"istio\\-ingressgateway"``,
+        which is valid Python regex but causes an RE2 parse error
+        (``unsupported escape sequence: \\-``) in Cloud Monitoring, resulting
+        in an HTTP 400.  ``_re2_escape`` must leave hyphens unescaped.
+        """
+        from vaig.tools.gke.monitoring import _CPU_METRIC, _build_metric_filter
+
+        result = _build_metric_filter(_CPU_METRIC, "cluster", "ns", "istio-ingressgateway")
+
+        assert "\\-" not in result
+        assert 'monitoring.regex.full_match("^istio-ingressgateway.*")' in result
 
     def test_memory_filter_contains_memory_metric_type(self) -> None:
         from vaig.tools.gke.monitoring import _MEMORY_METRIC, _build_metric_filter
@@ -114,7 +130,8 @@ class TestBuildMetricFilter:
         result = _build_metric_filter(_MEMORY_METRIC, "cluster", "ns", "backend-")
 
         assert f'metric.type = "{_MEMORY_METRIC}"' in result
-        assert 'monitoring.regex.full_match("^backend\\-.*")' in result
+        # Hyphens left as-is (RE2-safe)
+        assert 'monitoring.regex.full_match("^backend-.*")' in result
 
     def test_filter_all_parts_present(self) -> None:
         from vaig.tools.gke.monitoring import _CPU_METRIC, _build_metric_filter
@@ -133,8 +150,83 @@ class TestBuildMetricFilter:
 
         result = _build_metric_filter(_CPU_METRIC, "cluster", "ns", "")
 
-        # Empty prefix: re.escape("") == "" → matches all pods
+        # Empty prefix → matches all pods
         assert 'monitoring.regex.full_match("^.*")' in result
+
+
+# ── Unit tests for _re2_escape ────────────────────────────────
+
+
+class TestRe2Escape:
+    """Tests for _re2_escape() — ensures RE2-safe escaping without over-escaping hyphens."""
+
+    def test_plain_string_unchanged(self) -> None:
+        from vaig.tools.gke.monitoring import _re2_escape
+
+        assert _re2_escape("mypod") == "mypod"
+
+    def test_hyphen_not_escaped(self) -> None:
+        """Hyphens are literal in RE2 outside character classes and must not be escaped."""
+        from vaig.tools.gke.monitoring import _re2_escape
+
+        assert _re2_escape("istio-ingressgateway") == "istio-ingressgateway"
+
+    def test_multiple_hyphens_not_escaped(self) -> None:
+        from vaig.tools.gke.monitoring import _re2_escape
+
+        assert _re2_escape("my-app-v2") == "my-app-v2"
+
+    def test_dot_is_escaped(self) -> None:
+        from vaig.tools.gke.monitoring import _re2_escape
+
+        assert _re2_escape("my.pod") == r"my\.pod"
+
+    def test_plus_is_escaped(self) -> None:
+        from vaig.tools.gke.monitoring import _re2_escape
+
+        assert _re2_escape("a+b") == r"a\+b"
+
+    def test_star_is_escaped(self) -> None:
+        from vaig.tools.gke.monitoring import _re2_escape
+
+        assert _re2_escape("a*b") == r"a\*b"
+
+    def test_parens_are_escaped(self) -> None:
+        from vaig.tools.gke.monitoring import _re2_escape
+
+        assert _re2_escape("foo(bar)") == r"foo\(bar\)"
+
+    def test_caret_is_escaped(self) -> None:
+        from vaig.tools.gke.monitoring import _re2_escape
+
+        assert _re2_escape("^start") == r"\^start"
+
+    def test_dollar_is_escaped(self) -> None:
+        from vaig.tools.gke.monitoring import _re2_escape
+
+        assert _re2_escape("end$") == r"end\$"
+
+    def test_pipe_is_escaped(self) -> None:
+        from vaig.tools.gke.monitoring import _re2_escape
+
+        assert _re2_escape("a|b") == r"a\|b"
+
+    def test_backslash_is_escaped(self) -> None:
+        from vaig.tools.gke.monitoring import _re2_escape
+
+        assert _re2_escape("a\\b") == r"a\\b"
+
+    def test_empty_string(self) -> None:
+        from vaig.tools.gke.monitoring import _re2_escape
+
+        assert _re2_escape("") == ""
+
+    def test_hyphen_with_dots_mixed(self) -> None:
+        """Hyphens pass through; dots are escaped — common real-world prefix."""
+        from vaig.tools.gke.monitoring import _re2_escape
+
+        result = _re2_escape("my-app.v2")
+        assert result == r"my-app\.v2"
 
 
 # ── Unit tests for _calculate_trend ──────────────────────────
@@ -855,25 +947,20 @@ class TestRegexInjectionProtection:
     """Verify pod_name_prefix is safely escaped before regex interpolation."""
 
     def test_prefix_with_dot_is_escaped(self) -> None:
-        import re as re_module
-
         from vaig.tools.gke.monitoring import _CPU_METRIC, _build_metric_filter
 
         result = _build_metric_filter(_CPU_METRIC, "cluster", "ns", "app.v2-")
 
-        # re.escape("app.v2-") should produce "app\\.v2\\-"
-        expected_escaped = re_module.escape("app.v2-")
-        assert expected_escaped in result
+        # _re2_escape: dot → \. but hyphen stays literal (RE2-safe)
+        assert r"app\.v2-" in result
 
     def test_prefix_with_brackets_is_escaped(self) -> None:
-        import re as re_module
-
         from vaig.tools.gke.monitoring import _CPU_METRIC, _build_metric_filter
 
         result = _build_metric_filter(_CPU_METRIC, "cluster", "ns", "pod[0]-")
 
-        expected_escaped = re_module.escape("pod[0]-")
-        assert expected_escaped in result
+        # _re2_escape: brackets → \[ \] but hyphen stays literal
+        assert r"pod\[0\]-" in result
 
 
 # ── Tests for _build_metric_filter_with_container ────────────
