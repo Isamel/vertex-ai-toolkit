@@ -13,6 +13,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from vaig.core.cache import CacheStats
+from vaig.core.client import EndpointFlip
 from vaig.core.protocols import GCPClientProvider, GeminiClientProtocol, K8sClientProvider
 
 # ══════════════════════════════════════════════════════════════
@@ -107,6 +108,14 @@ class TestGeminiClientProtocol:
             def switch_model(self, model_id: str) -> str:
                 return model_id
 
+            @property
+            def fallback_active(self) -> bool:
+                return False
+
+            @property
+            def endpoint_flips(self) -> list[EndpointFlip]:
+                return []
+
             def list_available_models(self) -> list[dict[str, str]]:
                 return []
 
@@ -130,10 +139,6 @@ class TestGeminiClientProtocol:
                 location: str | None = None,
             ) -> None:
                 pass
-
-            @property
-            def endpoint_flips(self) -> list[Any]:
-                return []
 
         fake = FakeClient()
         assert isinstance(fake, GeminiClientProtocol)

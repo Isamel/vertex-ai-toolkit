@@ -824,7 +824,7 @@ class TestStructuredReportPopulation:
 
         post_process_calls: list[str] = []
 
-        def _fake_post_process(content: str) -> str:
+        def _fake_post_process(content: str, **kwargs: object) -> str:
             post_process_calls.append(content)
             return "## Processed Markdown"
 
@@ -926,7 +926,7 @@ class TestStructuredReportPopulation:
 
         post_process_calls: list[str] = []
 
-        def _fake_post_process(content: str) -> str:
+        def _fake_post_process(content: str, **kwargs: object) -> str:
             post_process_calls.append(content)
             return "## Async Processed Markdown"
 

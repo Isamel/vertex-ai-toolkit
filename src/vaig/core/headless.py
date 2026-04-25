@@ -524,7 +524,7 @@ def execute_skill_headless(
     # Create client + orchestrator
     from vaig.core.client import GeminiClient
 
-    client = GeminiClient(settings)
+    client = GeminiClient(settings, fallback_model=settings.models.fallback)
     orchestrator = Orchestrator(client, settings)
 
     # Build attachment context from adapters (if any)

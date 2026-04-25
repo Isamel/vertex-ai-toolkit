@@ -8,6 +8,7 @@ from enum import StrEnum
 from typing import Any
 
 from vaig.core.models import PipelineState
+from vaig.core.quality import QualityIssue
 from vaig.core.router import route_agents as _core_route_agents
 
 
@@ -143,7 +144,11 @@ class BaseSkill(ABC):
         """
         return None
 
-    def post_process_report(self, content: str) -> str:
+    def post_process_report(
+        self,
+        content: str,
+        run_quality: list[QualityIssue] | None = None,
+    ) -> str:
         """Post-process the reporter agent's raw output before validation.
 
         Called by the orchestrator on the last agent's output when the agent

@@ -3,7 +3,7 @@
 **Version**: 1.0
 **Target**: vaig v0.19+
 **Scope**: `vaig.core.client.GeminiClient` + `vaig.agents.orchestrator`
-**Status**: Draft for implementation
+**Status**: Implemented — 2026-04-25
 **Severity of addressed bug**: Critical — runs in `service-health` skill
 fail with `GeminiRateLimitError` after ~56 s of retries when the
 `gemini-2.5-pro` quota is saturated.
