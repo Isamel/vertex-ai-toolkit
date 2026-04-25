@@ -1,8 +1,9 @@
 """Attachment-priors extractor for SPEC-ATT-10 §6.5.1.
 
 Extracts an ``AttachmentPriors`` object from attached documents in a single
-bounded LLM pass.  Results are cached in-process by attachment fingerprint so
-subsequent runs with the same attachments skip the LLM call entirely.
+bounded LLM pass.  Results are cached in-process by a composite key that
+covers the attachment text, the system prompt, and the model ID so that prompt
+or model changes always produce a fresh extraction.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -17,8 +19,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# In-process cache: fingerprint → AttachmentPriors
-_PRIOR_CACHE: dict[str, AttachmentPriors] = {}
+# Bounded in-process LRU cache: composite_key → AttachmentPriors.
+# Evicts oldest entry once the limit is reached to prevent unbounded growth.
+_CACHE_MAX_SIZE = 64
+_PRIOR_CACHE: OrderedDict[str, AttachmentPriors] = OrderedDict()
 
 # Fingerprint length (hex chars, 64-bit width)
 _FP_LENGTH = 16
@@ -27,20 +31,40 @@ _FP_LENGTH = 16
 def fingerprint(text: str) -> str:
     """Return a 16-hex-char SHA-256 fingerprint of *text*.
 
-    Used to cache ``AttachmentPriors`` across runs with identical attachments
-    (SPEC-ATT-10 §6.5.1 — "fully cached by attachment fingerprint").
+    Used as a component of the composite cache key for ``AttachmentPriors``.
     """
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:_FP_LENGTH]
 
 
-def get_cached(fp: str) -> AttachmentPriors | None:
-    """Return cached ``AttachmentPriors`` for *fp*, or ``None`` if absent."""
-    return _PRIOR_CACHE.get(fp)
+def _cache_key(attachment_text: str, system_prompt: str, model_id: str) -> str:
+    """Return a composite cache key covering text, prompt, and model.
+
+    Combining all three ensures that changes to the prompt or model always
+    produce a fresh LLM extraction even for identical attachment text.
+    """
+    combined = f"{system_prompt}||{model_id}||{attachment_text}"
+    return hashlib.sha256(combined.encode("utf-8")).hexdigest()[: _FP_LENGTH * 2]
 
 
-def set_cached(fp: str, priors: AttachmentPriors) -> None:
-    """Store *priors* in the in-process cache under *fp*."""
-    _PRIOR_CACHE[fp] = priors
+def get_cached(key: str) -> AttachmentPriors | None:
+    """Return cached ``AttachmentPriors`` for *key*, or ``None`` if absent.
+
+    Moves the entry to the end (most-recently-used position) on a hit.
+    """
+    if key not in _PRIOR_CACHE:
+        return None
+    _PRIOR_CACHE.move_to_end(key)
+    return _PRIOR_CACHE[key]
+
+
+def set_cached(key: str, priors: AttachmentPriors) -> None:
+    """Store *priors* under *key*, evicting the oldest entry when at capacity."""
+    if key in _PRIOR_CACHE:
+        _PRIOR_CACHE.move_to_end(key)
+    else:
+        if len(_PRIOR_CACHE) >= _CACHE_MAX_SIZE:
+            _PRIOR_CACHE.popitem(last=False)
+    _PRIOR_CACHE[key] = priors
 
 
 def clear_cache() -> None:
@@ -85,9 +109,16 @@ def extract_priors(
 ) -> AttachmentPriors:
     """Extract ``AttachmentPriors`` from *attachment_text* using *client*.
 
-    The result is cached by the SHA-256 fingerprint of *attachment_text*.
-    If the same attachment text was seen in a previous call within this
-    process, the LLM call is skipped and the cached object is returned.
+    Results are cached by a composite key covering the attachment text, the
+    system prompt, and the model ID.  Changing any of these three inputs
+    bypasses the cache and triggers a fresh LLM call.
+
+    This is a **post-hoc enrichment** pass: it runs after the main
+    ``execute_with_tools`` fan-out and populates
+    ``OrchestratorResult.attachment_priors`` / ``HealthReport.attachment_priors``
+    for downstream consumers (reporters, CLI output).  Sub-gatherers in the
+    current sprint do *not* receive these priors during their execution; that
+    wiring is deferred to §6.5.2.
 
     Parameters
     ----------
@@ -106,14 +137,15 @@ def extract_priors(
     )
     from vaig.skills.service_health.schema import AttachmentPriors
 
-    fp = fingerprint(attachment_text)
+    _model_id = model_id or ""
+    key = _cache_key(attachment_text, SYSTEM_PROMPT, _model_id)
 
-    cached = get_cached(fp)
+    cached = get_cached(key)
     if cached is not None:
-        logger.debug("attachment_priors: cache hit for fingerprint %s — skipping LLM call", fp)
+        logger.debug("attachment_priors: cache hit for key %s — skipping LLM call", key[:8])
         return cached
 
-    logger.debug("attachment_priors: cache miss for fingerprint %s — calling LLM", fp)
+    logger.debug("attachment_priors: cache miss for key %s — calling LLM", key[:8])
 
     user_prompt = build_user_prompt(attachment_text)
 
@@ -124,10 +156,12 @@ def extract_priors(
     try:
         result = client.generate(user_prompt, **kwargs)
         raw_text: str = result.text if hasattr(result, "text") else str(result)
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception as exc:
         logger.warning("attachment_priors: LLM call failed — returning empty priors: %s", exc)
         empty = AttachmentPriors()
-        set_cached(fp, empty)
+        set_cached(key, empty)
         return empty
 
     try:
@@ -136,5 +170,5 @@ def extract_priors(
         logger.warning("attachment_priors: JSON parse failed — returning empty priors: %s", exc)
         priors = AttachmentPriors()
 
-    set_cached(fp, priors)
+    set_cached(key, priors)
     return priors

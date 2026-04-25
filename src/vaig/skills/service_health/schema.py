@@ -1439,7 +1439,9 @@ class HealthReport(BaseModel):
         default=None,
         description=(
             "Expected-state snapshot derived from attachments (SPEC-ATT-10 §6.5.1). "
-            "Populated post-hoc by the attachment_gatherer pass before live sub-gatherers run. "
+            "Populated post-hoc by the attachment_gatherer pass after the main execution "
+            "fan-out completes. ``None`` when no attachments were provided; an empty "
+            "``AttachmentPriors`` object when extraction was attempted but yielded no priors. "
             "Excluded from the Gemini response_schema."
         ),
     )

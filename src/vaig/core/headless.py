@@ -410,11 +410,18 @@ def _run_attachment_gatherer_pass(
     *,
     model_id: str | None = None,
 ) -> Any:
-    """Run the ATT-10 §6.5.1 attachment_gatherer pass.
+    """Run the ATT-10 §6.5.1 attachment_gatherer pass (post-hoc enrichment).
 
     Extracts an ``AttachmentPriors`` object from *attachment_context* using a
-    single bounded LLM call (or returns a cached result if the fingerprint
-    matches a previous call).
+    single bounded LLM call (or returns a cached result when the composite
+    cache key — covering text, system prompt, and model ID — matches a
+    previous call).
+
+    **Lifecycle note**: this pass runs *after* ``execute_with_tools`` completes.
+    Sub-gatherers in the current sprint therefore do *not* receive the priors
+    during their execution; the priors are available for downstream consumers
+    (reporters, CLI output) only.  Feeding priors into sub-gatherers is
+    deferred to §6.5.2.
 
     Parameters
     ----------
@@ -687,6 +694,9 @@ def execute_skill_headless(
         if attachment_gap_strings:
             existing = list(result.attachment_gaps or [])
             result.attachment_gaps = existing + attachment_gap_strings
+        # ATT-10 §6.5.1: extract priors from full combined context (post-hoc)
+        if attachment_context:
+            result.attachment_priors = _run_attachment_gatherer_pass(attachment_context, client)
 
     # ── ATT-11: compute and surface attachment usage observability ────────────
     if attachment_contexts_used:

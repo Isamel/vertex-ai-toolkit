@@ -237,9 +237,18 @@ class OrchestratorResult:
     """``AttachmentPriors`` object extracted by the attachment_gatherer pass
     (SPEC-ATT-10 §6.5.1).
 
-    Populated by ``execute_skill_headless`` before live sub-gatherers run,
-    when ``--attach`` was provided and the attachment context is non-empty.
-    ``None`` when no attachments were provided or prior extraction failed.
+    Populated by ``execute_skill_headless`` *after* the main
+    ``execute_with_tools`` fan-out completes (post-hoc enrichment).
+    Set for both the single-window and map-reduce execution paths when
+    ``--attach`` was provided and the attachment context is non-empty.
+
+    ``None`` when no attachments were provided.  When extraction is attempted
+    but fails (LLM error or JSON parse failure), this field holds an empty
+    ``AttachmentPriors()`` rather than ``None`` — callers should check
+    ``bool(attachment_priors.model_fields_set)`` or inspect the sub-fields
+    rather than testing for ``None`` to distinguish between "no attachments"
+    and "empty priors".
+
     Stored as ``Any`` to avoid a circular import between ``orchestrator``
     and the service-health schema layer.
     """
