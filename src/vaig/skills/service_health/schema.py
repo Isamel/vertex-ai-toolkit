@@ -551,6 +551,7 @@ _VERIFIED_SOURCE_SUPPORTS: frozenset[str] = frozenset(
         "live_and_attachment_corroborated",
         "live_matches_known_incident_pattern",
         "live_with_attachment_enrichment",
+        "live_vs_attachment_contradicts",  # contradictions are verified findings too (§6.5.4)
     }
 )
 
@@ -568,6 +569,17 @@ def render_attachment_sections(report: HealthReport) -> str:
     Returns:
         Markdown string (may be empty).
     """
+    # These fields are hydrated from ratification_json by apply_ratification()
+    # before render_attachment_sections() is called.
+
+    def _md_cell(s: str) -> str:
+        """Sanitize a string for use in a Markdown table cell."""
+        return s.replace("|", "\\|").replace("\n", " ")
+
+    def _md_line(s: str) -> str:
+        """Sanitize a string for use in a Markdown list item or heading."""
+        return s.replace("\n", " ")
+
     verified_findings = [f for f in report.findings if f.source_support in _VERIFIED_SOURCE_SUPPORTS]
     evidence_findings = [
         f for f in report.findings if f.supporting_evidence or f.contradictions or f.attachment_references
@@ -591,7 +603,7 @@ def render_attachment_sections(report: HealthReport) -> str:
             elif f.supporting_evidence:
                 ev = f.supporting_evidence[0]
                 attachment_col = ev.attachment_name or "—"
-            parts.append(f"| {f.title} | {f.source_support} | {attachment_col} |")
+            parts.append(f"| {_md_cell(f.title)} | {f.source_support} | {_md_cell(attachment_col)} |")
         parts.append("")
 
     # ── Source Evidence section ───────────────────────────────────────────
@@ -599,11 +611,11 @@ def render_attachment_sections(report: HealthReport) -> str:
         parts.append("## Source Evidence")
         parts.append("")
         for f in evidence_findings:
-            parts.append(f"### {f.title}")
+            parts.append(f"### {_md_line(f.title)}")
             if f.supporting_evidence:
                 parts.append("**Supporting Evidence**")
                 for ev in f.supporting_evidence:
-                    line = f"- [{ev.source}] {ev.excerpt}"
+                    line = f"- [{ev.source}] {_md_line(ev.excerpt)}"
                     extras: list[str] = []
                     if ev.attachment_name:
                         extras.append(f"attachment: {ev.attachment_name}")
@@ -616,7 +628,7 @@ def render_attachment_sections(report: HealthReport) -> str:
             if f.contradictions:
                 parts.append("**Contradictions**")
                 for c in f.contradictions:
-                    line = f"- Expected: {c.expected} / Observed: {c.observed}"
+                    line = f"- Expected: {_md_line(c.expected)} / Observed: {_md_line(c.observed)}"
                     if c.attachment_name:
                         line += f" *(attachment: {c.attachment_name})*"
                     parts.append(line)
@@ -624,7 +636,7 @@ def render_attachment_sections(report: HealthReport) -> str:
             if f.attachment_references:
                 parts.append("**Attachment References**")
                 for ref in f.attachment_references:
-                    parts.append(f"- {ref.attachment_name}: {ref.relevance}")
+                    parts.append(f"- {ref.attachment_name}: {_md_line(ref.relevance)}")
                 parts.append("")
 
     return "\n".join(parts)
