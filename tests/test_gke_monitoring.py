@@ -221,6 +221,17 @@ class TestRe2Escape:
 
         assert _re2_escape("") == ""
 
+    def test_double_quote_is_escaped(self) -> None:
+        """Double-quote must be escaped to prevent filter injection.
+
+        The escaped prefix is embedded inside ``monitoring.regex.full_match("^...*")``.
+        An unescaped ``"`` in the input would terminate the string literal and
+        allow injection of arbitrary filter clauses.
+        """
+        from vaig.tools.gke.monitoring import _re2_escape
+
+        assert _re2_escape('pod"name') == r"pod\"name"
+
     def test_hyphen_with_dots_mixed(self) -> None:
         """Hyphens pass through; dots are escaped — common real-world prefix."""
         from vaig.tools.gke.monitoring import _re2_escape

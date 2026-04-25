@@ -105,8 +105,12 @@ def _re2_escape(text: str) -> str:
     valid in Python regex but causes a parse error in RE2 outside of character
     classes (``unsupported escape sequence``).
 
-    Only the true RE2 metacharacters are escaped here:
-    ``\\ . + * ? ( ) | [ ] { } ^ $``
+    Escaped characters:
+    - True RE2 metacharacters: ``\\ . + * ? ( ) | [ ] { } ^ $``
+    - Double-quote (``"``) — the filter string delimiter.  An unescaped quote
+      in the input would terminate the ``monitoring.regex.full_match("...")``
+      literal prematurely, allowing filter injection by untrusted input (e.g.
+      LLM-supplied pod prefix).
 
     Hyphens are intentionally NOT escaped — they are only special inside
     ``[...]`` character classes in RE2 and are literal everywhere else.
@@ -119,7 +123,7 @@ def _re2_escape(text: str) -> str:
         RE2-safe escaped string suitable for embedding in a
         ``monitoring.regex.full_match(...)`` filter expression.
     """
-    return re.sub(r"([\\.\+\*\?\(\)\|\[\]\{\}\^\$])", r"\\\1", text)
+    return re.sub(r'([\\.\+\*\?\(\)\|\[\]\{\}\^\$"])', r"\\\1", text)
 
 
 def _build_metric_filter(
