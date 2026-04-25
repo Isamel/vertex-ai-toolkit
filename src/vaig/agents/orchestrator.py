@@ -30,6 +30,7 @@ from vaig.core.language import (
 from vaig.core.models import PipelineState, apply_state_patch
 from vaig.core.pricing import calculate_cost
 from vaig.core.prompt_defense import ANTI_INJECTION_RULE, wrap_untrusted_content
+from vaig.core.quality import QualityIssue, QualityIssueKind, RunQualityCollector
 from vaig.skills.base import BaseSkill, SkillPhase, SkillResult
 from vaig.tools.agent_tool import agent_as_tool
 from vaig.tools.base import ToolRegistry
@@ -143,9 +144,13 @@ def _fire_agent_progress(
 DEFAULT_MIN_CONTENT_CHARS = 200
 
 
-async def _post_process_report_async(skill: BaseSkill, content: str) -> str:
+async def _post_process_report_async(
+    skill: BaseSkill,
+    content: str,
+    run_quality: list[QualityIssue] | None = None,
+) -> str:
     """Run blocking post_process_report in a separate thread to avoid blocking the event loop."""
-    return await asyncio.to_thread(skill.post_process_report, content)
+    return await asyncio.to_thread(skill.post_process_report, content, run_quality)
 
 
 EMPTY_MARKERS: tuple[str, ...] = (
@@ -251,6 +256,14 @@ class OrchestratorResult:
 
     Stored as ``Any`` to avoid a circular import between ``orchestrator``
     and the service-health schema layer.
+    """
+    run_quality: list[QualityIssue] = field(default_factory=list)
+    """Quality issues recorded during this pipeline run.
+
+    Populated by :class:`RunQualityCollector` in ``execute_with_tools`` and
+    ``_execute_parallel_then_sequential``.  Empty when no issues were detected.
+    Consumers (reporter, CLI, headless caller) may inspect this list to surface
+    degradation warnings in reports or API responses.
     """
 
     def to_skill_result(self) -> SkillResult:
@@ -1287,6 +1300,7 @@ class Orchestrator:
             max_cost_per_run: float = self._settings.budget.max_cost_per_run
             failure_counts: dict[str, int] = {}
             max_failures: int = self._settings.agents.max_failures_before_fallback
+            _quality = RunQualityCollector()
 
             for i, agent in enumerate(agents):
                 logger.info(
@@ -1326,6 +1340,12 @@ class Orchestrator:
                     _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
+                if agent_result.model_degraded:
+                    _quality.record_kind(
+                        QualityIssueKind.MODEL_DEGRADED,
+                        where=agent_result.agent_name,
+                        detail="agent ran on fallback model",
+                    )
                 combined_patch = _combine_state_patches(
                     agent_result.state_patch, agent_result.agent_name, agent_result.content
                 )
@@ -1348,6 +1368,7 @@ class Orchestrator:
                         f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
                         + (result.agent_results[-1].content if result.agent_results else "")
                     )
+                    result.run_quality = _quality.issues
                     _set_models_used_from_results()
                     return result
 
@@ -1647,6 +1668,7 @@ class Orchestrator:
                     # Post-process structured output (e.g. JSON → Markdown)
                     agent_result.content = skill.post_process_report(
                         agent_result.content,
+                        run_quality=_quality.issues,
                     )
 
                     finish_reason = agent_result.metadata.get("finish_reason", "")
@@ -1731,7 +1753,10 @@ class Orchestrator:
                         # Re-run post-processing on retry result so callers
                         # always receive the processed (e.g. Markdown) form.
                         if hasattr(skill, "post_process_report") and callable(skill.post_process_report):
-                            reporter_retry.content = skill.post_process_report(reporter_retry.content)
+                            reporter_retry.content = skill.post_process_report(
+                                reporter_retry.content,
+                                run_quality=_quality.issues,
+                            )
                             result.agent_results[-1] = reporter_retry
                         if schema_cls is not None and hasattr(schema_cls, "model_validate_json"):
                             try:
@@ -1746,6 +1771,7 @@ class Orchestrator:
                 result.synthesized_output = result.agent_results[-1].content
 
             result.final_state = current_state
+            result.run_quality = _quality.issues
 
         # Telemetry: emit orchestrator event for execute_with_tools
         try:
@@ -2355,6 +2381,7 @@ class Orchestrator:
             current_context = ""
             context_chain: list[str] = []
             required_sections = skill.get_required_output_sections()
+            _quality = RunQualityCollector()
 
             # ── RAG historical context injection ─────────────────
             rag_context = await asyncio.to_thread(self._retrieve_rag_context, query)
@@ -2402,13 +2429,19 @@ class Orchestrator:
                     _fire_agent_progress(on_agent_progress, agent.name, i, len(agents), "end")
                 result.agent_results.append(agent_result)
                 _accumulate_usage(result, agent_result)
+                if agent_result.model_degraded:
+                    _quality.record_kind(
+                        QualityIssueKind.MODEL_DEGRADED,
+                        where=agent_result.agent_name,
+                        detail="sequential agent ran on fallback model",
+                    )
                 combined_patch = _combine_state_patches(
                     agent_result.state_patch, agent_result.agent_name, agent_result.content
                 )
                 current_state = apply_state_patch(current_state, combined_patch)
                 self._current_pipeline_state = current_state
 
-                # ── Cost circuit breaker ──────────────────────────────────
+                # ── Cost circuit breaker ──────────────────────────────────────
                 run_cost_usd += _compute_step_cost(agent_result, agent.model)
                 result.run_cost_usd = run_cost_usd
                 if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
@@ -2477,319 +2510,322 @@ class Orchestrator:
                     # Reset failure counter on success
                     failure_counts.pop(agent.name, None)
 
-                # ── Gatherer output validation + mandatory retry ──────
-                if i == 0 and required_sections and agent_result.success:
-                    validation = self._validate_gatherer_output(
-                        agent_result.content,
-                        required_sections,
-                    )
-                    if validation.needs_retry:
-                        all_issues = validation.missing_sections + validation.shallow_sections
-                        logger.warning(
-                            "Gatherer output has %d issue(s): missing=%s, shallow=%s — retrying once",
-                            len(all_issues),
-                            ", ".join(validation.missing_sections) or "(none)",
-                            ", ".join(validation.shallow_sections) or "(none)",
-                        )
-                        retry_prompt = self._build_retry_prompt(
-                            query,
-                            validation.missing_sections,
-                            shallow_sections=validation.shallow_sections,
-                        )
-                    else:
-                        logger.info(
-                            "Gatherer validation passed — running mandatory deepening second pass for thoroughness",
-                        )
-                        retry_prompt = self._build_deepening_prompt(
-                            query,
+                    # ── Gatherer output validation + mandatory retry ──────
+                    if i == 0 and required_sections and agent_result.success:
+                        validation = self._validate_gatherer_output(
                             agent_result.content,
+                            required_sections,
                         )
-
-                    is_deepening = not validation.needs_retry
-                    if not is_deepening:
-                        agent.reset()
-
-                    kw_retry: dict[str, Any] = {"context": ""}
-                    if isinstance(agent, ToolAwareAgent):
-                        if on_tool_call is not None:
-                            kw_retry["on_tool_call"] = on_tool_call
-                        if tool_call_store is not None:
-                            kw_retry["tool_call_store"] = tool_call_store
-                        kw_retry["tool_result_cache"] = tool_result_cache
-                        if required_sections:
-                            kw_retry["required_sections"] = required_sections
-
-                    original_max_iters: int | None = None
-                    if isinstance(agent, ToolAwareAgent) and hasattr(agent, "_max_iterations"):
-                        original_max_iters = agent._max_iterations
-                        agent._max_iterations = self._settings.agents.max_iterations_retry
-
-                    try:
-                        retry_result = await asyncio.to_thread(
-                            agent.execute,
-                            retry_prompt,
-                            **kw_retry,
-                        )
-                    except MaxIterationsError:
-                        if is_deepening:
+                        if validation.needs_retry:
+                            all_issues = validation.missing_sections + validation.shallow_sections
                             logger.warning(
-                                "Deepening second pass for agent %s hit "
-                                "max_iterations_retry limit; falling back "
-                                "to first-pass output",
-                                agent.name,
+                                "Gatherer output has %d issue(s): missing=%s, shallow=%s — retrying once",
+                                len(all_issues),
+                                ", ".join(validation.missing_sections) or "(none)",
+                                ", ".join(validation.shallow_sections) or "(none)",
                             )
-                            logger.info(
-                                "Agent %s continuing with first-pass output — tokens=%s",
-                                agent.name,
-                                agent_result.usage.get(
-                                    "total_tokens",
-                                    "?",
-                                ),
+                            retry_prompt = self._build_retry_prompt(
+                                query,
+                                validation.missing_sections,
+                                shallow_sections=validation.shallow_sections,
                             )
                         else:
-                            raise
-                    else:
-                        _accumulate_usage(result, retry_result)
-                        run_cost_usd += _compute_step_cost(retry_result, agent.model)
-                        result.run_cost_usd = run_cost_usd
-                        if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
-                            result.success = False
-                            result.budget_exceeded = True
-                            result.synthesized_output = (
-                                f"[WARNING] Cost budget ${max_cost_per_run:.4f} exceeded "
-                                f"during retry (actual: ${run_cost_usd:.4f})"
+                            logger.info(
+                                "Gatherer validation passed — running mandatory deepening second pass for thoroughness",
                             )
-                            break
-
-                        if is_deepening:
-                            merged_content = agent_result.content + "\n\n" + retry_result.content
-                            retry_result = AgentResult(
-                                agent_name=retry_result.agent_name,
-                                content=merged_content,
-                                success=retry_result.success,
-                                usage=retry_result.usage,
-                                metadata=retry_result.metadata,
+                            retry_prompt = self._build_deepening_prompt(
+                                query,
+                                agent_result.content,
                             )
 
-                        result.agent_results[-1] = retry_result
+                        is_deepening = not validation.needs_retry
+                        if not is_deepening:
+                            agent.reset()
 
-                        if not retry_result.success:
-                            result.success = False
-                            logger.warning(
-                                "Agent %s retry also failed: %s",
-                                agent.name,
-                                retry_result.content,
-                            )
-                            break
-                        logger.info(
-                            "Agent %s retry succeeded — tokens=%s",
-                            agent.name,
-                            retry_result.usage.get("total_tokens", "?"),
-                        )
-                    finally:
-                        if isinstance(agent, ToolAwareAgent) and original_max_iters is not None:
-                            agent._max_iterations = original_max_iters
+                        kw_retry: dict[str, Any] = {"context": ""}
+                        if isinstance(agent, ToolAwareAgent):
+                            if on_tool_call is not None:
+                                kw_retry["on_tool_call"] = on_tool_call
+                            if tool_call_store is not None:
+                                kw_retry["tool_call_store"] = tool_call_store
+                            kw_retry["tool_result_cache"] = tool_result_cache
+                            if required_sections:
+                                kw_retry["required_sections"] = required_sections
 
-                # ── Reporter output validation + retry (async) ──────
-                is_reporter = "report" in getattr(agent, "role", "").lower()
-                if i == len(agents) - 1 and agent_result.success and is_reporter:
-                    # ── Structured output pre-validation (async) ──────
-                    schema_cls = getattr(
-                        getattr(agent, "config", None),
-                        "response_schema",
-                        None,
-                    )
-                    if (
-                        schema_cls is not None
-                        and isinstance(schema_cls, type)
-                        and hasattr(schema_cls, "model_validate_json")
-                    ):
-                        import json as _json
+                        original_max_iters: int | None = None
+                        if isinstance(agent, ToolAwareAgent) and hasattr(agent, "_max_iterations"):
+                            original_max_iters = agent._max_iterations
+                            agent._max_iterations = self._settings.agents.max_iterations_retry
 
                         try:
-                            _json.loads(agent_result.content)
-                            schema_cls.model_validate_json(agent_result.content)
-                        except Exception as schema_exc:  # noqa: BLE001
-                            logger.warning(
-                                "Reporter %s structured output failed "
-                                "schema validation (%s) — retrying with "
-                                "JSON-focused prompt",
-                                agent.name,
-                                schema_exc,
-                            )
-                            json_retry_prompt = (
-                                "Your previous response was not valid JSON "
-                                "conforming to the required schema. "
-                                f"Error: {schema_exc}\n\n"
-                                "Regenerate the report as valid JSON that "
-                                "strictly conforms to the schema. "
-                                "Do NOT include markdown fences or commentary "
-                                "— output ONLY the raw JSON object.\n\n"
-                                f"## Previous Analysis\n\n{current_context}"
-                            )
-                            agent.reset()
-                            kw_js: dict[str, Any] = {"context": ""}
-                            if isinstance(agent, ToolAwareAgent):
-                                if on_tool_call is not None:
-                                    kw_js["on_tool_call"] = on_tool_call
-                                if tool_call_store is not None:
-                                    kw_js["tool_call_store"] = tool_call_store
-                                kw_js["tool_result_cache"] = tool_result_cache
-                            json_retry_result = await asyncio.to_thread(
+                            retry_result = await asyncio.to_thread(
                                 agent.execute,
-                                json_retry_prompt,
-                                **kw_js,
+                                retry_prompt,
+                                **kw_retry,
                             )
-                            _accumulate_usage(result, json_retry_result)
-                            run_cost_usd += _compute_step_cost(json_retry_result, agent.model)
+                        except MaxIterationsError:
+                            if is_deepening:
+                                logger.warning(
+                                    "Deepening second pass for agent %s hit "
+                                    "max_iterations_retry limit; falling back "
+                                    "to first-pass output",
+                                    agent.name,
+                                )
+                                logger.info(
+                                    "Agent %s continuing with first-pass output — tokens=%s",
+                                    agent.name,
+                                    agent_result.usage.get(
+                                        "total_tokens",
+                                        "?",
+                                    ),
+                                )
+                            else:
+                                raise
+                        else:
+                            _accumulate_usage(result, retry_result)
+                            run_cost_usd += _compute_step_cost(retry_result, agent.model)
                             result.run_cost_usd = run_cost_usd
                             if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
                                 result.success = False
                                 result.budget_exceeded = True
                                 result.synthesized_output = (
                                     f"[WARNING] Cost budget ${max_cost_per_run:.4f} exceeded "
-                                    f"during JSON schema retry (actual: ${run_cost_usd:.4f})"
+                                    f"during retry (actual: ${run_cost_usd:.4f})"
                                 )
                                 break
-                            if json_retry_result.success:
-                                agent_result = json_retry_result
-                                result.agent_results[-1] = agent_result
-                                logger.info(
-                                    "Reporter %s JSON retry succeeded — tokens=%s",
-                                    agent.name,
-                                    json_retry_result.usage.get("total_tokens", "?"),
+
+                            if is_deepening:
+                                merged_content = agent_result.content + "\n\n" + retry_result.content
+                                retry_result = AgentResult(
+                                    agent_name=retry_result.agent_name,
+                                    content=merged_content,
+                                    success=retry_result.success,
+                                    usage=retry_result.usage,
+                                    metadata=retry_result.metadata,
                                 )
-                            else:
+
+                            result.agent_results[-1] = retry_result
+
+                            if not retry_result.success:
+                                result.success = False
                                 logger.warning(
-                                    "Reporter %s JSON retry also failed — proceeding with original output",
+                                    "Agent %s retry also failed: %s",
                                     agent.name,
+                                    retry_result.content,
                                 )
-
-                    # Retain the parsed structured report (if any)
-                    # before post-processing converts it to Markdown.
-                    # The CLI uses this for --summary and Rich rendering.
-                    if (
-                        schema_cls is not None
-                        and hasattr(schema_cls, "model_validate_json")
-                        and result.structured_report is None
-                    ):
-                        try:
-                            result.structured_report = schema_cls.model_validate_json(
-                                agent_result.content,
+                                break
+                            logger.info(
+                                "Agent %s retry succeeded — tokens=%s",
+                                agent.name,
+                                retry_result.usage.get("total_tokens", "?"),
                             )
-                        except Exception:  # noqa: BLE001
-                            logger.warning(
-                                "Failed to parse structured report from reporter agent",
-                                exc_info=True,
-                            )
+                        finally:
+                            if isinstance(agent, ToolAwareAgent) and original_max_iters is not None:
+                                agent._max_iterations = original_max_iters
 
-                    # Post-process structured output (e.g. JSON → Markdown).
-                    # Offloaded to a thread to avoid blocking the event loop
-                    # during recommendation enrichment (up to 120 s of LLM calls).
-                    agent_result.content = await _post_process_report_async(
-                        skill,
-                        agent_result.content,
-                    )
-
-                    finish_reason = agent_result.metadata.get("finish_reason", "")
-                    md_issues = self._validate_reporter_output(agent_result.content)
-
-                    if finish_reason == "MAX_TOKENS" or md_issues:
-                        reasons: list[str] = []
-                        if finish_reason == "MAX_TOKENS":
-                            reasons.append("finish_reason=MAX_TOKENS")
-                        if md_issues:
-                            reasons.extend(md_issues)
-                        logger.warning(
-                            "Reporter output has %d issue(s): %s — retrying once",
-                            len(reasons),
-                            "; ".join(reasons),
+                    # ── Reporter output validation + retry (async) ──────
+                    is_reporter = "report" in getattr(agent, "role", "").lower()
+                    if i == len(agents) - 1 and agent_result.success and is_reporter:
+                        # ── Structured output pre-validation (async) ──────
+                        schema_cls = getattr(
+                            getattr(agent, "config", None),
+                            "response_schema",
+                            None,
                         )
-
-                        uses_structured_output = (
+                        if (
                             schema_cls is not None
                             and isinstance(schema_cls, type)
                             and hasattr(schema_cls, "model_validate_json")
-                        )
-                        if uses_structured_output:
-                            reporter_retry_prompt = (
-                                "Your previous JSON response was truncated (hit token limit). "
-                                "Regenerate the response as valid, complete JSON:\n"
-                                "- Focus on CONFIRMED and HIGH severity findings only\n"
-                                "- Reduce detail in descriptions to stay within token limits\n"
-                                "- Ensure the JSON is complete and valid\n\n"
-                                f"## Previous Analysis\n\n{current_context}"
-                            )
-                        else:
-                            reporter_retry_prompt = (
-                                "Your previous report had formatting issues "
-                                f"({'; '.join(reasons)}). "
-                                "Regenerate the report more concisely:\n"
-                                "- Focus on CONFIRMED and HIGH severity findings only\n"
-                                "- Close ALL table rows with a trailing |\n"
-                                "- Close ALL code blocks with ```\n"
-                                "- Keep total output under 12 000 tokens\n\n"
-                                f"## Previous Analysis\n\n{current_context}"
-                            )
-                        agent.reset()
-                        kw_rr: dict[str, Any] = {"context": ""}
-                        if isinstance(agent, ToolAwareAgent):
-                            if on_tool_call is not None:
-                                kw_rr["on_tool_call"] = on_tool_call
-                            if tool_call_store is not None:
-                                kw_rr["tool_call_store"] = tool_call_store
-                            kw_rr["tool_result_cache"] = tool_result_cache
-                        reporter_retry = await asyncio.to_thread(
-                            agent.execute,
-                            reporter_retry_prompt,
-                            **kw_rr,
-                        )
-                        _accumulate_usage(result, reporter_retry)
-                        run_cost_usd += _compute_step_cost(reporter_retry, agent.model)
-                        result.run_cost_usd = run_cost_usd
-                        if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
-                            result.success = False
-                            result.budget_exceeded = True
-                            result.synthesized_output = (
-                                f"[WARNING] Cost budget ${max_cost_per_run:.4f} exceeded "
-                                f"during reporter retry (actual: ${run_cost_usd:.4f})"
-                            )
-                            _set_models_used_from_results()
-                            return result
-                        result.agent_results[-1] = reporter_retry
+                        ):
+                            import json as _json
 
-                        if not reporter_retry.success:
-                            result.success = False
-                            logger.warning(
-                                "Reporter %s retry also failed: %s",
-                                agent.name,
-                                reporter_retry.content,
-                            )
-                            break
-                        logger.info(
-                            "Reporter %s retry succeeded — tokens=%s",
-                            agent.name,
-                            reporter_retry.usage.get("total_tokens", "?"),
-                        )
-                        # Re-run post-processing on retry result so callers
-                        # always receive the processed (e.g. Markdown) form.
-                        reporter_retry.content = await _post_process_report_async(
-                            skill,
-                            reporter_retry.content,
-                        )
-                        result.agent_results[-1] = reporter_retry
-                        if schema_cls is not None and hasattr(schema_cls, "model_validate_json"):
                             try:
-                                result.structured_report = schema_cls.model_validate_json(reporter_retry.content)
+                                _json.loads(agent_result.content)
+                                schema_cls.model_validate_json(agent_result.content)
+                            except Exception as schema_exc:  # noqa: BLE001
+                                logger.warning(
+                                    "Reporter %s structured output failed "
+                                    "schema validation (%s) — retrying with "
+                                    "JSON-focused prompt",
+                                    agent.name,
+                                    schema_exc,
+                                )
+                                json_retry_prompt = (
+                                    "Your previous response was not valid JSON "
+                                    "conforming to the required schema. "
+                                    f"Error: {schema_exc}\n\n"
+                                    "Regenerate the report as valid JSON that "
+                                    "strictly conforms to the schema. "
+                                    "Do NOT include markdown fences or commentary "
+                                    "— output ONLY the raw JSON object.\n\n"
+                                    f"## Previous Analysis\n\n{current_context}"
+                                )
+                                agent.reset()
+                                kw_js: dict[str, Any] = {"context": ""}
+                                if isinstance(agent, ToolAwareAgent):
+                                    if on_tool_call is not None:
+                                        kw_js["on_tool_call"] = on_tool_call
+                                    if tool_call_store is not None:
+                                        kw_js["tool_call_store"] = tool_call_store
+                                    kw_js["tool_result_cache"] = tool_result_cache
+                                json_retry_result = await asyncio.to_thread(
+                                    agent.execute,
+                                    json_retry_prompt,
+                                    **kw_js,
+                                )
+                                _accumulate_usage(result, json_retry_result)
+                                run_cost_usd += _compute_step_cost(json_retry_result, agent.model)
+                                result.run_cost_usd = run_cost_usd
+                                if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
+                                    result.success = False
+                                    result.budget_exceeded = True
+                                    result.synthesized_output = (
+                                        f"[WARNING] Cost budget ${max_cost_per_run:.4f} exceeded "
+                                        f"during JSON schema retry (actual: ${run_cost_usd:.4f})"
+                                    )
+                                    break
+                                if json_retry_result.success:
+                                    agent_result = json_retry_result
+                                    result.agent_results[-1] = agent_result
+                                    logger.info(
+                                        "Reporter %s JSON retry succeeded — tokens=%s",
+                                        agent.name,
+                                        json_retry_result.usage.get("total_tokens", "?"),
+                                    )
+                                else:
+                                    logger.warning(
+                                        "Reporter %s JSON retry also failed — proceeding with original output",
+                                        agent.name,
+                                    )
+
+                        # Retain the parsed structured report (if any)
+                        # before post-processing converts it to Markdown.
+                        # The CLI uses this for --summary and Rich rendering.
+                        if (
+                            schema_cls is not None
+                            and hasattr(schema_cls, "model_validate_json")
+                            and result.structured_report is None
+                        ):
+                            try:
+                                result.structured_report = schema_cls.model_validate_json(
+                                    agent_result.content,
+                                )
                             except Exception:  # noqa: BLE001
                                 logger.warning(
-                                    "Failed to parse structured report from reporter retry",
+                                    "Failed to parse structured report from reporter agent",
                                     exc_info=True,
                                 )
+
+                        # Post-process structured output (e.g. JSON → Markdown).
+                        # Offloaded to a thread to avoid blocking the event loop
+                        # during recommendation enrichment (up to 120 s of LLM calls).
+                        agent_result.content = await _post_process_report_async(
+                            skill,
+                            agent_result.content,
+                            _quality.issues,
+                        )
+
+                        finish_reason = agent_result.metadata.get("finish_reason", "")
+                        md_issues = self._validate_reporter_output(agent_result.content)
+
+                        if finish_reason == "MAX_TOKENS" or md_issues:
+                            reasons: list[str] = []
+                            if finish_reason == "MAX_TOKENS":
+                                reasons.append("finish_reason=MAX_TOKENS")
+                            if md_issues:
+                                reasons.extend(md_issues)
+                            logger.warning(
+                                "Reporter output has %d issue(s): %s — retrying once",
+                                len(reasons),
+                                "; ".join(reasons),
+                            )
+
+                            uses_structured_output = (
+                                schema_cls is not None
+                                and isinstance(schema_cls, type)
+                                and hasattr(schema_cls, "model_validate_json")
+                            )
+                            if uses_structured_output:
+                                reporter_retry_prompt = (
+                                    "Your previous JSON response was truncated (hit token limit). "
+                                    "Regenerate the response as valid, complete JSON:\n"
+                                    "- Focus on CONFIRMED and HIGH severity findings only\n"
+                                    "- Reduce detail in descriptions to stay within token limits\n"
+                                    "- Ensure the JSON is complete and valid\n\n"
+                                    f"## Previous Analysis\n\n{current_context}"
+                                )
+                            else:
+                                reporter_retry_prompt = (
+                                    "Your previous report had formatting issues "
+                                    f"({'; '.join(reasons)}). "
+                                    "Regenerate the report more concisely:\n"
+                                    "- Focus on CONFIRMED and HIGH severity findings only\n"
+                                    "- Close ALL table rows with a trailing |\n"
+                                    "- Close ALL code blocks with ```\n"
+                                    "- Keep total output under 12 000 tokens\n\n"
+                                    f"## Previous Analysis\n\n{current_context}"
+                                )
+                            agent.reset()
+                            kw_rr: dict[str, Any] = {"context": ""}
+                            if isinstance(agent, ToolAwareAgent):
+                                if on_tool_call is not None:
+                                    kw_rr["on_tool_call"] = on_tool_call
+                                if tool_call_store is not None:
+                                    kw_rr["tool_call_store"] = tool_call_store
+                                kw_rr["tool_result_cache"] = tool_result_cache
+                            reporter_retry = await asyncio.to_thread(
+                                agent.execute,
+                                reporter_retry_prompt,
+                                **kw_rr,
+                            )
+                            _accumulate_usage(result, reporter_retry)
+                            run_cost_usd += _compute_step_cost(reporter_retry, agent.model)
+                            result.run_cost_usd = run_cost_usd
+                            if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
+                                result.success = False
+                                result.budget_exceeded = True
+                                result.synthesized_output = (
+                                    f"[WARNING] Cost budget ${max_cost_per_run:.4f} exceeded "
+                                    f"during reporter retry (actual: ${run_cost_usd:.4f})"
+                                )
+                                _set_models_used_from_results()
+                                return result
+                            result.agent_results[-1] = reporter_retry
+
+                            if not reporter_retry.success:
+                                result.success = False
+                                logger.warning(
+                                    "Reporter %s retry also failed: %s",
+                                    agent.name,
+                                    reporter_retry.content,
+                                )
+                                break
+                            logger.info(
+                                "Reporter %s retry succeeded — tokens=%s",
+                                agent.name,
+                                reporter_retry.usage.get("total_tokens", "?"),
+                            )
+                            # Re-run post-processing on retry result so callers
+                            # always receive the processed (e.g. Markdown) form.
+                            reporter_retry.content = await _post_process_report_async(
+                                skill,
+                                reporter_retry.content,
+                                _quality.issues,
+                            )
+                            result.agent_results[-1] = reporter_retry
+                            if schema_cls is not None and hasattr(schema_cls, "model_validate_json"):
+                                try:
+                                    result.structured_report = schema_cls.model_validate_json(reporter_retry.content)
+                                except Exception:  # noqa: BLE001
+                                    logger.warning(
+                                        "Failed to parse structured report from reporter retry",
+                                        exc_info=True,
+                                    )
 
             if result.agent_results:
                 result.synthesized_output = result.agent_results[-1].content
 
+            result.run_quality = _quality.issues
             result.final_state = current_state
 
         # Telemetry
@@ -3071,6 +3107,15 @@ class Orchestrator:
         result.run_cost_usd = run_cost_usd
         failure_counts: dict[str, int] = {}
         max_failures: int = self._settings.agents.max_failures_before_fallback
+        _quality = RunQualityCollector()
+        # Capture model_degraded from sync parallel gatherers
+        for _pr in parallel_results:
+            if _pr.model_degraded:
+                _quality.record_kind(
+                    QualityIssueKind.MODEL_DEGRADED,
+                    where=_pr.agent_name,
+                    detail="gatherer ran on fallback model",
+                )
 
         # ── Post-parallel cost check ──────────────────────────────────────
         if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
@@ -3086,6 +3131,7 @@ class Orchestrator:
                 f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
                 + (result.agent_results[-1].content if result.agent_results else "")
             )
+            result.run_quality = _quality.issues
             return result
 
         for i, agent in enumerate(sequential_agents):
@@ -3145,6 +3191,7 @@ class Orchestrator:
                     f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
                     + (result.agent_results[-1].content if result.agent_results else "")
                 )
+                result.run_quality = _quality.issues
                 return result
 
             if not agent_result.success:
@@ -3236,6 +3283,7 @@ class Orchestrator:
                     # Post-process structured output (e.g. JSON → Markdown)
                     last_agent_result.content = skill.post_process_report(
                         last_agent_result.content,
+                        run_quality=_quality.issues,
                     )
 
             result.synthesized_output = result.agent_results[-1].content
@@ -3244,6 +3292,7 @@ class Orchestrator:
             result.synthesized_output = "No agents ran."
 
         result.final_state = current_state
+        result.run_quality = _quality.issues
         return result
 
     async def _async_execute_parallel_then_sequential(
@@ -3448,6 +3497,15 @@ class Orchestrator:
         result.run_cost_usd = run_cost_usd
         failure_counts: dict[str, int] = {}
         max_failures: int = self._settings.agents.max_failures_before_fallback
+        _quality = RunQualityCollector()
+        # Capture model_degraded from async parallel gatherers
+        for _pr in parallel_results:
+            if _pr.model_degraded:
+                _quality.record_kind(
+                    QualityIssueKind.MODEL_DEGRADED,
+                    where=_pr.agent_name,
+                    detail="gatherer ran on fallback model",
+                )
 
         # ── Post-parallel cost check ──────────────────────────────────────
         if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
@@ -3499,6 +3557,12 @@ class Orchestrator:
 
             result.agent_results.append(agent_result)
             _accumulate_usage(result, agent_result)
+            if agent_result.model_degraded:
+                _quality.record_kind(
+                    QualityIssueKind.MODEL_DEGRADED,
+                    where=agent_result.agent_name,
+                    detail="sequential agent ran on fallback model",
+                )
             combined_patch = _combine_state_patches(
                 agent_result.state_patch, agent_result.agent_name, agent_result.content
             )
@@ -3510,7 +3574,7 @@ class Orchestrator:
             result.run_cost_usd = run_cost_usd
             if self._is_cost_budget_exceeded(run_cost_usd, max_cost_per_run):
                 logger.warning(
-                    "Cost circuit breaker triggered after async agent %s: run_cost_usd=%.6f > max_cost_per_run=%.6f",
+                    "Cost circuit breaker triggered after agent %s: run_cost_usd=%.6f > max_cost_per_run=%.6f",
                     agent.name,
                     run_cost_usd,
                     max_cost_per_run,
@@ -3522,6 +3586,7 @@ class Orchestrator:
                     f"${run_cost_usd:.4f} exceeded budget ${max_cost_per_run:.4f}.\n\n"
                     + (result.agent_results[-1].content if result.agent_results else "")
                 )
+                result.run_quality = _quality.issues
                 return result
 
             if not agent_result.success:
@@ -3619,6 +3684,7 @@ class Orchestrator:
                     last_agent_result.content = await _post_process_report_async(
                         skill,
                         last_agent_result.content,
+                        _quality.issues,
                     )
 
             result.synthesized_output = result.agent_results[-1].content
@@ -3627,6 +3693,7 @@ class Orchestrator:
             result.synthesized_output = "No agents ran."
 
         result.final_state = current_state
+        result.run_quality = _quality.issues
         return result
 
     def _merge_parallel_outputs(

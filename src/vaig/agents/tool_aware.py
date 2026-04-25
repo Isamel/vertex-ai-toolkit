@@ -349,6 +349,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin, MemoryRecallMixin):
                 "context_window_pct": loop_result.peak_context_pct,
             },
             state_patch=state_patch if state_patch else None,
+            model_degraded=getattr(self._client, "fallback_active", False),
         )
 
     def execute_stream(self, prompt: str, *, context: str = "") -> Iterator[str]:
@@ -498,6 +499,7 @@ class ToolAwareAgent(BaseAgent, ToolLoopMixin, MemoryRecallMixin):
                 "context_window_pct": loop_result.peak_context_pct,
             },
             state_patch=state_patch if state_patch else None,
+            model_degraded=getattr(self._client, "fallback_active", False),
         )
 
     async def async_execute_stream(

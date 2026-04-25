@@ -37,7 +37,7 @@ from vaig.core.exceptions import CircuitBreakerOpenError
 if TYPE_CHECKING:
     from vaig.core.config import CircuitBreakerConfig
 
-__all__ = ["CircuitBreaker", "CircuitBreakerState"]
+__all__ = ["CircuitBreaker", "CircuitBreakerState", "ModelCircuitBreaker"]
 
 
 class CircuitBreakerState(StrEnum):
@@ -134,3 +134,79 @@ class CircuitBreaker:
                 "failure_count": self._failure_count,
                 "window": list(self._window),
             }
+
+
+class ModelCircuitBreaker:
+    """Registry of per-(location, model_id) circuit breakers.
+
+    Keyed by ``(location, model_id)`` tuple so that a tripped breaker for
+    ``"gemini-2.5-pro"`` in ``"us-central1"`` does **not** block
+    ``"gemini-2.5-flash"`` in the same location (or any model in a different
+    location).
+
+    Usage::
+
+        mcb = ModelCircuitBreaker(CircuitBreakerConfig())
+        if mcb.is_open(location, model_id):
+            ...  # skip request
+        try:
+            result = do_work()
+            await mcb.record_success(location, model_id)
+        except Exception:
+            await mcb.record_failure(location, model_id)
+            raise
+    """
+
+    def __init__(self, config: CircuitBreakerConfig) -> None:
+        self._config = config
+        self._breakers: dict[tuple[str, str], CircuitBreaker] = {}
+        self._lock = asyncio.Lock()
+
+    def _get_or_create(self, location: str, model_id: str) -> CircuitBreaker:
+        """Return the breaker for ``(location, model_id)``, creating if absent."""
+        key = (location, model_id)
+        if key not in self._breakers:
+            self._breakers[key] = CircuitBreaker(self._config)
+        return self._breakers[key]
+
+    def is_open(self, location: str, model_id: str) -> bool:
+        """Return ``True`` if the breaker for ``(location, model_id)`` is OPEN.
+
+        This is a **sync** read-only check — safe to call from non-async code.
+        Does not transition state (no side effects).
+        """
+        key = (location, model_id)
+        if key not in self._breakers:
+            return False
+        breaker = self._breakers[key]
+        if breaker.state != CircuitBreakerState.OPEN:
+            return False
+        # Check if recovery timeout has elapsed (same logic as allow_request).
+        import time as _time
+
+        elapsed = _time.monotonic() - breaker._opened_at
+        return elapsed < self._config.recovery_timeout
+
+    async def allow_request(self, location: str, model_id: str) -> None:
+        """Proxy to the underlying breaker's :meth:`CircuitBreaker.allow_request`."""
+        async with self._lock:
+            breaker = self._get_or_create(location, model_id)
+        await breaker.allow_request()
+
+    async def record_success(self, location: str, model_id: str) -> None:
+        """Record a successful call for ``(location, model_id)``."""
+        async with self._lock:
+            breaker = self._get_or_create(location, model_id)
+        await breaker.record_success()
+
+    async def record_failure(self, location: str, model_id: str) -> None:
+        """Record a failed call for ``(location, model_id)``."""
+        async with self._lock:
+            breaker = self._get_or_create(location, model_id)
+        await breaker.record_failure()
+
+    async def snapshot(self, location: str, model_id: str) -> dict[str, object]:
+        """Return a snapshot of the breaker for ``(location, model_id)``."""
+        async with self._lock:
+            breaker = self._get_or_create(location, model_id)
+        return await breaker.snapshot()

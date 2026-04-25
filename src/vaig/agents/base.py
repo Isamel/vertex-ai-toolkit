@@ -65,6 +65,13 @@ class AgentResult:
     usage: dict[str, int] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     state_patch: dict[str, Any] | BaseModel | None = None
+    model_degraded: bool = False
+    """``True`` when the agent ran (fully or partially) on the fallback model.
+
+    Set by the agent's ``execute`` method after the tool-loop completes,
+    by inspecting ``client.fallback_active``.  ``False`` when no fallback
+    was triggered or the client does not support fallback tracking.
+    """
 
 
 class BaseAgent(ABC):

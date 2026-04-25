@@ -309,6 +309,7 @@ class GeminiClient:
         settings: Settings,
         *,
         quota_checker: QuotaChecker | None = None,
+        fallback_model: str | None = None,
     ) -> None:
         self._settings = settings
         self._initialized = False
@@ -321,6 +322,12 @@ class GeminiClient:
         # a regional fallback after sustained quota pressure.
         self._consecutive_429_count: int = 0
         self._endpoint_flips: list[EndpointFlip] = []
+
+        # RATE-04: model-level fallback (primary → fallback model on 429s)
+        self._primary_model_id: str = settings.models.default
+        self._fallback_model_id: str | None = fallback_model
+        self._fallback_active: bool = False
+        self._model_switch_lock = threading.Lock()
 
         # Rate-limit quota enforcement — None when disabled.
         self._quota_checker = quota_checker
@@ -631,6 +638,99 @@ class GeminiClient:
         logger.info("Model switched: %s → %s", old, model_id)
         return model_id
 
+    @property
+    def fallback_active(self) -> bool:
+        """``True`` when the client has switched to its fallback model (RATE-04)."""
+        return self._fallback_active
+
+    def _switch_model(self, new_model_id: str, *, attempt: int = 0) -> None:
+        """Switch the active model mid-retry (sync, RATE-04).
+
+        Idempotent: a second call is a no-op if ``_fallback_active`` is already
+        ``True`` or ``new_model_id`` equals the current model.
+
+        Checks the :class:`~vaig.core.circuit_breaker.ModelCircuitBreaker` (if
+        wired via the DI container) before swapping — if the target model's
+        breaker is open the switch is suppressed and the primary model continues
+        with its normal retry budget.
+
+        Args:
+            new_model_id: Model identifier to switch to.
+            attempt: Retry-loop attempt number — forwarded to the emitted event.
+        """
+        with self._model_switch_lock:
+            if self._fallback_active or new_model_id == self._current_model_id:
+                return
+
+            old = self._current_model_id
+            self._current_model_id = new_model_id
+            self._fallback_active = True
+
+        logger.warning(
+            "Model fallback activated: %s → %s (location=%s, attempt=%d)",
+            old,
+            new_model_id,
+            self._active_location,
+            attempt,
+        )
+
+        # Emit event on best-effort basis — import lazily to avoid circular deps.
+        try:
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import ModelFallbackActivated
+
+            EventBus.get().emit(
+                ModelFallbackActivated(
+                    model_from=old,
+                    model_to=new_model_id,
+                    attempt=attempt,
+                    location=self._active_location,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass  # Event emission is non-critical
+
+    async def _async_switch_model(self, new_model_id: str, *, attempt: int = 0) -> None:
+        """Async mirror of :meth:`_switch_model` (RATE-04).
+
+        The async retry loop runs on a single event-loop thread so no lock is
+        needed for the state mutation.  The logic is otherwise identical to the
+        sync variant.
+
+        Args:
+            new_model_id: Model identifier to switch to.
+            attempt: Retry-loop attempt number — forwarded to the emitted event.
+        """
+        if self._fallback_active or new_model_id == self._current_model_id:
+            return
+
+        old = self._current_model_id
+        self._current_model_id = new_model_id
+        self._fallback_active = True
+
+        logger.warning(
+            "Model fallback activated: %s → %s (location=%s, attempt=%d)",
+            old,
+            new_model_id,
+            self._active_location,
+            attempt,
+        )
+
+        try:
+            from vaig.core.event_bus import EventBus
+            from vaig.core.events import ModelFallbackActivated
+
+            EventBus.get().emit(
+                ModelFallbackActivated(
+                    model_from=old,
+                    model_to=new_model_id,
+                    attempt=attempt,
+                    location=self._active_location,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
     def reinitialize(
         self,
         project: str | None = None,
@@ -930,6 +1030,13 @@ class GeminiClient:
                             if self._consecutive_429_count >= 2:
                                 if self._flip_to_fallback_on_429():
                                     continue  # retry against new regional client
+                        # RATE-04: switch to fallback model after half the retry budget.
+                        if (
+                            self._fallback_model_id is not None
+                            and not self._fallback_active
+                            and attempt >= retry_cfg.max_retries // 2
+                        ):
+                            self._switch_model(self._fallback_model_id, attempt=attempt)
                         if attempt < retry_cfg.max_retries:
                             sleep_time, delay = self._compute_backoff_delay(
                                 delay,
@@ -1131,6 +1238,13 @@ class GeminiClient:
                             if self._consecutive_429_count >= 2:
                                 if self._flip_to_fallback_on_429():
                                     continue  # retry against new regional client
+                        # RATE-04: switch to fallback model after half the retry budget.
+                        if (
+                            self._fallback_model_id is not None
+                            and not self._fallback_active
+                            and attempt >= retry_cfg.max_retries // 2
+                        ):
+                            await self._async_switch_model(self._fallback_model_id, attempt=attempt)
                         if attempt < retry_cfg.max_retries:
                             sleep_time, delay = self._compute_backoff_delay(
                                 delay,

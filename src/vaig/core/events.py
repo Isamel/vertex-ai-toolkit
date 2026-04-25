@@ -27,6 +27,7 @@ __all__ = [
     "FixAppliedEvent",
     "HealthReportCompleted",
     "LoopStepEvent",
+    "ModelFallbackActivated",
     "OrchestratorPhaseCompleted",
     "OrchestratorToolsCompleted",
     "QuotaExceeded",
@@ -517,3 +518,32 @@ class FixAppliedEvent(Event):
     strategy: str = ""
     cluster: str = ""
     namespace: str = ""
+
+
+# ══════════════════════════════════════════════════════════════
+# Rate-Limit Resilience Events
+# ══════════════════════════════════════════════════════════════
+
+
+@dataclass(frozen=True)
+class ModelFallbackActivated(Event):
+    """Emitted when the client switches from the primary model to a fallback.
+
+    Triggered inside :meth:`~vaig.core.client.GeminiClient._switch_model` when
+    persistent 429 errors exhaust half the retry budget and a
+    ``fallback_model`` is configured.
+
+    Attributes:
+        model_from: Model ID that was in use before the switch.
+        model_to: Model ID that the client switched to.
+        attempt: Retry attempt number at which the switch occurred.
+        agent_name: Optional name of the agent/caller that owns the client.
+        location: GCP location the client is bound to.
+    """
+
+    event_type: str = field(default="model.fallback_activated", init=False)
+    model_from: str = ""
+    model_to: str = ""
+    attempt: int = 0
+    agent_name: str = ""
+    location: str = ""

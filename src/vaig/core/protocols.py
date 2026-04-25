@@ -158,6 +158,11 @@ class GeminiClientProtocol(Protocol):
         """Switch the active model. Returns the new model ID."""
         ...
 
+    @property
+    def fallback_active(self) -> bool:
+        """``True`` when the client has switched to its fallback model (RATE-04)."""
+        ...
+
     def list_available_models(self) -> list[dict[str, str]]:
         """List configured available models."""
         ...

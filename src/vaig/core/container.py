@@ -109,7 +109,11 @@ def build_container(settings: Settings) -> ServiceContainer:
         except Exception as exc:  # noqa: BLE001
             logger.warning("PlatformAuthManager failed to initialize: %s", exc)
 
-    gemini_client = GeminiClient(settings, quota_checker=quota_checker)
+    gemini_client = GeminiClient(
+        settings,
+        quota_checker=quota_checker,
+        fallback_model=settings.models.fallback,
+    )
     event_bus = EventBus.get()
     k8s_provider = DefaultK8sClientProvider()
     gcp_provider = DefaultGCPClientProvider()

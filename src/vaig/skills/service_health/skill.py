@@ -17,6 +17,7 @@ from typing import Any, NamedTuple
 from pydantic import ValidationError
 
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
+from vaig.core.quality import QualityIssue, QualityIssueKind
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.skills.service_health.contradiction_validator import apply_contradiction_rules, detect_contradictions
 from vaig.skills.service_health.prompts import (
@@ -1185,7 +1186,11 @@ class ServiceHealthSkill(BaseSkill):
 
         return agents
 
-    def post_process_report(self, content: str) -> str:
+    def post_process_report(
+        self,
+        content: str,
+        run_quality: list[QualityIssue] | None = None,
+    ) -> str:
         """Convert the reporter's structured JSON output to Markdown.
 
         Gemini's structured output mode returns a JSON string conforming to
@@ -1206,6 +1211,9 @@ class ServiceHealthSkill(BaseSkill):
 
         If JSON parsing or schema validation fails after cleaning, a visible
         warning is prepended to the raw content so the failure is never silent.
+
+        If *run_quality* contains any :attr:`~QualityIssueKind.MODEL_DEGRADED`
+        issues, a ``> ⚠️ …`` notice is prepended to the Markdown output.
         """
         cleaned = clean_llm_json(content)
         try:
@@ -1292,7 +1300,7 @@ class ServiceHealthSkill(BaseSkill):
                         exc_info=True,
                     )
 
-            return report.to_markdown()
+            return self._render_run_quality_section(run_quality) + report.to_markdown()
         except (ValueError, ValidationError):
             logger.warning(
                 "Failed to parse reporter JSON as HealthReport, "
@@ -1301,6 +1309,32 @@ class ServiceHealthSkill(BaseSkill):
                 exc_info=True,
             )
             return "⚠️ Report parsing failed — showing raw output\n\n" + content
+
+    @staticmethod
+    def _render_run_quality_section(
+        run_quality: list[QualityIssue] | None,
+    ) -> str:
+        """Return a Markdown notice block for model-degraded runs, or empty string.
+
+        If *run_quality* is None or contains no MODEL_DEGRADED issues, returns
+        an empty string so nothing is prepended to the report.
+
+        Otherwise returns a blockquote warning with the affected agent names
+        so readers know the analysis was produced by a fallback model.
+        """
+        if not run_quality:
+            return ""
+        degraded = [
+            issue for issue in run_quality if issue.kind is QualityIssueKind.MODEL_DEGRADED
+        ]
+        if not degraded:
+            return ""
+        agents = ", ".join(sorted({i.where for i in degraded if i.where}))
+        notice = (
+            "> ⚠️ **Model degradation notice**: one or more agents ran on a fallback model"
+            f" ({agents}). Findings may be less detailed than usual.\n\n"
+        )
+        return notice
 
     def _enrich_report_recommendations(
         self,
@@ -1334,7 +1368,7 @@ class ServiceHealthSkill(BaseSkill):
         settings = get_settings()
         # Lazy-init: reuse client and pool across calls (SH-08).
         if self._gemini_client is None:
-            self._gemini_client = GeminiClient(settings)
+            self._gemini_client = GeminiClient(settings, fallback_model=settings.models.fallback)
         client = self._gemini_client
         if self._enrichment_pool is None:
             self._enrichment_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)

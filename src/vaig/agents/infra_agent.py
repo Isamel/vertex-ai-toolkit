@@ -348,6 +348,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
                 "iterations": loop_result.iterations,
                 "tools_executed": loop_result.tools_executed,
             },
+            model_degraded=getattr(self._client, "fallback_active", False),
         )
 
     def execute_stream(self, prompt: str, *, context: str = "") -> Iterator[str]:
@@ -457,6 +458,7 @@ class InfraAgent(BaseAgent, ToolLoopMixin):
                 "iterations": loop_result.iterations,
                 "tools_executed": loop_result.tools_executed,
             },
+            model_degraded=getattr(self._client, "fallback_active", False),
         )
 
     async def async_execute_stream(
