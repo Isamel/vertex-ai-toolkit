@@ -577,6 +577,18 @@ def register(app: typer.Typer) -> None:
                 ),
             ),
         ] = None,
+        fallback_location: Annotated[
+            str | None,
+            typer.Option(
+                "--fallback-location",
+                envvar="VAIG_FALLBACK_LOCATION",
+                help=(
+                    "Regional fallback location used when the global Vertex AI endpoint is "
+                    "unavailable (overrides gcp.fallback_location). Takes priority over the "
+                    "config file; --location takes priority when it is already set to a region."
+                ),
+            ),
+        ] = None,
         gke_project: Annotated[
             str | None,
             typer.Option(
@@ -888,6 +900,21 @@ def register(app: typer.Typer) -> None:
             # Apply --location: mutate gcp.location before component creation
             if location:
                 settings.gcp.location = location
+
+            # Apply --fallback-location / VAIG_FALLBACK_LOCATION: SPEC-GEP-04
+            if fallback_location is not None:
+                fallback_location_normalized = fallback_location.strip()
+                if not fallback_location_normalized:
+                    raise typer.BadParameter(
+                        "--fallback-location must not be empty",
+                        param_hint="--fallback-location",
+                    )
+                if fallback_location_normalized.lower() == "global":
+                    raise typer.BadParameter(
+                        f"--fallback-location must be a regional location, not 'global' (got {fallback_location!r})",
+                        param_hint="--fallback-location",
+                    )
+                settings.gcp.fallback_location = fallback_location_normalized
 
             # Apply --endpoint / VAIG_ENDPOINT: SPEC-GEP-04
             if endpoint:
