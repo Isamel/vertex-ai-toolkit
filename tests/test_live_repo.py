@@ -264,3 +264,88 @@ class TestLiveCommandRepoForwarding:
         sig = inspect.signature(_async_execute_orchestrated_skill)
         assert "repo" in sig.parameters
         assert "repo_ref" in sig.parameters
+
+
+# ── SPEC-V2-REPO-01: repo_cfg wiring ─────────────────────────────────────────
+
+
+class TestRepoCfgWiring:
+    """SPEC-V2-REPO-01: repo_cfg reaches execute_skill_headless via _execute_orchestrated_skill."""
+
+    __test__ = True
+
+    def test_execute_orchestrated_skill_accepts_repo_cfg(self) -> None:
+        """_execute_orchestrated_skill signature has repo_cfg parameter."""
+        from vaig.cli.commands.live import _execute_orchestrated_skill
+
+        sig = inspect.signature(_execute_orchestrated_skill)
+        assert "repo_cfg" in sig.parameters
+        assert sig.parameters["repo_cfg"].default is None
+
+    def test_repo_cfg_forwarded_to_execute_skill_headless(self) -> None:
+        """repo_cfg passed to _execute_orchestrated_skill reaches execute_skill_headless as repo_config."""
+        from unittest.mock import MagicMock, patch
+
+        from vaig.cli.commands.live import _execute_orchestrated_skill
+        from vaig.core.config import RepoInvestigationConfig
+
+        repo_cfg = RepoInvestigationConfig(repo="github.com/org/svc", max_files=50)
+
+        mock_result = MagicMock()
+        mock_result.structured_report = None
+        mock_result.synthesized_output = ""
+
+        with (
+            patch("vaig.cli.commands.live._register_live_tools") as mock_reg,
+            patch("vaig.cli.commands.live.execute_skill_headless", return_value=mock_result) as mock_headless,
+            patch("vaig.cli.commands.live.console"),
+            patch("vaig.cli.commands.live._print_launch_header"),
+            patch("vaig.cli.commands.live.AgentProgressDisplay"),
+            patch("vaig.cli.commands.live.ToolCallLogger"),
+        ):
+            mock_reg.return_value = MagicMock(list_tools=lambda: ["tool1"])
+
+            _execute_orchestrated_skill(
+                MagicMock(),  # client
+                MagicMock(),  # settings
+                MagicMock(),  # gke_config
+                MagicMock(get_metadata=lambda: MagicMock(name="test-skill", description="")),  # skill
+                "Is the service healthy?",
+                repo_cfg=repo_cfg,
+            )
+
+        mock_headless.assert_called_once()
+        _, kwargs = mock_headless.call_args
+        assert kwargs.get("repo_config") is repo_cfg
+
+    def test_repo_cfg_none_by_default_in_execute_skill_headless_call(self) -> None:
+        """When repo_cfg is not passed, execute_skill_headless receives repo_config=None."""
+        from unittest.mock import MagicMock, patch
+
+        from vaig.cli.commands.live import _execute_orchestrated_skill
+
+        mock_result = MagicMock()
+        mock_result.structured_report = None
+        mock_result.synthesized_output = ""
+
+        with (
+            patch("vaig.cli.commands.live._register_live_tools") as mock_reg,
+            patch("vaig.cli.commands.live.execute_skill_headless", return_value=mock_result) as mock_headless,
+            patch("vaig.cli.commands.live.console"),
+            patch("vaig.cli.commands.live._print_launch_header"),
+            patch("vaig.cli.commands.live.AgentProgressDisplay"),
+            patch("vaig.cli.commands.live.ToolCallLogger"),
+        ):
+            mock_reg.return_value = MagicMock(list_tools=lambda: ["tool1"])
+
+            _execute_orchestrated_skill(
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                MagicMock(get_metadata=lambda: MagicMock(name="test-skill", description="")),
+                "Is the service healthy?",
+            )
+
+        mock_headless.assert_called_once()
+        _, kwargs = mock_headless.call_args
+        assert kwargs.get("repo_config") is None

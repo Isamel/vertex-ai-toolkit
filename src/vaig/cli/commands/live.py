@@ -45,6 +45,7 @@ from vaig.cli.display import (
     print_watch_diff_summary,
 )
 from vaig.core.cache import ToolResultCache
+from vaig.core.headless import execute_skill_headless
 from vaig.core.tool_call_store import ToolCallStore
 from vaig.skills.service_health.diff import compute_report_diff
 from vaig.skills.service_health.skill import ServiceHealthSkill
@@ -52,7 +53,7 @@ from vaig.skills.service_health.skill import ServiceHealthSkill
 if TYPE_CHECKING:
     from vaig.agents.orchestrator import OrchestratorResult
     from vaig.core.attachment_adapter import AttachmentAdapter
-    from vaig.core.config import GKEConfig, Settings
+    from vaig.core.config import GKEConfig, RepoInvestigationConfig, Settings
     from vaig.core.protocols import GeminiClientProtocol
     from vaig.skills.base import BaseSkill, SkillMetadata
     from vaig.skills.service_health.diff import ReportDiff
@@ -941,8 +942,8 @@ def register(app: typer.Typer) -> None:
 
             # ── Repo investigation config (SPEC-V2-REPO-01) ───────
             # Validate repo config early so malformed globs are caught before
-            # any LLM call.  Wired into tools in Sprint 3.
-            repo_cfg = _build_repo_investigation_config(  # noqa: F841  # wired in Sprint 3
+            # any LLM call.  Forwarded to execute_skill_headless as repo_config.
+            repo_cfg = _build_repo_investigation_config(  # SPEC-V2-REPO-01
                 repo=repo,
                 repo_ref=repo_ref,
                 repo_paths=repo_path or [],
@@ -1100,6 +1101,7 @@ def register(app: typer.Typer) -> None:
                         interactive=interactive,
                         attachment_adapters=_attachment_adapters,
                         offline_mode=offline_mode,
+                        repo_cfg=repo_cfg,
                     )
                 _execute_live_mode(
                     client,
@@ -2156,6 +2158,7 @@ def _execute_orchestrated_skill(
     interactive: bool = False,
     attachment_adapters: list[AttachmentAdapter] | None = None,
     offline_mode: bool = False,
+    repo_cfg: RepoInvestigationConfig | None = None,  # SPEC-V2-REPO-01: forwarded to execute_skill_headless
 ) -> HealthReport | None:
     """Execute a skill through the Orchestrator's tool-aware pipeline.
 
@@ -2168,7 +2171,6 @@ def _execute_orchestrated_skill(
         The structured ``HealthReport`` if one was produced, else ``None``.
     """
     from vaig.core.exceptions import MaxIterationsError
-    from vaig.core.headless import execute_skill_headless
 
     skill_meta = skill.get_metadata()
 
@@ -2236,6 +2238,7 @@ def _execute_orchestrated_skill(
                 on_tool_call=tool_logger,
                 on_agent_progress=progress_display,
                 attachment_adapters=attachment_adapters,
+                repo_config=repo_cfg,
             )
         finally:
             progress_display.stop()
