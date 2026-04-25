@@ -523,9 +523,8 @@ class TestGEP03RuntimeFlip:
         copy1.append("garbage")  # type: ignore[arg-type]
         assert client.endpoint_flips == []
 
-    def test_flip_log_message(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_flip_log_message(self) -> None:
         """Flip emits WARNING with from/to/reason in message."""
-        import logging
         from unittest.mock import MagicMock, patch
 
         from google.genai import errors as genai_errors
@@ -541,17 +540,22 @@ class TestGEP03RuntimeFlip:
                 raise api_429
             return "ok"
 
-        # Use root-level caplog so the result is not affected by logger-level
-        # mutations from other tests running in the full suite.
+        # Patch the module-level logger directly so the test is immune to
+        # Rich/external handler interference in the full test suite.
         with (
-            caplog.at_level(logging.WARNING),
+            patch("vaig.core.client.logger") as mock_logger,
             patch("vaig.core.client.genai.Client"),
             patch("vaig.core.client.get_credentials", return_value=MagicMock()),
         ):
             client._retry_with_backoff(fn)
 
-        flip_logs = [r for r in caplog.records if r.name == "vaig.core.client" and "Endpoint flipped" in r.message]
-        assert flip_logs, "Expected at least one 'Endpoint flipped' WARNING log"
-        assert "global" in flip_logs[0].message
-        assert "us-central1" in flip_logs[0].message
-        assert "persistent_429" in flip_logs[0].message
+        warning_calls = mock_logger.warning.call_args_list
+        flip_call = next(
+            (c for c in warning_calls if "Endpoint flipped" in (c.args[0] if c.args else "")),
+            None,
+        )
+        assert flip_call is not None, f"Expected 'Endpoint flipped' WARNING; got: {warning_calls}"
+        msg = flip_call.args[0] % flip_call.args[1:]
+        assert "global" in msg
+        assert "us-central1" in msg
+        assert "persistent_429" in msg
