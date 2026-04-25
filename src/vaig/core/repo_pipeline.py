@@ -74,10 +74,7 @@ def _glob_match(path: str, pattern: str) -> bool:
     # Restore placeholders as regex patterns
     # ** matches zero or more path components (may include slashes)
     # When ** appears as **/ (prefix), it means "any directory prefix or empty"
-    pattern = pattern.replace(
-        re.escape(_DOUBLE_STAR) + re.escape("/"),
-        "(?:.*/)?"
-    )
+    pattern = pattern.replace(re.escape(_DOUBLE_STAR) + re.escape("/"), "(?:.*/)?")
     # Remaining ** (e.g. at end: "dir/**")
     pattern = pattern.replace(re.escape(_DOUBLE_STAR), ".*")
     # * matches anything within a path component (no slash)
@@ -165,9 +162,7 @@ def _build_classifier_rules() -> list[_Rule]:
             reason="binary",
         ),
         _Rule(
-            pred=lambda m, c: any(
-                _glob_match(m.path, g) for g in c.exclude_globs
-            ),
+            pred=lambda m, c: any(_glob_match(m.path, g) for g in c.exclude_globs),
             outcome=TierOutcome.SKIP,
             reason="exclude_glob",
         ),
@@ -185,19 +180,13 @@ def _build_classifier_rules() -> list[_Rule]:
         ),
         # ── High relevance ────────────────────────────────────────────────
         _Rule(
-            pred=lambda m, _c: (
-                _glob_match(m.path, "**/Chart.yaml")
-                or _glob_match(m.path, "**/Chart.lock")
-            ),
+            pred=lambda m, _c: _glob_match(m.path, "**/Chart.yaml") or _glob_match(m.path, "**/Chart.lock"),
             outcome=TierOutcome.CHUNKED,
             relevance=Relevance.HIGH,
             reason="helm_chart_root",
         ),
         _Rule(
-            pred=lambda m, _c: (
-                _glob_match(m.path, "**/values*.yaml")
-                or _glob_match(m.path, "**/values*.yml")
-            ),
+            pred=lambda m, _c: _glob_match(m.path, "**/values*.yaml") or _glob_match(m.path, "**/values*.yml"),
             outcome=TierOutcome.CHUNKED,
             relevance=Relevance.HIGH,
             reason="helm_values",
@@ -214,10 +203,7 @@ def _build_classifier_rules() -> list[_Rule]:
         ),
         _Rule(
             pred=lambda m, _c: (
-                (
-                    _glob_match(m.path, "**/Application*.yaml")
-                    or _glob_match(m.path, "**/Application*.yml")
-                )
+                (_glob_match(m.path, "**/Application*.yaml") or _glob_match(m.path, "**/Application*.yml"))
                 and m.kind == "argocd"
             ),
             outcome=TierOutcome.CHUNKED,
@@ -232,10 +218,7 @@ def _build_classifier_rules() -> list[_Rule]:
             reason="k8s_manifest",
         ),
         _Rule(
-            pred=lambda m, _c: (
-                _glob_match(m.path, "**/templates/*.yaml")
-                or _glob_match(m.path, "**/templates/*.yml")
-            ),
+            pred=lambda m, _c: _glob_match(m.path, "**/templates/*.yaml") or _glob_match(m.path, "**/templates/*.yml"),
             outcome=TierOutcome.CHUNKED,
             relevance=Relevance.MEDIUM,
             reason="helm_template",
@@ -293,12 +276,21 @@ def detect_file_kind(content_peek: str) -> str:
 
     Returns:
         One of: ``argocd``, ``istio_crd``, ``k8s_manifest``,
-        ``kustomization``, ``terraform_gke``, ``yaml``, ``text``.
+        ``kustomization``, ``terraform_gke``, ``helm_template``,
+        ``yaml``, ``text``.
     """
     if "apiVersion: argoproj.io/" in content_peek:
         return "argocd"
     if "apiVersion: networking.istio.io/" in content_peek:
         return "istio_crd"
+    # Helm templates contain Go template syntax — parse as text, not YAML.
+    # Must check before the generic k8s_manifest check because Helm templates
+    # often have valid apiVersion headers alongside {{ .Values.* }} directives.
+    if "{{" in content_peek and (
+        _looks_like_yaml(content_peek)  # looks YAML-like in the first ~20 lines
+        or content_peek.lstrip().startswith("{{")  # starts with template directive
+    ):
+        return "helm_template"
     if (
         "apiVersion: apps/v1" in content_peek
         or "apiVersion: v1" in content_peek
@@ -346,9 +338,7 @@ def is_binary_file(path: Path, peek_size: int = 8192) -> bool:
     if not raw:
         return False
 
-    non_text = sum(
-        1 for b in raw if b < 0x09 or (0x0E <= b <= 0x1F) or b == 0x7F
-    )
+    non_text = sum(1 for b in raw if b < 0x09 or (0x0E <= b <= 0x1F) or b == 0x7F)
     return (non_text / len(raw)) > _MAX_NON_TEXT_RATIO
 
 
@@ -497,10 +487,7 @@ def apply_file_cap(
             source="repo_processing",
             kind="path_file_cap",
             level="WARN",
-            details=(
-                f"Path has {len(files)} files, kept {max_files}. "
-                f"{len(dropped)} files dropped."
-            ),
+            details=(f"Path has {len(files)} files, kept {max_files}. {len(dropped)} files dropped."),
         )
     ]
     gaps.extend(
@@ -509,9 +496,7 @@ def apply_file_cap(
             kind="dropped_over_cap",
             level="WARN",
             path=f.path,
-            details=(
-                f"File dropped due to cap ({len(files)} total, {max_files} max)"
-            ),
+            details=(f"File dropped due to cap ({len(files)} total, {max_files} max)"),
         )
         for f in dropped
     )
@@ -539,9 +524,7 @@ def generate_repo_guidance(
     # Sort descending by file count, take top 5
     top = sorted(tree_outline, key=lambda t: t[1], reverse=True)[:5]
 
-    top_lines = "\n".join(
-        f"  - `{dir_path}/` ({count} files)" for dir_path, count in top
-    )
+    top_lines = "\n".join(f"  - `{dir_path}/` ({count} files)" for dir_path, count in top)
 
     description = (
         "No paths or globs specified. Emitting directory outline only. "

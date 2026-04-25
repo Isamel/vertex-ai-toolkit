@@ -75,9 +75,7 @@ class TestBuildMetricFilter:
     def test_cpu_filter_contains_metric_type(self) -> None:
         from vaig.tools.gke.monitoring import _CPU_METRIC, _build_metric_filter
 
-        result = _build_metric_filter(
-            _CPU_METRIC, "my-cluster", "production", "frontend-"
-        )
+        result = _build_metric_filter(_CPU_METRIC, "my-cluster", "production", "frontend-")
 
         assert f'metric.type = "{_CPU_METRIC}"' in result
 
@@ -128,7 +126,7 @@ class TestBuildMetricFilter:
         assert 'resource.type = "k8s_container"' in result
         assert 'resource.labels.cluster_name = "prod-cluster"' in result
         assert 'resource.labels.namespace_name = "prod"' in result
-        assert 'resource.labels.pod_name = monitoring.regex.full_match' in result
+        assert "resource.labels.pod_name = monitoring.regex.full_match" in result
 
     def test_filter_empty_prefix(self) -> None:
         from vaig.tools.gke.monitoring import _CPU_METRIC, _build_metric_filter
@@ -209,8 +207,11 @@ class TestFormatMetricsResponse:
         from vaig.tools.gke.monitoring import _CPU_METRIC, _format_metrics_response
 
         result = _format_metrics_response(
-            [], metric_type=_CPU_METRIC, namespace="default",
-            pod_name_prefix="api-", window_minutes=60,
+            [],
+            metric_type=_CPU_METRIC,
+            namespace="default",
+            pod_name_prefix="api-",
+            window_minutes=60,
         )
 
         assert "No data returned" in result
@@ -222,8 +223,11 @@ class TestFormatMetricsResponse:
 
         ts = _make_time_series("api-pod-1", [0.5, 0.6, 0.7, 0.8])
         result = _format_metrics_response(
-            [ts], metric_type=_CPU_METRIC, namespace="default",
-            pod_name_prefix="api-", window_minutes=60,
+            [ts],
+            metric_type=_CPU_METRIC,
+            namespace="default",
+            pod_name_prefix="api-",
+            window_minutes=60,
         )
 
         assert "| Pod" in result
@@ -237,8 +241,11 @@ class TestFormatMetricsResponse:
 
         ts = _make_time_series("app-pod-1", [50_000_000.0, 60_000_000.0, 55_000_000.0, 65_000_000.0])
         result = _format_metrics_response(
-            [ts], metric_type=_MEMORY_METRIC, namespace="staging",
-            pod_name_prefix="app-", window_minutes=30,
+            [ts],
+            metric_type=_MEMORY_METRIC,
+            namespace="staging",
+            pod_name_prefix="app-",
+            window_minutes=30,
         )
 
         assert "Memory" in result
@@ -249,8 +256,11 @@ class TestFormatMetricsResponse:
 
         ts = _make_time_series("frontend-abc-123", [0.1, 0.2, 0.3, 0.4])
         result = _format_metrics_response(
-            [ts], metric_type=_CPU_METRIC, namespace="default",
-            pod_name_prefix="frontend-", window_minutes=60,
+            [ts],
+            metric_type=_CPU_METRIC,
+            namespace="default",
+            pod_name_prefix="frontend-",
+            window_minutes=60,
         )
 
         assert "frontend-abc-123" in result
@@ -261,8 +271,11 @@ class TestFormatMetricsResponse:
         ts1 = _make_time_series("pod-a", [0.1, 0.2, 0.3, 0.4])
         ts2 = _make_time_series("pod-b", [0.5, 0.6, 0.7, 0.8])
         result = _format_metrics_response(
-            [ts1, ts2], metric_type=_CPU_METRIC, namespace="default",
-            pod_name_prefix="pod-", window_minutes=60,
+            [ts1, ts2],
+            metric_type=_CPU_METRIC,
+            namespace="default",
+            pod_name_prefix="pod-",
+            window_minutes=60,
         )
 
         assert "pod-a" in result
@@ -274,8 +287,11 @@ class TestFormatMetricsResponse:
         ts1 = _make_time_series("pod-a", [0.1, 0.2, 0.3, 0.4])
         ts2 = _make_time_series("pod-b", [0.5, 0.6, 0.7, 0.8])
         result = _format_metrics_response(
-            [ts1, ts2], metric_type=_CPU_METRIC, namespace="default",
-            pod_name_prefix="pod-", window_minutes=60,
+            [ts1, ts2],
+            metric_type=_CPU_METRIC,
+            namespace="default",
+            pod_name_prefix="pod-",
+            window_minutes=60,
         )
 
         assert "2 pod(s)" in result
@@ -286,8 +302,11 @@ class TestFormatMetricsResponse:
         # Strongly rising series
         ts = _make_time_series("pod-a", [0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8])
         result = _format_metrics_response(
-            [ts], metric_type=_CPU_METRIC, namespace="default",
-            pod_name_prefix="pod-", window_minutes=60,
+            [ts],
+            metric_type=_CPU_METRIC,
+            namespace="default",
+            pod_name_prefix="pod-",
+            window_minutes=60,
         )
 
         assert "↑" in result
@@ -298,8 +317,11 @@ class TestFormatMetricsResponse:
         # 0.125 cores/s * 1000 = 125m
         ts = _make_time_series("pod-a", [0.125, 0.125, 0.125, 0.125])
         result = _format_metrics_response(
-            [ts], metric_type=_CPU_METRIC, namespace="default",
-            pod_name_prefix="pod-", window_minutes=60,
+            [ts],
+            metric_type=_CPU_METRIC,
+            namespace="default",
+            pod_name_prefix="pod-",
+            window_minutes=60,
         )
 
         assert "125m" in result
@@ -311,8 +333,11 @@ class TestFormatMetricsResponse:
         bytes_100mib = 100.0 * 1024 * 1024
         ts = _make_time_series("pod-a", [bytes_100mib] * 4)
         result = _format_metrics_response(
-            [ts], metric_type=_MEMORY_METRIC, namespace="default",
-            pod_name_prefix="pod-", window_minutes=60,
+            [ts],
+            metric_type=_MEMORY_METRIC,
+            namespace="default",
+            pod_name_prefix="pod-",
+            window_minutes=60,
         )
 
         assert "100.0Mi" in result
@@ -691,13 +716,13 @@ class TestFormatMetricsResponseTruncation:
     def test_21_pods_shows_truncation_line(self) -> None:
         from vaig.tools.gke.monitoring import _CPU_METRIC, _format_metrics_response
 
-        ts_list = [
-            _make_time_series(f"pod-{i:03d}", [0.1, 0.2, 0.3, 0.4])
-            for i in range(21)
-        ]
+        ts_list = [_make_time_series(f"pod-{i:03d}", [0.1, 0.2, 0.3, 0.4]) for i in range(21)]
         result = _format_metrics_response(
-            ts_list, metric_type=_CPU_METRIC, namespace="default",
-            pod_name_prefix="pod-", window_minutes=60,
+            ts_list,
+            metric_type=_CPU_METRIC,
+            namespace="default",
+            pod_name_prefix="pod-",
+            window_minutes=60,
         )
 
         assert "more pods (truncated)" in result
@@ -706,13 +731,13 @@ class TestFormatMetricsResponseTruncation:
     def test_20_pods_does_not_truncate(self) -> None:
         from vaig.tools.gke.monitoring import _CPU_METRIC, _format_metrics_response
 
-        ts_list = [
-            _make_time_series(f"pod-{i:03d}", [0.1, 0.2, 0.3, 0.4])
-            for i in range(20)
-        ]
+        ts_list = [_make_time_series(f"pod-{i:03d}", [0.1, 0.2, 0.3, 0.4]) for i in range(20)]
         result = _format_metrics_response(
-            ts_list, metric_type=_CPU_METRIC, namespace="default",
-            pod_name_prefix="pod-", window_minutes=60,
+            ts_list,
+            metric_type=_CPU_METRIC,
+            namespace="default",
+            pod_name_prefix="pod-",
+            window_minutes=60,
         )
 
         assert "truncated" not in result
@@ -720,13 +745,13 @@ class TestFormatMetricsResponseTruncation:
     def test_summary_line_shows_total_pod_count_not_displayed_count(self) -> None:
         from vaig.tools.gke.monitoring import _CPU_METRIC, _format_metrics_response
 
-        ts_list = [
-            _make_time_series(f"pod-{i:03d}", [0.1, 0.2, 0.3, 0.4])
-            for i in range(25)
-        ]
+        ts_list = [_make_time_series(f"pod-{i:03d}", [0.1, 0.2, 0.3, 0.4]) for i in range(25)]
         result = _format_metrics_response(
-            ts_list, metric_type=_CPU_METRIC, namespace="default",
-            pod_name_prefix="pod-", window_minutes=60,
+            ts_list,
+            metric_type=_CPU_METRIC,
+            namespace="default",
+            pod_name_prefix="pod-",
+            window_minutes=60,
         )
 
         # Summary must reflect total (25), not just displayed (20)
@@ -981,7 +1006,7 @@ class TestGetWorkloadUsageMetrics:
         mock_client = MagicMock()
 
         cpu_ts = _make_container_ts("api-pod-1", "app", [0.2, 0.3, 0.25])
-        mem_ts = _make_container_ts("api-pod-1", "app", [0.5 * (1024 ** 3)] * 3)  # 0.5 GiB in bytes
+        mem_ts = _make_container_ts("api-pod-1", "app", [0.5 * (1024**3)] * 3)  # 0.5 GiB in bytes
 
         # First call → CPU, second → memory
         mock_client.list_time_series.side_effect = [[cpu_ts], [mem_ts]]
@@ -1031,7 +1056,7 @@ class TestGetWorkloadUsageMetrics:
         cfg = _make_gke_config()
         mock_client = MagicMock()
 
-        mem_ts = _make_container_ts("api-pod-1", "app", [0.25 * (1024 ** 3)] * 2)
+        mem_ts = _make_container_ts("api-pod-1", "app", [0.25 * (1024**3)] * 2)
         mock_client.list_time_series.side_effect = [
             RuntimeError("CPU query failed"),
             [mem_ts],
@@ -1058,8 +1083,8 @@ class TestGetWorkloadUsageMetrics:
 
         cpu_ts_api = _make_container_ts("api-pod-1", "app", [0.3])
         cpu_ts_worker = _make_container_ts("worker-pod-1", "worker", [0.6])
-        mem_ts_api = _make_container_ts("api-pod-1", "app", [0.2 * (1024 ** 3)])
-        mem_ts_worker = _make_container_ts("worker-pod-1", "worker", [0.4 * (1024 ** 3)])
+        mem_ts_api = _make_container_ts("api-pod-1", "app", [0.2 * (1024**3)])
+        mem_ts_worker = _make_container_ts("worker-pod-1", "worker", [0.4 * (1024**3)])
 
         mock_client.list_time_series.side_effect = [
             [cpu_ts_api, cpu_ts_worker],
@@ -1080,3 +1105,99 @@ class TestGetWorkloadUsageMetrics:
         assert "worker" in result
         assert result["api"].containers["app"].avg_cpu_cores == pytest.approx(0.3)
         assert result["worker"].containers["worker"].avg_cpu_cores == pytest.approx(0.6)
+
+
+# ── Tests for pod-mismatch diagnostics (Bug B fix) ──────────────────────────
+
+
+class TestPodMismatchDiagnostics:
+    """Tests that pod-name mismatches are diagnosed correctly."""
+
+    def test_pod_mismatch_returns_empty_not_exception(self) -> None:
+        """When monitoring returns pods that don't match expected, result is empty dict (no crash)."""
+        from vaig.tools.gke.monitoring import get_workload_usage_metrics
+
+        cfg = _make_gke_config()
+        mock_client = MagicMock()
+
+        # Monitoring returns "different-pod-xyz", but we expected "api-pod-1"
+        cpu_ts = _make_container_ts("different-pod-xyz", "app", [0.2])
+        mock_client.list_time_series.side_effect = [[cpu_ts], []]
+
+        with patch("vaig.tools.gke.monitoring.MetricServiceClient", return_value=mock_client):
+            result = get_workload_usage_metrics(
+                namespace="default",
+                workload_pod_names={"api": ["api-pod-1"]},
+                gke_config=cfg,
+            )
+
+        # No match → empty result (no KeyError, no crash)
+        assert result == {}
+
+    def test_pod_mismatch_diagnostic_logged(self) -> None:
+        """When monitoring returns pods that don't match expected, diagnostic is logged at DEBUG.
+
+        Uses a direct handler on the vaig logger to avoid pytest caplog propagation
+        issues (vaig_logger.propagate=False in log.py prevents root-level capture).
+        """
+        import logging
+
+        from vaig.tools.gke.monitoring import get_workload_usage_metrics
+
+        cfg = _make_gke_config()
+        mock_client = MagicMock()
+
+        # Cloud Monitoring gives us pods with a different naming pattern
+        cpu_ts = _make_container_ts("monitoring-pod-abc123", "app", [0.3])
+        mock_client.list_time_series.side_effect = [[cpu_ts], []]
+
+        # Attach a handler directly to the vaig logger (propagate=False means
+        # caplog/root won't capture it — we must go to the source).
+        records: list[logging.LogRecord] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        vaig_logger = logging.getLogger("vaig")
+        handler = _Capture(level=logging.DEBUG)
+        old_level = vaig_logger.level
+        vaig_logger.addHandler(handler)
+        vaig_logger.setLevel(logging.DEBUG)
+        try:
+            with patch("vaig.tools.gke.monitoring.MetricServiceClient", return_value=mock_client):
+                get_workload_usage_metrics(
+                    namespace="default",
+                    workload_pod_names={"api": ["expected-pod-1"]},
+                    gke_config=cfg,
+                )
+        finally:
+            vaig_logger.removeHandler(handler)
+            vaig_logger.setLevel(old_level)
+
+        # Should have logged the mismatch-specific diagnostics at DEBUG
+        messages = " ".join(r.getMessage() for r in records).lower()
+        assert "pod name mismatch" in messages
+
+    def test_matched_pods_no_mismatch_log(self, caplog: pytest.LogCaptureFixture) -> None:
+        """When pods match exactly, no mismatch warning is emitted."""
+        import logging
+
+        from vaig.tools.gke.monitoring import get_workload_usage_metrics
+
+        cfg = _make_gke_config()
+        mock_client = MagicMock()
+
+        cpu_ts = _make_container_ts("api-pod-1", "app", [0.2])
+        mock_client.list_time_series.side_effect = [[cpu_ts], []]
+
+        with caplog.at_level(logging.DEBUG, logger="vaig.tools.gke.monitoring"):
+            with patch("vaig.tools.gke.monitoring.MetricServiceClient", return_value=mock_client):
+                get_workload_usage_metrics(
+                    namespace="default",
+                    workload_pod_names={"api": ["api-pod-1"]},
+                    gke_config=cfg,
+                )
+
+        # Should NOT log mismatch when pods match
+        assert "mismatch" not in caplog.text.lower()
