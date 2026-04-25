@@ -387,8 +387,9 @@ class TestFastPathMapReduceWindowsUsed:
         mock_client_cls,
     ):
         """When exactly one window is produced, fast path runs and windows_used=1."""
-        from vaig.core.headless import execute_skill_headless
         from unittest.mock import patch as _patch
+
+        from vaig.core.headless import execute_skill_headless
 
         _patched_base(mock_register, mock_orch_cls, mock_client_cls)
         fake_adapter = MagicMock()

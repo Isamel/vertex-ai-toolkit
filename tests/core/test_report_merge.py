@@ -5,8 +5,6 @@ Pure-Python deterministic merge — no LLM, no network, no fixtures from disk.
 
 from __future__ import annotations
 
-import pytest
-
 from vaig.core.report_merge import (
     _collide_findings,
     _dedup_first,
@@ -36,7 +34,6 @@ from vaig.skills.service_health.schema import (
     TimelineEvent,
 )
 
-
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -49,7 +46,7 @@ def _exec_summary(status: OverallStatus = OverallStatus.HEALTHY) -> ExecutiveSum
 
 
 def _finding(
-    id: str,
+    finding_id: str,
     severity: Severity = Severity.MEDIUM,
     title: str = "",
     description: str = "",
@@ -59,8 +56,8 @@ def _finding(
     causes: list[str] | None = None,
 ) -> Finding:
     return Finding(
-        id=id,
-        title=title or id,
+        id=finding_id,
+        title=title or finding_id,
         severity=severity,
         description=description,
         evidence=evidence or [],

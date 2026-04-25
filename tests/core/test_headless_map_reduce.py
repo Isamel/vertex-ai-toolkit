@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -112,8 +112,8 @@ class TestSliceAttachmentWindows:
         assert _slice_attachment_windows(idx, 128_000) == []
 
     def test_single_chunk_fits_one_window(self):
-        from vaig.core.repo_chunkers import Chunk
         from vaig.core.headless import _slice_attachment_windows
+        from vaig.core.repo_chunkers import Chunk
         from vaig.core.repo_index import RepoIndex
 
         chunk = Chunk(
@@ -132,8 +132,8 @@ class TestSliceAttachmentWindows:
 
     def test_oversized_chunk_gets_own_window(self):
         """A chunk larger than the budget must be placed alone — render will truncate."""
-        from vaig.core.repo_chunkers import Chunk
         from vaig.core.headless import _slice_attachment_windows
+        from vaig.core.repo_chunkers import Chunk
         from vaig.core.repo_index import RepoIndex
 
         big = Chunk(
@@ -161,13 +161,20 @@ class TestSliceAttachmentWindows:
         assert any(len(w.chunks) == 1 and w.chunks[0].file_path == "big.txt" for w in windows)
 
     def test_multiple_small_chunks_fit_one_window(self):
-        from vaig.core.repo_chunkers import Chunk
         from vaig.core.headless import _slice_attachment_windows
+        from vaig.core.repo_chunkers import Chunk
         from vaig.core.repo_index import RepoIndex
 
         chunks = [
-            Chunk(file_path=f"f{i}.py", start_line=1, end_line=1, content="x" * 10,
-                  token_estimate=1, kind="text", outline=f"f{i}.py")
+            Chunk(
+                file_path=f"f{i}.py",
+                start_line=1,
+                end_line=1,
+                content="x" * 10,
+                token_estimate=1,
+                kind="text",
+                outline=f"f{i}.py",
+            )
             for i in range(5)
         ]
         idx = RepoIndex(chunks)
@@ -184,9 +191,7 @@ class TestFastPath:
     @patch(_P_ORCHESTRATOR)
     @patch(_P_REGISTER)
     @patch(_P_CREDS, return_value=None)
-    def test_no_adapters_uses_fast_path_windows_used_0(
-        self, _creds, mock_register, mock_orch_cls, mock_client_cls
-    ):
+    def test_no_adapters_uses_fast_path_windows_used_0(self, _creds, mock_register, mock_orch_cls, mock_client_cls):
         from vaig.core.headless import execute_skill_headless
 
         mock_orch, fake_result = _base_patches(mock_register, mock_orch_cls, mock_client_cls)
@@ -202,9 +207,7 @@ class TestFastPath:
     @patch(_P_ORCHESTRATOR)
     @patch(_P_REGISTER)
     @patch(_P_CREDS, return_value=None)
-    def test_single_window_sets_windows_used_1(
-        self, _creds, mock_register, mock_orch_cls, mock_client_cls
-    ):
+    def test_single_window_sets_windows_used_1(self, _creds, mock_register, mock_orch_cls, mock_client_cls):
         from vaig.core.headless import execute_skill_headless
 
         mock_orch, fake_result = _base_patches(mock_register, mock_orch_cls, mock_client_cls)
@@ -229,9 +232,7 @@ class TestFastPath:
     @patch(_P_ORCHESTRATOR)
     @patch(_P_REGISTER)
     @patch(_P_CREDS, return_value=None)
-    def test_fast_path_does_not_call_reduce(
-        self, _creds, mock_register, mock_orch_cls, mock_client_cls
-    ):
+    def test_fast_path_does_not_call_reduce(self, _creds, mock_register, mock_orch_cls, mock_client_cls):
         from vaig.core.headless import execute_skill_headless
 
         _base_patches(mock_register, mock_orch_cls, mock_client_cls)
@@ -260,9 +261,7 @@ class TestMapLoop:
     @patch(_P_ORCHESTRATOR)
     @patch(_P_REGISTER)
     @patch(_P_CREDS, return_value=None)
-    def test_orchestrator_called_once_per_window(
-        self, _creds, mock_register, mock_orch_cls, mock_client_cls
-    ):
+    def test_orchestrator_called_once_per_window(self, _creds, mock_register, mock_orch_cls, mock_client_cls):
         from vaig.core.headless import execute_skill_headless
 
         mock_orch, _ = _base_patches(mock_register, mock_orch_cls, mock_client_cls)
@@ -292,9 +291,7 @@ class TestMapLoop:
     @patch(_P_ORCHESTRATOR)
     @patch(_P_REGISTER)
     @patch(_P_CREDS, return_value=None)
-    def test_map_reduce_windows_used_set_correctly(
-        self, _creds, mock_register, mock_orch_cls, mock_client_cls
-    ):
+    def test_map_reduce_windows_used_set_correctly(self, _creds, mock_register, mock_orch_cls, mock_client_cls):
         from vaig.core.headless import execute_skill_headless
 
         _base_patches(mock_register, mock_orch_cls, mock_client_cls)
@@ -328,9 +325,7 @@ class TestMapWindowError:
     @patch(_P_ORCHESTRATOR)
     @patch(_P_REGISTER)
     @patch(_P_CREDS, return_value=None)
-    def test_window_exception_produces_gap_not_crash(
-        self, _creds, mock_register, mock_orch_cls, mock_client_cls
-    ):
+    def test_window_exception_produces_gap_not_crash(self, _creds, mock_register, mock_orch_cls, mock_client_cls):
         from vaig.core.headless import execute_skill_headless
 
         mock_orch, _ = _base_patches(mock_register, mock_orch_cls, mock_client_cls)
@@ -374,9 +369,7 @@ class TestMapWindowError:
     @patch(_P_ORCHESTRATOR)
     @patch(_P_REGISTER)
     @patch(_P_CREDS, return_value=None)
-    def test_keyboard_interrupt_propagates_in_map_loop(
-        self, _creds, mock_register, mock_orch_cls, mock_client_cls
-    ):
+    def test_keyboard_interrupt_propagates_in_map_loop(self, _creds, mock_register, mock_orch_cls, mock_client_cls):
         from vaig.core.headless import execute_skill_headless
 
         mock_orch, _ = _base_patches(mock_register, mock_orch_cls, mock_client_cls)
@@ -408,11 +401,9 @@ class TestWindowCap:
     @patch(_P_ORCHESTRATOR)
     @patch(_P_REGISTER)
     @patch(_P_CREDS, return_value=None)
-    def test_window_cap_limits_orchestrator_calls(
-        self, _creds, mock_register, mock_orch_cls, mock_client_cls
-    ):
-        from vaig.core.headless import execute_skill_headless
+    def test_window_cap_limits_orchestrator_calls(self, _creds, mock_register, mock_orch_cls, mock_client_cls):
         from vaig.core.config import RepoInvestigationConfig
+        from vaig.core.headless import execute_skill_headless
 
         mock_orch, _ = _base_patches(mock_register, mock_orch_cls, mock_client_cls)
         fake_adapter = MagicMock()
@@ -444,11 +435,9 @@ class TestWindowCap:
     @patch(_P_ORCHESTRATOR)
     @patch(_P_REGISTER)
     @patch(_P_CREDS, return_value=None)
-    def test_window_cap_sets_attachment_truncated(
-        self, _creds, mock_register, mock_orch_cls, mock_client_cls
-    ):
-        from vaig.core.headless import execute_skill_headless
+    def test_window_cap_sets_attachment_truncated(self, _creds, mock_register, mock_orch_cls, mock_client_cls):
         from vaig.core.config import RepoInvestigationConfig
+        from vaig.core.headless import execute_skill_headless
 
         _base_patches(mock_register, mock_orch_cls, mock_client_cls)
         fake_adapter = MagicMock()
@@ -483,9 +472,7 @@ class TestEmptyWindowSkipped:
     @patch(_P_ORCHESTRATOR)
     @patch(_P_REGISTER)
     @patch(_P_CREDS, return_value=None)
-    def test_empty_window_not_dispatched(
-        self, _creds, mock_register, mock_orch_cls, mock_client_cls
-    ):
+    def test_empty_window_not_dispatched(self, _creds, mock_register, mock_orch_cls, mock_client_cls):
         from vaig.core.headless import execute_skill_headless
 
         mock_orch, _ = _base_patches(mock_register, mock_orch_cls, mock_client_cls)
@@ -535,11 +522,9 @@ class TestReduceWindowResults:
         assert result.success is False
 
     def test_costs_summed(self):
-        from vaig.core.headless import _reduce_window_results
-        from vaig.core.config import RepoInvestigationConfig
-
         # Use real OrchestratorResult
         from vaig.agents.orchestrator import OrchestratorResult
+        from vaig.core.headless import _reduce_window_results
 
         r1 = OrchestratorResult(skill_name="s", phase="p", success=True)
         r1.run_cost_usd = 0.05
@@ -563,8 +548,8 @@ class TestReduceWindowResults:
         assert result.total_usage["input_tokens"] == 150
 
     def test_synthesized_joined_with_separator(self):
-        from vaig.core.headless import _reduce_window_results
         from vaig.agents.orchestrator import OrchestratorResult
+        from vaig.core.headless import _reduce_window_results
 
         r1 = OrchestratorResult(skill_name="s", phase="p", success=True)
         r1.synthesized_output = "window-1-output"
@@ -589,8 +574,8 @@ class TestReduceWindowResults:
         assert "---" in result.synthesized_output
 
     def test_success_true_if_any_window_succeeded(self):
-        from vaig.core.headless import _reduce_window_results
         from vaig.agents.orchestrator import OrchestratorResult
+        from vaig.core.headless import _reduce_window_results
 
         r_fail = OrchestratorResult(skill_name="s", phase="p", success=False)
         r_fail.structured_report = None
