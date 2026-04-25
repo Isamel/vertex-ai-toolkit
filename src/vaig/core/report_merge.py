@@ -46,6 +46,9 @@ _OVERALL_STATUS_FROM_WORST_SEVERITY: dict[Severity, OverallStatus] = {
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
+# Maximum number of hypotheses to keep in the merged report (schema constraint).
+_MAX_HYPOTHESES: int = 4
+
 
 # ── B2: _slugify ─────────────────────────────────────────────────────────────
 
@@ -135,17 +138,19 @@ def _collide_findings(a: Finding, b: Finding) -> Finding:
     List fields: ordered union.
     """
     sev = a.severity if _SEVERITY_RANK[a.severity] <= _SEVERITY_RANK[b.severity] else b.severity
-    return a.model_copy(update={
-        "severity": sev,
-        "title": _longer_non_empty(a.title, b.title),
-        "description": _longer_non_empty(a.description, b.description),
-        "root_cause": _longer_non_empty(a.root_cause, b.root_cause),
-        "impact": _longer_non_empty(a.impact, b.impact),
-        "evidence": _ordered_union(a.evidence, b.evidence),
-        "affected_resources": _ordered_union(a.affected_resources, b.affected_resources),
-        "caused_by": _ordered_union(a.caused_by, b.caused_by),
-        "causes": _ordered_union(a.causes, b.causes),
-    })
+    return a.model_copy(
+        update={
+            "severity": sev,
+            "title": _longer_non_empty(a.title, b.title),
+            "description": _longer_non_empty(a.description, b.description),
+            "root_cause": _longer_non_empty(a.root_cause, b.root_cause),
+            "impact": _longer_non_empty(a.impact, b.impact),
+            "evidence": _ordered_union(a.evidence, b.evidence),
+            "affected_resources": _ordered_union(a.affected_resources, b.affected_resources),
+            "caused_by": _ordered_union(a.caused_by, b.caused_by),
+            "causes": _ordered_union(a.causes, b.causes),
+        }
+    )
 
 
 def _merge_findings(buckets: Iterable[list[Finding]]) -> list[Finding]:
@@ -234,7 +239,7 @@ def _merge_hypotheses(
             if existing is None or h.probability > existing.probability:
                 merged[slug] = h
     ranked = sorted(merged.values(), key=lambda h: h.probability, reverse=True)
-    return ranked[:4]
+    return ranked[:_MAX_HYPOTHESES]
 
 
 def _merge_recommendations(
@@ -290,9 +295,11 @@ def _rebuild_executive_summary(
     if not findings:
         return template.model_copy(update={"overall_status": OverallStatus.UNKNOWN})
     worst = min(findings, key=lambda f: _SEVERITY_RANK[f.severity]).severity
-    return template.model_copy(update={
-        "overall_status": _OVERALL_STATUS_FROM_WORST_SEVERITY[worst],
-    })
+    return template.model_copy(
+        update={
+            "overall_status": _OVERALL_STATUS_FROM_WORST_SEVERITY[worst],
+        }
+    )
 
 
 # ── B9: causal graph rebuild ──────────────────────────────────────────────────
@@ -371,22 +378,20 @@ def merge_health_reports(reports: list[HealthReport]) -> HealthReport | None:
     causal_graph = _rebuild_causal_graph(findings, findings_by_slug)
 
     base = reports[0]
-    return base.model_copy(update={
-        "executive_summary": exec_summary,
-        "findings": findings,
-        "evidence_gaps": gaps,
-        "root_cause_hypotheses": hypotheses,
-        "recommendations": recommendations,
-        "timeline": timeline,
-        "causal_graph_mermaid": causal_graph,
-        "downgraded_findings": _union(r.downgraded_findings for r in reports),
-        "evidence_details": _union(r.evidence_details for r in reports),
-        "manual_investigations": _union(r.manual_investigations for r in reports),
-        "recent_changes": _union(r.recent_changes for r in reports),
-        "cluster_overview": _dedup_first(
-            (r.cluster_overview for r in reports), key=lambda m: m.name
-        ),
-        "service_statuses": _dedup_first(
-            (r.service_statuses for r in reports), key=lambda s: s.service
-        ),
-    })
+    return base.model_copy(
+        update={
+            "executive_summary": exec_summary,
+            "findings": findings,
+            "evidence_gaps": gaps,
+            "root_cause_hypotheses": hypotheses,
+            "recommendations": recommendations,
+            "timeline": timeline,
+            "causal_graph_mermaid": causal_graph,
+            "downgraded_findings": _union(r.downgraded_findings for r in reports),
+            "evidence_details": _union(r.evidence_details for r in reports),
+            "manual_investigations": _union(r.manual_investigations for r in reports),
+            "recent_changes": _union(r.recent_changes for r in reports),
+            "cluster_overview": _dedup_first((r.cluster_overview for r in reports), key=lambda m: m.metric),
+            "service_statuses": _dedup_first((r.service_statuses for r in reports), key=lambda s: s.service),
+        }
+    )

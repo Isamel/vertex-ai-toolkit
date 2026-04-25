@@ -38,8 +38,8 @@ _TRUNCATION_MARKER = (
     "include an EvidenceGap entry with:\n"
     '  source="attachment_context"\n'
     '  reason="attachment context truncated at run-level byte budget; '
-    "investigation ran on a subset of available evidence\"\n"
-    "  details=\"see logs for byte counts and chunk counts\"\n"
+    'investigation ran on a subset of available evidence"\n'
+    '  details="see logs for byte counts and chunk counts"\n'
     "Do not silently omit this gap — it must appear in evidence_gaps so "
     "operators know the analysis was based on partial input.\n"
 )
@@ -51,9 +51,7 @@ def _stringify_gap(gap: object) -> str:
     Avoids importing ``repo_pipeline`` at module level to prevent circular imports.
     ``gap`` is typed as ``object`` (not ``Any``) since we only read attributes.
     """
-    return (
-        f"[{gap.level}] {gap.kind}: {gap.path or '<no-path>'} — {gap.details}"  # type: ignore[attr-defined]
-    )
+    return f"[{gap.level}] {gap.kind}: {gap.path or '<no-path>'} — {gap.details}"  # type: ignore[attr-defined]
 
 
 def _render_attachment_context(
@@ -147,9 +145,7 @@ def _slice_attachment_windows(
 
     for chunk in chunks:
         chunk_bytes = (
-            len(chunk.outline.encode("utf-8"))
-            + len(chunk.content.encode("utf-8"))
-            + _RENDER_OVERHEAD_PER_CHUNK
+            len(chunk.file_path.encode("utf-8")) + len(chunk.content.encode("utf-8")) + _RENDER_OVERHEAD_PER_CHUNK
         )
         if current and current_bytes + chunk_bytes > budget_bytes:
             windows.append(current)
@@ -208,9 +204,7 @@ def _reduce_window_results(
             success=False,
         )
         carrier.structured_report = None
-        carrier.attachment_gaps = [
-            f"[{g.source}] {g.reason}: {g.details or ''}" for g in extra_gaps
-        ]
+        carrier.attachment_gaps = [f"[{g.source}] {g.reason}: {g.details or ''}" for g in extra_gaps]
         return carrier
 
     carrier = window_results[0]
@@ -222,9 +216,11 @@ def _reduce_window_results(
 
     # Append extra_gaps into the merged report's evidence_gaps
     if merged_report is not None and extra_gaps:
-        merged_report = merged_report.model_copy(update={
-            "evidence_gaps": list(merged_report.evidence_gaps) + list(extra_gaps),
-        })
+        merged_report = merged_report.model_copy(
+            update={
+                "evidence_gaps": list(merged_report.evidence_gaps) + list(extra_gaps),
+            }
+        )
 
     # Sum costs and usage
     total_cost = sum(wr.run_cost_usd for wr in window_results)
@@ -234,16 +230,20 @@ def _reduce_window_results(
             combined_usage[k] = combined_usage.get(k, 0) + v
 
     # Concatenate synthesized output
-    synthesized = "\n\n---\n\n".join(
-        wr.synthesized_output for wr in window_results if wr.synthesized_output
-    )
+    synthesized = "\n\n---\n\n".join(wr.synthesized_output for wr in window_results if wr.synthesized_output)
 
     # Stringify extra_gaps for OrchestratorResult.attachment_gaps
-    gap_strings = [
-        f"[{g.source}] {g.reason}: {g.details or ''}" for g in extra_gaps
-    ]
+    gap_strings = [f"[{g.source}] {g.reason}: {g.details or ''}" for g in extra_gaps]
 
-    carrier.structured_report = merged_report
+    # Only replace structured_report when merge produced a result;
+    # otherwise fall back to the first non-None structured_report from windows.
+    if merged_report is not None:
+        carrier.structured_report = merged_report
+    elif carrier.structured_report is None:
+        carrier.structured_report = next(
+            (wr.structured_report for wr in window_results if wr.structured_report is not None),
+            None,
+        )
     carrier.run_cost_usd = total_cost
     carrier.total_usage = combined_usage
     carrier.synthesized_output = synthesized
@@ -386,9 +386,7 @@ def execute_skill_headless(
     # ── Fast path: 0 or 1 window (preserves B1 byte-identical behavior) ──────
     if len(windows) <= 1:
         if windows:
-            attachment_context, attachment_truncated = _render_attachment_context(
-                windows[0], budget
-            )
+            attachment_context, attachment_truncated = _render_attachment_context(windows[0], budget)
             if attachment_truncated:
                 effective_budget = budget if budget is not None else MAX_ATTACHMENT_CONTEXT_BYTES
                 bytes_rendered = len(attachment_context.encode("utf-8"))
@@ -425,6 +423,8 @@ def execute_skill_headless(
 
     else:
         # ── MAP phase — sequential, one window at a time ──────────────────────
+        from vaig.skills.service_health.schema import EvidenceGap as _EvidenceGap
+
         window_results: list[Any] = []
         map_gaps: list[Any] = []
 
@@ -452,12 +452,13 @@ def execute_skill_headless(
                 )
                 window_results.append(wr)
                 if window_truncated:
-                    from vaig.skills.service_health.schema import EvidenceGap
-                    map_gaps.append(EvidenceGap(
-                        source="map_reduce_window",
-                        reason="window_internally_truncated",
-                        details=f"window {idx}/{len(windows)} exceeded single-window budget",
-                    ))
+                    map_gaps.append(
+                        _EvidenceGap(
+                            source="map_reduce_window",
+                            reason="window_internally_truncated",
+                            details=f"window {idx}/{len(windows)} exceeded single-window budget",
+                        )
+                    )
             except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception as exc:  # noqa: BLE001
@@ -467,12 +468,13 @@ def execute_skill_headless(
                     len(windows),
                     exc,
                 )
-                from vaig.skills.service_health.schema import EvidenceGap
-                map_gaps.append(EvidenceGap(
-                    source="map_reduce_window",
-                    reason="error",
-                    details=f"window {idx}/{len(windows)} failed: {type(exc).__name__}: {exc}",
-                ))
+                map_gaps.append(
+                    _EvidenceGap(
+                        source="map_reduce_window",
+                        reason="error",
+                        details=f"window {idx}/{len(windows)} failed: {type(exc).__name__}: {exc}",
+                    )
+                )
 
         # ── REDUCE phase ──────────────────────────────────────────────────────
         result = _reduce_window_results(
@@ -483,6 +485,10 @@ def execute_skill_headless(
         )
         result.attachment_truncated = window_cap_hit
         result.map_reduce_windows_used = len(windows)
+        # Merge attachment_gap_strings (cap message, adapter gaps) into result
+        if attachment_gap_strings:
+            existing = list(result.attachment_gaps or [])
+            result.attachment_gaps = existing + attachment_gap_strings
 
     logger.info(
         "Headless execution complete: skill=%s, success=%s, cost=$%.4f",
