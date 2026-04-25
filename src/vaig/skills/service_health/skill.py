@@ -41,6 +41,7 @@ from vaig.skills.service_health.prompts import (
 from vaig.skills.service_health.prompts._shared import _prefix_attachment_context
 from vaig.skills.service_health.schema import Finding, HealthReport, HealthReportGeminiSchema
 from vaig.skills.service_health.schema import apply_ratification as _apply_ratification
+from vaig.skills.service_health.schema import render_attachment_sections as _render_attachment_sections
 from vaig.tools.base import ToolResult
 from vaig.tools.gke._clients import ensure_client_initialized
 from vaig.utils.json_cleaner import clean_llm_json
@@ -1208,6 +1209,18 @@ class ServiceHealthSkill(BaseSkill):
                 except Exception:  # noqa: BLE001
                     logger.warning(
                         "Verifier ratification pass failed — findings unchanged",
+                        exc_info=True,
+                    )
+
+            # ── SPEC-ATT-10 §6.5.4: Reporter attachment sections ────────────
+            if report.attachment_priors is not None or report.ratification_json:
+                try:
+                    sections_md = _render_attachment_sections(report)
+                    if sections_md:
+                        report = report.model_copy(update={"attachment_sections_md": sections_md})
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "Attachment sections rendering failed — skipping",
                         exc_info=True,
                     )
 

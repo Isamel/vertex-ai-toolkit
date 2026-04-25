@@ -543,6 +543,105 @@ def apply_ratification(report: HealthReport, ratification_json: str) -> HealthRe
     return report
 
 
+# ── ATT-10 §6.5.4: Reporter attachment sections ──────────────────────────────
+
+_VERIFIED_SOURCE_SUPPORTS: frozenset[str] = frozenset(
+    {
+        "live_matches_expected_state",
+        "live_and_attachment_corroborated",
+        "live_matches_known_incident_pattern",
+        "live_with_attachment_enrichment",
+        "live_vs_attachment_contradicts",  # contradictions are verified findings too (§6.5.4)
+    }
+)
+
+
+def render_attachment_sections(report: HealthReport) -> str:
+    """Render the 'Verified Expectations' and 'Source Evidence' Markdown sections.
+
+    Called post-LLM by the Reporter skill when attachment_priors are present.
+    Returns an empty string when no findings have attachment-influenced
+    source_support.
+
+    Args:
+        report: The ``HealthReport`` after ``apply_ratification`` has been called.
+
+    Returns:
+        Markdown string (may be empty).
+    """
+    # These fields are hydrated from ratification_json by apply_ratification()
+    # before render_attachment_sections() is called.
+
+    def _md_cell(s: str) -> str:
+        """Sanitize a string for use in a Markdown table cell."""
+        return s.replace("|", "\\|").replace("\n", " ")
+
+    def _md_line(s: str) -> str:
+        """Sanitize a string for use in a Markdown list item or heading."""
+        return s.replace("\n", " ")
+
+    verified_findings = [f for f in report.findings if f.source_support in _VERIFIED_SOURCE_SUPPORTS]
+    evidence_findings = [
+        f for f in report.findings if f.supporting_evidence or f.contradictions or f.attachment_references
+    ]
+
+    if not verified_findings and not evidence_findings:
+        return ""
+
+    parts: list[str] = []
+
+    # ── Verified Expectations table ───────────────────────────────────────
+    if verified_findings:
+        parts.append("## Verified Expectations")
+        parts.append("")
+        parts.append("| Finding | Source Support | Attachment |")
+        parts.append("|---------|----------------|------------|")
+        for f in verified_findings:
+            attachment_col = "—"
+            if f.attachment_references:
+                attachment_col = f.attachment_references[0].attachment_name or "—"
+            elif f.supporting_evidence:
+                ev = f.supporting_evidence[0]
+                attachment_col = ev.attachment_name or "—"
+            parts.append(f"| {_md_cell(f.title)} | {f.source_support} | {_md_cell(attachment_col)} |")
+        parts.append("")
+
+    # ── Source Evidence section ───────────────────────────────────────────
+    if evidence_findings:
+        parts.append("## Source Evidence")
+        parts.append("")
+        for f in evidence_findings:
+            parts.append(f"### {_md_line(f.title)}")
+            if f.supporting_evidence:
+                parts.append("**Supporting Evidence**")
+                for ev in f.supporting_evidence:
+                    line = f"- [{ev.source}] {_md_line(ev.excerpt)}"
+                    extras: list[str] = []
+                    if ev.attachment_name:
+                        extras.append(f"attachment: {ev.attachment_name}")
+                    if ev.line_ref:
+                        extras.append(f"line: {ev.line_ref}")
+                    if extras:
+                        line += f" *({', '.join(extras)})*"
+                    parts.append(line)
+                parts.append("")
+            if f.contradictions:
+                parts.append("**Contradictions**")
+                for c in f.contradictions:
+                    line = f"- Expected: {_md_line(c.expected)} / Observed: {_md_line(c.observed)}"
+                    if c.attachment_name:
+                        line += f" *(attachment: {c.attachment_name})*"
+                    parts.append(line)
+                parts.append("")
+            if f.attachment_references:
+                parts.append("**Attachment References**")
+                for ref in f.attachment_references:
+                    parts.append(f"- {ref.attachment_name}: {_md_line(ref.relevance)}")
+                parts.append("")
+
+    return "\n".join(parts)
+
+
 class AttachmentUsage(BaseModel):
     """Per-agent attachment usage record."""
 
@@ -1720,6 +1819,15 @@ class HealthReport(BaseModel):
             "Populated post-hoc from the EvidenceLedger; excluded from the Gemini schema."
         ),
     )
+    attachment_sections_md: str = Field(
+        default="",
+        description=(
+            "Rendered 'Verified Expectations' and 'Source Evidence' Markdown sections. "
+            "Populated post-LLM by skill.py when attachment_priors are present. "
+            "Excluded from Gemini schema."
+        ),
+        exclude=True,
+    )
 
     @property
     def root_causes(self) -> list[Finding]:
@@ -1820,6 +1928,9 @@ class HealthReport(BaseModel):
         self._render_attachment_evidence(parts)
         self._render_evidence_gaps(parts)
         self._render_investigation_coverage(parts)
+        if self.attachment_sections_md:
+            parts.append("")
+            parts.append(self.attachment_sections_md)
         return "\n".join(parts)
 
     # ── Private rendering helpers ────────────────────────────
@@ -2356,6 +2467,7 @@ class HealthReportGeminiSchema(HealthReport):
             "investigation_evidence",
             "attachment_evidence",
             "attachment_priors",  # ATT-10: post-hoc, not for Reporter LLM
+            "attachment_sections_md",  # ATT-10 §6.5.4: post-LLM rendered sections
         }
     )
 
