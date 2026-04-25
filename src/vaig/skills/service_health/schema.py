@@ -109,6 +109,23 @@ class ServiceHealthStatus(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class OperatingMode(StrEnum):
+    """Pipeline operating mode detected at run time (SPEC-ATT-10 §6.5.5).
+
+    Determines which data sources are available to the agent pipeline and
+    controls the banner displayed before execution:
+
+    - ``LIVE_ONLY``: Live GKE/GCloud tools are available; no attachments.
+    - ``ATTACHMENT_ONLY``: Cluster unreachable OR ``--offline-mode`` flag set.
+      All findings are tagged ``source_support="attachment_only"``.
+    - ``LIVE_PLUS_ATTACHMENTS``: Both live tools AND attachment context are available.
+    """
+
+    LIVE_ONLY = "LIVE_ONLY"
+    ATTACHMENT_ONLY = "ATTACHMENT_ONLY"
+    LIVE_PLUS_ATTACHMENTS = "LIVE_PLUS_ATTACHMENTS"
+
+
 # ── Severity → emoji mapping (matches reporter prompt) ───────
 
 
@@ -1798,6 +1815,14 @@ class HealthReport(BaseModel):
             "and 2 MEDIUM findings in distinct namespaces.'"
         ),
     )
+    operating_mode: OperatingMode = Field(
+        default=OperatingMode.LIVE_ONLY,
+        description=(
+            "Pipeline operating mode (SPEC-ATT-10 §6.5.5). "
+            "Populated post-hoc by skill.py via _detect_operating_mode(). "
+            "Excluded from the Gemini response_schema via _GEMINI_EXCLUDED_FIELDS."
+        ),
+    )
 
     @field_validator("overall_severity_reason", mode="before")
     @classmethod
@@ -1910,6 +1935,13 @@ class HealthReport(BaseModel):
         Recent Changes → Quick Links → Evidence Gaps → Investigation Coverage.
         """
         parts: list[str] = []
+        if self.operating_mode == OperatingMode.ATTACHMENT_ONLY:
+            parts.append(
+                "> ⚠ **ATTACHMENT_ONLY mode** — Live GKE/GCloud tool calls were disabled "
+                "(--offline-mode). Analysis is based exclusively on attached sources. "
+                "All findings are tagged `source_support='attachment_only'`."
+            )
+            parts.append("")
         parts.append("# Service Health Report")
         parts.append("")
         self._render_executive_summary(parts)
@@ -2468,6 +2500,7 @@ class HealthReportGeminiSchema(HealthReport):
             "attachment_evidence",
             "attachment_priors",  # ATT-10: post-hoc, not for Reporter LLM
             "attachment_sections_md",  # ATT-10 §6.5.4: post-LLM rendered sections
+            "operating_mode",  # ATT-10 §6.5.5: set post-hoc by skill.py
         }
     )
 

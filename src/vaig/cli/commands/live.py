@@ -47,6 +47,7 @@ from vaig.cli.display import (
 from vaig.core.cache import ToolResultCache
 from vaig.core.tool_call_store import ToolCallStore
 from vaig.skills.service_health.diff import compute_report_diff
+from vaig.skills.service_health.skill import ServiceHealthSkill
 
 if TYPE_CHECKING:
     from vaig.agents.orchestrator import OrchestratorResult
@@ -801,6 +802,17 @@ def register(app: typer.Typer) -> None:
                 help="After the report, open an interactive drill-in REPL for follow-up questions",
             ),
         ] = False,
+        offline_mode: Annotated[
+            bool,
+            typer.Option(
+                "--offline-mode/--no-offline-mode",
+                help=(
+                    "Disable live GKE/GCloud tool calls. "
+                    "The pipeline runs in ATTACHMENT_ONLY mode using only --attach sources. "
+                    "All findings are tagged source_support='attachment_only'."
+                ),
+            ),
+        ] = False,
         show_pipeline: Annotated[
             bool,
             typer.Option(
@@ -903,7 +915,7 @@ def register(app: typer.Typer) -> None:
             # ── Repo investigation config (SPEC-V2-REPO-01) ───────
             # Validate repo config early so malformed globs are caught before
             # any LLM call.  Wired into tools in Sprint 3.
-            _repo_cfg = _build_repo_investigation_config(
+            repo_cfg = _build_repo_investigation_config(  # noqa: F841  # wired in Sprint 3
                 repo=repo,
                 repo_ref=repo_ref,
                 repo_paths=repo_path or [],
@@ -1037,6 +1049,10 @@ def register(app: typer.Typer) -> None:
                 (e.g. the InfraAgent path).
                 """
                 if active_skill is not None:
+                    # ── SPEC-ATT-10 §6.5.5: set operating mode signals on skill ──
+                    if isinstance(active_skill, ServiceHealthSkill):
+                        active_skill._offline_mode = offline_mode
+                        active_skill._attachments_present = bool(_attachment_adapters)
                     return _execute_orchestrated_skill(
                         client,
                         settings,
@@ -1056,6 +1072,7 @@ def register(app: typer.Typer) -> None:
                         repo_ref=repo_ref,
                         interactive=interactive,
                         attachment_adapters=_attachment_adapters,
+                        offline_mode=offline_mode,
                     )
                 _execute_live_mode(
                     client,
@@ -2111,6 +2128,7 @@ def _execute_orchestrated_skill(
     repo_ref: str = "HEAD",
     interactive: bool = False,
     attachment_adapters: list[AttachmentAdapter] | None = None,
+    offline_mode: bool = False,
 ) -> HealthReport | None:
     """Execute a skill through the Orchestrator's tool-aware pipeline.
 
@@ -2153,6 +2171,19 @@ def _execute_orchestrated_skill(
         tool_count,
         model_id=model_id,
     )
+
+    # ── SPEC-ATT-10 §6.5.5: ATTACHMENT_ONLY banner ───────────────────────
+    if offline_mode:
+        console.print(
+            Panel(
+                "[bold yellow]⚠ ATTACHMENT_ONLY mode[/bold yellow]\n"
+                "Live GKE/GCloud tool calls are [bold]disabled[/bold] (--offline-mode).\n"
+                "Analysis is based exclusively on attached sources.\n"
+                "All findings will be tagged [cyan]source_support='attachment_only'[/cyan].",
+                border_style="yellow",
+                expand=False,
+            )
+        )
 
     try:
         console.print(Rule("⏳ Pipeline Execution", style="bright_blue"))
