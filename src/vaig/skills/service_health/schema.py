@@ -443,12 +443,10 @@ _VALID_SOURCE_SUPPORT: frozenset[str] = frozenset(
     }
 )
 
-_VALID_CONFIDENCE_OVERRIDES: frozenset[str] = frozenset(
-    {"CONFIRMED", "HIGH", "MEDIUM", "LOW", "UNVERIFIABLE"}
-)
+_VALID_CONFIDENCE_OVERRIDES: frozenset[str] = frozenset({"CONFIRMED", "HIGH", "MEDIUM", "LOW", "UNVERIFIABLE"})
 
 
-def apply_ratification(report: "HealthReport", ratification_json: str) -> "HealthReport":
+def apply_ratification(report: HealthReport, ratification_json: str) -> HealthReport:
     """Apply verifier ratification data to a ``HealthReport``'s findings in-place.
 
     Parses *ratification_json* as a ``RatificationResult`` (a JSON array of
@@ -481,8 +479,7 @@ def apply_ratification(report: "HealthReport", ratification_json: str) -> "Healt
         raw = _json.loads(ratification_json)
     except _json.JSONDecodeError:
         logger.warning(
-            "apply_ratification: failed to parse ratification_json as JSON — skipping. "
-            "Input starts with: %.120s",
+            "apply_ratification: failed to parse ratification_json as JSON — skipping. Input starts with: %.120s",
             ratification_json,
         )
         return report
@@ -501,7 +498,7 @@ def apply_ratification(report: "HealthReport", ratification_json: str) -> "Healt
         return report
 
     # Build a title→finding index (lower-stripped for fuzzy match)
-    index: dict[str, "Finding"] = {f.title.lower().strip(): f for f in report.findings}
+    index: dict[str, Finding] = {f.title.lower().strip(): f for f in report.findings}
 
     updated = 0
     for ratif in result.items:
