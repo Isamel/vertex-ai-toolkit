@@ -96,12 +96,12 @@ class TestRateLimitResilienceIntegration:
         collector = RunQualityCollector()
         if client.fallback_active:
             collector.record_kind(
-                QualityIssueKind.MODEL_DEGRADED,
+                QualityIssueKind.model_degraded,
                 where="test-agent",
-                detail="switched to gemini-2.5-flash",
+                consequence="switched to gemini-2.5-flash",
             )
 
-        assert collector.has_kind(QualityIssueKind.MODEL_DEGRADED)
+        assert collector.has_kind(QualityIssueKind.model_degraded)
         assert len(collector) == 1
 
     @patch("vaig.core.client.time.sleep")
@@ -137,7 +137,7 @@ class TestRateLimitResilienceIntegration:
         # Orchestrator would produce empty run_quality
         collector = RunQualityCollector()
         if client.fallback_active:
-            collector.record_kind(QualityIssueKind.MODEL_DEGRADED, where="test-agent")
+            collector.record_kind(QualityIssueKind.model_degraded, where="test-agent")
 
         assert collector.issues == []
 
@@ -164,16 +164,16 @@ class TestCleanRunNoQualitySection:
         assert result == ""
         assert "Run Quality" not in result
 
-    def test_no_model_degraded_produces_no_section(self) -> None:
-        """Non-degraded issues → no section prepended."""
+    def test_any_issue_type_renders_section(self) -> None:
+        """Any issue kind → section is rendered."""
         from vaig.skills.service_health.skill import ServiceHealthSkill
 
         issues = [
-            QualityIssue(kind=QualityIssueKind.AGENT_FAILED, where="ag"),
-            QualityIssue(kind=QualityIssueKind.CONTEXT_TRUNCATED, where="attach"),
+            QualityIssue(kind=QualityIssueKind.agent_failed, where="ag"),
+            QualityIssue(kind=QualityIssueKind.attachment_truncated, where="attach"),
         ]
         result = ServiceHealthSkill._render_run_quality_section(issues)
-        assert result == ""
+        assert "## Run Quality" in result
 
     def test_run_quality_list_empty_from_clean_run(self, settings: Settings) -> None:
         """A client that never fallbacks → collector stays empty."""
@@ -187,7 +187,7 @@ class TestCleanRunNoQualitySection:
         collector = RunQualityCollector()
         # Only record on actual fallback
         if client.fallback_active:
-            collector.record_kind(QualityIssueKind.MODEL_DEGRADED, where="clean-agent")
+            collector.record_kind(QualityIssueKind.model_degraded, where="clean-agent")
 
         assert collector.issues == []
         assert len(collector) == 0

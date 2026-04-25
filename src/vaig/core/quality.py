@@ -7,42 +7,41 @@ to any specific skill schema.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import StrEnum
+
+from pydantic import BaseModel
 
 
 class QualityIssueKind(StrEnum):
     """Taxonomy of quality issues that can arise during a pipeline run."""
 
-    MODEL_DEGRADED = "model_degraded"
-    """One or more agents ran on the fallback model instead of the primary."""
-
-    BUDGET_EXCEEDED = "budget_exceeded"
-    """The pipeline was halted because the cost budget was exceeded."""
-
-    AGENT_FAILED = "agent_failed"
+    agent_failed = "agent_failed"
     """A gatherer or sequential agent returned ``success=False``."""
 
-    TOOL_ERROR = "tool_error"
-    """A tool call returned an error result."""
+    model_degraded = "model_degraded"
+    """One or more agents ran on the fallback model instead of the primary."""
 
-    CONTEXT_TRUNCATED = "context_truncated"
+    circuit_breaker_tripped = "circuit_breaker_tripped"
+    """The circuit breaker opened after repeated failures."""
+
+    incomplete_gather = "incomplete_gather"
+    """One or more gather agents did not return results."""
+
+    enrichment_timeout = "enrichment_timeout"
+    """Recommendation enrichment was cancelled due to timeout."""
+
+    attachment_truncated = "attachment_truncated"
     """Attachment or context content was truncated to fit the context window."""
 
 
-@dataclass(frozen=True)
-class QualityIssue:
-    """A single quality issue recorded during a pipeline run.
-
-    Designed to be lightweight and hashable so it can be stored in a set
-    for deduplication.
-    """
+class QualityIssue(BaseModel, frozen=True, extra="forbid"):
+    """A single quality issue recorded during a pipeline run."""
 
     kind: QualityIssueKind
     where: str
     """Human-readable location — e.g. agent name, tool name, or phase label."""
-    detail: str = ""
-    """Optional extra information such as an error message or metric value."""
+    consequence: str = ""
+    """Human-readable consequence or extra detail for this issue."""
 
 
 class RunQualityCollector:
@@ -69,10 +68,10 @@ class RunQualityCollector:
         self,
         kind: QualityIssueKind,
         where: str,
-        detail: str = "",
+        consequence: str = "",
     ) -> None:
         """Convenience wrapper — constructs a :class:`QualityIssue` and calls :meth:`record`."""
-        self.record(QualityIssue(kind=kind, where=where, detail=detail))
+        self.record(QualityIssue(kind=kind, where=where, consequence=consequence))
 
     def merge(self, other: RunQualityCollector) -> None:
         """Merge issues from *other* into this collector (dedup preserved)."""

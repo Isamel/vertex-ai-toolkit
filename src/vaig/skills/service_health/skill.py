@@ -17,7 +17,7 @@ from typing import Any, NamedTuple
 from pydantic import ValidationError
 
 from vaig.core.config import DEFAULT_MAX_OUTPUT_TOKENS
-from vaig.core.quality import QualityIssue, QualityIssueKind
+from vaig.core.quality import QualityIssue
 from vaig.skills.base import BaseSkill, SkillMetadata, SkillPhase
 from vaig.skills.service_health.contradiction_validator import apply_contradiction_rules, detect_contradictions
 from vaig.skills.service_health.prompts import (
@@ -1212,8 +1212,8 @@ class ServiceHealthSkill(BaseSkill):
         If JSON parsing or schema validation fails after cleaning, a visible
         warning is prepended to the raw content so the failure is never silent.
 
-        If *run_quality* contains any :attr:`~QualityIssueKind.MODEL_DEGRADED`
-        issues, a ``> ⚠️ …`` notice is prepended to the Markdown output.
+        If *run_quality* contains any issues, a ``## Run Quality`` table is
+        prepended to the Markdown output.
         """
         cleaned = clean_llm_json(content)
         try:
@@ -1314,27 +1314,32 @@ class ServiceHealthSkill(BaseSkill):
     def _render_run_quality_section(
         run_quality: list[QualityIssue] | None,
     ) -> str:
-        """Return a Markdown notice block for model-degraded runs, or empty string.
+        """Return a Markdown Run Quality table for runs with issues, or empty string.
 
-        If *run_quality* is None or contains no MODEL_DEGRADED issues, returns
-        an empty string so nothing is prepended to the report.
+        If *run_quality* is None or empty, returns an empty string so nothing
+        is prepended to the report.
 
-        Otherwise returns a blockquote warning with the affected agent names
-        so readers know the analysis was produced by a fallback model.
+        Otherwise returns a ``## Run Quality`` section with a Markdown table
+        listing every issue and a suggested action line.
         """
         if not run_quality:
             return ""
-        degraded = [
-            issue for issue in run_quality if issue.kind is QualityIssueKind.MODEL_DEGRADED
+        issues = list(run_quality)
+        n = len(issues)
+        label = "issue" if n == 1 else "issues"
+        lines: list[str] = [
+            f"## Run Quality ⚠ ({n} {label})\n",
+            "| Issue | Where | Consequence |",
+            "|---|---|---|",
         ]
-        if not degraded:
-            return ""
-        agents = ", ".join(sorted({i.where for i in degraded if i.where}))
-        notice = (
-            "> ⚠️ **Model degradation notice**: one or more agents ran on a fallback model"
-            f" ({agents}). Findings may be less detailed than usual.\n\n"
+        for issue in issues:
+            lines.append(f"| {issue.kind} | {issue.where} | {issue.consequence} |")
+        lines.append("")
+        lines.append(
+            "Suggested action: re-run during a lower-quota window, "
+            "or pass `--model gemini-2.5-flash` for the whole run to avoid 429s on gemini-2.5-pro quota."
         )
-        return notice
+        return "\n".join(lines) + "\n\n"
 
     def _enrich_report_recommendations(
         self,

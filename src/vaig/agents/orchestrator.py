@@ -1342,9 +1342,9 @@ class Orchestrator:
                 _accumulate_usage(result, agent_result)
                 if agent_result.model_degraded:
                     _quality.record_kind(
-                        QualityIssueKind.MODEL_DEGRADED,
+                        QualityIssueKind.model_degraded,
                         where=agent_result.agent_name,
-                        detail="agent ran on fallback model",
+                        consequence="agent ran on fallback model",
                     )
                 combined_patch = _combine_state_patches(
                     agent_result.state_patch, agent_result.agent_name, agent_result.content
@@ -2431,9 +2431,9 @@ class Orchestrator:
                 _accumulate_usage(result, agent_result)
                 if agent_result.model_degraded:
                     _quality.record_kind(
-                        QualityIssueKind.MODEL_DEGRADED,
+                        QualityIssueKind.model_degraded,
                         where=agent_result.agent_name,
-                        detail="sequential agent ran on fallback model",
+                        consequence="sequential agent ran on fallback model",
                     )
                 combined_patch = _combine_state_patches(
                     agent_result.state_patch, agent_result.agent_name, agent_result.content
@@ -3112,9 +3112,9 @@ class Orchestrator:
         for _pr in parallel_results:
             if _pr.model_degraded:
                 _quality.record_kind(
-                    QualityIssueKind.MODEL_DEGRADED,
+                    QualityIssueKind.model_degraded,
                     where=_pr.agent_name,
-                    detail="gatherer ran on fallback model",
+                    consequence="gatherer ran on fallback model",
                 )
 
         # ── Post-parallel cost check ──────────────────────────────────────
@@ -3502,9 +3502,9 @@ class Orchestrator:
         for _pr in parallel_results:
             if _pr.model_degraded:
                 _quality.record_kind(
-                    QualityIssueKind.MODEL_DEGRADED,
+                    QualityIssueKind.model_degraded,
                     where=_pr.agent_name,
-                    detail="gatherer ran on fallback model",
+                    consequence="gatherer ran on fallback model",
                 )
 
         # ── Post-parallel cost check ──────────────────────────────────────
@@ -3559,9 +3559,9 @@ class Orchestrator:
             _accumulate_usage(result, agent_result)
             if agent_result.model_degraded:
                 _quality.record_kind(
-                    QualityIssueKind.MODEL_DEGRADED,
+                    QualityIssueKind.model_degraded,
                     where=agent_result.agent_name,
-                    detail="sequential agent ran on fallback model",
+                    consequence="sequential agent ran on fallback model",
                 )
             combined_patch = _combine_state_patches(
                 agent_result.state_patch, agent_result.agent_name, agent_result.content
