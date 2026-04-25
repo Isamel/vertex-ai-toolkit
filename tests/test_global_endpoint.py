@@ -1,10 +1,11 @@
-"""Tests for SPEC-GEP-01 / SPEC-GEP-02 (Vertex AI global endpoint with fallback).
+"""Tests for SPEC-GEP-01 / SPEC-GEP-02 / SPEC-GEP-03 (Vertex AI global endpoint with fallback).
 
 Covers:
 - New :class:`~vaig.core.config.GCPConfig` fields (``endpoint_mode``, probe TTL).
 - ``resolve_endpoint_location`` dispatch logic for each mode.
 - Probe cache read/write round-trip.
 - CLI ``--endpoint`` flag validation.
+- Runtime global → regional flip on persistent 429s (GEP-03).
 """
 
 from __future__ import annotations
@@ -325,3 +326,230 @@ class TestCredentialsFingerprint:
 
         fp = _credentials_fingerprint(Opaque())  # type: ignore[arg-type]
         assert fp and len(fp) == 16
+
+
+# ── TestGEP03RuntimeFlip ──────────────────────────────────────────────────────
+
+
+class TestGEP03RuntimeFlip:
+    """GEP-03: global → regional fallback triggered by persistent 429s."""
+
+    def _make_client_on_global(self):  # noqa: ANN201  — local import, type resolved at call site
+        """Return a GeminiClient pre-initialized on the global endpoint."""
+        from unittest.mock import MagicMock, patch
+
+        from vaig.core.client import GeminiClient
+        from vaig.core.config import GCPConfig, ModelsConfig, RetryConfig, Settings
+
+        settings = Settings(
+            gcp=GCPConfig(
+                project_id="proj",
+                location="global",
+                fallback_location="us-central1",
+                endpoint_mode="auto",
+            ),
+            models=ModelsConfig(default="gemini-2.5-pro", fallback="gemini-2.5-flash"),
+            retry=RetryConfig(
+                max_retries=5,
+                initial_delay=0.0,
+                max_delay=0.0,
+                backoff_multiplier=1.0,
+            ),
+        )
+        with (
+            patch("vaig.core.endpoint_probe._probe_global_endpoint", return_value=True),
+            patch("vaig.core.client.genai.Client") as mock_cls,
+            patch("vaig.core.client.get_credentials", return_value=MagicMock()),
+        ):
+            client = GeminiClient(settings)
+            client.initialize()
+            client._mock_genai_cls = mock_cls  # stash for call-count assertions
+        return client
+
+    def test_flip_recorded_after_two_consecutive_429s(self) -> None:
+        """Two consecutive 429s on global → EndpointFlip appended."""
+        from unittest.mock import MagicMock, patch
+
+        from google.genai import errors as genai_errors
+
+        from vaig.core.client import EndpointFlip
+
+        client = self._make_client_on_global()
+        assert client._active_location == "global"
+
+        api_429 = genai_errors.ClientError(429, "rate limited")
+        call_count = 0
+
+        def fn() -> str:
+            nonlocal call_count
+            call_count += 1
+            # First two calls raise 429; third call (on regional) succeeds.
+            if call_count <= 2:
+                raise api_429
+            return "ok"
+
+        with (
+            patch("vaig.core.client.genai.Client"),
+            patch("vaig.core.client.get_credentials", return_value=MagicMock()),
+        ):
+            result = client._retry_with_backoff(fn)
+
+        assert result == "ok"
+        assert len(client.endpoint_flips) == 1
+        flip = client.endpoint_flips[0]
+        assert isinstance(flip, EndpointFlip)
+        assert flip.from_location == "global"
+        assert flip.to_location == "us-central1"
+        assert flip.reason == "persistent_429"
+        assert client._using_fallback is True
+        assert client._active_location == "us-central1"
+
+    def test_flip_does_not_occur_on_single_429(self) -> None:
+        """A single 429 on global should NOT trigger a flip — just retry."""
+        from unittest.mock import MagicMock, patch
+
+        from google.genai import errors as genai_errors
+
+        client = self._make_client_on_global()
+
+        api_429 = genai_errors.ClientError(429, "rate limited")
+        call_count = 0
+
+        def fn() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise api_429
+            return "ok"
+
+        with (
+            patch("vaig.core.client.genai.Client"),
+            patch("vaig.core.client.get_credentials", return_value=MagicMock()),
+        ):
+            result = client._retry_with_backoff(fn)
+
+        assert result == "ok"
+        assert client.endpoint_flips == []
+        assert client._active_location == "global"
+
+    def test_consecutive_count_resets_on_success(self) -> None:
+        """_consecutive_429_count resets to 0 after a successful call."""
+        from unittest.mock import MagicMock, patch
+
+        from google.genai import errors as genai_errors
+
+        client = self._make_client_on_global()
+
+        api_429 = genai_errors.ClientError(429, "rate limited")
+        call_count = 0
+
+        def fn() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise api_429
+            return "ok"
+
+        with (
+            patch("vaig.core.client.genai.Client"),
+            patch("vaig.core.client.get_credentials", return_value=MagicMock()),
+        ):
+            client._retry_with_backoff(fn)
+
+        assert client._consecutive_429_count == 0
+
+    def test_no_flip_when_already_on_regional(self) -> None:
+        """No EndpointFlip when the client is already on a regional endpoint."""
+        from unittest.mock import MagicMock, patch
+
+        from google.genai import errors as genai_errors
+
+        from vaig.core.client import GeminiClient
+        from vaig.core.config import GCPConfig, ModelsConfig, RetryConfig, Settings
+
+        settings = Settings(
+            gcp=GCPConfig(
+                project_id="proj",
+                location="us-central1",
+                fallback_location="us-central1",
+                endpoint_mode="regional",
+            ),
+            models=ModelsConfig(default="gemini-2.5-pro", fallback="gemini-2.5-flash"),
+            retry=RetryConfig(
+                max_retries=5,
+                initial_delay=0.0,
+                max_delay=0.0,
+                backoff_multiplier=1.0,
+            ),
+        )
+        with (
+            patch("vaig.core.client.genai.Client"),
+            patch("vaig.core.client.get_credentials", return_value=MagicMock()),
+        ):
+            client = GeminiClient(settings)
+            client.initialize()
+
+        api_429 = genai_errors.ClientError(429, "rate limited")
+        call_count = 0
+
+        def fn() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                raise api_429
+            return "ok"
+
+        with (
+            patch("vaig.core.client.genai.Client"),
+            patch("vaig.core.client.get_credentials", return_value=MagicMock()),
+        ):
+            result = client._retry_with_backoff(fn)
+
+        assert result == "ok"
+        # No flip: we were already regional
+        assert client.endpoint_flips == []
+
+    def test_endpoint_flips_property_returns_copy(self) -> None:
+        """endpoint_flips property returns a copy — mutation does not affect internal list."""
+        from vaig.core.client import GeminiClient
+        from vaig.core.config import GCPConfig, ModelsConfig, Settings
+
+        settings = Settings(
+            gcp=GCPConfig(project_id="proj"),
+            models=ModelsConfig(default="gemini-2.5-pro", fallback="gemini-2.5-flash"),
+        )
+        client = GeminiClient(settings)
+        copy1 = client.endpoint_flips
+        copy1.append("garbage")  # type: ignore[arg-type]
+        assert client.endpoint_flips == []
+
+    def test_flip_log_message(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Flip emits WARNING with from/to/reason in message."""
+        import logging
+        from unittest.mock import MagicMock, patch
+
+        from google.genai import errors as genai_errors
+
+        client = self._make_client_on_global()
+        api_429 = genai_errors.ClientError(429, "rate limited")
+        call_count = 0
+
+        def fn() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                raise api_429
+            return "ok"
+
+        with (
+            caplog.at_level(logging.WARNING, logger="vaig.core.client"),
+            patch("vaig.core.client.genai.Client"),
+            patch("vaig.core.client.get_credentials", return_value=MagicMock()),
+        ):
+            client._retry_with_backoff(fn)
+
+        flip_logs = [r for r in caplog.records if "Endpoint flipped" in r.message]
+        assert flip_logs, "Expected at least one 'Endpoint flipped' WARNING log"
+        assert "global" in flip_logs[0].message
+        assert "us-central1" in flip_logs[0].message
+        assert "persistent_429" in flip_logs[0].message

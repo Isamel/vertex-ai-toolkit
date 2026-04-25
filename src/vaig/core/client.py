@@ -9,6 +9,7 @@ so that existing callers work without changes.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import random
 import ssl
@@ -279,6 +280,24 @@ class ToolCallResult:
     """
 
 
+@dataclass
+class EndpointFlip:
+    """Record of a runtime global → regional endpoint switch (SPEC-GEP-03).
+
+    Created whenever ``GeminiClient`` detects persistent 429 errors on the
+    global endpoint and re-initializes against the regional fallback.
+    """
+
+    flipped_at: datetime.datetime
+    """UTC timestamp of the flip."""
+    from_location: str
+    """Endpoint location before the flip (typically ``"global"``)."""
+    to_location: str
+    """Endpoint location after the flip (e.g. ``"us-central1"``)."""
+    reason: str
+    """Human-readable reason (e.g. ``"persistent_429"``)."""
+
+
 class GeminiClient:
     """Vertex AI Gemini client with multi-model support and streaming.
 
@@ -298,6 +317,10 @@ class GeminiClient:
         self._active_location: str = settings.gcp.location
         self._using_fallback: bool = False
         self._fallback_lock = threading.Lock()
+        # SPEC-GEP-03: track consecutive 429s on the global endpoint to trigger
+        # a regional fallback after sustained quota pressure.
+        self._consecutive_429_count: int = 0
+        self._endpoint_flips: list[EndpointFlip] = []
 
         # Rate-limit quota enforcement — None when disabled.
         self._quota_checker = quota_checker
@@ -486,6 +509,43 @@ class GeminiClient:
             self._active_location,
         )
 
+    def _flip_to_fallback_on_429(self, *, reason: str = "persistent_429") -> bool:
+        """Switch from global to regional when persistent 429s are detected (SPEC-GEP-03).
+
+        Records an :class:`EndpointFlip`, resets ``_consecutive_429_count``,
+        and delegates to :meth:`_reinitialize_with_fallback` for the actual
+        client swap.
+
+        Returns:
+            ``True`` if a flip occurred (or was already in progress),
+            ``False`` when no fallback is available or the client is already
+            on the fallback.
+        """
+        if self._using_fallback:
+            return True  # already on regional
+
+        fallback = self._settings.gcp.fallback_location
+        if not fallback or fallback == self._active_location:
+            return False
+
+        from_loc = self._active_location
+        logger.warning(
+            "Endpoint flipped: %s → %s (reason: %s)",
+            from_loc,
+            fallback,
+            reason,
+        )
+        flip = EndpointFlip(
+            flipped_at=datetime.datetime.now(datetime.UTC),
+            from_location=from_loc,
+            to_location=fallback,
+            reason=reason,
+        )
+        self._endpoint_flips.append(flip)
+        self._consecutive_429_count = 0
+        self._reinitialize_with_fallback()
+        return True
+
     def _reinitialize_with_fallback(self) -> None:
         """Re-initialize with the fallback location (sync).
 
@@ -553,6 +613,16 @@ class GeminiClient:
     def current_model(self) -> str:
         """Get the current model ID."""
         return self._current_model_id
+
+    @property
+    def endpoint_flips(self) -> list[EndpointFlip]:
+        """Return a copy of all runtime endpoint flips recorded (SPEC-GEP-03).
+
+        Each :class:`EndpointFlip` captures a global → regional switch driven
+        by persistent 429 errors.  Non-empty only when the client started on
+        the global endpoint and had to fall back during the run.
+        """
+        return list(self._endpoint_flips)
 
     def switch_model(self, model_id: str) -> str:
         """Switch the active model. Returns the new model ID."""
@@ -785,7 +855,9 @@ class GeminiClient:
                     break  # fall through to raise
 
             try:
-                return fn()
+                result = fn()
+                self._consecutive_429_count = 0  # SPEC-GEP-03: reset on success
+                return result
             except _RETRYABLE_EXCEPTIONS as exc:
                 last_exception = exc
                 if _is_ssl_or_connection_error(exc) and not self._using_fallback:
@@ -851,6 +923,13 @@ class GeminiClient:
                         break  # fall through to exhaustion handler
                     # 429 rate-limit: retry at app level with longer backoff
                     if exc.code == 429:
+                        # SPEC-GEP-03: track consecutive 429s on the global endpoint;
+                        # flip to regional after 2 consecutive 429s.
+                        if self._active_location == "global" and not self._using_fallback:
+                            self._consecutive_429_count += 1
+                            if self._consecutive_429_count >= 2:
+                                if self._flip_to_fallback_on_429():
+                                    continue  # retry against new regional client
                         if attempt < retry_cfg.max_retries:
                             sleep_time, delay = self._compute_backoff_delay(
                                 delay,
@@ -977,7 +1056,9 @@ class GeminiClient:
                     break
 
             try:
-                return await fn()
+                result = await fn()
+                self._consecutive_429_count = 0  # SPEC-GEP-03: reset on success
+                return result
             except _RETRYABLE_EXCEPTIONS as exc:
                 last_exception = exc
                 if _is_ssl_or_connection_error(exc) and not self._using_fallback:
@@ -1043,6 +1124,13 @@ class GeminiClient:
                         break  # fall through to exhaustion handler
                     # 429 rate-limit: retry at app level with longer backoff
                     if exc.code == 429:
+                        # SPEC-GEP-03: track consecutive 429s on the global endpoint;
+                        # flip to regional after 2 consecutive 429s.
+                        if self._active_location == "global" and not self._using_fallback:
+                            self._consecutive_429_count += 1
+                            if self._consecutive_429_count >= 2:
+                                if self._flip_to_fallback_on_429():
+                                    continue  # retry against new regional client
                         if attempt < retry_cfg.max_retries:
                             sleep_time, delay = self._compute_backoff_delay(
                                 delay,
