@@ -555,7 +555,7 @@ _VERIFIED_SOURCE_SUPPORTS: frozenset[str] = frozenset(
 )
 
 
-def render_attachment_sections(report: HealthReport) -> str:  # type: ignore[name-defined]
+def render_attachment_sections(report: HealthReport) -> str:
     """Render the 'Verified Expectations' and 'Source Evidence' Markdown sections.
 
     Called post-LLM by the Reporter skill when attachment_priors are present.
