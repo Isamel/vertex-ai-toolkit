@@ -181,10 +181,20 @@ class TestGenerationConfig:
 
 class TestModelsConfig:
     def test_defaults(self) -> None:
+        # ModelsConfig uses "" as sentinel — resolved to concrete values by
+        # Settings._resolve_model_sentinels at the root level.
         cfg = ModelsConfig()
-        assert cfg.default == "gemini-2.5-pro"
-        assert cfg.fallback == "gemini-2.5-flash"
+        assert cfg.default == ""
+        assert cfg.fallback == ""
         assert cfg.available == []
+
+    def test_resolved_via_settings(self) -> None:
+        """Settings resolves sentinel '' into the hardcoded last-resort values."""
+        from vaig.core.config import Settings
+
+        s = Settings(models=ModelsConfig())
+        assert s.models.default == "gemini-2.5-pro"
+        assert s.models.fallback == "gemini-2.5-flash"
 
     def test_with_available_models(self) -> None:
         models = [

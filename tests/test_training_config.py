@@ -16,9 +16,18 @@ class TestTrainingConfigDefaults:
         cfg = TrainingConfig()
         assert cfg.enabled is False
 
-    def test_base_model_default(self) -> None:
+    def test_base_model_default_is_sentinel(self) -> None:
+        """base_model defaults to '' sentinel; Settings._resolve_model_sentinels fills it."""
         cfg = TrainingConfig()
-        assert cfg.base_model == "gemini-2.5-flash"
+        assert cfg.base_model == ""
+
+    def test_base_model_resolved_via_settings(self) -> None:
+        """Settings resolves the sentinel to the fallback model at construction time."""
+        from vaig.core.config import Settings
+
+        settings = Settings()
+        assert settings.training.base_model != ""
+        assert settings.training.base_model == settings.models.fallback
 
     def test_min_examples_default(self) -> None:
         cfg = TrainingConfig()

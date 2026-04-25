@@ -57,7 +57,7 @@ class SpecialistAgent(BaseAgent):
         history = self._build_chat_history()
 
         self._add_to_conversation("user", full_prompt)
-        logger.debug("Agent %s executing (model=%s, history=%d)", self.name, self._config.model, len(history))
+        logger.debug("Agent %s executing (model=%s, history=%d)", self.name, self.model, len(history))
 
         try:
             gen_kwargs: dict[str, Any] = {}
@@ -72,7 +72,7 @@ class SpecialistAgent(BaseAgent):
                 full_prompt,
                 system_instruction=self._config.system_instruction,
                 history=history,
-                model_id=self._config.model,
+                model_id=self.model,
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
                 **gen_kwargs,
@@ -116,10 +116,7 @@ class SpecialistAgent(BaseAgent):
             )
             return AgentResult(
                 agent_name=self.name,
-                content=(
-                    f"{_CONTEXT_WINDOW_DEGRADATION_MSG}\n\n"
-                    f"[Context window exceeded: {e}]"
-                ),
+                content=(f"{_CONTEXT_WINDOW_DEGRADATION_MSG}\n\n[Context window exceeded: {e}]"),
                 success=False,
                 usage=e.usage,
                 metadata={"error": str(e), "error_type": "context_window_exceeded"},
@@ -152,7 +149,7 @@ class SpecialistAgent(BaseAgent):
                 full_prompt,
                 system_instruction=self._config.system_instruction,
                 history=history,
-                model_id=self._config.model,
+                model_id=self.model,
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
             ):
@@ -172,9 +169,7 @@ class SpecialistAgent(BaseAgent):
 
         except ContextWindowExceededError as e:
             logger.warning("Agent %s streaming context window exceeded: %s", self.name, e)
-            yield (
-                f"\n[{_CONTEXT_WINDOW_DEGRADATION_MSG}]"
-            )
+            yield (f"\n[{_CONTEXT_WINDOW_DEGRADATION_MSG}]")
 
         except Exception as e:
             logger.exception("Agent %s streaming failed", self.name)
@@ -196,7 +191,7 @@ class SpecialistAgent(BaseAgent):
         logger.debug(
             "Agent %s async_execute (model=%s, history=%d)",
             self.name,
-            self._config.model,
+            self.model,
             len(history),
         )
 
@@ -213,7 +208,7 @@ class SpecialistAgent(BaseAgent):
                 full_prompt,
                 system_instruction=self._config.system_instruction,
                 history=history,
-                model_id=self._config.model,
+                model_id=self.model,
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
                 **gen_kwargs,
@@ -269,10 +264,7 @@ class SpecialistAgent(BaseAgent):
             )
             return AgentResult(
                 agent_name=self.name,
-                content=(
-                    f"{_CONTEXT_WINDOW_DEGRADATION_MSG}\n\n"
-                    f"[Context window exceeded: {e}]"
-                ),
+                content=(f"{_CONTEXT_WINDOW_DEGRADATION_MSG}\n\n[Context window exceeded: {e}]"),
                 success=False,
                 usage=e.usage,
                 metadata={"error": str(e), "error_type": "context_window_exceeded"},
@@ -306,7 +298,7 @@ class SpecialistAgent(BaseAgent):
                 full_prompt,
                 system_instruction=self._config.system_instruction,
                 history=history,
-                model_id=self._config.model,
+                model_id=self.model,
                 temperature=self._config.temperature,
                 max_output_tokens=self._config.max_output_tokens,
             )
@@ -336,9 +328,7 @@ class SpecialistAgent(BaseAgent):
 
         except ContextWindowExceededError as e:
             logger.warning("Agent %s async streaming context window exceeded: %s", self.name, e)
-            yield (
-                f"\n[{_CONTEXT_WINDOW_DEGRADATION_MSG}]"
-            )
+            yield (f"\n[{_CONTEXT_WINDOW_DEGRADATION_MSG}]")
 
         except Exception as e:
             logger.exception("Agent %s async streaming failed", self.name)

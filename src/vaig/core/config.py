@@ -96,6 +96,20 @@ class GCPConfig(BaseModel):
     ``~/.vaig/cache/endpoint-probe.json`` before re-probing. Default
     1 h. Set to 0 to disable caching (always probe)."""
 
+    http_proxy: str = ""
+    """Optional HTTP/HTTPS proxy URL for all Vertex AI API calls.
+
+    Useful for local testing behind a corporate proxy or when routing
+    traffic through a debugging proxy (e.g. mitmproxy, Charles).
+
+    Accepts any URL supported by ``httpx``, e.g.
+    ``"http://localhost:8080"`` or ``"http://user:pass@proxy.corp:3128"``.
+
+    If empty (the default), the environment variables ``HTTP_PROXY`` /
+    ``HTTPS_PROXY`` / ``ALL_PROXY`` are honoured by ``httpx`` automatically.
+    Set to ``"none"`` to disable proxy even when those env vars are set.
+    """
+
     available_projects: list[ProjectEntry] = Field(default_factory=list)
 
     def model_post_init(self, _context: Any) -> None:
@@ -142,22 +156,46 @@ class ThinkingConfig(BaseModel):
 
 # ── Thinking-capable model detection ─────────────────────────
 
+# Kept for backwards-compatibility — prefer ModelsConfig.thinking_capable_prefixes
+# which is populated from the YAML and therefore picks up new model families
+# automatically without code changes.
 THINKING_CAPABLE_MODELS: frozenset[str] = frozenset(
     {
         "gemini-2.5-flash",
         "gemini-2.5-pro",
+        "gemini-3",
     }
 )
-"""Model name prefixes that support thinking mode."""
+"""Model name prefixes that support thinking mode (legacy constant).
+
+New model families are discovered via ``ModelsConfig.thinking_capable_prefixes``
+which is loaded from ``config/default.yaml``.  This constant is kept only so
+that existing code that imports it directly keeps working.
+"""
 
 
-def supports_thinking(model_name: str) -> bool:
+def supports_thinking(model_name: str, extra_prefixes: list[str] | None = None) -> bool:
     """Check if a model supports thinking mode.
 
     Uses prefix matching so versioned variants (e.g.
     ``gemini-2.5-flash-001``) are also detected.
+
+    Args:
+        model_name: The model identifier to check.
+        extra_prefixes: Prefixes loaded from
+            ``ModelsConfig.thinking_capable_prefixes``.  When provided
+            (including an empty list), they are unioned with the
+            hard-coded :data:`THINKING_CAPABLE_MODELS` constant so that
+            YAML-configured prefixes extend the built-in list rather than
+            replacing it.  Pass ``None`` (the default) to use only the
+            built-in constant — backwards-compatible with callers that
+            pre-date YAML-driven configuration.
     """
-    return any(model_name.startswith(prefix) for prefix in THINKING_CAPABLE_MODELS)
+    if extra_prefixes is not None:
+        all_prefixes: tuple[str, ...] | frozenset[str] = tuple(extra_prefixes) + tuple(THINKING_CAPABLE_MODELS)
+    else:
+        all_prefixes = THINKING_CAPABLE_MODELS
+    return any(model_name.startswith(prefix) for prefix in all_prefixes)
 
 
 class GenerationConfig(BaseModel):
@@ -182,9 +220,32 @@ class ModelInfo(BaseModel):
 class ModelsConfig(BaseModel):
     """Model selection configuration."""
 
-    default: str = "gemini-2.5-pro"
-    fallback: str = "gemini-2.5-flash"
+    default: str = ""
+    """Primary model ID.  Must be set in ``config/default.yaml`` or via
+    ``VAIG_MODELS__DEFAULT`` environment variable.  Empty string is only
+    valid during Pydantic construction before the validator runs."""
+
+    fallback: str = ""
+    """Fallback model ID used when the primary is unavailable.  Must be set
+    in ``config/default.yaml`` or via ``VAIG_MODELS__FALLBACK``."""
+
     available: list[ModelInfo] = Field(default_factory=list)
+
+    thinking_capable_prefixes: list[str] = Field(
+        default_factory=list,
+    )
+    """Model ID prefixes that support Gemini thinking mode.
+
+    Defaults to ``[]`` so that ``config/default.yaml`` is the single source of
+    truth.  The hard-coded :data:`THINKING_CAPABLE_MODELS` constant is always
+    consulted as a fallback by :func:`supports_thinking`, so omitting this field
+    (or leaving it empty) still detects all built-in thinking-capable models.
+
+    Prefix matching is used so versioned variants (e.g. ``gemini-2.5-pro-001``)
+    are detected automatically.  Add new model family prefixes in
+    ``config/default.yaml`` under ``models.thinking_capable_prefixes`` to
+    enable thinking for them without any code change.
+    """
 
 
 class SessionConfig(BaseModel):
@@ -301,8 +362,18 @@ class AgentsConfig(BaseModel):
     """Multi-agent configuration."""
 
     max_concurrent: int = 3
-    orchestrator_model: str = "gemini-2.5-pro"
-    specialist_model: str = "gemini-2.5-flash"
+    orchestrator_model: str = ""
+    """Model used by the orchestrator agent.
+
+    Defaults to ``models.default`` when empty — set in ``config/default.yaml``
+    or via ``VAIG_AGENTS__ORCHESTRATOR_MODEL`` to override.
+    """
+    specialist_model: str = ""
+    """Model used by specialist/worker agents.
+
+    Defaults to ``models.fallback`` when empty — set in ``config/default.yaml``
+    or via ``VAIG_AGENTS__SPECIALIST_MODEL`` to override.
+    """
     max_iterations_retry: int = 15
     parallel_tool_calls: bool = True
     """Execute independent tool calls in parallel (async path only).
@@ -1416,7 +1487,12 @@ class TrainingConfig(BaseModel):
     """
 
     enabled: bool = False
-    base_model: str = "gemini-2.5-flash"
+    base_model: str = ""
+    """Base model for supervised fine-tuning.
+
+    Defaults to ``models.fallback`` when empty — set in ``config/default.yaml``
+    under ``training.base_model`` or via ``VAIG_TRAINING__BASE_MODEL``.
+    """
     min_examples: int = 50
     max_examples: int = 10000
     min_rating: int = 4
@@ -1534,8 +1610,7 @@ class RepoInvestigationConfig(BaseModel):
             logger.warning("Repo specified without paths or globs — will full-scan with cap")
         if self.attachment_context_budget_bytes is not None and self.attachment_context_budget_bytes <= 0:
             raise ValueError(
-                f"attachment_context_budget_bytes must be > 0 when set, "
-                f"got {self.attachment_context_budget_bytes}"
+                f"attachment_context_budget_bytes must be > 0 when set, got {self.attachment_context_budget_bytes}"
             )
         return self
 
@@ -2211,6 +2286,42 @@ class Settings(BaseSettings):
     investigation: InvestigationConfig = Field(default_factory=InvestigationConfig)
     idiom: IdiomConfig = Field(default_factory=IdiomConfig)
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)
+
+    @model_validator(mode="after")
+    def _resolve_model_sentinels(self) -> Settings:
+        """Fill sentinel empty strings with derived defaults.
+
+        Fields that accept ``""`` as a sentinel (meaning "inherit from
+        ``models.default`` / ``models.fallback``") are resolved here so
+        that the rest of the application can assume they are always
+        non-empty strings.
+
+        Resolution order for each field:
+        1. Explicit value from YAML / env var (already set, skip).
+        2. Derived from ``models.default`` or ``models.fallback``.
+        3. Hard-coded last-resort so the app never crashes on a bare
+           ``Settings()`` construction in tests.
+        """
+        _default = self.models.default or "gemini-2.5-pro"
+        _fallback = self.models.fallback or "gemini-2.5-flash"
+
+        # ModelsConfig itself — ensure non-empty
+        if not self.models.default:
+            self.models.default = _default
+        if not self.models.fallback:
+            self.models.fallback = _fallback
+
+        # AgentsConfig
+        if not self.agents.orchestrator_model:
+            self.agents.orchestrator_model = _default
+        if not self.agents.specialist_model:
+            self.agents.specialist_model = _fallback
+
+        # TrainingConfig
+        if not self.training.base_model:
+            self.training.base_model = _fallback
+
+        return self
 
     @model_validator(mode="after")
     def _bridge_platform_org_id(self) -> Settings:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import os
 import random
 import ssl
 import threading
@@ -20,6 +21,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
+import httpx
 from google import genai
 from google.api_core import exceptions as google_exceptions
 from google.auth import exceptions as auth_exceptions
@@ -360,17 +362,69 @@ class GeminiClient:
         Maps vaig's ``RetryConfig`` to the SDK's ``HttpRetryOptions`` so that
         the underlying HTTP transport retries transient errors (429, 5xx)
         automatically — before vaig's own application-level retry even kicks in.
+
+        When ``gcp.http_proxy`` is set, injects a proxy-aware
+        ``httpx.Client`` / ``httpx.AsyncClient`` pair so all Vertex AI traffic
+        flows through the configured proxy.  Set ``gcp.http_proxy = "none"`` to
+        disable proxy even when ``HTTP_PROXY`` / ``HTTPS_PROXY`` / ``ALL_PROXY``
+        env vars are set (uses ``trust_env=False``).  When ``gcp.http_proxy`` is
+        empty the SDK's default transport is used, so env-var proxies (including
+        ``NO_PROXY`` semantics) continue to work through httpx natively.
+
+        Proxy URLs containing credentials (``user:pass@host``) are redacted
+        to ``scheme://host:port`` before being written to the log.
         """
         retry_cfg = self._settings.retry
+        retry_options = types.HttpRetryOptions(
+            attempts=retry_cfg.max_retries + 1,  # SDK counts initial call as attempt
+            initial_delay=retry_cfg.initial_delay,
+            max_delay=retry_cfg.max_delay,
+            exp_base=retry_cfg.backoff_multiplier,
+            jitter=0.5,
+            http_status_codes=retry_cfg.retryable_status_codes,
+        )
+
+        # ── Proxy resolution ─────────────────────────────────────────────────
+        # Priority: gcp.http_proxy > env vars (httpx default behaviour).
+        # The sentinel value "none" disables proxy even when env vars are set.
+        cfg_proxy = self._settings.gcp.http_proxy.strip()
+        httpx_client: httpx.Client | None = None
+        httpx_async_client: httpx.AsyncClient | None = None
+
+        def _safe_proxy_url(raw: str) -> str:
+            """Return scheme://host:port — strips userinfo to avoid credential leaks."""
+            u = httpx.URL(raw)
+            port_part = f":{u.port}" if u.port else ""
+            return f"{u.scheme}://{u.host}{port_part}"
+
+        if cfg_proxy.lower() == "none":
+            # Explicitly disabled — trust_env=False prevents httpx from picking
+            # up HTTP_PROXY / HTTPS_PROXY / ALL_PROXY from the environment.
+            httpx_client = httpx.Client(trust_env=False)
+            httpx_async_client = httpx.AsyncClient(trust_env=False)
+        elif cfg_proxy:
+            # Explicit proxy URL — inject into httpx clients.
+            logger.info("HTTP proxy configured for Vertex AI calls: %s", _safe_proxy_url(cfg_proxy))
+            httpx_client = httpx.Client(proxy=cfg_proxy)
+            httpx_async_client = httpx.AsyncClient(proxy=cfg_proxy)
+        else:
+            # No explicit config — let the SDK's default transport handle env vars
+            # natively (preserves NO_PROXY, scheme-specific selection, etc.).
+            # Log only for observability; do NOT pass env proxy to httpx manually.
+            env_proxy = (
+                os.environ.get("HTTPS_PROXY")
+                or os.environ.get("https_proxy")
+                or os.environ.get("HTTP_PROXY")
+                or os.environ.get("http_proxy")
+                or os.environ.get("ALL_PROXY")
+            )
+            if env_proxy:
+                logger.info("HTTP proxy detected from environment: %s", _safe_proxy_url(env_proxy))
+
         return types.HttpOptions(
-            retry_options=types.HttpRetryOptions(
-                attempts=retry_cfg.max_retries + 1,  # SDK counts initial call as attempt
-                initial_delay=retry_cfg.initial_delay,
-                max_delay=retry_cfg.max_delay,
-                exp_base=retry_cfg.backoff_multiplier,
-                jitter=0.5,
-                http_status_codes=retry_cfg.retryable_status_codes,
-            ),
+            retry_options=retry_options,
+            httpx_client=httpx_client,
+            httpx_async_client=httpx_async_client,
         )
 
     def _resolve_initial_location(self, credentials: Credentials | None) -> str:
