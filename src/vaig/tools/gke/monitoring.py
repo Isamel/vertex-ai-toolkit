@@ -158,11 +158,7 @@ def _query_time_series(
     # CPU is a cumulative counter — use ALIGN_RATE to get cores/s then scale.
     # Memory is a gauge — use ALIGN_MEAN.
     is_cpu = metric_type == _CPU_METRIC
-    aligner = (
-        monitoring_v3.Aggregation.Aligner.ALIGN_RATE
-        if is_cpu
-        else monitoring_v3.Aggregation.Aligner.ALIGN_MEAN
-    )
+    aligner = monitoring_v3.Aggregation.Aligner.ALIGN_RATE if is_cpu else monitoring_v3.Aggregation.Aligner.ALIGN_MEAN
 
     aggregation = monitoring_v3.Aggregation(
         {
@@ -335,7 +331,7 @@ def _format_metrics_response(
         f"**{metric_label} Metrics** {unit_label} — namespace: `{namespace}`, "
         f"prefix: `{pod_name_prefix}`, window: {window_minutes}m\n",
         f"| {'Pod':<50} | {'Avg':>10} | {'Max':>10} | {'Latest':>10} | Trend |",
-        f"|{'-'*52}|{'-'*12}|{'-'*12}|{'-'*12}|-------|",
+        f"|{'-' * 52}|{'-' * 12}|{'-' * 12}|{'-' * 12}|-------|",
     ]
 
     for row in display_rows:
@@ -391,10 +387,7 @@ def get_pod_metrics(
     valid_types = {"cpu", "memory", "all"}
     if metric_type not in valid_types:
         return ToolResult(
-            output=(
-                f"Invalid metric_type '{metric_type}'. "
-                f"Must be one of: {', '.join(sorted(valid_types))}"
-            ),
+            output=(f"Invalid metric_type '{metric_type}'. Must be one of: {', '.join(sorted(valid_types))}"),
             error=True,
         )
 
@@ -402,8 +395,7 @@ def get_pod_metrics(
     if window_minutes <= 0 or window_minutes > 1440:
         return ToolResult(
             output=(
-                f"Invalid window_minutes '{window_minutes}'. "
-                "Must be a positive integer between 1 and 1440 (24 hours)."
+                f"Invalid window_minutes '{window_minutes}'. Must be a positive integer between 1 and 1440 (24 hours)."
             ),
             error=True,
         )
@@ -420,9 +412,7 @@ def get_pod_metrics(
             error=True,
         )
 
-    sections: list[str] = [
-        f"## Pod Metrics — {namespace}/{pod_name_prefix}* (last {window_minutes}m)\n"
-    ]
+    sections: list[str] = [f"## Pod Metrics — {namespace}/{pod_name_prefix}* (last {window_minutes}m)\n"]
 
     fetch_cpu = metric_type in {"cpu", "all"}
     fetch_memory = metric_type in {"memory", "all"}
@@ -431,9 +421,7 @@ def get_pod_metrics(
         if not do_fetch:
             continue
 
-        metric_filter = _build_metric_filter(
-            mtype, cluster_name, namespace, pod_name_prefix
-        )
+        metric_filter = _build_metric_filter(mtype, cluster_name, namespace, pod_name_prefix)
 
         try:
             ts_list = _query_time_series(
@@ -459,13 +447,8 @@ def get_pod_metrics(
                     f"``{project_id}``.\n"
                 )
             else:
-                logger.warning(
-                    "Cloud Monitoring query failed for %s: %s", mtype, exc
-                )
-                sections.append(
-                    f"**{'CPU' if mtype == _CPU_METRIC else 'Memory'} Metrics** — "
-                    f"Query error: {exc}\n"
-                )
+                logger.warning("Cloud Monitoring query failed for %s: %s", mtype, exc)
+                sections.append(f"**{'CPU' if mtype == _CPU_METRIC else 'Memory'} Metrics** — Query error: {exc}\n")
             continue
 
         section = _format_metrics_response(
@@ -544,11 +527,7 @@ def _query_time_series_with_container(
     )
 
     is_cpu = metric_type == _CPU_METRIC
-    aligner = (
-        monitoring_v3.Aggregation.Aligner.ALIGN_RATE
-        if is_cpu
-        else monitoring_v3.Aggregation.Aligner.ALIGN_MEAN
-    )
+    aligner = monitoring_v3.Aggregation.Aligner.ALIGN_RATE if is_cpu else monitoring_v3.Aggregation.Aligner.ALIGN_MEAN
 
     aggregation = monitoring_v3.Aggregation(
         {
@@ -617,8 +596,7 @@ def get_workload_usage_metrics(
     # ── Diagnostic logging ────────────────────────────────────
     total_pods = sum(len(pods) for pods in workload_pod_names.values())
     logger.debug(
-        "Cloud Monitoring query: project=%s, cluster=%s, namespace=%s, "
-        "workloads=%d, pods=%d, window=%dm",
+        "Cloud Monitoring query: project=%s, cluster=%s, namespace=%s, workloads=%d, pods=%d, window=%dm",
         project_id,
         cluster_name,
         namespace,
@@ -711,7 +689,7 @@ def get_workload_usage_metrics(
             continue
 
         avg_bytes = sum(values) / len(values)
-        avg_gib = avg_bytes / (1024.0 ** 3)
+        avg_gib = avg_bytes / (1024.0**3)
         mem_by_pod_container[(pod_name, container_name)] = avg_gib
 
     # ── Aggregate per workload ────────────────────────────────
@@ -734,13 +712,9 @@ def get_workload_usage_metrics(
         wl_container_mem.setdefault(workload_name, {}).setdefault(container_name, [])
 
         if (pod_name, container_name) in cpu_by_pod_container:
-            wl_container_cpu[workload_name][container_name].append(
-                cpu_by_pod_container[(pod_name, container_name)]
-            )
+            wl_container_cpu[workload_name][container_name].append(cpu_by_pod_container[(pod_name, container_name)])
         if (pod_name, container_name) in mem_by_pod_container:
-            wl_container_mem[workload_name][container_name].append(
-                mem_by_pod_container[(pod_name, container_name)]
-            )
+            wl_container_mem[workload_name][container_name].append(mem_by_pod_container[(pod_name, container_name)])
 
     result: dict[str, WorkloadUsageMetrics] = {}
 
@@ -751,12 +725,22 @@ def get_workload_usage_metrics(
     missing_pods = expected_pod_names - result_pod_names  # pods we expected but got no data for
     if missing_pods:
         logger.debug(
-            "Cloud Monitoring: %d pods matched, %d expected pods missing "
-            "(no monitoring data, showing first 5): %s",
+            "Cloud Monitoring: %d pods matched, %d expected pods missing (no monitoring data, showing first 5): %s",
             len(matched_pods),
             len(missing_pods),
             sorted(missing_pods)[:5],
         )
+        unmatched_monitoring_pods = result_pod_names - expected_pod_names
+        if unmatched_monitoring_pods:
+            # Both sides are non-empty → genuine pod name mismatch
+            logger.debug(
+                "Cloud Monitoring pod name mismatch — sample of names FROM monitoring (showing first 5): %s",
+                sorted(unmatched_monitoring_pods)[:5],
+            )
+            logger.debug(
+                "Cloud Monitoring pod name mismatch — sample of names WE EXPECTED (showing first 5): %s",
+                sorted(missing_pods)[:5],
+            )
     else:
         logger.debug(
             "Cloud Monitoring: all %d expected pods matched",
@@ -798,14 +782,26 @@ def get_workload_usage_metrics(
     # ── Diagnostic: final summary ──────────────────────────────
     workloads_with_data = set(result.keys())
     workloads_without_data = set(workload_pod_names.keys()) - workloads_with_data
+    matched_workloads = len(workloads_with_data)
+    total_workloads = len(workload_pod_names)
     if workloads_without_data:
-        logger.debug(
-            "Cloud Monitoring summary: %d/%d workloads have usage data. "
-            "Missing (showing first 10): %s",
-            len(workloads_with_data),
-            len(workload_pod_names),
-            sorted(workloads_without_data)[:10],
-        )
+        if missing_pods:
+            logger.debug(
+                "Cloud Monitoring summary: %d/%d workloads have usage data. "
+                "Missing (showing first 10): %s. "
+                "Tip: if pod names are present in Cloud Monitoring but don't match, "
+                "check that gke_config.cluster_name matches the 'cluster_name' label in Cloud Monitoring.",
+                matched_workloads,
+                total_workloads,
+                sorted(workloads_without_data)[:10],
+            )
+        else:
+            logger.debug(
+                "Cloud Monitoring summary: %d/%d workloads have usage data. Missing (showing first 10): %s",
+                matched_workloads,
+                total_workloads,
+                sorted(workloads_without_data)[:10],
+            )
     else:
         logger.debug(
             "Cloud Monitoring summary: all %d workloads have usage data",

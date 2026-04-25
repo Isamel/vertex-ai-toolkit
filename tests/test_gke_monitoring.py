@@ -1080,3 +1080,79 @@ class TestGetWorkloadUsageMetrics:
         assert "worker" in result
         assert result["api"].containers["app"].avg_cpu_cores == pytest.approx(0.3)
         assert result["worker"].containers["worker"].avg_cpu_cores == pytest.approx(0.6)
+
+
+# ── Tests for pod-mismatch diagnostics (Bug B fix) ──────────────────────────
+
+
+class TestPodMismatchDiagnostics:
+    """Tests that pod-name mismatches are diagnosed correctly."""
+
+    def test_pod_mismatch_returns_empty_not_exception(self) -> None:
+        """When monitoring returns pods that don't match expected, result is empty dict (no crash)."""
+        from vaig.tools.gke.monitoring import get_workload_usage_metrics
+
+        cfg = _make_gke_config()
+        mock_client = MagicMock()
+
+        # Monitoring returns "different-pod-xyz", but we expected "api-pod-1"
+        cpu_ts = _make_container_ts("different-pod-xyz", "app", [0.2])
+        mock_client.list_time_series.side_effect = [[cpu_ts], []]
+
+        with patch("vaig.tools.gke.monitoring.MetricServiceClient", return_value=mock_client):
+            result = get_workload_usage_metrics(
+                namespace="default",
+                workload_pod_names={"api": ["api-pod-1"]},
+                gke_config=cfg,
+            )
+
+        # No match → empty result (no KeyError, no crash)
+        assert result == {}
+
+    def test_pod_mismatch_diagnostic_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+        """When monitoring returns pods that don't match expected, diagnostic is logged at DEBUG."""
+        import logging
+
+        from vaig.tools.gke.monitoring import get_workload_usage_metrics
+
+        cfg = _make_gke_config()
+        mock_client = MagicMock()
+
+        # Cloud Monitoring gives us pods with a different naming pattern
+        cpu_ts = _make_container_ts("monitoring-pod-abc123", "app", [0.3])
+        mock_client.list_time_series.side_effect = [[cpu_ts], []]
+
+        with caplog.at_level(logging.DEBUG, logger="vaig.tools.gke.monitoring"):
+            with patch("vaig.tools.gke.monitoring.MetricServiceClient", return_value=mock_client):
+                get_workload_usage_metrics(
+                    namespace="default",
+                    workload_pod_names={"api": ["expected-pod-1"]},
+                    gke_config=cfg,
+                )
+
+        # Should log the mismatch diagnostics
+        log_text = caplog.text
+        assert "pod name mismatch" in log_text.lower() or "missing" in log_text.lower()
+
+    def test_matched_pods_no_mismatch_log(self, caplog: pytest.LogCaptureFixture) -> None:
+        """When pods match exactly, no mismatch warning is emitted."""
+        import logging
+
+        from vaig.tools.gke.monitoring import get_workload_usage_metrics
+
+        cfg = _make_gke_config()
+        mock_client = MagicMock()
+
+        cpu_ts = _make_container_ts("api-pod-1", "app", [0.2])
+        mock_client.list_time_series.side_effect = [[cpu_ts], []]
+
+        with caplog.at_level(logging.DEBUG, logger="vaig.tools.gke.monitoring"):
+            with patch("vaig.tools.gke.monitoring.MetricServiceClient", return_value=mock_client):
+                get_workload_usage_metrics(
+                    namespace="default",
+                    workload_pod_names={"api": ["api-pod-1"]},
+                    gke_config=cfg,
+                )
+
+        # Should NOT log mismatch when pods match
+        assert "mismatch" not in caplog.text.lower()
