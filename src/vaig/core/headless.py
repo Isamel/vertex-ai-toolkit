@@ -54,6 +54,157 @@ def _stringify_gap(gap: object) -> str:
     return f"[{gap.level}] {gap.kind}: {gap.path or '<no-path>'} — {gap.details}"  # type: ignore[attr-defined]
 
 
+def _detect_chunk_references(attachment_context: str, agent_output: str) -> tuple[list[str], list[str]]:
+    """Heuristically find which attachment chunks an agent referenced.
+
+    Scans the ``### <file_path>`` headings in *attachment_context* and checks
+    whether a meaningful portion of each chunk's content appears in *agent_output*
+    using a sliding window of sentence-like fragments.
+
+    Returns:
+        (chunk_ids, free_text_quotes) — list of heading labels found and list
+        of verbatim excerpt matches (≤ 120 chars each, de-duplicated).
+    """
+    import re
+
+    chunk_ids: list[str] = []
+    free_text_quotes: list[str] = []
+
+    if not attachment_context or not agent_output:
+        return chunk_ids, free_text_quotes
+
+    # Split on "### " headings to get (heading, body) pairs
+    segments = re.split(r"(### .+)", attachment_context)
+    current_heading = ""
+    for segment in segments:
+        if segment.startswith("### "):
+            raw_heading = segment.lstrip("# ").strip()
+            # Only treat as a chunk header if it looks like a file path:
+            # non-empty, under 200 chars, contains a dot or slash
+            if raw_heading and len(raw_heading) < 200 and ("." in raw_heading or "/" in raw_heading):
+                current_heading = raw_heading
+            else:
+                current_heading = ""
+            continue
+        if not current_heading or len(segment.strip()) < 40:
+            continue
+        body = segment.strip()
+        # Extract 5+ word phrases from the body and check if they appear in agent_output
+        # Use sentence fragments split by punctuation/newlines
+        phrases = re.split(r"[.\n!?;]", body)
+        for phrase in phrases:
+            phrase = phrase.strip()
+            words = phrase.split()
+            if len(words) < 6:
+                continue
+            # Slide a 6-word window
+            for i in range(len(words) - 5):
+                probe = " ".join(words[i : i + 6])
+                if probe.lower() in agent_output.lower():
+                    if current_heading not in chunk_ids:
+                        chunk_ids.append(current_heading)
+                    quote = phrase[:120]
+                    if quote not in free_text_quotes:
+                        free_text_quotes.append(quote)
+                    break
+            if current_heading in chunk_ids:
+                break
+
+    return chunk_ids, free_text_quotes
+
+
+def _compute_attachment_usages(
+    attachment_context: str,
+    bytes_sent: int,
+    bytes_truncated: int,
+    agent_results: list[Any],
+    attachment_names: list[str] | None = None,
+) -> list[Any]:
+    """Build :class:`~vaig.skills.service_health.schema.AttachmentUsage` records.
+
+    One record per agent result in *agent_results*.  Heuristically detects
+    which attachment chunks each agent referenced in its output.
+
+    Args:
+        attachment_context: The rendered attachment context string passed to agents.
+        bytes_sent: Byte length of *attachment_context*.
+        bytes_truncated: Bytes dropped due to budget (0 when not truncated).
+        agent_results: List of ``AgentResult`` objects from the pipeline run.
+        attachment_names: Top-level attachment names (from ``adapter.spec.name`` or
+            ``adapter.spec.source``).  When provided and contains exactly one entry,
+            that name is used for all ``AttachmentUsage`` records.  When ``None`` or
+            empty, the name is derived heuristically from the first ``###`` heading.
+
+    Returns a list of ``AttachmentUsage`` instances (imported lazily to avoid
+    circular imports at module level).
+    """
+    import re
+
+    from vaig.skills.service_health.schema import AttachmentUsage  # noqa: PLC0415
+
+    # Resolve the display name for the attachment
+    if attachment_names and len(attachment_names) == 1:
+        top_level_name = attachment_names[0]
+    elif attachment_names and len(attachment_names) > 1:
+        top_level_name = "multiple"
+    else:
+        # Fallback: derive from first ### heading (chunk file_path, not adapter name)
+        m = re.search(r"### (.+)", attachment_context)
+        top_level_name = m.group(1).strip() if m else "attachment"
+
+    usages: list[AttachmentUsage] = []
+    for ar in agent_results:
+        agent_output = getattr(ar, "content", "") or ""  # AgentResult uses .content
+        agent_name = getattr(ar, "agent_name", "") or ""
+        chunk_ids, quotes = _detect_chunk_references(attachment_context, agent_output)
+        usages.append(
+            AttachmentUsage(
+                agent_name=agent_name,
+                attachment_name=top_level_name,
+                context_bytes_received=bytes_sent,
+                context_bytes_truncated=bytes_truncated,
+                chunks_referenced=chunk_ids,
+                free_text_quotes=quotes,
+            )
+        )
+    return usages
+
+
+def _aggregate_attachment_summaries(usages: list[Any]) -> list[Any]:
+    """Aggregate per-agent usages into per-attachment summaries.
+
+    Returns a list of :class:`~vaig.skills.service_health.schema.AttachmentEvidenceSummary`.
+    """
+    from vaig.skills.service_health.schema import AttachmentEvidenceSummary  # noqa: PLC0415
+
+    per_attachment: dict[str, dict[str, Any]] = {}
+    for u in usages:
+        name = u.attachment_name
+        if name not in per_attachment:
+            per_attachment[name] = {
+                "bytes_sent": u.context_bytes_received,
+                "bytes_truncated": u.context_bytes_truncated,
+                "agents": set(),
+                "total_chunks": 0,
+            }
+        if u.chunks_referenced:
+            per_attachment[name]["agents"].add(u.agent_name)
+            per_attachment[name]["total_chunks"] += len(u.chunks_referenced)
+
+    summaries = []
+    for name, data in per_attachment.items():
+        summaries.append(
+            AttachmentEvidenceSummary(
+                attachment_name=name,
+                bytes_sent=data["bytes_sent"],
+                bytes_truncated=data["bytes_truncated"],
+                agents_that_cited=sorted(data["agents"]),
+                total_chunks_cited=data["total_chunks"],
+            )
+        )
+    return summaries
+
+
 def _render_attachment_context(
     index: RepoIndex,
     budget_bytes: int | None = None,
@@ -344,6 +495,9 @@ def execute_skill_headless(
     index = None
     budget: int | None = None
     cfg = None
+    total_index_bytes: int = 0
+    attachment_names: list[str] = []
+    attachment_contexts_used: list[str] = []
 
     if attachment_adapters:
         from vaig.core.config import RepoInvestigationConfig
@@ -359,6 +513,10 @@ def execute_skill_headless(
                 cfg,
             )
             attachment_gap_strings = [_stringify_gap(g) for g in gaps]
+            # ATT-11: compute total available bytes before any slicing/truncation
+            total_index_bytes = sum(len(c.content.encode("utf-8")) for c in index.chunks)
+            # ATT-11: collect top-level adapter display names
+            attachment_names = [a.spec.name or a.spec.source for a in attachment_adapters]
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as exc:
@@ -420,6 +578,9 @@ def execute_skill_headless(
         result.attachment_truncated = attachment_truncated
         result.attachment_gaps = attachment_gap_strings
         result.map_reduce_windows_used = 1 if windows else 0
+        # ATT-11: record context for post-run usage tracking
+        if attachment_context:
+            attachment_contexts_used.append(attachment_context)
 
     else:
         # ── MAP phase — sequential, one window at a time ──────────────────────
@@ -435,6 +596,8 @@ def execute_skill_headless(
                 continue
 
             window_ctx, window_truncated = _render_attachment_context(window, budget)
+            # ATT-11: always record rendered context, even if execution fails
+            attachment_contexts_used.append(window_ctx)
             try:
                 wr = orchestrator.execute_with_tools(
                     query=query,
@@ -489,6 +652,35 @@ def execute_skill_headless(
         if attachment_gap_strings:
             existing = list(result.attachment_gaps or [])
             result.attachment_gaps = existing + attachment_gap_strings
+
+    # ── ATT-11: compute and surface attachment usage observability ────────────
+    if attachment_contexts_used:
+        # Concatenate all window contexts for uniform chunk-reference detection
+        combined_context = "\n".join(attachment_contexts_used)
+        bytes_sent = len(combined_context.encode("utf-8"))
+        # Proper truncation delta: total available - what was actually rendered
+        bytes_truncated = max(0, total_index_bytes - bytes_sent) if result.attachment_truncated else 0
+        usages = _compute_attachment_usages(
+            attachment_context=combined_context,
+            bytes_sent=bytes_sent,
+            bytes_truncated=bytes_truncated,
+            agent_results=result.agent_results,
+            attachment_names=attachment_names or None,
+        )
+        result.attachment_usages = usages
+        summaries = _aggregate_attachment_summaries(usages)
+        logger.info(
+            "ATT-11 attachment usage: %d agent(s) processed, %d attachment(s) summarised",
+            len(usages),
+            len(summaries),
+        )
+        if result.structured_report is not None:
+            try:
+                result.structured_report.attachment_evidence = summaries
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception:  # noqa: BLE001
+                logger.debug("ATT-11: could not set attachment_evidence on structured_report")
 
     logger.info(
         "Headless execution complete: skill=%s, success=%s, cost=$%.4f",

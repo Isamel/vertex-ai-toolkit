@@ -213,6 +213,15 @@ class OrchestratorResult:
     Stored as strings (not ``EvidenceGap`` objects) to keep this layer decoupled
     from the repo pipeline schema.
     """
+    attachment_usages: list[Any] = field(default_factory=list)
+    """Per-agent :class:`~vaig.skills.service_health.schema.AttachmentUsage` records.
+
+    Computed once at the end of the pipeline run from all agent results and
+    the rendered attachment context(s).  Populated by ``execute_skill_headless``
+    when ``--attach`` was provided.  Stored as ``Any`` to avoid a circular import
+    between ``orchestrator`` and the service-health schema layer.
+    Empty when no attachments were provided or no agents ran.
+    """
     map_reduce_windows_used: int = 1
     """Number of attachment-context windows the headless executor processed.
 

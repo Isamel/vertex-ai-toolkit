@@ -641,6 +641,22 @@ The `quick_remediation` field accepts two kinds of values:
 - If YAML was retrieved and shows the problem, include the PROBLEMATIC section in ``evidence_details`` with the issue annotated
 - If proposing a fix, include the CORRECTED YAML in the ``corrected_text`` field of ``evidence_details``
 
+### Attachment Citations (ATT-11 — when attachment context is present)
+When an **ATTACHMENT CONTEXT** section is present in your input, you MUST populate the
+``attachment_citations`` field on EVERY finding that was influenced by that content:
+
+- ``attachment_name``: filename as it appears after ``### `` in the attachment context header
+- ``file_path``: relative path if visible; otherwise repeat the attachment_name
+- ``line_start``: start line number (integer) if line numbers are shown in the chunk header; otherwise omit
+- ``line_end``: end line number (integer, inclusive) if line numbers are shown; otherwise omit
+- ``excerpt``: a verbatim snippet ≤ 240 chars from the attachment that supports this finding
+
+Rules:
+- Only cite attachments that ACTUALLY influenced the finding — do not fabricate citations
+- If a finding was not influenced by any attachment, leave ``attachment_citations`` as an empty list
+- Each citation MUST contain a real excerpt from the attachment text, not a paraphrase
+- Multiple citations per finding are allowed when more than one attachment chunk contributed
+
 ### Cluster Overview (MANDATORY)
 Populate the ``cluster_overview`` field from the upstream data.  It MUST include at minimum:
 {namespace_hint}

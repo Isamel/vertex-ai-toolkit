@@ -33,23 +33,23 @@ logger = logging.getLogger(__name__)
 
 # ── Text-normalisation regexes (for smart timeline collapse) ──
 
-_POD_HASH_RE = re.compile(r'-[a-z0-9]{5,10}-[a-z0-9]{4,7}\b')   # strip -59967f9ccc-4zdx6
+_POD_HASH_RE = re.compile(r"-[a-z0-9]{5,10}-[a-z0-9]{4,7}\b")  # strip -59967f9ccc-4zdx6
 
 # ── quick_remediation placeholder guard ──────────────────────
 # Patterns that match vague "investigate" TODO text — rejected by field_validator.
 
 _BANNED_QUICK_REMEDIATION_PATTERNS: tuple[str, ...] = (
-    r"^\s*investig(a|a\w*|ate|ating)\b",          # ES "investigar" / EN "investigate"
+    r"^\s*investig(a|a\w*|ate|ating)\b",  # ES "investigar" / EN "investigate"
     r"^\s*look\s+into\b",
     r"^\s*check\s+the\s+(cause|root|issue)\b",
     r"^\s*revisa(r)?\s+la\s+causa\b",
     r"^\s*analyze\s+the\s+issue\b",
 )
-_COUNTER_RE = re.compile(r'\s*\(\d+(?:st|nd|rd|th)\s+time\)')    # strip "(3rd time)"
-_TIMESTAMP_RE = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')  # strip ISO timestamps
-_IP_RE = re.compile(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?\b')  # strip IPs / IP:port
-_UUID_RE = re.compile(                                             # strip UUIDs
-    r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b',
+_COUNTER_RE = re.compile(r"\s*\(\d+(?:st|nd|rd|th)\s+time\)")  # strip "(3rd time)"
+_TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")  # strip ISO timestamps
+_IP_RE = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?\b")  # strip IPs / IP:port
+_UUID_RE = re.compile(  # strip UUIDs
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
     re.IGNORECASE,
 )
 
@@ -196,6 +196,7 @@ def _make_enum_coercer(enum_class: type, default_value: object) -> Callable[[obj
     Returns:
         A coercion callable ``(v: object) -> object``.
     """
+
     def _coerce(v: object) -> object:
         if isinstance(v, enum_class):
             return v
@@ -208,7 +209,9 @@ def _make_enum_coercer(enum_class: type, default_value: object) -> Callable[[obj
                     pass
             logger.debug(
                 "Unknown %s value %r — coercing to %r",
-                enum_class.__name__, v, default_value,
+                enum_class.__name__,
+                v,
+                default_value,
             )
             return default_value
         return v
@@ -226,11 +229,11 @@ def _normalize_event_text(text: str) -> str:
     counters, IPv4 addresses, and UUIDs) so that semantically identical
     events compare equal even when their raw text differs slightly.
     """
-    normalised = _POD_HASH_RE.sub('', text)
-    normalised = _COUNTER_RE.sub('', normalised)
-    normalised = _TIMESTAMP_RE.sub('', normalised)
-    normalised = _IP_RE.sub('<IP>', normalised)
-    normalised = _UUID_RE.sub('<UUID>', normalised)
+    normalised = _POD_HASH_RE.sub("", text)
+    normalised = _COUNTER_RE.sub("", normalised)
+    normalised = _TIMESTAMP_RE.sub("", normalised)
+    normalised = _IP_RE.sub("<IP>", normalised)
+    normalised = _UUID_RE.sub("<UUID>", normalised)
     return normalised.strip()
 
 
@@ -245,7 +248,7 @@ class _CollapsedEvent:
 
     time_first: str
     time_last: str
-    event: str          # original (non-normalised) text from the first occurrence
+    event: str  # original (non-normalised) text from the first occurrence
     normalized_event: str  # normalised text, used for display when count > 1
     severity: Severity
     service: str
@@ -296,15 +299,17 @@ def _collapse_repeated_events(events: list[TimelineEvent]) -> list[_CollapsedEve
                 prev.count += 1
                 prev.time_last = ev.time
                 continue
-        result.append(_CollapsedEvent(
-            time_first=ev.time,
-            time_last=ev.time,
-            event=ev.event,
-            normalized_event=norm,
-            severity=ev.severity,
-            service=ev.service,
-            count=1,
-        ))
+        result.append(
+            _CollapsedEvent(
+                time_first=ev.time,
+                time_last=ev.time,
+                event=ev.event,
+                normalized_event=norm,
+                severity=ev.severity,
+                service=ev.service,
+                count=1,
+            )
+        )
     return result
 
 
@@ -332,6 +337,48 @@ class EvidenceGap(BaseModel):
     )
 
 
+class AttachmentCitation(BaseModel):
+    """A direct citation from an attachment file that influenced a finding."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    attachment_name: str = Field(description="Filename, e.g. 'runbook.md'")
+    file_path: str = Field(default="", description="Relative path inside archive/attachment")
+    line_start: int | None = Field(default=None, description="Start line number, 1-indexed")
+    line_end: int | None = Field(default=None, description="End line number, 1-indexed (inclusive)")
+    excerpt: str = Field(default="", description="Verbatim excerpt ≤ 240 chars")
+
+
+class AttachmentUsage(BaseModel):
+    """Per-agent attachment usage record."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    agent_name: str = Field(description="Agent that received this context")
+    attachment_name: str = Field(description="Source attachment filename")
+    context_bytes_received: int = Field(default=0, description="Bytes sent to the agent")
+    context_bytes_truncated: int = Field(default=0, description="Bytes dropped due to budget")
+    chunks_referenced: list[str] = Field(
+        default_factory=list, description="Chunk IDs heuristically found in agent output"
+    )
+    free_text_quotes: list[str] = Field(
+        default_factory=list, description="Direct substring matches of attachment chunks in agent output"
+    )
+
+
+class AttachmentEvidenceSummary(BaseModel):
+    """Per-attachment aggregate summary for the Attachment Evidence report section."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    attachment_name: str
+    kind: str = Field(default="file", description="'file', 'archive', 'url'")
+    bytes_sent: int = Field(default=0)
+    bytes_truncated: int = Field(default=0)
+    agents_that_cited: list[str] = Field(default_factory=list)
+    total_chunks_cited: int = Field(default=0)
+
+
 class ExecutiveSummary(BaseModel):
     """Executive summary section of the health report."""
 
@@ -352,10 +399,7 @@ class ExecutiveSummary(BaseModel):
         return v
 
     scope: str = Field(
-        description=(
-            "Blast radius: 'Cluster-wide', 'Namespace: <name>', "
-            "or 'Resource: <type>/<name> in <namespace>'"
-        ),
+        description=("Blast radius: 'Cluster-wide', 'Namespace: <name>', or 'Resource: <type>/<name> in <namespace>'"),
     )
     summary_text: str = Field(description="1-2 sentence overview of the situation")
     services_checked: int = Field(default=0, ge=0)
@@ -468,9 +512,7 @@ class RepoSnippet(BaseModel):
     @model_validator(mode="after")
     def _line_range_ordered(self) -> RepoSnippet:
         if self.line_start > self.line_end:
-            raise ValueError(
-                f"line_start ({self.line_start}) must be <= line_end ({self.line_end})"
-            )
+            raise ValueError(f"line_start ({self.line_start}) must be <= line_end ({self.line_end})")
         return self
 
 
@@ -552,6 +594,12 @@ class Finding(BaseModel):
             "Populated by RepoCorrelator when --repo is provided."
         ),
         exclude=True,
+    )
+    attachment_citations: list[AttachmentCitation] = Field(
+        default_factory=list,
+        description=(
+            "Attachment lines that influenced this finding. Populated by the reporter LLM when --attach was used."
+        ),
     )
 
 
@@ -723,10 +771,16 @@ class GKEResourceCost(BaseModel):
 
     resource_type: str = Field(default="", description="Resource type: 'cpu', 'memory', or 'ephemeral'")
     requests: float | None = Field(default=None, description="Total requested units (vCPUs or GiB)")
-    usage: float | None = Field(default=None, description="Total actual usage units (from Cloud Monitoring); None if unavailable")
+    usage: float | None = Field(
+        default=None, description="Total actual usage units (from Cloud Monitoring); None if unavailable"
+    )
     request_cost_usd: float | None = Field(default=None, description="Monthly cost based on requests (USD)")
-    usage_cost_usd: float | None = Field(default=None, description="Monthly cost based on actual usage (USD); None if unavailable")
-    waste_cost_usd: float | None = Field(default=None, description="Estimated monthly waste (request_cost - usage_cost); None if unavailable")
+    usage_cost_usd: float | None = Field(
+        default=None, description="Monthly cost based on actual usage (USD); None if unavailable"
+    )
+    waste_cost_usd: float | None = Field(
+        default=None, description="Estimated monthly waste (request_cost - usage_cost); None if unavailable"
+    )
 
 
 class GKEContainerCost(BaseModel):
@@ -736,9 +790,15 @@ class GKEContainerCost(BaseModel):
 
     container_name: str = Field(default="", description="Container name within the pod spec")
     resource_costs: list[GKEResourceCost] = Field(default_factory=list)
-    total_request_cost_usd: float | None = Field(default=None, description="Monthly request cost for this container (USD)")
-    total_usage_cost_usd: float | None = Field(default=None, description="Monthly usage cost for this container (USD); None if unavailable")
-    total_waste_usd: float | None = Field(default=None, description="Estimated monthly waste for this container (USD); None if unavailable")
+    total_request_cost_usd: float | None = Field(
+        default=None, description="Monthly request cost for this container (USD)"
+    )
+    total_usage_cost_usd: float | None = Field(
+        default=None, description="Monthly usage cost for this container (USD); None if unavailable"
+    )
+    total_waste_usd: float | None = Field(
+        default=None, description="Estimated monthly waste for this container (USD); None if unavailable"
+    )
 
 
 class GKENamespaceSummary(BaseModel):
@@ -747,9 +807,16 @@ class GKENamespaceSummary(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     namespace: str = Field(default="", description="Kubernetes namespace name")
-    total_request_cost_usd: float = Field(default=0.0, description="Sum of all workload request costs in the namespace (USD)")
-    total_usage_cost_usd: float | None = Field(default=None, description="Sum of all workload usage costs in the namespace (USD); None if any workload is missing usage data")
-    total_waste_usd: float | None = Field(default=None, description="Estimated total monthly waste in the namespace (USD); None if usage data unavailable")
+    total_request_cost_usd: float = Field(
+        default=0.0, description="Sum of all workload request costs in the namespace (USD)"
+    )
+    total_usage_cost_usd: float | None = Field(
+        default=None,
+        description="Sum of all workload usage costs in the namespace (USD); None if any workload is missing usage data",
+    )
+    total_waste_usd: float | None = Field(
+        default=None, description="Estimated total monthly waste in the namespace (USD); None if usage data unavailable"
+    )
 
 
 class CostDataQuality(BaseModel):
@@ -772,10 +839,7 @@ class CostDataQuality(BaseModel):
     )
     freshness: str = Field(
         default="unknown",
-        description=(
-            "Dominant freshness descriptor. "
-            "Values: '60m_avg', '24h_avg', 'snapshot', '1h_avg', 'unknown'."
-        ),
+        description=("Dominant freshness descriptor. Values: '60m_avg', '24h_avg', 'snapshot', '1h_avg', 'unknown'."),
     )
     coverage_count: int = Field(
         default=0,
@@ -818,7 +882,9 @@ class GKEWorkloadCost(BaseModel):
     total_request_cost_usd: float | None = Field(default=None)
     total_usage_cost_usd: float | None = Field(default=None)
     total_waste_usd: float | None = Field(default=None)
-    containers: list[GKEContainerCost] = Field(default_factory=list, description="Per-container cost breakdown; empty if container-level data unavailable")
+    containers: list[GKEContainerCost] = Field(
+        default_factory=list, description="Per-container cost breakdown; empty if container-level data unavailable"
+    )
     partial_metrics: bool = Field(
         default=False,
         description=(
@@ -874,9 +940,17 @@ class GKECostReport(BaseModel):
     )
     workloads: list[GKEWorkloadCost] = Field(default_factory=list)
     total_request_cost_usd: float | None = Field(default=None, description="Sum of all workload request costs")
-    total_usage_cost_usd: float | None = Field(default=None, description="Sum of all workload usage costs; may include estimated values when metrics_estimated is True")
-    total_savings_usd: float | None = Field(default=None, description="Estimated total monthly savings potential; may include estimated values when metrics_estimated is True")
-    namespace_summaries: dict[str, GKENamespaceSummary] = Field(default_factory=dict, description="Per-namespace aggregated cost summaries keyed by namespace name")
+    total_usage_cost_usd: float | None = Field(
+        default=None,
+        description="Sum of all workload usage costs; may include estimated values when metrics_estimated is True",
+    )
+    total_savings_usd: float | None = Field(
+        default=None,
+        description="Estimated total monthly savings potential; may include estimated values when metrics_estimated is True",
+    )
+    namespace_summaries: dict[str, GKENamespaceSummary] = Field(
+        default_factory=dict, description="Per-namespace aggregated cost summaries keyed by namespace name"
+    )
     monitoring_status: str | None = Field(
         default=None,
         description=(
@@ -1088,7 +1162,9 @@ class DependencyEdge(BaseModel):
 
     source: str = Field(description="Service that depends on target")
     target: str = Field(description="Service being depended upon")
-    evidence: str = Field(default="", description="How this was discovered (e.g., 'env:DATABASE_URL', 'istio:VirtualService')")
+    evidence: str = Field(
+        default="", description="How this was discovered (e.g., 'env:DATABASE_URL', 'istio:VirtualService')"
+    )
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="0.0-1.0 confidence score")
     method: str = Field(default="manual", description="Discovery method: 'env_var', 'istio', 'datadog', 'manual'")
 
@@ -1129,9 +1205,7 @@ class ExternalLink(BaseModel):
 
     label: str = Field(description="Human-readable link label")
     url: str = Field(description="Fully-formed target URL")
-    system: str = Field(
-        description="Originating system — one of 'gcp', 'datadog', or 'argocd'"
-    )
+    system: str = Field(description="Originating system — one of 'gcp', 'datadog', or 'argocd'")
     icon: str = Field(default="", description="Inline SVG icon string (optional)")
 
 
@@ -1198,7 +1272,9 @@ class HealthReport(BaseModel):
             "reported issue. Populated by the analyzer separately from findings."
         ),
     )
-    dependencies: DependencyGraph | None = Field(default=None, description="Structured dependency graph for the service ecosystem")
+    dependencies: DependencyGraph | None = Field(
+        default=None, description="Structured dependency graph for the service ecosystem"
+    )
     external_links: ExternalLinks | None = Field(
         default=None,
         description=(
@@ -1208,10 +1284,7 @@ class HealthReport(BaseModel):
     )
     metadata: ReportMetadata = Field(
         default_factory=ReportMetadata,
-        description=(
-            "Post-hoc metadata: cost, tokens, GKE cost, trends.  "
-            "Populated by the pipeline after generation."
-        ),
+        description=("Post-hoc metadata: cost, tokens, GKE cost, trends.  Populated by the pipeline after generation."),
     )
     causal_graph_mermaid: str | None = Field(
         default=None,
@@ -1223,6 +1296,10 @@ class HealthReport(BaseModel):
             "Signal sources that were not checked, errored, or returned empty data. "
             "Populated by sub-gatherers and merged by the analyzer."
         ),
+    )
+    attachment_evidence: list[AttachmentEvidenceSummary] = Field(
+        default_factory=list,
+        description=("Per-attachment usage summary. Populated post-hoc by headless.py when --attach was used."),
     )
     investigation_coverage: str | None = Field(
         default=None,
@@ -1251,6 +1328,7 @@ class HealthReport(BaseModel):
             )
             return v[:239].rstrip() + "…"
         return v
+
     investigation_evidence: list[InvestigationEvidenceSnapshot] = Field(
         default_factory=list,
         description=(
@@ -1289,8 +1367,7 @@ class HealthReport(BaseModel):
             )
             uniform = 1.0 / len(self.root_cause_hypotheses)
             self.root_cause_hypotheses = [
-                h.model_copy(update={"probability": uniform})
-                for h in self.root_cause_hypotheses
+                h.model_copy(update={"probability": uniform}) for h in self.root_cause_hypotheses
             ]
             return self
         if abs(total - 1.0) > 1e-6:
@@ -1299,8 +1376,7 @@ class HealthReport(BaseModel):
                 total,
             )
             self.root_cause_hypotheses = [
-                h.model_copy(update={"probability": h.probability / total})
-                for h in self.root_cause_hypotheses
+                h.model_copy(update={"probability": h.probability / total}) for h in self.root_cause_hypotheses
             ]
         return self
 
@@ -1357,6 +1433,7 @@ class HealthReport(BaseModel):
         self._render_causal_graph(parts)
         self._render_recent_changes(parts)
         self._render_external_links(parts)
+        self._render_attachment_evidence(parts)
         self._render_evidence_gaps(parts)
         self._render_investigation_coverage(parts)
         return "\n".join(parts)
@@ -1396,12 +1473,10 @@ class HealthReport(BaseModel):
             parts.append("")
             return
         parts.append(
-            "| Service | Namespace | Status | Pods Ready "
-            "| Restarts (1h) | CPU Usage | Memory Usage | Issues |"
+            "| Service | Namespace | Status | Pods Ready | Restarts (1h) | CPU Usage | Memory Usage | Issues |"
         )
         parts.append(
-            "|---------|-----------|--------|------------"
-            "|---------------|-----------|--------------|--------|"
+            "|---------|-----------|--------|------------|---------------|-----------|--------------|--------|"
         )
         for svc in self.service_statuses:
             emoji = _STATUS_EMOJI.get(svc.status, "⚪")
@@ -1506,8 +1581,7 @@ class HealthReport(BaseModel):
         parts.append("## Downgraded Findings")
         if not self.downgraded_findings:
             parts.append(
-                "No findings were downgraded during verification "
-                "— all findings maintained or increased confidence."
+                "No findings were downgraded during verification — all findings maintained or increased confidence."
             )
             parts.append("")
             return
@@ -1515,10 +1589,7 @@ class HealthReport(BaseModel):
         parts.append("| Finding | Original Confidence | Final Confidence | Reason for Downgrade |")
         parts.append("|---------|---------------------|------------------|----------------------|")
         for df in self.downgraded_findings:
-            parts.append(
-                f"| {df.title} | {df.original_confidence} "
-                f"| {df.final_confidence} | {df.reason} |"
-            )
+            parts.append(f"| {df.title} | {df.original_confidence} | {df.final_confidence} | {df.reason} |")
         parts.append("")
 
     def _render_root_cause_hypotheses(self, parts: list[str]) -> None:
@@ -1648,9 +1719,7 @@ class HealthReport(BaseModel):
 
         # Decide: grouped-by-service vs flat table (based on original events)
         events_with_service = sum(1 for ev in self.timeline if ev.service)
-        use_grouping = len(self.timeline) > 0 and (
-            events_with_service / len(self.timeline) >= 0.5
-        )
+        use_grouping = len(self.timeline) > 0 and (events_with_service / len(self.timeline) >= 0.5)
 
         if use_grouping:
             self._render_timeline_grouped(parts, collapsed)
@@ -1665,9 +1734,7 @@ class HealthReport(BaseModel):
             groups[key].append(ce)
 
         # Sort group names alphabetically, but "General" goes last
-        sorted_keys = sorted(
-            groups.keys(), key=lambda k: (k == "General", k)
-        )
+        sorted_keys = sorted(groups.keys(), key=lambda k: (k == "General", k))
 
         for key in sorted_keys:
             parts.append(f"### {key}")
@@ -1677,17 +1744,13 @@ class HealthReport(BaseModel):
                 parts.append(f"| {ce.display_time} | {ce.display_event} | {ce.severity.value} |")
             parts.append("")
 
-    def _render_timeline_flat(
-        self, parts: list[str], collapsed: list[_CollapsedEvent], *, show_service: bool
-    ) -> None:
+    def _render_timeline_flat(self, parts: list[str], collapsed: list[_CollapsedEvent], *, show_service: bool) -> None:
         """Render timeline as a flat table, optionally with a Service column."""
         if show_service:
             parts.append("| Time | Service | Event | Severity |")
             parts.append("|------|---------|-------|----------|")
             for ce in collapsed:
-                parts.append(
-                    f"| {ce.display_time} | {ce.service} | {ce.display_event} | {ce.severity.value} |"
-                )
+                parts.append(f"| {ce.display_time} | {ce.service} | {ce.display_event} | {ce.severity.value} |")
         else:
             parts.append("| Time | Event | Severity |")
             parts.append("|------|-------|----------|")
@@ -1729,8 +1792,51 @@ class HealthReport(BaseModel):
                 parts.append(f"- [{link.label}]({link.url})")
             parts.append("")
 
+    def _render_attachment_evidence(self, parts: list[str]) -> None:
+        """Render the Attachment Evidence section when attachments were used."""
+        if not self.attachment_evidence:
+            return
+        parts.append("## Attachment Evidence")
+        parts.append("")
+        # Table header
+        parts.append("| Attachment | Kind | Bytes sent | Bytes truncated | Agents that cited it | Chunks cited |")
+        parts.append("|---|---|---:|---:|---|---:|")
+        has_truncation = False
+        all_zero_chunks = all(a.total_chunks_cited == 0 for a in self.attachment_evidence)
+        for att in self.attachment_evidence:
+            truncated_cell = f"⚠ {att.bytes_truncated:,}" if att.bytes_truncated else "—"
+            if att.bytes_truncated:
+                has_truncation = True
+            agents_cell = ", ".join(att.agents_that_cited) if att.agents_that_cited else "—"
+            parts.append(
+                f"| {att.attachment_name} "
+                f"| {att.kind} "
+                f"| {att.bytes_sent:,} "
+                f"| {truncated_cell} "
+                f"| {agents_cell} "
+                f"| {att.total_chunks_cited} |"
+            )
+        parts.append("")
+        if all_zero_chunks:
+            parts.append("> No findings were influenced by attachments on this run.")
+            parts.append("")
+        if has_truncation:
+            parts.append(
+                "> ⚠ One or more attachments were truncated due to the per-run byte budget. "
+                "Analysis may be based on partial attachment content."
+            )
+            parts.append("")
+        for att in self.attachment_evidence:
+            truncated_note = f" *(⚠ {att.bytes_truncated:,} bytes truncated)*" if att.bytes_truncated else ""
+            parts.append(f"- **{att.attachment_name}** ({att.kind}): {att.bytes_sent:,} bytes sent{truncated_note}")
+            if att.agents_that_cited:
+                agents_str = ", ".join(att.agents_that_cited)
+                parts.append(f"  - Cited by: {agents_str}")
+            if att.total_chunks_cited:
+                parts.append(f"  - Chunks referenced: {att.total_chunks_cited}")
+        parts.append("")
+
     def _render_evidence_gaps(self, parts: list[str]) -> None:
-        """Render the Evidence Gaps section."""
         _REASON_LABELS: dict[str, str] = {
             "not_called": "Not Called",
             "error": "Error",
@@ -1864,6 +1970,7 @@ class HealthReportGeminiSchema(HealthReport):
             "external_links",
             "investigation_coverage",
             "investigation_evidence",
+            "attachment_evidence",
         }
     )
 
