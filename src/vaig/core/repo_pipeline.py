@@ -287,8 +287,8 @@ def detect_file_kind(content_peek: str) -> str:
     # Must check before the generic k8s_manifest check because Helm templates
     # often have valid apiVersion headers alongside {{ .Values.* }} directives.
     if "{{" in content_peek and (
-        _looks_like_yaml(content_peek[:200])  # starts with YAML-looking header
-        or content_peek.lstrip().startswith("{{-")  # starts with template directive
+        _looks_like_yaml(content_peek)  # looks YAML-like in the first ~20 lines
+        or content_peek.lstrip().startswith("{{")  # starts with template directive
     ):
         return "helm_template"
     if (

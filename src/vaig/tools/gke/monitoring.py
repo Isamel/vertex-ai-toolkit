@@ -731,8 +731,9 @@ def get_workload_usage_metrics(
             sorted(missing_pods)[:5],
         )
         unmatched_monitoring_pods = result_pod_names - expected_pod_names
-        if unmatched_monitoring_pods:
-            # Both sides are non-empty → genuine pod name mismatch
+        if unmatched_monitoring_pods and not matched_pods:
+            # Found pods in the namespace but none match our expected workload pods —
+            # this indicates a config error or total naming mismatch, not just metric latency.
             logger.debug(
                 "Cloud Monitoring pod name mismatch — sample of names FROM monitoring (showing first 5): %s",
                 sorted(unmatched_monitoring_pods)[:5],

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from vaig.core.repo_chunkers import FallbackLineChunker, chunk_file, get_chunker
 from vaig.core.repo_pipeline import detect_file_kind
 
@@ -15,12 +17,36 @@ def test_helm_template_with_values_classified_as_helm_template() -> None:
 
 
 def test_helm_template_does_not_trigger_yaml_chunker_error() -> None:
-    """Helm template files should not produce ChunkingError log warnings."""
+    """Helm template files should not produce ChunkingError log warnings.
+
+    Uses a direct handler on the vaig logger (propagate=False) to assert no
+    fallback warning is emitted when chunk_file handles helm_template kind.
+    """
     content = "apiVersion: apps/v1\nkind: Deployment\nspec:\n  replicas: {{ .Values.replicaCount }}\n"
     kind = detect_file_kind(content)
-    # Should be chunked without error — helm_template → FallbackLineChunker
-    chunks = chunk_file(content, "templates/deployment.yaml", kind)
+
+    records: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    vaig_logger = logging.getLogger("vaig")
+    handler = _Capture(level=logging.DEBUG)
+    old_level = vaig_logger.level
+    vaig_logger.addHandler(handler)
+    vaig_logger.setLevel(logging.DEBUG)
+    try:
+        chunks = chunk_file(content, "templates/deployment.yaml", kind)
+    finally:
+        vaig_logger.removeHandler(handler)
+        vaig_logger.setLevel(old_level)
+
     assert len(chunks) > 0
+    # No ChunkingError or fallback warning should be emitted for helm_template
+    messages = " ".join(r.getMessage() for r in records if r.levelno >= logging.WARNING).lower()
+    assert "chunkingerror" not in messages
+    assert "fallback" not in messages
 
 
 def test_pure_k8s_manifest_not_misclassified_as_helm() -> None:
@@ -49,7 +75,7 @@ def test_helm_template_multiple_braces() -> None:
         "kind: ConfigMap\n"
         "metadata:\n"
         "  name: {{ .Release.Name }}-config\n"
-        "  namespace: {{ .Values.namespace | default \"default\" }}\n"
+        '  namespace: {{ .Values.namespace | default "default" }}\n'
     )
     assert detect_file_kind(content) == "helm_template"
 
