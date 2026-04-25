@@ -346,7 +346,7 @@ class ServiceHealthSkill(BaseSkill):
         if offline_mode:
             return OperatingMode.ATTACHMENT_ONLY
         if attachments_present:
-            return OperatingMode.HYBRID
+            return OperatingMode.LIVE_PLUS_ATTACHMENTS
         return OperatingMode.LIVE_ONLY
 
     def get_metadata(self) -> SkillMetadata:

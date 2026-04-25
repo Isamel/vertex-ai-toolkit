@@ -2,7 +2,7 @@
 
 Covers:
 - OperatingMode enum members and string values
-- _detect_operating_mode: all three branches (LIVE_ONLY, ATTACHMENT_ONLY, HYBRID)
+- _detect_operating_mode: all three branches (LIVE_ONLY, ATTACHMENT_ONLY, LIVE_PLUS_ATTACHMENTS)
 - offline_mode=True always returns ATTACHMENT_ONLY regardless of attachments_present
 - post_process_report: findings tagged source_support='attachment_only' in ATTACHMENT_ONLY mode
 - post_process_report: operating_mode field set on HealthReport
@@ -29,13 +29,13 @@ class TestOperatingModeEnum:
     def test_members_exist(self) -> None:
         assert OperatingMode.LIVE_ONLY == "LIVE_ONLY"
         assert OperatingMode.ATTACHMENT_ONLY == "ATTACHMENT_ONLY"
-        assert OperatingMode.HYBRID == "HYBRID"
+        assert OperatingMode.LIVE_PLUS_ATTACHMENTS == "LIVE_PLUS_ATTACHMENTS"
 
     def test_is_str(self) -> None:
         """StrEnum values must serialise as plain strings (required for Gemini schema)."""
         assert isinstance(OperatingMode.LIVE_ONLY, str)
         assert isinstance(OperatingMode.ATTACHMENT_ONLY, str)
-        assert isinstance(OperatingMode.HYBRID, str)
+        assert isinstance(OperatingMode.LIVE_PLUS_ATTACHMENTS, str)
 
     def test_three_members_only(self) -> None:
         assert len(OperatingMode) == 3  # noqa: PLR2004
@@ -57,7 +57,7 @@ class TestDetectOperatingMode:
             offline_mode=False,
             attachments_present=True,
         )
-        assert mode == OperatingMode.HYBRID
+        assert mode == OperatingMode.LIVE_PLUS_ATTACHMENTS
 
     def test_attachment_only_when_offline_no_attachments(self) -> None:
         mode = ServiceHealthSkill._detect_operating_mode(
@@ -226,7 +226,7 @@ class TestPostProcessReportOperatingMode:
         assert all(f.source_support == "attachment_only" for f in report.findings)
 
     def test_hybrid_mode_does_not_override_source_support(self) -> None:
-        """HYBRID: source_support should NOT be bulk-overridden."""
+        """LIVE_PLUS_ATTACHMENTS: source_support should NOT be bulk-overridden."""
         skill = ServiceHealthSkill()
         skill._offline_mode = False
         skill._attachments_present = True
@@ -243,7 +243,7 @@ class TestPostProcessReportOperatingMode:
         )
         report = report.model_copy(update={"operating_mode": operating_mode})
 
-        assert report.operating_mode == OperatingMode.HYBRID
+        assert report.operating_mode == OperatingMode.LIVE_PLUS_ATTACHMENTS
         # source_support must stay as default live_only (not forced to attachment_only)
         assert all(f.source_support == "live_only" for f in report.findings)
 

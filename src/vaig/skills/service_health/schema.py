@@ -116,15 +116,14 @@ class OperatingMode(StrEnum):
     controls the banner displayed before execution:
 
     - ``LIVE_ONLY``: Live GKE/GCloud tools are available; no attachments.
-    - ``ATTACHMENT_ONLY``: No live cluster connectivity (``--offline-mode``
-      flag set, or zero live tools registered); attachments may or may not
-      be present.  All findings are tagged ``source_support="attachment_only"``.
-    - ``HYBRID``: Both live tools AND attachment context are available.
+    - ``ATTACHMENT_ONLY``: Cluster unreachable OR ``--offline-mode`` flag set.
+      All findings are tagged ``source_support="attachment_only"``.
+    - ``LIVE_PLUS_ATTACHMENTS``: Both live tools AND attachment context are available.
     """
 
     LIVE_ONLY = "LIVE_ONLY"
     ATTACHMENT_ONLY = "ATTACHMENT_ONLY"
-    HYBRID = "HYBRID"
+    LIVE_PLUS_ATTACHMENTS = "LIVE_PLUS_ATTACHMENTS"
 
 
 # ── Severity → emoji mapping (matches reporter prompt) ───────
