@@ -251,7 +251,10 @@ class TestSpecialistAgentExecute:
 
         agent = SpecialistAgent.from_config_dict(config_dict, client)
 
-        assert agent.model == "gemini-2.5-pro"
+        # Default is sentinel "" — orchestrator resolves to Settings value before
+        # calling from_config_dict.  Assert on _config.model (raw storage), not
+        # agent.model (which falls back to client.current_model when sentinel is set).
+        assert agent._config.model == ""
         assert agent.config.temperature == 0.7
         assert agent.config.max_output_tokens == 16384
 
@@ -317,9 +320,7 @@ class TestOrchestrator:
         orchestrator = Orchestrator(client, _make_mock_settings())
         skill = StubSkill()
 
-        result = orchestrator.execute_sequential(
-            skill, SkillPhase.ANALYZE, "log data", "find errors"
-        )
+        result = orchestrator.execute_sequential(skill, SkillPhase.ANALYZE, "log data", "find errors")
 
         assert result.success is True
         assert result.skill_name == "test_skill"
@@ -339,9 +340,7 @@ class TestOrchestrator:
         orchestrator = Orchestrator(client, _make_mock_settings())
         skill = StubSkill()
 
-        orchestrator.execute_sequential(
-            skill, SkillPhase.ANALYZE, "initial context", "task"
-        )
+        orchestrator.execute_sequential(skill, SkillPhase.ANALYZE, "initial context", "task")
 
         # SpecialistAgent._build_prompt bakes context into the prompt string
         # sent to client.generate as the first positional arg.
@@ -358,9 +357,7 @@ class TestOrchestrator:
         orchestrator = Orchestrator(client, _make_mock_settings())
         skill = StubSkill()
 
-        result = orchestrator.execute_sequential(
-            skill, SkillPhase.ANALYZE, "", "task"
-        )
+        result = orchestrator.execute_sequential(skill, SkillPhase.ANALYZE, "", "task")
 
         assert result.success is False
         # Only 1 agent ran (failed), second was never called
@@ -377,9 +374,7 @@ class TestOrchestrator:
         orchestrator = Orchestrator(client, _make_mock_settings())
         skill = StubSkill()
 
-        result = orchestrator.execute_fanout(
-            skill, SkillPhase.ANALYZE, "shared context", "analyze"
-        )
+        result = orchestrator.execute_fanout(skill, SkillPhase.ANALYZE, "shared context", "analyze")
 
         assert result.success is True
         assert len(result.agent_results) == 2
@@ -400,9 +395,7 @@ class TestOrchestrator:
         orchestrator = Orchestrator(client, _make_mock_settings())
         skill = StubSkill()
 
-        result = orchestrator.execute_fanout(
-            skill, SkillPhase.ANALYZE, "", "go"
-        )
+        result = orchestrator.execute_fanout(skill, SkillPhase.ANALYZE, "", "go")
 
         # success = any succeeded
         assert result.success is True
@@ -419,9 +412,7 @@ class TestOrchestrator:
         orchestrator = Orchestrator(client, _make_mock_settings())
         skill = StubSkill()
 
-        result = orchestrator.execute_fanout(
-            skill, SkillPhase.ANALYZE, "", "go"
-        )
+        result = orchestrator.execute_fanout(skill, SkillPhase.ANALYZE, "", "go")
 
         assert result.success is False
 
@@ -470,9 +461,7 @@ class TestOrchestrator:
         orchestrator = Orchestrator(client, _make_mock_settings())
         skill = StubSkill()
 
-        result = orchestrator.execute_skill_phase(
-            skill, SkillPhase.ANALYZE, "ctx", "input", strategy="sequential"
-        )
+        result = orchestrator.execute_skill_phase(skill, SkillPhase.ANALYZE, "ctx", "input", strategy="sequential")
 
         assert isinstance(result, SkillResult)
         assert result.success is True
@@ -488,9 +477,7 @@ class TestOrchestrator:
         orchestrator = Orchestrator(client, _make_mock_settings())
         skill = StubSkill()
 
-        result = orchestrator.execute_skill_phase(
-            skill, SkillPhase.ANALYZE, "ctx", "input", strategy="fanout"
-        )
+        result = orchestrator.execute_skill_phase(skill, SkillPhase.ANALYZE, "ctx", "input", strategy="fanout")
 
         assert isinstance(result, SkillResult)
         assert result.success is True
@@ -508,9 +495,7 @@ class TestOrchestrator:
             _make_generation_result(text="resp1"),
             _make_generation_result(text="resp2"),
         ]
-        orchestrator.execute_sequential(
-            skill, SkillPhase.ANALYZE, "", "task"
-        )
+        orchestrator.execute_sequential(skill, SkillPhase.ANALYZE, "", "task")
 
         for agent in orchestrator._agents.values():
             assert len(agent.conversation_history) > 0
@@ -554,9 +539,7 @@ class TestOrchestrator:
         orchestrator = Orchestrator(client, _make_mock_settings())
         skill = StubSkill()
 
-        result = orchestrator.execute_sequential(
-            skill, SkillPhase.ANALYZE, "", "task"
-        )
+        result = orchestrator.execute_sequential(skill, SkillPhase.ANALYZE, "", "task")
 
         assert result.total_usage["prompt_tokens"] == 25
         assert result.total_usage["completion_tokens"] == 45
