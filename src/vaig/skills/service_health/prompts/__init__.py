@@ -19,6 +19,7 @@ from ._analyzer import (
     _CONTRADICTION_RULES_PROMPT,
     _RECENT_CHANGES_PROMPT,
     HEALTH_ANALYZER_PROMPT,
+    build_attachment_seeded_section,
 )
 from ._analyzer import (
     AUTONOMOUS_OVERLAY as ANALYZER_AUTONOMOUS_OVERLAY,
@@ -64,6 +65,7 @@ __all__ = [
     # analyzer
     "HEALTH_ANALYZER_PROMPT",
     "ANALYZER_AUTONOMOUS_OVERLAY",
+    "build_attachment_seeded_section",
     "_CONTRADICTION_RULES_PROMPT",
     "_CHANGE_CORRELATION_PROMPT",
     "_RECENT_CHANGES_PROMPT",

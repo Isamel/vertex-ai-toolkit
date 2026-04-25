@@ -28,6 +28,7 @@ from vaig.skills.service_health.prompts import (
     INVESTIGATOR_AUTONOMOUS_OVERLAY,
     PHASE_PROMPTS,
     SYSTEM_INSTRUCTION,
+    build_attachment_seeded_section,
     build_datadog_gatherer_prompt,
     build_event_gatherer_prompt,
     build_gatherer_prompt,
@@ -653,12 +654,14 @@ class ServiceHealthSkill(BaseSkill):
         cluster_name: str = kwargs.get("cluster_name", "")
         user_query: str = kwargs.get("user_query", "")
         attachment_context: str | None = kwargs.get("attachment_context")
+        attachment_priors_json: str | None = kwargs.get("attachment_priors_json")
         return self.get_parallel_agents_config(
             namespace=namespace,
             location=location,
             cluster_name=cluster_name,
             user_query=user_query,
             attachment_context=attachment_context,
+            attachment_priors_json=attachment_priors_json,
         )
 
     def get_sequential_agents_config(
@@ -668,6 +671,7 @@ class ServiceHealthSkill(BaseSkill):
         location: str = "",  # noqa: ARG002 — reserved for future cluster routing
         cluster_name: str = "",  # noqa: ARG002 — reserved for future cluster routing
         attachment_context: str | None = None,
+        attachment_priors_json: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return the legacy 4-agent sequential pipeline configuration.
 
@@ -740,7 +744,8 @@ class ServiceHealthSkill(BaseSkill):
                         HEALTH_ANALYZER_PROMPT + ANALYZER_AUTONOMOUS_OVERLAY
                         if settings.investigation.enabled is True
                         else HEALTH_ANALYZER_PROMPT
-                    ),
+                    )
+                    + build_attachment_seeded_section(attachment_priors_json or ""),
                     attachment_context,
                 ),
                 "model": "gemini-2.5-flash",
@@ -780,6 +785,7 @@ class ServiceHealthSkill(BaseSkill):
         location: str = "",
         cluster_name: str = "",
         attachment_context: str | None = None,
+        attachment_priors_json: str | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Return the parallel-then-sequential pipeline configuration.
@@ -1061,7 +1067,8 @@ class ServiceHealthSkill(BaseSkill):
                         HEALTH_ANALYZER_PROMPT + ANALYZER_AUTONOMOUS_OVERLAY
                         if settings.investigation.enabled is True
                         else HEALTH_ANALYZER_PROMPT
-                    ),
+                    )
+                    + build_attachment_seeded_section(attachment_priors_json or ""),
                     attachment_context,
                 ),
                 "model": "gemini-2.5-flash",

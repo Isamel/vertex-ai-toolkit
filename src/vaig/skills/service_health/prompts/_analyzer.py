@@ -483,11 +483,125 @@ You are running in **autonomous mode**. In addition to the standard analysis abo
 3. **Causal chain reasoning** — where multiple findings exist, explicitly reason about causal relationships before emitting each finding's `causal_chain` field. Do not assume independence.
 """
 
+
+def _sanitize_prior_text(text: str) -> str:
+    """Strip characters that could break prompt structure from attachment-derived text."""
+    import re as _re
+
+    # Remove XML/HTML tags that could inject instructions
+    text = _re.sub(r"<[^>]{0,200}>", "", text)
+    # Truncate very long values to prevent prompt flooding
+    return text[:500]
+
+
+def build_attachment_seeded_section(priors_json: str) -> str:
+    """Return a formatted investigation-seed block for injection into the Analyzer user prompt.
+
+    Parses ``priors_json`` (an ``AttachmentPriors`` JSON blob) and formats
+    all four sections (hotspots, incidents, change signals, narrative hints)
+    as Markdown investigation directions. Sections with no items use a
+    ``- (none)`` placeholder. Returns an empty string when ``priors_json``
+    is blank, cannot be parsed as JSON, or parses to a non-dict value.
+
+    Args:
+        priors_json: JSON string of an ``AttachmentPriors`` object.
+
+    Returns:
+        Formatted Markdown string, or ``""`` if priors are empty/unparseable.
+    """
+    import json as _json  # noqa: PLC0415 — local import keeps module top clean
+
+    if not priors_json:
+        return ""
+
+    try:
+        data = _json.loads(priors_json)
+    except (_json.JSONDecodeError, TypeError):
+        return ""
+
+    if not isinstance(data, dict):
+        return ""
+
+    hotspots = data.get("runbook_hotspots") or []
+    incidents = data.get("historical_incidents") or []
+    change_signals = data.get("change_signals") or []
+    narrative_hints = data.get("narrative_hints") or []
+
+    if not any([hotspots, incidents, change_signals, narrative_hints]):
+        return ""
+
+    # Only emit the seeded block when hotspots or incidents are present;
+    # change_signals and narrative_hints alone don't warrant a dedicated section.
+    if not hotspots and not incidents:
+        return ""
+
+    lines: list[str] = [
+        "",
+        "## Attachment-Seeded Investigation Directions",
+        "",
+        "The following structured priors were extracted from the attached documents.",
+        "Use them to seed hypotheses BEFORE reading live evidence. These are NOT findings yet —",
+        "they are investigation directions you MUST follow.",
+        "",
+    ]
+
+    lines += ["### Runbook Hotspots"]
+    if hotspots:
+        for h in hotspots:
+            entity = _sanitize_prior_text(h.get("entity", ""))
+            concern = _sanitize_prior_text(h.get("concern", ""))
+            source_ref = _sanitize_prior_text(h.get("source_ref", ""))
+            lines.append(f"- **{entity}**: {concern} (ref: {source_ref})")
+    else:
+        lines.append("- (none)")
+
+    lines += ["", "### Historical Incidents"]
+    if incidents:
+        for i in incidents:
+            symptom = _sanitize_prior_text(i.get("symptom_pattern", ""))
+            root_cause = _sanitize_prior_text(i.get("root_cause", ""))
+            fix = _sanitize_prior_text(i.get("fix_applied", ""))
+            lines.append(f"- Symptom: {symptom} | Root cause: {root_cause} | Fix: {fix}")
+    else:
+        lines.append("- (none)")
+
+    lines += ["", "### Change Signals"]
+    if change_signals:
+        for s in change_signals:
+            path = _sanitize_prior_text(s.get("field_path", ""))
+            old_v = _sanitize_prior_text(s.get("old_value", ""))
+            new_v = _sanitize_prior_text(s.get("new_value", ""))
+            lines.append(f"- {path}: {old_v!r} → {new_v!r}")
+    else:
+        lines.append("- (none)")
+
+    lines += ["", "### Narrative Hints"]
+    if narrative_hints:
+        for nh in narrative_hints:
+            hint = _sanitize_prior_text(nh.get("hint", ""))
+            ref = _sanitize_prior_text(nh.get("source_ref", ""))
+            lines.append(f"- {hint} (ref: {ref})")
+    else:
+        lines.append("- (none)")
+
+    lines += [
+        "",
+        "For each hotspot and historical incident, explicitly investigate the named entity",
+        "during your analysis — even if no live alert fired. Emit a finding (severity=INFO,",
+        'source_support="live_matches_expected_state" or "live_with_attachment_enrichment")',
+        "or record that you checked and found nothing.",
+        "",
+    ]
+
+    return "\n".join(lines)
+
+
 # Suppress F401: ANTI_HALLUCINATION_RULES is referenced in the prompt text
 # (inside the f-string body) as a documentation reference only.
 __all__ = [
     "HEALTH_ANALYZER_PROMPT",
     "AUTONOMOUS_OVERLAY",
+    "build_attachment_seeded_section",
     "_CONTRADICTION_RULES_PROMPT",
     "_CHANGE_CORRELATION_PROMPT",
     "_RECENT_CHANGES_PROMPT",
