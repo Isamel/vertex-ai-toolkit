@@ -34,9 +34,15 @@ class TestAgentConfig:
 
     def test_defaults(self) -> None:
         cfg = AgentConfig(name="a", role="b", system_instruction="c")
-        assert cfg.model == "gemini-2.5-pro"
+        # model defaults to "" sentinel — callers resolve via effective_model()
+        assert cfg.model == ""
         assert cfg.temperature == 0.7
         assert cfg.max_output_tokens == 16384
+
+    def test_effective_model_with_default_sentinel(self) -> None:
+        """effective_model() returns the passed default when model is empty."""
+        cfg = AgentConfig(name="a", role="b", system_instruction="c")
+        assert cfg.effective_model("gemini-2.5-pro") == "gemini-2.5-pro"
 
     def test_custom_values(self) -> None:
         cfg = AgentConfig(

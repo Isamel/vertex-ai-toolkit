@@ -3,6 +3,7 @@ gcp:
   project_id: ""  # Override via VAIG_GCP__PROJECT_ID or --project
   location: "us-central1"  # Override via VAIG_GCP__LOCATION; use "global" for Gemini 3.1 models
   fallback_location: "us-central1"  # Fallback if primary location fails (SSL/connection errors)
+  http_proxy: ""  # Optional HTTP/HTTPS proxy for Vertex AI calls (e.g. "http://proxy:8080"). Set to "none" to disable even when HTTP_PROXY env var is set.
   available_projects: []  # Catalog of GCP projects you have access to — example:
   # - project_id: "my-vertex-project"
   #   description: "Vertex AI / Gemini billing"
@@ -18,6 +19,10 @@ auth:
 models:
   default: "gemini-2.5-pro"
   fallback: "gemini-2.5-flash"
+  thinking_capable_prefixes:
+    - "gemini-2.5-flash"
+    - "gemini-2.5-pro"
+    - "gemini-3"
   available:
     # ── Gemini 3.1 series (latest) ──────────────────────────────────
     - id: "gemini-3.1-pro-preview"
@@ -105,8 +110,8 @@ skills:
 
 agents:
   max_concurrent: 3
-  orchestrator_model: "gemini-2.5-pro"
-  specialist_model: "gemini-2.5-flash"
+  orchestrator_model: ""  # Inherits models.default when empty
+  specialist_model: ""    # Inherits models.fallback when empty
   max_iterations_retry: 15
   min_inter_call_delay: 0.0
 

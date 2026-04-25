@@ -20,6 +20,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
+import httpx
 from google import genai
 from google.api_core import exceptions as google_exceptions
 from google.auth import exceptions as auth_exceptions
@@ -360,17 +361,62 @@ class GeminiClient:
         Maps vaig's ``RetryConfig`` to the SDK's ``HttpRetryOptions`` so that
         the underlying HTTP transport retries transient errors (429, 5xx)
         automatically — before vaig's own application-level retry even kicks in.
+
+        When ``gcp.http_proxy`` is set (or the ``HTTP_PROXY`` / ``HTTPS_PROXY``
+        / ``ALL_PROXY`` environment variables are present), injects a proxy-aware
+        ``httpx.Client`` / ``httpx.AsyncClient`` pair so all Vertex AI traffic
+        flows through the configured proxy.  Set ``gcp.http_proxy = "none"`` to
+        disable proxy even when the env vars are set.
         """
+        import os
+
         retry_cfg = self._settings.retry
+        retry_options = types.HttpRetryOptions(
+            attempts=retry_cfg.max_retries + 1,  # SDK counts initial call as attempt
+            initial_delay=retry_cfg.initial_delay,
+            max_delay=retry_cfg.max_delay,
+            exp_base=retry_cfg.backoff_multiplier,
+            jitter=0.5,
+            http_status_codes=retry_cfg.retryable_status_codes,
+        )
+
+        # ── Proxy resolution ─────────────────────────────────────────────────
+        # Priority: gcp.http_proxy > env vars (httpx default behaviour).
+        # The sentinel value "none" disables proxy even when env vars are set.
+        proxy_url: str | None = None
+        cfg_proxy = self._settings.gcp.http_proxy.strip()
+        if cfg_proxy.lower() == "none":
+            # Explicitly disabled — pass empty mounts to suppress env-var proxies.
+            proxy_url = None
+            suppress_env_proxy = True
+        elif cfg_proxy:
+            proxy_url = cfg_proxy
+            suppress_env_proxy = False
+        else:
+            # Check env vars ourselves only for logging purposes; httpx picks
+            # them up automatically when no explicit proxy is passed.
+            proxy_url = (
+                os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY") or os.environ.get("ALL_PROXY")
+            ) or None
+            suppress_env_proxy = False
+
+        if proxy_url:
+            logger.info("HTTP proxy configured for Vertex AI calls: %s", proxy_url)
+
+        # Build httpx clients only when we need to influence proxy behaviour.
+        # Otherwise let the SDK use its own default transport (avoids overhead).
+        httpx_client: httpx.Client | None = None
+        httpx_async_client: httpx.AsyncClient | None = None
+
+        if proxy_url or suppress_env_proxy:
+            proxy_arg = proxy_url  # None when suppressing env proxies
+            httpx_client = httpx.Client(proxy=proxy_arg)
+            httpx_async_client = httpx.AsyncClient(proxy=proxy_arg)
+
         return types.HttpOptions(
-            retry_options=types.HttpRetryOptions(
-                attempts=retry_cfg.max_retries + 1,  # SDK counts initial call as attempt
-                initial_delay=retry_cfg.initial_delay,
-                max_delay=retry_cfg.max_delay,
-                exp_base=retry_cfg.backoff_multiplier,
-                jitter=0.5,
-                http_status_codes=retry_cfg.retryable_status_codes,
-            ),
+            retry_options=retry_options,
+            httpx_client=httpx_client,
+            httpx_async_client=httpx_async_client,
         )
 
     def _resolve_initial_location(self, credentials: Credentials | None) -> str:

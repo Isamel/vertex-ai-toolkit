@@ -37,12 +37,29 @@ class AgentConfig:
     name: str
     role: str
     system_instruction: str
-    model: str = "gemini-2.5-pro"
+    model: str = ""
+    """Model ID for this agent.
+
+    Leave empty (the default) to inherit ``settings.models.default`` at
+    runtime.  Use :meth:`effective_model` to resolve the final value.
+    """
     temperature: float = 0.7
     max_output_tokens: int = 16384
     frequency_penalty: float | None = None
     response_schema: type[BaseModel] | None = None
     response_mime_type: str | None = None
+
+    def effective_model(self, default: str) -> str:
+        """Return the resolved model ID.
+
+        Args:
+            default: Fallback model ID (typically ``settings.models.default``)
+                used when :attr:`model` is empty.
+
+        Returns:
+            :attr:`model` if set, otherwise *default*.
+        """
+        return self.model or default
 
 
 @dataclass
@@ -99,8 +116,13 @@ class BaseAgent(ABC):
 
     @property
     def model(self) -> str:
-        """Agent's model ID."""
-        return self._config.model
+        """Agent's effective model ID.
+
+        Returns :attr:`AgentConfig.model` when explicitly set, otherwise
+        falls back to the client's current model so the agent always
+        reports a concrete model name.
+        """
+        return self._config.model or self._client.current_model
 
     @property
     def config(self) -> AgentConfig:
@@ -146,9 +168,7 @@ class BaseAgent(ABC):
 
     def _add_to_conversation(self, role: str, content: str) -> None:
         """Track a message in the conversation."""
-        self._conversation.append(
-            AgentMessage(role=role, content=content, agent_name=self.name)
-        )
+        self._conversation.append(AgentMessage(role=role, content=content, agent_name=self.name))
 
     # ── Async abstract methods ─────────────────────────────────
 
@@ -232,8 +252,6 @@ class BaseAgent(ABC):
 
         # Cap generic messages at 500 chars
         return msg[:500] if len(msg) > 500 else msg
-
-
 
     def _build_prompt(self, prompt: str, context: str) -> str:
         """Build the full prompt with optional context.
