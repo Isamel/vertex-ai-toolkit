@@ -150,7 +150,7 @@ async def _post_process_report_async(
     run_quality: list[QualityIssue] | None = None,
 ) -> str:
     """Run blocking post_process_report in a separate thread to avoid blocking the event loop."""
-    return await asyncio.to_thread(skill.post_process_report, content, run_quality)
+    return await asyncio.to_thread(skill.post_process_report, content, run_quality=run_quality)
 
 
 EMPTY_MARKERS: tuple[str, ...] = (
